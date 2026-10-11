@@ -15,7 +15,8 @@
 // source of another bundle of the same run that is compiled from source — as overlay text
 // (TddCrossBundle.cs), recompiled by re-running the cycle. A procedure of a codeunit declared by neither
 // (a package's: .app symbols, a DLL or embedded source) is stubbed BESIDE the object in a new codeunit of
-// this compile, never in it (#5037, TddPrecompiledStub.cs, docs/tdd-precompiled.md); any other symbol
+// this compile, never in it (#5037, TddPrecompiledStub.cs, docs/tdd-precompiled.md), and a field or enum value of a package's
+// table or enum in a tableextension or enumextension of this compile (#5430, TddGeneration.PackageMembers.cs); any other symbol
 // declared by neither, or one BC couldn't resolve at all, is refused for a structural reason. A codeunit, a table or an enum no app
 // declares at all (AL0185) is first added as an object of the compile (TddGeneration.MissingObject.cs,
 // docs/tdd-missing-object.md), and the members its calls need are then generated as for any object. And because
@@ -54,7 +55,15 @@ public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberK
     /// the file it went into, as in-memory overlay text. The current compile cannot see it until
     /// that bundle is recompiled.</summary>
     public string? GeneratedIntoFile { get; init; }
+
+    /// <summary>Set for a field or enum value generated in a tableextension or enumextension beside a PACKAGE object (#5430):
+    /// the extension it lives in. Settled after the compile (<see cref="TddGeneration.SettlePackageExtensions"/>).</summary>
+    public TddPackageExtension? PackageExtension { get; init; }
 }
+
+/// <summary>An extension --tdd appended to a file of the compile for a package's table or enum (#5430). <see cref="RecordEngineText"/>
+/// is the text the record engine registers for a table extension (null for an enum, which is compiled from the trees).</summary>
+public sealed record TddPackageExtension(string Word, int Id, string Name, string ObjectName, string? RecordEngineText);
 
 public static partial class TddGeneration
 {
@@ -238,7 +247,7 @@ public static partial class TddGeneration
     /// it's safe to re-derive per diagnostic including repeat diagnostics for an
     /// already-generated member). Returns null for every refuse case from this file's header:
     /// unrecognized syntax shape, unresolvable qualifier, or a qualifier declared outside this
-    /// compile's own trees that is neither a source bundle's nor a package's codeunit (a Target with Precompiled set).
+    /// compile's own trees that is neither a source bundle's nor a package's codeunit, table or enum (a Target with Precompiled set).
     /// </summary>
     private static Target? ResolveTarget(
         NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavDiag.Diagnostic diag)
@@ -324,10 +333,14 @@ public static partial class TddGeneration
             var cross = TddCrossBundle.FindObject(SyntaxTypeFor(kind), qualType.Name);
             if (cross == null)
             {
-                // A codeunit of a loaded package (#5037): nothing to add the member to, so GenerateBesidePrecompiled,
-                // which takes only AL0132 (a missing procedure), never AL0126 (a missing overload).
-                return kind == "procedure" && IsPackagedObject(qualType) && mae != null
-                    ? new Target(kind, -1, qualType.Name, memberName, mae, null, null, Precompiled: true)
+                // A codeunit or a table of a loaded package (#5037, #5430): nothing to add the member to, so
+                // GenerateBesidePrecompiled, which takes only AL0132 (a missing procedure or field), never AL0126
+                // (a missing overload).
+                if (overload) return null;
+                return (mae != null && kind == "procedure" && IsPackagedObject(qualType))
+                    || (mae != null && kind == "field" && IsPackagedTable(qualType))
+                    || (kind == "enum-value" && IsPackagedEnum(qualType))
+                    ? new Target(kind, -1, qualType.Name, memberName, mae, null, null, Precompiled: true, TargetType: qualType)
                     : null;
             }
             return new Target(kind, -1, qualType.Name, memberName, mae, cross.Value.FilePath, overloadKey);
@@ -343,7 +356,7 @@ public static partial class TddGeneration
     private readonly record struct Target(
         string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
         NavSyntax.MemberAccessExpressionSyntax? Mae, string? CrossFile, string? OverloadKey = null,
-        bool Precompiled = false)
+        bool Precompiled = false, NavCA.ITypeSymbol? TargetType = null)
     {
         public bool IsOverload => OverloadKey != null;
         public string MemberKey => OverloadKey == null ? MemberName : $"{MemberName}({OverloadKey})";

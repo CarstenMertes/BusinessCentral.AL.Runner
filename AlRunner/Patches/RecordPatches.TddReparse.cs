@@ -42,4 +42,21 @@ public static partial class RecordPatches
 
         PopulateNclMetadataCache();
     }
+
+    /// <summary>
+    /// #5430: registers a <c>tableextension</c> --tdd generated in memory beside a PACKAGE table, exactly as
+    /// <c>TryParseTableExtensionFile</c> registers one found on disk, so the record engine's table shape gains the field
+    /// and the emitted <c>TableExtension{id}</c> type is attached to the base table's records. Like
+    /// <see cref="TddReparseAndRefreshTable"/> it runs after the registration pass, which cannot see an in-memory object.
+    /// Observably equivalent to the extension being on disk: the same registry write, from the same text a file would hold,
+    /// and only for an extension whose file the compile kept (<c>TddGeneration.SettlePackageExtensions</c>; a dropped
+    /// file's extension left a field nobody declares, #5430). Without it the first access to the field throws
+    /// "extension field N ... not found in NCLMetaTable". Trap: the watch reset clears this registry, so a compile that made
+    /// one must record no incremental baseline (BcCompiler.Emit).
+    /// </summary>
+    internal static void TddRegisterTableExtension(string extensionObjectText)
+    {
+        TryParseTableExtensionFile(extensionObjectText);
+        PopulateNclMetadataCache();
+    }
 }

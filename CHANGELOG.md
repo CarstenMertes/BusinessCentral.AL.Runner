@@ -29,6 +29,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tdd:** a generated field or enum value skips ids another app's extension already uses
 - **deferral:** cold platform-apps deferral replays JSON to the real stdout and no longer repeats startup lines
 - **startup:** deferred platform-apps replay no longer duplicates the startup preamble
 - **tests:** DotNetForwarderCycleTests fails on CI when the tier major has no row
@@ -181,6 +182,7 @@ All notable changes to this project are documented here. Format based on
 - **readme:** name the .NET 8 runtime as a prerequisite
 
 ### Changed
+- **startup:** reuse the package loader when a bundle only adds dependencies
 - **startup:** stage only the dependency closure for the package loader
 - **docs:** resolve doc anchors as GitHub does and pin the guard's dangling/control cases
 - **provision:** the implicit-version resolution test no longer depends on the live artifact CDN

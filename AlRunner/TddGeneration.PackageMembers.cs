@@ -17,8 +17,8 @@ public static partial class TddGeneration
     /// One tableextension per package table, holding every field of that table the tests assign and the table does not
     /// declare, appended to the FIRST file (in file order) that names one: an extension is one object, and two files
     /// adding the same field would clash. A field is generated only from an assignment <c>Rec.Field := &lt;expr&gt;</c>, as for a
-    /// source table; its id is the first of the app's <c>idRanges</c> that no field of the table nor of a tableextension of
-    /// the compile uses. A table that cannot get an extension id, a field no site types, or a field id is refused with
+    /// source table; its id is the first of the app's <c>idRanges</c> that no field of the table, no tableextension of the
+    /// compile's own trees and no tableextension of another app of the run (#5491) uses. A table that cannot get an extension id, a field no site types, or a field id is refused with
     /// the reason on stderr and the tests fail as before. Trap: if the home file is dropped by the compile, the other
     /// files naming the field fail with the AL0132 again (loud, as for a generated object, #5447).
     /// </summary>
@@ -79,7 +79,7 @@ public static partial class TddGeneration
                     foreach (var f in fields) Refuse(f.Name, "the table is not extensible, so a tableextension cannot add a field to it");
                     continue;
                 }
-                var used = UsedFieldIds(table.First().Target, trees);
+                var used = UsedFieldIds(compilation, table.First().Target, trees);
                 if (used == null)
                 {
                     foreach (var f in fields) Refuse(f.Name, "the field ids of the table could not be read, so a free one cannot be chosen");
@@ -179,10 +179,10 @@ public static partial class TddGeneration
     /// The same for an enum (#5430): one enumextension per package enum, holding every value the tests name that the enum does
     /// not declare, appended to the first file that names one. Refused when the enum is not <c>Extensible</c> (the
     /// compile would reject the extension and take its file down). Each value takes the first ordinal of the app's
-    /// <c>idRanges</c> that neither the enum nor an enumextension of the compile uses.
+    /// <c>idRanges</c> that neither the enum, nor an enumextension of the compile's own trees, nor an enumextension of another app of the run (#5491) uses.
     /// </summary>
     private static void GenerateValuesBesidePackageEnums(
-        NavSyntax.SyntaxTree[] originalTrees, NavSyntax.SyntaxTree[] trees, NavCA.ParseOptions parseOptions,
+        NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavSyntax.SyntaxTree[] trees, NavCA.ParseOptions parseOptions,
         string? manifestAppJsonPath, List<(NavDiag.Diagnostic Diag, Target Target)> entries,
         Dictionary<string, TddGeneratedMember> generatedByKey, Dictionary<string, List<NavDiag.Diagnostic>> diagsByKey)
     {
@@ -219,7 +219,7 @@ public static partial class TddGeneration
                     foreach (var v in values) Refuse(v.Name, "the enum is not Extensible, so an enumextension cannot add a value to it");
                     continue;
                 }
-                var used = UsedOrdinals(enumSymbol, target, trees);
+                var used = UsedOrdinals(compilation, enumSymbol, target, trees);
                 var extensionId = TddPrecompiledStub.FreeEnumExtensionId(trees, idRanges, reservedExtensions);
                 if (extensionId == null)
                 {
@@ -269,11 +269,14 @@ public static partial class TddGeneration
         }
     }
 
-    /// <summary>The ordinals the enum already has (its own, from the symbol) and those of every enumextension of the compile
-    /// that extends an enum of that name.</summary>
-    private static HashSet<int> UsedOrdinals(NavCA.IEnumBaseTypeSymbol enumSymbol, Target target, NavSyntax.SyntaxTree[] trees)
+    /// <summary>The ordinals the enum already has (its own, from the symbol), those of every enumextension of the compile's own trees
+    /// that extends an enum of that name, and those another app's enumextension of this very enum adds (#5491).</summary>
+    private static HashSet<int> UsedOrdinals(NavCA.Compilation compilation, NavCA.IEnumBaseTypeSymbol enumSymbol, Target target, NavSyntax.SyntaxTree[] trees)
     {
         var used = new HashSet<int>(enumSymbol.Values.Select(v => v.Ordinal));
+        foreach (var ext in compilation.GetApplicationObjectExtensionTypeSymbolsAcrossModules(enumSymbol))
+            if (ext is NavCA.IEnumExtensionTypeSymbol enumExt)
+                foreach (var v in enumExt.Values) used.Add(v.Ordinal);
         foreach (var tree in trees)
             if (tree.GetRoot() is NavSyntax.CompilationUnitSyntax root)
                 foreach (var ext in root.Objects.OfType<NavSyntax.EnumExtensionTypeSyntax>())
@@ -323,12 +326,16 @@ public static partial class TddGeneration
         return ns.Length == 0 ? Quote(target.TargetObjectName) : $"{ns}.{Quote(target.TargetObjectName)}";
     }
 
-    /// <summary>The ids of the fields the table already has: its own (the symbol) and those of every tableextension of
-    /// the compile that extends a table of that name. Null when the symbol is not a table the fields can be read from.</summary>
-    private static HashSet<int>? UsedFieldIds(Target target, NavSyntax.SyntaxTree[] trees)
+    /// <summary>The ids of the fields the table already has: its own (the symbol), those of every tableextension of the
+    /// compile's own trees that extends a table of that name, and those another app's tableextension of this very table
+    /// adds (#5491). Null when the symbol is not a table the fields can be read from.</summary>
+    private static HashSet<int>? UsedFieldIds(NavCA.Compilation compilation, Target target, NavSyntax.SyntaxTree[] trees)
     {
         if (TableSymbolOf(target.TargetType) is not { } table) return null;
         var used = new HashSet<int>(table.Fields.Select(f => f.Id));
+        foreach (var ext in compilation.GetApplicationObjectExtensionTypeSymbolsAcrossModules(table))
+            if (ext is NavCA.ITableExtensionTypeSymbol tableExt)
+                foreach (var f in tableExt.AddedFields) used.Add(f.Id);
         foreach (var tree in trees)
             if (tree.GetRoot() is NavSyntax.CompilationUnitSyntax root)
                 foreach (var ext in root.Objects.OfType<NavSyntax.TableExtensionSyntax>())

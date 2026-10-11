@@ -1,0 +1,76 @@
+// BcCompiler.LoaderReuse (#5473) - when a bundle may keep the package loader a previous one built.
+namespace AlRunner;
+
+public sealed partial class BcCompiler
+{
+    /// <summary>A resolved dependency the package loader can serve: where it is, the key naming its
+    /// bytes (<c>path@version@hash</c>), and whether the bytes could be named at all.</summary>
+    internal readonly record struct ServedDep(string Path, string Key, bool Identified);
+
+    internal enum LoaderReuse { Rebuild, Reuse, ReuseAndWarm }
+
+    /// <summary>What one built package loader was built over, beyond its dep keys: the paths those keys
+    /// name, the stat of every package in its scan, and the specs already walked through it.</summary>
+    internal sealed class LoaderBuild
+    {
+        internal readonly HashSet<string> DepPaths = new(StringComparer.OrdinalIgnoreCase);
+        internal readonly Dictionary<string, string> InventoryStat = new(StringComparer.OrdinalIgnoreCase);
+        internal readonly HashSet<string> WarmedSpecs = new(StringComparer.OrdinalIgnoreCase);
+
+        internal static LoaderBuild For(IReadOnlyList<ServedDep> deps, IEnumerable<PackageScanEntry> scanInventory)
+        {
+            var build = new LoaderBuild();
+            build.AddDeps(deps);
+            foreach (var e in scanInventory)
+                if (StatOf(e.Path) is { } st) build.InventoryStat[e.Path] = st;
+            return build;
+        }
+
+        internal void AddDeps(IEnumerable<ServedDep> deps)
+        {
+            foreach (var d in deps) DepPaths.Add(d.Path);
+        }
+    }
+
+    // The file's identity as the filesystem states it, ctime included (#5409): BC's manifest memo is keyed
+    // by path alone, and a timestamp the writer can set back would let a rewrite keep its stat. Where the
+    // platform cannot say, length and mtime; where it declined ctime, nothing, so the loader is rebuilt.
+    private static string? StatOf(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            var (key, declined) = AlRunner.Infrastructure.FileIdentity.Probe(full);
+            if (key != null) return key;
+            if (declined) return null;
+            var f = new FileInfo(full);
+            return f.Exists ? f.Length + "|" + f.LastWriteTimeUtc.Ticks : null;
+        }
+        catch { return null; }
+    }
+
+    internal static IReadOnlyCollection<string> LoaderDepPathsForTests()
+    {
+        lock (_refSync) return _loaderBuild?.DepPaths.ToArray() ?? Array.Empty<string>();
+    }
+
+    // The loader answers from a directory enumeration at lookup time and never sees the dependency
+    // list (#1832), so a dependency this loader was not built for is still served by it provided the
+    // package was in the scan and has not changed since. Anything else rebuilds: a key from a loader
+    // it was warmed for with other bytes or another version, a path the build never scanned, a
+    // package whose size or timestamp moved, and one whose bytes could not be named (#5081).
+    internal static LoaderReuse JudgeLoaderReuse(
+        IReadOnlyList<ServedDep> deps, HashSet<string>? universe, LoaderBuild? build)
+    {
+        var added = false;
+        foreach (var d in deps)
+        {
+            if (universe != null && universe.Contains(d.Key)) continue;
+            if (!d.Identified || build == null || build.DepPaths.Contains(d.Path)) return LoaderReuse.Rebuild;
+            if (!build.InventoryStat.TryGetValue(d.Path, out var built) || StatOf(d.Path) != built)
+                return LoaderReuse.Rebuild;
+            added = true;
+        }
+        return added ? LoaderReuse.ReuseAndWarm : LoaderReuse.Reuse;
+    }
+}

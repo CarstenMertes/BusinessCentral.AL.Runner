@@ -180,6 +180,7 @@ All notable changes to this project are documented here. Format based on
 - **readme:** name the .NET 8 runtime as a prerequisite
 
 ### Changed
+- **docs:** resolve doc anchors as GitHub does and pin the guard's dangling/control cases
 - **provision:** the implicit-version resolution test no longer depends on the live artifact CDN
 - **isolation:** a class that deletes a loaded assembly's directory no longer poisons later classes
 - **expectations:** declare the stale-buffer refusals BC makes and the runner does not

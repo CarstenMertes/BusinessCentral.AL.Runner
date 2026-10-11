@@ -29,6 +29,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **compile:** refuse a report and reportextension declaring a global of the same name (AL0155)
 - **loader:** key the manifest memo on the stable file identity
 - **tdd:** a generated field or enum value skips ids another app's extension already uses
 - **deferral:** cold platform-apps deferral replays JSON to the real stdout and no longer repeats startup lines

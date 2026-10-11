@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **tdd:** generate a missing enum under --tdd (part of #5445)
 - **tdd:** generate a missing table (AL0185), not only a codeunit
 - **affected:** select a changed Profile through the All Profile table
 - **cli:** --test-exact selects one test by whole qualified name; --exclude-test emptying a selection is exit 6

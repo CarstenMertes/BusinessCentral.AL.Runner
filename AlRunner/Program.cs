@@ -2536,6 +2536,8 @@ var basePackageCacheDirs = packageCacheDirs.ToList();
 // EDITED module was serving in between.
 var previousImplAppPaths = new Dictionary<Guid, string>();
 var changedImplAppIds = new HashSet<Guid>();
+// #4125: what each --watch app's last successful whole-module compile was built against.
+var siblingSurfaceMemory = new AlRunner.Infrastructure.SiblingSurfaceMemory();
 
 // Dirs the COMPILE-time .app scanner may safely enumerate: everything except the
 // synthetic workspace dirs (whose source-only .apps would trip AL1023).
@@ -3654,8 +3656,9 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
         // topological order (a dep-of-a-dep is written before the app that needs it), and
         // chain them into the compiler. Only sibling-dependency TARGETS are compiled here —
         // this is an extra compile per app, and most bundles (the corpus: one app) have none.
+        AlRunner.Infrastructure.SiblingSurfaces siblingSurfaces;
         using (AlRunner.Infrastructure.PhaseLog.Stage("sibling-symbols"))
-            EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps,
+            siblingSurfaces = EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps,
                 announcePath: watchMode || AlRunner.Log.Verbose);
 
         var loadedAssemblies = new List<Assembly>();
@@ -3846,7 +3849,8 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             {
             using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
                 bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: depIds.Terms, appRootDir: appGroup.SuiteDir);
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: depIds.Terms, appRootDir: appGroup.SuiteDir,
+                siblingTerms: siblingSurfaces.CacheTerms(appGroup));
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -4095,6 +4099,14 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
             var changedDependency = changedImplAppIds.Count == 0
                 ? null
                 : DeclaredDependencyOn(appGroup.SuiteDir, changedImplAppIds);
+            // #4125: the incremental baseline replays this app's unchanged files, so it may run only
+            // while the sibling surfaces and packages it was compiled against are the current ones.
+            // "Moved since last cycle" is not that question: a failed or skipped compile in between
+            // leaves the baseline on the old state.
+            var dependencyTerms = siblingSurfaces.Terms(appGroup)
+                .Concat(DeclaredImplTerms(appGroup.SuiteDir, previousImplAppPaths)).ToList();
+            var staleBaseline = watchMode && changedDependency == null
+                ? siblingSurfaceMemory.WhyNotReplayable(AlRunner.Infrastructure.SiblingSurfaceMemory.KeyOf(appGroup), dependencyTerms) : null;
             if (watchMode && changedDependency != null && watchCycleIndex > 0)
             {
                 watchFullRebuildReasons.Add((moduleName, $"dependency '{changedDependency}' changed this cycle"));
@@ -4103,7 +4115,14 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                     $"('{changedDependency}') changed, so replaying this bundle's previous output " +
                     "would test it against the previous compile of that dependency.");
             }
-            if (watchMode && changedDependency == null)
+            if (watchMode && staleBaseline != null && watchCycleIndex > 0)
+            {
+                watchFullRebuildReasons.Add((moduleName, $"incremental baseline not replayable: {staleBaseline}"));
+                Console.Error.WriteLine(
+                    $"[watch] {moduleName}: FULL REBUILD this cycle — {staleBaseline}, so replaying " +
+                    "this bundle's previous output could test it against a surface it was not compiled against.");
+            }
+            if (watchMode && changedDependency == null && staleBaseline == null)
             {
                 incrementalOutput = emitter.TryEmitIncremental(
                     allPaths, moduleName, appGroup.SuiteDir,
@@ -4138,6 +4157,11 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                         $"cold-cycle order of magnitude, not a proportional edit) — {incrementalFallbackReason}");
                 }
             }
+            // Whatever this whole-module compile does, the baseline it replaces is gone: only a compile
+            // that succeeds records what it was built against.
+            var wholeModule = watchMode && incrementalOutput == null && dependencyTerms.Count > 0;
+            if (wholeModule) siblingSurfaceMemory.Forget(AlRunner.Infrastructure.SiblingSurfaceMemory.KeyOf(appGroup));
+            var radGenerationBefore = wholeModule ? emitter.RadBaselineGeneration(moduleName) : null;
             var emitTask = incrementalOutput != null
                 ? Task.FromResult(incrementalOutput)
                 : Task.Run(() => emitter.Emit(allPaths, moduleName, appGroup.SuiteDir, trackIncrementalBaseline: watchMode));
@@ -4154,6 +4178,13 @@ foreach (var bundle in watchAffected ? new List<string>() : runBundles)
                 else
                 {
                     var emitOutput = emitTask.Result;
+                    // Recorded only if this compile also replaced the RAD baseline: Emit leaves the old one in
+                    // place when a --tdd package table extension was registered (#5430), and the memory says
+                    // what the baseline that is replayed was built against.
+                    if (wholeModule && emitOutput.Diagnostics.Count == 0 && emitOutput.ExcludedObjects.Count == 0
+                        && emitOutput.Sources.Count > 0
+                        && emitter.RadBaselineGeneration(moduleName) is { } radGenerationAfter && radGenerationAfter != radGenerationBefore)
+                        siblingSurfaceMemory.Built(AlRunner.Infrastructure.SiblingSurfaceMemory.KeyOf(appGroup), dependencyTerms);
                     sources = emitOutput.Sources;
                     emitManifestAppJsonPath = emitOutput.ManifestAppJsonPath;
                     alDiagnostics = emitOutput.Diagnostics;

@@ -184,6 +184,7 @@ All notable changes to this project are documented here. Format based on
 - **readme:** name the .NET 8 runtime as a prerequisite
 
 ### Changed
+- **expectations:** known gaps for Rec's AutoIncrement key and system stamps inside OnInsert/OnModify
 - **allobj:** index extension-row target ids instead of a linear scan per row
 - **startup:** reuse the package loader when a bundle only adds dependencies
 - **startup:** stage only the dependency closure for the package loader

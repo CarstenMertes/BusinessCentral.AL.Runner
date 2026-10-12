@@ -164,6 +164,7 @@ public static partial class RecordPatches
     // metadata change says so instead of silently writing into the wrong slot.
     private const string UserSecurityIdFieldName = "User Security ID";
     private const string UserNameFieldName = "User Name";
+    private const string UserWindowsSecurityIdFieldName = "Windows Security ID";
     private const string UserFullNameFieldName = "Full Name";
 
 
@@ -232,9 +233,12 @@ public static partial class RecordPatches
         // Put the generated identity back before the next bundle seeds, so each bundle decides
         // adoption against its OWN data from the same starting point. Idempotent and free when
         // nothing was ever adopted.
+        var session = AlRunner.BcRuntime.SkeletonSession;
+        // The Windows SID follows the row the session settled on (adoption, an already-present row),
+        // so every bundle starts from the generated one too, adoption or not (#2352).
+        if (session != null) TryPokeSessionUserWindowsSid(session, AlRunner.BcRuntime.SessionUserWindowsSid);
         if (_generatedSessionUserSid != null)
         {
-            var session = AlRunner.BcRuntime.SkeletonSession;
             if (session != null && TryPokeSessionUserSecurityId(session, _generatedSessionUserSid))
                 PerfTrace.Log(
                     "UserSystemTable: restored the generated session security id for the next bundle");
@@ -338,6 +342,7 @@ public static partial class RecordPatches
                 // the second answers the question this outcome reports.
                 if (SessionUserRowExists(session, userSid))
                 {
+                    AlignSessionWindowsSidWithRow(session, userSid);
                     PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
                     return UserRowSeedOutcome.AlreadyPresent;
                 }
@@ -392,6 +397,9 @@ public static partial class RecordPatches
                 PerfTrace.Log($"UserSystemTable: adopted the existing User row for '{userName}'");
                 break;
             case UserRowSeedOutcome.AlreadyPresent:
+                // Someone else wrote this row (install code); Sid() answers what it says, as for an
+                // adopted row (#2352).
+                AlignSessionWindowsSidWithRow(session, userSid);
                 PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
                 break;
             default:
@@ -434,7 +442,7 @@ public static partial class RecordPatches
         var (userName, fullName, userSid) = ReadSkeletonUserIdentity(session);
         var (companyName, companyId) = ReadSkeletonCompanyIdentity();
         if (userName == null || userSid == null || companyName == null) return null;
-        return $"{userName}|{fullName}|{userSid}|{companyName}|{companyId}";
+        return $"{userName}|{fullName}|{userSid}|{ReadSkeletonUserWindowsSid(session)}|{companyName}|{companyId}";
     }
 
     /// <summary>
@@ -458,6 +466,47 @@ public static partial class RecordPatches
         return (name, fullName, sid);
     }
 
+    /// <summary>The skeleton NavUser's Windows SID (<c>NavUser.Sid</c>, what <c>Sid()</c> answers), or "".</summary>
+    private static string ReadSkeletonUserWindowsSid(object session)
+    {
+        const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
+        var auth = session.GetType().GetProperty("Authenticator", F)?.GetValue(session);
+        var navUser = auth?.GetType().GetField("navUser", F)?.GetValue(auth);
+        return navUser?.GetType().GetField("windowsSID", F)?.GetValue(navUser) as string ?? string.Empty;
+    }
+
+    private static void AlignSessionWindowsSidWithRow(object session, NavGuid userSid)
+    {
+        try
+        {
+            using var probe = new NavRecord((NavSession)session, UserSystemTableId, SecurityFiltering.Ignored);
+#pragma warning disable CS0618
+            if (!probe.ALGet(DataError.TrapError, userSid)) return;
+#pragma warning restore CS0618
+            var meta = probe.MetaTable;
+            if (meta == null) return;
+            var wsid = probe.GetFieldValue(FieldNoByNameOnUser(meta, UserWindowsSecurityIdFieldName))?.ToString() ?? string.Empty;
+            TryPokeSessionUserWindowsSid(session, wsid);
+        }
+        catch (Exception ex)
+        {
+            // Diagnosis only: the session keeps the generated SID, which is the state before this existed.
+            Console.Error.WriteLine(
+                $"[warn] UserSystemTable: could not read the session user's Windows Security ID from its row ({ex.GetType().Name}: {ex.Message}); Sid() keeps the generated one.");
+        }
+    }
+
+    private static bool TryPokeSessionUserWindowsSid(object session, string windowsSid)
+    {
+        const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
+        var auth = session.GetType().GetProperty("Authenticator", F)?.GetValue(session);
+        var navUser = auth?.GetType().GetField("navUser", F)?.GetValue(auth);
+        var f = navUser?.GetType().GetField("windowsSID", F);
+        if (navUser == null || f == null) return false;
+        AlRunner.Infrastructure.FieldPoke.SetInstance(f, navUser, windowsSid);
+        return true;
+    }
+
     private static UserRowSeedOutcome InsertSessionUserRow(
         object session, NCLMetaTable meta, string userName, string? fullName, NavGuid userSid,
         out string refusalDetail)
@@ -475,6 +524,14 @@ public static partial class RecordPatches
             user.SetFieldValue(
                 FieldNoByNameOnUser(userMeta, UserFullNameFieldName),
                 NavValue.CreateNavValueFromObject(FieldByNameOnUser(userMeta, UserFullNameFieldName), fullName));
+        // #2352: the row and Sid() are one fact. A row without it makes User."Windows Security ID" =
+        // Sid(UserId()) match nobody, and the Microsoft idiom "create the user unless it exists" then
+        // inserts a SECOND user named TESTUSER, which BC refuses.
+        var windowsSid = ReadSkeletonUserWindowsSid(session);
+        if (windowsSid.Length > 0)
+            user.SetFieldValue(
+                FieldNoByNameOnUser(userMeta, UserWindowsSecurityIdFieldName),
+                NavValue.CreateNavValueFromObject(FieldByNameOnUser(userMeta, UserWindowsSecurityIdFieldName), windowsSid));
 
         // TrapError so a run that already has this user (a resumed app group, a bundle whose
         // install code created it, a --test-data backup carrying it) leaves the existing row
@@ -552,6 +609,7 @@ public static partial class RecordPatches
         out string whyNot)
     {
         NavGuid? adopted;
+        string adoptedWindowsSid;
         try
         {
             using var probe = new NavRecord((NavSession)session, UserSystemTableId, SecurityFiltering.Ignored);
@@ -567,6 +625,7 @@ public static partial class RecordPatches
             }
 
             adopted = probe.GetFieldValue(FieldNoByNameOnUser(probeMeta, UserSecurityIdFieldName)) as NavGuid;
+            adoptedWindowsSid = probe.GetFieldValue(FieldNoByNameOnUser(probeMeta, UserWindowsSecurityIdFieldName))?.ToString() ?? string.Empty;
 
             // Read the sid BEFORE stepping the cursor. A second row under one name is a state
             // real BC refuses to hold, so finding one means the data is inconsistent rather than
@@ -613,6 +672,8 @@ public static partial class RecordPatches
                 + "moved onto the existing row";
             return false;
         }
+        // The session is that row's user, so Sid() answers that row's Windows SID, blank included.
+        TryPokeSessionUserWindowsSid(session, adoptedWindowsSid);
 
         // Every User BC creates has a User Property (2000000121) row created with it (#2355).
         // The adopted row got here without passing through UserTableTriggerPatches's insert

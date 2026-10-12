@@ -1003,6 +1003,12 @@ public static class ALDatabasePatches
     // absence is not the same as inventing presence, and no AL caller can read an
     // identity out of "".
     //
+    // THE SESSION USER IS THE ONE NAME THAT DOES MAP (#2352). The runner defines the session
+    // user (TESTUSER) and gives it a synthetic SID (BcRuntime.SessionUserWindowsSid), the way it
+    // gives it a synthetic guid, so Sid() and Sid(UserId()) answer that SID. Mapping nobody made
+    // `User."Windows Security ID" = Sid(UserId())` match the blank-SID set, whose FindFirst order is
+    // random (Microsoft's Codeunit134302 setup).
+    //
     // WHAT NO SERVICE TIER HAS ADJUDICATED, AND WHY.
     // A real BC on Windows, joined to a domain in which N *does* exist, returns N's real
     // SID. The runner cannot reproduce that and does not claim to. What the runner claims
@@ -1026,7 +1032,14 @@ public static class ALDatabasePatches
 #pragma warning restore CS0618
         }
 
-        // Every other name: not mapped on this host. BC's IdentityNotMapped answer.
+        // The session user's own account name maps to the session user's SID, as it does for
+        // the logged-in account on a real host (#2352); `Sid() = Sid(UserId())` always holds in BC.
+        // Any other name: not mapped on this host. BC's IdentityNotMapped answer.
+#pragma warning disable CS0618
+        var user = Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session?.User;
+#pragma warning restore CS0618
+        if (user != null && string.Equals(userName, user.Name, StringComparison.OrdinalIgnoreCase))
+            return user.Sid ?? string.Empty;
         return string.Empty;
     }
 }

@@ -30,6 +30,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **server:** a re-request of one app tree after a version bump rebuilds instead of aborting on a duplicate-app-id FATAL
 - **watch:** an app folder created after the watch armed starts a cycle
 - **server:** a sourcePath below its app.json is recognised as moved with its app root
 - **autoincrement:** refuse a Rename of an AutoIncrement value, reset a refused Insert, roll Truncate back, keep BigInteger wide

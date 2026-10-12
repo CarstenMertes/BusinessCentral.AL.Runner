@@ -336,6 +336,7 @@ public static partial class RecordPatches
             // DataError.TrapError converts the ordinary refusals into a false return, so an
             // exception reaching here is something else entirely — including the
             // NavRecordAlreadyExistsException a non-trapping path would raise.
+            // No BC assembly defines this type name (#5544), so this branch never matches and align is not called here.
             if (inner.GetType().Name == "NavRecordAlreadyExistsException")
             {
                 // Confirmed by the SAME Get the non-exception path uses, rather than inferred
@@ -344,7 +345,6 @@ public static partial class RecordPatches
                 // the second answers the question this outcome reports.
                 if (SessionUserRowExists(session, userSid))
                 {
-                    AlignSessionWindowsSidWithRow(session, userSid);
                     PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
                     return UserRowSeedOutcome.AlreadyPresent;
                 }

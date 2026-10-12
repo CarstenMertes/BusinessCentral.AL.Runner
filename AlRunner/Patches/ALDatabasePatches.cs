@@ -1032,8 +1032,8 @@ public static class ALDatabasePatches
 #pragma warning restore CS0618
         }
 
-        // The session user's own account name maps to the session user's SID, as it does for
-        // the logged-in account on a real host (#2352); `Sid() = Sid(UserId())` always holds in BC.
+        // The session user's own account name maps to the session user's SID (#2352), the Windows
+        // authentication case: NavUser.TryAuthenticate fills windowsSID (Ncl 28.1.49838.53910, 49b11d9b).
         // Any other name: not mapped on this host. BC's IdentityNotMapped answer.
 #pragma warning disable CS0618
         var user = Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session?.User;
@@ -1054,7 +1054,12 @@ public static class ALDatabasePatches
     //
     // Same claim as ALSidForAccountName: the host's identity store maps no SID, so the sid comes
     // back unchanged (BC's own not-mapped answer), except the session user's SID, which maps to
-    // the session user's name, the inverse of Sid(UserId()). No service tier adjudicates it (#2312).
+    // the session user's name, the inverse of Sid(UserId()). A malformed sid raises as in BC (Ncl 28.1.49838.53910,
+    // ALDatabase.UserName). No service tier adjudicates the mapped part (#2312).
+    private static readonly System.Text.RegularExpressions.Regex WindowsSidShape = new(
+        @"^(?:[Ss]-1-(?:\d+|0[xX][0-9a-fA-F]+)(?:-\d+){0,15}|[A-Za-z]{2})$",
+        System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static string ALDatabase_UserNameForSid(string sid)
     {
@@ -1063,6 +1068,17 @@ public static class ALDatabasePatches
 #pragma warning restore CS0618
         if (string.IsNullOrEmpty(sid))
             return user?.Name ?? string.Empty;
+        // BC builds `new SecurityIdentifier(sid)` first and wraps ANY failure as NavUserNotFoundException
+        // (UnableToFindUserName, ex). Linux has no working constructor, so the shape it parses is
+        // checked here: S-1-<authority>(-<sub>){0,15}, or a two-letter SDDL alias. Its reject is
+        // ArgumentException(Argument_InvalidValue, "sddlForm") in the .NET reference source (not run here).
+        if (!WindowsSidShape.IsMatch(sid))
+        {
+            var bad = new ArgumentException("Value was invalid.", "sddlForm");
+            throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavUserNotFoundException(
+                string.Format(System.Globalization.CultureInfo.CurrentCulture,
+                    Microsoft.Dynamics.Nav.Common.Language.Lang.UnableToFindUserName, bad.Message), bad);
+        }
         if (user != null && !string.IsNullOrEmpty(user.Sid)
             && string.Equals(sid, user.Sid, StringComparison.OrdinalIgnoreCase))
             return user.Name;

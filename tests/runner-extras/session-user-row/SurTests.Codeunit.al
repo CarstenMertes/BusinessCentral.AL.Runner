@@ -107,6 +107,19 @@ codeunit 65591 "SUR Tests"
     end;
 
     [Test]
+    procedure SurUserNameOfAMalformedSidRaisesAsBcDoes()
+    var
+        IdentityManagement: Codeunit "Identity Management";
+    begin
+        // BC builds a SecurityIdentifier from the text first, and any failure of that, a malformed
+        // sid included, is raised as NavUserNotFoundException; only a well-formed sid BC cannot
+        // map comes back unchanged (the control in SurUserNameOfASidIsTheInverseOfSid).
+        asserterror IdentityManagement.UserName('not-a-sid');
+        Assert.ExpectedError(
+            'Cannot retrieve the requested user name. The following error was reported: Value was invalid. (Parameter ''sddlForm'')');
+    end;
+
+    [Test]
     procedure SurWindowsSidLookupFindsTheSessionUserNotAUserWithoutOne()
     var
         StubUser: Record User;

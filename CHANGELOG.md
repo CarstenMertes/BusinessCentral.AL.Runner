@@ -30,6 +30,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **packaging:** packaged BC 29.0 variant crashes at startup (runtimes assets)
 - **tdd:** the generated-stub cluster
 - **record:** restore the AutoIncrement counter when a guarded Codeunit.Run that truncated a table fails
 - **server:** a re-request of one app tree after a version bump rebuilds instead of aborting on a duplicate-app-id FATAL

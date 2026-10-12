@@ -261,4 +261,182 @@ public class AppIdCollisionLoudFailureTests
         // Within this epoch a sibling resolving the id shares Y's module (#1683), not X's.
         Assert.Same(asmY, DependencyLoader.TryGetByAppId(appId, "Reuse 5079", "Repro5079", "1.0.0.0", "/bundles/z", "FP-Z"));
     }
+
+    // #5520: a module answers for the folder it was compiled from. When that folder no longer
+    // holds an app (the app moved), an ask from another folder is the same app at a new path, not
+    // another bundle's copy of it.
+    private static string AppDir(string root, string name)
+    {
+        var dir = Path.Combine(root, name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), "{}");
+        return dir;
+    }
+
+    private static System.Reflection.Assembly Dynamic(string name) =>
+        System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(
+            new System.Reflection.AssemblyName(name), System.Reflection.Emit.AssemblyBuilderAccess.Run);
+
+    [Fact]
+    public void MovedApp_FolderGone_IsNotServedFromItsOldFolder()
+    {
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Moved5520Gone");
+            var one = AppDir(root, "one");
+            DependencyLoader.RegisterLoaded(appId, asm, "Moved 5520", "Repro5520", "1.0.0.0", one);
+            Directory.Delete(one, recursive: true);
+            var two = AppDir(root, "two");
+
+            Assert.Null(DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", two));
+            Assert.Equal(one, DependencyLoader.MovedSourcePath(appId, two));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_FolderLeftWithoutAppJson_IsAlsoMoved()
+    {
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var one = AppDir(root, "one");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Moved5520Left"), "Moved 5520", "Repro5520", "1.0.0.0", one);
+            File.Delete(Path.Combine(one, "app.json"));
+            File.WriteAllText(Path.Combine(one, "leftover.txt"), "x");
+            var two = AppDir(root, "two");
+
+            Assert.Null(DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", two));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_OldFolderStillHoldsTheApp_IsStillCrossBundleReuse()
+    {
+        // #1683: two folders that both hold the app are two bundles carrying one identity; the
+        // second reuses the first's module. Only a folder that no longer holds the app is "moved".
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Moved5520Copy");
+            var one = AppDir(root, "one");
+            var two = AppDir(root, "two");
+            DependencyLoader.RegisterLoaded(appId, asm, "Moved 5520", "Repro5520", "1.0.0.0", one);
+
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", two));
+            Assert.Null(DependencyLoader.MovedSourcePath(appId, two));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_AskedAboutItsOwnFolder_IsNotMoved()
+    {
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var one = AppDir(root, "one");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Moved5520Own"), "Moved 5520", "Repro5520", "1.0.0.0", one);
+
+            // The folder itself is never "moved", even once it has lost its app.json: it is the ask.
+            File.Delete(Path.Combine(one, "app.json"));
+            Assert.Null(DependencyLoader.MovedSourcePath(appId, one));
+            Assert.Null(DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", one)); // #2594: same folder recompiles
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_RegistrationFromTheNewFolder_ReplacesTheOldModule()
+    {
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asmOld = Dynamic("Moved5520Old");
+            var asmNew = Dynamic("Moved5520New");
+            var one = AppDir(root, "one");
+            DependencyLoader.RegisterLoaded(appId, asmOld, "Moved 5520", "Repro5520", "1.0.0.0", one);
+            Directory.Delete(one, recursive: true);
+            var two = AppDir(root, "two");
+            DependencyLoader.RegisterLoaded(appId, asmNew, "Moved 5520", "Repro5520", "1.0.0.0", two);
+
+            // A sibling bundle resolving the id now shares the module compiled at the new folder.
+            var three = AppDir(root, "three");
+            Assert.Same(asmNew, DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", three));
+            Assert.Equal(two, DependencyLoader.LoadedSourcePath(appId));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_WithABumpedVersion_IsNotACollision()
+    {
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var one = AppDir(root, "one");
+            DependencyLoader.RegisterLoaded(appId, Dynamic("Moved5520V1"), "Moved 5520", "Repro5520", "1.0.0.0", one);
+            Directory.Delete(one, recursive: true);
+            var two = AppDir(root, "two");
+
+            Assert.Null(DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "2.0.0.0", two));
+            var asmNew = Dynamic("Moved5520V2");
+            DependencyLoader.RegisterLoaded(appId, asmNew, "Moved 5520", "Repro5520", "2.0.0.0", two);
+            Assert.Equal(two, DependencyLoader.LoadedSourcePath(appId));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_AModuleRegisteredFromAFileIsNeverMoved()
+    {
+        // A package path can vanish when the workspace is rewritten; that is not an app folder moving.
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Moved5520File");
+            Directory.CreateDirectory(root);
+            var pkg = Path.Combine(root, "dep.app");
+            File.WriteAllText(pkg, "x");
+            DependencyLoader.RegisterLoaded(appId, asm, "Moved 5520", "Repro5520", "1.0.0.0", pkg);
+            File.Delete(pkg);
+            var two = AppDir(root, "two");
+
+            Assert.Null(DependencyLoader.MovedSourcePath(appId, two));
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", two));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void MovedApp_RegisteredFromASubfolderBelowTheAppJson_IsStillCrossBundleReuse()
+    {
+        // --server registers bundleAbs, which can be a folder BELOW the one holding app.json
+        // (FindBucketRoot climbs). That folder never holds an app.json itself, so it must not read
+        // as "moved": a second folder asking for the id shares the module (#1892).
+        var root = TestScratch.Dir("al-runner-moved-5520");
+        try
+        {
+            var appId = Guid.NewGuid();
+            var asm = Dynamic("Moved5520Sub");
+            var app = AppDir(root, "app");
+            var sub = Path.Combine(app, "src");
+            Directory.CreateDirectory(sub);
+            var other = AppDir(root, "other");
+            DependencyLoader.RegisterLoaded(appId, asm, "Moved 5520", "Repro5520", "1.0.0.0", sub);
+
+            Assert.Null(DependencyLoader.MovedSourcePath(appId, other));
+            Assert.Same(asm, DependencyLoader.TryGetByAppId(appId, "Moved 5520", "Repro5520", "1.0.0.0", other));
+        }
+        finally { try { Directory.Delete(root, recursive: true); } catch { } }
+    }
 }

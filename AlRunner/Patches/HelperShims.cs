@@ -108,24 +108,21 @@ public static partial class BcRuntime
             return default;
 
         var providerType = self.GetType();
+        // #5522: a TRUNCATE of a stored table is part of the open transaction. A rollback to the last commit brings the
+        // rows back and puts the AutoIncrement counter where it stood before the Truncate, whether or not it was
+        // reseeded (corpus 67826 AutoInc_Truncate_*, Truncate(true) and Truncate(false)). The snapshot and the
+        // journal entry have to precede the clear below. A temporary record's Truncate is not part of any transaction.
+        if (metaTable.TableId != 0 && AlRunner.Patches.RecordPatches.IsSessionStoreProvider(metaTable.TableId, self))
+        {
+            AlRunner.Patches.RecordPatches.NoteTransactionWriteForTable(metaTable.TableId);
+            AlRunner.Patches.RecordPatches.NoteIdentityRestart(
+                metaTable.TableId, _aiCounters.TryGetValue(metaTable.TableId, out var before) ? before : null);
+        }
         if (providerType.Name.Contains("TempTableDataProvider", StringComparison.Ordinal))
         {
-            // Clear backing row tree(s).
-            for (var t = providerType; t != null; t = t.BaseType)
-            {
-                foreach (var f in t.GetFields(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly))
-                {
-                    if (!f.Name.Contains("tree", StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    var value = f.GetValue(self);
-                    if (value == null)
-                        continue;
-                    var clear = value.GetType().GetMethod("Clear",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                        null, Type.EmptyTypes, null);
-                    clear?.Invoke(value, null);
-                }
-            }
+            // The provider's own "no rows yet" state, as a rollback restores it (#5516): Clear()ing the trees in place
+            // left a FindSet loop one row short of Count() in a test following a passing one, and left uniqueIndexes behind.
+            AlRunner.Patches.RecordPatches.ClearProviderInPlace(self);
         }
 
         if (resetIdentity)

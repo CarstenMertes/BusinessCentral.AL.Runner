@@ -107,7 +107,30 @@ public static partial class RecordPatches
     {
         EndPermissionSetupTransaction();
         _txCommitPoint.Clear();
+        _txIdentityRestarts.Clear();
     }
+
+    // AutoIncrement counters a Truncate touched since the last commit point, with the value each held before the FIRST
+    // one (null: no counter yet). Measured (corpus 67826 AutoInc_Truncate*, AlRunner#5522): after a rollback to the commit
+    // point the counter is where it stood before the Truncate, with Truncate(false) too, and the rows are back; a value
+    // taken after a refused Insert is not given back when nothing was truncated, which is why only a Truncate is journaled.
+    // Trap: a rollback of a guarded Codeunit.Run scope does not consult this (unmeasured); the journal waits for the
+    // top-level rollback or the next commit point.
+    private static readonly Dictionary<int, long?> _txIdentityRestarts = new();
+
+    /// <summary>True when <paramref name="provider"/> is the provider of a session-company store of <paramref name="tableId"/>,
+    /// the stores the transaction snapshot covers; false for a temporary record's provider.</summary>
+    internal static bool IsSessionStoreProvider(int tableId, object provider)
+    {
+        foreach (var (_, perTable) in _dataAccessByTable)
+            if (perTable.TryGetValue(tableId, out var store) && ReferenceEquals(GetDataProvider(store), provider))
+                return true;
+        return false;
+    }
+
+    /// <summary>Journal that <paramref name="tableId"/> is being truncated; the first Truncate since the commit wins.</summary>
+    internal static void NoteIdentityRestart(int tableId, long? counterBefore)
+        => _txIdentityRestarts.TryAdd(tableId, counterBefore);
 
     /// <summary>
     /// AL's <c>Commit()</c> STATEMENT: a commit point in the top-level tracker AND in every
@@ -361,6 +384,9 @@ public static partial class RecordPatches
     public static void RollbackToCommitPoint(object? session)
     {
         EndPermissionSetupTransaction();
+        foreach (var (tableId, before) in _txIdentityRestarts)
+            BcRuntime.RestoreAutoIncrementCounter(tableId, before);
+        _txIdentityRestarts.Clear();
         if (_txCommitPoint.Count == 0) return;
         foreach (var ((source, tableId, token), saved) in _txCommitPoint.ToList())
         {
@@ -385,7 +411,7 @@ public static partial class RecordPatches
     /// through <c>EnsureTreeCreated()</c>, so nulling them is the provider's own
     /// "no rows yet" state.
     /// </summary>
-    private static void ClearProviderInPlace(object provider)
+    internal static void ClearProviderInPlace(object provider)
     {
         var t = provider.GetType();
         foreach (var name in new[] { "trees", "primaryTree", "uniqueIndexes" })

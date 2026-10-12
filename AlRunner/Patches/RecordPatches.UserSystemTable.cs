@@ -41,9 +41,11 @@
 //
 //   Every other column keeps the default NavRecord initialisation gives it, which is already
 //   what BC's own defaults are for the two that matter: State = Enabled and License Type =
-//   "Full User". Nothing invents an authentication email, a Windows SID or an application id —
-//   the runner's user has none of those, and writing a plausible-looking value would be the
-//   silent-fake this repo's loud-failures rule forbids.
+//   "Full User". Nothing invents an authentication email or an application id — the runner's
+//   user has none of those, and writing a plausible-looking value would be the silent-fake this
+//   repo's loud-failures rule forbids. The Windows Security ID is the one exception (#2352): the
+//   session user is a Windows-authenticated user, so it has the generated SID Sid() answers
+//   (docs/session-user-seed-ordering.md#the-windows-sid).
 //
 //   The insert goes through NavRecord.ALInsert rather than straight at the data provider (the
 //   way the Company row's seed does), for one reason: BC's platform creates a User Property

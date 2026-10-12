@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **report:** bind a precompiled reportextension's added data items to its report
 - **tdd:** generate a missing field or enum value of a package's table or enum, beside it
 - **tdd:** generate a missing enum under --tdd (part of #5445)
 - **tdd:** generate a missing table (AL0185), not only a codeunit

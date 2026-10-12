@@ -1042,4 +1042,30 @@ public static class ALDatabasePatches
             return user.Sid ?? string.Empty;
         return string.Empty;
     }
+
+    // ── ALDatabase.UserName(string) — Windows SID → account name, the inverse of ALSid ────
+    //
+    // BC's body (Ncl 28.1, decompiled): an empty sid answers the session user's name;
+    // `new SecurityIdentifier(sid).Translate(typeof(NTAccount)).Value` otherwise, with
+    // IdentityNotMappedException answered by returning the sid itself. On Linux the same
+    // PlatformNotSupportedException as ALSid escapes as NavUserNotFoundException. It became
+    // reachable once the session user carried a Windows SID (#2352): User Card's
+    // OnAfterGetRecord calls it for the row's "Windows Security ID" (Codeunit132903).
+    //
+    // Same claim as ALSidForAccountName: the host's identity store maps no SID, so the sid comes
+    // back unchanged (BC's own not-mapped answer), except the session user's SID, which maps to
+    // the session user's name, the inverse of Sid(UserId()). No service tier adjudicates it (#2312).
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static string ALDatabase_UserNameForSid(string sid)
+    {
+#pragma warning disable CS0618
+        var user = Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session?.User;
+#pragma warning restore CS0618
+        if (string.IsNullOrEmpty(sid))
+            return user?.Name ?? string.Empty;
+        if (user != null && !string.IsNullOrEmpty(user.Sid)
+            && string.Equals(sid, user.Sid, StringComparison.OrdinalIgnoreCase))
+            return user.Name;
+        return sid;
+    }
 }

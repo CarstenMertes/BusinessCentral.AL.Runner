@@ -94,6 +94,19 @@ codeunit 65591 "SUR Tests"
     end;
 
     [Test]
+    procedure SurUserNameOfASidIsTheInverseOfSid()
+    var
+        IdentityManagement: Codeunit "Identity Management";
+    begin
+        // User Card's OnAfterGetRecord asks for the name behind a row's Windows Security ID
+        // (Codeunit132903); BC's ALDatabase.UserName(sid) raised the platform's NavUserNotFoundException here.
+        Assert.AreEqual(UserId(), IdentityManagement.UserName(Database.Sid(UserId())), 'UserName(Sid(UserId())) is the session user');
+        // Negative direction: a SID that belongs to nobody comes back unchanged, which is BC's own
+        // not-mapped answer, and does not raise.
+        Assert.AreEqual('S-1-5-21-1-2-3-4', IdentityManagement.UserName('S-1-5-21-1-2-3-4'), 'UserName(<unmapped SID>)');
+    end;
+
+    [Test]
     procedure SurWindowsSidLookupFindsTheSessionUserNotAUserWithoutOne()
     var
         StubUser: Record User;

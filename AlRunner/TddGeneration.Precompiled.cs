@@ -98,7 +98,7 @@ public static partial class TddGeneration
         if (byKey.Count == 0) return;
 
         var idRanges = TddPrecompiledStub.ReadIdRanges(manifestAppJsonPath);
-        var reserved = new HashSet<int>();
+        var reserved = IdsAcrossModules(compilation, NavCA.SymbolKind.Codeunit);
         var groups = new Dictionary<string, TddPrecompiledStub.Group>(StringComparer.OrdinalIgnoreCase);
         var pending = new List<(string Key, TddGeneratedMember Member, List<NavDiag.Diagnostic> Diags)>();
         // Members in key order, and each member's sites in file then position order: the emit reports
@@ -169,7 +169,8 @@ public static partial class TddGeneration
                     group.MemberNames.Add(first.MemberName);
                     group.Sites.AddRange(treeSites);
                 }
-                pending.Add((key, new TddGeneratedMember(first.TargetObjectName, "procedure", sig),
+                pending.Add((key, new TddGeneratedMember(first.TargetObjectName, "procedure", sig)
+                    { HomeFiles = perTree.Select(g => trees[g.Key].FilePath).ToList() },
                     entries.Select(e => e.Diag).ToList()));
             }
             catch (Exception ex)

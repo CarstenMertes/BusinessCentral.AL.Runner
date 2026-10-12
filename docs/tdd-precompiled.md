@@ -137,11 +137,19 @@ What differs from the procedure case, and what a later edit gets wrong:
   If the home file is dropped (it also names a field that cannot be typed, say), nothing is registered, the members are taken out of the
   generated list and the run says `--tdd: dropped with its file: ...`: otherwise the record engine kept a field nobody declares, visible to
   a test in a file that did compile (`RecordRef.FieldCount`).
-- **A compile that registered an extension records no incremental baseline.** The registration is state the trees do not reproduce: the
-  `--watch` reset clears it, and an incremental cycle reuses the previous baseline (extension appended, nothing regenerated), so the field
-  failed with the `not found in NCLMetaTable` above. So the next `--watch` cycle is a full rebuild, which generates and registers again; the
-  reason is printed (`FULL REBUILD ... generated a field of a package's table in a tableextension`). Same gate as an excluded object
+- **A compile that generated anything records no incremental baseline.** For an extension the registration is state the trees do not
+  reproduce: the `--watch` reset clears it, and an incremental cycle reuses the previous baseline (extension appended, nothing
+  regenerated), so the field failed with the `not found in NCLMetaTable` above. For every other generated member or object (#5494) the
+  baseline would hold the generated text while an incremental cycle runs no generation, so a test would keep running against the member with
+  no `generatedStubs` and a closing line saying nothing was generated. So the next `--watch` cycle is a full rebuild, which generates (and
+  registers) again; the reason is printed (`FULL REBUILD ... generated a member or an object`). Same gate as an excluded object
   (`BcCompiler.Emit`). Not run: `--server` (it resets once per request, by reading).
+
+## Ids and dropped files
+
+The stub codeunit, the tableextension and the enumextension take the first id of the app's `idRanges` that no object of their type uses in
+any module the compile reads (#5498), and a stub, field or value written into a file the compile then drops is not reported as generated
+(#5493); see [`tdd-missing-object.md`](tdd-missing-object.md) § "Design points a later edit gets wrong".
 
 ## Not covered (reported FAILED as before)
 

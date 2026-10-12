@@ -1,0 +1,24 @@
+{
+  "id": "1b7c2d3e-4f50-4a61-8b72-9c83d4e5f601",
+  "name": "Runner Tests Fixture - Tdd Home Dropped Source",
+  "publisher": "AL Runner Fixtures",
+  "version": "1.0.0.0",
+  "brief": "The source shape of the #5493 --tdd reproducer.",
+  "description": "Tests call a procedure its library does not declare, a codeunit nobody declares and a procedure of a package's codeunit, in files that do not compile.",
+  "dependencies": [
+    {
+      "id": "5f1a2b3c-8394-4ea5-9f16-d0728293a045",
+      "name": "Tdd Home Dropped Pkg",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65400,
+      "to": 65419
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

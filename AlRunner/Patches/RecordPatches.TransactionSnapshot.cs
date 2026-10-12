@@ -114,9 +114,14 @@ public static partial class RecordPatches
     // one (null: no counter yet). Measured (corpus 67826 AutoInc_Truncate*, AlRunner#5522): after a rollback to the commit
     // point the counter is where it stood before the Truncate, with Truncate(false) too, and the rows are back; a value
     // taken after a refused Insert is not given back when nothing was truncated, which is why only a Truncate is journaled.
-    // Trap: a rollback of a guarded Codeunit.Run scope does not consult this (unmeasured); the journal waits for the
-    // top-level rollback or the next commit point.
-    private static readonly Dictionary<int, long?> _txIdentityRestarts = new();
+    // Each open guarded-run scope keeps the same journal for the Truncates made since it was entered (#5527); an entry
+    // carries a sequence number so a scope that rolls back can forget exactly the entries it created in the levels
+    // around it. Trap: every level gets the entry from NoteIdentityRestart, so a new level has to be added there too.
+    private readonly record struct IdentityRestart(long? Before, long Seq);
+
+    private static readonly Dictionary<int, IdentityRestart> _txIdentityRestarts = new();
+    private static readonly Stack<(long StartSeq, Dictionary<int, IdentityRestart> Journal)> _txScopeIdentity = new();
+    private static long _identitySeq;
 
     /// <summary>True when <paramref name="provider"/> is the provider of a session-company store of <paramref name="tableId"/>,
     /// the stores the transaction snapshot covers; false for a temporary record's provider.</summary>
@@ -128,9 +133,15 @@ public static partial class RecordPatches
         return false;
     }
 
-    /// <summary>Journal that <paramref name="tableId"/> is being truncated; the first Truncate since the commit wins.</summary>
+    /// <summary>Journal that <paramref name="tableId"/> is being truncated; the first Truncate since the commit wins, and
+    /// since each open guarded-run scope was entered.</summary>
     internal static void NoteIdentityRestart(int tableId, long? counterBefore)
-        => _txIdentityRestarts.TryAdd(tableId, counterBefore);
+    {
+        var entry = new IdentityRestart(counterBefore, ++_identitySeq);
+        _txIdentityRestarts.TryAdd(tableId, entry);
+        foreach (var (_, journal) in _txScopeIdentity)
+            journal.TryAdd(tableId, entry);
+    }
 
     /// <summary>
     /// AL's <c>Commit()</c> STATEMENT: a commit point in the top-level tracker AND in every
@@ -166,6 +177,8 @@ public static partial class RecordPatches
         MarkCommitPoint();
         foreach (var scope in _txScopeStack)
             scope.Clear();
+        foreach (var (_, journal) in _txScopeIdentity)
+            journal.Clear();
     }
 
     /// <summary>
@@ -307,14 +320,11 @@ public static partial class RecordPatches
     // of _txCommitPoint's "since the last real commit" one — hence the stack, and the
     // dual-write in NoteTransactionWrite above.
     //
-    // NOT verified against real BC: nested guarded runs (a guarded Codeunit.Run whose OnRun
-    // itself calls another guarded Codeunit.Run). PopTransactionWorldScope's commit==true
-    // branch forgets any OLDER snapshot an enclosing scope holds for a table this scope
-    // itself touched, so a LATER failure in the enclosing scope cannot undo the inner
-    // scope's already-committed write — reasoned from "a transaction-world commit is as
-    // durable as an explicit Commit()" (see NoteTransactionEnd below), not measured against
-    // a real BC service tier. This shape is not exercised by any known corpus or
-    // runner-extras test today.
+    // Nested guarded runs (corpus 67840 AutoInc_GuardedRun_Nested*, #5527; ten cloud legs): an inner run that FAILS is
+    // rolled back on its own, rows and counters, before the outer run goes on; an inner run that SUCCEEDS is as durable
+    // as an explicit Commit(), so a LATER failure of the enclosing run does not undo it. PopTransactionWorldScope's
+    // commit==true branch implements that by forgetting any OLDER snapshot an enclosing scope holds for a table this scope
+    // itself touched (see NoteTransactionEnd below), and the counter journal follows the rows.
     private static readonly Stack<Dictionary<(object Source, int TableId, int Token), BaselineTable>> _txScopeStack = new();
 
     /// <summary>
@@ -322,7 +332,11 @@ public static partial class RecordPatches
     /// <c>Session.BeginTransactionWorldAndTransaction()</c>. Call before invoking the guarded
     /// run's OnRun; pair with <see cref="PopTransactionWorldScope"/> in a finally.
     /// </summary>
-    public static void PushTransactionWorldScope() => _txScopeStack.Push(new());
+    public static void PushTransactionWorldScope()
+    {
+        _txScopeStack.Push(new());
+        _txScopeIdentity.Push((++_identitySeq, new()));
+    }
 
     /// <summary>
     /// Close the innermost transaction-world scope — the runner's replacement for BC's
@@ -347,6 +361,7 @@ public static partial class RecordPatches
     {
         if (_txScopeStack.Count == 0) return; // defensive; Begin/End must always pair
         var scope = _txScopeStack.Pop();
+        PopScopeIdentityJournal(restore);
         if (restore) EndPermissionSetupTransaction();
         if (scope.Count == 0) return;
 
@@ -373,6 +388,37 @@ public static partial class RecordPatches
         }
     }
 
+    // The counter half of PopTransactionWorldScope (#5527). A rollback puts each counter this scope's Truncates restarted
+    // back where it stood when the scope found it, and takes the entries the scope created out of the enclosing levels:
+    // after it no Truncate happened there, so the caller's own rollback must not put those counters back. A commit forgets
+    // the tables at every level, as the row snapshots do.
+    private static void PopScopeIdentityJournal(bool restore)
+    {
+        if (_txScopeIdentity.Count == 0) return;
+        var (startSeq, journal) = _txScopeIdentity.Pop();
+        if (restore)
+        {
+            foreach (var (tableId, entry) in journal)
+                BcRuntime.RestoreAutoIncrementCounter(tableId, entry.Before);
+            ForgetEntriesSince(_txIdentityRestarts, startSeq);
+            foreach (var (_, enclosing) in _txScopeIdentity)
+                ForgetEntriesSince(enclosing, startSeq);
+            return;
+        }
+        foreach (var tableId in journal.Keys)
+        {
+            _txIdentityRestarts.Remove(tableId);
+            foreach (var (_, enclosing) in _txScopeIdentity)
+                enclosing.Remove(tableId);
+        }
+    }
+
+    private static void ForgetEntriesSince(Dictionary<int, IdentityRestart> journal, long startSeq)
+    {
+        foreach (var tableId in journal.Where(e => e.Value.Seq > startSeq).Select(e => e.Key).ToList())
+            journal.Remove(tableId);
+    }
+
     /// <summary>
     /// Roll the row store back to the last commit point. Called from BC's own
     /// <c>SessionTransactionExtensions.Rollback</c> (rewritten to land here), which
@@ -384,8 +430,8 @@ public static partial class RecordPatches
     public static void RollbackToCommitPoint(object? session)
     {
         EndPermissionSetupTransaction();
-        foreach (var (tableId, before) in _txIdentityRestarts)
-            BcRuntime.RestoreAutoIncrementCounter(tableId, before);
+        foreach (var (tableId, entry) in _txIdentityRestarts)
+            BcRuntime.RestoreAutoIncrementCounter(tableId, entry.Before);
         _txIdentityRestarts.Clear();
         if (_txCommitPoint.Count == 0) return;
         foreach (var ((source, tableId, token), saved) in _txCommitPoint.ToList())

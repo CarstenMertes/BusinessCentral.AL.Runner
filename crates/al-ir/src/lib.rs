@@ -33,6 +33,8 @@ pub struct Object {
 pub struct Table {
     pub fields: Vec<Field>,
     pub keys: Vec<Vec<usize>>,
+    /// `Unique = true` per key (parallel to `keys`).
+    pub unique_keys: Vec<bool>,
     pub per_company: bool,
     /// Object index of each table extension (their triggers are not run yet).
     pub extensions: Vec<usize>,

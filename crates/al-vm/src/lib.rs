@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod autoinc;
 mod flowfields;
 mod records;
 
@@ -100,6 +101,15 @@ pub struct Session {
     next_temp: u64,
     pub(crate) next_guid: u64,
     pub(crate) next_row_version: i64,
+    /// Last AutoIncrement value handed out per table (and company). It is not part of the
+    /// store: a rollback undoes rows but not the counter (corpus
+    /// record/TestAutoIncrementExplicitKey.al:154).
+    pub(crate) autoinc: std::collections::HashMap<(String, u32), i64>,
+    /// The counter each table had before the first Truncate of the open transaction; a
+    /// rollback puts it back (corpus record/TestAutoIncrementEdges.al:36-170).
+    pub(crate) truncate_undo: std::collections::HashMap<(String, u32), i64>,
+    /// Try functions on the call stack (Truncate is refused inside them).
+    pub(crate) try_depth: usize,
     pub(crate) cx: al_data::AccessContext,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
@@ -121,11 +131,30 @@ impl Session {
             next_temp: 0,
             next_guid: 0,
             next_row_version: 0,
+            autoinc: Default::default(),
+            truncate_undo: Default::default(),
+            try_depth: 0,
             cx: al_data::AccessContext {
                 company: "CRONUS".into(),
                 user: "USER".into(),
             },
             ret_used: true,
+        }
+    }
+
+    /// Makes every change so far durable (and a Truncate of this transaction final).
+    pub fn commit_transaction(&mut self) {
+        al_data::Store::commit(&mut self.store);
+        self.truncate_undo.clear();
+    }
+
+    /// Discards every change since the last commit. The AutoIncrement counters are not
+    /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
+    /// those a Truncate of this transaction changed.
+    pub fn rollback_transaction(&mut self) {
+        al_data::Store::rollback(&mut self.store);
+        for (slot, value) in std::mem::take(&mut self.truncate_undo) {
+            self.autoinc.insert(slot, value);
         }
     }
 
@@ -235,7 +264,11 @@ impl Session {
             instance,
             locals,
         };
-        let ret = match self.exec_block(&r.body, &mut frame) {
+        let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
+        self.try_depth += usize::from(is_try);
+        let outcome = self.exec_block(&r.body, &mut frame);
+        self.try_depth -= usize::from(is_try);
+        let ret = match outcome {
             Ok(()) => None,
             Err(Signal::Exit(v)) => v,
             Err(Signal::Break) => None,
@@ -355,7 +388,7 @@ impl Session {
                 Err(Signal::Error(e)) => {
                     // The caught error rolls the transaction back to the last commit
                     // (record/TestRecordRenameRollback.al).
-                    al_data::Store::rollback(&mut self.store);
+                    self.rollback_transaction();
                     self.last_error = e;
                     Ok(())
                 }
@@ -701,7 +734,7 @@ impl al_builtins::native::Ctx for Session {
         }
     }
     fn commit(&mut self) -> Result<(), Signal> {
-        al_data::Store::commit(&mut self.store);
+        self.commit_transaction();
         Ok(())
     }
     fn ret_used(&self) -> bool {

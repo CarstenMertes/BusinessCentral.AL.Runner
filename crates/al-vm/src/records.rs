@@ -12,7 +12,7 @@ use al_data::{InsertOutcome, RenameOutcome, Scan, Store, TableDef, WriteOutcome,
 use std::cell::RefCell;
 use std::rc::Rc;
 
-type Rec = Rc<RefCell<RecordState>>;
+pub(crate) type Rec = Rc<RefCell<RecordState>>;
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
@@ -148,6 +148,80 @@ impl Session {
                     ));
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Whether inserting `row` would repeat the values of a unique secondary key (a row with
+    /// the same primary key is the duplicate-key failure instead).
+    fn violates_unique_key(&mut self, rec: &Rec, t: &TableDef, row: &[Value]) -> Result<bool, Signal> {
+        let unique: Vec<usize> = {
+            let schema = self.engine.program.objects[t.object as usize]
+                .table
+                .as_ref()
+                .expect("table");
+            (1..t.keys.len())
+                .filter(|k| schema.unique_keys.get(*k).copied().unwrap_or(false))
+                .collect()
+        };
+        if unique.is_empty() {
+            return Ok(false);
+        }
+        let cx = self.cx.clone();
+        let pk = t.primary_key(row);
+        if self
+            .store_for(rec)
+            .get(&cx, t, &pk)
+            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        for k in unique {
+            let filters: Vec<FieldFilter> = t.keys[k]
+                .iter()
+                .map(|&f| FieldFilter {
+                    field: f,
+                    expr: FilterExpr::Eq(row[f].clone()),
+                })
+                .collect();
+            let n = self
+                .store_for(rec)
+                .count(&cx, t, &filters)
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            if n > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The refusal of a unique index; only the start of BC's message is pinned.
+    fn fail_unique(&mut self, t: &TableDef) -> Result<Value, Signal> {
+        if self.ret_used {
+            return Ok(Value::Boolean(false));
+        }
+        Err(Signal::Error(AlError {
+            message: format!(
+                "There is already a record in table {} that has the same values in a unique index.",
+                self.caption(t)
+            ),
+            code: String::new(),
+            call_stack: String::new(),
+        }))
+    }
+
+    /// Unique secondary keys are only enforced on Insert, so other writes to such tables are refused.
+    pub(crate) fn check_unique_keys(&self, t: &TableDef) -> Result<(), Signal> {
+        let schema = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .expect("table");
+        if schema.unique_keys.iter().skip(1).any(|u| *u) {
+            return unsupported(format!(
+                "write to {}: unique secondary keys are not enforced yet",
+                t.name
+            ));
         }
         Ok(())
     }
@@ -301,15 +375,13 @@ impl Session {
             }
             "Insert" => {
                 self.check_writable(&t, "Insert")?;
-                let schema = self.engine.program.objects[t.object as usize]
-                    .table
-                    .clone()
-                    .expect("table");
-                if schema.fields.iter().any(|f| f.auto_increment) {
-                    return unsupported(
-                        "Insert into a table with an AutoIncrement field (counter semantics not implemented yet)",
-                    );
-                }
+                // A temporary record has no sequence: the key stays as it is (corpus
+                // record/TestTempTableContracts.al:52).
+                let auto = if rec.borrow().temporary {
+                    None
+                } else {
+                    self.auto_increment_field(&t)?
+                };
                 if arg_bool(args, 0)? {
                     if let Some(tr) = self.table_trigger(&t, "OnInsert") {
                         self.run_trigger(t.object as usize, tr, rec, None)?;
@@ -317,18 +389,51 @@ impl Session {
                 }
                 self.assign_system_id(&t, rec);
                 self.bump_row_version(&t, rec);
+                // The key is chosen below the trigger: OnInsert starts with it still 0 and a
+                // refused Insert never takes a value (corpus record/TestAutoIncrementExplicitKey.al:63,
+                // TestAutoIncrementEdges.al:354).
+                let mut taken = false;
+                if let Some(a) = auto {
+                    let mut row = rec.borrow().fields.clone();
+                    taken = self.take_auto_increment(&t, a, &mut row)?;
+                    rec.borrow_mut().fields = row;
+                }
                 let row = rec.borrow().fields.clone();
+                // A unique secondary key refuses the row after its AutoIncrement value was taken
+                // (corpus record/TestAutoIncrementExplicitKey.al:131,163).
+                if self.violates_unique_key(rec, &t, &row)? {
+                    if let Some(a) = auto {
+                        if taken {
+                            rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
+                        } else {
+                            self.note_explicit_key(&t, a, &row);
+                        }
+                    }
+                    return self.fail_unique(&t);
+                }
                 match self
                     .store_for(rec)
                     .insert(&cx, &t, row.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
-                    InsertOutcome::Inserted => Ok(Value::Boolean(true)),
-                    InsertOutcome::AlreadyExists => self.fail(&t, &row, true),
+                    InsertOutcome::Inserted => {
+                        if let (Some(a), false) = (auto, taken) {
+                            self.note_explicit_key(&t, a, &row);
+                        }
+                        Ok(Value::Boolean(true))
+                    }
+                    InsertOutcome::AlreadyExists => {
+                        // The value stays consumed; the key it took does not stay on the record.
+                        if let (Some(a), true) = (auto, taken) {
+                            rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
+                        }
+                        self.fail(&t, &row, true)
+                    }
                 }
             }
             "Modify" => {
                 self.check_writable(&t, "Modify")?;
+                self.check_unique_keys(&t)?;
                 let pk = t.primary_key(&rec.borrow().fields);
                 let stored = self
                     .store_for(rec)
@@ -569,6 +674,7 @@ impl Session {
             }
             "Rename" => {
                 self.check_writable(&t, "Rename")?;
+                self.check_unique_keys(&t)?;
                 let name = t.name.to_lowercase();
                 let related = self
                     .engine
@@ -592,6 +698,7 @@ impl Session {
                         new[field] = ops::convert(v.clone(), &ty)?;
                     }
                 }
+                self.check_rename_auto_increment(&t, &old, &new)?;
                 rec.borrow_mut().fields = new.clone();
                 if let Some(tr) = self.table_trigger(&t, "OnRename") {
                     self.run_trigger(t.object as usize, tr, rec, Some(old.clone()))?;
@@ -615,6 +722,7 @@ impl Session {
                     }
                 }
             }
+            "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
             "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
             other => unsupported(format!("Record.{other}")),
         }

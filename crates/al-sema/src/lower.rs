@@ -106,7 +106,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 lw.globals.insert(name.to_lowercase(), globals.len());
                 globals.push(ir::Slot {
                     name: name.into(),
-                    ty: RtType::Record(t as u32, false),
+                    ty: RtType::Record(t as u32, lw.is_temporary_table(t)),
                 });
             }
         }
@@ -357,6 +357,7 @@ impl Lowerer<'_> {
             })
             .collect();
         let mut keys = Vec::new();
+        let mut unique_keys = Vec::new();
         for o in std::iter::once(oi).chain(extensions.iter().copied()) {
             for sec in self
                 .ws
@@ -376,6 +377,10 @@ impl Lowerer<'_> {
                         .collect();
                     if pos.len() == names.len() && !pos.is_empty() {
                         keys.push(pos);
+                        unique_keys.push(k.properties().any(|p| {
+                            p.name().eq_ignore_ascii_case("Unique")
+                                && p.value_text().trim().eq_ignore_ascii_case("true")
+                        }));
                     }
                 }
             }
@@ -383,6 +388,7 @@ impl Lowerer<'_> {
         if keys.is_empty() {
             // Without a keys section the first field is the primary key (doc: Table keys).
             keys.push(vec![0]);
+            unique_keys.push(false);
         }
         let per_company = !obj.properties().any(|p| {
             p.name().eq_ignore_ascii_case("DataPerCompany") && p.value_text().trim().eq_ignore_ascii_case("false")
@@ -390,6 +396,7 @@ impl Lowerer<'_> {
         ir::Table {
             fields,
             keys,
+            unique_keys,
             per_company,
             extensions,
         }
@@ -550,6 +557,12 @@ impl Lowerer<'_> {
         }
     }
 
+    fn is_temporary_table(&self, table: usize) -> bool {
+        self.ws.object_ast(table).properties().any(|p| {
+            p.name().eq_ignore_ascii_case("TableType") && p.value_text().trim().eq_ignore_ascii_case("temporary")
+        })
+    }
+
     fn rt(&self, t: &Ty) -> L<RtType> {
         Ok(match t {
             Ty::Integer => RtType::Integer,
@@ -576,7 +589,10 @@ impl Lowerer<'_> {
             Ty::Array(d, t) => RtType::Array(d.clone(), Box::new(self.rt(t)?)),
             Ty::Builtin(n) => RtType::Library(n.clone()),
             Ty::Record { table, temporary } => {
-                RtType::Record(self.resolve_obj(ObjKind::Table, table)? as u32, *temporary)
+                let t = self.resolve_obj(ObjKind::Table, table)?;
+                // `TableType = Temporary` makes every record of the table temporary (corpus
+                // record/TestTempTableContracts.al:16).
+                RtType::Record(t as u32, *temporary || self.is_temporary_table(t))
             }
             other => return Err(format!("type {other} is not lowered yet")),
         })

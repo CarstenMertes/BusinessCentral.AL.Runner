@@ -183,7 +183,7 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
                     Outcome::Pass
                 }
                 Err(Signal::Error(e)) => {
-                    al_data::Store::rollback(session.store_mut());
+                    session.rollback_transaction();
                     Outcome::Fail(e.message)
                 }
                 Err(Signal::Unsupported(r)) => Outcome::NotRun(r),
@@ -228,7 +228,7 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
                 },
             };
             if let Some(why) = why {
-                al_data::Store::rollback(session.store_mut());
+                session.rollback_transaction();
                 // Subscribers to events the installer raises are not in its static calls,
                 // but they are what it would have written through.
                 let mut touched = tables_touched(lowered, oi, ri);

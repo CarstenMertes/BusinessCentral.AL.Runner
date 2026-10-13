@@ -394,3 +394,668 @@ fn average_into_a_decimal_field_keeps_the_fraction() {
     );
     assert_eq!(text(r), "31.25|125|4");
 }
+
+// corpus record/TestCalcFormulaMinMaxAvgTests.Codeunit.al:97,120,140 (min/max/average over
+// Decimal, Integer and Date sources; empty sets give the type default).
+#[test]
+fn min_max_and_average_over_decimal_integer_and_date_sources() {
+    let r = run_lines(
+        "procedure F(): Text
+        var H: Record \"FF Head\"; Seen: Text;
+        begin
+            SeedLines();
+            H.Get('D1');
+            H.CalcFields(MinAmt, MaxAmt, AvgAmt, MinQty, AvgQty, FirstDate, LateDate);
+            Seen := Format(H.MinAmt) + '|' + Format(H.MaxAmt) + '|' + Format(H.AvgAmt) + '|' + Format(H.MinQty) + '|' + Format(H.AvgQty);
+            Seen += '|' + Format(H.FirstDate, 0, 9) + '|' + Format(H.LateDate, 0, 9);
+            H.Get('D3');
+            H.CalcFields(MinAmt, MaxAmt, AvgAmt, MinQty, FirstDate);
+            exit(Seen + '|' + Format(H.MinAmt) + Format(H.MaxAmt) + Format(H.AvgAmt) + Format(H.MinQty) + Format(H.FirstDate = 0D));
+        end;",
+    );
+    // Average Qty = 21 / 4 = 5.25 into an Integer field: 5.
+    assert_eq!(text(r), "-10|75|31.25|3|5|2024-01-10|2024-04-10|0000Yes");
+}
+
+// corpus record/TestCalcFormulaSignFiltersTests.Codeunit.al:61,150,201 (exist, signed sum and
+// signed exist, const and filter conditions ANDed).
+#[test]
+fn exist_sign_const_and_filter_conditions() {
+    let r = run_lines(
+        "procedure F(): Text
+        var H: Record \"FF Head\"; Seen: Text;
+        begin
+            SeedLines();
+            H.Get('D1');
+            H.CalcFields(HasLines, NoLines, NegTotal, OpenTotal, ActiveTotal, Closed);
+            Seen := Format(H.HasLines) + Format(H.NoLines) + '|' + Format(H.NegTotal) + '|' + Format(H.OpenTotal) + '|' + Format(H.ActiveTotal) + '|' + Format(H.Closed);
+            H.Get('D3');
+            H.CalcFields(HasLines, NoLines);
+            exit(Seen + '|' + Format(H.HasLines) + Format(H.NoLines));
+        end;",
+    );
+    // Open = 40 + 75 + 20; Open|Released = 40 - 10 + 20.
+    assert_eq!(text(r), "YesNo|-125|135|50|1|NoYes");
+}
+
+// corpus record/TestCalcFormulaFlowFiltersTests.Codeunit.al:76,107,128,258 (the caller's filter
+// on a FlowFilter field narrows a formula, upperlimit keeps only the upper bound, none set
+// means no constraint, and the flow filter does not constrain its own table).
+#[test]
+fn flow_filters_narrow_formulas_and_never_the_record_itself() {
+    let r = run_lines(
+        "procedure F(): Text
+        var H: Record \"FF Head\"; Seen: Text;
+        begin
+            SeedLines();
+            H.Get('D1');
+            H.CalcFields(Period, Balance);
+            Seen := Format(H.Period) + '/' + Format(H.Balance);
+            H.SetRange(\"Date Filter\", 20240201D, 20240229D);
+            H.CalcFields(Period, Balance, Total);
+            Seen += '|' + Format(H.Period) + '/' + Format(H.Balance) + '/' + Format(H.Total);
+            H.SetRange(\"Date Filter\");
+            H.CalcFields(Period, Balance);
+            Seen += '|' + Format(H.Period) + '/' + Format(H.Balance);
+            H.Reset();
+            H.SetRange(\"Date Filter\", 20990101D, 20991231D);
+            Seen += '|' + Format(H.Count()) + Format(H.FindFirst());
+            H.Get('D1');
+            H.CalcFields(Period);
+            exit(Seen + '|' + Format(H.Period));
+        end;",
+    );
+    // Unfiltered 125/125; February only: -10 and, up to the end of February, 40 - 10 = 30;
+    // cleared: back to 125; the table itself is not filtered (3 headers) and a window with no
+    // lines gives 0.
+    assert_eq!(text(r), "125/125|-10/30/125|125/125|3Yes|0");
+}
+
+// corpus record/TestCalcFormulaFlowFiltersTests.Codeunit.al:164,194 (field(filter(X)) reads the
+// parent's value as a filter expression; blank imposes nothing).
+#[test]
+fn field_filter_reads_the_parent_value_as_a_filter_expression() {
+    let r = run_lines(
+        "procedure F(): Text
+        var H: Record \"FF Head\"; Seen: Text;
+        begin
+            SeedLines();
+            H.Get('D1');
+            H.CalcFields(Totaled);
+            Seen := Format(H.Totaled);
+            H.Totaling := 'A1';
+            H.CalcFields(Totaled);
+            Seen += '|' + Format(H.Totaled);
+            H.Totaling := 'A0|A1';
+            H.CalcFields(Totaled);
+            Seen += '|' + Format(H.Totaled);
+            H.Totaling := 'A9';
+            H.CalcFields(Totaled);
+            exit(Seen + '|' + Format(H.Totaled));
+        end;",
+    );
+    // Account is 'A' + (Entry No. mod 2): entries 1 and 3 are A1 (40 + 75), 2 and 4 are A0.
+    assert_eq!(text(r), "125|115|125|0");
+}
+
+// corpus record/TestCalcFieldsFieldClass.Codeunit.al:76,92,108,124 (only a FlowField with a
+// formula can be calculated) and record/TestCalcFormulaValidationTests.Codeunit.al:96 (the
+// FlowField and its source must have the same type).
+#[test]
+fn calcfields_refuses_what_is_not_a_calculable_flow_field() {
+    for (field, expected) in [
+        ("\"No.\"", "The No. field in the FF Head table must be a FlowField."),
+        (
+            "\"Date Filter\"",
+            "The Date Filter field in the FF Head table must be a FlowField.",
+        ),
+        (
+            "Unformulated",
+            "You must define a CalcFormula for the Unformulated FlowField in the FF Head table.",
+        ),
+        (
+            "BadAvg",
+            "The following fields must have the same type:\n\nField: BadAvg <-- Qty\nTable: FF Head <-- FF Line\nType: Decimal <-- Integer",
+        ),
+    ] {
+        let r = run_lines(&format!(
+            "procedure F(): Text
+            var H: Record \"FF Head\";
+            begin
+                SeedLines();
+                H.Get('D1');
+                H.CalcFields({field});
+            end;"
+        ));
+        match r {
+            Err(Signal::Error(e)) => assert_eq!(e.message, expected),
+            other => panic!("{field}: {other:?}"),
+        }
+    }
+}
+
+// corpus record/TestCalcFormulaValidationTests.Codeunit.al:211, record/TestCalcFieldsFieldClass.Codeunit.al:204
+// (a refused CalcFields calculates none of its fields, not even the valid ones before the bad one).
+#[test]
+fn a_refused_calcfields_calculates_nothing() {
+    let r = run_lines(
+        "procedure F(): Text
+        var H: Record \"FF Head\";
+        begin
+            SeedLines();
+            H.Get('D1');
+            asserterror H.CalcFields(Total, Lines, BadAvg);
+            exit(Format(H.Total) + Format(H.Lines));
+        end;",
+    );
+    assert_eq!(text(r), "00");
+}
+
+// corpus record/TestCalcFormulaFlowFieldValueTests.Codeunit.al:176,205 (a formula that needs
+// itself, directly or through another FlowField, is the recursion error).
+#[test]
+fn formulas_that_need_themselves_raise_the_recursion_error() {
+    for field in ["SelfRef", "CycleA", "CycleB"] {
+        let r = run_lines(&format!(
+            "procedure F(): Text
+            var H: Record \"FF Head\";
+            begin
+                SeedLines();
+                H.Get('D1');
+                H.CalcFields({field});
+            end;"
+        ));
+        match r {
+            Err(Signal::Error(e)) => assert!(
+                e.message.contains("This can be caused by recursive function calls"),
+                "{e:?}"
+            ),
+            other => panic!("{field}: {other:?}"),
+        }
+    }
+}
+
+// corpus record/TestRecordFlowField.al:109-160 and TestRecordNavContracts.al:217 (CalcSums over
+// the record's own filters, several fields at once, no rows gives 0).
+#[test]
+fn calcsums_sums_the_filtered_rows_into_the_record() {
+    let r = run_lines(
+        "procedure F(): Text
+        var L: Record \"FF Line\"; Seen: Text;
+        begin
+            SeedLines();
+            L.SetRange(\"Doc No.\", 'D1');
+            L.CalcSums(Amount, Qty);
+            Seen := Format(L.Amount) + '/' + Format(L.Qty);
+            L.SetRange(\"Entry No.\", 1, 2);
+            L.CalcSums(Amount);
+            Seen += '|' + Format(L.Amount);
+            L.SetRange(\"Entry No.\", 99999);
+            L.CalcSums(Amount);
+            exit(Seen + '|' + Format(L.Amount));
+        end;",
+    );
+    assert_eq!(text(r), "125/21|30|0");
+}
+
+/// Tables with an AutoIncrement key (corpus record/TestAutoIncrement*.al fixtures, compacted).
+/// `Payload` steers the OnInsert trigger: 'refuse' raises an error, 'assign' sets the key to 500.
+const AUTO: &str = r#"
+table 60460 "AI Probe"
+{
+    fields
+    {
+        field(1; "Entry No."; Integer) { AutoIncrement = true; }
+        field(2; Payload; Text[30]) { }
+        field(3; SawInOnInsert; Integer) { }
+    }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+    trigger OnInsert()
+    begin
+        SawInOnInsert := "Entry No.";
+        if Payload = 'refuse' then Error('AI refused the row');
+        if Payload = 'assign' then "Entry No." := 500;
+    end;
+}
+table 60461 "AI Big"
+{
+    fields { field(1; "Entry No."; BigInteger) { AutoIncrement = true; } field(2; Payload; Text[30]) { } }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+table 60462 "AI Composite"
+{
+    fields { field(1; "Entry No."; Integer) { AutoIncrement = true; } field(2; Code; Code[10]) { } }
+    keys { key(PK; "Entry No.", Code) { Clustered = true; } }
+}
+table 60463 "AI Temp Only"
+{
+    TableType = Temporary;
+    fields { field(1; "Entry No."; Integer) { AutoIncrement = true; } field(2; Payload; Text[30]) { } }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+table 60464 "AI Unique"
+{
+    fields { field(1; "Entry No."; Integer) { AutoIncrement = true; } field(2; Code; Code[20]) { } }
+    keys { key(PK; "Entry No.") { Clustered = true; } key(Uniq; Code) { Unique = true; } }
+}
+"#;
+
+const AUTO_HELPERS: &str = "
+    procedure Zero(): Integer
+    var P: Record \"AI Probe\";
+    begin
+        P.\"Entry No.\" := 0; P.Payload := 'zero'; P.Insert(true);
+        exit(P.\"Entry No.\");
+    end;
+    procedure Explicit(K: Integer): Boolean
+    var P: Record \"AI Probe\";
+    begin
+        P.\"Entry No.\" := K; P.Payload := 'explicit';
+        exit(P.Insert(true));
+    end;
+";
+
+fn run_auto(body: &str) -> Result<Value, Signal> {
+    run_with(AUTO, &format!("{AUTO_HELPERS}\n{body}"), "F")
+}
+
+// corpus record/TestAutoIncrementContracts.al:25 (a zero key is assigned on Insert), and
+// record/TestBCSystemFieldContracts.al:155 / session/TestTransactionContracts.al:104 (the
+// counter only moves forward, also after Delete and DeleteAll).
+#[test]
+fn a_zero_key_is_assigned_from_a_counter_that_only_moves_forward() {
+    let r = run_auto(
+        "procedure F(): Text
+        var P: Record \"AI Probe\"; Seen: Text;
+        begin
+            Seen := Format(Zero()) + Format(Zero()) + Format(Zero());
+            P.Get(2); P.Delete();
+            Seen += '|' + Format(Zero());
+            P.DeleteAll();
+            exit(Seen + '|' + Format(Zero()) + Format(P.Count()));
+        end;",
+    );
+    assert_eq!(text(r), "123|4|51");
+}
+
+// corpus record/TestAutoIncrementContracts.al:40,62,83 (Init keeps the key, so a second Insert
+// of the same variable collides until the key is set to 0 again).
+#[test]
+fn init_keeps_the_assigned_key_so_a_reused_variable_collides_until_it_is_zeroed() {
+    let r = run_auto(
+        "procedure F(): Text
+        var P: Record \"AI Probe\"; Seen: Text;
+        begin
+            P.Insert();
+            Seen := Format(P.\"Entry No.\");
+            P.Init();
+            Seen += Format(P.\"Entry No.\");
+            asserterror P.Insert();
+            Seen += '|' + Format(GetLastErrorText() <> '');
+            P.\"Entry No.\" := 0;
+            P.Insert();
+            exit(Seen + Format(P.\"Entry No.\"));
+        end;",
+    );
+    assert_eq!(text(r), "11|Yes2");
+}
+
+// corpus record/TestAutoIncrementExplicitKey.al:43-130 (an explicit key above the counter raises it,
+// one at or below leaves it alone, a refused duplicate or a negative key does not move it).
+#[test]
+fn explicit_keys_raise_the_counter_only_when_they_are_above_it() {
+    let r = run_auto(
+        "procedure F(): Text
+        var P: Record \"AI Probe\"; Seen: Text;
+        begin
+            Seen := Format(Zero());
+            Explicit(11);
+            Seen += '|' + Format(Zero());
+            Explicit(2);
+            Seen += '|' + Format(Zero());
+            Seen += '|' + Format(Explicit(1)) + Format(Zero());
+            Explicit(-5);
+            Seen += '|' + Format(Zero());
+            P.DeleteAll();
+            Explicit(1);
+            exit(Seen + '|' + Format(Zero()));
+        end;",
+    );
+    // 1; 11 then 12; 2 fills a gap, next 13; 1 is a duplicate (No) and 14; -5 then 15; after
+    // DeleteAll an explicit 1 does not lower the counter: 16.
+    assert_eq!(text(r), "1|12|13|No14|15|16");
+}
+
+// corpus record/TestAutoIncrementExplicitKey.al:63,80 (OnInsert starts with the field 0 and the key
+// it assigns is stored and raises the counter); Insert(false) assigns too (record/TestStorageLayerFieldWriteRoutes.al:130).
+#[test]
+fn on_insert_sees_a_zero_key_and_may_assign_one_and_insert_false_still_assigns() {
+    let r = run_auto(
+        "procedure F(): Text
+        var P: Record \"AI Probe\"; Seen: Text;
+        begin
+            Seen := Format(Zero());
+            P.Payload := 'assign';
+            P.Insert(true);
+            Seen += '|' + Format(P.\"Entry No.\") + Format(P.SawInOnInsert);
+            Seen += '|' + Format(Zero());
+            Clear(P);
+            P.Insert(false);
+            exit(Seen + '|' + Format(P.\"Entry No.\") + Format(P.SawInOnInsert));
+        end;",
+    );
+    assert_eq!(text(r), "1|5000|501|5020");
+}
+
+// corpus record/TestAutoIncrementEdges.al:354 (a refused Insert leaves the key 0 and takes no value)
+// and record/TestAutoIncrementExplicitKey.al:154 (the data rolls back, the counter does not).
+#[test]
+fn an_insert_refused_by_on_insert_takes_no_value_and_the_counter_survives_rollback() {
+    let r = run_auto(
+        "procedure F(): Text
+        var P: Record \"AI Probe\"; Seen: Text;
+        begin
+            Commit();
+            Seen := Format(Zero());
+            P.Payload := 'refuse';
+            asserterror P.Insert(true);
+            Seen += '|' + Format(P.\"Entry No.\") + '|' + GetLastErrorText();
+            Seen += '|' + Format(Zero());
+            exit(Seen + '|' + Format(P.Count()));
+        end;",
+    );
+    // The first row is rolled back with the refused one; the counter is not.
+    assert_eq!(text(r), "1|0|AI refused the row|2|1");
+}
+
+// corpus record/TestAutoIncrementExplicitKey.al:115 (a BigInteger key past Int32).
+#[test]
+fn a_big_integer_key_follows_the_counter_past_int32() {
+    let r = run_with(
+        AUTO,
+        "procedure F(): Text
+        var B: Record \"AI Big\"; Big: BigInteger; Seen: Text;
+        begin
+            Big := 500000000;
+            Big := Big * 10;
+            B.Insert(true);
+            Clear(B);
+            B.\"Entry No.\" := Big;
+            B.Insert(true);
+            Clear(B);
+            B.Insert(true);
+            Seen := Format(B.\"Entry No.\" - Big);
+            Clear(B);
+            B.Insert(true);
+            exit(Seen + Format(B.\"Entry No.\" - Big) + Format(B.Count()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "124");
+}
+
+// corpus record/TestTempTableContracts.al:26,52,64 (no counter for a temporary record or a table
+// with TableType = Temporary: the key stays 0 and two zero keys collide).
+#[test]
+fn temporary_records_do_not_get_an_auto_increment_key() {
+    let r = run_with(
+        AUTO,
+        "procedure F(): Text
+        var T: Record \"AI Temp Only\"; V: Record \"AI Probe\" temporary; Seen: Text;
+        begin
+            T.Insert();
+            Seen := Format(T.\"Entry No.\");
+            V.Insert();
+            Seen += Format(V.\"Entry No.\");
+            V.\"Entry No.\" := 1;
+            V.Insert();
+            exit(Seen + Format(V.Count()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "002");
+}
+
+// corpus record/TestAutoIncrementExplicitKey.al:147,179 and TestAutoIncrementEdges.al:279,296
+// (the AutoIncrement value of a key cannot be renamed, the rest of a composite key can).
+#[test]
+fn renaming_the_auto_increment_value_is_refused_but_the_rest_of_the_key_is_not() {
+    let r = run_with(
+        AUTO,
+        "procedure F(): Text
+        var C: Record \"AI Composite\"; Seen: Text; K: Integer;
+        begin
+            C.Code := 'A';
+            C.Insert(true);
+            K := C.\"Entry No.\";
+            C.Rename(K, 'B');
+            Seen := C.Code + Format(C.Get(K, 'B')) + Format(C.Get(K, 'A'));
+            asserterror C.Rename(K + 50, 'B');
+            exit(Seen + '|' + GetLastErrorText());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "BYesNo|You cannot change the value of an AutoIncrement field.\n\nField: Entry No.\nTable: AI Composite"
+    );
+}
+
+// corpus record/TestAutoIncrementExplicitKey.al:131,148,163 and TestAutoIncrementEdges.al:262
+// (an Insert refused by a unique secondary key has already taken its value, does not leave it on
+// the record, and an explicit key it was refused with still raises the counter).
+#[test]
+fn an_insert_refused_by_a_unique_secondary_key_consumes_its_value() {
+    let r = run_auto(
+        "procedure F(): Text
+        var U: Record \"AI Unique\"; Seen: Text; K1: Integer;
+        begin
+            U.Code := 'X';
+            Seen := Format(U.Insert(true));
+            K1 := U.\"Entry No.\";
+            Clear(U);
+            U.Code := 'X';
+            Seen += Format(U.Insert(true)) + Format(U.\"Entry No.\");
+            Clear(U);
+            U.Code := 'Y';
+            U.Insert(true);
+            Seen += '|' + Format(U.\"Entry No.\" - K1);
+            Clear(U);
+            U.\"Entry No.\" := 50;
+            U.Code := 'X';
+            Seen += '|' + Format(U.Insert(true)) + Format(U.\"Entry No.\");
+            Clear(U);
+            U.Code := 'Z';
+            U.Insert(true);
+            Seen += '|' + Format(U.\"Entry No.\");
+            Clear(U);
+            U.Code := 'X';
+            asserterror U.Insert(true);
+            exit(Seen + '|' + Format(U.\"Entry No.\") + '|' + GetLastErrorText());
+        end;",
+    );
+    // 1: Yes; refused: No and the key back at 0; the next row skips one value (2 after 1, so
+    // +2); the explicit 50 is refused but stays on the record and raises the counter to 50, so
+    // the next row gets 51; the asserterror form leaves the key 0 too.
+    assert_eq!(
+        text(r),
+        "YesNo0|2|No50|51|0|There is already a record in table AI Unique that has the same values in a unique index."
+    );
+}
+
+// Modify and Rename could also break a unique secondary key, which is only checked on Insert.
+#[test]
+fn modify_and_rename_on_tables_with_unique_secondary_keys_are_refused() {
+    for write in ["U.Modify();", "U.Rename(7);"] {
+        let r = run_with(
+            AUTO,
+            &format!(
+                "procedure F()
+                var U: Record \"AI Unique\";
+                begin
+                    U.Code := 'X';
+                    U.Insert(true);
+                    {write}
+                end;"
+            ),
+            "F",
+        );
+        assert!(unsupported(r).contains("unique"), "{write}");
+    }
+}
+
+const TRUNC: &str = r#"
+table 60470 "TR Row"
+{
+    fields { field(1; "Entry No."; Integer) { } field(2; Link; Code[20]) { } field(3; Total; Decimal) { FieldClass = FlowField; CalcFormula = sum("TR Row".Link where(Link = field(Link))); } }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+table 60471 "TR Guarded"
+{
+    fields { field(1; "Entry No."; Integer) { } }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+codeunit 60472 "TR Delete Sub"
+{
+    [EventSubscriber(ObjectType::Table, Database::"TR Guarded", 'OnBeforeDeleteEvent', '', false, false)]
+    local procedure OnBeforeDeleteGuarded(var Rec: Record "TR Guarded"; RunTrigger: Boolean)
+    begin
+    end;
+}
+"#;
+
+fn run_trunc(body: &str) -> Result<Value, Signal> {
+    run_with(&format!("{AUTO}\n{TRUNC}"), body, "F")
+}
+
+// corpus record/TestRecordDelete.al:169 and TestBCSystemFieldContracts.al:180 (Truncate empties
+// the table); record/TestAutoIncrementContracts.al:83 (Truncate(true) restarts the counter at 1).
+#[test]
+fn truncate_empties_the_table_and_only_truncate_true_restarts_the_counter() {
+    let r = run_auto(
+        "procedure F(): Text
+        var P: Record \"AI Probe\"; Seen: Text;
+        begin
+            Zero(); Zero(); Zero();
+            P.Truncate();
+            Seen := Format(P.IsEmpty());
+            Seen += Format(Zero());
+            P.Truncate(true);
+            exit(Seen + Format(P.IsEmpty()) + Format(Zero()));
+        end;",
+    );
+    // Truncate() keeps the counter (next key 4); Truncate(true) restarts it (next key 1).
+    assert_eq!(text(r), "Yes4Yes1");
+}
+
+// corpus record/TestAutoIncrementEdges.al:36-170: a rollback to the last commit brings the
+// truncated rows back and puts the counter where it stood before the first Truncate of the
+// transaction, whatever was taken after it; without a Truncate the counter is not rolled back.
+#[test]
+fn a_rollback_restores_the_counter_a_truncate_changed() {
+    let r = run_auto(
+        "procedure F(): Text
+        var P: Record \"AI Probe\"; Seen: Text; W: Integer;
+        begin
+            P.Truncate(true);
+            Zero(); Zero(); Zero();
+            Commit();
+            P.Truncate(true);
+            W := Zero();
+            P.Payload := 'refuse';
+            asserterror P.Insert(true);
+            Seen := Format(W) + '|' + Format(P.Count()) + '|' + Format(Zero());
+            Commit();
+            P.Truncate(false);
+            W := Zero();
+            asserterror Error('x');
+            exit(Seen + '|' + Format(W) + '|' + Format(P.Count()) + '|' + Format(Zero()));
+        end;",
+    );
+    // First round: after Truncate(true) the Insert took 1; the rollback brings back rows 1..3
+    // and the counter 3, so the next key is 4 with 4 rows. Second round: Truncate(false) does
+    // not reseed; the next key 5 taken after it is handed out again after the rollback, which
+    // also restores the rows (1..4, so 4 rows).
+    assert_eq!(text(r), "1|3|4|5|4|5");
+}
+
+// corpus record/TestRecordTruncateEventAndFilterGuards.al:46,98,113 and
+// TestRecordTruncateTryScope.al:34,70 (the refusals are pinned by message; a filter on a normal
+// field that keeps every row empties the table).
+#[test]
+fn truncate_refusals_carry_the_pinned_messages() {
+    let guarded = run_trunc(
+        "procedure F(): Text
+        var G: Record \"TR Guarded\";
+        begin
+            G.Truncate();
+        end;",
+    );
+    match guarded {
+        Err(Signal::Error(e)) => assert_eq!(
+            e.message,
+            "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed. Please remove the events subscriptions or use DeleteAll."
+        ),
+        other => panic!("{other:?}"),
+    }
+    let flow = run_trunc(
+        "procedure F(): Text
+        var R: Record \"TR Row\";
+        begin
+            R.SetRange(Total, 0, 100);
+            R.Truncate();
+        end;",
+    );
+    match flow {
+        Err(Signal::Error(e)) => assert_eq!(e.message, "Truncate does not support filters on FlowFields."),
+        other => panic!("{other:?}"),
+    }
+    let in_try = run_trunc(
+        "[TryFunction] procedure Inner() var R: Record \"TR Row\"; begin R.Truncate(); end;
+        procedure Outer() begin Inner(); end;
+        [TryFunction] procedure ViaHelper() begin Outer(); end;
+        procedure F(): Text begin
+            if ViaHelper() then exit('succeeded');
+            exit(GetLastErrorText());
+        end;",
+    );
+    assert_eq!(text(in_try), "Truncate is not supported in try functions.");
+    let kept = run_trunc(
+        "procedure F(): Text
+        var R: Record \"TR Row\";
+        begin
+            R.\"Entry No.\" := 1; R.Link := 'L1'; R.Insert();
+            R.SetRange(Link, 'L1');
+            R.Truncate();
+            R.Reset();
+            exit(Format(R.IsEmpty()));
+        end;",
+    );
+    assert_eq!(text(kept), "Yes");
+}
+
+// Whether a filter limits what Truncate deletes is not pinned (the corpus filter keeps the
+// only row), so a filter that excludes rows is refused; so is a temporary record, whose guard
+// message is not pinned either.
+#[test]
+fn truncate_with_a_filter_that_excludes_rows_or_on_a_temporary_record_is_refused() {
+    let r = run_trunc(
+        "procedure F(): Text
+        var R: Record \"TR Row\";
+        begin
+            R.\"Entry No.\" := 1; R.Link := 'L1'; R.Insert();
+            R.\"Entry No.\" := 2; R.Link := 'L2'; R.Insert();
+            R.SetRange(Link, 'L1');
+            R.Truncate();
+        end;",
+    );
+    assert!(unsupported(r).contains("filter"));
+    let t = run_trunc(
+        "procedure F(): Text
+        var R: Record \"TR Row\" temporary;
+        begin
+            R.Truncate();
+        end;",
+    );
+    assert!(unsupported(t).contains("temporary"));
+}

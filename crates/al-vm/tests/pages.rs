@@ -173,6 +173,20 @@ codeunit 50102 "PG Evt Sub"
     local procedure OnMod(var Rec: Record "PG Row"; var xRec: Record "PG Row"; var AllowModify: Boolean) var T: Codeunit "PG Trace"; begin T.Add('evt-mod:' + xRec.Descr + '>' + Rec.Descr + ';'); AllowModify := false; end;
 }
 
+enum 50010 "PG Kind"
+{
+    value(0; Field) { Caption = 'Fields'; }
+    value(1; Block) { Caption = 'Blocks'; }
+    value(2; Plain) { }
+}
+
+page 50011 "PG Kind Page"
+{
+    PageType = Card;
+    layout { area(Content) { field(KindCtl; Kind) { Caption = 'Kind'; } } }
+    var Kind: Enum "PG Kind";
+}
+
 codeunit 50101 "PG Trace"
 {
     SingleInstance = true;
@@ -817,4 +831,38 @@ fn page_events_follow_the_triggers_and_can_veto_a_modify() {
         "F",
     );
     assert_eq!(text(r), "|evt-open;mod:>x;evt-mod:>x;qcp:Cancel;close;");
+}
+
+// handlers/TestPageEnumVariableControl_Tests.al:50-56,86-90: an Enum control resolves a SetValue text
+// by the member's caption; the bare member name of a captioned value is refused.
+#[test]
+fn an_enum_control_takes_the_caption_and_refuses_the_member_name() {
+    let body = |set: &str| {
+        format!(
+            "procedure F(): Text var TP: TestPage \"PG Kind Page\"; begin
+                TP.OpenEdit();
+                TP.KindCtl.SetValue('{set}');
+                exit(TP.KindCtl.Value());
+            end;"
+        )
+    };
+    assert_eq!(text(run(&body("Blocks"), "F")), "Blocks");
+    assert_eq!(
+        error_text(run(&body("Block"), "F")),
+        "Validation error for Field: KindCtl,  Message = 'Your entry of 'Block' is not an acceptable value for 'Kind'.'"
+    );
+}
+
+// A value that declares no caption shows, and is set by, its name (types/TestEnumCaption.al).
+#[test]
+fn an_enum_value_without_a_caption_is_set_by_its_name() {
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG Kind Page\"; begin
+            TP.OpenEdit();
+            TP.KindCtl.SetValue('Plain');
+            exit(TP.KindCtl.Value());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Plain");
 }

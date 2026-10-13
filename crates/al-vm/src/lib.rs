@@ -73,6 +73,8 @@ pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
     depth: usize,
+    /// Page handler functions running right now (`[PageHandler]`, `[ModalPageHandler]`).
+    pub(crate) page_handler_depth: usize,
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
@@ -140,6 +142,7 @@ impl Session {
             bindings: Vec::new(),
             error_finals: None,
             committed_row_version: 0,
+            page_handler_depth: 0,
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
@@ -428,22 +431,36 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
-            S::AssertError(body) => match self.exec_block(body, f) {
-                Err(Signal::Error(e)) => {
-                    // The caught error rolls the transaction back to the last commit
-                    // (record/TestRecordRenameRollback.al).
-                    self.rollback_transaction();
-                    self.last_error = e;
-                    Ok(())
+            S::AssertError(body) => {
+                // Inside a UI handler, with writes pending from before the page opened, the extent
+                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
+                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
+                // Initialize() without a Commit, runs a modal page whose handler does
+                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
+                // real BC. Rolling back to the last commit would undo it.
+                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                match self.exec_block(body, f) {
+                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
+                        "asserterror in a UI handler with writes pending from before it ran: the extent \
+                         of the rollback is not pinned"
+                            .into(),
+                    )),
+                    Err(Signal::Error(e)) => {
+                        // The caught error rolls the transaction back to the last commit
+                        // (record/TestRecordRenameRollback.al).
+                        self.rollback_transaction();
+                        self.last_error = e;
+                        Ok(())
+                    }
+                    // The message is not pinned by the corpus yet (docs/probes-needed.md).
+                    Ok(()) => Err(Signal::Error(AlError {
+                        message: "An error was expected inside an ASSERTERROR statement.".into(),
+                        code: "Dialog".into(),
+                        call_stack: String::new(),
+                    })),
+                    Err(other) => Err(other),
                 }
-                // The message is not pinned by the corpus yet (docs/probes-needed.md).
-                Ok(()) => Err(Signal::Error(AlError {
-                    message: "An error was expected inside an ASSERTERROR statement.".into(),
-                    code: "Dialog".into(),
-                    call_stack: String::new(),
-                })),
-                Err(other) => Err(other),
-            },
+            }
         }
     }
 
@@ -812,6 +829,9 @@ impl al_builtins::native::Ctx for Session {
 
     fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         Session::ref_op(self, id, receiver, args)
+    }
+    fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
+        Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
     fn commit(&mut self) -> Result<(), Signal> {
         self.commit_transaction();

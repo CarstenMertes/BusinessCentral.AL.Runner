@@ -677,7 +677,11 @@ impl<'a> Checker<'a> {
                     E::Val(t) => t,
                     E::Callable(c) => self.pick(sc, &kids[0], &c, &[], &member_name(&kids[0])),
                     E::TypeName(t) => {
-                        // Static members of a type: `"ALT Status".FromInteger(1)`.
+                        // Static members of a type: `"ALT Status".FromInteger(1)`. Lowering reads
+                        // the enum behind the type name from the receiver's recorded type.
+                        let r = kids[0].text_range();
+                        self.types
+                            .insert((sc.file, r.start().into(), r.end().into()), t.clone());
                         return match self.static_members(&t, &mname) {
                             Some(c) => E::Callable(c),
                             None => E::Val(Ty::Unknown),

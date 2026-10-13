@@ -166,6 +166,11 @@ impl Session {
         result.map(|(_, finals)| finals)
     }
 
+    /// Whether a handler function is running right now.
+    pub(crate) fn in_ui_handler(&self) -> bool {
+        self.page_handler_depth > 0 || self.ui.as_ref().is_some_and(|s| s.in_handler)
+    }
+
     /// The bound handler of `kind` for `page`, marked as used: `Unhandled UI` when there is none
     /// (corpus handlers/TestPageModalHandler_Tests.al:105, TestPageRunHandler_Tests.al:
     /// NonModalPageRunWithoutAHandlerIsRefused). BC looks the handler up before the page opens, so

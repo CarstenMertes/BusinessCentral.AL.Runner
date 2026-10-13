@@ -1307,7 +1307,10 @@ impl Session {
         let Some((hobject, hroutine, hinst)) = handler else {
             return Ok(Value::Null);
         };
-        if let Err(e) = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]) {
+        self.page_handler_depth += 1;
+        let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
+        self.page_handler_depth -= 1;
+        if let Err(e) = handled {
             st.borrow_mut().open = false;
             return Err(e);
         }
@@ -1640,10 +1643,15 @@ impl Session {
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
-            o.enum_captions
+            // An enum control resolves by caption only; a value without a caption shows its name.
+            // The bare member name of a captioned value is rejected, as on a real service tier
+            // (handlers/TestPageEnumVariableControl_Tests.al:50-56,86-90,137-140).
+            o.enum_values
                 .iter()
-                .chain(o.enum_values.iter())
-                .find(|(_, c)| c.eq_ignore_ascii_case(t))
+                .find(|(v, name)| {
+                    let shown = o.enum_captions.iter().find(|(c, _)| c == v).map_or(name, |(_, c)| c);
+                    shown.eq_ignore_ascii_case(t)
+                })
                 .map(|(v, _)| *v)
         };
         let suffix = if rec_bound {

@@ -2,6 +2,7 @@
 
 use crate::format::{FormatCtx, try_format};
 use crate::value::Value;
+use std::rc::Rc;
 
 /// The error state AL code can read back (`GetLastErrorText`, ...).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -40,6 +41,11 @@ pub trait Ctx: FormatCtx {
     /// (`RecordRef.Open#2`); the VM resolves it to the method.
     fn ref_op(&mut self, id: &str, _receiver: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id}")))
+    }
+    /// The declared values of enum object `id` as (ordinal, name), in declaration order with
+    /// extension values after them. `None` when the context has no program.
+    fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
+        None
     }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
@@ -89,6 +95,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.LowerCase#1", lowercase),
     ("Database.Commit#1", |c, _, _| c.commit().map(|_| Value::Null)),
     ("System.Clear#1", clear),
+    ("Enum.AsInteger#1", enum_as_integer),
+    ("Enum.Names#1", enum_names),
+    ("Enum.Ordinals#1", enum_ordinals),
+    ("Enum.FromInteger#1", enum_from_integer),
     ("Record.Init#1", |c, r, a| c.record("Init", r, a)),
     ("Record.Insert#1", |c, r, a| c.record("Insert", r, a)),
     ("Record.Insert#2", |c, r, a| c.record("Insert", r, a)),
@@ -427,6 +437,54 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         other => return unsupported(&format!("Clear of {other:?}")),
     };
     Ok(Value::Null)
+}
+
+/// `Enum.AsInteger()`: the ordinal (types/TestEnum.al:27-40).
+fn enum_as_integer(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    match r {
+        Some(Value::Enum(_, o)) => Ok(Value::Integer(*o)),
+        other => unsupported(&format!("AsInteger of {other:?}")),
+    }
+}
+
+/// The enum a type-level call (`"Name".Names()`) or a call on a variable names: lowering passes
+/// the enum object as the receiver value.
+fn enum_receiver(ctx: &dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<(u32, Vec<(i32, String)>), Signal> {
+    let Some(Value::Enum(id, _)) = r else {
+        return unsupported(&format!("{what} without an enum receiver"));
+    };
+    let id = *id;
+    ctx.enum_members(id)
+        .map(|m| (id, m))
+        .map_or_else(|| unsupported(&format!("{what}: this context has no enum metadata")), Ok)
+}
+
+fn list_of(items: Vec<Value>) -> Value {
+    Value::List(Rc::new(std::cell::RefCell::new(items)))
+}
+
+/// `Enum.Names()`: every declared name, the blank ordinal included
+/// (types/TestEnumNamesContracts.al:19-60). The order is the declaration order, which matches
+/// `Ordinals()` position by position; BC's order is not pinned (docs/probes-needed.md).
+fn enum_names(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let (_, members) = enum_receiver(ctx, r, "Enum.Names")?;
+    Ok(list_of(members.into_iter().map(|(_, n)| Value::Text(n)).collect()))
+}
+
+/// `Enum.Ordinals()` (session/TestSystemExtended.al:381-390, types/TestLanguageEdgeCases.al:91-105).
+fn enum_ordinals(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let (_, members) = enum_receiver(ctx, r, "Enum.Ordinals")?;
+    Ok(list_of(members.into_iter().map(|(o, _)| Value::Integer(o)).collect()))
+}
+
+/// `Enum.FromInteger(n)`: any number is carried, declared or not (types/TestEnum.al:83-91,
+/// types/TestEnumDefaultImplTests.Codeunit.al:70).
+fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let (id, _) = enum_receiver(ctx, r, "Enum.FromInteger")?;
+    match int_arg(args, 0).and_then(|n| i32::try_from(n).ok()) {
+        Some(n) => Ok(Value::Enum(id, n)),
+        None => unsupported("Enum.FromInteger with a number outside the Integer range"),
+    }
 }
 
 fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {

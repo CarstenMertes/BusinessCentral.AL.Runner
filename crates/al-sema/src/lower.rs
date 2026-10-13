@@ -1611,6 +1611,15 @@ impl Lowerer<'_> {
                     .ok_or_else(|| format!("{id} not in catalog"))?
                     .clone();
                 let receiver = match &receiver_node {
+                    // Enum metadata calls (`"Name".Names()`, `Var.Ordinals()`, `"Name".FromInteger(n)`)
+                    // receive the enum itself: its object index, as an enum constant.
+                    Some(r) if sig.receiver == "Enum" && sig.name != "AsInteger" => {
+                        let Ty::Enum(name) = self.ty_of(r) else {
+                            return Err(format!("{id}: the receiver is not an enum type"));
+                        };
+                        let object = self.resolve_obj(ObjKind::Enum, &name)?;
+                        Some(Box::new(ir::Arg::Value(ir::Expr::Const(ir::Const::Enum(object as u32, 0)))))
+                    }
                     Some(r) if sig.instance => Some(Box::new(match self.place(r) {
                         Ok(p) => ir::Arg::Ref(p),
                         Err(_) => ir::Arg::Value(self.expr(r)?),

@@ -282,3 +282,46 @@ impl Session {
         r
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_transaction_model_attribute_names_its_model() {
+        // The three models the corpus uses (record/TestTransactionModelAutoRollback.al, codeunit/TestWriteTxTestBoundary.al).
+        assert_eq!(
+            TxModel::from_attribute("[TransactionModel(TransactionModel::AutoCommit)]"),
+            Some(TxModel::AutoCommit)
+        );
+        assert_eq!(
+            TxModel::from_attribute("[TransactionModel(TransactionModel::AutoRollback)]"),
+            Some(TxModel::AutoRollback)
+        );
+        assert_eq!(
+            TxModel::from_attribute("[TransactionModel(TransactionModel::None)]"),
+            Some(TxModel::None)
+        );
+        assert_eq!(
+            TxModel::from_attribute("[transactionmodel(transactionmodel::autorollback )]"),
+            Some(TxModel::AutoRollback)
+        );
+        // Anything else, or no member at all, is not a model.
+        assert_eq!(TxModel::from_attribute("[TransactionModel(TransactionModel::Other)]"), None);
+        assert_eq!(TxModel::from_attribute("[TransactionModel]"), None);
+    }
+
+    #[test]
+    fn a_commit_behavior_attribute_names_ignore_or_error_only() {
+        assert_eq!(
+            CommitBehavior::from_attribute("[CommitBehavior(CommitBehavior::Ignore)]"),
+            Some(CommitBehavior::Ignore)
+        );
+        assert_eq!(
+            CommitBehavior::from_attribute("[CommitBehavior(CommitBehavior::Error)]"),
+            Some(CommitBehavior::Error)
+        );
+        assert_eq!(CommitBehavior::from_attribute("[CommitBehavior(CommitBehavior::Allow)]"), None);
+        assert_eq!(CommitBehavior::from_attribute("[CommitBehavior]"), None);
+    }
+}

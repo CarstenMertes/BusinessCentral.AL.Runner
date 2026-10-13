@@ -93,6 +93,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.IsEmpty#1", |c, r, a| c.record("IsEmpty", r, a)),
     ("Record.SetRange#1", |c, r, a| c.record("SetRange", r, a)),
     ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
+    // Event subscriptions are session state; the VM intercepts these ids
+    // (al-vm dispatch.rs). Registered so lowering accepts them.
+    ("Session.BindSubscription#1", vm_only),
+    ("Session.UnbindSubscription#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
@@ -125,12 +129,13 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsList#1", |_, r, _| is(r, "List")),
     ("Variant.IsDictionary#1", |_, r, _| is(r, "Dictionary")),
     ("Variant.IsCodeunit#1", |_, r, _| is(r, "Codeunit")),
-    // Kinds the value model has no variant for yet are never true.
-    ("Variant.IsRecordId#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
+    // RecordId, RecordRef and FieldRef variables are library handles named after their type.
+    ("Variant.IsRecordId#1", |_, r, _| is(r, "RecordId")),
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
-    ("Variant.IsRecordRef#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsFieldRef#1", |_, _, _| Ok(Value::Boolean(false))),
+    ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
+    ("Variant.IsFieldRef#1", |_, r, _| is(r, "FieldRef")),
+    // Kinds the value model has no variant for yet are never true.
+    ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsDotNet#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsAutomation#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
@@ -148,6 +153,10 @@ pub fn lookup(id: &str) -> Option<NativeFn> {
 /// Every registered id, for the conformance test.
 pub fn registered_ids() -> Vec<&'static str> {
     all().map(|(i, _)| *i).collect()
+}
+
+fn vm_only(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    unsupported("a builtin the VM runs itself")
 }
 
 fn unsupported<T>(what: &str) -> Result<T, Signal> {

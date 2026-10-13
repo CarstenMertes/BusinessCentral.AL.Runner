@@ -134,6 +134,11 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 .iter()
                 .map(|(v, n)| (*v as i32, n.clone()))
                 .collect(),
+            enum_captions: members[oi]
+                .enum_captions
+                .iter()
+                .map(|(v, c)| (*v as i32, c.clone()))
+                .collect(),
             table: (o.kind == ObjKind::Table)
                 .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), &routine_at)),
             rec_slot,
@@ -315,6 +320,20 @@ fn sig_tokens(n: &SyntaxNode) -> Vec<al_syntax::SyntaxToken> {
 impl Lowerer<'_> {
     fn field_pos(&self, table: usize, id: u32) -> Option<usize> {
         self.members[table].fields.iter().position(|f| f.id == id)
+    }
+
+    /// The position of field `id`, refusing the audit system fields (SystemCreatedAt/By,
+    /// SystemModifiedAt/By, ids 2000000001-4): the core has no clock or user (ADR-006), so
+    /// the runtime stamps no values into them and would read defaults.
+    fn readable_field_pos(&self, table: usize, id: u32) -> L<usize> {
+        let pos = self.field_pos(table, id).ok_or("field position")?;
+        if (2_000_000_001..=2_000_000_004).contains(&id) {
+            return Err(format!(
+                "system field {} is not stamped by the runtime yet",
+                self.members[table].fields[pos].name
+            ));
+        }
+        Ok(pos)
     }
 
     fn table_schema(
@@ -922,15 +941,7 @@ impl Lowerer<'_> {
                     .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::Field { table, id }) => {
                     let (table, id) = (*table, *id);
-                    let pos = self.field_pos(table, id).ok_or("field position")?;
-                    // SystemCreatedAt/By and SystemModifiedAt/By are not stamped on writes yet
-                    // (the core has no clock or user, ADR-006): refuse rather than read defaults.
-                    if (2_000_000_001..=2_000_000_004).contains(&id) {
-                        return Err(format!(
-                            "system field {} is not stamped by the runtime yet",
-                            self.members[table].fields[pos].name
-                        ));
-                    }
+                    let pos = self.readable_field_pos(table, id)?;
                     let base = match n.kind() {
                         SyntaxKind::MemberExpr => self.place(&n.children().next().ok_or("member base")?)?,
                         _ => ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
@@ -1070,15 +1081,26 @@ impl Lowerer<'_> {
         }
     }
 
-    /// Lower-case attribute names of the routine at `offset` in `object`.
-    fn routine_attributes(&self, object: usize, offset: usize) -> Vec<String> {
+    /// (lower-case name, argument constants) of each attribute of the routine
+    /// at `offset` in `object`.
+    fn routine_attributes(&self, object: usize, offset: usize) -> Vec<(String, Vec<ir::Const>)> {
         self.ws
             .object_ast(object)
             .syntax()
             .descendants()
             .filter_map(ast::Routine::cast)
             .find(|r| usize::from(r.syntax().text_range().start()) == offset)
-            .map(|r| r.attributes().map(|a| a.name().to_ascii_lowercase()).collect())
+            .map(|r| {
+                r.attributes()
+                    .map(|a| {
+                        let args = a
+                            .args()
+                            .map(|l| l.children().filter_map(|e| self.constant(&e).ok()).collect())
+                            .unwrap_or_default();
+                        (a.name().to_ascii_lowercase(), args)
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -1122,13 +1144,7 @@ impl Lowerer<'_> {
                 }
                 self.calls.push((object, routine));
                 let attrs = self.routine_attributes(object, offset);
-                if attrs
-                    .iter()
-                    .any(|a| ["integrationevent", "businessevent", "internalevent"].contains(&a.as_str()))
-                {
-                    return Err("event publishing is not implemented yet".into());
-                }
-                let try_call = attrs.iter().any(|a| a == "tryfunction");
+                let try_call = attrs.iter().any(|(a, _)| a == "tryfunction");
                 Ok(ir::Expr::Call {
                     object,
                     routine,
@@ -1167,7 +1183,7 @@ impl Lowerer<'_> {
                     let field_param =
                         p.name.to_ascii_lowercase().starts_with("field") || p.name.eq_ignore_ascii_case("FromField");
                     if let (true, Some(Res::Field { table, id })) = (field_param, self.res(a).cloned()) {
-                        let pos = self.field_pos(table, id).ok_or("field position")?;
+                        let pos = self.readable_field_pos(table, id)?;
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
                         continue;
                     }
@@ -1338,6 +1354,24 @@ mod tests {
             vec!["builtin System.Sleep#1 is not implemented".to_string()]
         );
         assert!(l.unsupported[0][oi].is_empty());
+    }
+
+    #[test]
+    fn event_publisher_calls_lower_including_isolated_ones() {
+        let (_, l) = lower_src(
+            "codeunit 50100 C {
+                [IntegrationEvent(false, false)] procedure OnA() begin end;
+                [BusinessEvent(false)] procedure OnB() begin end;
+                [InternalEvent(false)] procedure OnC() begin end;
+                [IntegrationEvent(false, false, true)] procedure OnIso() begin end;
+                [BusinessEvent(false, true)] procedure OnIsoB() begin end;
+                procedure Plain() begin OnA(); OnB(); OnC(); end;
+                procedure Iso() begin OnIso(); OnIsoB(); end;
+            }",
+        );
+        let reasons = |n: &str| l.unsupported[0][routine(&l, n).0].clone();
+        assert!(reasons("Plain").is_empty(), "{:?}", reasons("Plain"));
+        assert!(reasons("Iso").is_empty(), "{:?}", reasons("Iso"));
     }
 
     #[test]
@@ -1598,6 +1632,51 @@ table 50921 H { fields { field(1; K; Integer) { }
         let local = l.program.objects.iter().position(|o| o.id == Some(70002)).unwrap();
         let f = flow(&l, "Base", "Rows");
         assert_eq!(f.calc.map(|c| c.table), Some(local), "{:?}", f.calc_refusal);
+    }
+
+    #[test]
+    fn option_fields_carry_their_option_members() {
+        // types/TestOption.al:Option_Format_ReturnsName -- Format(option=1) is 'Draft'.
+        let (_, l) = lower_src(
+            "table 50901 K { fields {
+                field(1; A; Integer) { }
+                field(2; O; Option) { OptionMembers = \" \",Draft,\"In Work\"; }
+                field(3; P; Option) { OptionMembers = ,Alpha; }
+                field(4; Q; Option) { }
+            } }",
+        );
+        let t = table_ir(&l);
+        assert_eq!(
+            t.fields[1].ty,
+            RtType::Option(vec![" ".into(), "Draft".into(), "In Work".into()])
+        );
+        assert_eq!(t.fields[2].ty, RtType::Option(vec!["".into(), "Alpha".into()]));
+        assert_eq!(t.fields[3].ty, RtType::Option(vec!["".into()]));
+    }
+
+    #[test]
+    fn audit_system_fields_are_refused_until_they_are_written() {
+        // record/TestBCSystemFieldContracts.al needs a clock and the user's security id for
+        // SystemCreatedAt/By and SystemModifiedAt/By; neither exists yet, and a default
+        // value would silently pass for a populated one.
+        let src = format!(
+            "{TABLE}\ncodeunit 50100 C {{
+                procedure Read() var R: Record \"ALT T\"; D: DateTime; begin D := R.SystemModifiedAt; end;
+                procedure Filter() var R: Record \"ALT T\"; begin R.SetRange(SystemCreatedBy); end;
+                procedure Ok() var R: Record \"ALT T\"; G: Guid; begin G := R.SystemId; end;
+            }}"
+        );
+        let (_, l) = lower_src(&src);
+        let find = |n: &str| l.program.objects[1].routines.iter().position(|r| r.name == n).unwrap();
+        assert_eq!(
+            l.unsupported[1][find("Read")],
+            vec!["system field SystemModifiedAt is not stamped by the runtime yet".to_string()]
+        );
+        assert_eq!(
+            l.unsupported[1][find("Filter")],
+            vec!["system field SystemCreatedBy is not stamped by the runtime yet".to_string()]
+        );
+        assert!(l.unsupported[1][find("Ok")].is_empty());
     }
 
     #[test]

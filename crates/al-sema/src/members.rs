@@ -57,6 +57,8 @@ pub struct ProcSig {
 pub struct Members {
     pub fields: Vec<FieldInfo>,
     pub enum_values: Vec<(u32, String)>,
+    /// `Caption` of enum values that declare one, by ordinal.
+    pub enum_captions: Vec<(u32, String)>,
     pub procedures: Vec<ProcSig>,
 }
 
@@ -86,6 +88,7 @@ pub fn build(ws: &Workspace) -> Vec<Members> {
             let target = &mut out[t];
             target.fields.extend(ext.fields);
             target.enum_values.extend(ext.enum_values);
+            target.enum_captions.extend(ext.enum_captions);
             target.procedures.extend(ext.procedures);
         }
     }
@@ -101,6 +104,26 @@ const SYSTEM_FIELDS: &[(u32, &str, Ty)] = &[
     (2000000004, "SystemModifiedBy", Ty::Guid),
     (2000000005, "SystemRowVersion", Ty::BigInteger),
 ];
+
+/// The text of the first `'…'` literal in a property value (`'It''s', Locked = true` → `It's`).
+fn first_string_literal(value: &str) -> Option<String> {
+    let rest = value.trim().strip_prefix('\'')?;
+    let mut out = String::new();
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            if chars.peek() == Some(&'\'') {
+                chars.next();
+                out.push('\'');
+            } else {
+                return Some(out);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    None
+}
 
 fn own_members(ws: &Workspace, i: usize) -> Members {
     let obj = ws.object_ast(i);
@@ -161,6 +184,13 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
             let args = sec.args();
             if let (Some(id), Some(v)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) {
                 m.enum_values.push((id, v.clone()));
+                let caption = sec
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("Caption"))
+                    .and_then(|p| first_string_literal(&p.value_text()));
+                if let Some(c) = caption {
+                    m.enum_captions.push((id, c));
+                }
             }
         }
     }

@@ -38,7 +38,7 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p al-test-cli
 
-      # Fails the job on any regression against metrics/passing.txt (exit 1),
+      # Fails the job on any regression against metrics/<major>/passing.txt (exit 1),
       # or when the oracle and the corpus pin disagree (exit 2).
       - name: Corpus pass rate
         run: |

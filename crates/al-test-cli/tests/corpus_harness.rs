@@ -70,7 +70,8 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
         ),
     )
     .unwrap();
-    std::fs::copy(root().join("oracle/junit-27.5.xml"), dir.path().join("junit-27.5.xml")).unwrap();
+    std::fs::create_dir(dir.path().join("27")).unwrap();
+    std::fs::copy(root().join("oracle/27/junit.xml"), dir.path().join("27/junit.xml")).unwrap();
     let (code, _, err) = cli(&["--oracle", bad.to_str().unwrap()]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("corpus pin"), "{err}");
@@ -95,4 +96,28 @@ fn markdown_summary_is_written() {
     let (code, _, _) = cli(&["--markdown", md.to_str().unwrap()]);
     assert_eq!(code, 0);
     assert!(std::fs::read_to_string(md).unwrap().contains("| **overall** | 4836 |"));
+}
+
+#[test]
+fn the_first_line_names_the_target() {
+    require_corpus();
+    let (code, out, err) = cli(&["--bc-version", "27"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().next(), Some("target: BC 27.5, runtime 16.0"), "{out}");
+}
+
+#[test]
+fn an_unknown_bc_version_exits_2_and_lists_the_known_ones() {
+    require_corpus();
+    let (code, _, err) = cli(&["--bc-version", "99"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("no oracle for BC 99") && err.contains("27.5"), "{err}");
+}
+
+#[test]
+fn bc_26_is_not_supported() {
+    require_corpus();
+    let (code, _, err) = cli(&["--bc-version", "26"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("27 and later only"), "{err}");
 }

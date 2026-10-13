@@ -3,18 +3,9 @@
 //! Exit codes: 0 ok, 1 regression against the baseline, 2 setup error
 //! (oracle and corpus disagree, unreadable input, bad arguments).
 
-use al_test_cli::{corpus, oracle, output, report, runner::Runner, runtime};
+use al_test_cli::{config, corpus, oracle, output, report, runner::Runner, runtime, target};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-
-#[derive(serde::Deserialize)]
-struct OracleConfig {
-    bc_version: String,
-    corpus_commit: String,
-    junit: String,
-    corpus_repo: String,
-    corpus_app: String,
-}
 
 #[derive(Default)]
 struct Args {
@@ -25,6 +16,8 @@ struct Args {
     markdown: Option<PathBuf>,
     junit: Option<PathBuf>,
     update_baseline: bool,
+    /// `--bc-version PREFIX`: which oracle to run (default: the newest).
+    bc_version: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -44,6 +37,7 @@ fn parse_args() -> Result<Args, String> {
             "--markdown" => a.markdown = Some(val()?),
             "--junit" => a.junit = Some(val()?),
             "--update-baseline" => a.update_baseline = true,
+            "--bc-version" => a.bc_version = Some(val()?.to_string_lossy().into_owned()),
             _ => return Err(format!("unknown argument `{flag}`")),
         }
     }
@@ -77,8 +71,8 @@ fn run() -> Result<ExitCode, String> {
     let args = parse_args()?;
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
     let oracle_path = args.oracle.clone().unwrap_or_else(|| root.join("oracle/oracle.toml"));
-    let cfg: OracleConfig =
-        toml::from_str(&read(&oracle_path)?).map_err(|e| format!("{}: {e}", oracle_path.display()))?;
+    let cfg = config::OracleFile::parse(&read(&oracle_path)?).map_err(|e| format!("{}: {e}", oracle_path.display()))?;
+    let version = cfg.select(args.bc_version.as_deref())?;
 
     let pinned = git_head(&root.join(&cfg.corpus_repo))?;
     if pinned != cfg.corpus_commit {
@@ -88,12 +82,23 @@ fn run() -> Result<ExitCode, String> {
         ));
     }
 
-    let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&cfg.junit);
+    let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
     let cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
 
-    // ADR-015: the symbols the corpus CI defines for BC 27.
-    let symbols = al_version::corpus_symbols(27);
+    // ADR-015 3.2: the corpus runs as the oracle's BC version with the corpus app's runtime.
+    let leg = version.bc();
+    let chosen = al_version::choose_target(
+        Some(&leg),
+        &target::read_app_versions(&root.join(&cfg.corpus_app))?,
+        &leg,
+    )
+    .map_err(|e| e.to_string())?;
+    println!("target: BC {}, runtime {}", chosen.target.bc, chosen.target.runtime);
+    for note in &chosen.notes {
+        eprintln!("note: {note}");
+    }
+    let symbols = al_version::corpus_symbols(chosen.target.bc.major);
     let corpus_tests = root
         .join(&cfg.corpus_app)
         .parent()
@@ -132,7 +137,7 @@ fn run() -> Result<ExitCode, String> {
     }
     println!(
         "BC {}: {}/{} pass ({:.1}%), {} fail, {} not run",
-        cfg.bc_version,
+        version.bc_version,
         rep.overall.pass,
         rep.overall.total,
         rep.overall.rate() * 100.0,
@@ -140,10 +145,7 @@ fn run() -> Result<ExitCode, String> {
         rep.overall.not_run
     );
 
-    let baseline_path = args
-        .baseline
-        .clone()
-        .unwrap_or_else(|| root.join("metrics/passing.txt"));
+    let baseline_path = args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline));
     let baseline =
         report::parse_baseline(&read(&baseline_path)?).map_err(|e| format!("{}: {e}", baseline_path.display()))?;
     let regressed = report::regressions(&baseline, &outcome);

@@ -3,6 +3,9 @@
 //! A leaf crate: no dependencies, no OS access (ADR-006). Everything that
 //! depends on the Business Central version is a function of a [`Target`].
 
+mod choose;
+pub use choose::{AppVersions, Chosen, TargetError, choose_target};
+
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -47,7 +50,7 @@ pub struct Runtime {
     pub minor: u16,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Target {
     pub bc: BcVersion,
     pub runtime: Runtime,

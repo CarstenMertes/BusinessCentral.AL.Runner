@@ -1,6 +1,13 @@
-bc_version = "27.5"
-corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
-workflow_run = 38306086475
-junit = "junit-27.5.xml"
+# One [[version]] table per BC major (ADR-015). The oracle of a major is the CI leg of its
+# newest minor. All JUnit files must come from the CI run of `corpus_commit`.
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
+corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
+
+[[version]]
+major = 27
+bc_version = "27.5"
+workflow_run = 38306086475
+artifact_id = 11772863083
+junit = "27/junit.xml"
+baseline = "metrics/27/passing.txt"

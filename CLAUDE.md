@@ -16,7 +16,9 @@ Read `docs/handoff.md` (the spike brief) and `docs/adr/README.md` first.
    merged there, then bump the submodule + oracle and implement.
 4. **Unsupported means a compile-time error.** A builtin that is not
    implemented fails in `al-sema` with a diagnostic naming it, never at runtime.
-5. **Seams change only through an ADR** in `docs/adr/`.
+5. **Seams change only through an ADR** in `docs/adr/`. Draft it as
+   Proposed and ask the project owner (AskUserQuestion) to accept it before
+   building on it.
 6. **Match BC where it is observable; improve on it everywhere else**
    (ADR-009). Values, errors, database state, trigger and event order, host
    interaction and whether code compiles must match real BC. Internals,

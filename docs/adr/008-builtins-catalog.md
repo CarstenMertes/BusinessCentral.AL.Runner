@@ -1,6 +1,6 @@
 # ADR-008: Builtins catalog — signatures from the docs, implementations by id
 
-- Status: Proposed
+- Status: Accepted (project owner, 2026-10-13)
 - Date: 2026-10-13
 
 ## Context

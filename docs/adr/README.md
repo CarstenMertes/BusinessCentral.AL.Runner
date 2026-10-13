@@ -17,4 +17,4 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [006](006-core-purity.md) | No OS access in core crates; WASM-compatible | Accepted |
 | [007](007-oracle-and-ratchet.md) | Oracle = corpus CI JUnit for BC 27.5; passing set is a ratchet | Accepted |
 | [009](009-observable-equivalence.md) | The contract is observable behaviour; internals, performance, diagnostics and tooling may improve on BC | Accepted |
-| [008](008-builtins-catalog.md) | Builtin signatures generated from the docs; implementations registered by overload id; value model in al-builtins | **Proposed** — needs review |
+| [008](008-builtins-catalog.md) | Builtin signatures generated from the docs; implementations registered by overload id; value model in al-builtins | Accepted |

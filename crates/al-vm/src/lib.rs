@@ -14,6 +14,7 @@ mod autoinc;
 mod dispatch;
 pub mod events;
 mod flowfields;
+mod hostvalues;
 mod interfaces;
 mod pages;
 mod queries;
@@ -143,6 +144,16 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The clock and the identity (ADR-006).
+    pub(crate) host: al_host::Host,
+    /// The time `Sleep` has waited, added to every clock reading.
+    pub(crate) waited_ms: i64,
+    /// The instant of the last system stamp (milliseconds since the Unix epoch).
+    pub(crate) last_stamp: i64,
+    /// The date `WorkDate(Date)` set; today until then.
+    pub(crate) work_date: Option<i32>,
+    /// The language `GlobalLanguage(Id)` set.
+    pub(crate) global_language: i32,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,
@@ -154,8 +165,20 @@ pub struct Session {
 pub const MAX_CALL_DEPTH: usize = 400;
 
 impl Session {
+    /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
     pub fn new(engine: Arc<Engine>) -> Session {
+        Session::with_host(engine, al_host::Host::default())
+    }
+
+    /// A session whose clock and identity come from `host`.
+    pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
+        let (company, user) = (host.identity.company_name(), host.identity.user_id());
         Session {
+            global_language: host.identity.global_language(),
+            host,
+            waited_ms: 0,
+            last_stamp: i64::MIN / 2,
+            work_date: None,
             engine,
             last_error: AlError::default(),
             depth: 0,
@@ -169,10 +192,7 @@ impl Session {
             truncate_undo: Default::default(),
             validating: Vec::new(),
             try_depth: 0,
-            cx: al_data::AccessContext {
-                company: "CRONUS".into(),
-                user: "USER".into(),
-            },
+            cx: al_data::AccessContext { company, user },
             ret_used: true,
             bindings: Vec::new(),
             error_finals: None,
@@ -997,6 +1017,13 @@ impl al_builtins::native::Ctx for Session {
     }
     fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
+    }
+    fn session_locale(&self) -> Option<(i32, i32, String)> {
+        Some((
+            self.global_language,
+            self.host.identity.locale_id(),
+            self.host.identity.time_zone(),
+        ))
     }
     fn module_at_frame(&self, depth: usize) -> Option<al_builtins::value::ModuleInfoState> {
         let at = self.frames.len().checked_sub(1 + depth)?;

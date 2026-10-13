@@ -128,10 +128,25 @@ fn profile_system_scope(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value])
     }
 }
 
-fn init_refused(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Out {
-    unsupported(
-        "SessionSettings.Init reads the language, locale and time zone of the running session, which the runtime does not have (host value, ADR-013)",
-    )
+/// `Init()` loads the language, locale and time zone of the running session and replaces what
+/// the instance held (session/TestSessionSettings.al:371-455). The company stays empty, as BC 27.5
+/// leaves it (the same test, "MEASURED"). The profile properties are not pinned: they go back to
+/// "nobody set", which a read refuses.
+fn init(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    let Some((language, locale, zone)) = c.session_locale() else {
+        return unsupported(
+            "SessionSettings.Init reads the language, locale and time zone of the running session, which this context does not have (host value, ADR-013)",
+        );
+    };
+    with_settings(r, |s| {
+        *s = SessionSettingsState {
+            language_id: Some(language),
+            locale_id: Some(locale),
+            time_zone: Some(zone),
+            ..SessionSettingsState::default()
+        }
+    })
+    .map(|()| Value::Null)
 }
 
 fn request_update_refused(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Out {
@@ -223,7 +238,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("SessionSettings", "ProfileAppId") => profile_app_id,
         ("SessionSettings", "Company") => company,
         ("SessionSettings", "ProfileSystemScope") => profile_system_scope,
-        ("SessionSettings", "Init") => init_refused,
+        ("SessionSettings", "Init") => init,
         ("SessionSettings", "RequestSessionUpdate") => request_update_refused,
         ("Notification", "Message") => n_message,
         ("Notification", "Scope") => n_scope,

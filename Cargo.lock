@@ -87,6 +87,7 @@ dependencies = [
  "al-data",
  "al-ir",
  "al-sema",
+ "al-version",
  "rust_decimal",
 ]
 

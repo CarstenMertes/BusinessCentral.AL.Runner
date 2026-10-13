@@ -71,7 +71,7 @@ impl CorpusRuntime {
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
-        let engine = Engine::new(lowered.program.clone(), blocked);
+        let engine = Engine::with_target(lowered.program.clone(), blocked, target.cloned());
         let mut outcomes = std::collections::HashMap::new();
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {

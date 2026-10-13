@@ -37,10 +37,21 @@ pub struct Engine {
     pub tables: Vec<Option<al_data::TableDef>>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
+    /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
+    pub target: Option<al_version::Target>,
 }
 
 impl Engine {
     pub fn new(program: ir::Program, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
+        Engine::with_target(program, blocked, None)
+    }
+
+    /// An engine that runs as `target`: version-gated behaviour follows it (ADR-015 3.4).
+    pub fn with_target(
+        program: ir::Program,
+        blocked: Vec<Vec<Option<String>>>,
+        target: Option<al_version::Target>,
+    ) -> Arc<Engine> {
         let tables = program
             .objects
             .iter()
@@ -70,6 +81,7 @@ impl Engine {
             blocked,
             tables,
             events,
+            target,
         })
     }
 }

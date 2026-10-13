@@ -99,7 +99,15 @@ fn to_number(d: Decimal, ty: &RtType, drop_small_fraction: bool) -> Result<Value
     }
 }
 
+/// The field id of `SystemRowVersion` (al-sema `members.rs`).
+const SYSTEM_ROW_VERSION: u32 = 2_000_000_005;
+
 impl Session {
+    /// Whether this run has the newer behaviour of `gate` (ADR-015 3.4).
+    pub(crate) fn has(&self, gate: al_version::Gate) -> bool {
+        al_version::gate_on(self.engine.target.as_ref(), gate)
+    }
+
     /// Why a field cannot be handed to `CalcFields`, or `Ok` when it is a
     /// FlowField with a formula this runtime can calculate.
     pub(crate) fn check_calc_field(&mut self, table: usize, pos: usize) -> Result<(), Signal> {
@@ -138,9 +146,32 @@ impl Session {
                     return unsupported(format!("sum or average over a {} field", type_name(&s.ty)));
                 }
                 // Corpus record/TestCalcFormulaValidationTests.Codeunit.al:96-130: the FlowField
-                // and its source must have the very same type, refused when calculated. (BC 29
-                // relaxes Integer/BigInteger; the oracle is BC 27.5.)
-                if std::mem::discriminant(&f.ty) != std::mem::discriminant(&s.ty) {
+                // and its source must have the very same type, refused when calculated.
+                // Gate FlowFieldSumIntegerIntoBigInteger (BC 29, same file :205,227): a sum of an
+                // Integer source into a BigInteger FlowField is accepted.
+                let relaxed = self.has(al_version::Gate::FlowFieldSumIntegerIntoBigInteger);
+                let integer_pair = |a: &RtType, b: &RtType| {
+                    matches!(
+                        (a, b),
+                        (RtType::BigInteger, RtType::Integer) | (RtType::Integer, RtType::BigInteger)
+                    )
+                };
+                if relaxed
+                    && integer_pair(&f.ty, &s.ty)
+                    && !(calc.method == ir::CalcMethod::Sum && f.ty == RtType::BigInteger)
+                {
+                    // The file's header comment says BC 29 also accepts BigInteger into Integer,
+                    // but only the sum of an Integer source into a BigInteger FlowField is asserted.
+                    return unsupported(
+                        "BC 29 accepts this Integer/BigInteger pair, but the corpus pins only a sum of an Integer source into a BigInteger FlowField",
+                    );
+                }
+                if std::mem::discriminant(&f.ty) != std::mem::discriminant(&s.ty)
+                    && !(relaxed
+                        && calc.method == ir::CalcMethod::Sum
+                        && f.ty == RtType::BigInteger
+                        && s.ty == RtType::Integer)
+                {
                     let stcap = self.table_caption(calc.table);
                     return error(format!(
                         "The following fields must have the same type:\n\nField: {} <-- {}\nTable: {tcap} <-- {stcap}\nType: {} <-- {}",
@@ -153,6 +184,21 @@ impl Session {
             }
             ir::CalcMethod::Min | ir::CalcMethod::Max | ir::CalcMethod::Lookup => {
                 let s = &src[calc.field.expect("has a field")];
+                // Gate FlowFieldMinMaxOverRowVersionRefused (BC 29): the aggregate comes back from
+                // SQL as a timestamp and BC refuses it. lookup() still calculates. Corpus
+                // record/TestCalcFormulaSystemFieldsTests.Codeunit.al:298-318,353-361 pin the
+                // sentence and the Field, Type and SQL type fragments; the layout between them is
+                // assumed (docs/probes-needed.md).
+                if calc.method != ir::CalcMethod::Lookup
+                    && s.id == SYSTEM_ROW_VERSION
+                    && self.has(al_version::Gate::FlowFieldMinMaxOverRowVersionRefused)
+                {
+                    return error(format!(
+                        "Table content in the {tcap} table on SQL Server contains a value that is not compatible with the corresponding data type.\n\nField: {}\nType: {}\nSQL type: timestamp",
+                        f.name,
+                        type_name(&f.ty)
+                    ));
+                }
                 if !same_kind(&f.ty, &s.ty) {
                     return unsupported("min, max or lookup into a field of another type");
                 }

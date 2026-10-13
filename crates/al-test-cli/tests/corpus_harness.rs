@@ -160,8 +160,9 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     assert!(!json.exists(), "all-versions writes only per-version files");
     assert!(out.contains("Version comparison"), "{out}");
     assert!(out.contains("oracle: same cases in every version"), "{out}");
-    // The BC 29 differences the runtime does not model yet show up here.
-    assert!(out.contains("runtime:") && out.contains("differ"), "{out}");
+    // The three known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same
+    // cases on every version. A new difference would be listed here.
+    assert!(out.contains("runtime: same cases in every version"), "{out}");
 }
 
 #[test]

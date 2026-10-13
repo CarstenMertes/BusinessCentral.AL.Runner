@@ -37,3 +37,8 @@ reviewed it.
   `probes-needed.md`. The probe agent pins these first. Examples: the
   "transaction is stopped" error, nested test codeunits, CommitBehavior Error,
   and "part not found" (the runtime uses ID 0).
+- 2026-10-13, ADR-011: source positions in the IR are `Stmt::Pos` marker statements and a
+  `SrcPos` table; call expressions use their statement's position.
+- 2026-10-13, ADR-011: `GetLastErrorCallStack` uses AL Runner v2's measured frame format
+  (relative line, quoted object name, app tail) for codeunits and tables. Other object types
+  stay refused. Only substrings of it are pinned by the corpus.

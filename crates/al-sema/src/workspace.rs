@@ -118,6 +118,9 @@ pub struct SourceFileData {
     pub green: rowan::GreenNode,
     pub namespace: Option<String>,
     pub usings: Vec<String>,
+    /// Byte ranges of the text the compiler added to the file (page expression routines). The
+    /// green tree holds that text; source positions leave it out.
+    pub synthetic: Vec<ByteRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +141,12 @@ pub struct ObjectSym {
     /// Offset of the object node in its file.
     pub offset: usize,
 }
+
+/// A byte range of a parsed text.
+type ByteRange = (usize, usize);
+
+/// A file's text with the page expression routines added, and where they are.
+type Expanded = (String, Vec<ByteRange>);
 
 pub struct Workspace {
     pub apps: Vec<AppSource>,
@@ -166,32 +175,36 @@ impl Workspace {
         // all cores. `collect` keeps the input order, so the sequential merge
         // below sees files, diagnostics and objects exactly as a serial load would.
         // Expression-valued page properties become routines first (ADR-012).
-        let expanded: Vec<Vec<Option<String>>> = apps
+        let expanded: Vec<Vec<Option<Expanded>>> = apps
             .iter()
             .map(|app| {
                 app.files
                     .iter()
-                    .map(|(_, src)| crate::pages::expand(src, symbols))
+                    .map(|(_, src)| crate::pages::expand_ranges(src, symbols))
                     .collect()
             })
             .collect();
-        let inputs: Vec<(usize, &str, &str)> =
-            apps.iter()
-                .enumerate()
-                .flat_map(|(ai, app)| {
-                    let expanded = &expanded[ai];
-                    app.files.iter().enumerate().map(move |(fi, (path, src))| {
-                        (ai, path.as_str(), expanded[fi].as_deref().unwrap_or(src.as_str()))
+        let inputs: Vec<(usize, &str, &str, &[ByteRange])> = apps
+            .iter()
+            .enumerate()
+            .flat_map(|(ai, app)| {
+                let expanded = &expanded[ai];
+                app.files
+                    .iter()
+                    .enumerate()
+                    .map(move |(fi, (path, src))| match &expanded[fi] {
+                        Some((text, added)) => (ai, path.as_str(), text.as_str(), added.as_slice()),
+                        None => (ai, path.as_str(), src.as_str(), &[][..]),
                     })
-                })
-                .collect();
+            })
+            .collect();
         let parsed: Vec<ParsedFile> = inputs
             .par_iter()
-            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, src)| {
+            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, src, _)| {
                 parse_file(src, symbols, cache)
             })
             .collect();
-        for ((ai, path, _), file) in inputs.into_iter().zip(parsed) {
+        for ((ai, path, _, added), file) in inputs.into_iter().zip(parsed) {
             for e in &file.errors {
                 ws.diagnostics.push(Diagnostic {
                     file: path.to_string(),
@@ -207,6 +220,7 @@ impl Workspace {
                 green: file.green,
                 namespace: file.namespace.clone(),
                 usings: file.usings,
+                synthetic: added.to_vec(),
             });
             for (kind, id, name, offset) in file.objects {
                 ws.add_object(ObjectSym {

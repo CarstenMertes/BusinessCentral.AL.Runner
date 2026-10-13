@@ -71,6 +71,56 @@ needs more.
   request page, layout or output (those are refused).
 - **Culture.** Fixed en-US, which matches the oracle.
 
+## Source positions
+
+Lowering records where statements and routines sit in the source. Coverage, call
+stacks, value capture, loop tracking and a debugger all start from this table.
+
+**The data** (`al-ir`):
+
+- `Program::positions` is a table of `SrcPos { file, line, col, end_line, object, routine }`.
+  A position is named by its index, a `u32`. Lines and columns count from 1; the
+  column is a byte column. Lines are the author's lines: the compiler's added page
+  expression routines do not move them.
+- `Program::sources[pos.file]` gives `{ app, path }`. The path is relative to the app.
+  `pos.object` and `pos.routine` index `Program::objects` and `Object::routines`, so a
+  position names the routine or trigger it is in without anything else. The app is
+  `Object::app`.
+- `Routine::pos` is the position of the `procedure` or `trigger` keyword (after
+  attributes and modifiers). It is `NO_POS` for a routine the compiler made up.
+- `Stmt::Pos(id)` is a marker statement. It sits directly before every statement it
+  describes, in the same list, nested statements included. Blocks (`begin ... end`) have
+  none, because lowering flattens them. A statement that fails to lower leaves no marker.
+- Call expressions have no position of their own. A call is found through the statement
+  that contains it, so a call on a later line of a multi-line statement reports the
+  statement's first line. Giving `Expr::Call` and `Expr::Builtin` an optional position
+  later is additive; nothing needs it yet.
+
+**From an executing statement to its position:**
+
+1. `Session::call_stack` (`al-vm/src/lib.rs`) holds one `CallFrame { routine, pos }` per
+   routine on the call stack, parallel to `Session::frames` (which holds the object).
+2. Running `Stmt::Pos(id)` sets `pos` of the top frame. After a call returns, the caller's
+   frame still holds its own statement. `while` and `repeat` set it back to the loop's own
+   position after each pass, so the loop condition is attributed to the loop line.
+3. `program.pos(frame.pos)` gives the `SrcPos`; `program.sources[pos.file]` gives the file.
+   `program.pos(routine.pos)` gives the routine header.
+4. The code that wants to see every statement as it starts (coverage, value capture,
+   a debugger) hooks the `S::Pos` arm of `Session::exec`. The hit is "position `id` ran".
+   Nothing else has to change.
+
+**Where the positions go wrong, so nobody trusts them too far:** the table has no entry
+for page expression routines (`pos` is `NO_POS`, the call stack marks such a frame
+unreadable), and the table is only built when lowering is asked for positions
+(`lower` does; `lower_with_positions(.., false)` does not, which keeps unit tests of
+lowered bodies free of markers).
+
+**Error call stacks** (`al-vm/src/callstack.rs`). An error does not carry its stack from
+the point where it is raised. Each routine it leaves adds one line (innermost first),
+and the routine that catches it (`asserterror`, a TryFunction call, a guarded
+`Codeunit.Run`) adds the last. The line format, and which parts the corpus pins, are in
+that file's header and in `docs/probes-needed.md`.
+
 ## Budgets (tests, run in CI in release)
 
 | Budget | Limit | Today |

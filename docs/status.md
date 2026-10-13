@@ -117,8 +117,10 @@ Answered on 2026-10-13 and recorded in ADR-013:
 
 ## Known issues and debt
 
-- `GetLastErrorCallStack` returns a marker that refuses to be read; real call
-  stacks need source lines in the IR.
+- `GetLastErrorCallStack` lists real AL frames now, in the format AL Runner v2
+  measured on BC. The frame text beyond what the corpus pins is an assumption
+  (`docs/probes-needed.md`). Frames of pages, reports, queries, xmlports, extensions and field
+  triggers are still refused. `ErrorInfo.Callstack()` is not implemented.
 - Red/green discipline slipped in places during the parallel build-out (the
   first cut of event dispatch, later FlowField formula tests, some TestPage
   fixes). Those tests were checked by mutation, but were never seen red.

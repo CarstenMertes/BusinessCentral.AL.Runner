@@ -23,6 +23,12 @@ pub struct Lowered {
 }
 
 pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowered {
+    lower_with_positions(ws, members, checked, true)
+}
+
+/// `lower`, choosing whether statements carry source positions (`ir::Stmt::Pos`). Unit tests
+/// that check the shape of lowered bodies turn them off.
+pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &CheckResult, positions: bool) -> Lowered {
     let catalog = al_builtins::catalog::Catalog::load();
     // Routine numbering: every procedure and trigger node of an object, in source order.
     let routine_nodes: Vec<Vec<ast::Routine>> = (0..ws.objects.len())
@@ -52,10 +58,22 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                     resources: Vec::new(),
                 })
                 .collect(),
+            ..Default::default()
         },
         unsupported: Vec::new(),
         calls: Vec::new(),
     };
+    if positions {
+        out.program.sources = ws
+            .files
+            .iter()
+            .map(|f| ir::SourceFile {
+                app: f.app as u32,
+                path: f.path.clone(),
+            })
+            .collect();
+    }
+    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
     // The table whose record is the implicit `Rec` of each object, and each table's extensions.
     let mut table_of: Vec<Option<usize>> = vec![None; ws.objects.len()];
     let mut extensions: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -330,6 +348,15 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             xmlports: &xml_irs,
             reports: &report_irs,
             attrs: Default::default(),
+            positions: std::mem::take(&mut out.program.positions),
+            lines: positions.then(|| {
+                line_cache
+                    .entry(o.file)
+                    .or_insert_with(|| std::rc::Rc::new(FileLines::new(ws, o.file)))
+                    .clone()
+            }),
+            emit_pos: false,
+            routine_idx: 0,
         };
         let mut globals = Vec::new();
         let mut global_reasons = Vec::new();
@@ -477,7 +504,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         let mut routines = Vec::new();
         let mut unsupported = Vec::new();
         let mut calls = Vec::new();
-        for r in &routine_nodes[oi] {
+        for (ri, r) in routine_nodes[oi].iter().enumerate() {
+            lw.routine_idx = ri;
             lw.reasons = global_reasons.clone();
             lw.calls.clear();
             // A trigger of a data item runs with the item's record as its `Rec`.
@@ -555,6 +583,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             report_ext: ext_irs[oi].clone(),
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
+        out.program.positions = std::mem::take(&mut lw.positions);
         out.unsupported.push(unsupported);
         out.calls.push(calls);
     }
@@ -793,6 +822,73 @@ struct Lowerer<'a> {
     reports: &'a [Option<ir::Report>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+    /// `Program::positions` while the object is lowered (taken from and given back to the program).
+    positions: Vec<ir::SrcPos>,
+    /// The line table of the object's file; `None` when positions are off.
+    lines: Option<std::rc::Rc<FileLines>>,
+    /// Statements of the routine being lowered get position markers (off for made-up routines).
+    emit_pos: bool,
+    /// Index of the routine being lowered in its object.
+    routine_idx: usize,
+}
+
+/// Line starts of a source file, for turning offsets into the author's line and column.
+struct FileLines {
+    file: u32,
+    /// Offset of the first byte of every line of the file as the author wrote it.
+    starts: Vec<u32>,
+    /// Byte ranges the compiler added to the parsed text (page expression routines).
+    synthetic: Vec<(usize, usize)>,
+}
+
+impl FileLines {
+    fn new(ws: &Workspace, file: usize) -> FileLines {
+        let f = &ws.files[file];
+        // Files of an app are loaded in order, so the n-th file of the app is `apps[app].files[n]`.
+        let first = ws.files.iter().position(|g| g.app == f.app).unwrap_or(file);
+        let text = ws.apps[f.app].files[file - first].1.as_bytes();
+        let mut starts = vec![0u32];
+        starts.extend(
+            text.iter()
+                .enumerate()
+                .filter(|(_, b)| **b == b'\n')
+                .map(|(i, _)| i as u32 + 1),
+        );
+        FileLines {
+            file: file as u32,
+            starts,
+            synthetic: f.synthetic.clone(),
+        }
+    }
+
+    /// The 1-based (line, column) the author sees at `offset` of the parsed text.
+    fn locate(&self, offset: usize) -> (u32, u32) {
+        let added: usize = self
+            .synthetic
+            .iter()
+            .take_while(|(_, b)| *b <= offset)
+            .map(|(a, b)| b - a)
+            .sum();
+        let offset = offset - added;
+        let line = self.starts.partition_point(|&s| s as usize <= offset) - 1;
+        (line as u32 + 1, (offset - self.starts[line] as usize) as u32 + 1)
+    }
+}
+
+/// The first and last token of `n` that are not whitespace or comments.
+fn significant_span(n: &SyntaxNode) -> Option<(usize, usize)> {
+    let mut first = n.first_token()?;
+    while first.kind().is_trivia() {
+        first = first.next_token()?;
+    }
+    let mut last = n.last_token()?;
+    while last.kind().is_trivia() {
+        last = last.prev_token()?;
+    }
+    Some((
+        usize::from(first.text_range().start()),
+        usize::from(last.text_range().end()).max(usize::from(first.text_range().start())),
+    ))
 }
 
 /// An interface type anywhere inside a collection type.
@@ -1604,6 +1700,12 @@ impl Lowerer<'_> {
     }
 
     fn routine(&mut self, r: &ast::Routine) -> ir::Routine {
+        // A routine the compiler made up (a page expression) has no source.
+        self.emit_pos = self.lines.is_some() && !crate::pages::is_synthetic(&r.name());
+        let pos = match r.keyword_offset().filter(|_| self.emit_pos) {
+            Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
+            None => ir::NO_POS,
+        };
         self.locals.clear();
         self.local_labels.clear();
         let mut locals = Vec::new();
@@ -1705,7 +1807,34 @@ impl Lowerer<'_> {
             ret,
             ret_local,
             body,
+            pos,
         }
+    }
+
+    /// Records the position of the code at `start..end` of the file being lowered and returns its id.
+    fn add_pos(&mut self, start: usize, end: usize) -> Option<u32> {
+        let lines = self.lines.as_ref()?;
+        let (line, col) = lines.locate(start);
+        let (end_line, _) = lines.locate(end.saturating_sub(1).max(start));
+        let p = ir::SrcPos {
+            file: lines.file,
+            line,
+            col,
+            end_line,
+            object: self.oi as u32,
+            routine: self.routine_idx as u32,
+        };
+        self.positions.push(p);
+        Some(self.positions.len() as u32 - 1)
+    }
+
+    /// The marker for statement `n`, when the routine being lowered has positions.
+    fn mark(&mut self, n: &SyntaxNode) -> Option<ir::Stmt> {
+        if !self.emit_pos {
+            return None;
+        }
+        let (start, end) = significant_span(n)?;
+        self.add_pos(start, end).map(ir::Stmt::Pos)
     }
 
     /// Statement children of a block-like node, flattened.
@@ -1819,7 +1948,10 @@ impl Lowerer<'_> {
             other => Err(format!("statement {other:?} is not lowered yet")),
         };
         match r {
-            Ok(s) => vec![s],
+            Ok(s) => match self.mark(n) {
+                Some(m) => vec![m, s],
+                None => vec![s],
+            },
             Err(e) => {
                 self.reasons.push(e);
                 Vec::new()
@@ -2413,7 +2545,7 @@ impl Lowerer<'_> {
     }
 }
 
-/// Load, check and lower in one go.
+/// Load, check and lower in one go (with source positions).
 pub fn compile(
     apps: Vec<crate::workspace::AppSource>,
     symbols: &std::collections::BTreeSet<String>,
@@ -2431,15 +2563,37 @@ mod tests {
     use crate::workspace::AppSource;
 
     fn lower_src(src: &str) -> (Workspace, Lowered) {
-        compile(
+        lower_files(&[("f.al", src)], false)
+    }
+
+    /// Like `lower_src`, with source positions (the way the runner compiles).
+    fn lower_pos(src: &str) -> (Workspace, Lowered) {
+        lower_files(&[("f.al", src)], true)
+    }
+
+    fn lower_files(files: &[(&str, &str)], positions: bool) -> (Workspace, Lowered) {
+        let ws = Workspace::load(
             vec![AppSource {
                 id: "a".into(),
                 name: "a".into(),
                 dependencies: vec![],
-                files: vec![("f.al".into(), src.into())],
+                files: files.iter().map(|(p, s)| (p.to_string(), s.to_string())).collect(),
             }],
             &Default::default(),
-        )
+        );
+        let members = crate::members::build(&ws);
+        let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+        let lowered = lower_with_positions(&ws, &members, &checked, positions);
+        (ws, lowered)
+    }
+
+    /// (line, column) of the position a `Stmt::Pos` marker names.
+    fn at(l: &Lowered, s: &ir::Stmt) -> (u32, u32) {
+        let ir::Stmt::Pos(id) = s else {
+            panic!("not a position marker: {s:?}")
+        };
+        let p = l.program.pos(*id).expect("a position in the table");
+        (p.line, p.col)
     }
 
     fn routine<'a>(l: &'a Lowered, name: &str) -> (usize, &'a ir::Routine) {
@@ -2449,6 +2603,114 @@ mod tests {
             .enumerate()
             .find(|(_, r)| r.name == name)
             .expect("routine")
+    }
+
+    const POS_SRC: &str = "codeunit 50100 C
+{
+    [Scope('OnPrem')]
+    procedure P()
+    var
+        x: Integer;
+    begin
+        // a comment before the statement
+        x := 1;
+        if x = 1 then
+            x := 2;
+        x :=
+            3;
+    end;
+
+    trigger OnRun()
+    begin
+        P();
+    end;
+}
+";
+
+    #[test]
+    fn statements_carry_their_line_and_column() {
+        let (_, l) = lower_pos(POS_SRC);
+        let (_, p) = routine(&l, "P");
+        let b = &p.body;
+        assert_eq!(b.len(), 6, "{b:?}");
+        assert_eq!(at(&l, &b[0]), (9, 9));
+        assert!(matches!(b[1], ir::Stmt::Assign(..)));
+        assert_eq!(at(&l, &b[2]), (10, 9));
+        let ir::Stmt::If(_, then_s, _) = &b[3] else {
+            panic!("{:?}", b[3])
+        };
+        assert_eq!(at(&l, &then_s[0]), (11, 13));
+        // A statement that wraps starts on its first line and ends on its last.
+        assert_eq!(at(&l, &b[4]), (12, 9));
+        let ir::Stmt::Pos(id) = b[4] else { panic!() };
+        assert_eq!(l.program.pos(id).unwrap().end_line, 13);
+    }
+
+    #[test]
+    fn a_routine_position_is_its_keyword_not_its_attribute() {
+        let (_, l) = lower_pos(POS_SRC);
+        let (oi, p) = routine(&l, "P");
+        let pos = l.program.pos(p.pos).expect("routine position");
+        assert_eq!(
+            (pos.line, pos.col),
+            (4, 5),
+            "the `procedure` line, not the [Scope] line"
+        );
+        let (_, t) = routine(&l, "OnRun");
+        assert_eq!(l.program.pos(t.pos).map(|p| p.line), Some(16));
+        // A statement's position names its object and routine.
+        let ir::Stmt::Pos(id) = p.body[0] else { panic!() };
+        let sp = l.program.pos(id).unwrap();
+        assert_eq!((sp.object as usize, sp.routine), (oi, 0));
+        assert_eq!(l.program.sources[sp.file as usize].path, "f.al");
+        assert_eq!(l.program.sources[sp.file as usize].app, 0);
+    }
+
+    #[test]
+    fn without_positions_the_bodies_have_no_markers() {
+        let (_, l) = lower_src(POS_SRC);
+        let (_, p) = routine(&l, "P");
+        assert!(p.body.iter().all(|s| !matches!(s, ir::Stmt::Pos(_))));
+        assert!(l.program.positions.is_empty());
+        assert_eq!(p.pos, ir::NO_POS);
+    }
+
+    // The page expansion appends routines at the end of the page, which moves the lines of
+    // every object that follows it in the file. Positions use the author's lines.
+    #[test]
+    fn expanding_a_page_does_not_move_the_lines_of_the_next_object() {
+        let src = "page 50100 P
+{
+    layout { area(Content) { field(A; Rec.X) { Visible = not Hide; } } }
+    var Hide: Boolean;
+}
+
+codeunit 50101 C2
+{
+    procedure Q()
+    begin
+        Hide();
+    end;
+    local procedure Hide() begin end;
+}
+";
+        let (_, l) = lower_pos(src);
+        let c2 = l.program.objects.iter().find(|o| o.name == "C2").unwrap();
+        let q = c2.routines.iter().find(|r| r.name == "Q").unwrap();
+        assert_eq!(l.program.pos(q.pos).map(|p| p.line), Some(9));
+        let ir::Stmt::Pos(id) = q.body[0] else {
+            panic!("{:?}", q.body)
+        };
+        assert_eq!(l.program.pos(id).map(|p| p.line), Some(11));
+        // The made-up routine has no source position.
+        let page = l.program.objects.iter().find(|o| o.name == "P").unwrap();
+        let synthetic = page
+            .routines
+            .iter()
+            .find(|r| crate::pages::is_synthetic(&r.name))
+            .unwrap();
+        assert_eq!(synthetic.pos, ir::NO_POS);
+        assert!(synthetic.body.iter().all(|s| !matches!(s, ir::Stmt::Pos(_))));
     }
 
     #[test]

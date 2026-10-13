@@ -29,6 +29,9 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Blob(_), T::Library(n)) if n.eq_ignore_ascii_case("Blob") => v,
         (v @ Value::Enum(..), T::Enum(_)) => v,
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
+        (Value::Option(o, _), T::Integer) => Value::Integer(o),
+        (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
+        (Value::BigInteger(n), T::Duration) => Value::Duration(n),
         (Value::Integer(i), T::Option(m)) => Value::Option(i, m.clone().into()),
         // Numbers.
         (v, T::Integer | T::BigInteger | T::Decimal | T::Byte | T::Char)
@@ -240,6 +243,24 @@ mod tests {
             matches!(convert(d("2.5"), &RtType::Integer), Err(Signal::Unsupported(_))),
             "rounding rule not pinned yet"
         );
+    }
+
+    #[test]
+    fn convert_option_to_integer_and_integer_to_duration() {
+        // json/TestJsonComplete.al JsonObject_GetOption_ReturnsInteger: `Opt: Integer; Opt := JObj.GetOption('o')`;
+        // JsonArray_GetDuration_ReturnsDuration: `Dur: Duration; Dur := 86400000`.
+        assert!(matches!(
+            convert(Value::Option(2, std::rc::Rc::from(vec![])), &RtType::Integer),
+            Ok(Value::Integer(2))
+        ));
+        assert!(matches!(
+            convert(Value::Integer(86_400_000), &RtType::Duration),
+            Ok(Value::Duration(86_400_000))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(5), &RtType::Duration),
+            Ok(Value::Duration(5))
+        ));
     }
 
     #[test]

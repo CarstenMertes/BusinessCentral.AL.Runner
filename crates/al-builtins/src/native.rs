@@ -1,6 +1,6 @@
 //! Native builtin implementations, registered by catalog overload id (ADR-008).
 
-use crate::format::{FormatCtx, format};
+use crate::format::{FormatCtx, try_format};
 use crate::value::Value;
 
 /// The error state AL code can read back (`GetLastErrorText`, ...).
@@ -186,7 +186,9 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
-    Ok(Value::Text(format(&args[0], len, std, ctx)))
+    try_format(&args[0], len, std, ctx)
+        .map(Value::Text)
+        .map_err(Signal::Unsupported)
 }
 
 fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -238,7 +240,7 @@ pub fn substitute(template: &str, args: &[Value], ctx: &dyn FormatCtx) -> Result
             if let Some(d) = chars.peek().and_then(|d| d.to_digit(10)).filter(|d| *d >= 1) {
                 chars.next();
                 match args.get(d as usize - 1) {
-                    Some(v) => out.push_str(&format(v, 0, 0, ctx)),
+                    Some(v) => out.push_str(&try_format(v, 0, 0, ctx).map_err(Signal::Unsupported)?),
                     None => return unsupported("StrSubstNo placeholder without an argument"),
                 }
                 continue;
@@ -401,6 +403,20 @@ mod tests {
             )),
             "1"
         );
+    }
+
+    #[test]
+    fn formats_that_are_not_pinned_are_refused_not_panics() {
+        // Format of a Duration is not pinned by the corpus yet: Unsupported, so the test is
+        // reported as not run instead of a panic taking the whole codeunit down.
+        assert!(matches!(
+            call("System.Format#1", vec![Value::Duration(86_400_000)]),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(
+            call("Text.StrSubstNo#1", vec![t("%1"), Value::Duration(5)]),
+            Err(Signal::Unsupported(_))
+        ));
     }
 
     #[test]

@@ -74,3 +74,11 @@ reviewed it.
   placeholder `CRONUS`.
 - 2026-10-13, ADR-013, host values: temporary records are not stamped with the system
   created and modified fields.
+- 2026-10-14, ADR-017, error collection: closing a collecting scope that holds several errors raises
+  `Multiple errors occurred. <first message>`; the corpus pins only the leading words and the first message.
+- 2026-10-14, ADR-017, error collection: `HasCollectedErrors()` is true outside a scope, as the platform
+  computes it.
+- 2026-10-14, ADR-017, media: Media and MediaSet fields hold a Guid and the objects live in a session store, a
+  stand-in for the Tenant Media tables until ADR-013 lands.
+- 2026-10-14, ADR-017, partial records: `AddLoadFields` and `SetBaseLoadFields` on a full load answer false.
+- 2026-10-14, ADR-017, call depth: the ceiling is 1000 nested calls; beyond it the run is refused.

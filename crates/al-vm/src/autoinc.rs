@@ -93,8 +93,21 @@ impl Session {
                 call_stack: String::new(),
             }))
         };
+        // Texts and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_Refusals_Texts.
         if rec.borrow().temporary {
-            return unsupported("Truncate on a temporary record (the guards BC runs are not pinned yet)");
+            return Err(Signal::Error(AlError {
+                message: "Temporary tables does not support truncation.".into(),
+                code: "DB:Ok".into(),
+                call_stack: String::new(),
+            }));
+        }
+        let has_media = self.engine.program.objects[t.object as usize].table.as_ref().is_some_and(|s| {
+            s.fields
+                .iter()
+                .any(|f| matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet")))
+        });
+        if has_media {
+            return error("Truncate is not supported when the field has Media and/or MediaSet fields.");
         }
         // Corpus record/TestRecordTruncateTryScope.al:34: the scope is inherited by called frames.
         if self.try_depth > 0 {
@@ -111,15 +124,8 @@ impl Session {
         }
         let cx = self.cx.clone();
         let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e:?}"));
-        if !filters.is_empty() {
-            // Whether a filter limits what Truncate deletes is not pinned (the corpus filter
-            // keeps the only row): proceed only when both readings agree.
-            let all = al_data::Store::count(&self.store, &cx, t, &[]).map_err(store_err)?;
-            let kept = al_data::Store::count(&self.store, &cx, t, &filters).map_err(store_err)?;
-            if kept != all {
-                return unsupported("Truncate with a filter that excludes rows (what it deletes is not pinned yet)");
-            }
-        }
+        // A filter on a normal field limits what Truncate deletes (corpus
+        // record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_WithFilterOnANormalField_RemovesOnlyTheFilteredRows).
         let slot = self.counter_slot(t);
         if let Some(counter) = self.autoinc.get(&slot).copied() {
             self.truncate_undo.entry(slot.clone()).or_insert(counter);
@@ -129,7 +135,7 @@ impl Session {
         if reset {
             self.autoinc.insert(slot, 0);
         }
-        al_data::Store::delete_all(&mut self.store, &cx, t, &[]).map_err(store_err)?;
+        al_data::Store::delete_all(&mut self.store, &cx, t, &filters).map_err(store_err)?;
         Ok(Value::Boolean(true))
     }
 
@@ -162,13 +168,17 @@ impl Session {
             return Ok(());
         };
         if t.keys[0].contains(&field) && number(&old[field]) != number(&new[field]) {
+            // Layout and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+            // AutoIncrement_Rename_FullTextAndCode (the key shown is the new one).
+            let br = crate::records::BR;
             return Err(Signal::Error(AlError {
                 message: format!(
-                    "You cannot change the value of an AutoIncrement field.\n\nField: {}\nTable: {}",
+                    "You cannot change the value of an AutoIncrement field.{br}{br}Field: {}{br}Table: {}{br}{br}Identification fields and values:{br}{}",
                     t.fields[field].name,
-                    self.caption(t)
+                    self.caption(t),
+                    self.identification(t, new)?
                 ),
-                code: String::new(),
+                code: "DB:ModifyOnIdentityField".into(),
                 call_stack: String::new(),
             }));
         }

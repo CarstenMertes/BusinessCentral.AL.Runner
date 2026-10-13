@@ -14,6 +14,9 @@ use std::rc::Rc;
 
 pub(crate) type Rec = Rc<RefCell<RecordState>>;
 
+/// BC's line break inside error texts: a carriage return and a backslash.
+pub(crate) const BR: &str = "\r\\";
+
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
@@ -72,7 +75,7 @@ impl Session {
 
     /// `No.='A'` style identification of a row's primary key. A key value whose format is not
     /// pinned refuses.
-    fn identification(&self, t: &TableDef, fields: &[Value]) -> Result<String, Signal> {
+    pub(crate) fn identification(&self, t: &TableDef, fields: &[Value]) -> Result<String, Signal> {
         let mut parts = Vec::new();
         for &i in &t.keys[0] {
             let v = al_builtins::format::try_format(&fields[i], 0, 0, self).map_err(Signal::Unsupported)?;
@@ -358,9 +361,16 @@ impl Session {
             .collect()
     }
 
-    /// Whether inserting `row` would repeat the values of a unique secondary key (a row with
-    /// the same primary key is the duplicate-key failure instead).
-    fn violates_unique_key(&mut self, rec: &Rec, t: &TableDef, row: &[Value]) -> Result<bool, Signal> {
+    /// The first unique secondary key whose values `row` repeats in another row. `own` is the
+    /// primary key of the row being rewritten (Modify, Rename), which does not count. For an
+    /// Insert, a row with the same primary key is the duplicate-key failure instead.
+    fn unique_violation(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        row: &[Value],
+        own: Option<&[Value]>,
+    ) -> Result<Option<usize>, Signal> {
         let unique: Vec<usize> = {
             let schema = self.engine.program.objects[t.object as usize]
                 .table
@@ -371,18 +381,27 @@ impl Session {
                 .collect()
         };
         if unique.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let cx = self.cx.clone();
-        let pk = t.primary_key(row);
-        if self
-            .store_for(rec)
-            .get(&cx, t, &pk)
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
-            .is_some()
-        {
-            return Ok(false);
+        if own.is_none() {
+            let pk = t.primary_key(row);
+            if self
+                .store_for(rec)
+                .get(&cx, t, &pk)
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                .is_some()
+            {
+                return Ok(None);
+            }
         }
+        let current = match own {
+            Some(pk) => self
+                .store_for(rec)
+                .get(&cx, t, pk)
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?,
+            None => None,
+        };
         for k in unique {
             let filters: Vec<FieldFilter> = t.keys[k]
                 .iter()
@@ -392,45 +411,44 @@ impl Session {
                     group: 0,
                 })
                 .collect();
-            let n = self
+            let mut n = self
                 .store_for(rec)
                 .count(&cx, t, &filters)
                 .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            // The row being rewritten matches itself when its key values do not change.
+            if let Some(old) = &current {
+                if t.keys[k].iter().all(|&f| ops::compare_keys(&[old[f].clone()], &[row[f].clone()])) {
+                    n = n.saturating_sub(1);
+                }
+            }
             if n > 0 {
-                return Ok(true);
+                return Ok(Some(k));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// The refusal of a unique index; only the start of BC's message is pinned.
-    fn fail_unique(&mut self, t: &TableDef) -> Result<Value, Signal> {
+    fn fail_unique(&mut self, t: &TableDef, key: usize, row: &[Value]) -> Result<Value, Signal> {
         if self.ret_used {
             return Ok(Value::Boolean(false));
         }
+        // The fields of the violated key with their values (corpus
+        // record/TestCalcFieldsTruncateUniqueContracts.al:UniqueIndex_Violation_FullTextAndCode_...).
+        let mut parts = Vec::new();
+        for &i in &t.keys[key] {
+            let v = al_builtins::format::try_format(&row[i], 0, 0, self).map_err(Signal::Unsupported)?;
+            parts.push(format!("{}='{}'", t.fields[i].name, v));
+        }
         Err(Signal::Error(AlError {
             message: format!(
-                "There is already a record in table {} that has the same values in a unique index.",
-                self.caption(t)
+                "There is already a record in table {} that has the same values in a unique index for the following fields: {}",
+                self.caption(t),
+                parts.join(",")
             ),
-            code: String::new(),
+            code: "DB:RecordExists".into(),
             call_stack: String::new(),
         }))
-    }
-
-    /// Unique secondary keys are only enforced on Insert, so other writes to such tables are refused.
-    pub(crate) fn check_unique_keys(&self, t: &TableDef) -> Result<(), Signal> {
-        let schema = self.engine.program.objects[t.object as usize]
-            .table
-            .as_ref()
-            .expect("table");
-        if schema.unique_keys.iter().skip(1).any(|u| *u) {
-            return unsupported(format!(
-                "write to {}: unique secondary keys are not enforced yet",
-                t.name
-            ));
-        }
-        Ok(())
     }
 
     /// Whether an insert or modify of `t` would run table code (a trigger, an extension trigger
@@ -749,9 +767,6 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
-                if !rec.borrow().auto_calc.is_empty() {
-                    return unsupported("Clear after SetAutoCalcFields (what resets it is not pinned yet)");
-                }
                 if rec.borrow().temporary {
                     return unsupported("Clear of a temporary record (table reset not pinned yet)");
                 }
@@ -843,7 +858,7 @@ impl Session {
                 let row = rec.borrow().fields.clone();
                 // A unique secondary key refuses the row after its AutoIncrement value was taken
                 // (corpus record/TestAutoIncrementExplicitKey.al:131,163).
-                if self.violates_unique_key(rec, &t, &row)? {
+                if let Some(unique_key) = self.unique_violation(rec, &t, &row, None)? {
                     Self::restore_row_version(rec, old_version);
                     Self::unstamp(rec, stamped);
                     if let Some(a) = auto {
@@ -853,7 +868,7 @@ impl Session {
                             self.note_explicit_key(&t, a, &row);
                         }
                     }
-                    return self.fail_unique(&t);
+                    return self.fail_unique(&t, unique_key, &row);
                 }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
@@ -884,7 +899,6 @@ impl Session {
             }
             "Modify" => {
                 self.check_hooks(&t, "Modify")?;
-                self.check_unique_keys(&t)?;
                 let run = arg_bool(args, 0)?;
                 let pk = t.primary_key(&rec.borrow().fields);
                 let stored = self
@@ -913,7 +927,7 @@ impl Session {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(AlError {
                             message: format!(
-                                "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again. Identification fields and values: {}",
+                                "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again.{BR}{BR}Identification fields and values:{BR}{BR}{}",
                                 self.caption(&t),
                                 identification
                             ),
@@ -949,6 +963,13 @@ impl Session {
                 let mut row = rec.borrow().fields.clone();
                 for (i, v) in kept {
                     row[i] = v;
+                }
+                // A unique secondary key refuses the write after the trigger (corpus
+                // record/TestCalcFieldsTruncateUniqueContracts.al:UniqueIndex_Violation_..., Modify).
+                if let Some(unique_key) = self.unique_violation(rec, &t, &row, Some(&pk))? {
+                    Self::restore_row_version(rec, old_version);
+                    Self::unstamp(rec, stamped);
+                    return self.fail_unique(&t, unique_key, &row);
                 }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
@@ -1218,9 +1239,8 @@ impl Session {
                 Ok(Value::Null)
             }
             "Reset" => {
-                if !rec.borrow().auto_calc.is_empty() {
-                    return unsupported("Reset after SetAutoCalcFields (whether it keeps them is not pinned yet)");
-                }
+                // SetAutoCalcFields survives Reset and Clear (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+                // SetAutoCalcFields_SurvivesResetAndClear).
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
                 r.key = 0;
@@ -1288,7 +1308,6 @@ impl Session {
                     // temporary Rename but loses one persisted with Modify; no model here does both.
                     return unsupported("Rename of a temporary record with a Blob field");
                 }
-                self.check_unique_keys(&t)?;
                 // Fields that relate to this table follow the rename; a temporary record has none.
                 let refs = if rec.borrow().temporary {
                     Vec::new()
@@ -1337,6 +1356,10 @@ impl Session {
                 let _ = self.bump_row_version(&t, rec);
                 let _ = self.stamp_rename(&t, rec);
                 let row = rec.borrow().fields.clone();
+                if let Some(unique_key) = self.unique_violation(rec, &t, &row, Some(&old_pk))? {
+                    rec.borrow_mut().fields = old.clone();
+                    return self.fail_unique(&t, unique_key, &row);
+                }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 // A rename to the key the row has succeeds and writes the row again, which is what
                 // stamps it (record/TestRecordSystemId.al:752-775).

@@ -76,6 +76,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             file: o.file,
             globals: HashMap::new(),
             locals: HashMap::new(),
+            global_labels: HashMap::new(),
+            local_labels: HashMap::new(),
             reasons: Vec::new(),
             calls: Vec::new(),
         };
@@ -83,7 +85,11 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         let mut global_reasons = Vec::new();
         for v in obj.var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+            let label = v.type_ref().as_ref().and_then(label_text);
             for n in v.names() {
+                if let Some(l) = &label {
+                    lw.global_labels.insert(n.to_lowercase(), l.clone());
+                }
                 match lw.rt(&ty) {
                     Ok(rt) => {
                         lw.globals.insert(n.to_lowercase(), globals.len());
@@ -200,6 +206,20 @@ fn time_literal(text: &str) -> Option<i64> {
     Some(((h * 60 + m) * 60 + s) * 1000 + ms + 1)
 }
 
+/// The text of a `Label '...'` declaration, quotes undoubled.
+fn label_text(t: &ast::TypeRef) -> Option<String> {
+    if !t.type_name().eq_ignore_ascii_case("label") {
+        return None;
+    }
+    let tok = t
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .find(|k| k.kind() == SyntaxKind::StringLit)?;
+    let text = tok.text();
+    Some(text[1..text.len() - 1].replace("''", "'"))
+}
+
 struct Lowerer<'a> {
     /// Global slot of the implicit `Rec` of the current object.
     rec_slot: Option<usize>,
@@ -213,6 +233,9 @@ struct Lowerer<'a> {
     file: usize,
     globals: HashMap<String, usize>,
     locals: HashMap<String, usize>,
+    /// Declared text of Label variables, by lowercase name; reads lower to that constant.
+    global_labels: HashMap<String, String>,
+    local_labels: HashMap<String, String>,
     reasons: Vec<String>,
     calls: Vec<(usize, usize)>,
 }
@@ -374,6 +397,7 @@ impl Lowerer<'_> {
 
     fn routine(&mut self, r: &ast::Routine) -> ir::Routine {
         self.locals.clear();
+        self.local_labels.clear();
         let mut locals = Vec::new();
         let mut by_var = Vec::new();
         let add = |lw: &mut Self, name: String, ty: Ty, locals: &mut Vec<ir::Slot>| match lw.rt(&ty) {
@@ -414,8 +438,18 @@ impl Lowerer<'_> {
         }
         for v in r.local_var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+            let label = v.type_ref().as_ref().and_then(label_text);
             for n in v.names() {
+                if let Some(l) = &label {
+                    self.local_labels.insert(n.to_lowercase(), l.clone());
+                }
                 add(self, n, ty.clone(), &mut locals);
+            }
+        }
+        for a in r.attributes() {
+            let n = a.name();
+            if n.eq_ignore_ascii_case("CommitBehavior") || n.eq_ignore_ascii_case("ErrorBehavior") {
+                self.reasons.push(format!("[{n}] is not implemented yet"));
             }
         }
         let body = match r.body() {
@@ -809,6 +843,12 @@ impl Lowerer<'_> {
             },
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
+                Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
+                    Ok(ir::Expr::Const(ir::Const::Text(self.local_labels[&name].clone())))
+                }
+                Some(Res::Global(name)) if self.global_labels.contains_key(&name) => {
+                    Ok(ir::Expr::Const(ir::Const::Text(self.global_labels[&name].clone())))
+                }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },
             other => Err(format!("expression {other:?} `{}` is not lowered yet", n.text())),

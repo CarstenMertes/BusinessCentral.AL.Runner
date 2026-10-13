@@ -396,3 +396,40 @@ fn manual_subscribers_that_nothing_binds_do_not_block_writes() {
     let inst = s.instance(oi);
     assert!(matches!(s.call(oi, 0, inst, vec![]), Ok((Value::Integer(1), _))));
 }
+
+#[test]
+fn extension_field_triggers_do_not_block_other_writes() {
+    let src = format!("{TABLE}\ntableextension 50102 X extends \"ALT T\" {{ fields {{ field(50000; Ext; Integer) {{ trigger OnValidate() begin Log := 'ext'; end; }} }} }}
+        codeunit 50100 C {{ procedure F(): Text var R: Record \"ALT T\"; begin R.\"No.\" := 'A'; R.Insert(); R.Validate(Ext, 1); R.DeleteAll(); exit(R.Log + Format(R.Count())); end; }}");
+    let (_, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let mut s = Session::new(Engine::new(l.program, blocked));
+    let inst = s.instance(oi);
+    assert_eq!(text(s.call(oi, 0, inst, vec![]).map(|(v, _)| v)), "ext0");
+}
+
+#[test]
+fn writes_assign_increasing_row_versions() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; V1: BigInteger; V2: BigInteger; begin
+            R.\"No.\" := 'A'; R.Insert(); R.Get('A'); V1 := R.SystemRowVersion;
+            R.Grp := 1; R.Modify(); R.Get('A'); V2 := R.SystemRowVersion;
+            exit(Format(V1 > 0) + Format(V2 > V1));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesYes");
+}

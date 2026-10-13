@@ -221,10 +221,13 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
             };
             if let Some(why) = why {
                 al_data::Store::rollback(session.store_mut());
-                skipped.push((
-                    tables_touched(lowered, oi, ri),
-                    format!("install codeunit {} could not run: {why}", o.name),
-                ));
+                // Subscribers to events the installer raises are not in its static calls,
+                // but they are what it would have written through.
+                let mut touched = tables_touched(lowered, oi, ri);
+                for (so, sr) in subscribers_reached(lowered, oi, ri) {
+                    touched.extend(tables_touched(lowered, so, sr));
+                }
+                skipped.push((touched, format!("install codeunit {} could not run: {why}", o.name)));
             }
         }
         al_builtins::native::Ctx::commit(session).expect("commit");
@@ -253,6 +256,64 @@ fn tables_touched(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<
         stack.extend(lowered.calls[o][r].iter().copied());
     }
     out
+}
+
+/// Subscriber routines (object, routine) bound to an event publisher that
+/// `routine` of `object` can reach through static calls.
+fn subscribers_reached(lowered: &Lowered, object: usize, routine: usize) -> Vec<(usize, usize)> {
+    const EVENTS: [&str; 3] = ["IntegrationEvent", "BusinessEvent", "InternalEvent"];
+    let objs = &lowered.program.objects;
+    let mut published = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(object, routine)];
+    while let Some((o, r)) = stack.pop() {
+        if !seen.insert((o, r)) {
+            continue;
+        }
+        let rt = &objs[o].routines[r];
+        if rt
+            .attributes
+            .iter()
+            .any(|a| EVENTS.iter().any(|e| a.name.eq_ignore_ascii_case(e)))
+        {
+            published.insert((o, rt.name.to_lowercase()));
+        }
+        stack.extend(lowered.calls[o][r].iter().copied());
+    }
+    let mut out = Vec::new();
+    for (so, obj) in objs.iter().enumerate() {
+        for (sr, r) in obj.routines.iter().enumerate() {
+            let hit = r
+                .attributes
+                .iter()
+                .filter(|a| a.name.eq_ignore_ascii_case("EventSubscriber"))
+                .any(|a| {
+                    let Some((target, event)) = subscriber_target(&a.text) else {
+                        return false;
+                    };
+                    published.iter().any(|(po, ev)| {
+                        let p = &objs[*po];
+                        *ev == event
+                            && (p.name.eq_ignore_ascii_case(&target) || p.id.is_some_and(|id| id.to_string() == target))
+                    })
+                });
+            if hit {
+                out.push((so, sr));
+            }
+        }
+    }
+    out
+}
+
+/// (publisher object name or id, lower-case event name) from
+/// `[EventSubscriber(ObjectType::Codeunit, Codeunit::"Name", 'Event', ...)]`.
+fn subscriber_target(text: &str) -> Option<(String, String)> {
+    let args = text.split_once('(')?.1;
+    let mut parts = args.split(',');
+    parts.next()?;
+    let object = parts.next()?.rsplit("::").next()?.trim().trim_matches('"').to_string();
+    let event = parts.next()?.trim().trim_matches('\'').to_lowercase();
+    Some((object, event))
 }
 
 /// Why routine `routine` of `object` cannot run: the first reason found in
@@ -403,6 +464,25 @@ mod tests {
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure A() var R: Record S; begin if R.Count() <> 2 then Error('install did not run'); end; }");
         assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    }
+
+    #[test]
+    fn a_blocked_installer_also_blocks_tests_on_tables_its_event_subscribers_touch() {
+        // install/TestInstallEventDispatch_*.al: the installer raises an event whose
+        // subscriber seeds a table the installer never names; skipping the installer
+        // must not let tests on that table run against an unseeded store.
+        let o = outcomes(
+            "table 60900 Seed { fields { field(1; K; Code[10]) { } } }
+            codeunit 60904 Pub { [IntegrationEvent(false, false)] procedure OnSeed() begin end; }
+            codeunit 60905 Sub {
+                [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnSeed', '', false, false)]
+                local procedure Seed() var R: Record Seed; begin R.Insert(); end; }
+            codeunit 60901 Inst { Subtype = Install;
+                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin P.OnSeed(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
+        );
+        assert!(matches!(&o[0].1, Outcome::NotRun(r) if r.contains("install")), "{o:?}");
     }
 
     #[test]

@@ -318,3 +318,21 @@ fn create_guid_gives_distinct_non_null_guids() {
     );
     assert_eq!(text(run(&src, "F", vec![])), "YesNoYes");
 }
+
+#[test]
+fn commit_and_error_behavior_attributes_are_unsupported() {
+    let src = cu("[CommitBehavior(CommitBehavior::Ignore)] procedure G() begin end; procedure F() begin G(); end;");
+    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("CommitBehavior")));
+}
+
+#[test]
+fn labels_hold_their_text() {
+    // Label variables evaluate to their declared text, global or local, with or without
+    // properties (error-handling/TestCommitBehaviorAttribute.al raises Error(UnrelatedErr)
+    // and matches the text).
+    let src = cu("var G: Label 'glob %1', Locked = true;
+         procedure P(): Text
+         var L: Label 'it''s local', Comment = 'x';
+         begin exit(StrSubstNo(G, 1) + '|' + L); end;");
+    assert_eq!(text(run(&src, "P", vec![])), "glob 1|it's local");
+}

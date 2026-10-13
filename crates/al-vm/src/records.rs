@@ -126,9 +126,22 @@ impl Session {
                 t.name
             ));
         }
+        // Only the extension's table-level triggers for this operation matter;
+        // its field OnValidate triggers already run through Validate.
+        let op_triggers: &[&str] = match op {
+            "Insert" => &["OnBeforeInsert", "OnInsert", "OnAfterInsert"],
+            "Modify" => &["OnBeforeModify", "OnModify", "OnAfterModify"],
+            "Delete" | "DeleteAll" => &["OnBeforeDelete", "OnDelete", "OnAfterDelete"],
+            "Rename" => &["OnBeforeRename", "OnRename", "OnAfterRename"],
+            "Validate" => &["OnBeforeValidate", "OnAfterValidate"],
+            _ => &[],
+        };
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             for &e in &schema.extensions {
-                if self.engine.program.objects[e].routines.iter().any(|r| r.is_trigger) {
+                let hit = self.engine.program.objects[e].routines.iter().any(|r| {
+                    r.is_trigger && r.field.is_none() && op_triggers.iter().any(|n| r.name.eq_ignore_ascii_case(n))
+                });
+                if hit {
                     return unsupported(format!(
                         "{op} on {}: table extension triggers are not implemented yet",
                         t.name
@@ -177,6 +190,14 @@ impl Session {
             }
         }
         self.call(object, routine, inst, Vec::new()).map(|_| ())
+    }
+
+    /// Every write gets a new, increasing SystemRowVersion.
+    fn bump_row_version(&mut self, t: &TableDef, rec: &Rec) {
+        if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
+            self.next_row_version += 1;
+            rec.borrow_mut().fields[i] = Value::BigInteger(self.next_row_version);
+        }
     }
 
     fn assign_system_id(&mut self, t: &TableDef, rec: &Rec) {
@@ -279,6 +300,7 @@ impl Session {
                     }
                 }
                 self.assign_system_id(&t, rec);
+                self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
                 match self
                     .store_for(rec)
@@ -301,6 +323,7 @@ impl Session {
                         self.run_trigger(t.object as usize, tr, rec, stored)?;
                     }
                 }
+                self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
                 match self
                     .store_for(rec)
@@ -495,6 +518,7 @@ impl Session {
                     .clone()
                     .expect("table");
                 let field = schema.fields[pos].clone();
+                self.check_writable(&t, "Validate")?;
                 if field.relation {
                     return unsupported("Validate of a field with a TableRelation");
                 }
@@ -537,6 +561,7 @@ impl Session {
                 if let Some(tr) = self.table_trigger(&t, "OnRename") {
                     self.run_trigger(t.object as usize, tr, rec, Some(old.clone()))?;
                 }
+                self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
                 let old_pk = t.primary_key(&old);
                 match self

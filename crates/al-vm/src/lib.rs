@@ -98,6 +98,7 @@ pub struct Session {
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
     pub(crate) next_guid: u64,
+    pub(crate) next_row_version: i64,
     pub(crate) cx: al_data::AccessContext,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
@@ -118,6 +119,7 @@ impl Session {
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
+            next_row_version: 0,
             cx: al_data::AccessContext {
                 company: "CRONUS".into(),
                 user: "USER".into(),

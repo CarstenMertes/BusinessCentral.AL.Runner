@@ -47,6 +47,18 @@ reviewed it.
   `probes-needed.md`. The probe agent pins these first. Examples: the
   "transaction is stopped" error, nested test codeunits, CommitBehavior Error,
   and "part not found" (the runtime uses ID 0).
+- 2026-10-13, ADR-012 (page extensions): several page extensions that declare one
+  page trigger both run, in application order (dependency app first, then
+  object id); the page's own trigger runs first. Both are assumptions listed in
+  `probes-needed.md`.
+- 2026-10-13, ADR-012 (page extensions): only the void page triggers are
+  allowed in an extension. The Boolean ones, OnInit, OnFindRecord and
+  OnNextRecord are refused.
+- 2026-10-13, ADR-012 (application areas): the session's areas are read when a
+  page opens; a control with no area is removed while the areas are restricted;
+  the test runner empties the areas before each test method.
+- 2026-10-13, ADR-012 (page extensions): `DrillDown`, `AssistEdit` and `Lookup`
+  on a TestField run the control's trigger (its own or a `modify` block's).
 - 2026-10-13, ADR-013, host values: `SessionId()` and `ServiceInstanceId()` answer 1
   (positive), not 0, because codeunit 60023 asserts `> 0`.
 - 2026-10-13, ADR-013, host values: the host clock is a trait. It is frozen at

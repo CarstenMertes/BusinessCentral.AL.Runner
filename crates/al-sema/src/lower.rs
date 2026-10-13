@@ -72,6 +72,12 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
     }
+    // Extensions apply dependencies first, then by object id: when two modify one property, the
+    // later one wins (corpus handlers/TestPageExtensionModifyCaption_Tests.al: a higher object id wins
+    // within an app, `Twice2Ctl`; the app that depends on the other wins whatever the ids, `FxBoth2Ctl`).
+    for list in page_extensions.values_mut() {
+        list.sort_by_key(|&e| (ws.app_depth(ws.objects[e].app), ws.objects[e].id, ws.objects[e].offset));
+    }
     let mut page_reasons: Vec<Vec<String>> = vec![Vec::new(); ws.objects.len()];
     // The page objects each page shows as parts.
     let mut page_parts: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
@@ -82,9 +88,16 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             continue;
         }
         let obj = ws.object_ast(oi);
-        let l = crate::pages::layout(&obj);
+        let exts: Vec<(usize, ast::Object)> = page_extensions
+            .get(&oi)
+            .map(|v| v.iter().map(|&e| (e, ws.object_ast(e))).collect())
+            .unwrap_or_default();
+        let l = crate::pages::layout_with(&obj, &exts);
         page_reasons[oi].extend(l.reasons.iter().cloned());
+        page_reasons[oi].extend(extension_reasons(&exts));
         for c in l.controls.iter().filter(|c| c.kind == ir::ControlKind::Part) {
+            // A control an extension declares names its page the way the extension's file does.
+            let file = ws.objects[c.owner.unwrap_or(oi)].file;
             let prop_of = |n: &str| {
                 c.section
                     .properties()
@@ -110,7 +123,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 }
             }
             match c.section.args().get(1) {
-                Some(n) => match ws.resolve_ref(o.file, ObjKind::Page, &crate::types::qualified_parts(n)) {
+                Some(n) => match ws.resolve_ref(file, ObjKind::Page, &crate::types::qualified_parts(n)) {
                     Resolution::Found(p) => page_parts[oi].push(p),
                     _ => page_reasons[oi].push(format!(
                         "part {} shows page {} outside the workspace",
@@ -124,6 +137,16 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         // The pages and codeunits the actions run: their routines are reached through the host
         // (a RunObject target runs when the action is invoked, which the call graph cannot see).
         for c in &l.controls {
+            // How a `modify` block's RunObject would combine with the control's own is not pinned.
+            if c.modifies
+                .iter()
+                .any(|(_, m)| m.properties().any(|p| p.name().eq_ignore_ascii_case("RunObject")))
+            {
+                page_reasons[oi].push(format!(
+                    "modify({}) sets RunObject in a page extension (not supported yet)",
+                    c.name
+                ));
+            }
             let Some(text) = c
                 .section
                 .properties()
@@ -138,7 +161,9 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                     ir::RunKind::Codeunit => Some(ObjKind::Codeunit),
                     _ => None,
                 };
-                if let Some(Resolution::Found(t)) = found.map(|k| ws.resolve_ref(o.file, k, &parts)) {
+                if let Some(Resolution::Found(t)) =
+                    found.map(|k| ws.resolve_ref(ws.objects[c.owner.unwrap_or(oi)].file, k, &parts))
+                {
                     if !page_runs[oi].contains(&t) {
                         page_runs[oi].push(t);
                     }
@@ -158,8 +183,15 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
-        if page_extensions.contains_key(&oi) {
-            page_reasons[oi].push("page extensions are not supported by the test client yet".into());
+        if prop("SaveValues").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) && !exts.is_empty() {
+            page_reasons[oi].push("SaveValues on a page that page extensions extend is not supported yet".into());
+        }
+    }
+    // A page extension shares the page's `Rec`.
+    for (&p, list) in &page_extensions {
+        for &e in list {
+            table_of[e] = table_of[p];
+            page_temporary[e] = page_temporary[p];
         }
     }
     // A host cannot be driven where a part page cannot.
@@ -167,10 +199,14 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         for oi in 0..ws.objects.len() {
             for &p in &page_parts[oi].clone() {
                 // What a part page's close triggers do when the host closes is not pinned.
-                let closes = ws.object_ast(p).triggers().any(|t| {
-                    let n = t.name();
-                    n.eq_ignore_ascii_case("OnClosePage") || n.eq_ignore_ascii_case("OnQueryClosePage")
-                });
+                let closes = std::iter::once(p)
+                    .chain(page_extensions.get(&p).cloned().unwrap_or_default())
+                    .any(|q| {
+                        ws.object_ast(q).triggers().any(|t| {
+                            let n = t.name();
+                            n.eq_ignore_ascii_case("OnClosePage") || n.eq_ignore_ascii_case("OnQueryClosePage")
+                        })
+                    });
                 let reason = format!(
                     "part page `{}` declares a close trigger (what it does when the host closes is not pinned)",
                     ws.objects[p].name
@@ -341,30 +377,54 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             );
         }
     }
+    // The global slot of each variable of a page extension, by lower-case name. The page's control
+    // tree is built before the extensions are lowered, and binds their controls to these slots.
+    let ext_slots: std::cell::RefCell<Vec<HashMap<String, usize>>> =
+        std::cell::RefCell::new(vec![HashMap::new(); ws.objects.len()]);
+    let new_lowerer = |oi: usize| Lowerer {
+        rec_slot: None,
+        table_of: &table_of,
+        ws,
+        members,
+        checked,
+        catalog: &catalog,
+        routine_at: &routine_at,
+        oi,
+        file: ws.objects[oi].file,
+        globals: HashMap::new(),
+        locals: HashMap::new(),
+        global_labels: HashMap::new(),
+        local_labels: HashMap::new(),
+        reasons: Vec::new(),
+        calls: Vec::new(),
+        page_reasons: &page_reasons,
+        layouts: &layouts,
+        xmlports: &xml_irs,
+        reports: &report_irs,
+        attrs: Default::default(),
+        routine_nodes: &routine_nodes,
+        ext_slots: &ext_slots,
+        page_extensions: &page_extensions,
+    };
+    for exts in page_extensions.values() {
+        for &e in exts {
+            let lw = new_lowerer(e);
+            let mut slots = HashMap::new();
+            for v in ws.object_ast(e).var_decls() {
+                let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+                for n in v.names() {
+                    if lw.rt(&ty).is_ok() {
+                        let next = slots.len();
+                        slots.insert(n.to_lowercase(), next);
+                    }
+                }
+            }
+            ext_slots.borrow_mut()[e] = slots;
+        }
+    }
     for (oi, o) in ws.objects.iter().enumerate() {
         let obj = ws.object_ast(oi);
-        let mut lw = Lowerer {
-            rec_slot: None,
-            table_of: &table_of,
-            ws,
-            members,
-            checked,
-            catalog: &catalog,
-            routine_at: &routine_at,
-            oi,
-            file: o.file,
-            globals: HashMap::new(),
-            locals: HashMap::new(),
-            global_labels: HashMap::new(),
-            local_labels: HashMap::new(),
-            reasons: Vec::new(),
-            calls: Vec::new(),
-            page_reasons: &page_reasons,
-            layouts: &layouts,
-            xmlports: &xml_irs,
-            reports: &report_irs,
-            attrs: Default::default(),
-        };
+        let mut lw = new_lowerer(oi);
         let mut globals = Vec::new();
         let mut global_reasons = Vec::new();
         if let Some(l) = &xml_layouts[oi] {
@@ -501,12 +561,24 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
         lw.rec_slot = rec_slot;
-        if o.kind == ObjKind::Page {
+        // The page an extension extends, when it is in the workspace.
+        let extended_page = (o.kind == ObjKind::PageExtension)
+            .then(|| page_extensions.iter().find(|(_, v)| v.contains(&oi)).map(|(&p, _)| p))
+            .flatten();
+        if o.kind == ObjKind::Page || extended_page.is_some() {
             lw.globals.insert("currpage".into(), globals.len());
             globals.push(ir::Slot {
                 name: "CurrPage".into(),
-                ty: RtType::TestPage(oi as u32),
+                ty: RtType::TestPage(extended_page.unwrap_or(oi) as u32),
             });
+        }
+        if extended_page.is_some() {
+            debug_assert!(
+                ext_slots.borrow()[oi]
+                    .iter()
+                    .all(|(n, &i)| globals.get(i).is_some_and(|g| g.name.eq_ignore_ascii_case(n))),
+                "the slots of a page extension's variables moved"
+            );
         }
         let mut routines = Vec::new();
         let mut unsupported = Vec::new();
@@ -535,6 +607,10 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                         let q = seen[at];
                         at += 1;
                         lw.calls.extend((0..routine_nodes[q].len()).map(|ri| (q, ri)));
+                        // The extensions' triggers and procedures run with the page.
+                        for &e in page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
+                            lw.calls.extend((0..routine_nodes[e].len()).map(|ri| (e, ri)));
+                        }
                         for &part in page_parts[q].iter().chain(&page_runs[q]) {
                             if !seen.contains(&part) {
                                 seen.push(part);
@@ -560,7 +636,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         }
         let page = layouts[oi]
             .as_ref()
-            .map(|l| lw.page(oi, &obj, l, &routine_nodes[oi], &globals, &page_reasons[oi]));
+            .map(|l| lw.page(oi, &obj, l, &globals, &page_reasons[oi]));
         out.program.objects.push(ir::Object {
             kind: o.kind.label().to_string(),
             id: o.id,
@@ -596,6 +672,62 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
 }
 
 type L<T> = Result<T, String>;
+
+/// The page triggers an extension can declare that the client runs after the page's own trigger.
+/// The others answer a Boolean or serve rows, and how an extension's answer combines with the
+/// page's is not pinned. OnInit, OnFindRecord and OnNextRecord are page-only in BC: an extension
+/// that declares one is not called for it (AL Runner v2 docs/../RecordPatches.PageTriggerMetadata.cs,
+/// BC 27.5 and 28.4 NCLMetaForm.DefinedTriggers), so they are refused here.
+const EXTENSION_PAGE_TRIGGERS: &[&str] = &[
+    "onopenpage",
+    "onclosepage",
+    "onaftergetrecord",
+    "onaftergetcurrrecord",
+    "onnewrecord",
+];
+
+/// The triggers a `modify` block can add to a control, which the client runs.
+pub(crate) const MODIFY_TRIGGERS: &[&str] = &[
+    "onbeforevalidate",
+    "onaftervalidate",
+    "ondrilldown",
+    "onlookup",
+    "onassistedit",
+];
+
+/// Why the client cannot drive a page once the extensions `exts` are merged into it: the
+/// triggers it does not run. Several extensions may declare one trigger: they run in the order
+/// the extensions apply (docs/probes-needed.md, "Page extensions").
+fn extension_reasons(exts: &[(usize, ast::Object)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, e) in exts {
+        let ename = e.name();
+        for t in e.triggers() {
+            if !EXTENSION_PAGE_TRIGGERS.contains(&t.name().to_ascii_lowercase().as_str()) {
+                out.push(format!(
+                    "page extension `{ename}`: trigger {} is not supported yet",
+                    t.name()
+                ));
+            }
+        }
+        // Triggers inside `modify` blocks: only the ones the client dispatches.
+        for sec in ast::sections_in(e.syntax()) {
+            if !sec.name().eq_ignore_ascii_case("modify") {
+                continue;
+            }
+            for t in sec.triggers() {
+                if !MODIFY_TRIGGERS.contains(&t.name().to_ascii_lowercase().as_str()) {
+                    out.push(format!(
+                        "page extension `{ename}`: trigger {} in modify({}) is not supported yet",
+                        t.name(),
+                        sec.args().first().cloned().unwrap_or_default()
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
 
 /// An `InitValue` property as a constant of the field's type; `None` for
 /// forms not handled yet (the field then starts at its type's default).
@@ -827,6 +959,12 @@ struct Lowerer<'a> {
     reports: &'a [Option<ir::Report>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+    /// The routine nodes of every object, numbered as `routine_at` numbers them.
+    routine_nodes: &'a [Vec<ast::Routine>],
+    /// The global slot of each variable of a page extension (see `lower`).
+    ext_slots: &'a std::cell::RefCell<Vec<HashMap<String, usize>>>,
+    /// The page extensions of each page, in the order they apply.
+    page_extensions: &'a HashMap<usize, Vec<usize>>,
 }
 
 /// An interface type anywhere inside a collection type.
@@ -1079,53 +1217,109 @@ impl Lowerer<'_> {
         }
     }
 
-    /// The control tree of page `oi`, with bindings and routine indices resolved.
+    /// The control tree of page `oi` with its extensions merged in, with bindings and routine
+    /// indices resolved. A control an extension declares keeps the extension as its `owner`: its
+    /// routines and variable slots are the extension's.
     fn page(
         &self,
         oi: usize,
         obj: &ast::Object,
         layout: &crate::pages::Layout,
-        routine_nodes: &[ast::Routine],
         globals: &[ir::Slot],
         reasons: &[String],
     ) -> ir::Page {
-        let routine_named = |name: &str| routine_nodes.iter().position(|r| r.name() == name);
-        let routine_of = |r: &ast::Routine| {
-            self.routine_at
-                .get(&(oi, usize::from(r.syntax().text_range().start())))
-                .copied()
-        };
         let mut unsupported = reasons.to_vec();
         let table = self.table_of[oi];
-        let global_names = crate::pages::global_names(obj);
-        let base = usize::from(obj.syntax().text_range().start());
+        let extensions: Vec<usize> = self.page_extensions.get(&oi).cloned().unwrap_or_default();
+        // The code a control's text names lives in its owner: the page, or the extension.
+        struct Owner {
+            object: usize,
+            obj: ast::Object,
+            names: std::collections::BTreeSet<String>,
+            base: usize,
+        }
+        let owner_of = |o: Option<usize>| {
+            let object = o.unwrap_or(oi);
+            let obj = if o.is_none() {
+                obj.clone()
+            } else {
+                self.ws.object_ast(object)
+            };
+            Owner {
+                object,
+                names: crate::pages::global_names(&obj),
+                base: usize::from(obj.syntax().text_range().start()),
+                obj,
+            }
+        };
+        let routine_named =
+            |ow: &Owner, name: &str| self.routine_nodes[ow.object].iter().position(|r| r.name() == name);
+        let routine_of = |ow: &Owner, r: &ast::Routine| {
+            self.routine_at
+                .get(&(ow.object, usize::from(r.syntax().text_range().start())))
+                .copied()
+        };
+        // The routine behind an expression-valued property written at `p` in `ow`.
+        let prop_value = |ow: &Owner, p: &ast::Property, unsupported: &mut Vec<String>, control: &str| {
+            let name = p.name().to_ascii_lowercase();
+            let value = p.value_text();
+            let off = usize::from(p.syntax().text_range().start()) - ow.base;
+            let dynamic = crate::pages::dynamic_type(&name).filter(|t| !crate::pages::is_literal(*t, &value));
+            let val = match dynamic {
+                Some(_) => match routine_named(ow, &crate::pages::synthetic_name(&name, off)) {
+                    Some(r) => Some(r),
+                    None => {
+                        unsupported.push(format!("property {name} of control {control} has no routine"));
+                        None
+                    }
+                },
+                None => None,
+            };
+            (name, value, val)
+        };
         let mut controls = Vec::new();
         for raw in &layout.controls {
             let sec = &raw.section;
-            let mut props = Vec::new();
+            let ow = owner_of(raw.owner);
+            let mut props: Vec<(String, ir::PropVal)> = Vec::new();
             for p in sec.properties() {
-                let name = p.name().to_ascii_lowercase();
-                let value = p.value_text();
-                let off = usize::from(p.syntax().text_range().start()) - base;
-                let dynamic = crate::pages::dynamic_type(&name).filter(|t| !crate::pages::is_literal(*t, &value));
+                let (name, value, routine) = prop_value(&ow, &p, &mut unsupported, &raw.name);
                 props.push((
-                    name.clone(),
-                    match dynamic {
-                        Some(_) => match routine_named(&crate::pages::synthetic_name(&name, off)) {
-                            Some(r) => ir::PropVal::Routine(r),
-                            None => {
-                                unsupported.push(format!("property {name} of control {} has no routine", raw.name));
-                                ir::PropVal::Lit(value)
-                            }
-                        },
+                    name,
+                    match routine {
+                        Some(r) => ir::PropVal::Routine(r),
                         None => ir::PropVal::Lit(value),
                     },
                 ));
             }
+            // `modify` blocks replace what the control states, in the order the extensions apply.
+            let mut ext_triggers = Vec::new();
+            for (e, msec) in &raw.modifies {
+                let mow = owner_of(Some(*e));
+                for p in msec.properties() {
+                    let (name, value, routine) = prop_value(&mow, &p, &mut unsupported, &raw.name);
+                    let val = match routine {
+                        Some(r) => ir::PropVal::Ext(*e, r),
+                        None => ir::PropVal::Lit(value),
+                    };
+                    match props.iter_mut().find(|(n, _)| *n == name) {
+                        Some(slot) => slot.1 = val,
+                        None => props.push((name, val)),
+                    }
+                }
+                for t in msec.triggers() {
+                    match routine_of(&mow, &t) {
+                        Some(r) => ext_triggers.push((t.name().to_ascii_lowercase(), *e, r)),
+                        None => {
+                            unsupported.push(format!("trigger {} of control {} has no routine", t.name(), raw.name))
+                        }
+                    }
+                }
+            }
             let mut binding = ir::Binding::None;
             if raw.kind == ir::ControlKind::Field {
                 let args = sec.args();
-                match args.get(1).map(|a| crate::pages::classify_source(a, &global_names)) {
+                match args.get(1).map(|a| crate::pages::classify_source(a, &ow.names)) {
                     Some(crate::pages::Source::RecField(f)) => {
                         let pos = table.and_then(|t| {
                             self.members[t]
@@ -1139,7 +1333,11 @@ impl Lowerer<'_> {
                         }
                     }
                     Some(crate::pages::Source::Var(v)) => {
-                        match globals.iter().position(|g| g.name.eq_ignore_ascii_case(&v)) {
+                        let slot = match raw.owner {
+                            None => globals.iter().position(|g| g.name.eq_ignore_ascii_case(&v)),
+                            Some(e) => self.ext_slots.borrow()[e].get(&v.to_lowercase()).copied(),
+                        };
+                        match slot {
                             Some(slot) => binding = ir::Binding::Var(slot),
                             None => unsupported.push(format!(
                                 "control {} is bound to variable {v} of an unsupported type",
@@ -1148,8 +1346,8 @@ impl Lowerer<'_> {
                         }
                     }
                     Some(crate::pages::Source::Expr) => {
-                        let off = usize::from(sec.syntax().text_range().start()) - base;
-                        match routine_named(&crate::pages::synthetic_name("source", off)) {
+                        let off = usize::from(sec.syntax().text_range().start()) - ow.base;
+                        match routine_named(&ow, &crate::pages::synthetic_name("source", off)) {
                             Some(r) => binding = ir::Binding::Expr(r),
                             None => unsupported.push(format!("control {} has no source routine", raw.name)),
                         }
@@ -1159,10 +1357,11 @@ impl Lowerer<'_> {
             }
             let triggers = sec
                 .triggers()
-                .filter_map(|t| routine_of(&t).map(|r| (t.name().to_ascii_lowercase(), r)))
+                .filter_map(|t| routine_of(&ow, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
                 .collect();
+            let file = self.ws.objects[ow.object].file;
             let part_page = if raw.kind == ir::ControlKind::Part {
-                match sec.args().get(1).map(|n| self.resolve_obj(ObjKind::Page, n)) {
+                match sec.args().get(1).map(|n| self.resolve_obj_in(file, ObjKind::Page, n)) {
                     Some(Ok(p)) => Some(p),
                     _ => {
                         unsupported.push(format!("part {} shows a page outside the workspace", raw.name));
@@ -1173,7 +1372,7 @@ impl Lowerer<'_> {
                 None
             };
             let part_link = match (part_page, raw.kind == ir::ControlKind::Part) {
-                (Some(pp), true) => match self.part_link(oi, layout, sec, pp) {
+                (Some(pp), true) => match self.part_link(oi, file, layout, sec, pp) {
                     Ok(l) => Some(l),
                     Err(why) => {
                         unsupported.push(format!("part {}: {why}", raw.name));
@@ -1199,7 +1398,7 @@ impl Lowerer<'_> {
             } else {
                 None
             };
-            let run_object = match self.run_object(oi, sec) {
+            let run_object = match self.run_object(oi, file, sec) {
                 Some(r) => {
                     // Which of the two an action runs first is not pinned: no corpus action
                     // declares both.
@@ -1222,26 +1421,40 @@ impl Lowerer<'_> {
                 triggers,
                 part_page,
                 part_link,
+                owner: raw.owner,
+                ext_triggers,
                 run_object,
                 action_ref,
             });
         }
+        let base = owner_of(None);
         let triggers = obj
             .triggers()
-            .filter_map(|t| routine_of(&t).map(|r| (t.name().to_ascii_lowercase(), r)))
+            .filter_map(|t| routine_of(&base, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
             .collect();
+        let mut ext_triggers = Vec::new();
+        for &e in &extensions {
+            let ow = owner_of(Some(e));
+            for t in ow.obj.triggers() {
+                if let Some(r) = routine_of(&ow, &t) {
+                    ext_triggers.push((t.name().to_ascii_lowercase(), e, r));
+                }
+            }
+        }
         ir::Page {
             controls,
             triggers,
             curr_page_slot: globals.iter().position(|g| g.name == "CurrPage").unwrap_or(0),
             unsupported,
+            extensions,
+            ext_triggers,
         }
     }
 
     /// The `RunObject` of action `sec` of page `oi` with its `RunPageLink`, `RunPageView`,
     /// `RunPageMode` and `RunPageOnRec`; `None` for an action without one. What the test client
     /// cannot follow yet becomes `unsupported` (the action is refused when it is invoked).
-    fn run_object(&self, oi: usize, sec: &ast::Section) -> Option<ir::RunObject> {
+    fn run_object(&self, oi: usize, file: usize, sec: &ast::Section) -> Option<ir::RunObject> {
         let prop = |n: &str| {
             sec.properties()
                 .find(|p| p.name().eq_ignore_ascii_case(n))
@@ -1286,7 +1499,7 @@ impl Lowerer<'_> {
             ir::RunKind::Codeunit => ObjKind::Codeunit,
             ir::RunKind::Report | ir::RunKind::XmlPort | ir::RunKind::Query => return Some(out),
         };
-        match self.ws.resolve_ref(self.file, target, &parts) {
+        match self.ws.resolve_ref(file, target, &parts) {
             Resolution::Found(t) => out.object = Some(t),
             _ => {
                 out.unsupported = Some(format!("RunObject `{}` is outside the workspace", text.trim()));
@@ -1310,7 +1523,7 @@ impl Lowerer<'_> {
                 let entries = (|| {
                     let target_table = self.table_of[out.object.expect("resolved")]
                         .ok_or("RunPageLink on a target page without a source table")?;
-                    self.link_entries("RunPageLink", &link, self.table_of[oi], target_table)
+                    self.link_entries("RunPageLink", &link, file, self.table_of[oi], target_table)
                 })();
                 match entries {
                     Ok(e) => pl.entries = e,
@@ -1328,6 +1541,7 @@ impl Lowerer<'_> {
         &self,
         what: &str,
         text: &str,
+        file: usize,
         host_table: Option<usize>,
         target_table: usize,
     ) -> L<Vec<ir::LinkEntry>> {
@@ -1350,7 +1564,7 @@ impl Lowerer<'_> {
                 }
                 LinkRhs::Filter(t) => ir::LinkEntry::Filter(pf, t),
                 LinkRhs::TableId(name) => {
-                    let t = self.resolve_obj(ObjKind::Table, &name)?;
+                    let t = self.resolve_obj_in(file, ObjKind::Table, &name)?;
                     let id = self.ws.objects[t].id.ok_or("table without an id")?;
                     ir::LinkEntry::Filter(pf, id.to_string())
                 }
@@ -1364,6 +1578,7 @@ impl Lowerer<'_> {
     fn part_link(
         &self,
         oi: usize,
+        file: usize,
         layout: &crate::pages::Layout,
         sec: &ast::Section,
         part_page: usize,
@@ -1393,7 +1608,7 @@ impl Lowerer<'_> {
                     .section
                     .args()
                     .get(1)
-                    .and_then(|n| self.resolve_obj(ObjKind::Page, n).ok())
+                    .and_then(|n| self.resolve_obj_in(file, ObjKind::Page, n).ok())
                 else {
                     return Err("the Provider part shows a page outside the workspace".into());
                 };
@@ -1402,7 +1617,7 @@ impl Lowerer<'_> {
             None => self.table_of[oi],
         };
         let part_table = self.table_of[part_page].ok_or("the part page has no source table to link")?;
-        link.entries = self.link_entries("SubPageLink", &text, host_table, part_table)?;
+        link.entries = self.link_entries("SubPageLink", &text, file, host_table, part_table)?;
         Ok(link)
     }
 
@@ -1496,10 +1711,12 @@ impl Lowerer<'_> {
     }
 
     fn resolve_obj(&self, kind: ObjKind, name: &str) -> L<usize> {
-        match self
-            .ws
-            .resolve_ref(self.file, kind, &crate::types::qualified_parts(name))
-        {
+        self.resolve_obj_in(self.file, kind, name)
+    }
+
+    /// Object `name` as the file `file` sees it.
+    fn resolve_obj_in(&self, file: usize, kind: ObjKind, name: &str) -> L<usize> {
+        match self.ws.resolve_ref(file, kind, &crate::types::qualified_parts(name)) {
             Resolution::Found(i) => Ok(i),
             _ => Err(format!(
                 "{} `{}` is outside the workspace",

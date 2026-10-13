@@ -257,6 +257,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
+                    // The AL test runner enables every application area before each test method
+                    // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
+                    session.application_areas.clear();
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -1380,5 +1383,40 @@ codeunit 60703 PhT
         ] {
             assert_eq!(ph(n), Outcome::Pass, "{n}");
         }
+    }
+
+    // session/TestSessionApplicationAreaTestBoundary.al:67552 (A_FirstTest_StartsWithEveryAreaEnabled_EvenAfterOnRunSetOne,
+    // C_NextTest_StartsWithEveryAreaEnabled): every test method starts with every application area enabled.
+    #[test]
+    fn every_test_starts_with_every_application_area_enabled() {
+        let src = "codeunit 60110 T
+{
+    Subtype = Test;
+    trigger OnRun() begin ApplicationArea('#Basic,#FromOnRun'); end;
+
+    [Test]
+    procedure A_StartsEmptyEvenAfterOnRunSetOne()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure B_SetsAreasForTheRestOfTheTest()
+    begin
+        ApplicationArea('#Basic,#Probe');
+        if ApplicationArea() <> '#Basic,#Probe' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure C_StartsEmptyAgain()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+}";
+        let o = outcomes_of(src, "T");
+        for (n, r) in &o {
+            assert_eq!(*r, Outcome::Pass, "{n}");
+        }
+        assert_eq!(o.len(), 3);
     }
 }

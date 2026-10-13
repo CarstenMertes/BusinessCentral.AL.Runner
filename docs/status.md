@@ -95,7 +95,7 @@ Each test is counted under the first thing that stops it.
 | ~550 | Objects outside the workspace: tables (452), codeunits (51), pages (46) | ADR-013 (Proposed): compile Microsoft's real apps from the artifact feed; native providers for system tables |
 | 23 | Tests that use parts but stop on something else: `DMY2Date` (7), `Session.ApplicationArea` (5), RunObject action (4), the Integer system table (4), page extensions (3) | Each is counted under its own blocker |
 | 121 | Query objects | Not started |
-| 96 | Request and filter pages | ADR-012 follow-up |
+| 80 | Request pages and filter pages, done except what waits on others: Base App reports and pages, enums and the Temp Blob codeunit (53, ADR-013); the Integer system table (27, `deps`) | ADR-012 follow-up, built on branch `requestpages` |
 | 94 | Page extensions | ADR-012 follow-up |
 | 73 | Global Triggers codeunit events (Base App) | Arrives with ADR-013 |
 | 73 | RunObject actions | ADR-012 follow-up |

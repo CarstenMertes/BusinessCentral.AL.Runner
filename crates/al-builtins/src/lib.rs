@@ -8,6 +8,7 @@ pub mod value;
 pub mod version;
 pub mod wsac;
 pub mod xml;
+pub mod xmlport;
 
 pub mod catalog;
 pub mod collections;
@@ -26,6 +27,7 @@ pub mod native;
 pub mod ops;
 pub mod pagebuiltins;
 pub mod pagefmt;
+pub mod querybuiltins;
 pub mod refs;
 pub mod sessionfns;
 pub mod sessiontypes;

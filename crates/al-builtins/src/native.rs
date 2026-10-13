@@ -48,6 +48,12 @@ pub trait Ctx: FormatCtx {
         Err(Signal::Unsupported(format!("{method} needs a page runtime")))
     }
 
+    /// `Query` variable methods: the VM executes the query (`al-vm/src/queries.rs`).
+    /// `method` is the catalog name (`Open`, `SetRange`, ...).
+    fn query(&mut self, method: &str, _recv: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("Query.{method} needs a query runtime")))
+    }
+
     /// `RecordRef`, `FieldRef` and `KeyRef` methods need the table schema and
     /// the store, like record methods. `id` is the catalog overload id
     /// (`RecordRef.Open#2`); the VM resolves it to the method.
@@ -182,6 +188,21 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // (al-vm dispatch.rs). Registered so lowering accepts them.
     ("Session.BindSubscription#1", vm_only),
     ("Session.UnbindSubscription#1", vm_only),
+    // Codeunit.Run runs a codeunit and `IsInWriteTransaction` reads the transaction: both are
+    // session state, run by the VM (al-vm transactions.rs).
+    ("Codeunit.Run#1", vm_only),
+    ("Codeunit.Run#2", vm_only),
+    ("Codeunit.Run#3", vm_only),
+    ("Database.IsInWriteTransaction#1", vm_only),
+    // XmlPort import and export run triggers and write records: the VM runs them
+    // (al-vm xmlports.rs).
+    ("Xmlport.Export#1", vm_only),
+    ("Xmlport.Export#2", vm_only),
+    ("Xmlport.Import#1", vm_only),
+    ("Xmlport.Import#2", vm_only),
+    ("Xmlport.SetSource#1", vm_only),
+    ("Xmlport.SetDestination#1", vm_only),
+    ("Xmlport.SetTableView#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
@@ -233,6 +254,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .iter()
         .chain(crate::collections::REGISTRY)
         .chain(crate::pagebuiltins::REGISTRY)
+        .chain(crate::querybuiltins::REGISTRY)
         .chain(crate::refs::REGISTRY)
         .chain(crate::refs::RECORD_REGISTRY)
         .chain(crate::datefns::REGISTRY)
@@ -304,6 +326,20 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
 /// Stands for a call stack that exists in BC but is not tracked here (a private-use character).
 pub const UNTRACKED_CALL_STACK: &str = "\u{E000}";
 
+/// Stands for the text and code of an error BC raises but whose wording the corpus does not pin.
+/// `GetLastErrorText` and `GetLastErrorCode` refuse to answer while it is the last error, so a
+/// test that reads it is not run, and one that only needs the call to fail still passes.
+pub const UNPINNED_ERROR: &str = "\u{E001}";
+
+/// The last error to set when a call fails with an error whose text is not pinned.
+pub fn unpinned_error() -> AlError {
+    AlError {
+        message: UNPINNED_ERROR.into(),
+        code: UNPINNED_ERROR.into(),
+        call_stack: String::new(),
+    }
+}
+
 /// Text of a Text/Code/Char argument (Text parameters accept all three). Text that holds the
 /// untracked call stack marker is refused, so its content is never silently wrong.
 pub fn text_of(v: &Value) -> Option<String> {
@@ -349,11 +385,19 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
 }
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(ctx.last_error().message))
+    let e = ctx.last_error();
+    if e.message == UNPINNED_ERROR {
+        return unsupported("GetLastErrorText of an error whose text is not pinned");
+    }
+    Ok(Value::Text(e.message))
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(ctx.last_error().code))
+    let e = ctx.last_error();
+    if e.code == UNPINNED_ERROR {
+        return unsupported("GetLastErrorCode of an error whose text is not pinned");
+    }
+    Ok(Value::Text(e.code))
 }
 
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

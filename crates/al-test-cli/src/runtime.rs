@@ -187,17 +187,36 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             .map(|&r| (obj.routines[r].name.clone(), o.clone()))
             .collect::<Vec<_>>()
     };
-    // Test-runner transaction modes are not implemented; tests in such a
-    // codeunit depend on each other, so none of them runs.
-    if let Some(a) = tests.iter().flat_map(|&r| &obj.routines[r].attributes).find(|a| {
-        ["transactionmodel", "commitbehavior", "errorbehavior"].contains(&a.name.to_ascii_lowercase().as_str())
-    }) {
+    // [ErrorBehavior] is not implemented; tests in such a codeunit depend on each other, so none
+    // of them runs. ([CommitBehavior] and [TransactionModel] are: see al-vm transactions.rs.)
+    if let Some(a) = tests
+        .iter()
+        .flat_map(|&r| &obj.routines[r].attributes)
+        .find(|a| a.name.eq_ignore_ascii_case("ErrorBehavior"))
+    {
         return all(Outcome::NotRun(format!("[{}] is not implemented yet", a.name)));
+    }
+    // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
+    let mut models = std::collections::HashMap::new();
+    for &r in &tests {
+        for a in obj.routines[r]
+            .attributes
+            .iter()
+            .filter(|a| a.name.eq_ignore_ascii_case("TransactionModel"))
+        {
+            match al_vm::TxModel::from_attribute(&a.text) {
+                Some(m) => {
+                    models.insert(r, m);
+                }
+                None => return all(Outcome::NotRun(format!("{}: unknown transaction model", a.text))),
+            }
+        }
     }
     // What publishing the app does first: run its install codeunits, then commit.
     session.set_install_scope(true);
     let skipped_installs = run_install_codeunits(lowered, &mut session);
     session.set_install_scope(false);
+    session.in_test_codeunit = true;
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
     {
@@ -207,7 +226,7 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
         match session.call(object, on_run, instance.clone(), Vec::new()) {
             // NavTestCodeunit.DoRunAsync commits after a declared OnRun
             // (codeunit/TestTestCodeunitOnRun.al).
-            Ok(_) => al_builtins::native::Ctx::commit(&mut session).expect("commit"),
+            Ok(_) => session.commit_transaction(),
             Err(Signal::Unsupported(r)) => return all(Outcome::NotRun(format!("OnRun: {r}"))),
             Err(Signal::Error(e)) => {
                 return all(Outcome::NotRun(format!(
@@ -238,13 +257,29 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
+                    let model = models.get(&r).copied().unwrap_or_default();
+                    // TransactionModel::None is handled before the method body: every active
+                    // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
+                    // Test08). Nothing is pending here, because every earlier test ended its
+                    // transaction at its own boundary, so which way it ends is not observable.
+                    if model == al_vm::TxModel::None {
+                        session.commit_transaction();
+                    }
+                    session.tx_model = model;
                     let result = session.call(object, r, instance.clone(), Vec::new());
+                    session.tx_model = al_vm::TxModel::AutoCommit;
                     let unexecuted = session.end_ui_scope();
                     match result {
+                        // AutoRollback rolls the test's work back the moment it finishes, pass
+                        // or fail (record/TestTransactionModelAutoRollback.al:Test01-Test03).
+                        Ok(_) if unexecuted.is_empty() && model == al_vm::TxModel::AutoRollback => {
+                            session.rollback_transaction();
+                            Outcome::Pass
+                        }
                         // The default TransactionModel commits at the test boundary; a failed
                         // test's transaction is rolled back (corpus codeunit/TestWriteTxTestBoundary.al:26).
                         Ok(_) if unexecuted.is_empty() => {
-                            al_builtins::native::Ctx::commit(&mut session).expect("commit");
+                            session.commit_transaction();
                             Outcome::Pass
                         }
                         // corpus handlers/TestPageQueryCloseMessageHandler_Tests.al:51: a declared
@@ -409,7 +444,7 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
                 skipped.push((touched, format!("install codeunit {} could not run: {why}", o.name)));
             }
         }
-        al_builtins::native::Ctx::commit(session).expect("commit");
+        session.commit_transaction();
     }
     skipped
 }
@@ -606,16 +641,207 @@ mod tests {
         );
     }
 
-    #[test]
-    fn transaction_models_make_the_codeunit_not_run() {
-        let o = outcomes(
-            "codeunit 60101 T { Subtype = Test;
-            [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure A() begin end;
-            [Test] procedure B() begin end; }",
+    fn outcomes_of(src: &str, codeunit: &str) -> Vec<(String, Outcome)> {
+        let (ws, l) = al_sema::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
         );
-        assert!(
-            o.iter()
-                .all(|(_, x)| matches!(x, Outcome::NotRun(r) if r.contains("TransactionModel"))),
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let blocked = l
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let engine = Engine::new(l.program.clone(), blocked);
+        let oi = l.program.objects.iter().position(|o| o.name == codeunit).unwrap();
+        run_codeunit(&engine, &l, oi)
+    }
+
+    fn with_rows(body: &str) -> String {
+        format!("{ROWS}\n{body}")
+    }
+
+    const ROWS: &str = "table 60900 S { fields { field(1; K; Code[10]) { } } }
+        codeunit 60910 Inserter { trigger OnRun() var R: Record S; begin R.K := 'RUN'; R.Insert(); end; }";
+
+    // record/TestTransactionModelAutoRollback.al:Test01-Test03: an AutoRollback test's write is
+    // rolled back when it finishes; the next default-model test's write survives.
+    #[test]
+    fn an_auto_rollback_test_is_rolled_back_when_it_finishes() {
+        let o = outcomes(&with_rows(
+            "            codeunit 60102 T { Subtype = Test;
+                [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure T1() var R: Record S; begin
+                    R.K := 'A'; R.Insert(); if not R.Get('A') then Error('own write not visible'); end;
+                [Test] procedure T2() var R: Record S; begin
+                    if R.Get('A') then Error('the AutoRollback write survived');
+                    R.K := 'B'; R.Insert(); end;
+                [Test] procedure T3() var R: Record S; begin
+                    if not R.Get('B') then Error('the default model write did not survive'); end; }",
+        ));
+        assert_eq!(
+            o.iter().map(|(_, x)| x.clone()).collect::<Vec<_>>(),
+            vec![Outcome::Pass; 3],
+            "{o:?}"
+        );
+    }
+
+    // record/TestTransactionModelAutoRollback.al:Test04-Test06
+    #[test]
+    fn auto_rollback_refuses_commit_anywhere_beneath_the_test_and_auto_commit_allows_it() {
+        let o = outcomes(&with_rows(
+            "            codeunit 60102 T { Subtype = Test;
+                [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure Direct() begin
+                    asserterror Commit();
+                    if GetLastErrorText() <> 'Tests cannot call the Commit function if TransactionModel property is set to AutoRollback.' then
+                        Error('wrong text: %1', GetLastErrorText()); end;
+                [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure Callee() begin
+                    asserterror Down();
+                    if StrPos(GetLastErrorText(), 'Tests cannot call the Commit function') = 0 then
+                        Error('wrong text: %1', GetLastErrorText()); end;
+                [Test] [TransactionModel(TransactionModel::AutoCommit)] procedure AutoCommitAllows() var R: Record S; begin
+                    R.K := 'C'; R.Insert(); Commit(); asserterror Error('x');
+                    if not R.Get('C') then Error('the commit did not stick'); R.Delete(); Commit(); end;
+                local procedure Down() begin Commit(); end; }"
+        ));
+        assert_eq!(
+            o.iter().map(|(_, x)| x.clone()).collect::<Vec<_>>(),
+            vec![Outcome::Pass; 3],
+            "{o:?}"
+        );
+    }
+
+    // record/TestTransactionModelAutoRollback.al:Test07 and Test08
+    #[test]
+    fn commit_behavior_ignore_exempts_the_auto_rollback_refusal_and_error_does_not_outrank_it() {
+        let o = outcomes(&with_rows(
+            "            codeunit 60102 T { Subtype = Test;
+                [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure Ignored() var R: Record S; begin
+                    InsertAndCommitIgnoring();
+                    asserterror Error('unrelated');
+                    if R.Get('I') then Error('an ignored Commit moved the boundary'); end;
+                [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure ErrorBehavior() begin
+                    asserterror CommitUnderError();
+                    if StrPos(GetLastErrorText(), 'Tests cannot call the Commit function') = 0 then
+                        Error('wrong text: %1', GetLastErrorText());
+                    if StrPos(GetLastErrorText(), 'Commit is prohibited in the current scope') <> 0 then
+                        Error('the CommitBehavior text won'); end;
+                [CommitBehavior(CommitBehavior::Ignore)]
+                local procedure InsertAndCommitIgnoring() var R: Record S; begin R.K := 'I'; R.Insert(); Commit(); end;
+                [CommitBehavior(CommitBehavior::Error)]
+                local procedure CommitUnderError() begin Commit(); end; }",
+        ));
+        assert_eq!(
+            o.iter().map(|(_, x)| x.clone()).collect::<Vec<_>>(),
+            vec![Outcome::Pass; 2],
+            "{o:?}"
+        );
+    }
+
+    // codeunit/TestWriteTxTestBoundary.al:Test02-Test06: no write transaction crosses a test
+    // boundary, and a guarded Codeunit.Run is allowed at the start of the next test.
+    #[test]
+    fn no_write_transaction_survives_a_test_boundary() {
+        let o = outcomes(&with_rows(
+            "            codeunit 60102 T { Subtype = Test;
+                [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure RollbackWrites() var R: Record S; begin
+                    R.K := 'A'; R.Insert();
+                    if not Database.IsInWriteTransaction() then Error('no write transaction after an insert'); end;
+                [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure NextStartsClean() var Ok: Boolean; begin
+                    if Database.IsInWriteTransaction() then Error('inherited a write transaction');
+                    Ok := Codeunit.Run(Codeunit::Inserter);
+                    if not Ok then Error('guarded run refused'); end;
+                [Test] procedure DefaultWrites() var R: Record S; begin
+                    R.K := 'D'; R.Insert();
+                    if not Database.IsInWriteTransaction() then Error('no write transaction after an insert'); end;
+                [Test] procedure GuardedRunAfterDefaultWrite() var R: Record S; Ok: Boolean; begin
+                    if Database.IsInWriteTransaction() then Error('the default test left a write transaction');
+                    Ok := Codeunit.Run(Codeunit::Inserter);
+                    if not (Ok and R.Get('D')) then Error('guarded run refused or D lost'); end; }"
+        ));
+        assert_eq!(
+            o.iter().map(|(_, x)| x.clone()).collect::<Vec<_>>(),
+            vec![Outcome::Pass; 4],
+            "{o:?}"
+        );
+    }
+
+    // codeunit/TestWriteTxTestBoundary.al:Test08-Test10: a None test starts with no
+    // transaction, cannot write directly, and can write inside a Codeunit.Run.
+    #[test]
+    fn a_none_test_has_no_transaction_until_it_runs_a_codeunit() {
+        let o = outcomes(&with_rows(
+            "            codeunit 60102 T { Subtype = Test;
+                [Test] procedure Default() var R: Record S; begin R.K := 'D'; R.Insert(); end;
+                [Test] [TransactionModel(TransactionModel::None)] procedure StartsClean() var R: Record S; Ok: Boolean; begin
+                    if Database.IsInWriteTransaction() then Error('a None test started inside a write transaction');
+                    if not R.Get('D') then Error('the previous test row is gone');
+                    Ok := Codeunit.Run(Codeunit::Inserter);
+                    if not Ok then Error('guarded run refused'); end;
+                [Test] [TransactionModel(TransactionModel::None)] procedure CannotWrite() var R: Record S; begin
+                    R.K := 'N';
+                    asserterror R.Insert();
+                    if GetLastErrorText() <> 'A transaction must be started before changes can be made to the database.' then
+                        Error('wrong text: %1', GetLastErrorText());
+                    if Database.IsInWriteTransaction() then Error('a refused write left a transaction open');
+                    if R.Get('N') then Error('the refused insert wrote'); end;
+                [Test] [TransactionModel(TransactionModel::None)] procedure DeleteAllUnderNone() var R: Record S; begin
+                    R.DeleteAll();
+                    end; }"
+        ));
+        assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+        assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
+        assert_eq!(o[2].1, Outcome::Pass, "{o:?}");
+        // DeleteAll under None: the refusal is not pinned.
+        assert!(matches!(&o[3].1, Outcome::NotRun(r) if r.contains("None")), "{o:?}");
+    }
+
+    // codeunit/TestWriteTxTestBoundary.al:Test10_ARunCodeunitMayWriteUnderNone
+    #[test]
+    fn a_codeunit_run_from_a_none_test_may_write_and_its_transaction_ends_with_it() {
+        let o = outcomes(&with_rows(
+            "            codeunit 60102 T { Subtype = Test;
+                [Test] [TransactionModel(TransactionModel::None)] procedure Run() var R: Record S; begin
+                    Codeunit.Run(Codeunit::Inserter);
+                    if not R.Get('RUN') then Error('the run did not write');
+                    if Database.IsInWriteTransaction() then Error('the run left a transaction open'); end; }",
+        ));
+        assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    }
+
+    // codeunit/TestCodeunitRunNestedTestCodeunit.al: Codeunit.Run of a test codeunit from a
+    // running test raises, guarded or not, in the static and the instance form, and runs nothing.
+    #[test]
+    fn running_a_test_codeunit_from_a_test_is_refused() {
+        let o = outcomes_of(
+            "codeunit 60201 Inner { Subtype = Test;
+                [Test] procedure InnerTest() begin Error('the inner test ran'); end; }
+            codeunit 60202 Plain { trigger OnRun() begin end; }
+            codeunit 60203 Outer { Subtype = Test;
+                [Test] procedure Unguarded() begin
+                    asserterror Codeunit.Run(Codeunit::Inner);
+                    if StrPos(GetLastErrorText(), 'You cannot nest the execution of test codeunits.') = 0 then Error('wrong text: %1', GetLastErrorText());
+                    if StrPos(GetLastErrorText(), 'Test codeunit 60201 Inner was called from another test codeunit.') = 0 then Error('wrong text: %1', GetLastErrorText()); end;
+                [Test] procedure Guarded() var Ok: Boolean; begin
+                    Ok := true;
+                    asserterror Ok := Codeunit.Run(Codeunit::Inner);
+                    if not Ok then Error('a result was assigned');
+                    if StrPos(GetLastErrorText(), 'You cannot nest the execution of test codeunits.') = 0 then Error('wrong text: %1', GetLastErrorText()); end;
+                [Test] procedure Instance() var I: Codeunit Inner; begin
+                    asserterror I.Run();
+                    if StrPos(GetLastErrorText(), 'You cannot nest the execution of test codeunits.') = 0 then Error('wrong text: %1', GetLastErrorText()); end;
+                [Test] procedure PlainStillRuns() var Ok: Boolean; begin
+                    Ok := Codeunit.Run(Codeunit::Plain);
+                    if not Ok then Error('plain codeunit failed'); end; }",
+            "Outer",
+        );
+        assert_eq!(
+            o.iter().map(|(_, x)| x.clone()).collect::<Vec<_>>(),
+            vec![Outcome::Pass; 4],
             "{o:?}"
         );
     }

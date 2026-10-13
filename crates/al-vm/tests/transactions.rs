@@ -1,0 +1,412 @@
+//! Codeunit.Run and the write-transaction rules around it, end to end.
+//!
+//! Each test cites the corpus test that pins the behaviour.
+
+use al_builtins::native::Signal;
+use al_builtins::value::Value;
+use al_sema::workspace::AppSource;
+use al_vm::{Engine, Session};
+
+const FIXTURES: &str = r#"
+table 50900 "TX T"
+{
+    fields { field(1; K; Code[10]) { } field(2; V; Text[30]) { } }
+    keys { key(PK; K) { } }
+}
+
+codeunit 50910 Erroring
+{
+    trigger OnRun() begin Error('BOOM'); end;
+}
+
+// corpus codeunit/ALTRunTxInserter.Codeunit.al: inserts a marker and commits.
+codeunit 50911 Inserter
+{
+    trigger OnRun() var R: Record "TX T"; begin R.K := 'M'; R.Insert(); Commit(); end;
+}
+
+// corpus codeunit/ALTRunTxDirtyInserter.Codeunit.al: inserts and does not commit.
+codeunit 50912 DirtyInserter
+{
+    trigger OnRun() var R: Record "TX T"; begin R.K := 'D'; R.Insert(); end;
+}
+
+// corpus codeunit/ALTRunTxWriteThenError.Codeunit.al
+codeunit 50913 WriteThenError
+{
+    trigger OnRun() var R: Record "TX T"; begin R.K := 'W'; R.Insert(); Error('BOOM-W'); end;
+}
+
+// corpus codeunit/ALTRunTxCommitThenError.Codeunit.al
+codeunit 50914 CommitThenError
+{
+    trigger OnRun() var R: Record "TX T"; begin
+        R.K := 'C1'; R.Insert(); Commit();
+        R.K := 'C2'; R.Insert();
+        Error('BOOM-C');
+    end;
+}
+
+codeunit 50915 NoOnRun
+{
+    procedure P(): Integer begin exit(7); end;
+}
+
+codeunit 50916 Probe
+{
+    var Runs: Integer; Calls: Integer;
+    trigger OnRun() begin Runs += 1; end;
+    procedure Triple(N: Integer): Integer begin Calls += 1; exit(3 * N); end;
+    procedure GetRuns(): Integer begin exit(Runs); end;
+    procedure GetCalls(): Integer begin exit(Calls); end;
+}
+
+codeunit 50917 Single
+{
+    SingleInstance = true;
+    var Bumps: Integer;
+    trigger OnRun() begin Bumps += 1; end;
+    procedure GetBumps(): Integer begin exit(Bumps); end;
+}
+
+codeunit 50918 Outer
+{
+    trigger OnRun() var Ok: Boolean; R: Record "TX T"; begin
+        Ok := Codeunit.Run(Codeunit::Erroring);
+        R.K := 'O'; R.Insert();
+    end;
+}
+"#;
+
+fn run(body: &str) -> Result<Value, Signal> {
+    let src = format!("{FIXTURES}\ncodeunit 50100 C {{ {body} }}");
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
+    if let Some(Some(r)) = blocked.get(oi).and_then(|o| o.get(ri)) {
+        panic!("F is blocked: {r}");
+    }
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
+}
+
+fn text(r: Result<Value, Signal>) -> String {
+    match r {
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn f(body: &str) -> String {
+    text(run(&format!("procedure F(): Text {body}")))
+}
+
+// codeunit/TestCodeunitRunGuard.al:GuardedRun_TrapsInnerError_ReturnsFalse
+#[test]
+fn a_guarded_run_traps_the_inner_error_and_returns_false() {
+    assert_eq!(
+        f("var Ok: Boolean; begin Ok := Codeunit.Run(Codeunit::Erroring); exit(Format(Ok) + GetLastErrorText()); end;"),
+        "NoBOOM"
+    );
+}
+
+// codeunit/TestCodeunitRunGuard.al:UnguardedRun_PropagatesInnerError
+#[test]
+fn an_unguarded_run_propagates_the_inner_error() {
+    assert_eq!(
+        f("begin asserterror Codeunit.Run(Codeunit::Erroring); exit(GetLastErrorText()); end;"),
+        "BOOM"
+    );
+}
+
+// codeunit/TestCodeunitRunGuard.al:GuardedRun_InstanceForm_TrapsInnerError_ReturnsFalse
+// and UnguardedRun_InstanceForm_PropagatesInnerError
+#[test]
+fn the_instance_form_is_guarded_the_same_way() {
+    assert_eq!(
+        f("var G: Codeunit Erroring; Ok: Boolean; begin Ok := G.Run(); exit(Format(Ok) + GetLastErrorText()); end;"),
+        "NoBOOM"
+    );
+    assert_eq!(
+        f("var G: Codeunit Erroring; begin asserterror G.Run(); exit(GetLastErrorText()); end;"),
+        "BOOM"
+    );
+}
+
+// codeunit/TestCodeunitRunGuard.al:GuardedRun_InstanceForm_WriteThenError_RollsBackInsertedRow
+#[test]
+fn a_failed_guarded_run_rolls_back_its_own_writes() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; Ok: Boolean; begin
+            Ok := Codeunit.Run(Codeunit::WriteThenError);
+            exit(Format(Ok) + Format(R.Count()) + GetLastErrorText());
+        end;"),
+        "No0BOOM-W"
+    );
+}
+
+// codeunit/TestCodeunitRunGuard.al:GuardedRun_StaticForm_CommitThenError_KeepsCommittedRowOnly
+#[test]
+fn a_failed_guarded_run_keeps_what_it_committed_and_loses_what_it_wrote_after() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; Ok: Boolean; begin
+            Ok := Codeunit.Run(Codeunit::CommitThenError);
+            exit(Format(Ok) + Format(R.Get('C1')) + Format(R.Get('C2')));
+        end;"),
+        "NoYesNo"
+    );
+}
+
+// codeunit/TestCodeunitRunGuard.al:GuardedRun_InstanceForm_CommitThenError_KeepsCommittedRowOnly
+#[test]
+fn the_instance_form_keeps_the_committed_row_too() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; G: Codeunit CommitThenError; Ok: Boolean; begin
+            Ok := G.Run();
+            exit(Format(Ok) + Format(R.Get('C1')) + Format(R.Get('C2')));
+        end;"),
+        "NoYesNo"
+    );
+}
+
+// codeunit/TestCodeunitRunWriteTransaction.al:GuardedRun_WithUncommittedWrite_IsRefused_AndCodeunitNeverRuns
+#[test]
+fn a_guarded_run_is_refused_while_the_caller_has_an_uncommitted_write() {
+    // The full text is quoted in corpus docs/handoff-2026-05-25-test-failures.md:242; the
+    // test pins the fragment `the transaction is stopped`.
+    assert_eq!(
+        f("var R: Record \"TX T\"; Ok: Boolean; begin
+            Commit();
+            R.K := 'P'; R.Insert();
+            asserterror Ok := Codeunit.Run(Codeunit::Inserter);
+            Commit();
+            R.Reset();
+            exit(GetLastErrorText() + '|' + Format(Ok) + Format(R.Get('M')));
+        end;"),
+        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|NoNo"
+    );
+}
+
+// codeunit/TestCodeunitRunWriteTransaction.al:UnguardedRun_WithUncommittedWrite_IsAllowed_AndCodeunitRuns
+#[test]
+fn an_unguarded_run_is_allowed_with_an_uncommitted_write() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; begin
+            Commit();
+            R.K := 'P'; R.Insert();
+            Codeunit.Run(Codeunit::Inserter);
+            exit(Format(R.Get('M')));
+        end;"),
+        "Yes"
+    );
+}
+
+// codeunit/TestCodeunitRunWriteTransaction.al:GuardedRun_AfterCommit_IsAllowed_AndCodeunitRuns
+#[test]
+fn a_guarded_run_after_a_commit_runs_and_returns_true() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; Ok: Boolean; begin
+            R.K := 'P'; R.Insert(); Commit();
+            Ok := Codeunit.Run(Codeunit::Inserter);
+            exit(Format(Ok) + Format(R.Get('M')));
+        end;"),
+        "YesYes"
+    );
+}
+
+// codeunit/TestCodeunitRunWriteTransaction.al:GuardedRun_LeavingUncommittedWrite_DoesNotBlockTheNextGuardedRun
+#[test]
+fn a_write_a_guarded_run_leaves_uncommitted_does_not_block_the_next_guarded_run() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; A: Boolean; B: Boolean; begin
+            Commit();
+            A := Codeunit.Run(Codeunit::DirtyInserter);
+            B := Codeunit.Run(Codeunit::Inserter);
+            exit(Format(A) + Format(B));
+        end;"),
+        "YesYes"
+    );
+}
+
+// codeunit/TestCodeunitRunWriteTransaction.al:GuardedRun_LeavingUncommittedWrite_CommitsItWithTheRunsOwnTransaction
+#[test]
+fn a_successful_guarded_run_commits_its_own_transaction() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; Ok: Boolean; begin
+            Commit();
+            Ok := Codeunit.Run(Codeunit::DirtyInserter);
+            asserterror Error('later');
+            exit(Format(Ok) + Format(R.Get('D')));
+        end;"),
+        "YesYes"
+    );
+}
+
+// codeunit/TestCodeunitRunContracts.al:Codeunit_Run_SetsErrorTextOnFailure (statement form, no
+// OnRun) and types/TestLanguageEdgeCases.al:CodeunitRun_Success_ReturnsTrue (guarded, no OnRun)
+#[test]
+fn a_codeunit_without_onrun_runs_as_a_no_op() {
+    assert_eq!(
+        f(
+            "var Ok: Boolean; begin Codeunit.Run(Codeunit::NoOnRun); Ok := Codeunit.Run(Codeunit::NoOnRun); exit(Format(Ok) + GetLastErrorText()); end;"
+        ),
+        "Yes"
+    );
+}
+
+// codeunit/TestCodeunitVariableDispatch.al:CodeunitRun_ReachesOnRunAndNotTheProcedures and
+// RunOnAVariable_ReachesThatVariablesOwnInstance
+#[test]
+fn the_static_form_runs_its_own_instance_and_the_instance_form_the_variables() {
+    assert_eq!(
+        f("var P: Codeunit Probe; begin
+            Commit();
+            Codeunit.Run(Codeunit::Probe);
+            exit(Format(P.GetRuns()) + Format(P.GetCalls()));
+        end;"),
+        "00"
+    );
+    assert_eq!(
+        f("var P: Codeunit Probe; begin
+            Commit();
+            P.Triple(4); P.Run();
+            exit(Format(P.GetRuns()) + Format(P.GetCalls()));
+        end;"),
+        "11"
+    );
+}
+
+// codeunit/TestCodeunitSingleInstanceLeak_Tests.al:TestCodeunit_SingleInstance_SurvivesACodeunitBoundary
+#[test]
+fn a_single_instance_codeunit_keeps_its_state_across_a_run() {
+    assert_eq!(
+        f("var S: Codeunit Single; begin
+            Commit();
+            Codeunit.Run(Codeunit::Single);
+            exit(Format(S.GetBumps()));
+        end;"),
+        "1"
+    );
+}
+
+// record/TestAutoIncrementGuardedRun.Objects.al: Outer H -- an outer run swallows a failed inner
+// run, writes, and succeeds.
+#[test]
+fn a_nested_guarded_run_that_fails_leaves_the_outer_run_working() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; Ok: Boolean; begin
+            Commit();
+            Ok := Codeunit.Run(Codeunit::Outer);
+            exit(Format(Ok) + Format(R.Get('O')));
+        end;"),
+        "YesYes"
+    );
+}
+
+// codeunit/TestCodeunitRunMissing.al: the text is only pinned in two fragments, so a run of an
+// id no object declares is refused rather than given a made-up text.
+#[test]
+fn running_a_codeunit_id_that_does_not_exist_is_unsupported() {
+    let r = run("procedure F(): Text begin Codeunit.Run(99990); exit(''); end;");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+// ---- [CommitBehavior] (error-handling/TestCommitBehaviorAttribute.al) ----
+
+const CB: &str = r#"
+    [CommitBehavior(CommitBehavior::Ignore)]
+    local procedure InsertCommitThenErrorIgnoring(K: Code[10]) var R: Record "TX T"; begin R.K := K; R.Insert(); Commit(); Error('unrelated'); end;
+    local procedure InsertCommitThenError(K: Code[10]) var R: Record "TX T"; begin R.K := K; R.Insert(); Commit(); Error('unrelated'); end;
+    [CommitBehavior(CommitBehavior::Ignore)]
+    local procedure ViaCallee(K: Code[10]) begin InsertCommitThenError(K); end;
+    [CommitBehavior(CommitBehavior::Ignore)]
+    local procedure InsertAndIgnoreCommit(K: Code[10]) var R: Record "TX T"; begin R.K := K; R.Insert(); Commit(); end;
+    [CommitBehavior(CommitBehavior::Error)]
+    local procedure InsertThenCommitUnderError(K: Code[10]) var R: Record "TX T"; begin R.K := K; R.Insert(); Commit(); end;
+"#;
+
+fn g(body: &str) -> String {
+    text(run(&format!("{CB}\nprocedure F(): Text {body}")))
+}
+
+// :CommitBehavior_Unattributed_CommitBeforeErrorMakesRowDurable (the control twin)
+#[test]
+fn without_the_attribute_the_commit_before_the_error_is_durable() {
+    assert_eq!(
+        g("var R: Record \"TX T\"; begin asserterror InsertCommitThenError('1'); exit(Format(R.Get('1'))); end;"),
+        "Yes"
+    );
+}
+
+// :CommitBehavior_Ignore_CommitBeforeErrorDoesNotMakeRowDurable
+#[test]
+fn an_ignored_commit_does_not_move_the_rollback_boundary() {
+    assert_eq!(
+        g(
+            "var R: Record \"TX T\"; begin asserterror InsertCommitThenErrorIgnoring('1'); exit(Format(R.Get('1')) + GetLastErrorText()); end;"
+        ),
+        "Nounrelated"
+    );
+}
+
+// :CommitBehavior_Ignore_GovernsCommitIssuedByAnUnattributedCallee
+#[test]
+fn the_attribute_governs_the_whole_dynamic_scope() {
+    assert_eq!(
+        g("var R: Record \"TX T\"; begin asserterror ViaCallee('2'); exit(Format(R.Get('2'))); end;"),
+        "No"
+    );
+}
+
+// :CommitBehavior_Ignore_ScopeIsPoppedOnReturn
+#[test]
+fn the_scope_ends_when_the_attributed_procedure_returns() {
+    assert_eq!(
+        g(
+            "var R: Record \"TX T\"; begin InsertAndIgnoreCommit('3'); Commit(); asserterror Error('later'); exit(Format(R.Get('3'))); end;"
+        ),
+        "Yes"
+    );
+}
+
+// :CommitBehavior_Error_CommitRaisesAndRowIsRolledBack
+#[test]
+fn an_error_scope_makes_commit_raise() {
+    assert_eq!(
+        g(
+            "var R: Record \"TX T\"; begin asserterror InsertThenCommitUnderError('4'); exit(Format(R.Get('4')) + GetLastErrorText()); end;"
+        ),
+        "NoCommit is prohibited in the current scope"
+    );
+}
+
+// The scope also ends when the attributed procedure fails.
+#[test]
+fn the_scope_ends_when_the_attributed_procedure_fails() {
+    assert_eq!(
+        g(
+            "var R: Record \"TX T\"; begin asserterror InsertCommitThenErrorIgnoring('5'); R.K := 'Z'; R.Insert(); Commit(); asserterror Error('later'); exit(Format(R.Get('Z'))); end;"
+        ),
+        "Yes"
+    );
+}

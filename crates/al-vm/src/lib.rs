@@ -14,15 +14,20 @@ mod autoinc;
 mod dispatch;
 pub mod events;
 mod flowfields;
+mod interfaces;
 mod pages;
+mod queries;
 mod recmeta;
 mod records;
 mod refs;
 mod relations;
 mod rename;
 mod sessionops;
+mod transactions;
 mod ui;
 mod views;
+mod xmlports;
+pub use transactions::TxModel;
 pub use ui::{UiHandler, UiKind};
 
 pub struct Engine {
@@ -124,6 +129,15 @@ pub struct Session {
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
     pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
+    /// The transaction model of the running test method (set by the test runner).
+    pub tx_model: TxModel,
+    /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
+    /// a TestPage operation); a `TransactionModel::None` test may write inside them.
+    pub(crate) tx_world: usize,
+    /// The `[CommitBehavior]` of the innermost procedure that declares one.
+    pub(crate) commit_behavior: transactions::CommitBehavior,
+    /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
+    pub in_test_codeunit: bool,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -163,6 +177,10 @@ impl Session {
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
+            tx_model: TxModel::default(),
+            tx_world: 0,
+            commit_behavior: Default::default(),
+            in_test_codeunit: false,
         }
     }
 
@@ -346,11 +364,30 @@ impl Session {
             locals,
         };
         let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
+        // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
+        // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
+        let saved_commit_behavior = self.commit_behavior;
+        for a in r
+            .attributes
+            .iter()
+            .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
+        {
+            match transactions::CommitBehavior::from_attribute(&a.text) {
+                Some(b) => self.commit_behavior = b,
+                None => {
+                    return Err(Signal::Unsupported(format!(
+                        "{} (only Ignore and Error are pinned)",
+                        a.text
+                    )));
+                }
+            }
+        }
         self.try_depth += usize::from(is_try);
         self.frames.push(object);
         let outcome = self.exec_block(&r.body, &mut frame);
         self.frames.pop();
         self.try_depth -= usize::from(is_try);
+        self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
             Ok(()) => None,
@@ -599,44 +636,40 @@ impl Session {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
                         Value::Record(rc) => self.record_instance(*object, rc, None)?,
+                        // The page a part shows (`CurrPage.<Part>.Page`).
+                        // A `Page` variable's procedures (OnInit at first use) are not modelled.
+                        Value::TestPage(st) if st.borrow().host.is_some() => {
+                            let i = self.page_instance(&st)?;
+                            self.shared_instance(i)
+                        }
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };
-                let mut values = Vec::with_capacity(args.len());
-                for a in args {
-                    values.push(match a {
-                        ir::Arg::Value(e) => self.eval(e, f)?,
-                        ir::Arg::Ref(p) => self.read(p, f)?,
-                    });
-                }
-                let result = self.call(*object, *routine, inst, values);
-                if let Err(Signal::Error(_)) = &result {
-                    if let Some(finals) = self.error_finals.take() {
-                        for (a, v) in args.iter().zip(finals) {
-                            if let ir::Arg::Ref(p) = a {
-                                self.write(p, v, f)?;
-                            }
-                        }
-                    }
-                }
-                let (ret, finals) = match (result, try_call) {
-                    (Err(Signal::Error(e)), true) => {
-                        self.last_error = e;
-                        return Ok(Value::Boolean(false));
-                    }
-                    (Ok((_, finals)), true) => (Value::Boolean(true), finals),
-                    (r, _) => r?,
-                };
-                for (a, v) in args.iter().zip(finals) {
-                    if let ir::Arg::Ref(p) = a {
-                        self.write(p, v, f)?;
-                    }
-                }
-                Ok(ret)
+                self.finish_call(*object, *routine, inst, args, *try_call, f)
+            }
+            E::InterfaceCall {
+                receiver,
+                targets,
+                args,
+            } => {
+                let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
+                self.finish_call(object, routine, inst, args, false, f)
+            }
+            E::EnumImpl {
+                value,
+                by_ordinal,
+                unknown,
+            } => {
+                let v = self.eval(value, f)?;
+                self.enum_implementation(v, by_ordinal, *unknown)
             }
             E::Control { page, control } => {
                 let p = self.eval(page, f)?;
                 self.page_control(p, *control)
+            }
+            E::QueryColumn { query, column } => {
+                let q = self.eval(query, f)?;
+                self.query_column(q, *column)
             }
             E::Builtin {
                 id,
@@ -651,6 +684,30 @@ impl Session {
                     };
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
+                }
+                if id.starts_with("Codeunit.Run#")
+                    || id.starts_with("Xmlport.")
+                    || id == "Database.IsInWriteTransaction#1"
+                {
+                    let recv = match receiver.as_deref() {
+                        Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
+                        Some(ir::Arg::Ref(p)) => Some(self.read(p, f)?),
+                        None => None,
+                    };
+                    let mut values = Vec::with_capacity(args.len());
+                    for a in args {
+                        values.push(match a {
+                            ir::Arg::Value(e) => self.eval(e, f)?,
+                            ir::Arg::Ref(p) => self.read(p, f)?,
+                        });
+                    }
+                    if id == "Database.IsInWriteTransaction#1" {
+                        return Ok(Value::Boolean(self.in_write_transaction()));
+                    }
+                    if id.starts_with("Xmlport.") {
+                        return self.xmlport_builtin(id, recv, &values, *ret_used);
+                    }
+                    return self.codeunit_run(id, recv, &values, *ret_used);
                 }
                 let native =
                     al_builtins::native::lookup(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
@@ -679,6 +736,50 @@ impl Session {
                 Ok(ret)
             }
         }
+    }
+
+    /// Evaluates the arguments of a resolved call and runs it on `inst`, writing back the
+    /// by-reference arguments.
+    fn finish_call(
+        &mut self,
+        object: usize,
+        routine: usize,
+        inst: Rc<RefCell<Instance>>,
+        args: &[ir::Arg],
+        try_call: bool,
+        f: &mut Frame,
+    ) -> Result<Value, Signal> {
+        let mut values = Vec::with_capacity(args.len());
+        for a in args {
+            values.push(match a {
+                ir::Arg::Value(e) => self.eval(e, f)?,
+                ir::Arg::Ref(p) => self.read(p, f)?,
+            });
+        }
+        let result = self.call(object, routine, inst, values);
+        if let Err(Signal::Error(_)) = &result {
+            if let Some(finals) = self.error_finals.take() {
+                for (a, v) in args.iter().zip(finals) {
+                    if let ir::Arg::Ref(p) = a {
+                        self.write(p, v, f)?;
+                    }
+                }
+            }
+        }
+        let (ret, finals) = match (result, try_call) {
+            (Err(Signal::Error(e)), true) => {
+                self.last_error = e;
+                return Ok(Value::Boolean(false));
+            }
+            (Ok((_, finals)), true) => (Value::Boolean(true), finals),
+            (r, _) => r?,
+        };
+        for (a, v) in args.iter().zip(finals) {
+            if let ir::Arg::Ref(p) = a {
+                self.write(p, v, f)?;
+            }
+        }
+        Ok(ret)
     }
 
     /// The instance a call on codeunit value `i` runs on: the session's
@@ -871,6 +972,10 @@ impl al_builtins::native::Ctx for Session {
         self.page_op(method, recv, args)
     }
 
+    fn query(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        self.query_op(method, recv, args)
+    }
+
     fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         Session::ref_op(self, id, receiver, args)
     }
@@ -933,8 +1038,7 @@ impl al_builtins::native::Ctx for Session {
         Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
     fn commit(&mut self) -> Result<(), Signal> {
-        self.commit_transaction();
-        Ok(())
+        self.commit_builtin()
     }
     fn ret_used(&self) -> bool {
         self.ret_used

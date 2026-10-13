@@ -55,6 +55,139 @@ pub struct Object {
     /// Builtins scoped to a module (`IsolatedStorage`) key on it.
     #[serde(default)]
     pub app: u32,
+    /// For queries: dataitems, columns and the query-level properties.
+    #[serde(default)]
+    pub query: Option<Query>,
+    /// For xmlports: the schema. Triggers and procedures are ordinary routines of the object.
+    #[serde(default)]
+    pub xmlport: Option<XmlPort>,
+}
+
+/// The direction an xmlport declares (`Direction`, default `Both`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum XmlDirection {
+    Import,
+    Export,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum XmlNodeKind {
+    /// `textelement`: a container when it has children, else it carries a variable's text.
+    Text,
+    /// `textattribute`: an attribute carrying a variable's text.
+    TextAttr,
+    /// `tableelement`: one element per record of a table.
+    Table,
+    /// `fieldelement`: an element carrying a field of the enclosing table element's record.
+    Field,
+    /// `fieldattribute`: an attribute carrying such a field.
+    FieldAttr,
+}
+
+/// An xmlport as the runtime sees it (`Format = Xml`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct XmlPort {
+    pub direction: XmlDirection,
+    /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
+    pub nodes: Vec<XmlNode>,
+    /// Global slots of the source `InStream` and destination `OutStream` set by
+    /// `SetSource` / `SetDestination`.
+    pub source_slot: usize,
+    pub destination_slot: usize,
+    /// Why the runtime cannot run this xmlport yet; empty = it can.
+    pub unsupported: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct XmlNode {
+    /// The name in the schema (the AL variable for text and table nodes).
+    pub name: String,
+    /// The element or attribute name in the document (`XmlName`, else `name`).
+    pub xml_name: String,
+    pub kind: XmlNodeKind,
+    pub parent: Option<usize>,
+    /// Global slot of the Text variable (text nodes) or the record buffer (table nodes).
+    pub slot: Option<usize>,
+    /// For table nodes: the object index of the table.
+    pub table: Option<usize>,
+    /// For field nodes: the table node holding the record, and the field's position in the table.
+    pub table_node: Option<usize>,
+    pub field: Option<usize>,
+    /// For nested table nodes: the `LinkTable` node and (own field, link-table field) positions.
+    pub link_node: Option<usize>,
+    pub link_fields: Vec<(usize, usize)>,
+    /// Table node properties (`AutoSave` defaults to true, the others to false, as in AL).
+    pub auto_save: bool,
+    pub auto_update: bool,
+    pub auto_replace: bool,
+    pub use_temporary: bool,
+    /// Triggers by lower-case name (`onbeforepassvariable`, ...) to routine index.
+    pub triggers: Vec<(String, usize)>,
+}
+
+impl XmlNode {
+    pub fn trigger(&self, name: &str) -> Option<usize> {
+        self.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
+    }
+}
+
+/// A query object (corpus query/): a chain of dataitems joined by `DataItemLink`, and the
+/// columns they project. Execution is the VM's (`al-vm/src/queries.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Query {
+    /// Dataitems in source order; each nests in `parent`.
+    pub items: Vec<QueryItem>,
+    /// `column(...)` and `filter(...)` elements in source order. A query column is identified by
+    /// its position here.
+    pub columns: Vec<QueryColumn>,
+    /// `OrderBy` as (column, ascending).
+    pub order_by: Vec<(usize, bool)>,
+    /// The `TopNumberOfRows` property; 0 = all rows.
+    pub top: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueryItem {
+    pub name: String,
+    /// Object index of the source table.
+    pub table: usize,
+    /// The enclosing dataitem (index into `Query::items`); `None` for the root.
+    pub parent: Option<usize>,
+    /// `SqlJoinType = LeftOuterJoin`, which is also the default of a nested dataitem.
+    pub left_outer: bool,
+    /// `DataItemLink`: (field position in this table, field position in the parent's table).
+    pub link: Vec<(usize, usize)>,
+    /// `DataItemTableFilter`: conditions on fields of this table.
+    pub table_filter: Vec<CalcCond>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueryMethod {
+    Sum,
+    Count,
+    Average,
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueryColumn {
+    pub name: String,
+    /// The `Caption` property when it is a plain text literal.
+    pub caption: Option<String>,
+    /// Index into `Query::items`.
+    pub item: usize,
+    /// Position of the source field in the dataitem's table; `None` for a `Count` column.
+    pub field: Option<usize>,
+    /// A `filter(...)` element: it filters its dataitem and is not part of the dataset.
+    pub filter_element: bool,
+    pub method: Option<QueryMethod>,
+    pub reverse_sign: bool,
+    /// Type of the value the column reads.
+    pub ty: RtType,
+    /// `ColumnFilter`: a `const` or `filter` condition on this column.
+    pub static_filter: Option<CalcValue>,
 }
 
 /// A page object as the test client sees it (ADR-012). The AL code of a page
@@ -117,6 +250,29 @@ pub struct Control {
     pub triggers: Vec<(String, usize)>,
     /// For parts: the page object index.
     pub part_page: Option<usize>,
+    /// For parts: how the part's rows follow the host's current row.
+    #[serde(default)]
+    pub part_link: Option<PartLink>,
+}
+
+/// `SubPageLink`, `SubPageView` and `Provider` of a part control (ADR-012 follow-up).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PartLink {
+    /// `SubPageLink` entries, in source order.
+    pub entries: Vec<LinkEntry>,
+    /// `SubPageView` as written.
+    pub view: Option<String>,
+    /// `Provider = <part>`: the control index (on the same page) whose current row the link reads.
+    pub provider: Option<usize>,
+}
+
+/// One `PartField = field(HostField)` / `const(..)` / `filter(..)` entry of a `SubPageLink`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LinkEntry {
+    /// Position of the part's field, position of the host (or provider) field.
+    Field(usize, usize),
+    /// Position of the part's field, the filter text (`const(x)` and `filter(x)` alike).
+    Filter(usize, String),
 }
 
 impl Control {
@@ -367,11 +523,34 @@ pub enum Expr {
         args: Vec<Arg>,
         try_call: bool,
     },
+    /// A call through an interface: `receiver` evaluates to the codeunit instance the
+    /// interface variable holds, and the call runs the target routine of that
+    /// instance's object. `targets` are (object, routine) of every implementation.
+    InterfaceCall {
+        receiver: Box<Expr>,
+        targets: Vec<(usize, usize)>,
+        args: Vec<Arg>,
+    },
+    /// An enum value cast to an interface: a fresh instance of the codeunit that
+    /// implements the interface for the value's ordinal. `by_ordinal` has every declared
+    /// ordinal of the enum (extensions included), already resolved through the value's own
+    /// `Implementation` and the enum's `DefaultImplementation`; `unknown` is the
+    /// `UnknownValueImplementation` for ordinals the enum does not declare.
+    EnumImpl {
+        value: Box<Expr>,
+        by_ordinal: Vec<(i32, usize)>,
+        unknown: Option<usize>,
+    },
     /// A control of the test page `page` evaluates to (`TP.Ctl`), by index
     /// into the page's control list (ADR-012).
     Control {
         page: Box<Expr>,
         control: usize,
+    },
+    /// The current row's value of column `column` of a query variable (`Q.Amount`).
+    QueryColumn {
+        query: Box<Expr>,
+        column: usize,
     },
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
@@ -443,6 +622,8 @@ mod tests {
                 xrec_slot: None,
                 page: None,
                 app: 0,
+                query: None,
+                xmlport: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

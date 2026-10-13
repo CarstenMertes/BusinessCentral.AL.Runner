@@ -31,11 +31,11 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 | tableextensiontrigger | 13 | 6 | 7 | 46.2% |
 | handlers | 1115 | 497 | 618 | 44.6% |
 | session | 427 | 80 | 347 | 18.7% |
-| testpart | 80 | 10 | 70 | 12.5% |
+| testpart | 80 | 71 | 9 | 88.8% |
 | query | 129 | 0 | 129 | 0% |
 | permissions | 58 | 0 | 58 | 0% |
 | pageapplicationarea | 76 | 0 | 76 | 0% |
-| xmlport | 40 | 0 | 40 | 0% |
+| xmlport | 40 | 25 | 15 | 62.5% |
 | other areas (17) | 257 | 17 | 240 | |
 
 ## What is implemented
@@ -58,12 +58,19 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
   extension triggers, Isolated events.
 - **Data formats.** JSON, XML DOM with simple XPath, Blob streams, text
   functions, TextBuilder, BigText, SecretText.
+- **XmlPorts (Format = Xml).** `Import` and `Export` (instance and static),
+  `SetSource`, `SetDestination`, `SetTableView`; table, field, text elements and
+  attributes, nested table elements with `LinkFields`, `AutoSave`, `AutoUpdate`,
+  `AutoReplace`, `UseTemporary`, and the triggers the corpus uses. The 15
+  remaining xmlport tests need dependency apps (ADR-013).
 - **Test runner.** Install codeunits. `[HandlerFunctions]` with Message,
   Confirm, StrMenu, page and modal page handlers.
 - **Pages (ADR-012).** TestPage on Card and List pages: lifecycle,
   navigation, SetValue and validation, actions, page triggers,
   `CurrPage.Update`, `Page.Run` and `RunModal`, lookup mode, SaveValues,
-  control-text formatting.
+  control-text formatting. Parts and `TestPart` (SubPageLink, SubPageView,
+  Provider, navigation, new rows with AutoSplitKey, `CurrPage.<Part>.Page`
+  calls), `TestFilter`, `Page.SetRecord`, SourceTableTemporary pages.
 
 ## Largest remaining blockers
 
@@ -72,7 +79,7 @@ Each test is counted under the first thing that stops it.
 | Tests | Blocker | Plan |
 |---:|---|---|
 | ~550 | Objects outside the workspace: tables (452), codeunits (51), pages (46) | ADR-013 (Proposed): compile Microsoft's real apps from the artifact feed; native providers for system tables |
-| 180 | TestPage parts and TestPart | ADR-012 follow-up; groundwork in place |
+| 23 | Tests that use parts but stop on something else: `DMY2Date` (7), `Session.ApplicationArea` (5), RunObject action (4), the Integer system table (4), page extensions (3) | Each is counted under its own blocker |
 | 121 | Query objects | Not started |
 | 96 | Request and filter pages | ADR-012 follow-up |
 | 94 | Page extensions | ADR-012 follow-up |
@@ -85,20 +92,28 @@ Each test is counted under the first thing that stops it.
 
 ## Open decisions for the project owner
 
-ADR-013 (Proposed) waits on these questions:
+ADR-013 (Proposed, revised 2026-10-13) now waits on one question and on the
+owner accepting the revision.
 
-1. **Licensing.** Download Microsoft's app source into a local cache and CI
-   cache and compile it, committing nothing. Acceptable?
-2. **Native layer.** Rust row providers for system tables and shims for
-   `DotNet` types, placed behind their real AL declarations and refused when
-   absent. Is that within "do not fake objects from dependent apps"?
-3. **Pinning.** Ask the corpus CI to record its artifact build, or pin the
-   latest 27.5 build in `oracle.toml` and warn on a mismatch?
-4. **Budget.** Compiling the Base Application costs about 16 s cold today. Is
-   "1 s warm plus what the run reaches" acceptable, or should a persistent
-   cache come first?
-5. **Install triggers.** Run the dependency apps' install and
-   Company-Initialize code into the baseline, or not?
+1. **`DotNet` types in Microsoft's AL.** May the runtime contain Rust code that
+   stands in for a .NET class declared in Microsoft's AL? Options: no (refuse
+   every `DotNet` use); yes for standard-library classes only (`Convert`,
+   `Encoding`, `MemoryStream`, ...); yes for those and for Microsoft server
+   classes (`NavTenantSettingsHelper`, `NavUserAccountHelper`, ...). At most 20
+   to 28 corpus tests are affected. Real cases are in `docs/dotnet-examples.md`.
+   Until decided, a `DotNet` call is refused.
+
+Answered on 2026-10-13 and recorded in ADR-013:
+
+- Licensing: download Microsoft's app source into a local cache and a CI cache,
+  compile it, commit nothing.
+- Native layer: AL that exists is taken as AL and never shimmed. Platform
+  tables with no AL body get native row providers.
+- Version selection: driven by the project's `app.json`, using the same
+  mechanism as AL Runner. Not corpus-specific. The corpus harness passes the
+  oracle's BC minor.
+- Budget: demand-driven compilation. A persistent cache is an optimisation.
+- Install triggers and Company-Initialize: mirror AL Runner.
 
 ## Known issues and debt
 

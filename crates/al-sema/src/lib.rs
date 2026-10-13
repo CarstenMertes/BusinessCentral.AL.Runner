@@ -5,8 +5,10 @@ pub mod check;
 pub mod lower;
 pub mod members;
 pub mod pages;
+pub mod queries;
 pub mod relation;
 pub mod types;
 pub mod workspace;
+pub mod xmlports;
 
 pub use workspace::{AppSource, Diagnostic, ObjKind, Resolution, Workspace};

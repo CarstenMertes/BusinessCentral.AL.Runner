@@ -73,6 +73,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         }
     }
     let mut page_reasons: Vec<Vec<String>> = vec![Vec::new(); ws.objects.len()];
+    // The page objects each page shows as parts.
+    let mut page_parts: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
     for (oi, o) in ws.objects.iter().enumerate() {
         if o.kind != ObjKind::Page {
             continue;
@@ -80,8 +82,42 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         let obj = ws.object_ast(oi);
         let l = crate::pages::layout(&obj);
         page_reasons[oi].extend(l.reasons.iter().cloned());
-        if l.controls.iter().any(|c| c.kind == ir::ControlKind::Part) {
-            page_reasons[oi].push("parts are not supported by the test client yet".into());
+        for c in l.controls.iter().filter(|c| c.kind == ir::ControlKind::Part) {
+            let prop_of = |n: &str| {
+                c.section
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case(n))
+                    .map(|p| p.value_text())
+            };
+            if let Some(link) = prop_of("SubPageLink") {
+                if let Err(why) = crate::pages::parse_sub_page_link(&link) {
+                    page_reasons[oi].push(format!("part {}: {why} is not supported yet", c.name));
+                }
+            }
+            if let Some(provider) = prop_of("Provider") {
+                let provider = provider.trim().trim_matches('"').to_string();
+                if !l
+                    .controls
+                    .iter()
+                    .any(|p| p.kind == ir::ControlKind::Part && p.name.eq_ignore_ascii_case(&provider))
+                {
+                    page_reasons[oi].push(format!(
+                        "part {}: Provider `{provider}` is not a part of the page",
+                        c.name
+                    ));
+                }
+            }
+            match c.section.args().get(1) {
+                Some(n) => match ws.resolve_ref(o.file, ObjKind::Page, &crate::types::qualified_parts(n)) {
+                    Resolution::Found(p) => page_parts[oi].push(p),
+                    _ => page_reasons[oi].push(format!(
+                        "part {} shows page {} outside the workspace",
+                        c.name,
+                        crate::types::display_name(n)
+                    )),
+                },
+                None => page_reasons[oi].push(format!("part {} names no page", c.name)),
+            }
         }
         if l.controls.iter().any(|c| {
             c.section
@@ -103,11 +139,33 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
-        if page_temporary[oi] {
-            page_reasons[oi].push("SourceTableTemporary is not supported by the test client yet".into());
-        }
         if page_extensions.contains_key(&oi) {
             page_reasons[oi].push("page extensions are not supported by the test client yet".into());
+        }
+    }
+    // A host cannot be driven where a part page cannot.
+    for _ in 0..3 {
+        for oi in 0..ws.objects.len() {
+            for &p in &page_parts[oi].clone() {
+                // What a part page's close triggers do when the host closes is not pinned.
+                let closes = ws.object_ast(p).triggers().any(|t| {
+                    let n = t.name();
+                    n.eq_ignore_ascii_case("OnClosePage") || n.eq_ignore_ascii_case("OnQueryClosePage")
+                });
+                let reason = format!(
+                    "part page `{}` declares a close trigger (what it does when the host closes is not pinned)",
+                    ws.objects[p].name
+                );
+                if closes && !page_reasons[oi].contains(&reason) {
+                    page_reasons[oi].push(reason);
+                }
+                if let Some(why) = page_reasons[p].first().cloned() {
+                    let reason = format!("part page `{}`: {why}", ws.objects[p].name);
+                    if !page_reasons[oi].contains(&reason) {
+                        page_reasons[oi].push(reason);
+                    }
+                }
+            }
         }
     }
     for (oi, o) in ws.objects.iter().enumerate() {
@@ -123,6 +181,41 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
             _ => {}
         }
+    }
+    // XmlPorts: schema and the reasons the runtime cannot run one yet. The element variables
+    // take the first global slots (text, attribute and table nodes in schema order), then the
+    // hidden source and destination streams, so the slots are known before anything is lowered.
+    let mut xml_layouts: Vec<Option<crate::xmlports::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut xml_irs: Vec<Option<ir::XmlPort>> = (0..ws.objects.len()).map(|_| None).collect();
+    for (oi, o) in ws.objects.iter().enumerate() {
+        if o.kind != ObjKind::XmlPort {
+            continue;
+        }
+        let l = crate::xmlports::layout(&ws.object_ast(oi));
+        let mut slots = HashMap::new();
+        for n in &l.nodes {
+            if matches!(
+                n.kind,
+                ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr | ir::XmlNodeKind::Table
+            ) {
+                let next = slots.len();
+                slots.entry(n.name.to_lowercase()).or_insert(next);
+            }
+        }
+        let n = slots.len();
+        let cx = crate::xmlports::Context {
+            ws,
+            members,
+            oi,
+            file: o.file,
+            layout: &l,
+            slots: &slots,
+            routine_at: &routine_at,
+            source_slot: n,
+            destination_slot: n + 1,
+        };
+        xml_irs[oi] = Some(crate::xmlports::build(&cx, Vec::new()));
+        xml_layouts[oi] = Some(l);
     }
     for (oi, o) in ws.objects.iter().enumerate() {
         let obj = ws.object_ast(oi);
@@ -144,10 +237,58 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             calls: Vec::new(),
             page_reasons: &page_reasons,
             layouts: &layouts,
+            xmlports: &xml_irs,
             attrs: Default::default(),
         };
         let mut globals = Vec::new();
         let mut global_reasons = Vec::new();
+        if let Some(l) = &xml_layouts[oi] {
+            for n in &l.nodes {
+                let (ty, table) = match n.kind {
+                    ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr => (Ok(RtType::Text(None)), false),
+                    ir::XmlNodeKind::Table => (
+                        lw.rt(&Ty::Record {
+                            table: n.args.get(1).cloned().unwrap_or_default(),
+                            temporary: n.section.properties().any(|p| {
+                                p.name().eq_ignore_ascii_case("UseTemporary")
+                                    && p.value_text().trim().eq_ignore_ascii_case("true")
+                            }),
+                        }),
+                        true,
+                    ),
+                    _ => continue,
+                };
+                let key = n.name.to_lowercase();
+                if lw.globals.contains_key(&key) {
+                    continue;
+                }
+                lw.globals.insert(key, globals.len());
+                match ty {
+                    Ok(rt) => globals.push(ir::Slot {
+                        name: n.name.clone(),
+                        ty: rt,
+                    }),
+                    Err(e) => {
+                        global_reasons.push(format!(
+                            "{} `{}`: {e}",
+                            if table { "table element" } else { "variable" },
+                            n.name
+                        ));
+                        globals.push(ir::Slot {
+                            name: n.name.clone(),
+                            ty: RtType::Variant,
+                        });
+                    }
+                }
+            }
+            for name in ["__source", "__destination"] {
+                let ty = if name == "__source" { "InStream" } else { "OutStream" };
+                globals.push(ir::Slot {
+                    name: name.into(),
+                    ty: RtType::Library(ty.into()),
+                });
+            }
+        }
         for v in obj.var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
@@ -171,7 +312,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 lw.globals.insert(name.to_lowercase(), globals.len());
                 globals.push(ir::Slot {
                     name: name.into(),
-                    ty: RtType::Record(t as u32, lw.is_temporary_table(t)),
+                    ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
                 });
             }
         }
@@ -193,8 +334,26 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             // A TestPage drives page routines the call graph cannot see (ADR-012).
             for s in routine.locals.iter().chain(&globals) {
                 if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
+                    // The page and, transitively, the pages it shows as parts.
+                    let mut seen = vec![p as usize];
+                    let mut at = 0;
+                    while at < seen.len() {
+                        let q = seen[at];
+                        at += 1;
+                        lw.calls.extend((0..routine_nodes[q].len()).map(|ri| (q, ri)));
+                        for &part in &page_parts[q] {
+                            if !seen.contains(&part) {
+                                seen.push(part);
+                            }
+                        }
+                    }
+                }
+                // An xmlport's triggers are run by Import and Export, which the graph cannot see.
+                if let RtType::Codeunit(p) = s.ty {
                     let p = p as usize;
-                    lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
+                    if ws.objects[p].kind == ObjKind::XmlPort {
+                        lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
+                    }
                 }
             }
             unsupported.push(std::mem::take(&mut lw.reasons));
@@ -227,6 +386,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             xrec_slot,
             page,
             app: o.app as u32,
+            xmlport: xml_irs[oi].clone(),
+            query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.unsupported.push(unsupported);
         out.calls.push(calls);
@@ -238,7 +399,7 @@ type L<T> = Result<T, String>;
 
 /// An `InitValue` property as a constant of the field's type; `None` for
 /// forms not handled yet (the field then starts at its type's default).
-fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
+pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
     let t = text.trim();
     Some(match ty {
         Ty::Integer => ir::Const::Integer(t.parse().ok()?),
@@ -260,6 +421,97 @@ fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
         Ty::Time => ir::Const::Time(time_literal(t)?),
         _ => return None,
     })
+}
+
+/// A `const(..)` value as a constant of the source field's type.
+pub(crate) fn calc_const(
+    ws: &Workspace,
+    members: &[Members],
+    file: usize,
+    raw: &str,
+    ty: &Ty,
+) -> Result<ir::Const, String> {
+    let raw = raw.trim();
+    // `Database::"X"` / `Report::"X"`: the object's id (corpus
+    // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
+    if let Some((kind, name)) = raw.split_once("::") {
+        let kind = match kind.trim().to_ascii_lowercase().as_str() {
+            "database" => Some(ObjKind::Table),
+            other => ObjKind::from_type_name(other),
+        };
+        let name = name.trim().trim_matches('"').to_string();
+        let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
+            return Err(format!("CalcFormula const({raw}) is not understood yet"));
+        };
+        let Resolution::Found(o) = ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
+            return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
+        };
+        let id = ws.objects[o]
+            .id
+            .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
+        return match ty {
+            Ty::Integer => Ok(ir::Const::Integer(id as i32)),
+            Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
+            Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
+            _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
+        };
+    }
+    let unquoted = raw.trim_matches('"');
+    if let Ty::Enum(name) = ty {
+        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
+            return Err(format!(
+                "CalcFormula const({raw}): enum `{name}` is outside the workspace"
+            ));
+        };
+        let values = &members[e].enum_values;
+        let ordinal = values
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
+            .map(|(v, _)| *v as i32)
+            .or_else(|| unquoted.parse().ok())
+            .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
+        return Ok(ir::Const::Enum(e as u32, ordinal));
+    }
+    if let Ty::Option(members) = ty {
+        if let Ok(n) = unquoted.parse::<i32>() {
+            return Ok(ir::Const::Option(n, members.clone()));
+        }
+    }
+    init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
+}
+
+/// The runtime type of a scalar type (numbers, text, dates, options, enums); `None` for the rest.
+pub(crate) fn scalar_rt(ws: &Workspace, file: usize, t: &Ty) -> Option<L<RtType>> {
+    Some(Ok(match t {
+        Ty::Integer => RtType::Integer,
+        Ty::BigInteger => RtType::BigInteger,
+        Ty::Decimal => RtType::Decimal,
+        Ty::Boolean => RtType::Boolean,
+        Ty::Char => RtType::Char,
+        Ty::Byte => RtType::Byte,
+        Ty::Text(n) => RtType::Text(*n),
+        Ty::Code(n) => RtType::Code(*n),
+        Ty::Label => RtType::Text(None),
+        Ty::Date => RtType::Date,
+        Ty::Time => RtType::Time,
+        Ty::DateTime => RtType::DateTime,
+        Ty::Duration => RtType::Duration,
+        Ty::DateFormula => RtType::DateFormula,
+        Ty::Guid => RtType::Guid,
+        Ty::Variant => RtType::Variant,
+        Ty::Option(m) => RtType::Option(m.clone()),
+        Ty::Enum(n) => match ws.resolve_ref(file, ObjKind::Enum, &crate::types::qualified_parts(n)) {
+            Resolution::Found(i) => RtType::Enum(i as u32),
+            _ => {
+                return Some(Err(format!(
+                    "{} `{}` is outside the workspace",
+                    ObjKind::Enum.label(),
+                    crate::types::display_name(n)
+                )));
+            }
+        },
+        _ => return None,
+    }))
 }
 
 /// `20240115D` / `0D` as a day number.
@@ -313,7 +565,7 @@ fn label_text(t: &ast::TypeRef) -> Option<String> {
 /// the single-quoted literals the filter grammar understands. AL quotes an
 /// identifier with `"`; the filter grammar treats `"` as an ordinary
 /// character (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9).
-fn rewrite_quotes(raw: &str) -> String {
+pub(crate) fn rewrite_quotes(raw: &str) -> String {
     let mut out = String::new();
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
@@ -369,8 +621,20 @@ struct Lowerer<'a> {
     /// Per object: why the test client cannot drive it yet (pages).
     page_reasons: &'a [Vec<String>],
     layouts: &'a [Option<crate::pages::Layout>],
+    /// Per object: the schema of an xmlport (its `unsupported` says why a variable is refused).
+    xmlports: &'a [Option<ir::XmlPort>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+}
+
+/// An interface type anywhere inside a collection type.
+fn holds_interface(t: &Ty) -> bool {
+    match t {
+        Ty::Object(ObjKind::Interface, _) => true,
+        Ty::List(t) | Ty::Array(_, t) => holds_interface(t),
+        Ty::Dictionary(k, v) => holds_interface(k) || holds_interface(v),
+        _ => false,
+    }
 }
 
 fn key(file: usize, n: &SyntaxNode) -> (usize, usize, usize) {
@@ -715,6 +979,16 @@ impl Lowerer<'_> {
             } else {
                 None
             };
+            let part_link = match (part_page, raw.kind == ir::ControlKind::Part) {
+                (Some(pp), true) => match self.part_link(oi, layout, sec, pp) {
+                    Ok(l) => Some(l),
+                    Err(why) => {
+                        unsupported.push(format!("part {}: {why}", raw.name));
+                        None
+                    }
+                },
+                _ => None,
+            };
             controls.push(ir::Control {
                 name: raw.name.clone(),
                 kind: raw.kind.clone(),
@@ -723,6 +997,7 @@ impl Lowerer<'_> {
                 props,
                 triggers,
                 part_page,
+                part_link,
             });
         }
         let triggers = obj
@@ -735,6 +1010,75 @@ impl Lowerer<'_> {
             curr_page_slot: globals.iter().position(|g| g.name == "CurrPage").unwrap_or(0),
             unsupported,
         }
+    }
+
+    /// `SubPageLink`, `SubPageView` and `Provider` of the part control `sec` of page `oi`, which
+    /// shows page `part_page`. `Err` is why the link cannot be followed yet.
+    fn part_link(
+        &self,
+        oi: usize,
+        layout: &crate::pages::Layout,
+        sec: &ast::Section,
+        part_page: usize,
+    ) -> L<ir::PartLink> {
+        use crate::pages::LinkRhs;
+        let prop = |n: &str| {
+            sec.properties()
+                .find(|p| p.name().eq_ignore_ascii_case(n))
+                .map(|p| p.value_text())
+        };
+        let mut link = ir::PartLink::default();
+        if let Some(pname) = prop("Provider") {
+            let pname = pname.trim().trim_matches('"');
+            let idx = layout
+                .controls
+                .iter()
+                .position(|c| c.kind == ir::ControlKind::Part && c.name.eq_ignore_ascii_case(pname));
+            link.provider = Some(idx.ok_or_else(|| format!("Provider `{pname}` is not a part of the page"))?);
+        }
+        link.view = prop("SubPageView").map(|v| v.trim().to_string());
+        let Some(text) = prop("SubPageLink") else {
+            return Ok(link);
+        };
+        // The host side: the page's own table, or the Provider part's table.
+        let host_table = match link.provider {
+            Some(pi) => {
+                let Some(ppage) = layout.controls[pi]
+                    .section
+                    .args()
+                    .get(1)
+                    .and_then(|n| self.resolve_obj(ObjKind::Page, n).ok())
+                else {
+                    return Err("the Provider part shows a page outside the workspace".into());
+                };
+                self.table_of[ppage]
+            }
+            None => self.table_of[oi],
+        };
+        let part_table = self.table_of[part_page].ok_or("the part page has no source table to link")?;
+        let field_pos = |t: usize, name: &str| {
+            self.members[t]
+                .fields
+                .iter()
+                .position(|x| x.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("SubPageLink names field `{name}`, which table does not have"))
+        };
+        for (left, rhs) in crate::pages::parse_sub_page_link(&text)? {
+            let pf = field_pos(part_table, &left)?;
+            link.entries.push(match rhs {
+                LinkRhs::Field(f) => {
+                    let ht = host_table.ok_or("SubPageLink reads a host field, but the host has no source table")?;
+                    ir::LinkEntry::Field(pf, field_pos(ht, &f)?)
+                }
+                LinkRhs::Filter(t) => ir::LinkEntry::Filter(pf, t),
+                LinkRhs::TableId(name) => {
+                    let t = self.resolve_obj(ObjKind::Table, &name)?;
+                    let id = self.ws.objects[t].id.ok_or("table without an id")?;
+                    ir::LinkEntry::Filter(pf, id.to_string())
+                }
+            });
+        }
+        Ok(link)
     }
 
     /// A FlowField's `CalcFormula` with field names resolved against the table
@@ -825,53 +1169,7 @@ impl Lowerer<'_> {
 
     /// A `const(..)` value as a constant of the source field's type.
     fn calc_const(&self, file: usize, raw: &str, ty: &Ty) -> Result<ir::Const, String> {
-        let raw = raw.trim();
-        // `Database::"X"` / `Report::"X"`: the object's id (corpus
-        // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
-        if let Some((kind, name)) = raw.split_once("::") {
-            let kind = match kind.trim().to_ascii_lowercase().as_str() {
-                "database" => Some(ObjKind::Table),
-                other => ObjKind::from_type_name(other),
-            };
-            let name = name.trim().trim_matches('"').to_string();
-            let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
-                return Err(format!("CalcFormula const({raw}) is not understood yet"));
-            };
-            let Resolution::Found(o) = self.ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
-                return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
-            };
-            let id = self.ws.objects[o]
-                .id
-                .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
-            return match ty {
-                Ty::Integer => Ok(ir::Const::Integer(id as i32)),
-                Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
-                Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
-                _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
-            };
-        }
-        let unquoted = raw.trim_matches('"');
-        if let Ty::Enum(name) = ty {
-            let Resolution::Found(e) = self.ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
-                return Err(format!(
-                    "CalcFormula const({raw}): enum `{name}` is outside the workspace"
-                ));
-            };
-            let values = &self.members[e].enum_values;
-            let ordinal = values
-                .iter()
-                .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
-                .map(|(v, _)| *v as i32)
-                .or_else(|| unquoted.parse().ok())
-                .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
-            return Ok(ir::Const::Enum(e as u32, ordinal));
-        }
-        if let Ty::Option(members) = ty {
-            if let Ok(n) = unquoted.parse::<i32>() {
-                return Ok(ir::Const::Option(n, members.clone()));
-            }
-        }
-        init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
+        calc_const(self.ws, self.members, file, raw, ty)
     }
 
     fn res(&self, n: &SyntaxNode) -> Option<&Res> {
@@ -907,31 +1205,31 @@ impl Lowerer<'_> {
     }
 
     fn rt(&self, t: &Ty) -> L<RtType> {
+        if let Some(r) = scalar_rt(self.ws, self.file, t) {
+            return r;
+        }
         Ok(match t {
-            Ty::Integer => RtType::Integer,
-            Ty::BigInteger => RtType::BigInteger,
-            Ty::Decimal => RtType::Decimal,
-            Ty::Boolean => RtType::Boolean,
-            Ty::Char => RtType::Char,
-            Ty::Byte => RtType::Byte,
-            Ty::Text(n) => RtType::Text(*n),
-            Ty::Code(n) => RtType::Code(*n),
-            Ty::Label => RtType::Text(None),
-            Ty::Date => RtType::Date,
-            Ty::Time => RtType::Time,
-            Ty::DateTime => RtType::DateTime,
-            Ty::Duration => RtType::Duration,
-            Ty::DateFormula => RtType::DateFormula,
-            Ty::Guid => RtType::Guid,
-            Ty::Variant => RtType::Variant,
-            Ty::Option(m) => RtType::Option(m.clone()),
-            Ty::Enum(n) => RtType::Enum(self.resolve_obj(ObjKind::Enum, n)? as u32),
             Ty::Object(ObjKind::Codeunit, n) => RtType::Codeunit(self.resolve_obj(ObjKind::Codeunit, n)? as u32),
+            // An xmlport variable is an instance with its own globals, like a codeunit's.
+            Ty::Object(ObjKind::XmlPort, n) => {
+                let x = self.resolve_obj(ObjKind::XmlPort, n)?;
+                match self.xmlports[x].as_ref().and_then(|p| p.unsupported.first()) {
+                    None => RtType::Codeunit(x as u32),
+                    Some(why) => return Err(format!("XmlPort \"{}\": {why}", crate::types::display_name(n))),
+                }
+            }
             Ty::Object(ObjKind::Page, n) => {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
                 match self.page_reasons[p].first() {
                     None => RtType::Page(p as u32),
                     Some(why) => return Err(format!("Page \"{n}\": {why}")),
+                }
+            }
+            Ty::Object(ObjKind::Query, n) => {
+                let q = self.resolve_obj(ObjKind::Query, n)?;
+                match self.checked.queries[q].as_ref().and_then(|l| l.reasons.first()) {
+                    None => RtType::Query(q as u32),
+                    Some(why) => return Err(format!("Query \"{}\": {why}", crate::types::display_name(n))),
                 }
             }
             Ty::TestPage(n) => {
@@ -940,6 +1238,20 @@ impl Lowerer<'_> {
                     None => RtType::TestPage(p as u32),
                     Some(why) => return Err(format!("TestPage \"{}\": {why}", crate::types::display_name(n))),
                 }
+            }
+            Ty::Object(ObjKind::Interface, n) => {
+                let i = self.resolve_obj(ObjKind::Interface, n)?;
+                // Which procedures an extending interface inherits is not pinned by the corpus.
+                if self.ws.object_ast(i).extends_parts().is_some() {
+                    return Err(format!(
+                        "interface \"{}\" extends another interface (`extends` is not lowered yet)",
+                        crate::types::display_name(n)
+                    ));
+                }
+                RtType::Interface(i as u32)
+            }
+            Ty::List(_) | Ty::Dictionary(..) | Ty::Array(..) if holds_interface(t) => {
+                return Err("an interface inside a List, Dictionary or array is not lowered yet (not pinned)".into());
             }
             Ty::List(t) => RtType::List(Box::new(self.rt(t)?)),
             Ty::Dictionary(k, v) => RtType::Dictionary(Box::new(self.rt(k)?), Box::new(self.rt(v)?)),
@@ -955,6 +1267,163 @@ impl Lowerer<'_> {
                 RtType::Record(t as u32, *temporary || self.is_temporary_table(t))
             }
             other => return Err(format!("type {other} is not lowered yet")),
+        })
+    }
+
+    /// Whether codeunit `cu` lists interface `iface` after `implements`.
+    fn implements(&self, cu: usize, iface: usize) -> bool {
+        let file = self.ws.objects[cu].file;
+        self.ws
+            .object_ast(cu)
+            .implements_parts()
+            .iter()
+            .any(|p| matches!(self.ws.resolve_ref(file, ObjKind::Interface, p), Resolution::Found(i) if i == iface))
+    }
+
+    /// `value` (of type `src`) converted for a slot of type `target`. An interface slot takes a
+    /// codeunit that implements it (corpus codeunit/TestCodeunitInterface.al:14-26) or an enum
+    /// that implements it (types/TestEnumDefaultImplTests.Codeunit.al:30-42); everything else
+    /// is refused.
+    fn convert_to(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
+        let slot = self.rt(target)?;
+        let RtType::Interface(iface) = slot else {
+            return Ok(ir::Expr::Convert(slot, Box::new(value)));
+        };
+        let iface = iface as usize;
+        let iname = &self.ws.objects[iface].name;
+        match src {
+            Ty::Object(ObjKind::Interface, n) if self.rt(src)? == slot => {
+                let _ = n;
+                Ok(ir::Expr::Convert(slot, Box::new(value)))
+            }
+            Ty::Object(ObjKind::Codeunit, n) => {
+                let cu = self.resolve_obj(ObjKind::Codeunit, n)?;
+                if !self.implements(cu, iface) {
+                    return Err(format!(
+                        "codeunit \"{}\" does not implement interface \"{iname}\"",
+                        crate::types::display_name(n)
+                    ));
+                }
+                Ok(ir::Expr::Convert(slot, Box::new(value)))
+            }
+            Ty::Enum(n) => self.enum_impl(n, iface, value),
+            other => Err(format!("{other} into interface \"{iname}\" is not lowered yet")),
+        }
+    }
+
+    /// The cast of an enum value to interface `iface`: per declared ordinal the value's own
+    /// `Implementation`, else the enum's `DefaultImplementation`; undeclared ordinals take
+    /// `UnknownValueImplementation` (corpus types/TestEnumDefaultImplTests.Codeunit.al:58-100,
+    /// types/TestEnumExtImplTests.Codeunit.al:33-76: an enumextension adds values with their own
+    /// `Implementation` and falls back to the base enum's default).
+    fn enum_impl(&self, enum_name: &str, iface: usize, value: ir::Expr) -> L<ir::Expr> {
+        use crate::members::ImplSlot;
+        let e = self.resolve_obj(ObjKind::Enum, enum_name)?;
+        let iname = &self.ws.objects[iface].name;
+        let find = |slot: &ImplSlot| -> L<Option<usize>> {
+            for im in self.members[e].enum_impls.iter().filter(|i| i.slot == *slot) {
+                let file = self.ws.objects[im.declared_in].file;
+                if !matches!(self.ws.resolve_ref(file, ObjKind::Interface, &im.interface), Resolution::Found(i) if i == iface)
+                {
+                    continue;
+                }
+                return match self.ws.resolve_ref(file, ObjKind::Codeunit, &im.codeunit) {
+                    Resolution::Found(c) => Ok(Some(c)),
+                    _ => Err(format!("codeunit `{}` is outside the workspace", im.codeunit.join("."))),
+                };
+            }
+            Ok(None)
+        };
+        let default = find(&ImplSlot::Default)?;
+        let unknown = find(&ImplSlot::Unknown)?;
+        let mut by_ordinal = Vec::new();
+        for (ordinal, vname) in &self.members[e].enum_values {
+            match find(&ImplSlot::Value(*ordinal))?.or(default) {
+                Some(c) => by_ordinal.push((*ordinal as i32, c)),
+                None => {
+                    return Err(format!(
+                        "enum \"{enum_name}\" value `{vname}` has no implementation of interface \"{iname}\""
+                    ));
+                }
+            }
+        }
+        Ok(ir::Expr::EnumImpl {
+            value: Box::new(value),
+            by_ordinal,
+            unknown,
+        })
+    }
+
+    /// A call of an interface procedure on `receiver`: it runs the same-named procedure of
+    /// whichever codeunit the variable holds, so every implementation is a possible target.
+    fn interface_call(
+        &mut self,
+        iface: usize,
+        offset: usize,
+        receiver: Option<&SyntaxNode>,
+        args: &[SyntaxNode],
+    ) -> L<ir::Expr> {
+        let Some(receiver) = receiver else {
+            return Err("an interface procedure called without a receiver is not lowered yet".into());
+        };
+        if !matches!(self.ty_of(receiver), Ty::Object(ObjKind::Interface, _)) {
+            return Err("an interface procedure called on something that is not an interface variable".into());
+        }
+        let sig = self.members[iface]
+            .procedures
+            .iter()
+            .find(|p| p.offset == offset)
+            .ok_or("interface procedure signature")?
+            .clone();
+        let mut targets = Vec::new();
+        for cu in 0..self.ws.objects.len() {
+            if self.ws.objects[cu].kind != ObjKind::Codeunit || !self.implements(cu, iface) {
+                continue;
+            }
+            let same_shape: Vec<_> = self.members[cu]
+                .procedures
+                .iter()
+                .filter(|p| {
+                    !p.local
+                        && p.name.eq_ignore_ascii_case(&sig.name)
+                        && p.params.len() == sig.params.len()
+                        && p.params.iter().zip(&sig.params).all(|(a, b)| a.by_var == b.by_var)
+                })
+                .collect();
+            let exact = same_shape
+                .iter()
+                .find(|p| p.params.iter().zip(&sig.params).all(|(a, b)| a.ty == b.ty));
+            let Some(imp) = exact.or(same_shape.first()) else {
+                return Err(format!(
+                    "codeunit \"{}\" implements \"{}\" without a procedure `{}`",
+                    self.ws.objects[cu].name, self.ws.objects[iface].name, sig.name
+                ));
+            };
+            let routine = *self.routine_at.get(&(cu, imp.offset)).ok_or("procedure not found")?;
+            self.calls.push((cu, routine));
+            targets.push((cu, routine));
+        }
+        if targets.is_empty() {
+            return Err(format!(
+                "interface \"{}\" has no implementing codeunit in the workspace",
+                self.ws.objects[iface].name
+            ));
+        }
+        let receiver = Box::new(self.expr(receiver)?);
+        let mut out = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let p = sig.params.get(i).ok_or("too many arguments")?;
+            if p.by_var {
+                out.push(ir::Arg::Ref(self.place(a)?));
+            } else {
+                let value = self.expr(a)?;
+                out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
+            }
+        }
+        Ok(ir::Expr::InterfaceCall {
+            receiver,
+            targets,
+            args: out,
         })
     }
 
@@ -980,11 +1449,22 @@ impl Lowerer<'_> {
         for p in r.params() {
             by_var.push(p.is_var());
             let ty = p.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+            if p.is_var() && matches!(ty, Ty::Object(ObjKind::Interface, _)) {
+                self.reasons.push(format!(
+                    "`{}`: a var interface parameter is not lowered yet (not pinned)",
+                    p.name()
+                ));
+            }
             add(self, p.name(), ty, &mut locals);
         }
         let params = locals.len();
         let ret_ty = r.return_type().map(|t| Ty::from_type_ref(&t));
         let ret = match &ret_ty {
+            Some(Ty::Object(ObjKind::Interface, _)) => {
+                self.reasons
+                    .push("return type: an interface return value is not lowered yet (not pinned)".into());
+                None
+            }
             Some(t) => match self.rt(t) {
                 Ok(rt) => Some(rt),
                 Err(e) => {
@@ -1011,7 +1491,7 @@ impl Lowerer<'_> {
         }
         for a in r.attributes() {
             let n = a.name();
-            if n.eq_ignore_ascii_case("CommitBehavior") || n.eq_ignore_ascii_case("ErrorBehavior") {
+            if n.eq_ignore_ascii_case("ErrorBehavior") {
                 self.reasons.push(format!("[{n}] is not implemented yet"));
             }
         }
@@ -1210,7 +1690,7 @@ impl Lowerer<'_> {
             }
         }
         let place = self.place(&kids[0])?;
-        let slot = self.rt(&self.ty_of(&kids[0]))?;
+        let target_ty = self.ty_of(&kids[0]);
         let rhs = self.expr(&kids[1])?;
         let op = sig_tokens(n).into_iter().find(|t| {
             matches!(
@@ -1222,7 +1702,8 @@ impl Lowerer<'_> {
                     | SyntaxKind::SlashAssign
             )
         });
-        let value = match op.map(|t| t.kind()) {
+        let op_kind = op.map(|t| t.kind());
+        let value = match op_kind {
             Some(SyntaxKind::PlusAssign) => {
                 ir::Expr::Binary(ir::BinOp::Add, Box::new(ir::Expr::Load(place.clone())), Box::new(rhs))
             }
@@ -1237,7 +1718,11 @@ impl Lowerer<'_> {
             }
             _ => rhs,
         };
-        Ok(ir::Stmt::Assign(place, ir::Expr::Convert(slot, Box::new(value))))
+        let value = match op_kind {
+            Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, &self.ty_of(&kids[1]), value)?,
+            Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
+        };
+        Ok(ir::Stmt::Assign(place, value))
     }
 
     fn case(&mut self, kids: &[SyntaxNode]) -> L<ir::Stmt> {
@@ -1445,8 +1930,24 @@ impl Lowerer<'_> {
                 _ => Err(format!("`{}` is not lowered yet", n.text())),
             },
             MemberExpr if self.is_control_access(n) => self.control(n),
+            // `CurrPage.<Part>.Page`: the page the part shows.
+            MemberExpr if self.is_curr_page_part_page(n) => {
+                let part = n.children().next().ok_or("part page without a part")?;
+                self.control(&part)
+            }
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
+                // `Q.Amount`: the current row's value of a query column.
+                Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
+                    let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
+                    if layout.query.columns[column].filter_element {
+                        return Err("reading a filter element of a query (not pinned)".into());
+                    }
+                    Ok(ir::Expr::QueryColumn {
+                        query: Box::new(self.expr(&kids[0])?),
+                        column,
+                    })
+                }
                 // `Database::A.B."Name"`: a namespace-qualified object id.
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
@@ -1469,9 +1970,33 @@ impl Lowerer<'_> {
                 || matches!(self.ty_of(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction"))
     }
 
+    /// `CurrPage.<Part>.Page`
+    fn is_curr_page_part_page(&self, n: &SyntaxNode) -> bool {
+        let mut kids = n.children();
+        let (Some(part), Some(_)) = (kids.next(), kids.next()) else {
+            return false;
+        };
+        let last_is_page = n
+            .children()
+            .last()
+            .and_then(|m| {
+                m.children_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .find(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))
+            })
+            .is_some_and(|t| ast::ident_text(&t).eq_ignore_ascii_case("Page"));
+        last_is_page
+            && matches!(self.ty_of(&part), Ty::TestPart(_))
+            && part.kind() == SyntaxKind::MemberExpr
+            && part
+                .children()
+                .next()
+                .is_some_and(|r| matches!(self.ty_of(&r), Ty::Object(ObjKind::Page, _)))
+    }
+
     fn control(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         let recv = n.children().next().ok_or("control access without a receiver")?;
-        let (Ty::TestPage(page) | Ty::TestPart(page)) = self.ty_of(&recv) else {
+        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page)) = self.ty_of(&recv) else {
             return Err("control of a non-page".into());
         };
         let page = self.resolve_obj(ObjKind::Page, &page)?;
@@ -1538,6 +2063,9 @@ impl Lowerer<'_> {
             .then(|| callee.children().next())
             .flatten();
         match self.res(node).cloned() {
+            Some(Res::Proc { object, offset }) if self.ws.objects[object].kind == ObjKind::Interface => {
+                self.interface_call(object, offset, receiver_node.as_ref(), args)
+            }
             Some(Res::Proc { object, offset }) => {
                 let routine = *self.routine_at.get(&(object, offset)).ok_or("procedure not found")?;
                 let sig = self.members[object]
@@ -1550,7 +2078,7 @@ impl Lowerer<'_> {
                     Some(r)
                         if matches!(
                             self.ty_of(r),
-                            Ty::Object(ObjKind::Codeunit | ObjKind::Page, _) | Ty::Record { .. }
+                            Ty::Object(ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort, _) | Ty::Record { .. }
                         ) =>
                     {
                         Some(Box::new(self.expr(r)?))
@@ -1569,10 +2097,8 @@ impl Lowerer<'_> {
                     if p.by_var {
                         out.push(ir::Arg::Ref(self.place(a)?));
                     } else {
-                        out.push(ir::Arg::Value(ir::Expr::Convert(
-                            self.rt(&p.ty)?,
-                            Box::new(self.expr(a)?),
-                        )));
+                        let value = self.expr(a)?;
+                        out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
                     }
                 }
                 self.calls.push((object, routine));
@@ -1655,12 +2181,21 @@ impl Lowerer<'_> {
                         .get(i)
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
-                    let field_param =
-                        p.name.to_ascii_lowercase().starts_with("field") || p.name.eq_ignore_ascii_case("FromField");
-                    if let (true, Some(Res::Field { table, id })) = (field_param, self.res(a).cloned()) {
-                        let pos = self.readable_field_pos(table, id)?;
-                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
-                        continue;
+                    let field_param = p.name.to_ascii_lowercase().starts_with("field")
+                        || p.name.eq_ignore_ascii_case("FromField")
+                        || p.name.to_ascii_lowercase().starts_with("column");
+                    match (field_param, self.res(a).cloned()) {
+                        (true, Some(Res::Field { table, id })) => {
+                            let pos = self.readable_field_pos(table, id)?;
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
+                            continue;
+                        }
+                        // A query column is named by its position in the query's column list.
+                        (true, Some(Res::QueryColumn { column, .. })) => {
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(column as u32))));
+                            continue;
+                        }
+                        _ => {}
                     }
                     // Generic parameters convert to the collection's element types.
                     let elem = match (p.ty.as_str(), receiver_node.as_ref().map(|r| self.ty_of(r))) {

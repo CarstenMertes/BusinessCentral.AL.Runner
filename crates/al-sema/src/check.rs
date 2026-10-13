@@ -44,6 +44,8 @@ pub struct CheckResult {
     pub types: PosMap<Ty>,
     /// What each name, member and call resolved to, same keys.
     pub resolutions: PosMap<Res>,
+    /// The layout of every query object, by object index.
+    pub queries: Vec<Option<crate::queries::QueryLayout>>,
 }
 
 /// The target of a resolved name, member or call.
@@ -73,6 +75,11 @@ pub enum Res {
     OptionValue(i32),
     /// `Database::X` and friends: the object id.
     ObjectId(i32),
+    /// Column `column` (position in `ir::Query::columns`) of query object `query`.
+    QueryColumn {
+        query: usize,
+        column: usize,
+    },
 }
 
 pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckResult {
@@ -94,6 +101,9 @@ pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckRes
         system_enums: system_enums(catalog),
         extensions,
         sections: Default::default(),
+        queries: (0..ws.objects.len())
+            .map(|oi| (ws.objects[oi].kind == ObjKind::Query).then(|| crate::queries::layout(ws, members, oi)))
+            .collect(),
     };
     for oi in 0..ws.objects.len() {
         c.check_object(oi);
@@ -104,6 +114,7 @@ pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckRes
         diagnostics: c.diags,
         types: c.types,
         resolutions: c.resolutions,
+        queries: c.queries,
     }
 }
 
@@ -201,6 +212,8 @@ struct Checker<'a> {
     extensions: HashMap<usize, Vec<usize>>,
     /// `sections_of` memo by object, for `named_section`.
     sections: std::cell::RefCell<HashMap<usize, Vec<NamedSection>>>,
+    /// The layout of each query object.
+    queries: Vec<Option<crate::queries::QueryLayout>>,
 }
 
 fn name_of(node: &SyntaxNode) -> String {
@@ -253,6 +266,11 @@ impl<'a> Checker<'a> {
 
     /// `Res::Field` if `name` is a field of the record type `t`.
     fn field_res(&self, sc: &Scope, t: &Ty, name: &str) -> Option<Res> {
+        if let Ty::Object(ObjKind::Query, q) = t {
+            let qi = self.resolve(sc, ObjKind::Query, q)?;
+            let column = self.queries[qi].as_ref()?.column(name)?;
+            return Some(Res::QueryColumn { query: qi, column });
+        }
         let Ty::Record { table, .. } = t else { return None };
         let ti = self.resolve(sc, ObjKind::Table, table)?;
         self.members[ti].field(name).map(|f| Res::Field { table: ti, id: f.id })
@@ -625,14 +643,20 @@ impl<'a> Checker<'a> {
                             let r = a.text_range();
                             self.types
                                 .insert((sc.file, r.start().into(), r.end().into()), t.clone());
-                            if let (Some(Ty::Record { table, .. }), Some(ti)) = (
-                                &receiver,
-                                receiver.as_ref().and_then(|r| match r {
-                                    Ty::Record { table, .. } => self.resolve(sc, ObjKind::Table, table),
-                                    _ => None,
-                                }),
-                            ) {
-                                let _ = table;
+                            if let Some(r) = receiver.as_ref().and_then(|r| self.field_res(sc, r, &name_of(a))) {
+                                if matches!(r, Res::QueryColumn { .. }) {
+                                    self.record(sc, a, r);
+                                }
+                            }
+                            // A `TestPage.Filter` field is a field of the page's source table
+                            // (corpus testfilter/TestTestFilter.al:1-30).
+                            let table_idx = match &receiver {
+                                Some(Ty::Record { table, .. } | Ty::TestFilter(table)) => {
+                                    self.resolve(sc, ObjKind::Table, table)
+                                }
+                                _ => None,
+                            };
+                            if let Some(ti) = table_idx {
                                 if let Some(f) = self.members[ti].field(&name_of(a)) {
                                     let id = f.id;
                                     self.record(sc, a, Res::Field { table: ti, id });
@@ -966,6 +990,23 @@ impl<'a> Checker<'a> {
                 if !procs.is_empty() {
                     return Some(E::Callable(procs));
                 }
+                // `CurrPage.<Part>`: the part control, whose `.Page` is the page it shows.
+                if *kind == ObjKind::Page {
+                    if let Some(sec) = self.named_section(oi, name) {
+                        if sec.name().eq_ignore_ascii_case("part") {
+                            if let Some(page) = sec.args().get(1) {
+                                return Some(E::Val(Ty::TestPart(page.clone())));
+                            }
+                        }
+                    }
+                }
+                if *kind == ObjKind::Query {
+                    if let Some(l) = &self.queries[oi] {
+                        if let Some(c) = l.column(name) {
+                            return Some(E::Val(l.column_tys[c].clone()));
+                        }
+                    }
+                }
                 if matches!(
                     kind,
                     ObjKind::Page | ObjKind::Query | ObjKind::Report | ObjKind::XmlPort
@@ -997,6 +1038,11 @@ impl<'a> Checker<'a> {
                         }
                     }
                     return Some(E::Callable(c));
+                }
+                if let (Ty::TestPart(part), true) = (t, name.eq_ignore_ascii_case("Page")) {
+                    if resolved.is_some_and(|oi| self.named_section(oi, name).is_none()) {
+                        return Some(E::Val(Ty::Object(ObjKind::Page, part.clone())));
+                    }
                 }
                 if let Some(oi) = resolved {
                     if let Some(sec) = self.named_section(oi, name) {
@@ -1071,6 +1117,9 @@ impl<'a> Checker<'a> {
             }
             Ty::Object(ObjKind::Query, q) => {
                 let qi = self.resolve(sc, ObjKind::Query, q)?;
+                if let Some(c) = self.queries[qi].as_ref().and_then(|l| l.column(name).map(|c| (l, c))) {
+                    return Some(c.0.column_tys[c.1].clone());
+                }
                 self.has_named_section(qi, name).then_some(Ty::Unknown)
             }
             _ => None,

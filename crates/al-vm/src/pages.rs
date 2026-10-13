@@ -588,6 +588,7 @@ impl Session {
         }
         // A reopened variable shows a fresh page.
         st.borrow_mut().instance = None;
+        st.borrow_mut().pre_init = false;
         st.borrow_mut().modal = false;
         self.open_page(st, mode, None, None).map(|_| Value::Null)
     }
@@ -612,6 +613,32 @@ impl Session {
         let inst = self.instance(object);
         inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(st.clone());
         st.borrow_mut().instance = Some(inst.clone());
+        Ok(inst)
+    }
+
+    /// The instance a procedure call on a `Page` variable runs on. The first use makes it and runs
+    /// OnInit, before the call and before the page opens (corpus handlers/TestPageOnInit_Tests.al:
+    /// POI_SetterBeforeRunModal_RunsAfterOnInitAndSurvives, :188-201: trace `ISO`); the open then
+    /// skips OnInit (`pre_init`). A page with parts is refused: its parts are made at open.
+    pub(crate) fn page_variable_instance(
+        &mut self,
+        st: &St,
+    ) -> Result<Rc<RefCell<al_builtins::value::Instance>>, Signal> {
+        if st.borrow().instance.is_some() {
+            return self.page_instance(st);
+        }
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        if page.controls.iter().any(|c| c.kind == ir::ControlKind::Part) {
+            return unsupported("a procedure call on a Page variable whose page has parts, before it opens");
+        }
+        let inst = self.page_instance(st)?;
+        st.borrow_mut().pre_init = true;
+        if let Err(e) = self.page_trigger(st, "oninit", vec![]) {
+            st.borrow_mut().instance = None;
+            st.borrow_mut().pre_init = false;
+            return Err(e);
+        }
         Ok(inst)
     }
 
@@ -718,7 +745,10 @@ impl Session {
             dst.ascending = src.ascending;
         }
         let result = (|| {
-            self.page_trigger(st, "oninit", vec![])?;
+            // A procedure call on the Page variable already ran OnInit.
+            if !std::mem::take(&mut st.borrow_mut().pre_init) {
+                self.page_trigger(st, "oninit", vec![])?;
+            }
             if let Some(kind) = bind {
                 handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
             }
@@ -1642,8 +1672,20 @@ impl Session {
                     return unsupported("a Trap() for another page than the one Page.Run opens");
                 }
                 trap.borrow_mut().trapping = false;
-                // The trapped variable receives the page and keeps it open for the test.
-                trap.borrow_mut().instance = None;
+                // The trapped variable receives the page and keeps it open for the test. A page
+                // the Page variable already made (a setter ran) is the one it receives (corpus
+                // handlers/TestPageOnInit_Tests.al:POI_SetterBeforeTrappedRun_RunsAfterOnInitAndSurvives, :222-238).
+                let carried = st.borrow().instance.clone();
+                let pre_init = st.borrow().pre_init;
+                {
+                    let mut t = trap.borrow_mut();
+                    t.instance = carried.clone();
+                    t.pre_init = pre_init;
+                }
+                if let Some(inst) = carried {
+                    let slot = page_of(&self.engine(), &trap).curr_page_slot;
+                    inst.borrow_mut().globals[slot] = Value::TestPage(trap.clone());
+                }
                 st = trap;
                 trapped = true;
             }

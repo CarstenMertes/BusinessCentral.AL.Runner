@@ -591,6 +591,18 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Dictionary(_) => Value::Dictionary(Default::default()),
         // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
         Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
+        // A closed TestPage or Page variable becomes a fresh one, which opens a new page
+        // (corpus handlers/TestPageEditable_Tests.al:EditableBoundToPageVariable_FollowsTheRow,
+        // :92-109, clears a closed card before opening it on another row).
+        Value::TestPage(st) => {
+            let s = st.borrow();
+            if s.open || s.trapping || s.host.is_some() {
+                return unsupported("Clear of a TestPage that is open, trapping or a part (not pinned)");
+            }
+            Value::TestPage(Rc::new(std::cell::RefCell::new(crate::value::PageState::closed(
+                s.object,
+            ))))
+        }
         other => return unsupported(&format!("Clear of {other:?}")),
     };
     Ok(Value::Null)

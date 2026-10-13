@@ -72,6 +72,21 @@ page 50003 "PG Format"
     }
 }
 
+// corpus handlers/TestPageOnInit_Objects.al: OnInit appends 'I', a procedure 'S'.
+page 50999 "PG Wizard"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    var
+        Trace: Text;
+        Step: Integer;
+    trigger OnInit() begin Trace += 'I'; Step := 0; end;
+    trigger OnOpenPage() begin Trace += 'O'; end;
+    procedure SetStep(NewStep: Integer) begin Trace += 'S'; Step := NewStep; end;
+    procedure GetTrace(): Text begin exit(Trace + ':' + Format(Step)); end;
+}
+
 page 50005 "PG Maker"
 {
     PageType = List;
@@ -893,4 +908,57 @@ fn a_get_of_a_row_the_view_hides_shows_nothing() {
         "F",
     );
     assert_eq!(text(r), "[][]");
+}
+
+// handlers/TestPageOnInit_Tests.al:POI_SetterBeforeRun_RunsAfterOnInitAndSurvives (:204-217): OnInit
+// runs when the Page variable's instance is constructed, before the first procedure call on it.
+#[test]
+fn a_procedure_call_on_a_page_variable_runs_oninit_first_and_keeps_the_instance() {
+    let r = run(
+        "procedure F(): Text var W: Page \"PG Wizard\"; begin
+            W.SetStep(2);
+            W.SetStep(3);
+            exit(W.GetTrace());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "ISS:3");
+}
+
+// handlers/TestPageEditable_Tests.al:EditableBoundToPageVariable_FollowsTheRow (:92-109): a closed
+// TestPage variable that is cleared opens a fresh page.
+#[test]
+fn clear_of_a_closed_testpage_variable_leaves_a_fresh_closed_one() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Card\"; T: Text; begin
+            R.\"No.\" := 'A'; R.Qty := 1; R.Insert();
+            R.\"No.\" := 'B'; R.Qty := 2; R.Insert();
+            TP.OpenView();
+            T := TP.NoCtl.Value();
+            TP.Close();
+            Clear(TP);
+            TP.OpenView();
+            TP.Last();
+            exit(T + TP.NoCtl.Value());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "AB");
+}
+
+// Clearing a page that is open is not pinned: refused.
+#[test]
+fn clear_of_an_open_testpage_variable_is_refused() {
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG Card\"; begin
+            TP.OpenNew();
+            Clear(TP);
+            exit('x');
+        end;",
+        "F",
+    );
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("Clear of a TestPage that is open"), "{why}"),
+        other => panic!("{other:?}"),
+    }
 }

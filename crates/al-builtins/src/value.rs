@@ -222,6 +222,9 @@ pub struct PageState {
     pub set_record: Option<Rc<RefCell<RecordState>>>,
     /// For a part: the page that hosts it and the index of the part control on that page.
     pub host: Option<(std::rc::Weak<RefCell<PageState>>, usize)>,
+    /// A procedure call on a `Page` variable made the instance and ran its OnInit before the page
+    /// opened; the open must not run it again (handlers/TestPageOnInit_Tests.al:188-217).
+    pub pre_init: bool,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -265,6 +268,7 @@ impl PageState {
             lower_key: None,
             set_record: None,
             host: None,
+            pre_init: false,
         }
     }
 }

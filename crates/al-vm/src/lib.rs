@@ -649,6 +649,12 @@ impl Session {
                             let i = self.page_instance(&st)?;
                             self.shared_instance(i)
                         }
+                        // A procedure of a `Page` variable: the instance is made, and OnInit runs,
+                        // on first use (handlers/TestPageOnInit_Tests.al:188-217).
+                        Value::TestPage(st) => {
+                            let i = self.page_variable_instance(&st)?;
+                            self.shared_instance(i)
+                        }
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };

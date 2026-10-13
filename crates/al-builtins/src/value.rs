@@ -43,7 +43,8 @@ pub enum RtType {
     Array(Vec<u32>, Box<RtType>),
     /// Record of the table with this object index; temporary flag.
     Record(u32, bool),
-    /// Codeunit with this object index.
+    /// Codeunit with this object index; also an xmlport variable, which is an instance with
+    /// its own globals in the same way.
     Codeunit(u32),
     /// `TestPage` of the page with this object index (ADR-012).
     TestPage(u32),

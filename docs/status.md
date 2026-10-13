@@ -35,7 +35,7 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 | query | 129 | 0 | 129 | 0% |
 | permissions | 58 | 0 | 58 | 0% |
 | pageapplicationarea | 76 | 0 | 76 | 0% |
-| xmlport | 40 | 0 | 40 | 0% |
+| xmlport | 40 | 25 | 15 | 62.5% |
 | other areas (17) | 257 | 17 | 240 | |
 
 ## What is implemented
@@ -58,6 +58,11 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
   extension triggers, Isolated events.
 - **Data formats.** JSON, XML DOM with simple XPath, Blob streams, text
   functions, TextBuilder, BigText, SecretText.
+- **XmlPorts (Format = Xml).** `Import` and `Export` (instance and static),
+  `SetSource`, `SetDestination`, `SetTableView`; table, field, text elements and
+  attributes, nested table elements with `LinkFields`, `AutoSave`, `AutoUpdate`,
+  `AutoReplace`, `UseTemporary`, and the triggers the corpus uses. The 15
+  remaining xmlport tests need dependency apps (ADR-013).
 - **Test runner.** Install codeunits. `[HandlerFunctions]` with Message,
   Confirm, StrMenu, page and modal page handlers.
 - **Pages (ADR-012).** TestPage on Card and List pages: lifecycle,

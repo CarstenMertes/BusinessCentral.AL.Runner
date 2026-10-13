@@ -23,6 +23,7 @@ mod rename;
 mod transactions;
 mod ui;
 mod views;
+mod xmlports;
 pub use transactions::TxModel;
 pub use ui::{UiHandler, UiKind};
 
@@ -625,7 +626,10 @@ impl Session {
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
                 }
-                if id.starts_with("Codeunit.Run#") || id == "Database.IsInWriteTransaction#1" {
+                if id.starts_with("Codeunit.Run#")
+                    || id.starts_with("Xmlport.")
+                    || id == "Database.IsInWriteTransaction#1"
+                {
                     let recv = match receiver.as_deref() {
                         Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
                         Some(ir::Arg::Ref(p)) => Some(self.read(p, f)?),
@@ -640,6 +644,9 @@ impl Session {
                     }
                     if id == "Database.IsInWriteTransaction#1" {
                         return Ok(Value::Boolean(self.in_write_transaction()));
+                    }
+                    if id.starts_with("Xmlport.") {
+                        return self.xmlport_builtin(id, recv, &values, *ret_used);
                     }
                     return self.codeunit_run(id, recv, &values, *ret_used);
                 }

@@ -673,7 +673,7 @@ fn parse_document(text: &str) -> Result<Option<Handle>, Signal> {
 
 // ---------------------------------------------------------- serialising
 
-fn escape_text(s: &str, out: &mut String) {
+pub(crate) fn escape_text(s: &str, out: &mut String) {
     for c in s.chars() {
         match c {
             '&' => out.push_str("&amp;"),
@@ -685,7 +685,7 @@ fn escape_text(s: &str, out: &mut String) {
     }
 }
 
-fn escape_attr(s: &str, out: &mut String) {
+pub(crate) fn escape_attr(s: &str, out: &mut String) {
     for c in s.chars() {
         match c {
             '&' => out.push_str("&amp;"),
@@ -2072,6 +2072,72 @@ variant_is! {
 
 /// The implementation of one catalog overload, if the corpus pins enough of it.
 /// Overloads with streams, read/write options or namespace managers are not implemented.
+/// The element tree of a document, for XmlPort import (`xmlport.rs`). `Ok(None)`: not
+/// well-formed; `Err`: well-formed but uses namespaces or other features the reader does not
+/// carry over.
+pub(crate) fn read_tree(text: &str) -> Result<Option<crate::xmlport::Elem>, String> {
+    use crate::xmlport::{Elem, Node};
+    fn convert(h: &Handle) -> Result<Elem, String> {
+        let (prefix, local, ns, attrs) = with(h, |d| match d {
+            XData::Element {
+                prefix,
+                local,
+                ns,
+                attrs,
+                ..
+            } => (prefix.clone(), local.clone(), ns.clone(), attrs.clone()),
+            _ => unreachable!("callers pass elements"),
+        });
+        if !prefix.is_empty() || !ns.is_empty() {
+            return Err("namespaces in an XmlPort document".into());
+        }
+        let mut out = Elem::new(&local);
+        for a in attrs {
+            let (p, l, n, v) = with(&a, |d| match d {
+                XData::Attribute {
+                    prefix,
+                    local,
+                    ns,
+                    value,
+                } => (prefix.clone(), local.clone(), ns.clone(), value.clone()),
+                _ => unreachable!("attributes of an element"),
+            });
+            if !p.is_empty() || !n.is_empty() || l == "xmlns" {
+                return Err("namespace declarations in an XmlPort document".into());
+            }
+            out.attrs.push((l, v));
+        }
+        for c in children_of(h) {
+            enum K {
+                Element,
+                Text(String),
+                Skip,
+            }
+            match with(&c, |d| match d {
+                XData::Element { .. } => K::Element,
+                XData::Text(t) | XData::CData(t) => K::Text(t.clone()),
+                _ => K::Skip,
+            }) {
+                K::Element => out.children.push(Node::Elem(convert(&c)?)),
+                K::Text(t) => out.children.push(Node::Text(t)),
+                K::Skip => {}
+            }
+        }
+        Ok(out)
+    }
+    let doc = match parse_document(text) {
+        Ok(Some(d)) => d,
+        Ok(None) => return Ok(None),
+        Err(Signal::Unsupported(why)) => return Err(why),
+        Err(other) => return Err(format!("{other:?}")),
+    };
+    let root = children_of(&doc)
+        .into_iter()
+        .find(|c| with(c, |d| matches!(d, XData::Element { .. })))
+        .ok_or("a document without a root element")?;
+    convert(&root).map(Some)
+}
+
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     let params: Vec<&str> = sig.params.iter().map(|p| p.ty.as_str()).collect();
     let first_by_var = sig.params.first().is_some_and(|p| p.by_var);

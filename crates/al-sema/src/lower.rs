@@ -110,6 +110,41 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             _ => {}
         }
     }
+    // XmlPorts: schema and the reasons the runtime cannot run one yet. The element variables
+    // take the first global slots (text, attribute and table nodes in schema order), then the
+    // hidden source and destination streams, so the slots are known before anything is lowered.
+    let mut xml_layouts: Vec<Option<crate::xmlports::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut xml_irs: Vec<Option<ir::XmlPort>> = (0..ws.objects.len()).map(|_| None).collect();
+    for (oi, o) in ws.objects.iter().enumerate() {
+        if o.kind != ObjKind::XmlPort {
+            continue;
+        }
+        let l = crate::xmlports::layout(&ws.object_ast(oi));
+        let mut slots = HashMap::new();
+        for n in &l.nodes {
+            if matches!(
+                n.kind,
+                ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr | ir::XmlNodeKind::Table
+            ) {
+                let next = slots.len();
+                slots.entry(n.name.to_lowercase()).or_insert(next);
+            }
+        }
+        let n = slots.len();
+        let cx = crate::xmlports::Context {
+            ws,
+            members,
+            oi,
+            file: o.file,
+            layout: &l,
+            slots: &slots,
+            routine_at: &routine_at,
+            source_slot: n,
+            destination_slot: n + 1,
+        };
+        xml_irs[oi] = Some(crate::xmlports::build(&cx, Vec::new()));
+        xml_layouts[oi] = Some(l);
+    }
     for (oi, o) in ws.objects.iter().enumerate() {
         let obj = ws.object_ast(oi);
         let mut lw = Lowerer {
@@ -130,10 +165,58 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             calls: Vec::new(),
             page_reasons: &page_reasons,
             layouts: &layouts,
+            xmlports: &xml_irs,
             attrs: Default::default(),
         };
         let mut globals = Vec::new();
         let mut global_reasons = Vec::new();
+        if let Some(l) = &xml_layouts[oi] {
+            for n in &l.nodes {
+                let (ty, table) = match n.kind {
+                    ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr => (Ok(RtType::Text(None)), false),
+                    ir::XmlNodeKind::Table => (
+                        lw.rt(&Ty::Record {
+                            table: n.args.get(1).cloned().unwrap_or_default(),
+                            temporary: n.section.properties().any(|p| {
+                                p.name().eq_ignore_ascii_case("UseTemporary")
+                                    && p.value_text().trim().eq_ignore_ascii_case("true")
+                            }),
+                        }),
+                        true,
+                    ),
+                    _ => continue,
+                };
+                let key = n.name.to_lowercase();
+                if lw.globals.contains_key(&key) {
+                    continue;
+                }
+                lw.globals.insert(key, globals.len());
+                match ty {
+                    Ok(rt) => globals.push(ir::Slot {
+                        name: n.name.clone(),
+                        ty: rt,
+                    }),
+                    Err(e) => {
+                        global_reasons.push(format!(
+                            "{} `{}`: {e}",
+                            if table { "table element" } else { "variable" },
+                            n.name
+                        ));
+                        globals.push(ir::Slot {
+                            name: n.name.clone(),
+                            ty: RtType::Variant,
+                        });
+                    }
+                }
+            }
+            for name in ["__source", "__destination"] {
+                let ty = if name == "__source" { "InStream" } else { "OutStream" };
+                globals.push(ir::Slot {
+                    name: name.into(),
+                    ty: RtType::Library(ty.into()),
+                });
+            }
+        }
         for v in obj.var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
@@ -182,6 +265,13 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                     let p = p as usize;
                     lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
                 }
+                // An xmlport's triggers are run by Import and Export, which the graph cannot see.
+                if let RtType::Codeunit(p) = s.ty {
+                    let p = p as usize;
+                    if ws.objects[p].kind == ObjKind::XmlPort {
+                        lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
+                    }
+                }
             }
             unsupported.push(std::mem::take(&mut lw.reasons));
             calls.push(std::mem::take(&mut lw.calls));
@@ -212,6 +302,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             rec_slot,
             xrec_slot,
             page,
+            xmlport: xml_irs[oi].clone(),
         });
         out.unsupported.push(unsupported);
         out.calls.push(calls);
@@ -354,6 +445,8 @@ struct Lowerer<'a> {
     /// Per object: why the test client cannot drive it yet (pages).
     page_reasons: &'a [Vec<String>],
     layouts: &'a [Option<crate::pages::Layout>],
+    /// Per object: the schema of an xmlport (its `unsupported` says why a variable is refused).
+    xmlports: &'a [Option<ir::XmlPort>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
 }
@@ -912,6 +1005,14 @@ impl Lowerer<'_> {
             Ty::Option(m) => RtType::Option(m.clone()),
             Ty::Enum(n) => RtType::Enum(self.resolve_obj(ObjKind::Enum, n)? as u32),
             Ty::Object(ObjKind::Codeunit, n) => RtType::Codeunit(self.resolve_obj(ObjKind::Codeunit, n)? as u32),
+            // An xmlport variable is an instance with its own globals, like a codeunit's.
+            Ty::Object(ObjKind::XmlPort, n) => {
+                let x = self.resolve_obj(ObjKind::XmlPort, n)?;
+                match self.xmlports[x].as_ref().and_then(|p| p.unsupported.first()) {
+                    None => RtType::Codeunit(x as u32),
+                    Some(why) => return Err(format!("XmlPort \"{}\": {why}", crate::types::display_name(n))),
+                }
+            }
             Ty::Object(ObjKind::Page, n) => {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
                 match self.page_reasons[p].first() {
@@ -1535,7 +1636,7 @@ impl Lowerer<'_> {
                     Some(r)
                         if matches!(
                             self.ty_of(r),
-                            Ty::Object(ObjKind::Codeunit | ObjKind::Page, _) | Ty::Record { .. }
+                            Ty::Object(ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort, _) | Ty::Record { .. }
                         ) =>
                     {
                         Some(Box::new(self.expr(r)?))

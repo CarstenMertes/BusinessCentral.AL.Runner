@@ -116,6 +116,15 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Codeunit.Run#2", vm_only),
     ("Codeunit.Run#3", vm_only),
     ("Database.IsInWriteTransaction#1", vm_only),
+    // XmlPort import and export run triggers and write records: the VM runs them
+    // (al-vm xmlports.rs).
+    ("Xmlport.Export#1", vm_only),
+    ("Xmlport.Export#2", vm_only),
+    ("Xmlport.Import#1", vm_only),
+    ("Xmlport.Import#2", vm_only),
+    ("Xmlport.SetSource#1", vm_only),
+    ("Xmlport.SetDestination#1", vm_only),
+    ("Xmlport.SetTableView#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))

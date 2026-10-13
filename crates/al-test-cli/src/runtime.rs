@@ -463,7 +463,6 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                         "no corpus test pins how FilterPageBuilder.RunModal reaches a filter page handler"
                     }
                     "sendnotificationhandler" | "recallnotificationhandler" => "it needs the Notification type",
-                    "sessionsettingshandler" => "it needs the SessionSettings type",
                     _ => "this handler kind",
                 };
                 return Err(format!(

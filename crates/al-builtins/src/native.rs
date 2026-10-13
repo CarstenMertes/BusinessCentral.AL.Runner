@@ -103,6 +103,10 @@ pub trait Ctx: FormatCtx {
     fn install_scope(&self) -> bool {
         false
     }
+    /// Whether a test codeunit is being run by the test runner (under TestIsolation = Codeunit).
+    fn in_test_run(&self) -> bool {
+        false
+    }
     /// `Error(ErrorInfo)` of a collectible error: inside a `[ErrorBehavior(Collect)]` scope the
     /// session keeps a copy and the call returns normally (`true`); outside one it is raised like
     /// any other error (`false`).
@@ -133,6 +137,13 @@ pub trait Ctx: FormatCtx {
     fn ui_confirm(&mut self, _question: String, _default: bool) -> Result<bool, Signal> {
         Err(Signal::Unsupported("Confirm: this context has no UI".into()))
     }
+    /// `SessionSettings.RequestSessionUpdate(false)`: hands a copy of the settings to the bound
+    /// `[SessionSettingsHandler]`.
+    fn ui_session_settings(&mut self, _settings: Value) -> Result<(), Signal> {
+        Err(Signal::Unsupported(
+            "SessionSettings.RequestSessionUpdate: this context has no UI".into(),
+        ))
+    }
     /// `StrMenu(options, default, instruction)`: the chosen option, 1-based, 0 for none.
     fn ui_str_menu(&mut self, _options: String, _default: i32, _instruction: String) -> Result<i32, Signal> {
         Err(Signal::Unsupported("StrMenu: this context has no UI".into()))
@@ -160,6 +171,14 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Dialog.StrMenu#1", str_menu),
     ("Text.StrLen#1", strlen),
     ("Text.StrPos#1", strpos),
+    ("Text.StrCheckSum#1", strchecksum),
+    ("Session.LogMessage#1", log_message),
+    ("Session.LogMessage#2", log_message),
+    ("System.Variant2Date#1", variant_2_date),
+    ("System.Variant2Time#1", variant_2_time),
+    ("Session.StartSession#1", start_session),
+    ("Session.StartSession#2", start_session),
+    ("Session.StartSession#3", start_session),
     ("Text.CopyStr#1", copystr),
     ("Text.StrSubstNo#1", strsubstno),
     ("Text.UpperCase#1", uppercase),
@@ -564,6 +583,94 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     Ok(Value::Integer(pos as i32))
 }
 
+/// `Session.LogMessage`: telemetry has no effect AL code can see in a test, so the call returns
+/// (session/TestSessionExtended.al:76-89 only needs it callable).
+fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    Ok(Value::Null)
+}
+
+/// `Variant2Date(Variant)`: the Date a Variant holds (session/TestFinalCoverage.al:79-88). Another
+/// content raises a conversion error whose text is not pinned: refused.
+fn variant_2_date(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    match args.first() {
+        Some(d @ Value::Date(..)) => Ok(d.clone()),
+        other => unsupported(&format!(
+            "Variant2Date of {other:?} (the conversion error is not pinned)"
+        )),
+    }
+}
+
+/// `Variant2Time(Variant)`: the Time a Variant holds (session/TestFinalCoverage.al:91-100).
+fn variant_2_time(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    match args.first() {
+        Some(t @ Value::Time(_)) => Ok(t.clone()),
+        other => unsupported(&format!(
+            "Variant2Time of {other:?} (the conversion error is not pinned)"
+        )),
+    }
+}
+
+/// `StartSession`, every overload. While an app installs it starts nothing, leaves `SessionId` alone
+/// and answers false (or raises nothing when the result is ignored): install/TestInstallStartSession_Tests.al,
+/// ALSession.ALStartSessionAsyncImpl. In a test run under TestIsolation = Codeunit it raises the
+/// refusal below, also for the overload with a record, and `SessionId` stays 0
+/// (session/TestStartSessionRecord.al:StartSession_FromATestCodeunit_IsRefusedUnderCodeunitIsolation).
+/// Anywhere else a session would start, which this runtime does not do: refused.
+fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    if c.install_scope() {
+        return Ok(if c.ret_used() {
+            Value::Boolean(false)
+        } else {
+            Value::Null
+        });
+    }
+    if c.in_test_run() {
+        return Err(Signal::Error(AlError {
+            message: "Sessions can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled."
+                .into(),
+            code: String::new(),
+            call_stack: String::new(),
+        }));
+    }
+    unsupported("StartSession outside an install trigger and a test run (a second session is not modelled)")
+}
+
+/// `StrCheckSum(String [, WeightString] [, Modulus])`: `(M - (sum of digit * weight) mod M) mod M`, the
+/// formula of the documentation (methods-auto/text/text-strchecksum-method.md, its example gives 0
+/// for '4378' with weights '1234' and modulus 7). The corpus pins only that the result is not
+/// negative, is below the modulus and is not 0 for '12345' (session/TestSystemExtended.al:218-256).
+/// The documentation says a non-digit or a too long weight string raises, without a text: refused.
+fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let digits = |s: &str| -> Option<Vec<i64>> { s.chars().map(|c| c.to_digit(10).map(i64::from)).collect() };
+    let source = text_arg(args, 0)?;
+    let Some(source) = digits(&source) else {
+        return unsupported("StrCheckSum of a string with a character that is not 0-9 (error text not pinned)");
+    };
+    let mut weights = match args.get(1) {
+        Some(_) => {
+            let Some(w) = digits(&text_arg(args, 1)?) else {
+                return unsupported("StrCheckSum with a weight character that is not 0-9 (error text not pinned)");
+            };
+            w
+        }
+        None => Vec::new(),
+    };
+    if weights.len() > source.len() {
+        return unsupported("StrCheckSum with a weight string longer than the source (error text not pinned)");
+    }
+    // A short weight string is padded with 1 up to the length of the source.
+    weights.resize(source.len(), 1);
+    let modulus = int_arg(args, 2).unwrap_or(10);
+    if modulus < 1 {
+        return unsupported("StrCheckSum with a modulus below 1 (not pinned)");
+    }
+    if source.is_empty() {
+        return Ok(Value::Integer(0));
+    }
+    let sum: i64 = source.iter().zip(&weights).map(|(d, w)| d * w).sum();
+    Ok(Value::Integer(((modulus - sum % modulus) % modulus) as i32))
+}
+
 fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let s: Vec<u16> = text_arg(args, 0)?.encode_utf16().collect();
     let pos = int_arg(args, 1).unwrap_or(1);
@@ -765,6 +872,9 @@ pub(crate) mod tests {
     #[derive(Default)]
     pub(crate) struct TestCtx {
         err: AlError,
+        install: bool,
+        in_test: bool,
+        result_ignored: bool,
     }
     impl FormatCtx for TestCtx {
         fn enum_name(&self, _id: u32, o: i32) -> String {
@@ -787,6 +897,63 @@ pub(crate) mod tests {
         fn new_guid(&mut self) -> [u8; 16] {
             [1; 16]
         }
+        fn install_scope(&self) -> bool {
+            self.install
+        }
+        fn in_test_run(&self) -> bool {
+            self.in_test
+        }
+        fn ret_used(&self) -> bool {
+            !self.result_ignored
+        }
+    }
+
+    #[test]
+    fn variant_conversions_and_log_message() {
+        assert!(matches!(
+            call("System.Variant2Date#1", vec![Value::Date(5, false)]),
+            Ok(Value::Date(5, false))
+        ));
+        assert!(matches!(
+            call("System.Variant2Time#1", vec![Value::Time(7)]),
+            Ok(Value::Time(7))
+        ));
+        assert!(matches!(
+            call("System.Variant2Date#1", vec![Value::Integer(1)]),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(
+            call("Session.LogMessage#2", vec![t("E"), t("m")]),
+            Ok(Value::Null)
+        ));
+    }
+
+    #[test]
+    fn start_session_answers_false_in_install_and_is_refused_in_a_test_run() {
+        let run = |ctx: &mut TestCtx| {
+            let mut args = vec![Value::Integer(777), Value::Integer(60448)];
+            lookup("Session.StartSession#1").unwrap()(ctx, None, &mut args)
+        };
+        // install/TestInstallStartSession_Tests.al:51-65
+        let mut install = TestCtx {
+            install: true,
+            ..Default::default()
+        };
+        assert!(matches!(run(&mut install), Ok(Value::Boolean(false))));
+        let mut plain = TestCtx {
+            install: true,
+            result_ignored: true,
+            ..Default::default()
+        };
+        assert!(matches!(run(&mut plain), Ok(Value::Null)));
+        // session/TestStartSessionRecord.al:57-66
+        let mut test = TestCtx {
+            in_test: true,
+            ..Default::default()
+        };
+        assert!(matches!(run(&mut test), Err(Signal::Error(e)) if e.message.contains(
+            "can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled")));
+        assert!(matches!(run(&mut TestCtx::default()), Err(Signal::Unsupported(_))));
     }
 
     pub(crate) fn call(id: &str, args: Vec<Value>) -> Result<Value, Signal> {
@@ -879,6 +1046,38 @@ pub(crate) mod tests {
         };
         assert!(matches!(&stack, Value::Text(s) if !s.is_empty()));
         assert!(text_of(&stack).is_none(), "its content cannot be inspected");
+    }
+
+    // session/TestSystemExtended.al:218-256 pins the range; the values are the documentation's formula.
+    #[test]
+    fn strchecksum_follows_the_documented_formula() {
+        let n = |v: Result<Value, Signal>| int(v);
+        assert_eq!(n(call("Text.StrCheckSum#1", vec![t("12345")])), 5);
+        assert_eq!(n(call("Text.StrCheckSum#1", vec![t("12345"), t("5432")])), 5); // weights 54321: 35 mod 10 = 5
+        assert_eq!(
+            n(call(
+                "Text.StrCheckSum#1",
+                vec![t("12345"), t("5432"), Value::Integer(10)]
+            )),
+            5
+        );
+        // The example of the documentation: (7 - (4*1 + 3*2 + 7*3 + 8*4) mod 7) mod 7 = 0.
+        assert_eq!(
+            n(call(
+                "Text.StrCheckSum#1",
+                vec![t("4378"), t("1234"), Value::Integer(7)]
+            )),
+            0
+        );
+        assert_eq!(n(call("Text.StrCheckSum#1", vec![t("")])), 0);
+        assert!(matches!(
+            call("Text.StrCheckSum#1", vec![t("12a")]),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(
+            call("Text.StrCheckSum#1", vec![t("12"), t("123")]),
+            Err(Signal::Unsupported(_))
+        ));
     }
 
     #[test]

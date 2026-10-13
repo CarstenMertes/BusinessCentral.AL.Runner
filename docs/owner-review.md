@@ -159,3 +159,8 @@ reviewed it.
   `GlobalTriggerManagement` reaches platform tables with no provider) are skipped and reported on stderr, as main always
   did, instead of refusing every write; remove when nothing is unavailable.
 - 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).
+- 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
+- 2026-10-14, ADR-018, telemetry: `Session.LogMessage` is a no-op in every overload.
+- 2026-10-14, ADR-018, SessionSettings: `RequestSessionUpdate(false)` hands a copy to the handler and needs true back; `(true)` and a missing handler are refused.
+- 2026-10-14, ADR-018, InitValue: `0DT` and closing-date literals raise in `Init()` of a written record and on the first read of an untouched one.
+- 2026-10-14, ADR-018, held branch: the narrower static-subscriber global check is not merged (net zero) until the `DeleteAll(false)` probe is in.

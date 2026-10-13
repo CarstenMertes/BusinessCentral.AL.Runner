@@ -405,7 +405,8 @@ impl Checker<'_> {
                             continue;
                         }
                         if let Resolution::Found(r) =
-                            self.ws.resolve_ref_certain(decl_file, ObjKind::Table, &arm.path[..n])
+                            self.ws
+                                .resolve_relation_target(decl_file, ObjKind::Table, &arm.path[..n])
                         {
                             self.touch_schema(r);
                             break;

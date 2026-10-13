@@ -585,6 +585,18 @@ impl Workspace {
         self.resolve_in_scope(file, kind, parts, true, true)
     }
 
+    /// A `TableRelation` target. The file of a dependency app resolves it among the apps that app
+    /// saw (`visible`), as BC fixed it when the app compiled: a same-named table of a dependent app
+    /// is not a candidate (corpus fieldref/TestRelationTargetNameCollision.al). The file of the
+    /// workspace resolves it as `resolve_ref_certain` does.
+    pub fn resolve_relation_target(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
+        if self.kinds[self.files[file].app] == AppKind::Dependency {
+            self.resolve_ref(file, kind, parts)
+        } else {
+            self.resolve_ref_certain(file, kind, parts)
+        }
+    }
+
     /// `check_usable`: leave out objects of a dependency file that does not parse. That parses
     /// the file of every candidate, which the extension index must not trigger.
     fn resolve_in_scope(

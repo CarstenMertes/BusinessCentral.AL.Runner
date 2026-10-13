@@ -225,6 +225,11 @@ pub struct PageState {
     /// A procedure call on a `Page` variable made the instance and ran its OnInit before the page
     /// opened; the open must not run it again (handlers/TestPageOnInit_Tests.al:188-217).
     pub pre_init: bool,
+    /// AL code called `LookupMode(true)` on the page variable. Unlike `lookup` (which the
+    /// `Page.RunModal(id, Rec)` overload also sets) it takes the new-row line away from a list
+    /// (corpus handlers/TestPageModalNewRowLine_Tests.al:Plain_LookupModeTrue_HasNoNewRowLine
+    /// against Plain_RunModalZero_HasTheNewRowLine).
+    pub lookup_requested: bool,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -269,6 +274,7 @@ impl PageState {
             set_record: None,
             host: None,
             pre_init: false,
+            lookup_requested: false,
         }
     }
 }

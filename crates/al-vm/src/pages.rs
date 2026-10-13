@@ -485,7 +485,10 @@ impl Session {
             }
             "LookupMode" => match args.first() {
                 Some(v) => {
-                    st.borrow_mut().lookup = ops::truthy(v)?;
+                    let on = ops::truthy(v)?;
+                    let mut s = st.borrow_mut();
+                    s.lookup = on;
+                    s.lookup_requested = on;
                     Ok(Value::Null)
                 }
                 None => Ok(Value::Boolean(st.borrow().lookup)),
@@ -499,6 +502,19 @@ impl Session {
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetRecord with {other:?}")),
+            },
+            // `P.SetTableView(Rec)` hands the page the filters of Rec as its view, not the
+            // record (corpus handlers/TestPageModalNewRowLine_Tests.al:100-114, 190-205: Rec has
+            // filters and no key). The page then opens as it does after SetRecord, on a Rec
+            // that was Init-ed.
+            "SetTableView" => match args.first() {
+                Some(Value::Record(r)) => {
+                    let copy = Rc::new(RefCell::new(r.borrow().clone()));
+                    self.record_op("Init", &copy, &mut [])?;
+                    st.borrow_mut().set_record = Some(copy);
+                    Ok(Value::Null)
+                }
+                other => unsupported(format!("Page.SetTableView with {other:?}")),
             },
             "Run" => {
                 let record = st.borrow().set_record.clone();
@@ -1018,7 +1034,8 @@ impl Session {
         Ok(has_repeater
             && st.borrow().mode == PageMode::Edit
             && !prop_false("Editable")
-            && !prop_false("InsertAllowed"))
+            && !prop_false("InsertAllowed")
+            && !st.borrow().lookup_requested)
     }
 
     // ---- rows ---------------------------------------------------------------------------
@@ -1676,11 +1693,12 @@ impl Session {
                 // the Page variable already made (a setter ran) is the one it receives (corpus
                 // handlers/TestPageOnInit_Tests.al:POI_SetterBeforeTrappedRun_RunsAfterOnInitAndSurvives, :222-238).
                 let carried = st.borrow().instance.clone();
-                let pre_init = st.borrow().pre_init;
+                let (pre_init, lookup_requested) = (st.borrow().pre_init, st.borrow().lookup_requested);
                 {
                     let mut t = trap.borrow_mut();
                     t.instance = carried.clone();
                     t.pre_init = pre_init;
+                    t.lookup_requested = lookup_requested;
                 }
                 if let Some(inst) = carried {
                     let slot = page_of(&self.engine(), &trap).curr_page_slot;

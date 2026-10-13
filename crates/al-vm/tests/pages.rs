@@ -998,3 +998,55 @@ fn assigning_currpage_editable_is_the_same_as_calling_it() {
     );
     assert_eq!(text(r), "NoNo|NoNo");
 }
+
+// handlers/TestPageModalNewRowLine_Tests.al:ReEditable_LookupModeTrue_HasNoNewRowLine (:100-114):
+// `P.SetTableView(Row)` gives the page the filters of Row as its view when it runs; a trailing
+// new-row line follows the filtered rows of an editable list (the `Yes` of the last Next).
+#[test]
+fn page_settableview_filters_the_rows_the_page_shows() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; V: Record \"PG Row\"; P: Page \"PG List\"; TP: TestPage \"PG List\"; X: Text; begin
+                {}
+                V.SetRange(Qty, 2, 3);
+                P.SetTableView(V);
+                TP.Trap();
+                P.Run();
+                X := TP.\"NoCtl\".Value();
+                if TP.Next() then X += TP.\"NoCtl\".Value();
+                X += Format(TP.Next());
+                TP.Close();
+                exit(X);
+            end;",
+            rows(&[("A", 1), ("B", 2), ("C", 3), ("D", 4)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "BCYes");
+}
+
+// handlers/TestPageModalNewRowLine_Tests.al:Plain_LookupModeTrue_HasNoNewRowLine (:208-221) against
+// Plain_LookupModeFalse_HasTheNewRowLine (:190-205): LookupMode(true) takes the new-row line away.
+#[test]
+fn lookupmode_true_takes_the_new_row_line_away_from_a_list() {
+    let body = |mode: &str| {
+        format!(
+            "procedure F(): Text var R: Record \"PG Row\"; V: Record \"PG Row\"; P: Page \"PG List\"; TP: TestPage \"PG List\"; X: Text; begin
+                {}
+                V.SetRange(Qty, 2, 3);
+                P.SetTableView(V);
+                P.LookupMode({mode});
+                TP.Trap();
+                P.Run();
+                X := TP.\"NoCtl\".Value();
+                if TP.Next() then X += TP.\"NoCtl\".Value();
+                X += Format(TP.Next());
+                TP.Close();
+                exit(X);
+            end;",
+            rows(&[("A", 1), ("B", 2), ("C", 3), ("D", 4)])
+        )
+    };
+    assert_eq!(text(run(&body("true"), "F")), "BCNo");
+    assert_eq!(text(run(&body("false"), "F")), "BCYes");
+}

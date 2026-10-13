@@ -220,6 +220,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
     ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
     ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetLoadFields#1", |c, r, a| c.record("SetLoadFields", r, a)),
+    ("Record.AddLoadFields#1", |c, r, a| c.record("AddLoadFields", r, a)),
+    ("Record.SetBaseLoadFields#1", |c, r, a| {
+        c.record("SetBaseLoadFields", r, a)
+    }),
+    ("Record.AreFieldsLoaded#1", |c, r, a| c.record("AreFieldsLoaded", r, a)),
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record("SetAutoCalcFields", r, a)
     }),

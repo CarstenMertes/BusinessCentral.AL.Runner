@@ -306,6 +306,8 @@ impl Session {
                     d.key = s.key;
                     d.ascending = s.ascending;
                     d.position = s.position.clone();
+                    d.load.buffer = s.load.buffer.clone();
+                    d.load.partial = s.load.partial;
                 }
                 Ok(Value::Null)
             }

@@ -17,6 +17,7 @@ pub mod events;
 mod flowfields;
 mod interfaces;
 mod pages;
+mod partial;
 mod queries;
 mod recmeta;
 mod records;
@@ -246,6 +247,7 @@ impl Session {
                     field_descending: false,
                     position: None,
                     auto_calc: Vec::new(),
+                    load: Default::default(),
                 })))
             }
             other => Value::default_for(other),
@@ -843,7 +845,15 @@ impl Session {
                 Ok(v)
             }
             ir::Place::Field(base, pos) => match self.read(base, f)? {
-                Value::Record(rc) => Ok(rc.borrow().fields[*pos].clone()),
+                Value::Record(rc) => {
+                    let r = rc.borrow();
+                    let v = r.fields[*pos].clone();
+                    if r.load.partial {
+                        drop(r);
+                        rc.borrow_mut().load.touch(*pos);
+                    }
+                    Ok(v)
+                }
                 other => Err(Signal::Unsupported(format!("field of {other:?}"))),
             },
         }
@@ -860,7 +870,12 @@ impl Session {
                             // Whether a copied record shares or copies its Blob is not pinned.
                             return Err(Signal::Unsupported("record assignment with a Blob field".into()));
                         }
-                        dst.borrow_mut().fields = fields;
+                        let load = src.borrow().load.clone();
+                        let mut d = dst.borrow_mut();
+                        d.fields = fields;
+                        // The copy holds what the source's buffer held, if that is known.
+                        d.load.buffer = load.buffer;
+                        d.load.partial = load.partial;
                     }
                     return Ok(());
                 }
@@ -871,7 +886,11 @@ impl Session {
             let v = ops::convert(v, &ty)?;
             return match self.read(base, f)? {
                 Value::Record(rc) => {
-                    rc.borrow_mut().fields[*pos] = v;
+                    let mut r = rc.borrow_mut();
+                    r.fields[*pos] = v;
+                    if r.load.partial {
+                        r.load.written(*pos);
+                    }
                     Ok(())
                 }
                 other => Err(Signal::Unsupported(format!("field of {other:?}"))),

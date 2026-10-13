@@ -315,6 +315,84 @@ pub struct RecordState {
     pub position: Option<Vec<Value>>,
     /// Field positions of `SetAutoCalcFields`: calculated whenever a row is read.
     pub auto_calc: Vec<usize>,
+    /// Partial records: `SetLoadFields` and which fields the buffer holds.
+    pub load: LoadState,
+}
+
+/// A set of field positions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldSet {
+    All,
+    Of(Vec<usize>),
+}
+
+impl FieldSet {
+    pub fn contains(&self, pos: usize) -> bool {
+        match self {
+            FieldSet::All => true,
+            FieldSet::Of(v) => v.contains(&pos),
+        }
+    }
+
+    pub fn add(&mut self, pos: usize) {
+        if let FieldSet::Of(v) = self {
+            if !v.contains(&pos) {
+                v.push(pos);
+            }
+        }
+    }
+
+    pub fn remove(&mut self, pos: usize) {
+        if let FieldSet::Of(v) = self {
+            v.retain(|&p| p != pos);
+        }
+    }
+}
+
+/// What a record's buffer holds after a fetch (partial records, `Record.AreFieldsLoaded`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Buffer {
+    /// The fields known to be loaded.
+    pub have: FieldSet,
+    /// Fields outside `have` whose state the corpus does not pin: asking about one is refused.
+    pub unsure: FieldSet,
+    /// The primary key of the row fetched, when the buffer is partial (`None` for a full one).
+    pub row: Option<String>,
+}
+
+/// Partial-record state of a record variable. A default one is a full load that fetched nothing.
+#[derive(Debug, Clone, Default)]
+pub struct LoadState {
+    /// `SetLoadFields`: the field positions requested; `None` is the table's default (all).
+    pub request: Option<Vec<usize>>,
+    /// What the buffer holds; `None` until a row was fetched into it (and after `Clear`).
+    pub buffer: Option<Buffer>,
+    /// The buffer is partial: a read of an omitted field loads it, so reads and writes of
+    /// fields tell `touch` and `written`. Kept as its own flag so the full-load path pays one
+    /// branch.
+    pub partial: bool,
+}
+
+impl LoadState {
+    /// A field of the buffer was read: an omitted one is loaded on demand
+    /// (record/TestRecordPartialLoad.al:144-190).
+    pub fn touch(&mut self, pos: usize) {
+        if let Some(b) = &mut self.buffer {
+            if !b.have.contains(pos) {
+                b.have.add(pos);
+                b.unsure.remove(pos);
+            }
+        }
+    }
+
+    /// A field of the buffer was assigned. Whether that counts as loading it is not pinned.
+    pub fn written(&mut self, pos: usize) {
+        if let Some(b) = &mut self.buffer {
+            if !b.have.contains(pos) {
+                b.unsure.add(pos);
+            }
+        }
+    }
 }
 
 /// What a `WebServiceActionContext` holds: the object an API action points the OData layer at.

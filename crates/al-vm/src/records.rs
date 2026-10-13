@@ -614,6 +614,19 @@ impl Session {
                 }
             }
         }
+        // A full load (the default) needs no bookkeeping beyond the flag; a partial one is worked
+        // out in partial.rs.
+        if rec.borrow().load.request.is_some() {
+            self.note_partial_fetch(rec, &row)?;
+        } else {
+            let mut r = rec.borrow_mut();
+            r.load.buffer = Some(al_builtins::value::Buffer {
+                have: al_builtins::value::FieldSet::All,
+                unsure: al_builtins::value::FieldSet::Of(Vec::new()),
+                row: None,
+            });
+            r.load.partial = false;
+        }
         rec.borrow_mut().fields = row;
         self.auto_calculate(rec)
     }
@@ -712,6 +725,7 @@ impl Session {
                 r.ascending = true;
                 r.field_descending = false;
                 r.position = None;
+                r.load = Default::default();
                 Ok(Value::Null)
             }
             "Insert" => {
@@ -1243,6 +1257,9 @@ impl Session {
             }
             "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
             "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
+            "SetLoadFields" | "AddLoadFields" | "AreFieldsLoaded" | "SetBaseLoadFields" => {
+                self.load_fields_op(method, rec, &t, args)
+            }
             other => self.record_meta_op(other, rec, &t, args),
         }
     }

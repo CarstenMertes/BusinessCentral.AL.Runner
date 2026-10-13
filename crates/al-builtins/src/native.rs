@@ -93,6 +93,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.IsEmpty#1", |c, r, a| c.record("IsEmpty", r, a)),
     ("Record.SetRange#1", |c, r, a| c.record("SetRange", r, a)),
     ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
+    // Event subscriptions are session state; the VM intercepts these ids
+    // (al-vm dispatch.rs). Registered so lowering accepts them.
+    ("Session.BindSubscription#1", vm_only),
+    ("Session.UnbindSubscription#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
@@ -101,6 +105,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
+    ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
+    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
+    ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetAutoCalcFields#1", |c, r, a| {
+        c.record("SetAutoCalcFields", r, a)
+    }),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -119,12 +129,13 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsList#1", |_, r, _| is(r, "List")),
     ("Variant.IsDictionary#1", |_, r, _| is(r, "Dictionary")),
     ("Variant.IsCodeunit#1", |_, r, _| is(r, "Codeunit")),
-    // Kinds the value model has no variant for yet are never true.
-    ("Variant.IsRecordId#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
+    // RecordId, RecordRef and FieldRef variables are library handles named after their type.
+    ("Variant.IsRecordId#1", |_, r, _| is(r, "RecordId")),
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
-    ("Variant.IsRecordRef#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsFieldRef#1", |_, _, _| Ok(Value::Boolean(false))),
+    ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
+    ("Variant.IsFieldRef#1", |_, r, _| is(r, "FieldRef")),
+    // Kinds the value model has no variant for yet are never true.
+    ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsDotNet#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsAutomation#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
@@ -142,6 +153,10 @@ pub fn lookup(id: &str) -> Option<NativeFn> {
 /// Every registered id, for the conformance test.
 pub fn registered_ids() -> Vec<&'static str> {
     all().map(|(i, _)| *i).collect()
+}
+
+fn vm_only(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    unsupported("a builtin the VM runs itself")
 }
 
 fn unsupported<T>(what: &str) -> Result<T, Signal> {
@@ -177,6 +192,9 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
+    if !crate::format::is_pinned(&args[0]) {
+        return unsupported(&format!("Format of {:?} (its format is not pinned yet)", args[0]));
+    }
     Ok(Value::Text(format(&args[0], len, std, ctx)))
 }
 
@@ -427,6 +445,18 @@ mod tests {
             )),
             "1"
         );
+    }
+
+    // The formats of Time, DateTime and Duration are not pinned by the corpus yet: Format of
+    // them is a refusal the test can report, not a panic that takes the whole codeunit down.
+    #[test]
+    fn format_of_a_value_without_a_pinned_format_is_a_refusal() {
+        for v in [Value::Duration(3_600_000), Value::Time(43_200_001), Value::DateTime(5)] {
+            assert!(
+                matches!(call("System.Format#1", vec![v]), Err(Signal::Unsupported(_))),
+                "Format must refuse"
+            );
+        }
     }
 
     #[test]

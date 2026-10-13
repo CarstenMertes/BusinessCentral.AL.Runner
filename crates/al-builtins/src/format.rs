@@ -10,6 +10,31 @@ pub trait FormatCtx {
     fn enum_name(&self, id: u32, ordinal: i32) -> String;
 }
 
+/// Whether [`format`] knows the format of this kind of value. Time, DateTime, Duration and
+/// reference types get theirs with the corpus tests that pin them; callers that can refuse
+/// (the `Format` builtin) check first so an unpinned format is a refusal, not a panic.
+pub fn is_pinned(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Null
+            | Value::Boolean(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Byte(_)
+            | Value::Char(_)
+            | Value::Decimal(_)
+            | Value::Text(_)
+            | Value::Code(_)
+            | Value::Option(..)
+            | Value::Enum(..)
+            | Value::Guid(_)
+            | Value::Date(..)
+            | Value::DateFormula(_)
+            | Value::Time(0)
+            | Value::DateTime(0)
+    )
+}
+
 /// `Format(v, length, standard_format)`.
 pub fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> String {
     let s = match v {

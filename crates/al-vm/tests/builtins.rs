@@ -1017,3 +1017,40 @@ fn other_list_index_errors_are_still_refused() {
         assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
     }
 }
+
+// ---------------------------------------------------------------- platform context
+
+#[test]
+fn a_test_runs_with_a_gui_on_a_service_tier() {
+    // session/TestBCPlatformContracts.al:26-43 (GuiAllowed and IsServiceTier are true in a test);
+    // handlers/TestConfirmNoHandler.al:28 (GuiAllowed is Yes inside a page trigger).
+    let r = text_of(
+        "",
+        "exit(Format(GuiAllowed()) + Format(System.GuiAllowed()) + Format(IsServiceTier()));",
+    );
+    assert_eq!(r.unwrap(), "YesYesYes");
+}
+
+#[test]
+fn the_last_used_row_version_is_positive_and_does_not_fall_after_an_insert() {
+    // session/TestSystemExtended.al:635-659, session/TestBCDatabaseContracts.al:100-117.
+    let src = "table 50902 \"RV Row\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var r: Record \"RV Row\"; a: BigInteger; b: BigInteger;
+        begin a := Database.LastUsedRowVersion(); r.Id := 1; r.Insert(); b := Database.LastUsedRowVersion();
+              exit(Format(a > 0) + Format(b >= a) + Format(b = r.\"SystemRowVersion\")); end; }";
+    match run(src, "F") {
+        Ok(Value::Text(t)) => assert_eq!(t, "YesYesYes"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_lock_timeout_can_be_read_and_set() {
+    // session/TestSystemExtended.al:608-630: callable in every form. The default is the documented one.
+    let r = text_of(
+        "a: Text;",
+        "a := Format(Database.LockTimeout()); Database.LockTimeout(false); a += Format(Database.LockTimeout());
+         Database.LockTimeout(true); exit(a + Format(Database.LockTimeout()));",
+    );
+    assert_eq!(r.unwrap(), "YesNoYes");
+}

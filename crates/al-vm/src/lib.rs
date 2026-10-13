@@ -143,13 +143,16 @@ pub struct Session {
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
+    /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
+    pub(crate) lock_timeout: bool,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
 }
 
-/// Nested AL calls allowed before the session gives up. BC's own limit and
-/// its error are not pinned by the corpus, so exceeding it is Unsupported.
-pub const MAX_CALL_DEPTH: usize = 400;
+/// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
+/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al); BC's exact limit
+/// and the text of its error are not pinned, so exceeding this is Unsupported.
+pub const MAX_CALL_DEPTH: usize = 1000;
 
 impl Session {
     pub fn new(engine: Arc<Engine>) -> Session {
@@ -189,6 +192,7 @@ impl Session {
             commit_behavior: Default::default(),
             in_test_codeunit: false,
             error_scopes: Default::default(),
+            lock_timeout: true,
             media: Default::default(),
         }
     }
@@ -334,7 +338,7 @@ impl Session {
         }
         if self.depth >= MAX_CALL_DEPTH {
             return Err(Signal::Unsupported(format!(
-                "call depth over {MAX_CALL_DEPTH} (BC's limit not pinned)"
+                "call depth over {MAX_CALL_DEPTH} (BC's limit and error text are not pinned)"
             )));
         }
         self.depth += 1;
@@ -902,6 +906,9 @@ impl Session {
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
+            ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_)) => {
+                return self.write_char(base, idx, v, f);
+            }
             ir::Place::Index(base, idx) => {
                 let el_ty = self.place_type(p, f);
                 let (arr, flat) = self.element(base, idx, f)?;
@@ -910,6 +917,45 @@ impl Session {
             ir::Place::Field(..) => unreachable!("handled above"),
         }
         Ok(())
+    }
+
+    /// `Text[i] := c`: sets one character of a text. Pinned only for an empty or growing text at
+    /// the next position within the declared length (handlers/TestPageFieldFormats_Tests.al:58-66);
+    /// a position outside that, a value that is not one UTF-16 character, and a Code are refused.
+    fn write_char(&mut self, base: &ir::Place, idx: &[ir::Expr], v: Value, f: &mut Frame) -> Result<(), Signal> {
+        let max = match self.place_type(base, f) {
+            RtType::Text(m) => m,
+            _ => None,
+        };
+        let [e] = idx else {
+            return Err(Signal::Unsupported("a text indexed with several positions".into()));
+        };
+        let i = int(&self.eval(e, f)?)?;
+        let unit = match int(&v) {
+            Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
+            Err(_) => None,
+        };
+        let Value::Text(s) = self.read(base, f)? else {
+            return Err(Signal::Unsupported(
+                "assigning a character into a value that is no text".into(),
+            ));
+        };
+        let mut units: Vec<u16> = s.encode_utf16().collect();
+        let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
+        let (Some(unit), true) = (unit, in_range) else {
+            return Err(Signal::Unsupported(format!(
+                "assigning {v:?} to character {i} of a text (only the next position within the length is pinned)"
+            )));
+        };
+        let i = i as usize - 1;
+        if i == units.len() {
+            units.push(unit);
+        } else {
+            units[i] = unit;
+        }
+        let text = String::from_utf16(&units)
+            .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
+        self.write(base, Value::Text(text), f)
     }
 
     /// The array behind `base` and the flat position of `idx` (1-based, row-major).

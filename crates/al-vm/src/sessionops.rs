@@ -68,6 +68,25 @@ impl Session {
             // (session/TestDatabase.al:69-75, session/TestSessionFunctions.al:25).
             return Ok(Value::Text(self.cx.company.clone()));
         }
+        match id {
+            // A test runs with a client on a service tier: true in a test body and inside a page
+            // trigger (session/TestBCPlatformContracts.al:26-43, handlers/TestConfirmNoHandler.al:28).
+            "System.GuiAllowed#1" | "System.IsServiceTier#1" => return Ok(Value::Boolean(true)),
+            // The counter has handed out `next_row_version` so far; the database never reports
+            // zero (session/TestSystemExtended.al:635-659, TestBCDatabaseContracts.al:100-117).
+            "Database.LastUsedRowVersion#1" => return Ok(Value::BigInteger(self.next_row_version.max(1))),
+            // Set when given a value, read otherwise; the default is the documented one
+            // (docs/probes-needed.md). session/TestSystemExtended.al:608-630 only calls it.
+            "Database.LockTimeout#1" => {
+                match args.first() {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Boolean(b)) => self.lock_timeout = *b,
+                    Some(other) => return unsupported(format!("LockTimeout with {other:?}")),
+                }
+                return Ok(Value::Boolean(self.lock_timeout));
+            }
+            _ => {}
+        }
         if id == "System.CodeCoverageLog#1" {
             // With a state it records or stops and answers the state it was given; without one it
             // answers whether it is recording (codeunit/TestCodeCoverageStartStop.al:30-102). The

@@ -240,6 +240,52 @@ fn runaway_recursion_is_unsupported_not_a_crash() {
 }
 
 #[test]
+fn a_character_can_be_assigned_into_a_text_by_position() {
+    // handlers/TestPageFieldFormats_Tests.al:58-66: `Nnbsp[1] := 8239` on an empty Text[1] sets
+    // its one character (the narrow no-break space), which Replace then finds.
+    let src = cu("procedure F(): Text var N: Text[1]; T: Text; begin
+                      N[1] := 8239; T := 'a' + N + 'b';
+                      exit(Format(StrLen(N)) + Format(StrLen(T)) + Format(StrLen(T.Replace(N, ' ')))); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "133");
+    // Past the end of the text, past its declared length, or a value that is no character: refused.
+    for body in [
+        "N[2] := 65;",
+        "N[1] := 65; N[3] := 66;",
+        "N[1] := 65; N[2] := 66;",
+        "N[0] := 65;",
+    ] {
+        let src = cu(&format!(
+            "procedure F(): Text var N: Text[1]; begin {body} exit(N); end;"
+        ));
+        assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))), "{body}");
+    }
+}
+
+#[test]
+fn a_990_deep_chain_completes() {
+    // codeunit/TestCodeunitRecursionDepth.al:57-70 (RecursionDepth_JustInsideTheCeiling_Completes):
+    // the platform's ceiling lies above 990 calls. Past it the run is refused, not guessed (the
+    // text of the platform's refusal is not pinned).
+    std::thread::Builder::new()
+        .stack_size(512 << 20)
+        .spawn(|| {
+            let src = cu(
+                "procedure R(N: Integer): Integer begin if N <= 0 then exit(0); exit(1 + R(N - 1)); end;
+                          procedure F(N: Integer): Integer begin exit(R(N)); end;",
+            );
+            let r = run(&src, "F", vec![Value::Integer(990)]);
+            assert!(matches!(r, Ok(Value::Integer(990))), "{r:?}");
+            assert!(matches!(
+                run(&src, "F", vec![Value::Integer(5000)]),
+                Err(Signal::Unsupported(_))
+            ));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
 fn try_function_used_as_a_value_catches_errors() {
     // Doc (TryFunction attribute): the return value tells whether the method ran without errors.
     let src = cu("[TryFunction] procedure T(Fail: Boolean) begin if Fail then Error('inner'); end;

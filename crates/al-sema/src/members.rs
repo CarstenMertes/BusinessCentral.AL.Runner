@@ -37,6 +37,8 @@ pub struct ProcSig {
     pub local: bool,
     /// Object index of the declaring object.
     pub declared_in: usize,
+    /// Offset of the routine node in its file.
+    pub offset: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -153,6 +155,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
             ret: r.return_type().map(|t| Ty::from_type_ref(&t)),
             local: r.is_local(),
             declared_in: i,
+            offset: r.syntax().text_range().start().into(),
         });
     }
     m

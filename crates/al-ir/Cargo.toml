@@ -6,3 +6,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+al-builtins.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

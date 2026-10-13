@@ -14,6 +14,37 @@ pub struct CheckResult {
     pub diagnostics: Vec<Diagnostic>,
     /// Inferred type of every expression, keyed by (file index, start offset, end offset).
     pub types: HashMap<(usize, usize, usize), Ty>,
+    /// What each name, member and call resolved to, same keys.
+    pub resolutions: HashMap<(usize, usize, usize), Res>,
+}
+
+/// The target of a resolved name, member or call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Res {
+    /// A variable in the routine's scope (parameter, return value, local).
+    Local(String),
+    /// A global variable of the object (or an implicit one such as `Rec`).
+    Global(String),
+    /// Field `id` of table object `table`.
+    Field {
+        table: usize,
+        id: u32,
+    },
+    /// A procedure: declaring object and the offset of its routine node.
+    Proc {
+        object: usize,
+        offset: usize,
+    },
+    /// A catalog builtin overload id (ADR-008).
+    Builtin(String),
+    /// An enum value by its declared integer value (what `AsInteger()` returns).
+    EnumValue {
+        object: usize,
+        value: i32,
+    },
+    OptionValue(i32),
+    /// `Database::X` and friends: the object id.
+    ObjectId(i32),
 }
 
 pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckResult {
@@ -31,6 +62,7 @@ pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckRes
         catalog,
         diags: Vec::new(),
         types: HashMap::new(),
+        resolutions: HashMap::new(),
         system_enums: system_enums(catalog),
         extensions,
     };
@@ -42,6 +74,7 @@ pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckRes
     CheckResult {
         diagnostics: c.diags,
         types: c.types,
+        resolutions: c.resolutions,
     }
 }
 
@@ -96,6 +129,9 @@ struct Cand {
     min: usize,
     max: usize,
     ret: Ty,
+    target: Res,
+    /// Declared parameter types (catalog spelling or `Ty` display), for tie-breaks.
+    param_tys: Vec<String>,
     /// Per parameter position: the argument names a field of the receiver
     /// (catalog parameters named `Field`, `Field1`, `Fields`, `FromField`, `Column`).
     fields: Vec<bool>,
@@ -127,6 +163,7 @@ struct Checker<'a> {
     catalog: &'a Catalog,
     diags: Vec<Diagnostic>,
     types: HashMap<(usize, usize, usize), Ty>,
+    resolutions: HashMap<(usize, usize, usize), Res>,
     system_enums: HashSet<String>,
     /// Extended object → its extension objects.
     extensions: HashMap<usize, Vec<usize>>,
@@ -172,6 +209,19 @@ impl<'a> Checker<'a> {
             code,
             message,
         });
+    }
+
+    fn record(&mut self, sc: &Scope, node: &SyntaxNode, r: Res) {
+        let range = node.text_range();
+        self.resolutions
+            .insert((sc.file, range.start().into(), range.end().into()), r);
+    }
+
+    /// `Res::Field` if `name` is a field of the record type `t`.
+    fn field_res(&self, sc: &Scope, t: &Ty, name: &str) -> Option<Res> {
+        let Ty::Record { table, .. } = t else { return None };
+        let ti = self.resolve(sc, ObjKind::Table, table)?;
+        self.members[ti].field(name).map(|f| Res::Field { table: ti, id: f.id })
     }
 
     fn resolve(&self, sc: &Scope, kind: ObjKind, name: &str) -> Option<usize> {
@@ -403,7 +453,7 @@ impl<'a> Checker<'a> {
         let e = self.infer(sc, node);
         let t = match e {
             E::Val(t) => t,
-            E::Callable(c) => self.pick(sc, node, &c, 0, &name_of(node)),
+            E::Callable(c) => self.pick(sc, node, &c, &[], &name_of(node)),
             E::PartialObj(k, parts) => {
                 self.diag(
                     sc,
@@ -421,9 +471,24 @@ impl<'a> Checker<'a> {
         t
     }
 
-    fn pick(&mut self, sc: &Scope, node: &SyntaxNode, cands: &[Cand], argc: usize, name: &str) -> Ty {
-        match cands.iter().find(|c| c.min <= argc && argc <= c.max) {
-            Some(c) => c.ret.clone(),
+    /// Chooses an overload: by arity, then by how many argument types fit the
+    /// declared parameter types (first in catalog order on a tie). Records the
+    /// choice on `node`.
+    fn pick(&mut self, sc: &Scope, node: &SyntaxNode, cands: &[Cand], args: &[Ty], name: &str) -> Ty {
+        let argc = args.len();
+        let mut best: Option<(&Cand, usize)> = None;
+        for c in cands.iter().filter(|c| c.min <= argc && argc <= c.max) {
+            let score = args.iter().zip(&c.param_tys).filter(|(a, p)| fits(a, p)).count();
+            if best.is_none_or(|(_, s)| score > s) {
+                best = Some((c, score));
+            }
+        }
+        match best {
+            Some((c, _)) => {
+                let (ret, target) = (c.ret.clone(), c.target.clone());
+                self.record(sc, node, target);
+                ret
+            }
             None => {
                 self.diag(
                     sc,
@@ -503,6 +568,7 @@ impl<'a> Checker<'a> {
                     _ => Vec::new(),
                 };
                 let unknown_callee = matches!(target, E::Val(Ty::Unknown));
+                let mut arg_tys = Vec::with_capacity(args.len());
                 for (i, a) in args.iter().enumerate() {
                     // On a receiver outside the workspace, a bare name may be one of
                     // its fields: resolve it if we can, but never report it.
@@ -512,21 +578,38 @@ impl<'a> Checker<'a> {
                             _ => Ty::Unknown,
                         };
                         let r = a.text_range();
-                        self.types.insert((sc.file, r.start().into(), r.end().into()), t);
+                        self.types
+                            .insert((sc.file, r.start().into(), r.end().into()), t.clone());
+                        arg_tys.push(t);
                         continue;
                     }
                     let field_pos = cands.iter().any(|c| c.is_field_pos(i));
                     if field_pos && a.kind() == NameRef {
                         if let Some(t) = receiver.as_ref().and_then(|r| self.field_of(sc, r, &name_of(a))) {
                             let r = a.text_range();
-                            self.types.insert((sc.file, r.start().into(), r.end().into()), t);
+                            self.types
+                                .insert((sc.file, r.start().into(), r.end().into()), t.clone());
+                            if let (Some(Ty::Record { table, .. }), Some(ti)) = (
+                                &receiver,
+                                receiver.as_ref().and_then(|r| match r {
+                                    Ty::Record { table, .. } => self.resolve(sc, ObjKind::Table, table),
+                                    _ => None,
+                                }),
+                            ) {
+                                let _ = table;
+                                if let Some(f) = self.members[ti].field(&name_of(a)) {
+                                    let id = f.id;
+                                    self.record(sc, a, Res::Field { table: ti, id });
+                                }
+                            }
+                            arg_tys.push(t);
                             continue;
                         }
                     }
-                    self.ty(sc, a);
+                    arg_tys.push(self.ty(sc, a));
                 }
                 match target {
-                    E::Callable(c) => E::Val(self.pick(sc, callee, &c, args.len(), &member_name(callee))),
+                    E::Callable(c) => E::Val(self.pick(sc, node, &c, &arg_tys, &member_name(callee))),
                     E::Val(Ty::Unknown) => E::Val(Ty::Unknown),
                     E::Val(t) => {
                         self.diag(
@@ -552,7 +635,7 @@ impl<'a> Checker<'a> {
                 }
                 let base_ty = match base {
                     E::Val(t) => t,
-                    E::Callable(c) => self.pick(sc, &kids[0], &c, 0, &member_name(&kids[0])),
+                    E::Callable(c) => self.pick(sc, &kids[0], &c, &[], &member_name(&kids[0])),
                     E::TypeName(t) => {
                         // Static members of a type: `"ALT Status".FromInteger(1)`.
                         return match self.static_members(&t, &mname) {
@@ -579,6 +662,9 @@ impl<'a> Checker<'a> {
                 let r = kids[0].text_range();
                 self.types
                     .insert((sc.file, r.start().into(), r.end().into()), base_ty.clone());
+                if let Some(r) = self.field_res(sc, &base_ty, &mname) {
+                    self.record(sc, node, r);
+                }
                 match self.member(sc, &base_ty, &mname) {
                     Some(e) => e,
                     None => {
@@ -603,7 +689,11 @@ impl<'a> Checker<'a> {
                 };
                 match base {
                     E::ObjKeyword(k) => match self.resolve(sc, k, &rhs) {
-                        Some(_) => E::Val(Ty::Integer),
+                        Some(i) => {
+                            let id = self.ws.objects[i].id.unwrap_or(0) as i32;
+                            self.record(sc, node, Res::ObjectId(id));
+                            E::Val(Ty::Integer)
+                        }
                         None => E::PartialObj(k, vec![rhs]),
                     },
                     E::PartialObj(k, parts) => E::PartialObj(k, parts),
@@ -614,8 +704,30 @@ impl<'a> Checker<'a> {
                             E::TypeName(Ty::Unknown)
                         }
                     },
-                    E::TypeName(t) | E::Val(t) => E::Val(t),
-                    E::Callable(c) => E::Val(self.pick(sc, &kids[0], &c, 0, &rhs)),
+                    E::TypeName(t) | E::Val(t) => {
+                        match &t {
+                            Ty::Enum(name) => {
+                                if let Some(ei) = self.resolve(sc, ObjKind::Enum, name) {
+                                    if let Some((v, _)) = self.members[ei]
+                                        .enum_values
+                                        .iter()
+                                        .find(|(_, n)| n.eq_ignore_ascii_case(&rhs))
+                                    {
+                                        let value = *v as i32;
+                                        self.record(sc, node, Res::EnumValue { object: ei, value });
+                                    }
+                                }
+                            }
+                            Ty::Option(members) => {
+                                if let Some(i) = members.iter().position(|m| m.eq_ignore_ascii_case(&rhs)) {
+                                    self.record(sc, node, Res::OptionValue(i as i32));
+                                }
+                            }
+                            _ => {}
+                        }
+                        E::Val(t)
+                    }
+                    E::Callable(c) => E::Val(self.pick(sc, &kids[0], &c, &[], &rhs)),
                 }
             }
             _ => E::Val(Ty::Unknown),
@@ -656,7 +768,7 @@ impl<'a> Checker<'a> {
                 .catalog
                 .global(n)
                 .iter()
-                .map(|s| sig_cand(s, &Ty::Unknown))
+                .map(|s| sig_cand(s, &Ty::Unknown, self.catalog.id(s)))
                 .collect();
         }
         (!c.is_empty()).then_some(c)
@@ -666,9 +778,11 @@ impl<'a> Checker<'a> {
     fn lookup_name(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Option<E> {
         let n = name_of(node);
         let key = n.to_lowercase();
-        for frame in sc.vars.iter().rev() {
+        for (depth, frame) in sc.vars.iter().enumerate().rev() {
             if let Some(t) = frame.get(&key) {
-                return Some(E::Val(t.clone()));
+                let t = t.clone();
+                self.record(sc, node, if depth == 0 { Res::Global(key) } else { Res::Local(key) });
+                return Some(E::Val(t));
             }
         }
         if sc.rec_unqualified {
@@ -677,6 +791,9 @@ impl<'a> Checker<'a> {
                     return Some(E::Val(Ty::Unknown));
                 }
                 if let Some(e) = self.member(sc, &rec, &n) {
+                    if let Some(r) = self.field_res(sc, &rec, &n) {
+                        self.record(sc, node, r);
+                    }
                     return Some(e);
                 }
             }
@@ -702,7 +819,7 @@ impl<'a> Checker<'a> {
             .catalog
             .global(&n)
             .iter()
-            .map(|s| sig_cand(s, &Ty::Unknown))
+            .map(|s| sig_cand(s, &Ty::Unknown, self.catalog.id(s)))
             .collect();
         if !globals.is_empty() {
             return Some(E::Callable(globals));
@@ -750,7 +867,7 @@ impl<'a> Checker<'a> {
             .overloads(receiver, name)
             .into_iter()
             .filter(|s| !instance_only || s.instance)
-            .map(|s| sig_cand(s, recv_ty))
+            .map(|s| sig_cand(s, recv_ty, self.catalog.id(s)))
             .collect()
     }
 
@@ -1055,8 +1172,34 @@ fn proc_cand(p: &ProcSig) -> Cand {
         min: p.params.len(),
         max: p.params.len(),
         ret: p.ret.clone().unwrap_or(Ty::Unknown),
+        target: Res::Proc {
+            object: p.declared_in,
+            offset: p.offset,
+        },
+        param_tys: p.params.iter().map(|x| x.ty.to_string()).collect(),
         fields: Vec::new(),
         rest_field: false,
+    }
+}
+
+/// Whether an argument of type `arg` fits a parameter declared as `param`
+/// (catalog spelling or `Ty` display). Only used to break arity ties.
+fn fits(arg: &Ty, param: &str) -> bool {
+    let p = param.to_ascii_lowercase();
+    let p = p.split(['[', ' ']).next().unwrap_or("");
+    match arg {
+        Ty::Unknown => true,
+        Ty::Integer | Ty::BigInteger | Ty::Decimal | Ty::Byte | Ty::Char => {
+            matches!(
+                p,
+                "integer" | "biginteger" | "decimal" | "byte" | "char" | "any" | "joker" | "variant"
+            )
+        }
+        Ty::Text(_) | Ty::Code(_) | Ty::Label => {
+            matches!(p, "text" | "code" | "string" | "any" | "joker" | "variant" | "label")
+        }
+        Ty::Boolean => matches!(p, "boolean" | "any" | "joker" | "variant"),
+        other => p == "any" || p == "joker" || p == "variant" || other.to_string().to_ascii_lowercase().starts_with(p),
     }
 }
 
@@ -1065,7 +1208,7 @@ fn is_field_param(name: &str) -> bool {
     n.starts_with("field") || n == "fromfield" || n.starts_with("column")
 }
 
-fn sig_cand(s: &Signature, recv: &Ty) -> Cand {
+fn sig_cand(s: &Signature, recv: &Ty, id: String) -> Cand {
     let min = s.params.iter().filter(|p| !p.optional && !p.variadic).count()
         + s.params.iter().filter(|p| !p.optional && p.variadic).count();
     let max = if s.params.iter().any(|p| p.variadic) {
@@ -1076,6 +1219,8 @@ fn sig_cand(s: &Signature, recv: &Ty) -> Cand {
     let fields = s.params.iter().map(|p| is_field_param(&p.name)).collect();
     let rest_field = s.params.iter().any(|p| p.variadic && is_field_param(&p.name));
     Cand {
+        target: Res::Builtin(id),
+        param_tys: s.params.iter().map(|p| p.ty.clone()).collect(),
         min,
         max,
         ret: catalog_ty(&s.ret, recv),
@@ -1528,6 +1673,92 @@ mod tests {
         ]);
         let m = crate::members::build(&w);
         assert!(check(&w, &m, &Catalog::load()).diagnostics.is_empty());
+    }
+
+    /// Resolution of `sub`, located inside the first occurrence of `context`.
+    fn res_in(files: &[&str], context: &str, sub: &str) -> Res {
+        let (w, r) = run(files);
+        let fi = w.files.len() - 1;
+        let src = al_syntax::SyntaxNode::new_root(w.files[fi].green.clone())
+            .text()
+            .to_string();
+        let start = src.find(context).unwrap_or_else(|| panic!("`{context}` not in source"))
+            + context.find(sub).expect("sub in context");
+        let key = (fi, start, start + sub.len());
+        r.resolutions.get(&key).cloned().unwrap_or_else(|| {
+            panic!(
+                "no resolution for `{sub}`; have {:?}",
+                r.resolutions.keys().filter(|k| k.0 == fi).collect::<Vec<_>>()
+            )
+        })
+    }
+
+    #[test]
+    fn resolutions_for_variables() {
+        assert_eq!(
+            res_in(
+                &[&cu("var G: Integer; procedure P() var L: Integer; begin L := G; end;")],
+                "L := G",
+                "G"
+            ),
+            Res::Global("g".into())
+        );
+    }
+
+    #[test]
+    fn resolutions_for_locals_and_params() {
+        let src = cu("procedure P(A: Integer) var L: Integer; begin L := A; end;");
+        assert_eq!(res_in(&[&src], "L := A", "L"), Res::Local("l".into()));
+        assert_eq!(res_in(&[&src], "L := A", "A"), Res::Local("a".into()));
+    }
+
+    #[test]
+    fn resolutions_for_calls_pick_the_overload() {
+        let r = res_in(
+            &[&cu("procedure P() var T: Text; begin T := Format(1, 0, 2); end;")],
+            "Format(1, 0, 2)",
+            "Format(1, 0, 2)",
+        );
+        assert_eq!(r, Res::Builtin("System.Format#1".into()));
+        let r = res_in(
+            &[&cu(
+                "procedure P() var T: Text; begin T := Format(1, 0, '<Integer>'); end;",
+            )],
+            "Format(1, 0, '<Integer>')",
+            "Format(1, 0, '<Integer>')",
+        );
+        assert_eq!(r, Res::Builtin("System.Format#2".into()));
+    }
+
+    #[test]
+    fn resolutions_for_procedures() {
+        let src = cu("procedure Q(): Integer begin end; procedure P() var I: Integer; begin I := Q(); end;");
+        let Res::Proc { object, offset } = res_in(&[&src], "I := Q()", "Q()") else {
+            panic!()
+        };
+        assert_eq!(object, 0);
+        assert_eq!(offset, src.find("procedure Q").unwrap());
+    }
+
+    #[test]
+    fn resolutions_for_enum_and_option_values() {
+        let e = "enum 50900 \"ALT Status\" { value(0; Open) { } value(5; Closed) { } }";
+        let r = res_in(
+            &[
+                e,
+                &cu("procedure P(): Enum \"ALT Status\" begin exit(\"ALT Status\"::Closed); end;"),
+            ],
+            "exit(\"ALT Status\"::Closed",
+            "\"ALT Status\"::Closed",
+        );
+        assert!(matches!(r, Res::EnumValue { value: 5, .. }), "{r:?}");
+        let src = cu(
+            "procedure P() var R: Record \"ALT Universal\"; B: Boolean; begin B := R.Status = R.Status::Closed; end;",
+        );
+        assert_eq!(
+            res_in(&[TABLE, &src], "= R.Status::Closed", "R.Status::Closed"),
+            Res::OptionValue(1)
+        );
     }
 
     #[test]

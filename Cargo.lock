@@ -22,6 +22,11 @@ version = "0.1.0"
 [[package]]
 name = "al-ir"
 version = "0.1.0"
+dependencies = [
+ "al-builtins",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "al-sema"

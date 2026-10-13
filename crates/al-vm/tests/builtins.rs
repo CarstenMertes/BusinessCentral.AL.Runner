@@ -977,3 +977,12 @@ fn the_execution_context_is_normal_in_a_test() {
     );
     assert_eq!(r.unwrap(), "NormalYesYesYes");
 }
+
+#[test]
+fn guiallowed_is_true_in_a_test_session_with_or_without_the_system_prefix() {
+    // session/TestBCPlatformContracts.al:26-32 pins true in the test context;
+    // session/TestFinalCoverage.al:17-33 calls both spellings; handlers/TestConfirmNoHandler.al:28
+    // pins true inside a page trigger reached from a test.
+    let r = text_of("", "exit(Format(GuiAllowed()) + Format(System.GuiAllowed()));");
+    assert_eq!(r.unwrap(), "YesYes");
+}

@@ -219,6 +219,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
     ("Report.Quit#1", vm_only),
+    // True in a test session (corpus session/TestBCPlatformContracts.al:26-32) and inside a page
+    // trigger a test reaches (handlers/TestConfirmNoHandler.al:28). A background session would
+    // answer false, but the runtime has no StartSession.
+    ("System.GuiAllowed#1", |_, _, _| Ok(Value::Boolean(true))),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))

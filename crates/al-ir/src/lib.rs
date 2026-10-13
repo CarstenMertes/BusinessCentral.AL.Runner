@@ -7,6 +7,35 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Program {
     pub objects: Vec<Object>,
+    /// Every `type(..; Alias)` of every `dotnet { }` block in the workspace (ADR-014). A
+    /// `DotNet` variable's `RtType::DotNet(i)` and `Expr::DotNet::ty` index this list.
+    #[serde(default)]
+    pub dotnet_types: Vec<DotNetDecl>,
+}
+
+/// A `.NET` type declared by a `dotnet { }` block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DotNetDecl {
+    pub alias: String,
+    pub assembly: String,
+    pub version: Option<String>,
+    pub culture: Option<String>,
+    pub public_key_token: Option<String>,
+    /// The CLR type name as declared.
+    pub type_name: String,
+}
+
+/// What an `Expr::DotNet` does to its receiver (ADR-014).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DotNetOp {
+    /// `Alias.Alias(args)`: construct an instance of the declared type.
+    Construct,
+    /// `X.Member(args)`.
+    Call(String),
+    /// `X.Member` without parentheses: a property or field read.
+    Get(String),
+    /// `X.Member := value`; the value is the only argument.
+    Set(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -529,6 +558,21 @@ pub enum Expr {
         query: Box<Expr>,
         column: usize,
     },
+    /// A member of a `DotNet` value (ADR-014). `ty` is the declared alias of the receiver
+    /// variable (`None` when the receiver is the result of another DotNet call); a receiver
+    /// that holds no object is the static member access of the declared type. Plain variable
+    /// arguments are `Arg::Ref` so a by-reference .NET parameter can write them back. The result
+    /// has no static type: an assignment wraps it in `DotNetCoerce`.
+    DotNet {
+        ty: Option<usize>,
+        receiver: Option<Box<Expr>>,
+        op: DotNetOp,
+        args: Vec<Arg>,
+    },
+    /// A DotNet result stored into a slot of this type. The kinds must match exactly (Text and
+    /// Code, Integer and BigInteger and Decimal widen); anything else is Unsupported, because
+    /// BC's conversion of a .NET result to a differently typed AL variable is not pinned.
+    DotNetCoerce(RtType, Box<Expr>),
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
     /// result report failure as `false` instead of raising an error.
@@ -582,6 +626,14 @@ mod tests {
     #[test]
     fn program_round_trips_through_serde() {
         let p = Program {
+            dotnet_types: vec![DotNetDecl {
+                alias: "Convert".into(),
+                assembly: "netstandard".into(),
+                version: None,
+                culture: Some("neutral".into()),
+                public_key_token: None,
+                type_name: "System.Convert".into(),
+            }],
             objects: vec![Object {
                 kind: "codeunit".into(),
                 id: Some(50100),
@@ -625,6 +677,15 @@ mod tests {
                                 Box::new(Expr::Load(Place::Global(0))),
                             ),
                         ),
+                        Stmt::Expr(Expr::DotNetCoerce(
+                            RtType::Text(None),
+                            Box::new(Expr::DotNet {
+                                ty: Some(0),
+                                receiver: Some(Box::new(Expr::Load(Place::Global(0)))),
+                                op: DotNetOp::Call("ToBase64String".into()),
+                                args: vec![Arg::Ref(Place::Local(0))],
+                            }),
+                        )),
                         Stmt::AssertError(vec![Stmt::Expr(Expr::Builtin {
                             id: "Dialog.Error#2".into(),
                             receiver: None,

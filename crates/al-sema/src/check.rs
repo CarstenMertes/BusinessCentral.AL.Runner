@@ -80,6 +80,8 @@ pub enum Res {
         query: usize,
         column: usize,
     },
+    /// A member of a `DotNet` value: only its name is known at compile time (ADR-014).
+    DotNetMember(String),
 }
 
 pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckResult {
@@ -957,6 +959,19 @@ impl<'a> Checker<'a> {
     /// Members of a value of type `t`: fields, procedures, library methods.
     fn member(&mut self, sc: &Scope, t: &Ty, name: &str) -> Option<E> {
         match t {
+            // Members of a .NET type come from reflection at run time: any name, any arity,
+            // a result whose type is known only then (ADR-014).
+            Ty::DotNet(_) => {
+                return Some(E::Callable(vec![Cand {
+                    min: 0,
+                    max: usize::MAX,
+                    ret: Ty::DotNet(String::new()),
+                    target: Res::DotNetMember(name.to_string()),
+                    param_tys: Vec::new(),
+                    fields: Vec::new(),
+                    rest_field: false,
+                }]));
+            }
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),
             Ty::Record { table, .. } => {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {

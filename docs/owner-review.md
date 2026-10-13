@@ -74,3 +74,16 @@ reviewed it.
   placeholder `CRONUS`.
 - 2026-10-13, ADR-013, host values: temporary records are not stamped with the system
   created and modified fields.
+- 2026-10-13, ADR-012 (request pages): a report without a `requestpage` section opens a request page of
+  its data items' filters unless `UseRequestPage` is switched off; a run that opens a request page where the
+  test declares no `[RequestPageHandler]` is refused, not answered with `Unhandled UI`.
+- 2026-10-13, ADR-012 (request pages): `RunRequestPage` returns an XML text of this runtime's own layout and
+  accepts only that text back as a seed; `RunRequestPage` commits its transaction world like `Run`.
+- 2026-10-13, ADR-012 (request pages): the id in "The action with ID = N is not found on the page." is
+  FNV-1a over the UTF-16 text of the report id and the action name, fitted to three corpus ids.
+- 2026-10-13, ADR-012 (request pages): a report that renders output (not `ProcessingOnly`, or a layout) is
+  refused when its run reaches the output, so its request page can still be tested.
+- 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
+  caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
+  around the control name (the corpus pins only the name).
+

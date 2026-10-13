@@ -261,6 +261,38 @@ report 61225 "RQ Dataset No Page"
     dataset { dataitem(Rows; "RQ Row") { column(EntryNo; "Entry No.") { } } }
     rendering { layout(RqLayout) { Type = RDLC; LayoutFile = './x.rdl'; } }
 }
+// record/TestTxModelReportRunMarker.Reports.al, with a table of numbers for Integer
+table 61226 "RQ Num"
+{
+    fields { field(1; Number; Integer) { } }
+    keys { key(PK; Number) { } }
+}
+table 61227 "RQ Base"
+{
+    fields { field(1; "Entry No."; Integer) { } field(2; Name; Text[30]) { } }
+    keys { key(PK; "Entry No.") { } }
+}
+report 61226 "RQ Tx Marker"
+{
+    ProcessingOnly = true;
+    dataset
+    {
+        dataitem(Loop; "RQ Num")
+        {
+            DataItemTableView = sorting(Number) where(Number = const(1));
+            trigger OnAfterGetRecord()
+            var B: Record "RQ Base";
+            begin
+                B.Init(); B."Entry No." := MarkerNo; B.Insert();
+                if FailAfterWrite then Error('rq report body error');
+            end;
+        }
+    }
+    requestpage { layout { area(Content) { group(Options) { field(EchoText; EchoText) { ApplicationArea = All; } } } } }
+    var MarkerNo: Integer; EchoText: Text[30]; FailAfterWrite: Boolean;
+    procedure SetMarker(NewMarkerNo: Integer) begin MarkerNo := NewMarkerNo; end;
+    procedure FailAfterTheWrite() begin FailAfterWrite := true; end;
+}
 report 61221 "RQ No Page"
 {
     ProcessingOnly = true;
@@ -711,4 +743,51 @@ fn a_run_that_would_render_is_refused() {
         procedure Renders() begin Seed(); Report.Run(Report::\"RQ Dataset No Page\"); end;"
     ));
     assert!(why.contains("renders output"), "{why}");
+}
+
+const TX_HELPERS: &str = "var HandlerRan: Boolean;
+local procedure Seed() var N: Record \"RQ Num\"; B: Record \"RQ Base\"; begin
+    N.DeleteAll(); B.DeleteAll(); N.Number := 1; N.Insert(); Commit(); HandlerRan := false; end;
+local procedure SeedNoCommit() begin HandlerRan := false; end;
+local procedure InsertBase(EntryNo: Integer) var B: Record \"RQ Base\"; begin B.Init(); B.\"Entry No.\" := EntryNo; B.Insert(); end;
+local procedure BaseExists(EntryNo: Integer): Boolean var B: Record \"RQ Base\"; begin exit(B.Get(EntryNo)); end;
+local procedure Check(Expected: Boolean; Actual: Boolean; What: Text) begin if Expected <> Actual then Error('%1: expected %2', What, Expected); end;
+[RequestPageHandler] procedure Confirm(var RP: TestRequestPage \"RQ Tx Marker\") begin HandlerRan := true; RP.OK().Invoke(); end;";
+
+// record/TestTxModelReportRun.al:Test04, Test05, Test06, Test09, Test12 (with a table of numbers
+// for the Integer table the corpus reports loop over)
+#[test]
+fn a_report_that_shows_its_request_page_follows_the_transaction_rules() {
+    passes(&format!(
+        "{TX_HELPERS}
+        [Test]
+        procedure PendingWriteIsRefused() var R: Report \"RQ Tx Marker\"; begin
+            Seed(); InsertBase(11);
+            R.SetMarker(12); asserterror R.Run();
+            if StrPos(GetLastErrorText(), 'the transaction is stopped') = 0 then Error(GetLastErrorText());
+            Check(false, BaseExists(12), 'refused report ran'); Check(false, BaseExists(11), 'pending write kept'); end;
+        [Test] [HandlerFunctions('Confirm')]
+        procedure CommitsItsOwnWrites() var R: Report \"RQ Tx Marker\"; begin
+            Seed(); R.SetMarker(21); R.Run();
+            Check(true, HandlerRan, 'handler'); Check(true, BaseExists(21), 'body');
+            InsertBase(22); asserterror Error('probe');
+            Check(true, BaseExists(21), 'committed'); Check(false, BaseExists(22), 'uncommitted'); end;
+        [Test] [TransactionModel(TransactionModel::AutoRollback)] [HandlerFunctions('Confirm')]
+        procedure AutoRollbackRunsWithAPendingWrite() var R: Report \"RQ Tx Marker\"; begin
+            SeedNoCommit(); InsertBase(31); R.SetMarker(32); R.Run();
+            Check(true, HandlerRan, 'handler'); Check(true, BaseExists(32), 'body'); Check(true, BaseExists(31), 'prior write'); end;
+        [Test] [HandlerFunctions('Confirm')]
+        procedure AFailingBodyCommitsNothing() var R: Report \"RQ Tx Marker\"; begin
+            Seed(); R.SetMarker(41); R.FailAfterTheWrite();
+            asserterror R.Run();
+            if StrPos(GetLastErrorText(), 'rq report body error') = 0 then Error(GetLastErrorText());
+            Check(true, HandlerRan, 'handler'); Check(false, BaseExists(41), 'failed write kept'); end;
+        [Test]
+        procedure RunRequestPageWithAPendingWriteIsRefused() var R: Report \"RQ Tx Marker\"; P: Text; begin
+            Seed(); InsertBase(51);
+            asserterror P := R.RunRequestPage();
+            if StrPos(GetLastErrorText(), 'the transaction is stopped') = 0 then Error(GetLastErrorText());
+            Check(false, BaseExists(51), 'pending write kept');
+            Check(false, HandlerRan, 'the page opened'); end;"
+    ));
 }

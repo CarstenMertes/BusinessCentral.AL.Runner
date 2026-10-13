@@ -451,7 +451,7 @@ impl Tree {
     fn merge(&mut self, exts: &[(usize, Vec<ast::Section>)]) {
         let mut pending: Vec<Op> = Vec::new();
         for (e, sections) in exts {
-            for top in sections.iter().cloned() {
+            for top in sections {
                 let n = top.name().to_ascii_lowercase();
                 if n != "layout" && n != "actions" {
                     continue;

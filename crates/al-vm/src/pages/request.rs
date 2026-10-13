@@ -242,20 +242,10 @@ impl Session {
                         xml_escape(&text)
                     ));
                 }
-                (ir::ControlKind::DataItem, ir::Binding::Var(_)) => {
-                    let idx = page
-                        .controls
-                        .iter()
-                        .position(|x| std::ptr::eq(x, c))
-                        .expect("own control");
-                    let rec = {
-                        let ir::Binding::Var(slot) = page.controls[idx].binding else {
-                            unreachable!()
-                        };
-                        match inst.borrow().globals[slot].clone() {
-                            Value::Record(r) => r,
-                            other => return unsupported(format!("data item {} holds {other:?}", c.name)),
-                        }
+                (ir::ControlKind::DataItem, ir::Binding::Var(slot)) => {
+                    let rec = match inst.borrow().globals[*slot].clone() {
+                        Value::Record(r) => r,
+                        other => return unsupported(format!("data item {} holds {other:?}", c.name)),
                     };
                     let view = self.parameter_view(&rec)?;
                     items.push_str(&format!(

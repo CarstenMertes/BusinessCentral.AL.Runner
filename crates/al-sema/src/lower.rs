@@ -814,7 +814,17 @@ impl Lowerer<'_> {
                     name: f.name.clone(),
                     ty: self.rt(&f.ty).unwrap_or(RtType::Variant),
                     stored: f.class == crate::members::FieldClass::Normal,
-                    init: f.init_value.as_ref().and_then(|v| init_const(v, &f.ty)),
+                    init: f.init_value.as_ref().and_then(|v| {
+                        init_const(v, &f.ty).or_else(|| match f.ty {
+                            // A member of the field's enum, by name; a blank-named member too
+                            // (types/TestBlankEnumInitTests.Codeunit.al).
+                            Ty::Enum(_) => {
+                                let file = self.ws.objects[f.declared_in.unwrap_or(oi)].file;
+                                self.calc_const(file, v, &f.ty).ok()
+                            }
+                            _ => None,
+                        })
+                    }),
                     auto_increment: f.auto_increment,
                     relation: f.table_relation,
                     init_text: f.init_value.clone(),

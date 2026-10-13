@@ -1054,3 +1054,25 @@ fn the_lock_timeout_can_be_read_and_set() {
     );
     assert_eq!(r.unwrap(), "YesNoYes");
 }
+
+// ---------------------------------------------------------------- enum InitValue
+
+#[test]
+fn an_enum_field_starts_at_its_init_value_blank_or_named() {
+    // types/TestBlankEnumInitTests.Codeunit.al:52-86 (InTestInsertInitializesBlankEnumToOrdinalZero,
+    // MixedEnumInitValue...): a blank member as InitValue is ordinal 0, a named one its true ordinal.
+    let src = "enum 50910 \"IV Level\" { value(0; \" \") { } value(5; Verbose) { } value(9; Quiet) { } }
+        table 50911 \"IV Row\" { fields {
+            field(1; K; Code[10]) { }
+            field(2; Blank; Enum \"IV Level\") { InitValue = \" \"; }
+            field(3; Named; Enum \"IV Level\") { InitValue = Verbose; }
+            field(4; Opt; Option) { OptionMembers = \" \",Alpha; InitValue = \" \"; }
+        } keys { key(PK; K) { } } }
+        codeunit 50100 C { procedure F(): Text var r: Record \"IV Row\"; a: Text; begin
+            r.Init(); r.K := 'M1'; r.Insert(false); r.Get('M1');
+            exit(Format(r.Blank.AsInteger()) + '|' + Format(r.Named.AsInteger()) + '|' + Format(r.Opt = r.Opt::\" \")); end; }";
+    match run(src, "F") {
+        Ok(Value::Text(t)) => assert_eq!(t, "0|5|Yes"),
+        other => panic!("{other:?}"),
+    }
+}

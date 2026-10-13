@@ -70,19 +70,15 @@ impl Session {
             .unwrap_or_else(|| t.name.clone())
     }
 
-    /// `No.='A'` style identification of a row's primary key.
-    fn identification(&self, t: &TableDef, fields: &[Value]) -> String {
-        t.keys[0]
-            .iter()
-            .map(|&i| {
-                format!(
-                    "{}='{}'",
-                    t.fields[i].name,
-                    al_builtins::format::format(&fields[i], 0, 0, self)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(",")
+    /// `No.='A'` style identification of a row's primary key. A key value whose format is not
+    /// pinned refuses.
+    fn identification(&self, t: &TableDef, fields: &[Value]) -> Result<String, Signal> {
+        let mut parts = Vec::new();
+        for &i in &t.keys[0] {
+            let v = al_builtins::format::try_format(&fields[i], 0, 0, self).map_err(Signal::Unsupported)?;
+            parts.push(format!("{}='{}'", t.fields[i].name, v));
+        }
+        Ok(parts.join(","))
     }
 
     /// Raises (or, when the result is used, returns false for) a failed write.
@@ -92,12 +88,13 @@ impl Session {
         if self.ret_used {
             return Ok(Value::Boolean(false));
         }
+        let identification = self.identification(t, fields)?;
         let (message, code) = if exists {
             (
                 format!(
                     "The record in table {} already exists. Identification fields and values: {}",
                     self.caption(t),
-                    self.identification(t, fields)
+                    identification
                 ),
                 "DB:RecordExists",
             )
@@ -106,7 +103,7 @@ impl Session {
                 format!(
                     "The {} does not exist. Identification fields and values: {}",
                     self.caption(t),
-                    self.identification(t, fields)
+                    identification
                 ),
                 "DB:RecordNotFound",
             )
@@ -562,13 +559,14 @@ impl Session {
         if taken == 0 {
             return Ok(());
         }
+        let shown = al_builtins::format::try_format(&id, 0, 0, self).map_err(Signal::Unsupported)?;
         Err(Signal::Error(AlError {
             message: format!(
                 "There is already a record in table {} that has the same values in a unique index. \
                  The conflict is in the following fields: {}='{}'.",
                 self.caption(t),
                 self.field_caption(t, i),
-                al_builtins::format::format(&id, 0, 0, self)
+                shown
             ),
             code: "DB:RecordExists".into(),
             call_stack: String::new(),
@@ -803,11 +801,12 @@ impl Session {
                         && version(&mine) != version(&theirs)
                         && version(&theirs) <= self.committed_row_version
                     {
+                        let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(AlError {
                             message: format!(
                                 "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again. Identification fields and values: {}",
                                 self.caption(&t),
-                                self.identification(&t, &rec.borrow().fields)
+                                identification
                             ),
                             code: "DB:RecordChanged".into(),
                             call_stack: String::new(),

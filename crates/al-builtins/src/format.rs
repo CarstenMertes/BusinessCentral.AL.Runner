@@ -10,12 +10,6 @@ pub trait FormatCtx {
     fn enum_name(&self, id: u32, ordinal: i32) -> String;
 }
 
-/// `Format(v, length, standard_format)`. Panics on a value or format no corpus test pins
-/// yet; builtins use [`try_format`] so that becomes a refusal instead.
-pub fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> String {
-    try_format(v, length, standard, ctx).unwrap_or_else(|e| unimplemented!("{e}"))
-}
-
 /// `Err` names the value whose format is not pinned yet.
 pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, String> {
     let s = match v {
@@ -213,6 +207,11 @@ fn format_date(day: i32, closing: bool, standard: i32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `Format` for a value the tests expect to be pinned.
+    fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> String {
+        try_format(v, length, standard, ctx).unwrap_or_else(|e| panic!("{e}"))
+    }
     use rust_decimal::Decimal;
     use std::rc::Rc;
     use std::str::FromStr;

@@ -739,3 +739,35 @@ fn set_ascending_outside_a_single_field_key_is_refused() {
         assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
     }
 }
+
+// A key value whose Format is not pinned (a Duration) used to panic the whole codeunit when a failed
+// write named the row; it is a refusal the test can report instead.
+#[test]
+fn a_duplicate_key_with_an_unpinned_format_is_refused_not_a_panic() {
+    let src = r#"
+table 50902 "ALT Dur" { fields { field(1; Span; Duration) { } } keys { key(PK; Span) { } } }
+codeunit 50100 C { procedure F() var R: Record "ALT Dur"; begin
+    R.Span := 5000; R.Insert(); R.Insert();
+end; }"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    let r = s.call(oi, 0, inst, vec![]);
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}

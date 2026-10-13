@@ -121,7 +121,7 @@ impl Session {
             | Value::Enum(..)
             | Value::Guid(_)
             | Value::Date(..)
-            | Value::DateFormula(_) => Ok(al_builtins::format::format(v, 0, 0, self)),
+            | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
             other => unsupported(format!("a {other:?} value in an error message")),
         }
     }

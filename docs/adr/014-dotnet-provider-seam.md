@@ -523,3 +523,34 @@ Reading the numbers:
 - `no_microsoft_source_in_repo` (ADR-013) keeps covering the sidecar folder.
 - The corpus run (`metrics/passing.txt`) with .NET present is the integration
   test.
+
+## Implementation notes (branch `dotnet-impl`)
+
+The sketches above became code with these differences. None changes a seam; they are the
+"exact signatures belong to the first implementation" the ADR allows.
+
+- `DotNetUnavailable` carries the end of the sentence `DotNet 'T' ...` (for example
+  `needs a .NET host; none is configured`). The VM puts the marker `dotnet-unavailable:` in
+  front, and the runner uses it to tell "no .NET on this machine" from a real failure.
+- `StreamEffects` names bridges: `bridges` (argument position to bridge id, for `OutStream`
+  arguments of this call), `written` (bytes per bridge id, for every live bridge) and
+  `consumed` (bytes .NET read, per `InStream` argument). The VM keeps the AL stream behind each
+  id until the session ends.
+- `DotNetValue::Enum` keeps the CLR type, so a .NET enum result goes back as an enum argument.
+  AL `Option` and `Enum` values go to .NET as their ordinal.
+- Wire format: 4-byte little-endian length plus UTF-8 JSON, tagged values. `Time` is refused
+  (the mapping is not known), as are undefined Date and DateTime values and closing dates.
+- The registry, the policy (`policy.txt`) and the release queue live in `al-vm/src/dotnet/`.
+  The registry ships empty. `Value::DotNet` is `Rc<DotNetObject>`; its `Drop` queues the handle.
+- `Engine::with_dotnet(program, blocked, DotNetConfig)` carries the host; `Engine::new` uses
+  `NoDotNet`.
+- `SidecarHost` (in `al-test-cli`) finds the sidecar by `--dotnet-sidecar` or
+  `ALRT_DOTNET_SIDECAR`, then `dotnet-sidecar/` next to the binary, then a cache keyed by the
+  source hash, built once when the SDK is present. The sidecar starts with a cleared
+  environment, `TZ=UTC`, and an empty working folder. Starting a process gets at least 30 s
+  whatever the call deadline.
+- Lowering refuses, with a reason, a `DotNet` value used as an operand, passed to a builtin,
+  indexed, or iterated, because BC types such results from the assembly and lowering never
+  opens it. Results are coerced exactly where they are stored.
+- Not built: Fallback A and B of the resolution table (phase 3), a warm standby, the
+  compile-time AL0296 check, `foreach` over `DotNet`, and a Rust-side method cache.

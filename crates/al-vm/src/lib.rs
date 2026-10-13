@@ -10,9 +10,13 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod autoinc;
 mod dispatch;
 pub mod events;
+mod flowfields;
 mod records;
+mod ui;
+pub use ui::{UiHandler, UiKind};
 
 pub struct Engine {
     pub program: ir::Program,
@@ -71,6 +75,19 @@ pub struct Session {
     next_temp: u64,
     pub(crate) next_guid: u64,
     pub(crate) next_row_version: i64,
+    /// Last AutoIncrement value handed out per table (and company). It is not part of the
+    /// store: a rollback undoes rows but not the counter (corpus
+    /// record/TestAutoIncrementExplicitKey.al:154).
+    pub(crate) autoinc: std::collections::HashMap<(String, u32), i64>,
+    /// The counter each table had before the first Truncate of the open transaction; a
+    /// rollback puts it back (corpus record/TestAutoIncrementEdges.al:36-170).
+    pub(crate) truncate_undo: std::collections::HashMap<(String, u32), i64>,
+    /// Records inside an OnValidate (by handle) with the field values from before the outermost
+    /// Validate, which nested Validates of the same record see as xRec (corpus
+    /// record/TestXRecContracts.al:133).
+    pub(crate) validating: Vec<(usize, Vec<Value>)>,
+    /// Try functions on the call stack (Truncate is refused inside them).
+    pub(crate) try_depth: usize,
     pub(crate) cx: al_data::AccessContext,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
@@ -79,15 +96,10 @@ pub struct Session {
     /// The parameters of the routine that just failed with an error, as it left them:
     /// the caller writes its `var` arguments back before it handles the error.
     pub(crate) error_finals: Option<Vec<Value>>,
-    /// Inside a test run: whether the test has called `Commit()` yet. `None` outside one.
-    pub(crate) test_commit: Option<bool>,
-    /// The database as the running test found it (an O(1) clone), to tell what the test wrote.
-    pub(crate) test_mark: Option<al_data::memory::MemStore>,
     /// The highest rowversion handed out when the last `Commit` ran: rows at or below it are durable.
     pub(crate) committed_row_version: i64,
-    /// (record handle address, its xRec) for each Validate in progress: a Validate nested in
-    /// another one's trigger on the same record keeps the outer call's xRec.
-    pub(crate) active_xrecs: Vec<(usize, Rc<RefCell<RecordState>>)>,
+    /// Handler functions bound to the running test method (None outside one).
+    pub(crate) ui: Option<ui::UiScope>,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -106,6 +118,10 @@ impl Session {
             next_temp: 0,
             next_guid: 0,
             next_row_version: 0,
+            autoinc: Default::default(),
+            truncate_undo: Default::default(),
+            validating: Vec::new(),
+            try_depth: 0,
             cx: al_data::AccessContext {
                 company: "CRONUS".into(),
                 user: "USER".into(),
@@ -113,17 +129,27 @@ impl Session {
             ret_used: true,
             bindings: Vec::new(),
             error_finals: None,
-            test_commit: None,
-            test_mark: None,
             committed_row_version: 0,
-            active_xrecs: Vec::new(),
+            ui: None,
         }
     }
 
-    /// Marks the start of a `[Test]` procedure: the runner calls it before each test.
-    pub fn begin_test(&mut self) {
-        self.test_commit = Some(false);
-        self.test_mark = Some(self.store.clone());
+    /// Makes every change so far durable (and a Truncate of this transaction final).
+    pub fn commit_transaction(&mut self) {
+        al_data::Store::commit(&mut self.store);
+        self.truncate_undo.clear();
+        // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
+        self.committed_row_version = self.next_row_version;
+    }
+
+    /// Discards every change since the last commit. The AutoIncrement counters are not
+    /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
+    /// those a Truncate of this transaction changed.
+    pub fn rollback_transaction(&mut self) {
+        al_data::Store::rollback(&mut self.store);
+        for (slot, value) in std::mem::take(&mut self.truncate_undo) {
+            self.autoinc.insert(slot, value);
+        }
     }
 
     /// The session's database, for runners that manage transactions around tests.
@@ -148,6 +174,7 @@ impl Session {
                     key: 0,
                     ascending: true,
                     position: None,
+                    auto_calc: Vec::new(),
                 })))
             }
             other => Value::default_for(other),
@@ -246,7 +273,11 @@ impl Session {
             instance,
             locals,
         };
-        let ret = match self.exec_block(&r.body, &mut frame) {
+        let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
+        self.try_depth += usize::from(is_try);
+        let outcome = self.exec_block(&r.body, &mut frame);
+        self.try_depth -= usize::from(is_try);
+        let ret = match outcome {
             Ok(()) => None,
             Err(Signal::Exit(v)) => v,
             Err(Signal::Break) => None,
@@ -369,34 +400,22 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
-            S::AssertError(body) => {
-                let unpinned = self.test_commit == Some(false)
-                    && self.test_mark.as_ref().is_some_and(|m| self.store.written_since(m));
-                match self.exec_block(body, f) {
-                    Err(Signal::Error(e)) if unpinned && e.code == "Dialog" => Err(Signal::Unsupported(
-                        // BC rolls such writes back when a Commit() precedes them in the test
-                        // (error-handling/TestAssertErrorRollback.al) and keeps them in the same
-                        // shape without one (codeunit/TestScopeIsolationContracts.al:Test04...,
-                        // session/TestTransactionContracts.al:Error_After_Insert_Before_Commit_RecordPersists);
-                        // what separates them is not pinned.
-                        "asserterror after uncommitted writes and no Commit() in the test: how far its rollback reaches is not pinned".into(),
-                    )),
-                    Err(Signal::Error(e)) => {
-                        // The caught error rolls the transaction back to the last commit
-                        // (record/TestRecordRenameRollback.al).
-                        al_data::Store::rollback(&mut self.store);
-                        self.last_error = e;
-                        Ok(())
-                    }
-                    // The message is not pinned by the corpus yet (docs/probes-needed.md).
-                    Ok(()) => Err(Signal::Error(AlError {
-                        message: "An error was expected inside an ASSERTERROR statement.".into(),
-                        code: "Dialog".into(),
-                        call_stack: String::new(),
-                    })),
-                    Err(other) => Err(other),
+            S::AssertError(body) => match self.exec_block(body, f) {
+                Err(Signal::Error(e)) => {
+                    // The caught error rolls the transaction back to the last commit
+                    // (record/TestRecordRenameRollback.al).
+                    self.rollback_transaction();
+                    self.last_error = e;
+                    Ok(())
                 }
-            }
+                // The message is not pinned by the corpus yet (docs/probes-needed.md).
+                Ok(()) => Err(Signal::Error(AlError {
+                    message: "An error was expected inside an ASSERTERROR statement.".into(),
+                    code: "Dialog".into(),
+                    call_stack: String::new(),
+                })),
+                Err(other) => Err(other),
+            },
         }
     }
 
@@ -539,9 +558,6 @@ impl Session {
                     };
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
-                }
-                if id == "Database.Commit#1" && self.test_commit.is_some() {
-                    self.test_commit = Some(true);
                 }
                 let native =
                     al_builtins::native::lookup(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
@@ -755,12 +771,20 @@ impl al_builtins::native::Ctx for Session {
         }
     }
     fn commit(&mut self) -> Result<(), Signal> {
-        al_data::Store::commit(&mut self.store);
-        self.committed_row_version = self.next_row_version;
+        self.commit_transaction();
         Ok(())
     }
     fn ret_used(&self) -> bool {
         self.ret_used
+    }
+    fn ui_message(&mut self, text: String) -> Result<(), Signal> {
+        Session::ui_message(self, text)
+    }
+    fn ui_confirm(&mut self, question: String, default: bool) -> Result<bool, Signal> {
+        Session::ui_confirm(self, question, default)
+    }
+    fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
+        Session::ui_str_menu(self, options, default, instruction)
     }
     fn new_guid(&mut self) -> [u8; 16] {
         // Deterministic ids (ADR-006: no OS randomness in the core).

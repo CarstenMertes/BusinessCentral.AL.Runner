@@ -38,6 +38,21 @@ pub trait Ctx: FormatCtx {
     fn ret_used(&self) -> bool {
         true
     }
+    /// `Message(text)` after argument substitution. The runner decides what a
+    /// message does (a test handler, an "Unhandled UI" refusal); a context
+    /// with no UI refuses explicitly.
+    fn ui_message(&mut self, _text: String) -> Result<(), Signal> {
+        Err(Signal::Unsupported("Message: this context has no UI".into()))
+    }
+    /// `Confirm(question, default)`: the question is NOT substituted
+    /// (corpus handlers/TestConfirmFormatArgs.al).
+    fn ui_confirm(&mut self, _question: String, _default: bool) -> Result<bool, Signal> {
+        Err(Signal::Unsupported("Confirm: this context has no UI".into()))
+    }
+    /// `StrMenu(options, default, instruction)`: the chosen option, 1-based, 0 for none.
+    fn ui_str_menu(&mut self, _options: String, _default: i32, _instruction: String) -> Result<i32, Signal> {
+        Err(Signal::Unsupported("StrMenu: this context has no UI".into()))
+    }
 }
 
 pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result<Value, Signal>;
@@ -50,6 +65,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
     ("Dialog.Error#2", error_text),
+    ("Dialog.Message#1", message),
+    ("Dialog.Confirm#1", confirm),
+    ("Dialog.StrMenu#1", str_menu),
     ("Text.StrLen#1", strlen),
     ("Text.StrPos#1", strpos),
     ("Text.CopyStr#1", copystr),
@@ -87,6 +105,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
+    ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
+    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
+    ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetAutoCalcFields#1", |c, r, a| {
+        c.record("SetAutoCalcFields", r, a)
+    }),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -166,11 +190,11 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 }
 
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    if !crate::format::is_formattable(&args[0]) {
-        return unsupported(&format!("Format of {:?}", args[0]));
-    }
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
+    if !crate::format::is_pinned(&args[0]) {
+        return unsupported(&format!("Format of {:?} (its format is not pinned yet)", args[0]));
+    }
     Ok(Value::Text(format(&args[0], len, std, ctx)))
 }
 
@@ -211,6 +235,43 @@ fn error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
         code: "Dialog".into(),
         call_stack: String::new(),
     }))
+}
+
+/// `Message(String, Values...)`: the text is substituted like `StrSubstNo`
+/// before it reaches the UI (corpus handlers/TestMessageHandler.al
+/// Message_FormattedString_HandlerGetsFormatted).
+fn message(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let text = substitute(&text_arg(args, 0)?, &args[1..], ctx)?;
+    ctx.ui_message(text)?;
+    Ok(Value::Null)
+}
+
+/// `Confirm(String, Default, Values...)`. Values are not substituted into the
+/// question a handler sees (corpus handlers/TestConfirmFormatArgs.al). An
+/// omitted Default is false (docs/probes-needed.md).
+fn confirm(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let question = text_arg(args, 0)?;
+    let default = match args.get(1) {
+        None => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(other) => return unsupported(&format!("Confirm default {other:?}")),
+    };
+    Ok(Value::Boolean(ctx.ui_confirm(question, default)?))
+}
+
+/// `StrMenu(Options, Default, Instruction)`. An omitted Default is 1 and an
+/// omitted Instruction is empty (docs/probes-needed.md).
+fn str_menu(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let options = text_arg(args, 0)?;
+    let default = match args.get(1) {
+        None => 1,
+        Some(_) => int_arg(args, 1).map_or_else(|| unsupported("StrMenu default"), |n| Ok(n as i32))?,
+    };
+    let instruction = match args.get(2) {
+        None => String::new(),
+        Some(_) => text_arg(args, 2)?,
+    };
+    Ok(Value::Integer(ctx.ui_str_menu(options, default, instruction)?))
 }
 
 /// `%1`..`%9` replaced by `Format(arg)`. A placeholder without an argument
@@ -371,14 +432,6 @@ mod tests {
     }
 
     #[test]
-    fn formatting_a_value_without_a_pinned_format_is_unsupported_not_a_panic() {
-        // Time, DateTime and Duration formats come with the corpus tests that pin them.
-        for v in [Value::Time(43_200_001), Value::DateTime(5), Value::Duration(1000)] {
-            assert!(matches!(call("System.Format#1", vec![v]), Err(Signal::Unsupported(m)) if m.contains("Format of")),);
-        }
-    }
-
-    #[test]
     fn format_with_length_and_standard_format() {
         assert_eq!(text(call("System.Format#1", vec![Value::Integer(42)])), "42");
         assert_eq!(
@@ -392,6 +445,18 @@ mod tests {
             )),
             "1"
         );
+    }
+
+    // The formats of Time, DateTime and Duration are not pinned by the corpus yet: Format of
+    // them is a refusal the test can report, not a panic that takes the whole codeunit down.
+    #[test]
+    fn format_of_a_value_without_a_pinned_format_is_a_refusal() {
+        for v in [Value::Duration(3_600_000), Value::Time(43_200_001), Value::DateTime(5)] {
+            assert!(
+                matches!(call("System.Format#1", vec![v]), Err(Signal::Unsupported(_))),
+                "Format must refuse"
+            );
+        }
     }
 
     #[test]

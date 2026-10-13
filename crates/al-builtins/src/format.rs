@@ -10,20 +10,29 @@ pub trait FormatCtx {
     fn enum_name(&self, id: u32, ordinal: i32) -> String;
 }
 
-/// Whether `format` has a pinned format for `v`; callers refuse the rest.
-pub fn is_formattable(v: &Value) -> bool {
-    match v {
-        // The undefined (zero) values format as the empty string.
-        Value::Time(t) | Value::DateTime(t) => *t == 0,
-        Value::Duration(_)
-        | Value::List(_)
-        | Value::Dictionary(_)
-        | Value::Array(_)
-        | Value::Codeunit(_)
-        | Value::Library(..)
-        | Value::Record(_) => false,
-        _ => true,
-    }
+/// Whether [`format`] knows the format of this kind of value. Time, DateTime, Duration and
+/// reference types get theirs with the corpus tests that pin them; callers that can refuse
+/// (the `Format` builtin) check first so an unpinned format is a refusal, not a panic.
+pub fn is_pinned(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Null
+            | Value::Boolean(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Byte(_)
+            | Value::Char(_)
+            | Value::Decimal(_)
+            | Value::Text(_)
+            | Value::Code(_)
+            | Value::Option(..)
+            | Value::Enum(..)
+            | Value::Guid(_)
+            | Value::Date(..)
+            | Value::DateFormula(_)
+            | Value::Time(0)
+            | Value::DateTime(0)
+    )
 }
 
 /// `Format(v, length, standard_format)`.

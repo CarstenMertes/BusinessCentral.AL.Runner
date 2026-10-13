@@ -56,12 +56,6 @@ impl MemStore {
         !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
     }
 
-    /// Whether a write has changed the data since `mark`, a clone of this store taken earlier.
-    /// O(1): persistent maps that were not written to share their root.
-    pub fn written_since(&self, mark: &MemStore) -> bool {
-        !(self.tables.ptr_eq(&mark.tables) || (self.tables.is_empty() && mark.tables.is_empty()))
-    }
-
     fn table(&self, cx: &AccessContext, t: &TableDef) -> Option<&Table> {
         self.tables.get(&slot(cx, t))
     }
@@ -204,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_writes_since_a_mark() {
+    fn reports_uncommitted_writes() {
         let cx = AccessContext {
             company: "C".into(),
             user: "U".into(),
@@ -223,18 +217,13 @@ mod tests {
         };
         let mut s = MemStore::default();
         assert!(!s.has_uncommitted());
-        let mark = s.clone();
-        assert!(!s.written_since(&mark));
         s.insert(&cx, &t, vec![Value::Integer(1)]).unwrap();
-        assert!(s.written_since(&mark));
         assert!(s.has_uncommitted());
-        let mark = s.clone();
         s.commit();
         assert!(!s.has_uncommitted());
-        assert!(!s.written_since(&mark), "a commit changes no data");
         s.insert(&cx, &t, vec![Value::Integer(2)]).unwrap();
         s.rollback();
-        assert!(!s.written_since(&mark), "the rollback restored the state at the mark");
+        assert!(!s.has_uncommitted());
     }
 
     #[test]

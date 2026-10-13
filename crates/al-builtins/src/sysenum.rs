@@ -52,6 +52,7 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "AnonymousData",
         ]),
         "errortype" => Some(&["Client", "Internal"]),
+        "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Only `LocalScope` is named by the corpus; the ordinals are not pinned.
         "notificationscope" => Some(&["LocalScope", "GlobalScope"]),
         "webserviceactionresultcode" => Some(&["None", "Get", "Created", "Updated", "Deleted"]),

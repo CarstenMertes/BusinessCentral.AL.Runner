@@ -719,3 +719,48 @@ fn datetime_plus_and_minus_durations() {
     );
     assert_eq!(r.unwrap(), "YesYesYes");
 }
+
+// ---------------------------------------------------------------- IsolatedStorage
+
+fn storage(body: &str) -> Result<String, Signal> {
+    text_of(
+        "v: Text; w: Text; s: SecretText; a: Text; secret: Boolean; ok: Boolean;",
+        body,
+    )
+}
+
+#[test]
+fn isolated_storage_round_trips_and_deletes() {
+    // session/TestIsolatedStorage.al:30-65 and :95-125.
+    let r = storage(
+        "a := Format(IsolatedStorage.Set('k', 'value')) + Format(IsolatedStorage.Contains('k'));
+         a += Format(IsolatedStorage.Get('k', v)) + v;
+         a += '|' + Format(IsolatedStorage.Delete('k')) + Format(IsolatedStorage.Contains('k'));
+         a += Format(IsolatedStorage.Get('absent', w)) + '[' + w + ']';
+         exit(a);",
+    );
+    assert_eq!(r.unwrap(), "YesYesYesvalue|YesNoNo[]");
+}
+
+#[test]
+fn isolated_storage_scopes_are_apart_and_encrypted_entries_read_back_as_text() {
+    // session/TestIsolatedStorage.al:97-110, session/TestIsolatedStoragePerApp.al:100-110 (the Company scope).
+    let r = storage(
+        "IsolatedStorage.Set('k', 'module'); IsolatedStorage.Set('k', 'company', DataScope::Company);
+         ok := IsolatedStorage.Get('k', v); a := v;
+         ok := IsolatedStorage.Get('k', DataScope::Company, v); a += ',' + v;
+         ok := IsolatedStorage.SetEncrypted('e', 'secret value');
+         ok := IsolatedStorage.Contains('e', DataScope::Module, secret);
+         ok := IsolatedStorage.Get('e', v);
+         exit(a + ',' + v + Format(secret));",
+    );
+    assert_eq!(r.unwrap(), "module,company,secret valueYes");
+}
+
+#[test]
+fn isolated_storage_takes_secret_text_and_refuses_the_user_scopes() {
+    let r = storage("s := 'hidden'; IsolatedStorage.Set('k', s); ok := IsolatedStorage.Get('k', s); exit(Format(ok));");
+    assert_eq!(r.unwrap(), "Yes");
+    let r = storage("IsolatedStorage.Set('k', 'x', DataScope::User); exit('');");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}

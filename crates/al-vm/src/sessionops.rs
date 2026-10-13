@@ -3,6 +3,8 @@
 use crate::Session;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::value::Value;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// One `NumberSequence`.
 #[derive(Debug, Clone)]
@@ -78,6 +80,9 @@ impl Session {
                 }
                 Some(other) => unsupported(format!("CodeCoverageLog with {other:?}")),
             };
+        }
+        if let Some(rest) = id.strip_prefix("IsolatedStorage.") {
+            return self.isolated_storage_op(rest, args);
         }
         let method = id.strip_prefix("NumberSequence.").and_then(|m| m.split('#').next());
         let Some(method) = method else {
@@ -164,6 +169,91 @@ impl Session {
                 }
             }
             other => unsupported(format!("NumberSequence.{other}")),
+        }
+    }
+}
+
+fn secret_text(s: String) -> Value {
+    Value::Library(
+        "SecretText".into(),
+        Rc::new(RefCell::new(al_builtins::value::LibraryValue::Text(s))),
+    )
+}
+
+impl Session {
+    /// The key a data scope names. Module is the default and is one app's store; Company adds the
+    /// session company, and the app boundary holds there too (session/TestIsolatedStoragePerApp.al:
+    /// 100-120). The user scopes need a user identity, which the runtime does not have.
+    fn storage_scope(&self, scope: Option<&Value>) -> Result<String, Signal> {
+        // The module is the app that owns the code calling IsolatedStorage, not the app that raised
+        // the event it handles (session/TestIsolatedStoragePerApp.al:140-160).
+        let app = self.engine.program.objects[self.current_object].app;
+        match scope {
+            None => Ok(format!("app{app}")),
+            Some(Value::Option(0, _)) => Ok(format!("app{app}")),
+            Some(Value::Option(1, _)) => Ok(format!("app{app}:company:{}", self.cx.company)),
+            Some(Value::Option(..)) => {
+                unsupported("IsolatedStorage with a user data scope (needs an identity, ADR-013)")
+            }
+            Some(other) => unsupported(format!("IsolatedStorage with data scope {other:?}")),
+        }
+    }
+
+    /// `IsolatedStorage.<rest>` (`Get#4`, `SetEncrypted#2`, ...): a text store per scope, outside
+    /// the transaction (not pinned either way). Corpus: session/TestIsolatedStorage.al:30-125.
+    fn isolated_storage_op(&mut self, rest: &str, args: &mut [Value]) -> Result<Value, Signal> {
+        let Some(key) = args.first().and_then(al_builtins::native::text_of) else {
+            return unsupported("an IsolatedStorage key that is not text");
+        };
+        let (method, n) = rest.split_once('#').unwrap_or((rest, "1"));
+        let n: u32 = n.parse().unwrap_or(1);
+        // Where the optional DataScope sits, and where the value goes, per overload.
+        let scope_at = match (method, n) {
+            ("Get", 3 | 4) => None,
+            ("Get", _) => Some(1),
+            ("Set" | "SetEncrypted", _) => Some(2),
+            _ => Some(1),
+        };
+        let scope = self.storage_scope(scope_at.and_then(|i| args.get(i)))?;
+        let slot = (scope, key);
+        let found = self.ret_used;
+        match method {
+            "Set" | "SetEncrypted" => {
+                let value = match args.get(1) {
+                    Some(v) => al_builtins::textfns::secret_or_text(v)?,
+                    None => return unsupported("IsolatedStorage.Set without a value"),
+                };
+                self.isolated_storage.insert(slot, (value, method == "SetEncrypted"));
+                Ok(Value::Boolean(true))
+            }
+            "Contains" => {
+                let hit = self.isolated_storage.get(&slot).cloned();
+                if n == 2 {
+                    args[2] = Value::Boolean(hit.as_ref().is_some_and(|(_, enc)| *enc));
+                }
+                Ok(Value::Boolean(hit.is_some()))
+            }
+            "Delete" => match self.isolated_storage.remove(&slot) {
+                Some(_) => Ok(Value::Boolean(true)),
+                None if found => Ok(Value::Boolean(false)),
+                None => unsupported("IsolatedStorage.Delete of a missing key as a statement (error text not pinned)"),
+            },
+            "Get" => {
+                let target = if n <= 2 { 2 } else { 1 };
+                match self.isolated_storage.get(&slot) {
+                    Some((value, _)) => {
+                        args[target] = if n == 1 || n == 3 {
+                            secret_text(value.clone())
+                        } else {
+                            Value::Text(value.clone())
+                        };
+                        Ok(Value::Boolean(true))
+                    }
+                    None if found => Ok(Value::Boolean(false)),
+                    None => unsupported("IsolatedStorage.Get of a missing key as a statement (error text not pinned)"),
+                }
+            }
+            other => unsupported(format!("IsolatedStorage.{other}")),
         }
     }
 }

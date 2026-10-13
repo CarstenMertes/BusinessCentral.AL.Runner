@@ -78,6 +78,10 @@ pub struct Session {
     pub(crate) page_handler_depth: usize,
     /// `CodeCoverageLog` is recording.
     pub(crate) code_coverage: bool,
+    /// The object whose routine is running (builtins scoped to an app read its app).
+    pub(crate) current_object: usize,
+    /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
+    pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
     /// Number sequences by (company, name); a global sequence has an empty company.
@@ -151,6 +155,8 @@ impl Session {
             committed_row_version: 0,
             page_handler_depth: 0,
             code_coverage: false,
+            current_object: 0,
+            isolated_storage: Default::default(),
             install_scope: false,
             sequences: Default::default(),
             ui: None,
@@ -321,7 +327,9 @@ impl Session {
         };
         let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
         self.try_depth += usize::from(is_try);
+        let caller = std::mem::replace(&mut self.current_object, object);
         let outcome = self.exec_block(&r.body, &mut frame);
+        self.current_object = caller;
         self.try_depth -= usize::from(is_try);
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {

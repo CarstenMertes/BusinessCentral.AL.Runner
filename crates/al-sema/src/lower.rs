@@ -212,6 +212,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             rec_slot,
             xrec_slot,
             page,
+            app: o.app as u32,
         });
         out.unsupported.push(unsupported);
         out.calls.push(calls);

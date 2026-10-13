@@ -10,33 +10,14 @@ pub trait FormatCtx {
     fn enum_name(&self, id: u32, ordinal: i32) -> String;
 }
 
-/// Whether [`format`] knows the format of this kind of value. Time, DateTime, Duration and
-/// reference types get theirs with the corpus tests that pin them; callers that can refuse
-/// (the `Format` builtin) check first so an unpinned format is a refusal, not a panic.
-pub fn is_pinned(v: &Value) -> bool {
-    matches!(
-        v,
-        Value::Null
-            | Value::Boolean(_)
-            | Value::Integer(_)
-            | Value::BigInteger(_)
-            | Value::Byte(_)
-            | Value::Char(_)
-            | Value::Decimal(_)
-            | Value::Text(_)
-            | Value::Code(_)
-            | Value::Option(..)
-            | Value::Enum(..)
-            | Value::Guid(_)
-            | Value::Date(..)
-            | Value::DateFormula(_)
-            | Value::Time(0)
-            | Value::DateTime(0)
-    ) || matches!(v, Value::Library(name, _) if name == "RecordId")
+/// `Format(v, length, standard_format)`. Panics on a value or format no corpus test pins
+/// yet; builtins use [`try_format`] so that becomes a refusal instead.
+pub fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> String {
+    try_format(v, length, standard, ctx).unwrap_or_else(|e| unimplemented!("{e}"))
 }
 
-/// `Format(v, length, standard_format)`.
-pub fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> String {
+/// `Err` names the value whose format is not pinned yet.
+pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, String> {
     let s = match v {
         Value::Null => String::new(),
         Value::Boolean(b) => match (standard, b) {
@@ -63,22 +44,30 @@ pub fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Str
         Value::Guid(g) => format_guid(g),
         Value::Date(0, _) | Value::Time(0) | Value::DateTime(0) => String::new(),
         Value::Date(day, closing) => format_date(*day, *closing, standard),
+        Value::Time(t) if standard == 2 => format_time_12h(t - 1),
+        Value::DateTime(t) if standard == 2 || standard == 9 => format_datetime(t - 1, standard),
         Value::DateFormula(f) => f.clone(),
-        // Time, DateTime, Duration and reference types get their formats with
-        // the corpus tests that pin them.
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs
         // the key values in it; the layout is docs/probes-needed.md).
-        Value::Library(_, l) => match &*l.borrow() {
+        Value::Library(name, l) if name == "RecordId" => match &*l.borrow() {
             crate::value::LibraryValue::RecordId { name, key, .. } => {
-                let key: Vec<String> = key.iter().map(|k| format(k, 0, 0, ctx)).collect();
+                let key = key
+                    .iter()
+                    .map(|k| try_format(k, 0, 0, ctx))
+                    .collect::<Result<Vec<_>, _>>()?;
                 format!("{name}: {}", key.join(","))
             }
-            crate::value::LibraryValue::Empty => String::new(),
-            other => unimplemented!("Format of {other:?}"),
+            _ => String::new(),
         },
-        other => unimplemented!("Format of {other:?}"),
+        // Duration and the other reference types get their formats with
+        // the corpus tests that pin them.
+        other => {
+            return Err(format!(
+                "Format of {other:?} (standard format {standard}) is not pinned yet"
+            ));
+        }
     };
-    pad(s, length)
+    Ok(pad(s, length))
 }
 
 /// A positive length right-aligns in that many characters (text/TestFormat.al:
@@ -152,6 +141,37 @@ pub fn day_from_civil(y: i32, m: u32, d: u32) -> i32 {
     let doy = (153 * mp + 2) / 5 + i64::from(d) - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     (era * 146_097 + doe - 306 + 1) as i32
+}
+
+/// `hh:mm AM/PM` for a time of day in milliseconds. Assert compares Times with `Format(_, 0, 2)`;
+/// the text itself is not pinned (docs/probes-needed.md).
+fn format_time_12h(ms_of_day: i64) -> String {
+    let (h, m) = (ms_of_day / 3_600_000, ms_of_day / 60_000 % 60);
+    format!(
+        "{:02}:{m:02} {}",
+        if h % 12 == 0 { 12 } else { h % 12 },
+        if h < 12 { "AM" } else { "PM" }
+    )
+}
+
+/// Format 2 renders to the minute (`09/20/26 01:10 PM`) and format 9 is the round-trip form
+/// (`2026-09-20T11:10:12.851Z`), both measured on BC in pagesave/TestPageSaveDataLayer.al:199-206.
+/// The session time zone is taken to be UTC.
+fn format_datetime(ms: i64, standard: i32) -> String {
+    let day = ms.div_euclid(86_400_000);
+    let in_day = ms.rem_euclid(86_400_000);
+    let (y, m, d) = civil_from_day(day as i32 + 1);
+    if standard == 9 {
+        let (h, mi, s, f) = (
+            in_day / 3_600_000,
+            in_day / 60_000 % 60,
+            in_day / 1000 % 60,
+            in_day % 1000,
+        );
+        format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{f:03}Z")
+    } else {
+        format!("{m:02}/{d:02}/{:02} {}", y.rem_euclid(100), format_time_12h(in_day))
+    }
 }
 
 /// en-US doc table (region unverified: docs/probes-needed.md): format 0/1
@@ -271,6 +291,30 @@ mod tests {
         let day = day_from_civil(2021, 4, 5);
         assert_eq!(f2(Value::Date(day, false)), "040521D");
         assert_eq!(format(&Value::Date(day, false), 0, 9, &Ctx), "2021-04-05");
+    }
+
+    #[test]
+    fn date_times_in_the_two_standard_formats_the_corpus_measured() {
+        // pagesave/TestPageSaveDataLayer.al:199-206 (measured on BC): Format(_, 0, 2) of a DateTime
+        // renders to the minute ('09/20/26 01:10 PM'); Format(_, 0, 9) is the round-trip form
+        // ('2026-09-20T11:10:12.851Z'). The session time zone is taken to be UTC here.
+        let day = i64::from(day_from_civil(2026, 9, 20)) - 1;
+        let ms = day * 86_400_000 + (13 * 3600 + 10 * 60 + 12) * 1000 + 851;
+        assert_eq!(f2(Value::DateTime(ms + 1)), "09/20/26 01:10 PM");
+        assert_eq!(format(&Value::DateTime(ms + 1), 0, 9, &Ctx), "2026-09-20T13:10:12.851Z");
+        let midnight = day * 86_400_000;
+        assert_eq!(f2(Value::DateTime(midnight + 1)), "09/20/26 12:00 AM");
+        // Two instants in the same minute format alike: Assert compares DateTimes at minute resolution.
+        assert_eq!(f2(Value::DateTime(ms + 1)), f2(Value::DateTime(ms - 5_000 + 1)));
+        assert_ne!(f2(Value::DateTime(ms + 1)), f2(Value::DateTime(ms + 120_000 + 1)));
+    }
+
+    #[test]
+    fn times_are_distinct_per_minute_in_format_2() {
+        // Assert.AreEqual/AreNotEqual compare Times through Format(_, 0, 2) (Assert.al Equal);
+        // the exact text is not pinned (docs/probes-needed.md).
+        assert_eq!(f2(Value::Time(13 * 3_600_000 + 10 * 60_000 + 1)), "01:10 PM");
+        assert_eq!(f2(Value::Time(1)), "12:00 AM");
     }
 
     #[test]

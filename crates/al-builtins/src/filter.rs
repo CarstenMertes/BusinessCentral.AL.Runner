@@ -92,7 +92,7 @@ pub fn parse_filter_with(
 enum Tok {
     /// Unquoted text (may hold wildcards).
     Raw(String),
-    /// Quoted literal: no operators or wildcards inside.
+    /// Quoted expression: no filter operators inside (`@` and wildcards stay active).
     Quoted(String),
     /// A `%n` placeholder's typed value.
     Typed(Value),
@@ -272,6 +272,22 @@ impl Parser<'_> {
     /// A single value, which may be a wildcard pattern on text fields.
     fn single(&mut self, t: Tok, case_insensitive: bool) -> Result<FilterExpr, String> {
         use crate::value::RtType as T;
+        // `@` and wildcards stay active inside a quoted expression; only the filter operators
+        // are literal there (record/TestFilterQuotedLiterals.al).
+        if let (Tok::Quoted(q), T::Text(_) | T::Code(_)) = (&t, self.ty) {
+            let (body, ci) = match q.strip_prefix('@') {
+                Some(b) => (b, true),
+                None => (q.as_str(), case_insensitive),
+            };
+            if body.contains(['*', '?']) || ci {
+                let body = if matches!(self.ty, T::Code(_)) && !ci {
+                    body.to_uppercase()
+                } else {
+                    body.to_string()
+                };
+                return Ok(FilterExpr::Like(body, ci));
+            }
+        }
         if let (Tok::Raw(s), T::Text(_) | T::Code(_)) = (&t, self.ty) {
             let s = if matches!(self.ty, T::Code(_)) && !case_insensitive {
                 s.to_uppercase()
@@ -558,6 +574,24 @@ mod tests {
             parse_filter("''", &[], &zero_length_only).is_err(),
             "'' names no member here"
         );
+    }
+
+    #[test]
+    fn at_and_wildcards_stay_active_inside_a_quoted_expression() {
+        // record/TestFilterQuotedLiterals.al: `'@*Smith & Sons*'` ("quote so &, (, ), =, | are literal,
+        // and keep @ and * active"): a case-insensitive "contains" filter on a value with operators in it.
+        let f = pf("'@*Smith & Sons*'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("Mr smith & sons LLC".into())));
+        assert!(!f.matches(&Value::Text("Acme Co".into())));
+        let f = pf("'@*(2025)*'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("Expenses (2025) - Diana".into())));
+        assert!(!f.matches(&Value::Text("Expenses 2025".into())));
+        // Without @ the quoted wildcard still matches case-sensitively.
+        let f = pf("'*A|B*'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("xA|By".into())) && !f.matches(&Value::Text("xa|by".into())));
+        // A quoted expression without wildcards is a plain literal.
+        let f = pf("'Smith & Sons'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("Smith & Sons".into())) && !f.matches(&Value::Text("smith & sons".into())));
     }
 
     #[test]

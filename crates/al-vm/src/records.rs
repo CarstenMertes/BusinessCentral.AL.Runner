@@ -575,10 +575,65 @@ impl Session {
         }))
     }
 
-    /// Reads a row into the record, then calculates its `SetAutoCalcFields` fields.
-    pub(crate) fn load(&mut self, rec: &Rec, row: Vec<Value>) -> Result<(), Signal> {
+    /// Reads a row into the record, then calculates its `SetAutoCalcFields` fields. A database
+    /// table hands out its own copy of every Blob, not yet loaded
+    /// (streams/TestBlobUncommittedWriteIsolation.al, TestBlob.al Blob_Get_WithoutCalcFields_InStreamReadsEmpty);
+    /// a temporary table's rows hold the record's own Blob objects
+    /// (TempBlob_UncommittedWrite_SameInstanceReGet_KeepsWrite).
+    pub(crate) fn load(&mut self, rec: &Rec, mut row: Vec<Value>) -> Result<(), Signal> {
+        if rec.borrow().temp_id.is_none() {
+            for v in &mut row {
+                if let Value::Blob(b) = v {
+                    *b = al_builtins::stream::copy_blob(b, false);
+                }
+            }
+        }
         rec.borrow_mut().fields = row;
         self.auto_calculate(rec)
+    }
+
+    /// The row to hand to the store: a database table keeps its own copy of every Blob.
+    fn to_store(rec: &Rec, mut row: Vec<Value>) -> Vec<Value> {
+        if rec.borrow().temp_id.is_none() {
+            for v in &mut row {
+                if let Value::Blob(b) = v {
+                    *b = al_builtins::stream::copy_blob(b, true);
+                }
+            }
+        }
+        row
+    }
+
+    /// `CalcFields` of Blob fields: a database record's Blob is fetched from the stored row unless
+    /// the buffer already holds it (an in-memory write is kept:
+    /// streams/TestBlobCalcFieldsUncommittedWrite.al); a temporary record's Blob is always loaded.
+    pub(crate) fn load_blobs(&mut self, rec: &Rec, positions: &[usize]) -> Result<(), Signal> {
+        let t = self.table(rec)?;
+        let cx = self.cx.clone();
+        let mut stored: Option<Vec<Value>> = None;
+        for &pos in positions {
+            let Value::Blob(buf) = rec.borrow().fields[pos].clone() else {
+                return unsupported("CalcFields of a Blob field that holds no Blob");
+            };
+            if buf.borrow().loaded {
+                continue;
+            }
+            if stored.is_none() {
+                let pk = t.primary_key(&rec.borrow().fields);
+                stored = self
+                    .store_for(rec)
+                    .get(&cx, &t, &pk)
+                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            }
+            let Some(Value::Blob(src)) = stored.as_ref().map(|row| row[pos].clone()) else {
+                return unsupported("CalcFields of a Blob whose row is gone (error text not pinned)");
+            };
+            let bytes = src.borrow().bytes.clone();
+            let mut b = buf.borrow_mut();
+            b.bytes = bytes;
+            b.loaded = true;
+        }
+        Ok(())
     }
 
     pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
@@ -693,7 +748,7 @@ impl Session {
                     }
                     return self.fail_unique(&t);
                 }
-                let stored = self.stored_view(&t, &row);
+                let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
                     .store_for(rec)
                     .insert(&cx, &t, stored.clone())
@@ -783,7 +838,7 @@ impl Session {
                 for (i, v) in kept {
                     row[i] = v;
                 }
-                let stored = self.stored_view(&t, &row);
+                let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
                     .store_for(rec)
                     .modify(&cx, &t, stored.clone())
@@ -1072,6 +1127,11 @@ impl Session {
             }
             "Rename" => {
                 self.check_hooks(&t, "Rename")?;
+                if rec.borrow().temp_id.is_some() && rec.borrow().fields.iter().any(|f| matches!(f, Value::Blob(_))) {
+                    // streams/TestBlobRenameIsolation.al: BC keeps an unpersisted Blob write across a
+                    // temporary Rename but loses one persisted with Modify; no model here does both.
+                    return unsupported("Rename of a temporary record with a Blob field");
+                }
                 self.check_unique_keys(&t)?;
                 // Fields that relate to this table follow the rename; a temporary record has none.
                 let refs = if rec.borrow().temporary {
@@ -1120,7 +1180,7 @@ impl Session {
                 self.run_ext_trigger(&t, "OnRename", rec, Some(&xrec))?;
                 let _ = self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
-                let stored = self.stored_view(&t, &row);
+                let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
                     .store_for(rec)
                     .rename(&cx, &t, &old_pk, stored.clone())

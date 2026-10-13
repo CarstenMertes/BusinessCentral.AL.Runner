@@ -16,7 +16,7 @@ pub(crate) mod test_util {
     /// Parses `src` with `entry` and returns the dump of the entry's node(s),
     /// asserting no errors.
     pub fn dump(src: &str, entry: fn(&mut Parser)) -> String {
-        let p = parse_entry(src, &Default::default(), entry);
+        let p = parse_entry(src, &Default::default(), &mut crate::TreeCache::default(), entry);
         assert!(
             p.errors.is_empty(),
             "errors for {src:?}: {:?}\n{}",
@@ -30,7 +30,7 @@ pub(crate) mod test_util {
     }
 
     pub fn errors(src: &str, entry: fn(&mut Parser)) -> usize {
-        let p = parse_entry(src, &Default::default(), entry);
+        let p = parse_entry(src, &Default::default(), &mut crate::TreeCache::default(), entry);
         assert_eq!(p.syntax().text().to_string(), src, "lossless even with errors");
         p.errors.len()
     }

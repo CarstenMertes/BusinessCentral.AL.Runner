@@ -670,6 +670,10 @@ impl Session {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
                     if !Rc::ptr_eq(src, &dst) {
                         let fields = src.borrow().fields.clone();
+                        if fields.iter().any(|f| matches!(f, Value::Blob(_))) {
+                            // Whether a copied record shares or copies its Blob is not pinned.
+                            return Err(Signal::Unsupported("record assignment with a Blob field".into()));
+                        }
                         dst.borrow_mut().fields = fields;
                     }
                     return Ok(());

@@ -31,13 +31,32 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
 
+      # One release build serves the corpus run and the perf budgets below;
+      # rust-cache keeps dependencies only, so building release twice (as
+      # `cargo run --release` after a debug `cargo test` used to) paid for the
+      # workspace crates twice. The corpus step now just runs the binary.
+      - name: Build release binary
+        run: cargo build --release -p al-test-cli
+
       # Fails the job on any regression against metrics/passing.txt (exit 1),
       # or when the oracle and the corpus pin disagree (exit 2).
       - name: Corpus pass rate
         run: |
-          cargo run --release -p al-test-cli -- \
+          ./target/release/al-test-cli \
             --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml
           cat pass-rate.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s,
+      # parser throughput at least 50 MB/s. #[ignore]d in plain `cargo test`
+      # because they only mean something in release. After the corpus step so a
+      # budget failure never costs the day's pass-rate artifact.
+      - name: Perf budgets
+        run: |
+          cargo test --release --no-fail-fast \
+            -p al-syntax --test perf_parse_throughput \
+            -p al-test-cli --test perf_budget \
+            -- --ignored --nocapture
+
       - name: Date stamp
         if: always()
         id: date

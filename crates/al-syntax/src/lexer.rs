@@ -11,10 +11,11 @@ pub struct Token {
 
 pub fn lex(src: &str) -> Vec<Token> {
     let mut lx = Lexer {
+        text: src,
         src: src.as_bytes(),
         pos: 0,
         line_has_code: false,
-        out: Vec::new(),
+        out: Vec::with_capacity(src.len() / 4),
     };
     if src.starts_with('\u{FEFF}') {
         lx.pos = 3;
@@ -27,6 +28,7 @@ pub fn lex(src: &str) -> Vec<Token> {
 }
 
 struct Lexer<'a> {
+    text: &'a str,
     src: &'a [u8],
     pos: usize,
     /// Whether a non-trivia token has appeared on the current line, which
@@ -59,8 +61,12 @@ impl Lexer<'_> {
     }
 
     fn char_at(&self, pos: usize) -> Option<char> {
-        // `src` came from a `&str` and `pos` is always on a char boundary.
-        std::str::from_utf8(&self.src[pos..]).ok()?.chars().next()
+        // `pos` is always on a char boundary. Only the first char is decoded;
+        // validating the rest of the file here made lexing quadratic.
+        match *self.src.get(pos)? {
+            b if b < 0x80 => Some(b as char),
+            _ => self.text[pos..].chars().next(),
+        }
     }
 
     fn eat_while(&mut self, f: impl Fn(u8) -> bool) {
@@ -70,11 +76,19 @@ impl Lexer<'_> {
     }
 
     fn eat_ident_rest(&mut self) {
-        while let Some(c) = self.char_at(self.pos) {
-            if !is_ident_continue(c) {
-                break;
+        while let Some(&b) = self.src.get(self.pos) {
+            if b < 0x80 {
+                if !(b == b'_' || b.is_ascii_alphanumeric()) {
+                    break;
+                }
+                self.pos += 1;
+            } else {
+                let Some(c) = self.char_at(self.pos) else { break };
+                if !is_ident_continue(c) {
+                    break;
+                }
+                self.pos += c.len_utf8();
             }
-            self.pos += c.len_utf8();
         }
     }
 
@@ -177,16 +191,19 @@ impl Lexer<'_> {
         }
         let suffix_start = self.pos;
         self.eat_ident_rest();
-        let suffix = std::str::from_utf8(&self.src[suffix_start..self.pos])
-            .expect("utf-8")
-            .to_ascii_uppercase();
-        kind = match (suffix.as_str(), kind) {
-            ("", k) => k,
-            ("D", Integer) => DateLit,
-            ("DT", Integer) => DateTimeLit,
-            ("T", _) => TimeLit,
-            ("L", Integer) => BigIntLit,
-            _ => Error,
+        let suffix = &self.text[suffix_start..self.pos];
+        kind = if suffix.is_empty() {
+            kind
+        } else if suffix.eq_ignore_ascii_case("D") && kind == Integer {
+            DateLit
+        } else if suffix.eq_ignore_ascii_case("DT") && kind == Integer {
+            DateTimeLit
+        } else if suffix.eq_ignore_ascii_case("T") {
+            TimeLit
+        } else if suffix.eq_ignore_ascii_case("L") && kind == Integer {
+            BigIntLit
+        } else {
+            Error
         };
         self.push(kind, start);
     }
@@ -431,6 +448,38 @@ mod tests {
                 (Colon, ":"),
                 (Ident, "x")
             ]
+        );
+    }
+
+    #[test]
+    fn non_ascii_letters_continue_and_start_identifiers() {
+        assert_eq!(
+            significant("Größe1 Äpfel x_ü2 ü"),
+            vec![(Ident, "Größe1"), (Ident, "Äpfel"), (Ident, "x_ü2"), (Ident, "ü")]
+        );
+    }
+
+    #[test]
+    fn a_non_ascii_letter_after_digits_is_not_a_literal_suffix() {
+        assert_eq!(significant("1ä 2D"), vec![(Error, "1ä"), (DateLit, "2D")]);
+    }
+
+    #[test]
+    fn a_multibyte_symbol_is_one_error_token_and_lexing_continues() {
+        assert_eq!(significant("a €x"), vec![(Ident, "a"), (Error, "€"), (Ident, "x")]);
+    }
+
+    #[test]
+    fn lexing_a_long_file_of_non_ascii_text_is_linear() {
+        // The lexer once re-validated the rest of the input for every
+        // character, which made this quadratic: 600k characters took minutes.
+        let src = "ä ".repeat(300_000);
+        let started = std::time::Instant::now();
+        assert_eq!(lex(&src).len(), 600_000);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "lexing took {:?}",
+            started.elapsed()
         );
     }
 

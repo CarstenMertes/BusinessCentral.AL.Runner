@@ -7,18 +7,24 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 
 | Field | Value |
 |---|---|
-| Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests |
-| Corpus commit | `cf6e546793a92c482499ce86eadf0a0b13d2a742` (must equal the `corpus` submodule pin) |
-| Workflow run | 38306086475 (`ci.yml`, push to master) |
+| Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `al-runtime-rs` |
+| Corpus pin | `cdf315abd1e7115fcbfbcc88c720371e75989b8e` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
 
-| Major | Oracle leg | Artifact | Artifact id |
-|---|---|---|---|
-| 27 | 27.5 | `junit-test-results-27.5` | 11772863083 |
-| 28 | 28.5 | `junit-test-results-28.5` | 11773069390 |
-| 29 | 29.0 | `junit-test-results-29.0` | 11773034371 |
+| Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
+|---|---|---|---|---|---|---|
+| 27 | 27.5 | `cdf315a` (the pin) | 38476427517 | `junit-test-results-27.5` | 11856955675 | 5059 |
+| 28 | 28.5 | `cdf315a` (the pin) | 38480686379 | `junit-test-results-28.5` | 11858881269 | 5059 (+26 `OnRun`) |
+| 29 | 29.0 | `cf6e546793a9` (older) | 38306086475 | `junit-test-results-29.0` | 11773034371 | 4836 (+26 `OnRun`) |
 
-Each file has 4836 cases and 0 failures. The other legs of the same run (27.0, 27.3,
-28.0 to 28.4) have the same case set; they are the drift check.
+Every file has 0 failures. Each run published two artifacts with the same name; the
+oracle is the large one (the main suite, `junit-al-language.xml`). The small one is
+the OnPrem suite and is not used.
+
+BC 29 stays on the older commit because the 29.0 run on the pin is unusable: the
+corpus workflow's dispatch path does not define `BC29PLUS`, so four guarded tests
+failed (`docs/owner-review.md`). The CLI accepts an oracle for an older commit only
+when the corpus diff since then adds files under `tests/` and changes none (ADR-007).
+The 223 cases the pin added are then absent from the BC 29 report and ratchet.
 
 Layout:
 
@@ -29,7 +35,8 @@ metrics/<major>/passing.txt  the ratchet for that major
 ```
 
 The oracle leg of a major is its newest minor: 27.5, 28.5, 29.0. Every JUnit
-file must come from the CI run of the pinned corpus commit. The runner of the
+file must come from the CI run of the pinned corpus commit, or of the older commit its
+`[[version]]` table names (ADR-007). The runner of the
 28.x and 29.0 legs adds an `OnRun` pseudo-case per test codeunit; the reader
 skips them (ADR-015 1.6).
 

@@ -2072,6 +2072,12 @@ impl Session {
         self.ret_used = true;
         if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
             let fields = probe.borrow().fields.clone();
+            // The probe replaced the view's filters on key fields with the key; the row must still
+            // pass the filters the page has (a Get of a row the view hides shows nothing:
+            // testpart/BnrBlankPart.al NoRow_Action_GetOfARowTheFilterHides_StaysBlank).
+            if !rec.borrow().filters.iter().all(|f| f.expr.matches(&fields[f.field])) {
+                return Ok(());
+            }
             rec.borrow_mut().fields = fields;
             st.borrow_mut().cursor = Cursor::Row;
             let r = self.arrive(st);

@@ -679,3 +679,43 @@ fn code_coverage_log_reports_the_requested_state() {
     );
     assert_eq!(r.unwrap(), "NoNoNoYesYesNoNoYesYesNo");
 }
+
+// ---------------------------------------------------------------- Clear, conversions
+
+#[test]
+fn clear_empties_lists_and_dictionaries_also_through_a_var_parameter() {
+    // types/TestClearContracts.al:130-150, collections/TestListByRefContracts.al:155,
+    // collections/TestCollectionsDictionary.al:108.
+    let src = "codeunit 50100 C {
+        procedure F(): Text var l: List of [Integer]; d: Dictionary of [Text, Integer]; a: Text; begin
+            l.Add(1); l.Add(2); d.Add('a', 1);
+            Clear(l); Clear(d);
+            a := Format(l.Count()) + Format(d.Count());
+            l.Add(5); d.Add('a', 7);
+            ClearViaVar(l);
+            exit(a + Format(l.Count()) + Format(d.Count()));
+        end;
+        local procedure ClearViaVar(var l: List of [Integer]) begin Clear(l); end; }";
+    assert!(matches!(run(src, "F"), Ok(Value::Text(ref s)) if s == "0001"));
+}
+
+#[test]
+fn a_text_assigns_into_a_guid() {
+    // record/TestRecordGetBySystemId.al ZeroGuid, install and system-id fixtures.
+    let r = text_of(
+        "g: Guid;",
+        "g := '00000000-0000-0000-0000-000000000000'; exit(Format(IsNullGuid(g)) + Format(g));",
+    );
+    assert_eq!(r.unwrap(), "Yes{00000000-0000-0000-0000-000000000000}");
+}
+
+#[test]
+fn datetime_plus_and_minus_durations() {
+    // types/TestDurationContracts.al:44-171.
+    let r = text_of(
+        "a: DateTime; b: DateTime; d: Duration;",
+        "a := CreateDateTime(20240115D, 100000T); d := 7200000; b := a + d;
+         exit(Format(DT2Time(b) = 120000T) + Format((b - a) = d) + Format(DT2Time(b - d) = 100000T));",
+    );
+    assert_eq!(r.unwrap(), "YesYesYes");
+}

@@ -187,6 +187,15 @@ page 50011 "PG Kind Page"
     var Kind: Enum "PG Kind";
 }
 
+page 50012 "PG Hidden Get"
+{
+    PageType = List;
+    SourceTable = "PG Row";
+    SourceTableView = where("No." = const('ZZZ'));
+    layout { area(Content) { repeater(Lines) { field(NoCtl; Rec."No.") { } field(QtyCtl; Rec.Qty) { } } } }
+    actions { area(Processing) { action(GetRow) { trigger OnAction() begin Rec.Get('A'); end; } } }
+}
+
 codeunit 50101 "PG Trace"
 {
     SingleInstance = true;
@@ -865,4 +874,23 @@ fn an_enum_value_without_a_caption_is_set_by_its_name() {
         "F",
     );
     assert_eq!(text(r), "Plain");
+}
+
+// testpart/BnrBlankPart.al NoRow_Action_GetOfARowTheFilterHides_StaysBlank: an action that Gets a row the
+// page's filter hides, on a key field of the filter, leaves the page showing nothing.
+#[test]
+fn a_get_of_a_row_the_view_hides_shows_nothing() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Hidden Get\"; begin
+                {}
+                TP.OpenView();
+                TP.GetRow.Invoke();
+                exit('[' + TP.QtyCtl.Value() + '][' + TP.NoCtl.Value() + ']');
+            end;",
+            rows(&[("A", 5)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "[][]");
 }

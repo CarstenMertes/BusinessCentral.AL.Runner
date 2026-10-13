@@ -488,6 +488,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Duration(_) => Value::Duration(0),
         Value::Guid(_) => Value::Guid([0; 16]),
         Value::Option(_, m) => Value::Option(0, m.clone()),
+        // A cleared List or Dictionary is a new, empty one (types/TestClearContracts.al:130-150,
+        // collections/TestListByRefContracts.al:155 through a `var` parameter).
+        Value::List(_) => Value::List(Default::default()),
+        Value::Dictionary(_) => Value::Dictionary(Default::default()),
         // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
         Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
         other => return unsupported(&format!("Clear of {other:?}")),

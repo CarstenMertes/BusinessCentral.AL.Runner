@@ -39,7 +39,7 @@ fn compile_corpus() -> usize {
         runtime::load_app(&tests.join("al-language-internals-fixture")).unwrap(),
         runtime::load_app(&tests.join("al-language")).unwrap(),
     ];
-    let symbols = ["BC27PLUS".to_string()].into();
+    let symbols = al_version::corpus_symbols(27);
     let (_ws, lowered) = al_sema::lower::compile(apps, &symbols);
     lowered.program.objects.len()
 }

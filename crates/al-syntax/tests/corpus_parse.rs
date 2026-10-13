@@ -28,7 +28,7 @@ fn corpus_files() -> Vec<PathBuf> {
 
 #[test]
 fn every_corpus_file_parses_without_errors_and_round_trips() {
-    let syms = ["BC27PLUS".to_string()].into();
+    let syms = al_version::corpus_symbols(27);
     let mut failures = Vec::new();
     let files = corpus_files();
     for f in &files {
@@ -62,7 +62,7 @@ fn every_corpus_file_parses_without_errors_and_round_trips() {
 #[test]
 fn corpus_code_is_parsed_structurally_not_swallowed() {
     use al_syntax::SyntaxKind::*;
-    let syms = ["BC27PLUS".to_string()].into();
+    let syms = al_version::corpus_symbols(27);
     let (mut kw_routines, mut kw_begins, mut nodes_routines, mut nodes_blocks, mut test_attrs) = (0, 0, 0, 0, 0);
     for f in corpus_files() {
         let src = std::fs::read_to_string(&f).unwrap();

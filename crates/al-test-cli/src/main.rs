@@ -92,8 +92,8 @@ fn run() -> Result<ExitCode, String> {
     let cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
 
-    // ADR-007: BC 27.5 defines BC27PLUS.
-    let symbols = ["BC27PLUS".to_string()].into();
+    // ADR-015: the symbols the corpus CI defines for BC 27.
+    let symbols = al_version::corpus_symbols(27);
     let corpus_tests = root
         .join(&cfg.corpus_app)
         .parent()

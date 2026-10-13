@@ -39,6 +39,7 @@ dependencies = [
  "al-builtins",
  "al-ir",
  "al-syntax",
+ "al-version",
  "rayon",
  "rowan",
  "rust_decimal",
@@ -50,6 +51,7 @@ dependencies = [
 name = "al-syntax"
 version = "0.1.0"
 dependencies = [
+ "al-version",
  "libc",
  "rowan",
 ]
@@ -63,6 +65,7 @@ dependencies = [
  "al-ir",
  "al-sema",
  "al-syntax",
+ "al-version",
  "al-vm",
  "quick-xml",
  "serde",

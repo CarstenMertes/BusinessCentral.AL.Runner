@@ -116,6 +116,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // (al-vm dispatch.rs). Registered so lowering accepts them.
     ("Session.BindSubscription#1", vm_only),
     ("Session.UnbindSubscription#1", vm_only),
+    // Codeunit.Run runs a codeunit and `IsInWriteTransaction` reads the transaction: both are
+    // session state, run by the VM (al-vm transactions.rs).
+    ("Codeunit.Run#1", vm_only),
+    ("Codeunit.Run#2", vm_only),
+    ("Codeunit.Run#3", vm_only),
+    ("Database.IsInWriteTransaction#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))

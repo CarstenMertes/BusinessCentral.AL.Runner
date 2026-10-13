@@ -21,8 +21,10 @@ mod records;
 mod refs;
 mod relations;
 mod rename;
+mod transactions;
 mod ui;
 mod views;
+pub use transactions::TxModel;
 pub use ui::{UiHandler, UiKind};
 
 pub struct Engine {
@@ -111,6 +113,15 @@ pub struct Session {
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
     pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
+    /// The transaction model of the running test method (set by the test runner).
+    pub tx_model: TxModel,
+    /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
+    /// a TestPage operation); a `TransactionModel::None` test may write inside them.
+    pub(crate) tx_world: usize,
+    /// The `[CommitBehavior]` of the innermost procedure that declares one.
+    pub(crate) commit_behavior: transactions::CommitBehavior,
+    /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
+    pub in_test_codeunit: bool,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -144,6 +155,10 @@ impl Session {
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
+            tx_model: TxModel::default(),
+            tx_world: 0,
+            commit_behavior: Default::default(),
+            in_test_codeunit: false,
         }
     }
 
@@ -302,9 +317,28 @@ impl Session {
             locals,
         };
         let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
+        // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
+        // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
+        let saved_commit_behavior = self.commit_behavior;
+        for a in r
+            .attributes
+            .iter()
+            .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
+        {
+            match transactions::CommitBehavior::from_attribute(&a.text) {
+                Some(b) => self.commit_behavior = b,
+                None => {
+                    return Err(Signal::Unsupported(format!(
+                        "{} (only Ignore and Error are pinned)",
+                        a.text
+                    )));
+                }
+            }
+        }
         self.try_depth += usize::from(is_try);
         let outcome = self.exec_block(&r.body, &mut frame);
         self.try_depth -= usize::from(is_try);
+        self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
             Ok(()) => None,
@@ -596,6 +630,24 @@ impl Session {
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
                 }
+                if id.starts_with("Codeunit.Run#") || id == "Database.IsInWriteTransaction#1" {
+                    let recv = match receiver.as_deref() {
+                        Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
+                        Some(ir::Arg::Ref(p)) => Some(self.read(p, f)?),
+                        None => None,
+                    };
+                    let mut values = Vec::with_capacity(args.len());
+                    for a in args {
+                        values.push(match a {
+                            ir::Arg::Value(e) => self.eval(e, f)?,
+                            ir::Arg::Ref(p) => self.read(p, f)?,
+                        });
+                    }
+                    if id == "Database.IsInWriteTransaction#1" {
+                        return Ok(Value::Boolean(self.in_write_transaction()));
+                    }
+                    return self.codeunit_run(id, recv, &values, *ret_used);
+                }
                 let native =
                     al_builtins::native::lookup(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
                 let mut recv = match receiver.as_deref() {
@@ -823,8 +875,7 @@ impl al_builtins::native::Ctx for Session {
         Session::ref_op(self, id, receiver, args)
     }
     fn commit(&mut self) -> Result<(), Signal> {
-        self.commit_transaction();
-        Ok(())
+        self.commit_builtin()
     }
     fn ret_used(&self) -> bool {
         self.ret_used

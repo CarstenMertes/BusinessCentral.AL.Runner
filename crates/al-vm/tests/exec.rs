@@ -319,8 +319,12 @@ fn create_guid_gives_distinct_non_null_guids() {
 }
 
 #[test]
-fn commit_and_error_behavior_attributes_are_unsupported() {
-    let src = cu("[CommitBehavior(CommitBehavior::Ignore)] procedure G() begin end; procedure F() begin G(); end;");
+fn error_behavior_and_unpinned_commit_behaviors_are_unsupported() {
+    // [CommitBehavior(Ignore | Error)] is implemented (tests/transactions.rs); [ErrorBehavior]
+    // and any other CommitBehavior value are refused.
+    let src = cu("[ErrorBehavior(ErrorBehavior::Collect)] procedure G() begin end; procedure F() begin G(); end;");
+    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("ErrorBehavior")));
+    let src = cu("[CommitBehavior(CommitBehavior::Allow)] procedure G() begin end; procedure F() begin G(); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("CommitBehavior")));
 }
 

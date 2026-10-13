@@ -1174,3 +1174,131 @@ codeunit 50100 C
     // the later plain Validate(Ref) sees the record as it was then (Kind 2, Ref 0).
     assert_eq!(text(run(src, "F")), "xKind=1,xRef=5,Ref=0;xKind=2,xRef=0,Ref=9;");
 }
+
+// Mutation-testing additions (docs/status.md debt): these pin behaviour the corpus tests above
+// reach only by accident. Each names the code it guards.
+
+// A subscriber parameter that matches no event parameter is refused, with or without
+// IncludeSender. Without a sender there is nothing to bind to the unmatched parameter.
+#[test]
+fn a_subscriber_parameter_matching_no_event_parameter_is_refused() {
+    let src = format!(
+        "{PUB}
+codeunit 50201 Sub
+{{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure H(Input: Integer; Stranger: Integer) begin end;
+}}
+codeunit 50100 C
+{{
+    procedure F(): Integer var P: Codeunit Pub; Log: Text; begin exit(P.Raise(1, Log)); end;
+}}"
+    );
+    match run(&src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("`Stranger` matches no parameter"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+// Only one unmatched parameter can take the sender; a second one is refused.
+#[test]
+fn a_second_unmatched_subscriber_parameter_is_refused_even_with_a_sender() {
+    let src = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(true, false)] procedure OnWork(Input: Integer) begin end;
+    procedure Raise() begin OnWork(1); end;
+}
+codeunit 50201 Sub
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure H(Input: Integer; S: Codeunit Pub; Extra: Integer) begin end;
+}
+codeunit 50100 C
+{
+    procedure F() var P: Codeunit Pub; begin P.Raise(); end;
+}"#;
+    match run(src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("`Extra` matches no parameter"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+const STATEFUL_SUB: &str = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(false, false)] procedure OnTick() begin end;
+    procedure Tick() begin OnTick(); end;
+}
+codeunit 50201 Sub
+{
+    SingleInstance = true;
+    var Count: Integer;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnTick', '', false, false)]
+    local procedure H() begin Count += 1; end;
+    procedure Seen(): Integer begin exit(Count); end;
+}
+codeunit 50100 C
+{
+    procedure F(): Integer var P: Codeunit Pub; S: Codeunit Sub; begin P.Tick(); P.Tick(); exit(S.Seen()); end;
+}"#;
+
+// A static subscriber on a SingleInstance codeunit runs on that one instance: its global
+// state survives from one event to the next and is what the codeunit's callers see.
+// (Corpus: codeunit/TestEventContracts.al uses SingleInstance trace codeunits the same way.)
+#[test]
+fn a_single_instance_static_subscriber_keeps_its_globals_between_events() {
+    assert_eq!(int(run(STATEFUL_SUB, "F")), 2);
+}
+
+// A non-single-instance static subscriber that keeps globals is refused, because its instance
+// lifetime is not pinned. `SingleInstance = false` is not SingleInstance.
+#[test]
+fn a_static_subscriber_with_globals_and_single_instance_false_is_refused() {
+    let src = STATEFUL_SUB.replace("SingleInstance = true;", "SingleInstance = false;");
+    match run(&src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("keeps global variables"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+// Only a *Manual* EventSubscriberInstance is manual. Naming the default, StaticAutomatic,
+// still fires the subscriber without a binding, and BindSubscription on it is false.
+// (codeunit/TestEventManualBinding.al Contract 5 covers the property being absent.)
+#[test]
+fn an_explicit_static_automatic_subscriber_fires_unbound_and_cannot_be_bound() {
+    let src = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(false, false)] procedure OnBefore(var Handled: Boolean) begin end;
+    procedure Fire(): Boolean var Handled: Boolean; begin OnBefore(Handled); exit(Handled); end;
+}
+codeunit 50201 Auto
+{
+    EventSubscriberInstance = StaticAutomatic;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnBefore', '', false, false)]
+    local procedure H(var Handled: Boolean) begin Handled := true; end;
+}
+codeunit 50100 C
+{
+    procedure Fires(): Boolean var P: Codeunit Pub; begin exit(P.Fire()); end;
+    procedure Bind(): Boolean var A: Codeunit Auto; begin exit(BindSubscription(A)); end;
+}"#;
+    assert!(boolean(run(src, "Fires")));
+    assert!(!boolean(run(src, "Bind")));
+}
+
+// Unbinding a static subscriber raises nothing; as a value it is false (only "no error" is
+// pinned by codeunit/TestEventContracts.al Contract 6, the value is in docs/probes-needed.md).
+#[test]
+fn unbinding_a_static_subscriber_does_not_raise_and_is_false_as_a_value() {
+    let src = r#"
+codeunit 50201 Auto { }
+codeunit 50100 C
+{
+    procedure Stmt(): Boolean var A: Codeunit Auto; begin UnbindSubscription(A); exit(true); end;
+    procedure Value(): Boolean var A: Codeunit Auto; begin exit(UnbindSubscription(A)); end;
+}"#;
+    assert!(boolean(run(src, "Stmt")));
+    assert!(!boolean(run(src, "Value")));
+}

@@ -367,4 +367,100 @@ mod tests {
         assert_eq!(split_args("[Test]"), Vec::<String>::new());
         assert_eq!(split_args("[Foo()]"), Vec::<String>::new());
     }
+    #[test]
+    fn nested_brackets_protect_their_commas_and_single_arguments_survive() {
+        assert_eq!(split_args("[X(f(a, b), c)]"), vec!["f(a, b)", "c"]);
+        assert_eq!(split_args("[X(f(a), b)]"), vec!["f(a)", "b"]);
+        assert_eq!(split_args("[X(g[1, 2], h)]"), vec!["g[1, 2]", "h"]);
+        assert_eq!(split_args("[X(a)]"), vec!["a"]);
+        assert_eq!(split_args("[X(a,)]"), vec!["a", ""]);
+        // A closing bracket with nothing open does not underflow.
+        assert_eq!(split_args("[X(a), b)]"), vec!["a)", "b"]);
+    }
+
+    #[test]
+    fn a_close_before_the_open_yields_no_arguments_instead_of_panicking() {
+        assert_eq!(split_args("[Foo)("), Vec::<String>::new());
+    }
+
+    fn registry(src: &str) -> Registry {
+        let (_ws, l) = al_sema::lower::compile(
+            vec![al_sema::workspace::AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        Registry::build(&l.program)
+    }
+
+    #[test]
+    fn a_subscriber_attribute_with_fewer_than_three_arguments_is_ignored() {
+        let reg = registry(
+            "codeunit 50200 Pub { [IntegrationEvent(false, false)] procedure OnX() begin end; }
+             codeunit 50201 Sub { [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub)] local procedure H() begin end; }",
+        );
+        assert!(reg.subscribers.is_empty());
+        assert_eq!(reg.publishers.len(), 1);
+    }
+
+    #[test]
+    fn subscribers_attach_to_every_object_kind_they_name() {
+        // The registry resolves each target by (kind, name); a kind it does not know is skipped.
+        let reg = registry(
+            "report 50300 Rep { }
+             query 50301 Qry { elements { dataitem(Dummy; Integer) { } } }
+             xmlport 50302 Xml { schema { textelement(Root) { } } }
+             page 50303 Pg { }
+             table 50304 Tbl { fields { field(1; \"No.\"; Integer) { } } keys { key(PK; \"No.\") { } } }
+             codeunit 50305 Cu { }
+             codeunit 50310 Sub
+             {
+                 [EventSubscriber(ObjectType::Report, Report::Rep, 'OnR', '', false, false)] local procedure R() begin end;
+                 [EventSubscriber(ObjectType::Query, Query::Qry, 'OnQ', '', false, false)] local procedure Q() begin end;
+                 [EventSubscriber(ObjectType::XmlPort, XmlPort::Xml, 'OnX', '', false, false)] local procedure X() begin end;
+                 [EventSubscriber(ObjectType::Page, Page::Pg, 'OnP', '', false, false)] local procedure P() begin end;
+                 [EventSubscriber(ObjectType::Table, Database::Tbl, 'OnT', '', false, false)] local procedure T() begin end;
+                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Cu, 'OnC', '', false, false)] local procedure C() begin end;
+             }",
+        );
+        for (name, event) in [
+            ("Rep", "onr"),
+            ("Qry", "onq"),
+            ("Xml", "onx"),
+            ("Pg", "onp"),
+            ("Tbl", "ont"),
+            ("Cu", "onc"),
+        ] {
+            let target = reg
+                .subscribers
+                .keys()
+                .find(|(_, e)| e == event)
+                .unwrap_or_else(|| panic!("no subscriber for {name}: {:?}", reg.subscribers.keys().collect::<Vec<_>>()));
+            assert_eq!(reg.subscribers[target].len(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn only_a_missing_global_triggers_codeunit_sets_the_global_triggers_flag() {
+        let other = registry(
+            "codeunit 50310 Sub
+             { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Not There\", 'OnX', '', false, false)] local procedure H() begin end; }",
+        );
+        assert!(!other.has_global_triggers);
+        let global = registry(
+            "codeunit 50310 Sub
+             { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }",
+        );
+        assert!(global.has_global_triggers);
+        // A different object kind named like the platform codeunit is not it.
+        let table = registry(
+            "codeunit 50310 Sub
+             { [EventSubscriber(ObjectType::Table, Database::\"Global Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }",
+        );
+        assert!(!table.has_global_triggers);
+    }
+
 }

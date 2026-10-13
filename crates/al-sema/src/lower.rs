@@ -683,9 +683,16 @@ impl Lowerer<'_> {
     }
 
     fn resolve_obj(&self, kind: ObjKind, name: &str) -> L<usize> {
-        match self.ws.resolve_ref(self.file, kind, &[name.to_string()]) {
+        match self
+            .ws
+            .resolve_ref(self.file, kind, &crate::types::qualified_parts(name))
+        {
             Resolution::Found(i) => Ok(i),
-            _ => Err(format!("{} `{name}` is outside the workspace", kind.label())),
+            _ => Err(format!(
+                "{} `{}` is outside the workspace",
+                kind.label(),
+                crate::types::display_name(name)
+            )),
         }
     }
 
@@ -1221,6 +1228,8 @@ impl Lowerer<'_> {
             },
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
+                // `Database::A.B."Name"`: a namespace-qualified object id.
+                Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
                     Ok(ir::Expr::Const(ir::Const::Text(self.local_labels[&name].clone())))
                 }
@@ -1826,6 +1835,48 @@ table 50921 H { fields { field(1; K; Integer) { }
         let local = l.program.objects.iter().position(|o| o.id == Some(70002)).unwrap();
         let f = flow(&l, "Base", "Rows");
         assert_eq!(f.calc.map(|c| c.table), Some(local), "{:?}", f.calc_refusal);
+    }
+
+    #[test]
+    fn namespace_qualified_object_types_resolve_in_the_workspace() {
+        // tableextensiontrigger/TestTableExtTargetNamespace_Tests.al:58 declares
+        // `Record ALLanguage.Coverage.TxnLocal."Shipment Method"`, a workspace table.
+        let files = vec![
+            (
+                "t.al".to_string(),
+                "namespace A.B; table 70010 \"Ship. Method\" { fields { field(1; Code; Code[10]) { } } }".to_string(),
+            ),
+            (
+                "c.al".to_string(),
+                "codeunit 70011 C { procedure P() var R: Record A.B.\"Ship. Method\"; begin end;
+                    procedure Q(): Integer begin exit(Database::A.B.\"Ship. Method\"); end; }"
+                    .to_string(),
+            ),
+        ];
+        let (_, l) = crate::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files,
+            }],
+            &Default::default(),
+        );
+        let c = l.program.objects.iter().position(|o| o.id == Some(70011)).unwrap();
+        let p = l.program.objects[c]
+            .routines
+            .iter()
+            .position(|r| r.name == "P")
+            .unwrap();
+        assert!(l.unsupported[c][p].is_empty(), "{:?}", l.unsupported[c][p]);
+        // TestTableExtTargetNamespace_Tests.al: `Database::ALLanguage.Coverage.TxnLocal."Shipment Method"`.
+        let q = l.program.objects[c]
+            .routines
+            .iter()
+            .position(|r| r.name == "Q")
+            .unwrap();
+        assert!(l.unsupported[c][q].is_empty(), "{:?}", l.unsupported[c][q]);
+        assert!(format!("{:?}", l.program.objects[c].routines[q].body).contains("Integer(70010)"));
     }
 
     #[test]

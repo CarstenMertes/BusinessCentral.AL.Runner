@@ -658,7 +658,11 @@ impl<'a> Checker<'a> {
                 if let E::PartialObj(k, mut parts) = base {
                     parts.push(mname);
                     return match self.ws.resolve_ref(sc.file, k, &parts) {
-                        Resolution::Found(_) => E::Val(Ty::Integer),
+                        Resolution::Found(i) => {
+                            let id = self.ws.objects[i].id.unwrap_or(0) as i32;
+                            self.record(sc, node, Res::ObjectId(id));
+                            E::Val(Ty::Integer)
+                        }
                         _ => E::PartialObj(k, parts),
                     };
                 }
@@ -1090,7 +1094,7 @@ impl<'a> Checker<'a> {
 }
 
 fn split_qualified(name: &str) -> Vec<String> {
-    vec![name.to_string()]
+    crate::types::qualified_parts(name)
 }
 
 fn first_token(node: &SyntaxNode) -> String {

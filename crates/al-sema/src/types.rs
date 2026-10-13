@@ -50,11 +50,25 @@ pub fn text_encoding_members() -> Vec<String> {
     ["MSDos", "UTF8", "UTF16", "Windows"].map(String::from).to_vec()
 }
 
+/// Joins the parts of a qualified object name in a type (`A.B."Ship. Method"`).
+/// A dot cannot be used: quoted names may contain one. Split with [`qualified_parts`].
+pub const QUAL_SEP: &str = "\u{1f}";
+
+/// The parts of an object name stored in a type.
+pub fn qualified_parts(name: &str) -> Vec<String> {
+    name.split(QUAL_SEP).map(str::to_string).collect()
+}
+
+/// An object name from a type, as written (`A.B.Ship. Method`), for messages.
+pub fn display_name(name: &str) -> String {
+    name.replace(QUAL_SEP, ".")
+}
+
 impl Ty {
     pub fn from_type_ref(t: &TypeRef) -> Ty {
         let name = t.type_name();
         let lower = name.to_ascii_lowercase();
-        let obj = || t.object_name_parts().join(".");
+        let obj = || t.object_name_parts().join(QUAL_SEP);
         let size = || t.size_args().first().copied();
         let args = t.type_args();
         let arg = |i: usize| Box::new(args.get(i).map(Ty::from_type_ref).unwrap_or(Ty::Unknown));
@@ -102,10 +116,10 @@ impl std::fmt::Display for Ty {
             Ty::Code(Some(n)) => write!(f, "Code[{n}]"),
             Ty::Code(None) => write!(f, "Code"),
             Ty::Text(None) => write!(f, "Text"),
-            Ty::Enum(n) => write!(f, "Enum \"{n}\""),
-            Ty::Record { table, .. } => write!(f, "Record \"{table}\""),
-            Ty::Object(k, n) => write!(f, "{} \"{n}\"", k.label()),
-            Ty::TestPage(n) => write!(f, "TestPage \"{n}\""),
+            Ty::Enum(n) => write!(f, "Enum \"{}\"", display_name(n)),
+            Ty::Record { table, .. } => write!(f, "Record \"{}\"", display_name(table)),
+            Ty::Object(k, n) => write!(f, "{} \"{}\"", k.label(), display_name(n)),
+            Ty::TestPage(n) => write!(f, "TestPage \"{}\"", display_name(n)),
             Ty::TestRequestPage(n) => write!(f, "TestRequestPage \"{n}\""),
             Ty::TestPart(n) => write!(f, "TestPart \"{n}\""),
             Ty::TestFilter(n) => write!(f, "TestFilter \"{n}\""),

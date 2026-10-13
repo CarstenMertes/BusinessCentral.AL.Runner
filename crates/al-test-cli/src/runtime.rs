@@ -44,6 +44,26 @@ pub fn load_app(dir: &std::path::Path) -> Result<al_sema::workspace::AppSource, 
     })
 }
 
+/// What only an app's manifest says that `ModuleInfo` reports (publisher and version).
+#[derive(Debug, Clone, Default)]
+pub struct Manifest {
+    pub publisher: String,
+    pub version: String,
+}
+
+/// The manifest fields `NavApp.GetCurrentModuleInfo` reports, from `dir/app.json`.
+pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("app.json")).map_err(|e| format!("{}: {e}", dir.display()))?,
+    )
+    .map_err(|e| format!("{}/app.json: {e}", dir.display()))?;
+    let s = |k: &str| manifest[k].as_str().unwrap_or_default().to_string();
+    Ok(Manifest {
+        publisher: s("publisher"),
+        version: s("version"),
+    })
+}
+
 /// Every corpus test's outcome on this runtime, keyed by (codeunit id, procedure).
 pub struct CorpusRuntime {
     outcomes: std::collections::HashMap<(u32, String), Outcome>,
@@ -52,7 +72,20 @@ pub struct CorpusRuntime {
 
 impl CorpusRuntime {
     pub fn run(apps: Vec<al_sema::workspace::AppSource>, symbols: &BTreeSet<String>) -> CorpusRuntime {
-        let (_ws, lowered) = al_sema::lower::compile(apps, symbols);
+        Self::run_with_manifests(apps, &[], symbols)
+    }
+
+    /// `manifests[i]` belongs to `apps[i]`: the publisher and version `ModuleInfo` reports.
+    pub fn run_with_manifests(
+        apps: Vec<al_sema::workspace::AppSource>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+    ) -> CorpusRuntime {
+        let (_ws, mut lowered) = al_sema::lower::compile(apps, symbols);
+        for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
+            app.publisher = m.publisher.clone();
+            app.version = m.version.clone();
+        }
         let blocked = lowered
             .unsupported
             .iter()

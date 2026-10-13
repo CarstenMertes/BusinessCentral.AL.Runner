@@ -47,6 +47,12 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
         Value::Time(t) if standard == 2 => format_time_12h(t - 1),
         Value::DateTime(t) if standard == 2 || standard == 9 => format_datetime(t - 1, standard),
         Value::DateFormula(f) => f.clone(),
+        // A Version reads `major.minor.build.revision` (session/TestBCPlatformContracts.al:120-136
+        // compares the formatted AppVersion with the manifest's `1.0.0.0`).
+        Value::Library(name, l) if name == "Version" => match &*l.borrow() {
+            crate::value::LibraryValue::Version(v) => format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]),
+            _ => return Err("Format of a Version nobody set".into()),
+        },
         // A SessionSettings renders its contents; the layout is not pinned, only that it shows the
         // time zone and differs when a property differs (session/TestSessionSettings.al:457-493).
         Value::Library(name, l) if name == "SessionSettings" => match &*l.borrow() {

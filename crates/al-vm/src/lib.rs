@@ -78,8 +78,9 @@ pub struct Session {
     pub(crate) page_handler_depth: usize,
     /// `CodeCoverageLog` is recording.
     pub(crate) code_coverage: bool,
-    /// The object whose routine is running (builtins scoped to an app read its app).
-    pub(crate) current_object: usize,
+    /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
+    /// `NavApp.GetCallerModuleInfo`).
+    pub(crate) frames: Vec<usize>,
     /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
@@ -155,7 +156,7 @@ impl Session {
             committed_row_version: 0,
             page_handler_depth: 0,
             code_coverage: false,
-            current_object: 0,
+            frames: Vec::new(),
             isolated_storage: Default::default(),
             install_scope: false,
             sequences: Default::default(),
@@ -229,6 +230,25 @@ impl Session {
     }
 
     /// A fresh instance of codeunit `object` with default globals.
+    /// What `ModuleInfo` reports for app `index` of the program, from its manifest.
+    fn module_of_app(&self, index: usize) -> Option<al_builtins::value::ModuleInfoState> {
+        let app = self.engine.program.apps.get(index)?;
+        let version = {
+            let parts: Vec<Option<i32>> = app.version.split('.').map(|p| p.parse().ok()).collect();
+            match parts.as_slice() {
+                [Some(a), Some(b), Some(c), Some(d)] => Some([*a, *b, *c, *d]),
+                _ => None,
+            }
+        };
+        Some(al_builtins::value::ModuleInfoState {
+            id: ops::parse_guid(&app.id)?,
+            name: app.name.clone(),
+            publisher: app.publisher.clone(),
+            version,
+            dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
+        })
+    }
+
     /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
     pub fn set_install_scope(&mut self, on: bool) {
         self.install_scope = on;
@@ -327,9 +347,9 @@ impl Session {
         };
         let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
         self.try_depth += usize::from(is_try);
-        let caller = std::mem::replace(&mut self.current_object, object);
+        self.frames.push(object);
         let outcome = self.exec_block(&r.body, &mut frame);
-        self.current_object = caller;
+        self.frames.pop();
         self.try_depth -= usize::from(is_try);
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
@@ -856,6 +876,39 @@ impl al_builtins::native::Ctx for Session {
     }
     fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
+    }
+    fn module_at_frame(&self, depth: usize) -> Option<al_builtins::value::ModuleInfoState> {
+        let at = self.frames.len().checked_sub(1 + depth)?;
+        self.module_of_app(self.engine.program.objects[self.frames[at]].app as usize)
+    }
+    fn module_callstack(&self, skip: usize) -> Vec<al_builtins::value::ModuleInfoState> {
+        let mut seen = Vec::new();
+        let mut out = Vec::new();
+        for obj in self.frames.iter().rev().skip(skip) {
+            let app = self.engine.program.objects[*obj].app as usize;
+            if !seen.contains(&app) {
+                seen.push(app);
+                out.extend(self.module_of_app(app));
+            }
+        }
+        out
+    }
+    fn module_by_id(&self, id: &[u8; 16]) -> al_builtins::native::ModuleLookup {
+        use al_builtins::native::ModuleLookup;
+        let apps = &self.engine.program.apps;
+        let parse = |s: &str| ops::parse_guid(s);
+        if let Some(i) = apps.iter().position(|a| parse(&a.id).as_ref() == Some(id)) {
+            if let Some(m) = self.module_of_app(i) {
+                return ModuleLookup::Found(m);
+            }
+        }
+        if apps
+            .iter()
+            .any(|a| a.dependencies.iter().any(|d| parse(d).as_ref() == Some(id)))
+        {
+            return ModuleLookup::OutsideWorkspace;
+        }
+        ModuleLookup::NotInstalled
     }
     fn workspace_table(&self, number: i32) -> bool {
         self.engine

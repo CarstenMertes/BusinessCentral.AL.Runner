@@ -187,7 +187,7 @@ impl Session {
     fn storage_scope(&self, scope: Option<&Value>) -> Result<String, Signal> {
         // The module is the app that owns the code calling IsolatedStorage, not the app that raised
         // the event it handles (session/TestIsolatedStoragePerApp.al:140-160).
-        let app = self.engine.program.objects[self.current_object].app;
+        let app = self.frames.last().map_or(0, |o| self.engine.program.objects[*o].app);
         match scope {
             None => Ok(format!("app{app}")),
             Some(Value::Option(0, _)) => Ok(format!("app{app}")),

@@ -38,7 +38,20 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         })
         .collect();
     let mut out = Lowered {
-        program: ir::Program::default(),
+        program: ir::Program {
+            objects: Vec::new(),
+            apps: ws
+                .apps
+                .iter()
+                .map(|a| ir::AppInfo {
+                    id: a.id.clone(),
+                    name: a.name.clone(),
+                    publisher: String::new(),
+                    version: String::new(),
+                    dependencies: a.dependencies.clone(),
+                })
+                .collect(),
+        },
         unsupported: Vec::new(),
         calls: Vec::new(),
     };

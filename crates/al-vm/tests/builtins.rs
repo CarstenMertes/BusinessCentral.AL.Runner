@@ -764,3 +764,135 @@ fn isolated_storage_takes_secret_text_and_refuses_the_user_scopes() {
     let r = storage("IsolatedStorage.Set('k', 'x', DataScope::User); exit('');");
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+// ---------------------------------------------------------------- NavApp module info
+
+const DEP_ID: &str = "f1e2d3c4-b5a6-7890-fedc-ba9876543210";
+const MAIN_ID: &str = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
+/// Two apps: `dep` (a callee codeunit) and `main` (depends on it, holds the test code).
+fn run_two_apps(dep_src: &str, main_src: &str, routine: &str) -> Result<Value, Signal> {
+    let (ws, mut l) = al_sema::lower::compile(
+        vec![
+            AppSource {
+                id: DEP_ID.into(),
+                name: "Dependency".into(),
+                dependencies: vec![],
+                files: vec![("d.al".into(), dep_src.into())],
+            },
+            AppSource {
+                id: MAIN_ID.into(),
+                name: "Main".into(),
+                dependencies: vec![DEP_ID.into(), "63ca2fa4-4f03-4f2b-a480-172fef340d3f".into()],
+                files: vec![("m.al".into(), main_src.into())],
+            },
+        ],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    // The runner patches what only the manifests know.
+    l.program.apps[0].publisher = "Dep Publisher".into();
+    l.program.apps[0].version = "2.3.4.5".into();
+    l.program.apps[1].publisher = "Main Publisher".into();
+    l.program.apps[1].version = "1.0.0.0".into();
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l
+        .program
+        .objects
+        .iter()
+        .position(|o| o.routines.iter().any(|r| r.name == routine))
+        .expect("object");
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == routine)
+        .unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
+}
+
+const CALLEE: &str = "codeunit 60384 Callee {
+    procedure OwnName(): Text var i: ModuleInfo; begin NavApp.GetCurrentModuleInfo(i); exit(i.Name()); end;
+    procedure OwnId(): Guid var i: ModuleInfo; begin NavApp.GetCurrentModuleInfo(i); exit(i.Id()); end;
+    procedure CallerName(): Text var i: ModuleInfo; begin NavApp.GetCallerModuleInfo(i); exit(i.Name()); end;
+    procedure CallerInfos(): List of [ModuleInfo] begin exit(NavApp.GetCallerCallstackModuleInfos()); end;
+    procedure CallerInfosThroughOwnFrame(): List of [ModuleInfo] begin exit(Inner()); end;
+    local procedure Inner(): List of [ModuleInfo] begin exit(NavApp.GetCallerCallstackModuleInfos()); end;
+}";
+
+fn module_text(body: &str) -> Result<String, Signal> {
+    let main = format!(
+        "codeunit 50100 T {{ procedure F(): Text var c: Codeunit Callee; i: ModuleInfo; j: ModuleInfo; v: Version; a: Text; ids: List of [ModuleInfo]; g: Guid; begin {body} end; }}"
+    );
+    match run_two_apps(CALLEE, &main, "F")? {
+        Value::Text(s) => Ok(s),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn module_info_reports_the_manifest_of_the_running_app() {
+    // session/TestBCPlatformContracts.al:100-130 (Id, Name, AppVersion match app.json),
+    // session/TestMiscTypes.al:100-150 (AppVersion, PackageId, DataVersion), TestNavAppExtended.al.
+    let r = module_text(
+        "NavApp.GetCurrentModuleInfo(i);
+         v := i.AppVersion();
+         Evaluate(g, '{a1b2c3d4-e5f6-7890-abcd-ef1234567890}');
+         exit(i.Name() + '|' + i.Publisher() + '|' + Format(i.Id() = g) + '|'
+              + Format(v.Major()) + Format(v.Minor()) + Format(v) + '|' + Format(IsNullGuid(i.PackageId())) + Format(i.PackageId() = i.Id())
+              + '|' + Format(i.Dependencies().Count()));",
+    );
+    assert_eq!(r.unwrap(), "Main|Main Publisher|Yes|101.0.0.0|NoNo|2");
+}
+
+#[test]
+fn get_module_info_finds_installed_apps_and_names_an_unknown_id() {
+    // session/TestNavAppExtended.al:94-150.
+    let r = module_text(
+        "NavApp.GetCurrentModuleInfo(i);
+         a := Format(NavApp.GetModuleInfo(i.Id(), j)) + Format(j.Name() = i.Name());
+         a += Format(NavApp.GetModuleInfo('00000000-dead-beef-0000-000000000004', j));
+         ClearLastError();
+         asserterror NavApp.GetModuleInfo('00000000-dead-beef-0000-000000000002', j);
+         exit(a + '|' + GetLastErrorText());",
+    );
+    let r = r.unwrap();
+    assert!(r.starts_with("YesYesNo|"), "{r}");
+    assert!(r.contains("No installed extension was found with ID"), "{r}");
+    assert!(r.contains("00000000-dead-beef-0000-000000000002"), "{r}");
+}
+
+#[test]
+fn a_manifest_dependency_outside_the_workspace_is_refused_not_called_missing() {
+    let r = module_text("NavApp.GetModuleInfo('63ca2fa4-4f03-4f2b-a480-172fef340d3f', j); exit('');");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+#[test]
+fn the_callee_in_another_app_sees_its_own_module_and_its_caller() {
+    // session/TestNavAppModuleInfoCallerIdentity.al:35-100 and TestNavAppCallerCallstackModuleInfos.al:25-100.
+    let r = module_text(
+        "NavApp.GetCurrentModuleInfo(i);
+         a := c.OwnName() + ',' + c.CallerName() + '|';
+         ids := c.CallerInfos();
+         j := ids.Get(1);
+         a += Format(ids.Count() >= 1) + Format(j.Id() = i.Id()) + '|';
+         ids := c.CallerInfosThroughOwnFrame();
+         a += Format(ids.Count()) + ',' + Format(ids.Get(1).Id() = c.OwnId()) + Format(ids.Get(2).Id() = i.Id());
+         exit(a);",
+    );
+    assert_eq!(r.unwrap(), "Dependency,Main|YesYes|2,YesYes");
+}
+
+#[test]
+fn is_installing_is_false_in_test_code() {
+    // session/TestNavAppExtended.al, session/TestBCPlatformContracts.al:IsInstalling.
+    let r = module_text("exit(Format(NavApp.IsInstalling()));");
+    assert_eq!(r.unwrap(), "No");
+}

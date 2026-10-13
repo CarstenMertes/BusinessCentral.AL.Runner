@@ -23,6 +23,15 @@ pub enum Signal {
     Unsupported(String),
 }
 
+/// What `NavApp.GetModuleInfo` finds.
+pub enum ModuleLookup {
+    Found(crate::value::ModuleInfoState),
+    /// No app of the workspace has this id and none of its manifests names it.
+    NotInstalled,
+    /// An app a manifest names as a dependency, which is not part of the workspace.
+    OutsideWorkspace,
+}
+
 /// What builtins need from the running session.
 pub trait Ctx: FormatCtx {
     fn last_error(&self) -> AlError;
@@ -52,6 +61,21 @@ pub trait Ctx: FormatCtx {
     /// the call's arguments, with `var` parameters written back in place.
     fn session_op(&mut self, id: &str, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id} needs a session")))
+    }
+    /// The app of the routine `depth` frames out on the call stack: 0 is the routine that runs the
+    /// builtin, 1 its caller. `None` when there is no such frame (the caller of a test is the test
+    /// runner) or the app's manifest has no readable id.
+    fn module_at_frame(&self, _depth: usize) -> Option<crate::value::ModuleInfoState> {
+        None
+    }
+    /// The distinct apps of the frames on the call stack, innermost first, leaving out the
+    /// `skip` innermost frames.
+    fn module_callstack(&self, _skip: usize) -> Vec<crate::value::ModuleInfoState> {
+        Vec::new()
+    }
+    /// The installed app with this id.
+    fn module_by_id(&self, _id: &[u8; 16]) -> ModuleLookup {
+        ModuleLookup::NotInstalled
     }
     /// Whether table `number` (`Database::"Name"`) is declared in the workspace.
     fn workspace_table(&self, _number: i32) -> bool {
@@ -203,6 +227,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .chain(crate::datefns::REGISTRY)
         .chain(crate::mathfns::REGISTRY)
         .chain(crate::sessionfns::REGISTRY)
+        .chain(crate::moduleinfo::REGISTRY)
 }
 
 /// Implementations chosen per catalog signature instead of being listed by id
@@ -223,6 +248,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                     .or_else(|| crate::errorinfo::native_for(sig))
                     .or_else(|| crate::version::native_for(sig))
                     .or_else(|| crate::datatransfer::native_for(sig))
+                    .or_else(|| crate::moduleinfo::native_for(sig))
                     .or_else(|| crate::sessiontypes::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })

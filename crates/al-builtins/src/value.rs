@@ -311,6 +311,18 @@ pub struct ErrorInfoState {
     pub custom_dimensions: Vec<(String, String)>,
 }
 
+/// What a `ModuleInfo` reports: an app's manifest (corpus session/TestNavAppExtended.al,
+/// session/TestBCPlatformContracts.al, session/TestMiscTypes.al).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleInfoState {
+    pub id: [u8; 16],
+    pub name: String,
+    pub publisher: String,
+    /// `None` when the manifest gave none the runtime can read.
+    pub version: Option<[i32; 4]>,
+    pub dependencies: Vec<[u8; 16]>,
+}
+
 /// The global variables of one codeunit instance.
 #[derive(Debug, Default)]
 pub struct Instance {
@@ -348,6 +360,8 @@ pub enum LibraryValue {
     SessionSettings(SessionSettingsState),
     /// A `Notification` that has been written to (an untouched one is `Empty`).
     Notification(NotificationState),
+    /// A `ModuleInfo`: what one app reports about itself.
+    ModuleInfo(ModuleInfoState),
     /// A `DataTransfer` that `SetTables` staged: (source table, destination table).
     DataTransfer(Option<(i32, i32)>),
     /// A `Version`: major, minor, build, revision.

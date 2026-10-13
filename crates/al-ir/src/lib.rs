@@ -7,6 +7,22 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Program {
     pub objects: Vec<Object>,
+    /// The apps the objects belong to, in the order the compiler was given them (`Object::app`
+    /// indexes this). Publisher and version come from the runner, which reads the manifests.
+    #[serde(default)]
+    pub apps: Vec<AppInfo>,
+}
+
+/// What `NavApp.GetCurrentModuleInfo` reports about an app.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AppInfo {
+    pub id: String,
+    pub name: String,
+    pub publisher: String,
+    /// `1.0.0.0`.
+    pub version: String,
+    /// Ids of the apps it depends on.
+    pub dependencies: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -407,6 +423,7 @@ mod tests {
     #[test]
     fn program_round_trips_through_serde() {
         let p = Program {
+            apps: vec![],
             objects: vec![Object {
                 kind: "codeunit".into(),
                 id: Some(50100),

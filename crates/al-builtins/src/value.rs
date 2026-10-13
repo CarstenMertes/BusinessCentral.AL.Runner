@@ -80,6 +80,11 @@ pub struct RecordState {
     /// Field values in the table's field order.
     pub fields: Vec<Value>,
     pub filters: Vec<crate::filter::FieldFilter>,
+    /// The filter group `SetRange` and `SetFilter` write to and `GetFilter` reads.
+    pub filter_group: i32,
+    /// Primary keys marked with `Mark(true)`, and whether `MarkedOnly` restricts the set to them.
+    pub marks: Vec<Vec<Value>>,
+    pub marked_only: bool,
     /// Index of the current key in the table's keys.
     pub key: usize,
     pub ascending: bool,
@@ -111,6 +116,13 @@ pub enum LibraryValue {
     /// A `RecordRef` opened on a system table the workspace has no schema for:
     /// only its number is known (corpus recordref/TestRecordRefOpenCompilationTarget.al).
     SystemTable(i64),
+    /// A `RecordId`: table object index and number, table name (for `Format`), primary key values.
+    RecordId {
+        table: u32,
+        table_no: u32,
+        name: String,
+        key: Vec<Value>,
+    },
 }
 
 impl Value {

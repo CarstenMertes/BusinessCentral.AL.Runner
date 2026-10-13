@@ -153,6 +153,166 @@ impl Session {
             "FieldName" => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone())),
             "FieldCaption" => self.field_caption_checked(t, arg_pos(args, 0)?).map(Value::Text),
             "FieldNo" => Ok(Value::Integer(t.fields[arg_pos(args, 0)?].id as i32)),
+            "RecordId" => Ok(self.record_id(rec, t)),
+            "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
+            // Without an argument, whether the current row is marked; with one, marks or unmarks it.
+            // What the call returns then (the previous state?) is not pinned, so a used result is refused.
+            "Mark" => {
+                let pk = t.primary_key(&rec.borrow().fields);
+                let at = rec.borrow().marks.iter().position(|m| ops::compare_keys(m, &pk));
+                match args.first() {
+                    None => Ok(Value::Boolean(at.is_some())),
+                    Some(_) if self.ret_used => unsupported("a used result of Mark(SetMark) (not pinned)"),
+                    Some(v) => {
+                        let want = ops::truthy(v)?;
+                        let mut r = rec.borrow_mut();
+                        match (want, at) {
+                            (true, None) => r.marks.push(pk),
+                            (false, Some(i)) => {
+                                r.marks.remove(i);
+                            }
+                            _ => {}
+                        }
+                        Ok(Value::Null)
+                    }
+                }
+            }
+            "MarkedOnly" => match args.first() {
+                None => Ok(Value::Boolean(rec.borrow().marked_only)),
+                Some(v) => {
+                    rec.borrow_mut().marked_only = ops::truthy(v)?;
+                    Ok(Value::Null)
+                }
+            },
+            "ClearMarks" => {
+                rec.borrow_mut().marks.clear();
+                Ok(Value::Null)
+            }
+            // The bounds of a range filter on the field in the current group. With no filter BC raises an
+            // error whose text the corpus does not pin (record/TestFilterContracts.al:190-211): refused.
+            "GetRangeMin" | "GetRangeMax" => {
+                use al_builtins::filter::FilterExpr as F;
+                let pos = arg_pos(args, 0)?;
+                let r = rec.borrow();
+                let Some(f) = r.filters.iter().find(|f| f.field == pos && f.group == r.filter_group) else {
+                    return unsupported(format!("{method} without a filter (error text not pinned)"));
+                };
+                match (&f.expr, method) {
+                    (F::Range(Some(lo), _), "GetRangeMin") | (F::Eq(lo), "GetRangeMin") => Ok(lo.clone()),
+                    (F::Range(_, Some(hi)), "GetRangeMax") | (F::Eq(hi), "GetRangeMax") => Ok(hi.clone()),
+                    _ => unsupported(format!("{method} of a filter that is not a single range")),
+                }
+            }
+            "GetBySystemId" => self.get_by_system_id(rec, t, args),
+            "ModifyAll" => self.modify_all(rec, t, args),
+            // Doc (Record.Ascending): with an argument sets the sort direction of the current key,
+            // without one reads it (corpus record/TestRecordSort.al:111, TestCopyOntoTemporaryRecord.al).
+            "Ascending" => match args.first() {
+                None => Ok(Value::Boolean(rec.borrow().ascending)),
+                Some(v) => {
+                    rec.borrow_mut().ascending = ops::truthy(v)?;
+                    Ok(Value::Null)
+                }
+            },
+            // The key's field names (corpus record/TestCopyOntoTemporaryRecord.al:93 `'No.'`,
+            // TestBCMetadataContracts.al:196-208 contains the names).
+            "CurrentKey" => {
+                let key = rec.borrow().key;
+                Ok(Value::Text(
+                    t.keys[key]
+                        .iter()
+                        .map(|&p| t.fields[p].name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(","),
+                ))
+            }
+            "HasFilter" => Ok(Value::Boolean(Self::has_filter(rec))),
+            "GetFilters" => self.get_filters(rec, t).map(Value::Text),
+            "GetFilter" => self.field_filter_text(rec, arg_pos(args, 0)?).map(Value::Text),
+            "GetView" => {
+                let use_names = match args.first() {
+                    Some(v) => ops::truthy(v)?,
+                    None => true,
+                };
+                self.get_view(rec, t, use_names).map(Value::Text)
+            }
+            "SetView" => {
+                let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
+                self.set_view(rec, t, &view).map(|()| Value::Null)
+            }
+            // Returns the group in use before the call (docs/probes-needed.md); without an argument, the current one.
+            "FilterGroup" => {
+                let mut r = rec.borrow_mut();
+                let before = r.filter_group;
+                if let Some(v) = args.first() {
+                    r.filter_group = match v {
+                        Value::Integer(n) => *n,
+                        other => return unsupported(format!("FilterGroup({other:?})")),
+                    };
+                }
+                Ok(Value::Integer(before))
+            }
+            // Doc (Record.SetRecFilter): filters the primary key fields to the current values. Whether
+            // filters on other fields are kept is not pinned, so they refuse.
+            "SetRecFilter" => {
+                let group = rec.borrow().filter_group;
+                let pk = &t.keys[0];
+                if rec.borrow().filters.iter().any(|f| !pk.contains(&f.field)) {
+                    return unsupported(
+                        "SetRecFilter with filters on other fields (whether they are kept is not pinned)",
+                    );
+                }
+                let mut r = rec.borrow_mut();
+                r.filters.retain(|f| !pk.contains(&f.field));
+                for &p in pk {
+                    let v = r.fields[p].clone();
+                    r.filters.push(al_builtins::filter::FieldFilter {
+                        field: p,
+                        expr: al_builtins::filter::FilterExpr::Range(Some(v.clone()), Some(v)),
+                        group,
+                    });
+                }
+                Ok(Value::Null)
+            }
+            "CopyFilters" => {
+                let Some(Value::Record(src)) = args.first() else {
+                    return unsupported(format!("CopyFilters from {:?}", args.first()));
+                };
+                if !Rc::ptr_eq(src, rec) {
+                    let filters = src.borrow().filters.clone();
+                    rec.borrow_mut().filters = filters;
+                }
+                Ok(Value::Null)
+            }
+            // Doc (Record.Copy) and corpus record/TestCopyOntoTemporaryRecord.al:66-110: the buffer, filters,
+            // key and direction come over; a temporary target keeps its own rows and stays temporary.
+            "Copy" => {
+                let Some(Value::Record(src)) = args.first() else {
+                    return unsupported(format!("Copy from {:?}", args.first()));
+                };
+                let share = match args.get(1) {
+                    Some(v) => ops::truthy(v)?,
+                    None => false,
+                };
+                if Rc::ptr_eq(src, rec) {
+                    return Ok(Value::Null);
+                }
+                let s = src.borrow().clone();
+                let mut d = rec.borrow_mut();
+                if s.temporary && !d.temporary {
+                    return unsupported("Copy from a temporary record onto a normal one (not pinned)");
+                }
+                d.fields = s.fields;
+                d.filters = s.filters;
+                d.filter_group = s.filter_group;
+                d.key = s.key;
+                d.ascending = s.ascending;
+                d.position = s.position;
+                if share && s.temporary {
+                    d.temp_id = s.temp_id;
+                }
+                Ok(Value::Null)
+            }
             "TestField" => self.test_field(rec, t, args),
             "FieldError" => self.field_error(rec, t, args),
             "Truncate" => self.truncate(rec, t, args),
@@ -200,6 +360,103 @@ impl Session {
             }
         }
         Ok(Value::Null)
+    }
+
+    /// `GetBySystemId(Guid)`: loads the row holding that SystemId; a miss is `false`. A miss with the
+    /// result unused raises an error whose text the corpus does not pin: refused.
+    fn get_by_system_id(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
+        let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) else {
+            return unsupported("GetBySystemId on a table without SystemId");
+        };
+        let Some(Value::Guid(g)) = args.first() else {
+            return unsupported(format!("GetBySystemId of {:?}", args.first()));
+        };
+        let found = if *g == [0; 16] {
+            None
+        } else {
+            let filters = [al_builtins::filter::FieldFilter {
+                field: i,
+                expr: al_builtins::filter::FilterExpr::Eq(Value::Guid(*g)),
+                group: 0,
+            }];
+            let cx = self.cx.clone();
+            self.store_for(rec)
+                .next(
+                    &cx,
+                    t,
+                    &al_data::Scan {
+                        key: 0,
+                        filters: &filters,
+                        ascending: true,
+                        after: None,
+                    },
+                )
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+        };
+        match found {
+            Some(row) => {
+                rec.borrow_mut().fields = row;
+                Ok(Value::Boolean(true))
+            }
+            None if self.ret_used => Ok(Value::Boolean(false)),
+            None => unsupported("GetBySystemId of a missing row without using the result (error text not pinned)"),
+        }
+    }
+
+    /// `ModifyAll(Field, Value [, RunTrigger])`: every row passing the filters, as they stand when
+    /// the call starts, gets the value through `Modify(RunTrigger)`; the buffer is left alone
+    /// (corpus record/TestRecordModify.al:87-170, TestTriggerContracts.al:123-146).
+    fn modify_all(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
+        let pos = arg_pos(args, 0)?;
+        if t.fields[pos].id == 2_000_000_000 {
+            // Wording after the pinned fragment: record/TestRecordSystemId.al:230-262, docs/probes-needed.md.
+            return Err(error(
+                "ModifyAll cannot change the value of the SystemId field.".into(),
+                "Dialog",
+            ));
+        }
+        let value = ops::convert(args.get(1).cloned().unwrap_or(Value::Null), &t.fields[pos].ty)?;
+        let run_trigger = match args.get(2) {
+            Some(v) => ops::truthy(v)?,
+            None => false,
+        };
+        let mut rows = Vec::new();
+        let (key, mut after) = (rec.borrow().key, None);
+        while let Some(row) = self.scan(rec, t, true, after.take())? {
+            after = Some(al_data::position(t, key, &row));
+            rows.push(row);
+        }
+        for mut row in rows {
+            row[pos] = value.clone();
+            let copy = {
+                let r = rec.borrow();
+                RecordState {
+                    fields: row,
+                    filters: Vec::new(),
+                    marks: Vec::new(),
+                    marked_only: false,
+                    position: None,
+                    ..r.clone()
+                }
+            };
+            let copy = Rc::new(RefCell::new(copy));
+            self.record_op("Modify", &copy, &mut [Value::Boolean(run_trigger)])?;
+        }
+        Ok(Value::Null)
+    }
+
+    /// The `RecordId` of the row in `rec`'s buffer: the table and its primary key values.
+    pub(crate) fn record_id(&self, rec: &Rec, t: &TableDef) -> Value {
+        let key = t.primary_key(&rec.borrow().fields);
+        Value::Library(
+            "RecordId".into(),
+            Rc::new(RefCell::new(al_builtins::value::LibraryValue::RecordId {
+                table: t.object,
+                table_no: self.engine.program.objects[t.object as usize].id.unwrap_or(0),
+                name: t.name.clone(),
+                key,
+            })),
+        )
     }
 
     /// `FieldError(Field, Text)`: `<caption> <text> in <table>: <key>.` A bare `FieldError(Field)`

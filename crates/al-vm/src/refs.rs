@@ -77,6 +77,11 @@ impl Session {
             "RecordRef" => self.recordref_op(&sig.name, &lib, args),
             "FieldRef" => self.fieldref_op(&sig.name, &lib, args),
             "KeyRef" => self.keyref_op(&sig.name, &lib, args),
+            "RecordId" => match (&*lib.borrow(), sig.name.as_str()) {
+                (LibraryValue::RecordId { table_no, .. }, "TableNo") => Ok(Value::Integer(*table_no as i32)),
+                (LibraryValue::Empty, "TableNo") => Ok(Value::Integer(0)),
+                (_, other) => unsupported(format!("RecordId.{other}")),
+            },
             other => unsupported(format!("{other} methods")),
         }
     }
@@ -171,7 +176,7 @@ impl Session {
             // corpus recordref/TestRecordRefGetSet.al:16-30 pins only that it is not empty.
             "CurrentCompany" => Ok(Value::Text(self.cx.company.clone())),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
-            "HasFilter" => Ok(Value::Boolean(!rec.borrow().filters.is_empty())),
+            "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
             "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
             "GetView" => {
                 let use_names = match args.first() {
@@ -185,6 +190,24 @@ impl Session {
                 self.set_view(&rec, &t, &view).map(|()| Value::Null)
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
+            "RecordId" => Ok(self.record_id(&rec, &t)),
+            // Doc (RecordRef.Get): loads the row a RecordId names; the table must be the ref's own.
+            "Get" => {
+                let key = match args.first() {
+                    Some(Value::Library(_, l)) => match &*l.borrow() {
+                        LibraryValue::RecordId { table, key, .. } if *table == t.object => key.clone(),
+                        LibraryValue::RecordId { .. } => {
+                            return unsupported(
+                                "RecordRef.Get of a RecordId of another table (error text not pinned yet)",
+                            );
+                        }
+                        other => return unsupported(format!("RecordRef.Get of {other:?}")),
+                    },
+                    other => return unsupported(format!("RecordRef.Get of {other:?}")),
+                };
+                let mut a = key;
+                self.record_op("Get", &rec, &mut a)
+            }
             "Duplicate" => {
                 if rec.borrow().temporary {
                     return unsupported("Duplicate of a temporary RecordRef (shared table not pinned)");
@@ -203,12 +226,7 @@ impl Session {
                 }
             }
             "IsEmpty" | "Count" | "Init" | "Insert" | "Modify" | "Delete" | "DeleteAll" | "Find" | "FindFirst"
-            | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => {
-                if method == "Insert" && args.len() > 1 {
-                    return unsupported("RecordRef.Insert with InsertWithSystemId");
-                }
-                self.record_op(method, &rec, args)
-            }
+            | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(method, &rec, args),
             "Field" => {
                 let no = int_arg(args, 0)?;
                 match t.fields.iter().position(|f| i64::from(f.id) == no) {

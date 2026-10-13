@@ -27,6 +27,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.Init#1",
     "RecordRef.Insert#1",
     "RecordRef.Insert#2",
+    "RecordRef.Insert#3",
     "RecordRef.Modify#1",
     "RecordRef.Delete#1",
     "RecordRef.DeleteAll#1",
@@ -50,6 +51,9 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.GetView#1",
     "RecordRef.SetView#1",
     "RecordRef.Duplicate#1",
+    "RecordRef.RecordId#1",
+    "RecordRef.Get#1",
+    "RecordId.TableNo#1",
     "RecordRef.SystemIdNo#1",
     "RecordRef.SystemCreatedAtNo#1",
     "RecordRef.SystemCreatedByNo#1",
@@ -108,12 +112,15 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
 
 macro_rules! record_methods {
     ($($id:literal => $m:literal),* $(,)?) => {
-        &[$(($id, (|c: &mut dyn Ctx, r, a| c.record($m, r, a)) as NativeFn)),*]
+        pub const RECORD_REGISTRY: &[(&str, NativeFn)] =
+            &[$(($id, (|c: &mut dyn Ctx, r, a| c.record($m, r, a)) as NativeFn)),*];
+        /// Each Record overload id with the record method it forwards to.
+        pub const RECORD_METHODS: &[(&str, &str)] = &[$(($id, $m)),*];
     };
 }
 
-/// Record builtins that read table metadata or guard on session state.
-pub const RECORD_REGISTRY: &[(&str, NativeFn)] = record_methods![
+// Record builtins that read table metadata or guard on session state.
+record_methods! {
     "Record.TestField#1" => "TestField",
     "Record.TestField#3" => "TestField",
     "Record.TestField#5" => "TestField",
@@ -132,9 +139,30 @@ pub const RECORD_REGISTRY: &[(&str, NativeFn)] = record_methods![
     "Record.FieldNo#1" => "FieldNo",
     "Record.TableCaption#1" => "TableCaption",
     "Record.TableName#1" => "TableName",
+    "Record.RecordId#1" => "RecordId",
+    "Record.Insert#3" => "Insert",
+    "Record.Mark#1" => "Mark",
+    "Record.MarkedOnly#1" => "MarkedOnly",
+    "Record.ClearMarks#1" => "ClearMarks",
+    "Record.GetRangeMin#1" => "GetRangeMin",
+    "Record.GetRangeMax#1" => "GetRangeMax",
+    "Record.GetBySystemId#1" => "GetBySystemId",
+    "Record.ModifyAll#1" => "ModifyAll",
+    "Record.IsTemporary#1" => "IsTemporary",
+    "Record.Ascending#1" => "Ascending",
+    "Record.CurrentKey#1" => "CurrentKey",
+    "Record.HasFilter#1" => "HasFilter",
+    "Record.GetFilters#1" => "GetFilters",
+    "Record.GetFilter#1" => "GetFilter",
+    "Record.GetView#1" => "GetView",
+    "Record.SetView#1" => "SetView",
+    "Record.FilterGroup#1" => "FilterGroup",
+    "Record.SetRecFilter#1" => "SetRecFilter",
+    "Record.CopyFilters#1" => "CopyFilters",
+    "Record.Copy#1" => "Copy",
     "Record.FieldError#1" => "FieldError",
     "Record.FieldError#2" => "FieldError",
-];
+}
 
 #[cfg(test)]
 mod tests {
@@ -170,21 +198,8 @@ mod tests {
             params(id);
         }
         // The Record overloads forward to a method name: it must be the id's own method.
-        for (id, _) in RECORD_REGISTRY {
-            let name = &cat.by_id(id).unwrap().name;
-            assert!(
-                [
-                    "TestField",
-                    "Truncate",
-                    "FieldCaption",
-                    "FieldName",
-                    "FieldNo",
-                    "TableCaption",
-                    "TableName",
-                    "FieldError"
-                ]
-                .contains(&name.as_str())
-            );
+        for (id, method) in RECORD_METHODS {
+            assert_eq!(&cat.by_id(id).unwrap().name, method, "{id}");
         }
         // No ErrorInfo overload of TestField or FieldError is registered.
         for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {

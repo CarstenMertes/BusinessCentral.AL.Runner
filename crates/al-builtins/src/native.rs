@@ -108,7 +108,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsDictionary#1", |_, r, _| is(r, "Dictionary")),
     ("Variant.IsCodeunit#1", |_, r, _| is(r, "Codeunit")),
     // Kinds the value model has no variant for yet are never true.
-    ("Variant.IsRecordId#1", |_, _, _| Ok(Value::Boolean(false))),
+    ("Variant.IsRecordId#1", |_, r, _| is(r, "RecordId")),
     ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
     ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
@@ -284,7 +284,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     *v = match v {
         Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
         // Clearing a RecordRef/FieldRef/KeyRef closes it: a fresh, unopened handle.
-        Value::Library(name, _) if matches!(name.as_str(), "RecordRef" | "FieldRef" | "KeyRef") => {
+        Value::Library(name, _) if matches!(name.as_str(), "RecordRef" | "FieldRef" | "KeyRef" | "RecordId") => {
             Value::Library(name.clone(), Default::default())
         }
         Value::Boolean(_) => Value::Boolean(false),

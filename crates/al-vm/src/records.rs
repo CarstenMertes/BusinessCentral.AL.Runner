@@ -192,18 +192,21 @@ impl Session {
         self.call(object, routine, inst, Vec::new()).map(|_| ())
     }
 
-    /// Every write gets a new, increasing SystemRowVersion.
-    fn bump_row_version(&mut self, t: &TableDef, rec: &Rec) {
-        if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
-            self.next_row_version += 1;
-            rec.borrow_mut().fields[i] = Value::BigInteger(self.next_row_version);
-        }
+    /// Every write gets a new, increasing SystemRowVersion. It is returned, not stored: a
+    /// refused write must not hand the buffer one (corpus record/TestRowVersion*, 60247).
+    fn next_row_version(&mut self, t: &TableDef) -> Option<(usize, Value)> {
+        let i = t.fields.iter().position(|f| f.id == 2_000_000_005)?;
+        self.next_row_version += 1;
+        Some((i, Value::BigInteger(self.next_row_version)))
     }
 
-    fn assign_system_id(&mut self, t: &TableDef, rec: &Rec) {
+    /// Gives the row its SystemId: the one in the buffer when `keep` (`Insert(_, true)`) and it is
+    /// set, otherwise a fresh one (corpus record/TestRecordInsert.al:84-110).
+    fn assign_system_id(&mut self, t: &TableDef, rec: &Rec, keep: bool) {
         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) {
             let mut r = rec.borrow_mut();
-            if matches!(r.fields[i], Value::Guid(g) if g == [0; 16]) {
+            let unset = matches!(r.fields[i], Value::Guid(g) if g == [0; 16]);
+            if unset || !keep {
                 // Deterministic ids (ADR-006: no OS randomness in the core).
                 self.next_guid += 1;
                 let mut g = [0u8; 16];
@@ -214,31 +217,98 @@ impl Session {
         }
     }
 
-    fn scan(
+    pub(crate) fn scan(
         &mut self,
         rec: &Rec,
         t: &TableDef,
         ascending: bool,
         after: Option<Vec<Value>>,
     ) -> Result<Option<Vec<Value>>, Signal> {
-        let (key, filters) = {
+        let (key, filters, marked_only) = {
             let r = rec.borrow();
-            (r.key, r.filters.clone())
+            (r.key, r.filters.clone(), r.marked_only)
         };
         let cx = self.cx.clone();
-        let store = self.store_for(rec);
-        store
-            .next(
-                &cx,
-                t,
-                &Scan {
-                    key,
-                    filters: &filters,
-                    ascending,
-                    after: after.as_deref(),
-                },
-            )
-            .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))
+        let mut after = after;
+        loop {
+            let found = self
+                .store_for(rec)
+                .next(
+                    &cx,
+                    t,
+                    &Scan {
+                        key,
+                        filters: &filters,
+                        ascending,
+                        after: after.as_deref(),
+                    },
+                )
+                .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+            // MarkedOnly narrows the set to the marked rows (corpus record/TestRecordFind.al:258-290).
+            match found {
+                Some(row) if marked_only && !Self::is_marked(rec, t, &row) => after = Some(position(t, key, &row)),
+                other => return Ok(other),
+            }
+        }
+    }
+
+    fn is_marked(rec: &Rec, t: &TableDef, row: &[Value]) -> bool {
+        let pk = t.primary_key(row);
+        rec.borrow()
+            .marks
+            .iter()
+            .any(|m| key_cmp(m, &pk) == std::cmp::Ordering::Equal)
+    }
+
+    /// Rows passing the filters (and the marks, with `MarkedOnly`).
+    fn count_rows(&mut self, rec: &Rec, t: &TableDef) -> Result<usize, Signal> {
+        if !rec.borrow().marked_only {
+            let filters = rec.borrow().filters.clone();
+            let cx = self.cx.clone();
+            return self
+                .store_for(rec)
+                .count(&cx, t, &filters)
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")));
+        }
+        let (key, mut n, mut after) = (rec.borrow().key, 0, None);
+        while let Some(row) = self.scan(rec, t, true, after.take())? {
+            n += 1;
+            after = Some(position(t, key, &row));
+        }
+        Ok(n)
+    }
+
+    /// Refuses an explicit SystemId another row already holds. The wording after the pinned
+    /// fragments is docs/probes-needed.md (record/TestRecordSystemId.al:86-168, TestAutoIncrementEdges.al:282).
+    fn check_system_id_unique(&mut self, rec: &Rec, t: &TableDef) -> Result<(), Signal> {
+        let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) else {
+            return Ok(());
+        };
+        let id = rec.borrow().fields[i].clone();
+        let filters = [FieldFilter {
+            field: i,
+            expr: FilterExpr::Eq(id.clone()),
+            group: 0,
+        }];
+        let cx = self.cx.clone();
+        let taken = self
+            .store_for(rec)
+            .count(&cx, t, &filters)
+            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+        if taken == 0 {
+            return Ok(());
+        }
+        Err(Signal::Error(AlError {
+            message: format!(
+                "There is already a record in table {} that has the same values in a unique index. \
+                 The conflict is in the following fields: {}='{}'.",
+                self.caption(t),
+                self.field_caption(t, i),
+                al_builtins::format::format(&id, 0, 0, self)
+            ),
+            code: "DB:RecordExists".into(),
+            call_stack: String::new(),
+        }))
     }
 
     fn load(rec: &Rec, row: Vec<Value>) {
@@ -278,6 +348,7 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 r.fields = fresh;
                 r.filters.clear();
+                r.filter_group = 0;
                 r.key = 0;
                 r.ascending = true;
                 r.position = None;
@@ -299,15 +370,30 @@ impl Session {
                         self.run_trigger(t.object as usize, tr, rec, None)?;
                     }
                 }
-                self.assign_system_id(&t, rec);
-                self.bump_row_version(&t, rec);
-                let row = rec.borrow().fields.clone();
+                let keep_id = match args.get(1) {
+                    Some(v) => ops::truthy(v)?,
+                    None => false,
+                };
+                self.assign_system_id(&t, rec, keep_id);
+                if keep_id {
+                    self.check_system_id_unique(rec, &t)?;
+                }
+                let mut row = rec.borrow().fields.clone();
+                let version = self.next_row_version(&t);
+                if let Some((i, v)) = &version {
+                    row[*i] = v.clone();
+                }
                 match self
                     .store_for(rec)
                     .insert(&cx, &t, row.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
-                    InsertOutcome::Inserted => Ok(Value::Boolean(true)),
+                    InsertOutcome::Inserted => {
+                        if let Some((i, v)) = version {
+                            rec.borrow_mut().fields[i] = v;
+                        }
+                        Ok(Value::Boolean(true))
+                    }
                     InsertOutcome::AlreadyExists => self.fail(&t, &row, true),
                 }
             }
@@ -320,17 +406,34 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
                 if arg_bool(args, 0)? {
                     if let Some(tr) = self.table_trigger(&t, "OnModify") {
-                        self.run_trigger(t.object as usize, tr, rec, stored)?;
+                        self.run_trigger(t.object as usize, tr, rec, stored.clone())?;
                     }
                 }
-                self.bump_row_version(&t, rec);
-                let row = rec.borrow().fields.clone();
+                let mut row = rec.borrow().fields.clone();
+                // Modify never changes the stored SystemId, whatever the buffer carries
+                // (corpus record/TestRecordSystemId.al:176-215, :285-330).
+                if let Some(old) = &stored {
+                    for id in [2_000_000_000, 2_000_000_001, 2_000_000_002] {
+                        if let Some(i) = t.fields.iter().position(|f| f.id == id) {
+                            row[i] = old[i].clone();
+                        }
+                    }
+                }
+                let version = self.next_row_version(&t);
+                if let Some((i, v)) = &version {
+                    row[*i] = v.clone();
+                }
                 match self
                     .store_for(rec)
                     .modify(&cx, &t, row.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
-                    WriteOutcome::Done => Ok(Value::Boolean(true)),
+                    WriteOutcome::Done => {
+                        if let Some((i, v)) = version {
+                            rec.borrow_mut().fields[i] = v;
+                        }
+                        Ok(Value::Boolean(true))
+                    }
                     WriteOutcome::NotFound => self.fail(&t, &row, false),
                 }
             }
@@ -450,11 +553,7 @@ impl Session {
                 Ok(Value::Integer(if steps < 0 { -moved } else { moved }))
             }
             "Count" | "IsEmpty" => {
-                let filters = rec.borrow().filters.clone();
-                let n = self
-                    .store_for(rec)
-                    .count(&cx, &t, &filters)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                let n = self.count_rows(rec, &t)?;
                 Ok(if method == "Count" {
                     Value::Integer(n as i32)
                 } else {
@@ -465,7 +564,8 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let mut r = rec.borrow_mut();
-                r.filters.retain(|f| f.field != pos);
+                let group = r.filter_group;
+                r.filters.retain(|f| !(f.field == pos && f.group == group));
                 if let Some(from) = args.get(1) {
                     let from = ops::convert(from.clone(), &ty)?;
                     let to = match args.get(2) {
@@ -475,6 +575,7 @@ impl Session {
                     r.filters.push(FieldFilter {
                         field: pos,
                         expr: FilterExpr::Range(Some(from), Some(to)),
+                        group,
                     });
                 }
                 Ok(Value::Null)
@@ -486,8 +587,13 @@ impl Session {
                 let expr = al_builtins::filter::parse_filter(&text, &args[2..], &ty)
                     .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?;
                 let mut r = rec.borrow_mut();
-                r.filters.retain(|f| f.field != pos);
-                r.filters.push(FieldFilter { field: pos, expr });
+                let group = r.filter_group;
+                r.filters.retain(|f| !(f.field == pos && f.group == group));
+                r.filters.push(FieldFilter {
+                    field: pos,
+                    expr,
+                    group,
+                });
                 Ok(Value::Null)
             }
             "Reset" => {
@@ -568,15 +674,23 @@ impl Session {
                 if let Some(tr) = self.table_trigger(&t, "OnRename") {
                     self.run_trigger(t.object as usize, tr, rec, Some(old.clone()))?;
                 }
-                self.bump_row_version(&t, rec);
-                let row = rec.borrow().fields.clone();
+                let mut row = rec.borrow().fields.clone();
+                let version = self.next_row_version(&t);
+                if let Some((i, v)) = &version {
+                    row[*i] = v.clone();
+                }
                 let old_pk = t.primary_key(&old);
                 match self
                     .store_for(rec)
                     .rename(&cx, &t, &old_pk, row.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
-                    RenameOutcome::Renamed => Ok(Value::Boolean(true)),
+                    RenameOutcome::Renamed => {
+                        if let Some((i, v)) = version {
+                            rec.borrow_mut().fields[i] = v;
+                        }
+                        Ok(Value::Boolean(true))
+                    }
                     RenameOutcome::NotFound => {
                         rec.borrow_mut().fields = old.clone();
                         self.fail(&t, &old, false)

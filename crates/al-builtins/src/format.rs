@@ -41,6 +41,16 @@ pub fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Str
         Value::DateFormula(f) => f.clone(),
         // Time, DateTime, Duration and reference types get their formats with
         // the corpus tests that pin them.
+        // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs
+        // the key values in it; the layout is docs/probes-needed.md).
+        Value::Library(_, l) => match &*l.borrow() {
+            crate::value::LibraryValue::RecordId { name, key, .. } => {
+                let key: Vec<String> = key.iter().map(|k| format(k, 0, 0, ctx)).collect();
+                format!("{name}: {}", key.join(","))
+            }
+            crate::value::LibraryValue::Empty => String::new(),
+            other => unimplemented!("Format of {other:?}"),
+        },
         other => unimplemented!("Format of {other:?}"),
     };
     pad(s, length)

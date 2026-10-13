@@ -328,6 +328,8 @@ impl Parser<'_> {
 pub struct FieldFilter {
     pub field: usize,
     pub expr: FilterExpr,
+    /// The filter group it was set in (`FilterGroup(n)`); every group applies at once.
+    pub group: i32,
 }
 
 /// Total order on key tuples (field-wise `compare`; incomparable counts as equal).

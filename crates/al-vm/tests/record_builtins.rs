@@ -294,3 +294,317 @@ codeunit 50100 C { procedure F(): Text var R: Record T; RR: RecordRef; begin RR.
     let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
     assert_eq!(text(r), "New A|Orig B|New A");
 }
+
+#[test]
+fn ascending_current_key_and_is_temporary() {
+    // corpus record/TestRecordSort.al:111-112 (default true), TestSortingKeyContracts.al:224,
+    // TestCopyOntoTemporaryRecord.al:89-93 (CurrentKey is the key's field names)
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; T: Record \"ALT T\" temporary; s: Text; begin
+            s := Format(R.Ascending()) + '|' + R.CurrentKey() + '|';
+            R.Ascending(false);
+            R.SetCurrentKey(Grp);
+            s += Format(R.Ascending()) + '|' + R.CurrentKey() + '|' + Format(R.IsTemporary()) + Format(T.IsTemporary);
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes|No.|No|Grp,No.|NoYes");
+}
+
+#[test]
+fn filters_read_back_per_field_and_in_total() {
+    // corpus record/TestCopyOntoTemporaryRecord.al:91-92 ('<>L0001', 'Included'), TestFilterAdvancedContracts.al:204-211
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin
+            s := Format(R.HasFilter()) + '[' + R.GetFilters() + ']';
+            R.SetRange(Grp, 1, 3);
+            R.SetFilter(\"No.\", '<>%1', 'A');
+            s += Format(R.HasFilter()) + R.GetFilter(Grp) + '|' + R.GetFilter(\"No.\") + '|' + R.GetFilter(Descr) + '|' + R.GetFilters();
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "No[]Yes1..3|<>A||No.: <>A, Grp: 1..3");
+}
+
+#[test]
+fn getview_setview_round_trip_and_setrecfilter() {
+    // corpus record/TestFilterAdvancedContracts.al:125-141,144-160, TestRecordFilter.al:344-385
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; R2: Record \"ALT T\"; i: Integer; s: Text; begin
+            for i := 1 to 5 do begin R.\"No.\" := Format(i); R.Grp := i; R.Insert(); end;
+            R.SetRange(Grp, 2, 4);
+            s := Format(R.GetView() <> '') + Format(StrPos(R.GetView(true), 'Grp') > 0);
+            R2.SetView(R.GetView());
+            s += Format(R2.Count()) + R2.GetView(false);
+            R.Reset();
+            R.Get('5');
+            R.SetRecFilter();
+            s += '|' + Format(R.Count()) + R.GetFilter(\"No.\") + Format(R.HasFilter());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "YesYes3SORTING(Field1) WHERE(Field3=FILTER(2..4))|1".to_string() + "5Yes"
+    );
+}
+
+#[test]
+fn copy_filters_and_copy_onto_a_temporary_record() {
+    // corpus record/TestFilterContracts.al:137-152 (CopyFilters), TestCopyOntoTemporaryRecord.al:66-110
+    let r = run(
+        "procedure F(): Text var Src: Record \"ALT T\"; B: Record \"ALT T\" temporary; C: Record \"ALT T\"; i: Integer; s: Text; begin
+            for i := 1 to 4 do begin B.\"No.\" := 'T' + Format(i); B.Grp := i; B.Insert(); end;
+            Src.\"No.\" := 'S1'; Src.Insert();
+            Src.SetCurrentKey(Grp);
+            Src.Ascending(false);
+            Src.SetFilter(Grp, '>1');
+            B.Copy(Src);
+            s := Format(B.IsTemporary) + Format(B.Count()) + B.GetFilter(Grp) + '|' + B.CurrentKey() + Format(B.Ascending());
+            B.FindFirst();
+            s += B.\"No.\";
+            C.CopyFilters(Src);
+            s += '|' + Format(C.Count());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes3>1|Grp,No.NoT4|0");
+}
+
+#[test]
+fn filter_groups_combine_as_and_and_reset_clears_all() {
+    // corpus record/TestFilterContracts.al:98-113,154-175, TestFilterAdvancedContracts.al:181-212,
+    // TestRecordFilter.al:270-305
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; i: Integer; s: Text; begin
+            for i := 1 to 5 do begin R.\"No.\" := Format(i); R.Grp := i; R.Insert(); end;
+            s := Format(R.FilterGroup());
+            R.FilterGroup(2);
+            s += Format(R.FilterGroup());
+            R.SetRange(Grp, 1, 3);
+            s += '|' + R.GetFilter(Grp);
+            R.FilterGroup(0);
+            s += '|' + R.GetFilter(Grp) + '|' + Format(R.Count());
+            R.SetRange(Grp, 2, 5);
+            s += '|' + Format(R.Count()) + R.GetFilter(Grp);
+            R.Reset();
+            s += '|' + Format(R.Count());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "02|1..3||3|22..5|5");
+}
+
+#[test]
+fn setrecfilter_with_a_filter_on_another_field_is_refused_not_guessed() {
+    let r = run(
+        "procedure F() var R: Record \"ALT T\"; begin R.SetRange(Grp, 1); R.\"No.\" := 'A'; R.SetRecFilter(); end;",
+        "F",
+    );
+    assert!(
+        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("SetRecFilter")),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn insert_with_system_id_keeps_the_assigned_id_and_get_by_system_id_finds_the_row() {
+    // corpus record/TestRecordInsert.al:84-110, TestRecordSystemId.al:10-60,285-330
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; F: Record \"ALT T\"; G: Guid; s: Text; begin
+            G := CreateGuid();
+            R.\"No.\" := 'A'; R.SystemId := G; R.Insert(false, true);
+            s := Format(R.SystemId = G);
+            R.\"No.\" := 'B'; R.SystemId := G; R.Insert(false, false);
+            s += Format(R.SystemId = G) + Format(IsNullGuid(R.SystemId));
+            s += '|' + Format(F.GetBySystemId(G)) + F.\"No.\" + Format(F.GetBySystemId(CreateGuid()));
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesNoNo|YesANo");
+}
+
+#[test]
+fn a_duplicate_system_id_is_refused_until_the_row_is_gone() {
+    // corpus record/TestRecordSystemId.al:86-168 ('unique index', the caption and the quoted value),
+    // :330-400 (a deleted or deleted-all row frees its id)
+    let m = error_text(
+        "R.\"No.\" := 'B'; R.SystemId := CreateGuid(); R.Insert(false, true); R.\"No.\" := 'C'; R.Insert(false, true);",
+    );
+    assert!(m.contains("unique index"), "{m}");
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; S: Record \"ALT T\"; G: Guid; begin
+            G := CreateGuid();
+            R.\"No.\" := 'A'; R.SystemId := G; R.Insert(false, true);
+            R.Delete();
+            S.\"No.\" := 'B'; S.SystemId := G; S.Insert(false, true);
+            exit(Format(R.GetBySystemId(G)) + R.\"No.\");
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesB");
+    // The error names the field by its caption and quotes the formatted value.
+    let m = text(run(
+        "procedure F(): Text var R: Record \"ALT T\"; S: Record \"ALT T\"; G: Guid; begin
+            G := CreateGuid();
+            R.\"No.\" := 'A'; R.SystemId := G; R.Insert(false, true);
+            S.\"No.\" := 'B'; S.SystemId := G; asserterror S.Insert(false, true);
+            exit(GetLastErrorText() + '#' + Format(G));
+        end;",
+        "F",
+    ));
+    let (msg, g) = m.split_once('#').unwrap();
+    assert!(msg.contains(&format!("the following fields: System ID='{g}'")), "{msg}");
+}
+
+#[test]
+fn modify_never_changes_the_stored_system_id() {
+    // corpus record/TestRecordSystemId.al:176-215,285-300: the buffer's SystemId is not written
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; F: Record \"ALT T\"; A: Guid; B: Guid; begin
+            R.\"No.\" := 'A'; R.Insert(); A := R.SystemId; Clear(R);
+            R.\"No.\" := 'B'; R.Insert(); B := R.SystemId;
+            R.Get('A');
+            R.\"No.\" := 'B'; R.Grp := 42; R.Modify();
+            F.Get('B');
+            exit(Format(F.SystemId = B) + Format(F.Grp) + Format(F.GetBySystemId(A)) + F.\"No.\");
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes42YesA");
+}
+
+#[test]
+fn a_refused_write_hands_the_buffer_no_row_version() {
+    // corpus record/TestRowVersion*: 60247 RefusedInsert_/RefusedModify_LeavesRecordWithoutRowVersion
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; D: Record \"ALT T\"; begin
+            R.\"No.\" := 'A'; R.Insert();
+            D.\"No.\" := 'A';
+            D.Insert();
+            exit(Format(D.SystemRowVersion));
+        end;",
+        "F",
+    );
+    // Insert() without using the result raises on a duplicate; the buffer stays at 0.
+    assert!(matches!(r, Err(Signal::Error(_))), "{r:?}");
+    let r = run(
+        "procedure F(): BigInteger var R: Record \"ALT T\"; D: Record \"ALT T\"; begin
+            R.\"No.\" := 'A'; R.Insert();
+            D.\"No.\" := 'A';
+            if not D.Insert() then;
+            exit(D.SystemRowVersion);
+        end;",
+        "F",
+    );
+    assert!(matches!(r, Ok(Value::BigInteger(0))), "{r:?}");
+}
+
+#[test]
+fn modify_all_updates_every_filtered_row_and_refuses_system_id() {
+    // corpus record/TestRecordModify.al:87-142, TestRecordSystemId.al:215-270
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; C: Record \"ALT T\"; i: Integer; begin
+            for i := 1 to 5 do begin R.\"No.\" := Format(i); R.Grp := i; R.Insert(); end;
+            R.SetRange(Grp, 1, 3);
+            R.ModifyAll(Grp, 77, true);
+            C.SetRange(Grp, 77);
+            exit(Format(C.Count()) + Format(R.Count()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "30");
+    let m = error_text("R.ModifyAll(SystemId, CreateGuid());");
+    assert!(m.contains("cannot change the value of the SystemId field"), "{m}");
+}
+
+#[test]
+fn get_range_min_and_max_read_the_set_range() {
+    // corpus record/TestFilterContracts.al:214-235, TestRecordFilter.al:436-458
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; begin
+            R.SetRange(Grp, 5, 10);
+            exit(Format(R.GetRangeMin(Grp)) + '|' + Format(R.GetRangeMax(Grp)));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "5|10");
+    // Without a filter BC raises an error whose text the corpus does not pin: refused.
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; begin exit(Format(R.GetRangeMin(Grp))); end;",
+        "F",
+    );
+    assert!(
+        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("GetRangeMin")),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn marks_restrict_the_set_when_marked_only() {
+    // corpus record/TestRecordFind.al:225-300, TestRecordNavContracts.al:283-302
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; i: Integer; begin
+            for i := 1 to 3 do begin R.\"No.\" := Format(i); R.Insert(); end;
+            R.MarkedOnly(true);
+            s := Format(R.FindFirst());
+            R.MarkedOnly(false);
+            R.Get('2');
+            R.Mark(true);
+            s += Format(R.Mark());
+            R.MarkedOnly(true);
+            R.FindFirst();
+            s += R.\"No.\" + Format(R.Count());
+            R.Mark(false);
+            s += Format(R.FindFirst());
+            R.MarkedOnly(false);
+            R.Get('1'); R.Mark(true); R.Get('3'); R.Mark(true);
+            R.MarkedOnly(true);
+            s += Format(R.Count());
+            R.ClearMarks();
+            s += Format(R.Count());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "NoYes21No20");
+}
+
+#[test]
+fn a_table_of_table_type_temporary_is_temporary_for_every_variable_and_ref() {
+    // corpus record (60198) TempOnly_IsTemporary_AlwaysTrue: TableType = Temporary without the modifier
+    let src = r#"
+table 50940 "Temp Only" { TableType = Temporary; fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
+codeunit 50100 C { procedure F(): Text var R: Record "Temp Only"; S: Record "Temp Only"; RR: RecordRef; begin
+    R.K := 1; R.Insert();
+    RR.Open(50940);
+    exit(Format(R.IsTemporary) + Format(S.Count()) + Format(RR.IsTemporary())); end; }
+"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
+    assert_eq!(text(r), "Yes0Yes");
+}

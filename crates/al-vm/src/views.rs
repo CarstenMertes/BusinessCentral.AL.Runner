@@ -75,16 +75,28 @@ impl Session {
         let parts = r
             .filters
             .iter()
-            .filter(|f| f.field == pos)
+            .filter(|f| f.field == pos && f.group == r.filter_group)
             .map(|f| self.filter_text(&f.expr))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(parts.join(""))
     }
 
+    /// The filters of the current filter group, in field order.
     fn filters_in_field_order(rec: &Rec) -> Vec<FieldFilter> {
-        let mut v = rec.borrow().filters.clone();
+        let r = rec.borrow();
+        let mut v: Vec<FieldFilter> = r
+            .filters
+            .iter()
+            .filter(|f| f.group == r.filter_group)
+            .cloned()
+            .collect();
         v.sort_by_key(|f| f.field);
         v
+    }
+
+    /// Whether the current filter group has a filter (`HasFilter`).
+    pub(crate) fn has_filter(rec: &Rec) -> bool {
+        !Self::filters_in_field_order(rec).is_empty()
     }
 
     /// `GetFilters`: `Caption: filter` pairs joined by `, ` (docs/probes-needed.md).
@@ -136,6 +148,7 @@ impl Session {
         let mut key = None;
         let mut ascending = true;
         let mut filters: Vec<FieldFilter> = Vec::new();
+        let group = rec.borrow().filter_group;
         let mut rest = view.trim();
         while !rest.is_empty() {
             let open = rest
@@ -183,7 +196,11 @@ impl Session {
                         let expr = al_builtins::filter::parse_filter(value, &[], &ty)
                             .map_err(|e| Signal::Unsupported(format!("SetView: {e}")))?;
                         filters.retain(|f| f.field != pos);
-                        filters.push(FieldFilter { field: pos, expr });
+                        filters.push(FieldFilter {
+                            field: pos,
+                            expr,
+                            group,
+                        });
                     }
                 }
                 other => return unsupported(format!("view part {other}")),
@@ -191,7 +208,9 @@ impl Session {
             rest = after.trim();
         }
         let mut r = rec.borrow_mut();
-        r.filters = filters;
+        // The view replaces the filters of the current group; other groups stay.
+        r.filters.retain(|f| f.group != group);
+        r.filters.extend(filters);
         r.key = key.unwrap_or(0);
         r.ascending = ascending;
         Ok(())

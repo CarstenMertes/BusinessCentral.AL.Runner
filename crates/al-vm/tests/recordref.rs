@@ -400,3 +400,43 @@ fn fieldref_record_gives_the_same_buffer_back() {
     );
     assert_eq!(int(r), 9);
 }
+
+#[test]
+fn record_id_table_no_equality_format_and_variant() {
+    // corpus record/TestRecordRecordId.al:14-56, recordref/TestBCMetadataContracts.al:98-150,
+    // types/TestVariantExtended.al:123-130
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; A: RecordId; B: RecordId; V: Variant; s: Text; begin
+            R.\"No.\" := 'X1'; R.Grp := 1; R.Insert();
+            R.\"No.\" := 'X2'; R.Insert();
+            R.Get('X1'); A := R.RecordId();
+            R.Get('X1'); B := R.RecordId();
+            s := Format(A = B) + Format(A.TableNo());
+            R.Get('X2'); B := R.RecordId();
+            s += Format(A = B) + '|' + Format(A);
+            V := A;
+            s += '|' + Format(V.IsRecordId());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes50900No|ALT T: X1|Yes");
+}
+
+#[test]
+fn recordref_recordid_and_get_by_recordid() {
+    // corpus recordref/TestRecordRefKeys.al:35-52 (RecRef.Get(Rec.RecordId())), TestRecordRefGetSet.al:32-50
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; s: Text; begin
+            R.\"No.\" := 'X1'; R.Grp := 11; R.Insert();
+            R.\"No.\" := 'X2'; R.Grp := 22; R.Insert();
+            RR.Open(50900);
+            s := Format(RR.Get(R.RecordId())) + Format(RR.Field(3).Value());
+            R.Get('X1');
+            s += Format(RR.RecordId() = R.RecordId());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes22No");
+}

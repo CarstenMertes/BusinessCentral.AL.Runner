@@ -76,6 +76,10 @@ pub struct Session {
     depth: usize,
     /// Page handler functions running right now (`[PageHandler]`, `[ModalPageHandler]`).
     pub(crate) page_handler_depth: usize,
+    /// `CodeCoverageLog` is recording.
+    pub(crate) code_coverage: bool,
+    /// An install codeunit is running.
+    install_scope: bool,
     /// Number sequences by (company, name); a global sequence has an empty company.
     pub(crate) sequences: std::collections::HashMap<(String, String), sessionops::Sequence>,
     /// The one instance of each `SingleInstance = true` codeunit in this session.
@@ -146,6 +150,8 @@ impl Session {
             error_finals: None,
             committed_row_version: 0,
             page_handler_depth: 0,
+            code_coverage: false,
+            install_scope: false,
             sequences: Default::default(),
             ui: None,
             saved_values: std::collections::HashMap::new(),
@@ -217,6 +223,11 @@ impl Session {
     }
 
     /// A fresh instance of codeunit `object` with default globals.
+    /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
+    pub fn set_install_scope(&mut self, on: bool) {
+        self.install_scope = on;
+    }
+
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
         let tys: Vec<RtType> = self.engine.program.objects[object]
             .globals
@@ -837,6 +848,16 @@ impl al_builtins::native::Ctx for Session {
     }
     fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
+    }
+    fn workspace_table(&self, number: i32) -> bool {
+        self.engine
+            .program
+            .objects
+            .iter()
+            .any(|o| o.kind == "table" && o.id.is_some_and(|id| i64::from(id) == i64::from(number)))
+    }
+    fn install_scope(&self) -> bool {
+        self.install_scope
     }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())

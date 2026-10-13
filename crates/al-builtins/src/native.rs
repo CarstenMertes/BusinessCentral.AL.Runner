@@ -53,6 +53,14 @@ pub trait Ctx: FormatCtx {
     fn session_op(&mut self, id: &str, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id} needs a session")))
     }
+    /// Whether table `number` (`Database::"Name"`) is declared in the workspace.
+    fn workspace_table(&self, _number: i32) -> bool {
+        false
+    }
+    /// Whether an install codeunit is running (DataTransfer works there and only there).
+    fn install_scope(&self) -> bool {
+        false
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -214,6 +222,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                     .or_else(|| crate::wsac::native_for(sig))
                     .or_else(|| crate::errorinfo::native_for(sig))
                     .or_else(|| crate::version::native_for(sig))
+                    .or_else(|| crate::datatransfer::native_for(sig))
                     .or_else(|| crate::sessiontypes::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })

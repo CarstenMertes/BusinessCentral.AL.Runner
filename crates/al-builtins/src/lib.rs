@@ -11,6 +11,7 @@ pub mod xml;
 
 pub mod catalog;
 pub mod collections;
+pub mod datatransfer;
 pub mod datefns;
 pub mod errorinfo;
 pub mod evaluate;

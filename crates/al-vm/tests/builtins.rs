@@ -620,3 +620,62 @@ fn a_version_is_read_by_evaluate_and_split_in_parts() {
     );
     assert_eq!(r.unwrap(), "1234|8");
 }
+
+// ---------------------------------------------------------------- DataTransfer, CodeCoverageLog
+
+fn transfer(body: &str) -> Result<String, Signal> {
+    let src = format!(
+        "table 50900 \"DT Src\" {{ fields {{ field(1; Id; Integer) {{ }} }} keys {{ key(PK; Id) {{ }} }} }}
+         table 50901 \"DT Dst\" {{ fields {{ field(1; Id; Integer) {{ }} }} keys {{ key(PK; Id) {{ }} }} }}
+         codeunit 50100 C {{ procedure F(): Text var DT: DataTransfer; a: Text; begin {body} end; }}"
+    );
+    match run(&src, "F")? {
+        Value::Text(s) => Ok(s),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn data_transfer_outside_upgrade_says_which_of_the_two_things_is_wrong() {
+    // install/TestDataTransferContracts.al:44-160: a call before SetTables asks for SetTables; after it,
+    // every staging or copying call says the transfer is for upgrade and install code only.
+    let r = transfer(
+        "asserterror DT.AddFieldValue(1, 1); a := GetLastErrorText();
+         asserterror DT.CopyRows(); a += '|' + GetLastErrorText();
+         DT.SetTables(Database::\"DT Src\", Database::\"DT Dst\");
+         asserterror DT.AddFieldValue(1, 1); a += '|' + GetLastErrorText();
+         asserterror DT.AddConstantValue('x', 1); a += '|' + GetLastErrorText();
+         asserterror DT.AddSourceFilter(1, '=%1', 5); a += '|' + GetLastErrorText();
+         asserterror DT.AddDestinationFilter(1, '=%1', 5); a += '|' + GetLastErrorText();
+         asserterror DT.AddJoin(1, 1); a += '|' + GetLastErrorText();
+         asserterror DT.CopyFields(); a += '|' + GetLastErrorText();
+         asserterror DT.CopyRows(); a += '|' + GetLastErrorText();
+         exit(a);",
+    );
+    let first = "SetTables must first be called before calling other methods on DataTransfer.";
+    let later = "DataTransfer is only usable during upgrade and installation code.";
+    let want = format!("{first}|{first}|{later}|{later}|{later}|{later}|{later}|{later}|{later}");
+    assert_eq!(r.unwrap(), want);
+}
+
+#[test]
+fn data_transfer_with_a_table_outside_the_workspace_is_refused() {
+    let r = transfer("DT.SetTables(2000000001, Database::\"DT Dst\"); exit('');");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+#[test]
+fn code_coverage_log_reports_the_requested_state() {
+    // codeunit/TestCodeCoverageStartStop.al:30-102.
+    let r = text_of(
+        "a: Text; b: Boolean;",
+        "a := Format(CodeCoverageLog());
+         b := CodeCoverageLog(false, false); a += Format(b) + Format(CodeCoverageLog());
+         b := CodeCoverageLog(true, false); a += Format(b) + Format(CodeCoverageLog());
+         b := CodeCoverageLog(false, false); a += Format(b) + Format(CodeCoverageLog());
+         b := CodeCoverageLog(true); a += Format(b) + Format(CodeCoverageLog());
+         CodeCoverageLog(false);
+         exit(a + Format(CodeCoverageLog()));",
+    );
+    assert_eq!(r.unwrap(), "NoNoNoYesYesNoNoYesYesNo");
+}

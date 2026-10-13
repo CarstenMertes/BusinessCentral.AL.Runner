@@ -66,6 +66,19 @@ impl Session {
             // (session/TestDatabase.al:69-75, session/TestSessionFunctions.al:25).
             return Ok(Value::Text(self.cx.company.clone()));
         }
+        if id == "System.CodeCoverageLog#1" {
+            // With a state it records or stops and answers the state it was given; without one it
+            // answers whether it is recording (codeunit/TestCodeCoverageStartStop.al:30-102). The
+            // MultiSession flag changes nothing observable here.
+            return match args.first() {
+                None => Ok(Value::Boolean(self.code_coverage)),
+                Some(Value::Boolean(on)) => {
+                    self.code_coverage = *on;
+                    Ok(Value::Boolean(*on))
+                }
+                Some(other) => unsupported(format!("CodeCoverageLog with {other:?}")),
+            };
+        }
         let method = id.strip_prefix("NumberSequence.").and_then(|m| m.split('#').next());
         let Some(method) = method else {
             return unsupported(format!("builtin {id}"));

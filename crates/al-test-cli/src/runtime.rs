@@ -135,7 +135,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
         return all(Outcome::NotRun(format!("[{}] is not implemented yet", a.name)));
     }
     // What publishing the app does first: run its install codeunits, then commit.
+    session.set_install_scope(true);
     let skipped_installs = run_install_codeunits(lowered, &mut session);
+    session.set_install_scope(false);
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
     {

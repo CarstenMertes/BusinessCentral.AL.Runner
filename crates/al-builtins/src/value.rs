@@ -348,6 +348,8 @@ pub enum LibraryValue {
     SessionSettings(SessionSettingsState),
     /// A `Notification` that has been written to (an untouched one is `Empty`).
     Notification(NotificationState),
+    /// A `DataTransfer` that `SetTables` staged: (source table, destination table).
+    DataTransfer(Option<(i32, i32)>),
     /// A `Version`: major, minor, build, revision.
     Version([i32; 4]),
     /// An `ErrorInfo` (the zero-argument `Create` and `Create(Message, ...)` build one).

@@ -188,7 +188,7 @@ impl Session {
                     targets.push((s.clone(), inst));
                 }
             } else {
-                targets.push((s.clone(), self.static_instance(s.object)?));
+                targets.push((s.clone(), self.static_instance(s.object, s.routine)?));
             }
         }
         Ok(targets)
@@ -204,15 +204,17 @@ impl Session {
 
     /// The instance a static (automatic) subscriber runs on: the session's one
     /// instance for `SingleInstance` codeunits. Other codeunits would get a
-    /// fresh instance per event, which only matters if they keep global state;
-    /// that is not pinned by the corpus, so such subscribers are refused.
-    fn static_instance(&mut self, object: usize) -> Result<Inst, Signal> {
+    /// fresh instance per event, which only matters if the subscriber can observe
+    /// global state; that is not pinned by the corpus, so such subscribers are refused.
+    fn static_instance(&mut self, object: usize, routine: usize) -> Result<Inst, Signal> {
         let o = &self.engine.program.objects[object];
         let single = o
             .properties
             .iter()
             .any(|(k, v)| k.eq_ignore_ascii_case("SingleInstance") && v.trim().eq_ignore_ascii_case("true"));
-        if !single && !o.globals.is_empty() {
+        // A subscriber that cannot reach a global of its codeunit cannot tell which instance it
+        // runs on (`subscribers.rs`), so the open question does not touch it.
+        if !single && !o.globals.is_empty() && crate::subscribers::may_observe_globals(&self.engine, object, routine) {
             return unsupported(format!(
                 "subscriber codeunit {} keeps global variables: the lifetime of a static subscriber instance is not pinned",
                 o.name

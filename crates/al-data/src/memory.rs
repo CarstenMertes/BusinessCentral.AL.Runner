@@ -341,3 +341,68 @@ mod tests {
         crate::contract::snapshot_restores_everything(MemStore::default());
     }
 }
+
+#[cfg(test)]
+mod virtual_tests {
+    use super::*;
+    use al_builtins::value::RtType;
+    use std::rc::Rc;
+
+    /// A table that has one row, 7, and is served by a provider.
+    struct One;
+    impl VirtualTables for One {
+        fn serves(&self, t: &TableDef) -> bool {
+            t.name == "V"
+        }
+        fn get(&self, _: &AccessContext, _: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+            Ok(matches!(pk, [Value::Integer(7)]).then(|| vec![Value::Integer(7)]))
+        }
+        fn next(&self, _: &AccessContext, _: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+            Ok(scan.after.is_none().then(|| vec![Value::Integer(7)]))
+        }
+        fn count(&self, _: &AccessContext, _: &TableDef, _: &[FieldFilter]) -> Result<usize, StoreError> {
+            Ok(1)
+        }
+    }
+
+    fn table(name: &str) -> TableDef {
+        TableDef {
+            object: 0,
+            name: name.into(),
+            fields: vec![FieldDef {
+                id: 1,
+                name: "K".into(),
+                ty: RtType::Integer,
+                stored: true,
+            }],
+            keys: vec![vec![0]],
+            per_company: false,
+        }
+    }
+
+    #[test]
+    fn a_served_table_is_read_from_the_provider_and_never_written() {
+        let cx = AccessContext {
+            company: "C".into(),
+            user: "U".into(),
+        };
+        let mut s = MemStore::with_virtual_tables(Rc::new(One));
+        let v = table("V");
+        assert_eq!(s.count(&cx, &v, &[]), Ok(1));
+        assert!(s.get(&cx, &v, &[Value::Integer(7)]).unwrap().is_some());
+        assert!(s.get(&cx, &v, &[Value::Integer(8)]).unwrap().is_none());
+        for r in [
+            s.insert(&cx, &v, vec![Value::Integer(8)]).map(|_| ()),
+            s.modify(&cx, &v, vec![Value::Integer(7)]).map(|_| ()),
+            s.delete(&cx, &v, &[Value::Integer(7)]).map(|_| ()),
+            s.delete_all(&cx, &v, &[]).map(|_| ()),
+        ] {
+            assert!(matches!(r, Err(StoreError::Refused(_))), "{r:?}");
+        }
+        assert!(!s.has_uncommitted(), "a refused write leaves nothing pending");
+        // A table the provider does not serve is an ordinary stored table.
+        let w = table("W");
+        s.insert(&cx, &w, vec![Value::Integer(1)]).unwrap();
+        assert_eq!(s.count(&cx, &w, &[]), Ok(1));
+    }
+}

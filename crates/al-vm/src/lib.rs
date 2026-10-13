@@ -31,6 +31,7 @@ mod relations;
 mod rename;
 mod reports;
 mod sessionops;
+mod subscribers;
 mod transactions;
 mod ui;
 mod views;

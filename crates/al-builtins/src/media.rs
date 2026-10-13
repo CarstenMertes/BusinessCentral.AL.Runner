@@ -41,7 +41,7 @@ fn id_of(r: &Option<&mut Value>) -> Result<Id, Signal> {
     }
 }
 
-fn store<'a>(c: &'a mut dyn Ctx) -> Result<&'a mut MediaStore, Signal> {
+fn store(c: &mut dyn Ctx) -> Result<&mut MediaStore, Signal> {
     match c.media_store() {
         Some(s) => Ok(s),
         None => unsupported("media in a context without a media store"),

@@ -33,6 +33,15 @@ pub struct AppSource {
     pub files: Vec<(String, String)>,
 }
 
+/// Whether an app is the code being tested or a dependency it was compiled against.
+/// No test is discovered or run in a dependency (ADR-013 decision 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppKind {
+    #[default]
+    Workspace,
+    Dependency,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Diagnostic {
     pub file: String,
@@ -144,6 +153,8 @@ pub struct Workspace {
     pub files: Vec<SourceFileData>,
     pub objects: Vec<ObjectSym>,
     pub diagnostics: Vec<Diagnostic>,
+    /// The kind of each app, by index in `apps`.
+    pub kinds: Vec<AppKind>,
     /// For each app, the set of apps it can see (itself + transitive dependencies).
     visible: Vec<BTreeSet<usize>>,
     by_name: HashMap<(ObjKind, String), Vec<usize>>,
@@ -152,7 +163,15 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn load(apps: Vec<AppSource>, symbols: &BTreeSet<String>) -> Workspace {
+        let kinds = vec![AppKind::Workspace; apps.len()];
+        Workspace::load_apps(apps, kinds, symbols)
+    }
+
+    /// Like `load`, with the kind of each app.
+    pub fn load_apps(apps: Vec<AppSource>, kinds: Vec<AppKind>, symbols: &BTreeSet<String>) -> Workspace {
+        assert_eq!(apps.len(), kinds.len(), "one kind per app");
         let mut ws = Workspace {
+            kinds,
             visible: Vec::new(),
             files: Vec::new(),
             objects: Vec::new(),
@@ -369,6 +388,11 @@ impl Workspace {
             Err(_) => self.by_name.get(&(kind, name_or_id.to_lowercase())),
         };
         hits?.iter().find(visible).copied()
+    }
+
+    /// Whether object `i` belongs to a dependency app.
+    pub fn is_dependency(&self, i: usize) -> bool {
+        self.kinds[self.objects[i].app] == AppKind::Dependency
     }
 
     /// The syntax node of object `i`.

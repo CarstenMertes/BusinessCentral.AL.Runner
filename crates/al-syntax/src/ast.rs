@@ -674,6 +674,36 @@ tableextension 50100 Ext extends "Sales Header" { fields { field(50100; F; Integ
     }
 
     #[test]
+    fn variable_declarations_may_carry_attributes() {
+        // Microsoft's source: ItemVendor.Table.al, `[SecurityFiltering(SecurityFilter::Ignored)]`.
+        let f = file(
+            "codeunit 1 C { var [NonDebuggable] G: Text; procedure P() var [SecurityFiltering(SecurityFilter::Ignored)] R: Record Item; L: Integer; begin end; }",
+        );
+        let o = f.objects().next().unwrap();
+        assert_eq!(
+            o.var_decls().map(|v| v.names()).collect::<Vec<_>>(),
+            vec![vec!["G".to_string()]]
+        );
+        let r = o.routines().next().unwrap();
+        assert_eq!(
+            r.local_var_decls().map(|v| v.names()).collect::<Vec<_>>(),
+            vec![vec!["R".to_string()], vec!["L".to_string()]]
+        );
+    }
+
+    #[test]
+    fn dotnet_typed_variables_and_parameters_parse() {
+        // Microsoft's source declares .NET types as `DotNet Name` (System Application, 134 files).
+        let f = file(
+            "codeunit 1 C { var Conv: DotNet Convert; Plain: DotNet \"Dotted.Name\"; procedure P(X: DotNet String): DotNet Array begin end; }",
+        );
+        let o = f.objects().next().unwrap();
+        let types: Vec<_> = o.var_decls().map(|v| v.type_ref().unwrap().text()).collect();
+        assert_eq!(types, ["DotNet Convert", "DotNet \"Dotted.Name\""]);
+        assert_eq!(o.var_decls().next().unwrap().type_ref().unwrap().type_name(), "DotNet");
+    }
+
+    #[test]
     fn routine_signature_attributes_and_locals() {
         let o = file(SRC).objects().next().unwrap();
         let r = o.routines().next().unwrap();

@@ -10,4 +10,4 @@ pub mod relation;
 pub mod types;
 pub mod workspace;
 
-pub use workspace::{AppSource, Diagnostic, ObjKind, Resolution, Workspace};
+pub use workspace::{AppKind, AppSource, Diagnostic, ObjKind, Resolution, Workspace};

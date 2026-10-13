@@ -20,6 +20,8 @@ pub struct Lowered {
     pub unsupported: Vec<Vec<Vec<String>>>,
     /// Per object, per routine: the routines it calls directly, as (object, routine).
     pub calls: Vec<Vec<Vec<(usize, usize)>>>,
+    /// Per object: it belongs to a dependency app, so no test or install code of it runs (ADR-013).
+    pub dependency: Vec<bool>,
 }
 
 pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowered {
@@ -41,6 +43,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         program: ir::Program::default(),
         unsupported: Vec::new(),
         calls: Vec::new(),
+        dependency: (0..ws.objects.len()).map(|oi| ws.is_dependency(oi)).collect(),
     };
     // The table whose record is the implicit `Rec` of each object, and each table's extensions.
     let mut table_of: Vec<Option<usize>> = vec![None; ws.objects.len()];
@@ -1923,7 +1926,17 @@ pub fn compile(
     apps: Vec<crate::workspace::AppSource>,
     symbols: &std::collections::BTreeSet<String>,
 ) -> (Workspace, Lowered) {
-    let ws = Workspace::load(apps, symbols);
+    let kinds = vec![crate::workspace::AppKind::Workspace; apps.len()];
+    compile_apps(apps, kinds, symbols)
+}
+
+/// Like `compile`, with the kind of each app (dependency apps, ADR-013).
+pub fn compile_apps(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+) -> (Workspace, Lowered) {
+    let ws = Workspace::load_apps(apps, kinds, symbols);
     let members = crate::members::build(&ws);
     let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
     let lowered = lower(&ws, &members, &checked);

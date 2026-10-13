@@ -30,6 +30,7 @@ name = "al-deps"
 version = "0.1.0"
 dependencies = [
  "al-sema",
+ "al-syntax",
  "crc32fast",
  "flate2",
  "quick-xml",
@@ -79,6 +80,7 @@ version = "0.1.0"
 dependencies = [
  "al-builtins",
  "al-data",
+ "al-deps",
  "al-ir",
  "al-sema",
  "al-syntax",

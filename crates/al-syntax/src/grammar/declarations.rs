@@ -2,17 +2,42 @@
 
 use super::expressions::{arg_list, expr, is_reserved};
 use super::statements::block;
-use crate::SyntaxKind::*;
+use crate::SyntaxKind::{self, *};
 use crate::parser::Parser;
 
 pub(crate) fn var_section(p: &mut Parser) {
     p.start(VarSection);
     p.eat_kw("protected");
     p.expect_kw("var");
-    while at_var_decl_start(p) {
+    while at_var_decl_start(p) || at_attributed_var_decl(p) {
+        // Attributes sit before the declaration, as siblings of it in the section
+        // (`[SecurityFiltering(SecurityFilter::Ignored)] Rec: Record Item;`).
+        attributes(p);
         var_decl(p);
     }
     p.finish();
+}
+
+/// `[Attribute(...)] [More] Name:` -- attributes on a variable, as opposed to the
+/// attributes of the procedure that follows the section.
+fn at_attributed_var_decl(p: &Parser) -> bool {
+    let mut n = 0;
+    while p.nth(n) == LBrack {
+        let mut depth = 0;
+        loop {
+            match p.nth(n) {
+                LBrack => depth += 1,
+                RBrack => depth -= 1,
+                SyntaxKind::__Last => return false,
+                _ => {}
+            }
+            n += 1;
+            if depth == 0 {
+                break;
+            }
+        }
+    }
+    n > 0 && at_name(p, n) && matches!(p.nth(n + 1), Colon | Comma)
 }
 
 fn at_name(p: &Parser, n: usize) -> bool {
@@ -60,6 +85,8 @@ const OBJECT_TYPES: &[&str] = &[
     "enum",
     "interface",
     "testfield",
+    // `DotNet Convert`, `DotNet "Dotted.Name"`: Microsoft's apps declare .NET types by name.
+    "dotnet",
 ];
 
 pub(crate) fn type_ref(p: &mut Parser) {

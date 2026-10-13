@@ -52,7 +52,18 @@ pub struct CorpusRuntime {
 
 impl CorpusRuntime {
     pub fn run(apps: Vec<al_sema::workspace::AppSource>, symbols: &BTreeSet<String>) -> CorpusRuntime {
-        let (_ws, lowered) = al_sema::lower::compile(apps, symbols);
+        let kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+        CorpusRuntime::run_apps(apps, kinds, symbols)
+    }
+
+    /// Like `run`, with the kind of each app. Dependency apps are compiled but no test
+    /// is run in them (ADR-013 decision 4).
+    pub fn run_apps(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        symbols: &BTreeSet<String>,
+    ) -> CorpusRuntime {
+        let (_ws, lowered) = al_sema::lower::compile_apps(apps, kinds, symbols);
         let blocked = lowered
             .unsupported
             .iter()
@@ -63,6 +74,7 @@ impl CorpusRuntime {
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {
             let is_test = o.kind == "codeunit"
+                && !lowered.dependency[oi]
                 && o.properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
@@ -342,6 +354,7 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
     let mut skipped = Vec::new();
     for (oi, o) in lowered.program.objects.iter().enumerate() {
         let install = o.kind == "codeunit"
+            && !lowered.dependency[oi]
             && o.properties
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"));

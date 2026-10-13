@@ -3,7 +3,7 @@
 //! Exit codes: 0 ok, 1 regression against the baseline, 2 setup error
 //! (oracle and corpus disagree, unreadable input, bad arguments).
 
-use al_test_cli::{corpus, oracle, output, report, runner::Runner, runtime};
+use al_test_cli::{corpus, deps, oracle, output, report, runner::Runner, runtime};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -25,6 +25,10 @@ struct Args {
     markdown: Option<PathBuf>,
     junit: Option<PathBuf>,
     update_baseline: bool,
+    /// Extra directories of `.app` packages, searched after the project's `.alpackages`.
+    deps: Vec<PathBuf>,
+    /// Run without dependency apps (the corpus alone).
+    no_deps: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -44,6 +48,8 @@ fn parse_args() -> Result<Args, String> {
             "--markdown" => a.markdown = Some(val()?),
             "--junit" => a.junit = Some(val()?),
             "--update-baseline" => a.update_baseline = true,
+            "--deps" => a.deps.push(val()?),
+            "--no-deps" => a.no_deps = true,
             _ => return Err(format!("unknown argument `{flag}`")),
         }
     }
@@ -99,11 +105,22 @@ fn run() -> Result<ExitCode, String> {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let apps = vec![
-        runtime::load_app(&corpus_tests.join("al-language-internals-fixture"))?,
+    let fixture_dir = corpus_tests.join("al-language-internals-fixture");
+    let mut apps = vec![
+        runtime::load_app(&fixture_dir)?,
         runtime::load_app(&root.join(&cfg.corpus_app))?,
     ];
-    let rt = runtime::CorpusRuntime::run(apps, &symbols);
+    let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+    if !args.no_deps {
+        // Dependencies go after the corpus apps, so the corpus objects keep their positions.
+        let deps = deps::load(&root.join(&cfg.corpus_app), &[fixture_dir], &args.deps)?;
+        for line in &deps.log {
+            eprintln!("{line}");
+        }
+        kinds.extend(deps.apps.iter().map(|_| al_sema::AppKind::Dependency));
+        apps.extend(deps.apps);
+    }
+    let rt = runtime::CorpusRuntime::run_apps(apps, kinds, &symbols);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",

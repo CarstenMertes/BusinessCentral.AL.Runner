@@ -151,6 +151,12 @@ pub fn control_sections(obj: &ast::Object) -> Vec<ast::Section> {
 /// `src` with the synthetic routines of every page object appended, or `None`
 /// when no page has an expression-valued property.
 pub fn expand(src: &str, symbols: &BTreeSet<String>) -> Option<String> {
+    expand_ranges(src, symbols).map(|(text, _)| text)
+}
+
+/// `expand`, with the byte ranges of the added text in the returned text (source positions
+/// subtract them to give the author's lines).
+pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, Vec<(usize, usize)>)> {
     let parse = al_syntax::parse(src, symbols);
     let root = ast::SourceFile::cast(parse.syntax())?;
     let mut inserts: Vec<(usize, String)> = Vec::new();
@@ -184,10 +190,20 @@ pub fn expand(src: &str, symbols: &BTreeSet<String>) -> Option<String> {
         return None;
     }
     let mut out = src.to_string();
-    for (at, text) in inserts.into_iter().rev() {
-        out.insert_str(at, &text);
+    for (at, text) in inserts.iter().rev() {
+        out.insert_str(*at, text);
     }
-    Some(out)
+    // Each insert moves by the length of the ones before it.
+    let mut added = 0;
+    let ranges = inserts
+        .iter()
+        .map(|(at, text)| {
+            let r = (at + added, at + added + text.len());
+            added += text.len();
+            r
+        })
+        .collect();
+    Some((out, ranges))
 }
 
 /// A control found in the page's source, before bindings and routines are resolved.

@@ -455,10 +455,12 @@ fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
     if e.call_stack.is_empty() && !(e.message.is_empty() && e.code.is_empty()) {
-        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al); they are not
-        // tracked. The answer is non-empty, as in BC, but its content is a marker that every text
-        // function refuses to read ([`text_of`]), so a test that inspects the frames is not run
-        // while one that only calls the function (error-handling/TestGetLastError.al) still passes.
+        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al). The VM adds
+        // them as the error unwinds (al-vm/src/callstack.rs), so an error with no frame at all
+        // (raised outside any AL routine) is the only one that gets here. The answer is non-empty,
+        // as in BC, but its content is a marker that every text function refuses to read
+        // ([`text_of`]), so a test that inspects the frames is not run while one that only calls
+        // the function (error-handling/TestGetLastError.al) still passes.
         return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string()));
     }
     Ok(Value::Text(e.call_stack))
@@ -837,8 +839,9 @@ pub(crate) mod tests {
 
     #[test]
     fn the_call_stack_of_a_recorded_error_is_refused_not_invented() {
-        // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`; call
-        // stacks are not tracked: after an error the answer is a marker no text function reads.
+        // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`. The VM
+        // fills them in (al-vm/tests/call_stack.rs); an error that has no frame gets a marker no
+        // text function reads.
         let mut ctx = TestCtx::default();
         let f = lookup("System.GetLastErrorCallStack#1").unwrap();
         assert!(matches!(f(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s.is_empty()));

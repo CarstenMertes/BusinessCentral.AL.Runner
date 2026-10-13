@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod autoinc;
+mod callstack;
 mod dispatch;
 pub mod dotnet;
 mod errorcollect;
@@ -126,6 +127,9 @@ pub struct Session {
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
+    /// The routine and current statement position of every frame, parallel to `frames`
+    /// (`callstack.rs`).
+    pub(crate) call_stack: Vec<CallFrame>,
     /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
@@ -255,6 +259,7 @@ impl Session {
             page_handler_depth: 0,
             code_coverage: false,
             frames: Vec::new(),
+            call_stack: Vec::new(),
             isolated_storage: Default::default(),
             install_scope: false,
             sequences: Default::default(),
@@ -482,7 +487,16 @@ impl Session {
         }
         self.try_depth += usize::from(is_try);
         self.frames.push(object);
+        self.call_stack.push(CallFrame {
+            routine,
+            pos: ir::NO_POS,
+        });
         let mut outcome = self.exec_block(&r.body, &mut frame);
+        // An error that leaves the routine takes the routine's frame into its call stack.
+        if let (Err(Signal::Error(e)), Some(&top)) = (&mut outcome, self.call_stack.last()) {
+            self.add_frame(e, object, top);
+        }
+        self.call_stack.pop();
         self.frames.pop();
         if collecting {
             outcome = self.close_error_scope(outcome);
@@ -536,20 +550,25 @@ impl Session {
                 }
             }
             S::While(c, body) => {
+                let here = self.call_stack.last().map(|t| t.pos);
                 while ops::truthy(&self.eval(c, f)?)? {
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         r => r?,
                     }
+                    // The condition belongs to the loop's line, not to the body's last statement.
+                    self.restore_pos(here);
                 }
                 Ok(())
             }
             S::Repeat(body, until) => {
+                let here = self.call_stack.last().map(|t| t.pos);
                 loop {
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         r => r?,
                     }
+                    self.restore_pos(here);
                     if ops::truthy(&self.eval(until, f)?)? {
                         break;
                     }
@@ -613,6 +632,12 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
+            S::Pos(p) => {
+                if let Some(top) = self.call_stack.last_mut() {
+                    top.pos = *p;
+                }
+                Ok(())
+            }
             S::AssertError(body) => {
                 // Inside a UI handler, with writes pending from before the page opened, the extent
                 // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
@@ -627,10 +652,12 @@ impl Session {
                          of the rollback is not pinned"
                             .into(),
                     )),
-                    Err(Signal::Error(e)) => {
+                    Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
                         self.rollback_transaction();
+                        // The routine that catches it is the last frame of its call stack.
+                        self.add_top_frame(&mut e);
                         self.last_error = e;
                         Ok(())
                     }
@@ -643,6 +670,12 @@ impl Session {
                     Err(other) => Err(other),
                 }
             }
+        }
+    }
+
+    fn restore_pos(&mut self, pos: Option<u32>) {
+        if let (Some(p), Some(top)) = (pos, self.call_stack.last_mut()) {
+            top.pos = p;
         }
     }
 
@@ -925,7 +958,8 @@ impl Session {
             }
         }
         let (ret, finals) = match (result, try_call) {
-            (Err(Signal::Error(e)), true) => {
+            (Err(Signal::Error(mut e)), true) => {
+                self.add_top_frame(&mut e);
                 self.last_error = e;
                 return Ok(Value::Boolean(false));
             }
@@ -1128,6 +1162,14 @@ impl Session {
 
 /// The shared storage of an array value.
 type Cells = Rc<RefCell<Vec<Value>>>;
+
+/// A routine on the call stack and the position of the statement it is running.
+#[derive(Clone, Copy)]
+pub(crate) struct CallFrame {
+    pub(crate) routine: usize,
+    /// `Program::positions` id of the current statement; `NO_POS` before the first one.
+    pub(crate) pos: u32,
+}
 
 struct Frame {
     object: usize,

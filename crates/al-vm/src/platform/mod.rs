@@ -11,6 +11,7 @@
 
 mod date;
 mod fields;
+mod host_tables;
 mod identity;
 mod ids;
 mod integer;
@@ -44,6 +45,8 @@ pub(crate) struct Ident {
     pub client_type: al_host::ClientType,
     /// When the session started: milliseconds since the Unix epoch.
     pub login_millis: i64,
+    /// The host's time zones, in `No.` order.
+    pub time_zones: Vec<al_host::TimeZoneInfo>,
 }
 
 impl Ident {
@@ -59,6 +62,7 @@ impl Ident {
             host_name: id.host_name(),
             client_type: id.current_client_type(),
             login_millis: host.clock.now_utc_millis(),
+            time_zones: id.time_zones(),
         }
     }
 }
@@ -105,6 +109,7 @@ impl Providers {
             return Ok(m.clone());
         }
         let rows = match kind {
+            Virtual::TimeZone => host_tables::time_zone_rows(t, &self.ident),
             Virtual::Session => vec![mat::Entry::ok(identity::session_row(t, &self.ident))],
             Virtual::ActiveSession => vec![mat::Entry::ok(identity::active_session_row(t, &self.ident))],
             Virtual::AllObj => objects::all_obj_rows(self, t),
@@ -115,7 +120,7 @@ impl Providers {
             Virtual::PageControlField => pages::page_control_field_rows(self, t),
             Virtual::Field => fields::field_rows(self, t),
             Virtual::Key => fields::key_rows(self, t),
-            Virtual::Integer | Virtual::Date => unreachable!("generated, never listed"),
+            Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage => unreachable!("generated, never listed"),
         };
         let m = Rc::new(mat::Mat::new(t, rows));
         self.listed.borrow_mut().insert(kind, m.clone());
@@ -158,6 +163,7 @@ impl VirtualTables for Providers {
         match self.kind(t) {
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
+            Virtual::WindowsLanguage => host_tables::windows_language_get(t, pk),
             k => self.listed(t, k)?.get(t, pk),
         }
     }
@@ -166,6 +172,7 @@ impl VirtualTables for Providers {
         match self.kind(t) {
             Virtual::Integer => integer::next(t, scan),
             Virtual::Date => date::next(t, scan),
+            Virtual::WindowsLanguage => host_tables::windows_language_next(t, scan),
             k => self.listed(t, k)?.next(t, scan),
         }
     }
@@ -174,6 +181,7 @@ impl VirtualTables for Providers {
         match self.kind(t) {
             Virtual::Integer => integer::count(t, filters),
             Virtual::Date => date::count(t, filters),
+            Virtual::WindowsLanguage => host_tables::windows_language_count(t, filters),
             k => self.listed(t, k)?.count(t, filters),
         }
     }

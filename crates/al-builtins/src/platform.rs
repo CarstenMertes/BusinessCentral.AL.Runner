@@ -33,6 +33,8 @@ pub enum Virtual {
     Key,
     PageMetadata,
     PageControlField,
+    TimeZone,
+    WindowsLanguage,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -49,6 +51,8 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_063, "Key", Provider::Virtual(Virtual::Key)),
     (2_000_000_138, "Page Metadata", Provider::Virtual(Virtual::PageMetadata)),
     (2_000_000_192, "Page Control Field", Provider::Virtual(Virtual::PageControlField)),
+    (2_000_000_164, "Time Zone", Provider::Virtual(Virtual::TimeZone)),
+    (2_000_000_045, "Windows Language", Provider::Virtual(Virtual::WindowsLanguage)),
     // Stored tables whose rows AL reads as facts about the session; the platform seeds them
     // (al-vm `platform/seed.rs`).
     (2_000_000_006, "Company", Provider::Stored),
@@ -95,6 +99,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     ),
     // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
     (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10]),
+    // Windows Language: record/TestWindowsLanguageTable.al.
+    (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.
     (2_000_000_009, &[1, 2, 3, 5, 6, 16, 17, 19]),
     // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. The server and client computer names are not read.

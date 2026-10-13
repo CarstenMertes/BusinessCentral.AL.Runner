@@ -105,6 +105,36 @@ pub trait Identity {
     fn host_name(&self) -> String {
         "localhost".into()
     }
+    /// The time zones the host knows, as the Time Zone table lists them (`No.` counts from 1 in
+    /// this order). The corpus pins only that there is more than one, that every one has an id and
+    /// that `No.` runs 1 to N (record/TestTimeZoneVirtualTable.al); the list is the host's.
+    fn time_zones(&self) -> Vec<TimeZoneInfo> {
+        default_time_zones()
+    }
+}
+
+/// One entry of the Time Zone table: a Windows time zone id and its display name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimeZoneInfo {
+    pub id: String,
+    pub display_name: String,
+}
+
+/// The time zones of the default host: a few Windows zones with the names Windows gives them.
+pub fn default_time_zones() -> Vec<TimeZoneInfo> {
+    [
+        ("UTC", "(UTC) Coordinated Universal Time"),
+        ("GMT Standard Time", "(UTC+00:00) Dublin, Edinburgh, Lisbon, London"),
+        ("W. Europe Standard Time", "(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna"),
+        ("Eastern Standard Time", "(UTC-05:00) Eastern Time (US & Canada)"),
+        ("Pacific Standard Time", "(UTC-08:00) Pacific Time (US & Canada)"),
+    ]
+    .into_iter()
+    .map(|(id, display_name)| TimeZoneInfo {
+        id: id.into(),
+        display_name: display_name.into(),
+    })
+    .collect()
 }
 
 /// `{C0A1BDFA-0000-0000-0000-43524F4E5553}`, the id of the company (ADR-013 decision 9).

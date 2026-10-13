@@ -965,9 +965,10 @@ pub(crate) fn calc_const(
     }
     let unquoted = raw.trim_matches('"');
     if let Ty::Enum(name) = ty {
-        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
+        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, &crate::types::qualified_parts(name)) else {
             return Err(format!(
-                "CalcFormula const({raw}): enum `{name}` is outside the workspace"
+                "CalcFormula const({raw}): enum `{}` is outside the workspace",
+                crate::types::display_name(name)
             ));
         };
         let values = &members[e].enum_values;
@@ -1355,9 +1356,9 @@ impl Lowerer<'_> {
     /// The constant of a `Field = const(x)` condition, typed by the field.
     fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
         if let Ty::Enum(name) = ty {
-            let Resolution::Found(e) = self
-                .ws
-                .resolve_ref_certain(file, ObjKind::Enum, std::slice::from_ref(name))
+            let Resolution::Found(e) =
+                self.ws
+                    .resolve_ref_certain(file, ObjKind::Enum, &crate::types::qualified_parts(name))
             else {
                 return None;
             };
@@ -3928,6 +3929,38 @@ codeunit 50101 C2
     procedure Double(X: Integer): Integer begin exit(X * 2); end;
     procedure SetAmount() begin Amount := 1; end;
 }";
+
+    /// An enum field's InitValue by name when the enum is in another namespace, named by a
+    /// qualified path: Base App's `Item Journal Line.Type` is
+    /// `Enum Microsoft.Manufacturing.Capacity."Capacity Type Journal"` with `InitValue = " "`
+    /// (corpus record/TestRenamePropagationBaseApp.al, Codeunit 60975).
+    #[test]
+    fn enum_init_value_with_namespaced_enum() {
+        let (_, l) = lower_files(
+            &[
+                (
+                    "e.al",
+                    "namespace A.B; enum 50920 \"ALT Cap\" { value(0; \" \") { } value(1; \"Machine Center\") { } value(2; Work) { } }",
+                ),
+                (
+                    "t.al",
+                    "namespace C.D; table 50921 \"ALT Tab\" { fields { field(1; K; Code[10]) { } \
+                     field(2; T; Enum A.B.\"ALT Cap\") { InitValue = \" \"; } \
+                     field(3; U; Enum A.B.\"ALT Cap\") { InitValue = Work; } } keys { key(PK; K) { } } }",
+                ),
+            ],
+            false,
+        );
+        let t = l
+            .program
+            .objects
+            .iter()
+            .find_map(|o| o.table.as_ref().filter(|t| t.fields.iter().any(|f| f.name == "T")))
+            .expect("table schema");
+        let f = |n: &str| t.fields.iter().find(|f| f.name == n).unwrap();
+        assert!(matches!(f("T").init, Some(ir::Const::Enum(_, 0))), "{:?}", f("T").init);
+        assert!(matches!(f("U").init, Some(ir::Const::Enum(_, 2))), "{:?}", f("U").init);
+    }
 
     fn table_ir(l: &Lowered) -> &ir::Table {
         l.program.objects[0].table.as_ref().expect("table schema")

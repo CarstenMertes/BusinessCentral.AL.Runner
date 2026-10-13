@@ -55,7 +55,9 @@ impl Session {
         inst: &Inst,
         object: usize,
         seed: Option<&str>,
-    ) -> Result<RequestClosed, Signal> {
+        run_ext: Option<(usize, Inst)>,
+        want_parameters: bool,
+    ) -> Result<(RequestClosed, Option<String>), Signal> {
         let engine = self.engine();
         let name = engine.program.objects[object].name.clone();
         let Some(page) = engine.program.objects[object].page.as_ref() else {
@@ -74,9 +76,6 @@ impl Session {
                  (what BC answers then is not pinned)"
             ));
         }
-        if let Some(xml) = seed {
-            self.apply_request_parameters(inst, object, xml)?;
-        }
         let st: St = Rc::new(RefCell::new(PageState::closed(object as u32)));
         {
             let mut s = st.borrow_mut();
@@ -84,6 +83,21 @@ impl Session {
             s.modal = true;
         }
         inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(st.clone());
+        // Each reportextension that extends the request page runs on an instance of its own: the
+        // one the run uses when it is the extension that changes the run, so that what a handler
+        // writes into the extension's variables is what its triggers read.
+        let mut exts = Vec::new();
+        for &e in &page.extensions {
+            let ext = match &run_ext {
+                Some((re, i)) if *re == e => i.clone(),
+                _ => self.instance(e),
+            };
+            exts.push((e, ext));
+        }
+        if let Some(xml) = seed {
+            self.apply_request_parameters(inst, &exts, object, xml)?;
+        }
+        st.borrow_mut().ext_instances = exts.clone();
         let Some((hobject, hroutine, hinst)) =
             self.open_page_as(&st, PageMode::Edit, None, Some(UiKind::RequestPage), false)?
         else {
@@ -102,8 +116,15 @@ impl Session {
         }
         let result = st.borrow().result.clone();
         match result.as_deref() {
-            Some("OK") => Ok(RequestClosed::Ok),
-            Some("Cancel") => Ok(RequestClosed::Cancel),
+            Some("OK") => {
+                let parameters = if want_parameters {
+                    Some(self.request_parameters(inst, &exts, object)?)
+                } else {
+                    None
+                };
+                Ok((RequestClosed::Ok, parameters))
+            }
+            Some("Cancel") => Ok((RequestClosed::Cancel, None)),
             other => unsupported(format!("a request page closed with {other:?} (not pinned)")),
         }
     }
@@ -193,7 +214,12 @@ impl Session {
 
     /// The parameters of the request page as BC returns them from `RunRequestPage`: the report's
     /// options (the controls bound to variables) and the view of every data item.
-    pub(crate) fn request_parameters(&mut self, inst: &Inst, object: usize) -> Result<String, Signal> {
+    pub(crate) fn request_parameters(
+        &mut self,
+        inst: &Inst,
+        exts: &[(usize, Inst)],
+        object: usize,
+    ) -> Result<String, Signal> {
         let engine = self.engine();
         let o = &engine.program.objects[object];
         let page = o.page.as_ref().expect("a request page");
@@ -202,7 +228,8 @@ impl Session {
         for c in &page.controls {
             match (&c.kind, &c.binding) {
                 (ir::ControlKind::Field, ir::Binding::Var(slot)) => {
-                    let v = inst.borrow().globals[*slot].clone();
+                    let owner = owner_inst(inst, exts, c.owner);
+                    let v = owner.borrow().globals[*slot].clone();
                     let text = match &v {
                         Value::Boolean(b) => b.to_string(),
                         // An option travels as its ordinal.
@@ -253,7 +280,13 @@ impl Session {
     /// that names another report, is refused
     /// (handlers/TestReportInstanceRunReqPage.al:TestReport_InstanceRunRequestPage_SeededWithParameters_StillRunsTheHandler
     /// pins only that the handler still runs and its own filter comes back).
-    pub(crate) fn apply_request_parameters(&mut self, inst: &Inst, object: usize, xml: &str) -> Result<(), Signal> {
+    pub(crate) fn apply_request_parameters(
+        &mut self,
+        inst: &Inst,
+        exts: &[(usize, Inst)],
+        object: usize,
+        xml: &str,
+    ) -> Result<(), Signal> {
         let engine = self.engine();
         let o = &engine.program.objects[object];
         let page = o.page.as_ref().expect("a request page");
@@ -285,7 +318,8 @@ impl Session {
             let ir::Binding::Var(slot) = c.binding else {
                 return unsupported(format!("a parameter for the control {name}, which shows no variable"));
             };
-            let current = inst.borrow().globals[slot].clone();
+            let owner = owner_inst(inst, exts, c.owner);
+            let current = owner.borrow().globals[slot].clone();
             let value = match &current {
                 Value::Text(_) => Value::Text(text),
                 Value::Code(_) => Value::Code(text),
@@ -314,7 +348,7 @@ impl Session {
                 }
                 other => return unsupported(format!("a parameter for the control {name} holding {other:?}")),
             };
-            inst.borrow_mut().globals[slot] = value;
+            owner.borrow_mut().globals[slot] = value;
         }
         let items = xml
             .split("<DataItems>")
@@ -445,6 +479,18 @@ impl Session {
             out.push_str(&format!(" WHERE({})", parts.join(",")));
         }
         Ok(out)
+    }
+}
+
+/// The instance that holds the variables of a control: the report's, or its extension's.
+fn owner_inst(report: &Inst, exts: &[(usize, Inst)], owner: Option<usize>) -> Inst {
+    match owner {
+        None => report.clone(),
+        Some(e) => exts
+            .iter()
+            .find(|(o, _)| *o == e)
+            .map(|(_, i)| i.clone())
+            .expect("an extension of the request page has an instance"),
     }
 }
 

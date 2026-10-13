@@ -71,6 +71,11 @@ pub trait Ctx: FormatCtx {
     fn session_op(&mut self, id: &str, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id} needs a session")))
     }
+    /// The language id, locale id and Windows time zone name of the running session, which
+    /// `SessionSettings.Init` reads. `None` where the context has no host.
+    fn session_locale(&self) -> Option<(i32, i32, String)> {
+        None
+    }
     /// The app of the routine `depth` frames out on the call stack: 0 is the routine that runs the
     /// builtin, 1 its caller. `None` when there is no such frame (the caller of a test is the test
     /// runner) or the app's manifest has no readable id.
@@ -186,6 +191,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
     // Event subscriptions are session state; the VM intercepts these ids
     // (al-vm dispatch.rs). Registered so lowering accepts them.
+    ("Session.ApplicationArea#1", vm_only),
     ("Session.BindSubscription#1", vm_only),
     ("Session.UnbindSubscription#1", vm_only),
     // Codeunit.Run runs a codeunit and `IsInWriteTransaction` reads the transaction: both are
@@ -246,6 +252,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record("SetAutoCalcFields", r, a)
     }),
+    ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -273,7 +280,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsFieldRef#1", |_, r, _| is(r, "FieldRef")),
     // Kinds the value model has no variant for yet are never true.
     ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsDotNet#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsAutomation#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
 ];

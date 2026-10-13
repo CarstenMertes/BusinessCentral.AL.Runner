@@ -144,16 +144,75 @@ const INERT_REQUEST_PAGE_PROPERTIES: &[&str] = &[
 /// closes it (`OnQueryClosePage`, `OnClosePage`).
 const REQUEST_PAGE_TRIGGERS: &[&str] = &["oninit", "onopenpage", "onqueryclosepage", "onclosepage"];
 
+/// What a reportextension can add to a request page that the client runs: the void page triggers
+/// after the report's own, and the triggers of a `modify` block that a page extension has
+/// (docs/probes-needed.md, "Reportextension request pages").
+fn request_extension_reasons(exts: &[(usize, ast::Object)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, e) in exts {
+        let ename = e.name();
+        for sec in e.sections().filter(|s| s.name().eq_ignore_ascii_case("requestpage")) {
+            for t in sec.triggers() {
+                let n = t.name().to_ascii_lowercase();
+                if !["onopenpage", "onclosepage"].contains(&n.as_str()) {
+                    out.push(format!(
+                        "reportextension `{ename}`: request page trigger {} is not supported yet",
+                        t.name()
+                    ));
+                }
+            }
+            for p in sec.properties() {
+                out.push(format!(
+                    "reportextension `{ename}`: request page property {} is not supported yet",
+                    p.name().to_ascii_lowercase()
+                ));
+            }
+            for m in ast::sections_in(sec.syntax()) {
+                if !m.name().eq_ignore_ascii_case("modify") {
+                    continue;
+                }
+                for t in m.triggers() {
+                    if !crate::lower::MODIFY_TRIGGERS.contains(&t.name().to_ascii_lowercase().as_str()) {
+                        out.push(format!(
+                            "reportextension `{ename}`: trigger {} in modify({}) is not supported yet",
+                            t.name(),
+                            m.args().first().cloned().unwrap_or_default()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The request page of report `obj`: the controls its `requestpage` section declares, then one
 /// `DataItem` control per data item of `items` (the filters a handler sets on the page), and the
 /// `requestpage` section itself when the report declares one. A report without one still has a
 /// request page showing its data items' filters.
-pub fn request_layout(obj: &ast::Object, items: &[RawItem]) -> (crate::pages::Layout, Option<ast::Section>) {
+pub fn request_layout(
+    obj: &ast::Object,
+    items: &[RawItem],
+    exts: &[(usize, ast::Object)],
+) -> (crate::pages::Layout, Option<ast::Section>) {
     let section = obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage"));
+    // The `layout` and `actions` sections of each extension's `requestpage`.
+    let ext_sections: Vec<(usize, Vec<ast::Section>)> = exts
+        .iter()
+        .map(|(e, o)| {
+            let sections = o
+                .sections()
+                .filter(|s| s.name().eq_ignore_ascii_case("requestpage"))
+                .flat_map(|s| s.sections().collect::<Vec<_>>())
+                .collect();
+            (*e, sections)
+        })
+        .collect();
     let mut layout = match &section {
-        Some(s) => crate::pages::layout_of(s.sections()),
-        None => crate::pages::layout_of(std::iter::empty()),
+        Some(s) => crate::pages::layout_from(s.sections(), &ext_sections),
+        None => crate::pages::layout_from(std::iter::empty(), &ext_sections),
     };
+    layout.reasons.extend(request_extension_reasons(exts));
     if let Some(s) = &section {
         for p in s.properties() {
             let name = p.name().to_ascii_lowercase();
@@ -204,6 +263,8 @@ pub fn request_layout(obj: &ast::Object, items: &[RawItem]) -> (crate::pages::La
             kind: ir::ControlKind::DataItem,
             parent: None,
             section: i.section.clone(),
+            owner: None,
+            modifies: Vec::new(),
         });
     }
     (layout, section)

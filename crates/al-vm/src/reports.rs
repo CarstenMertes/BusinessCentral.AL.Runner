@@ -458,9 +458,10 @@ impl Session {
     /// confirming it is not a run, so a `SaveValues` page does not remember what was confirmed
     /// (handlers/TestReportRequestPageSaveValues.al:SourceReport_SaveValues_RunRequestPageReturnsTheValueWithoutSavingIt).
     fn report_request_only(&mut self, inst: &Inst, schema: &Schema, seed: Option<&str>) -> Result<String, Signal> {
-        self.report_prepare(inst, schema)?;
+        let run = self.report_prepare(inst, schema)?;
         let before = self.saved_values.get(&(schema.object as u32)).cloned();
-        let closed = self.run_request_page(inst, schema.object, seed);
+        let ext = run.ext.as_ref().map(|(i, e)| (*e, i.clone()));
+        let closed = self.run_request_page(inst, schema.object, seed, ext, true);
         match before {
             Some(v) => {
                 self.saved_values.insert(schema.object as u32, v);
@@ -470,8 +471,8 @@ impl Session {
             }
         }
         match closed? {
-            RequestClosed::Cancel => Ok(String::new()),
-            RequestClosed::Ok => self.request_parameters(inst, schema.object),
+            (RequestClosed::Cancel, _) => Ok(String::new()),
+            (RequestClosed::Ok, parameters) => Ok(parameters.expect("parameters were asked for")),
         }
     }
 
@@ -527,8 +528,11 @@ impl Session {
         // what the run reads, so the views are not applied again afterwards. A cancelled page ends
         // the run without an error (handlers/TestReportRunWithRequestPage.al:
         // Report_Run_CancelledRequestPageRunsNothingAndRaisesNoError).
-        if shows_page && self.run_request_page(inst, schema.object, None)? == RequestClosed::Cancel {
-            return Ok(());
+        if shows_page {
+            let ext = run.ext.as_ref().map(|(i, e)| (*e, i.clone()));
+            if self.run_request_page(inst, schema.object, None, ext, false)?.0 == RequestClosed::Cancel {
+                return Ok(());
+            }
         }
         // How a filter on a field a DataItemLink joins combines with the link is not pinned.
         for r in run.all_items() {

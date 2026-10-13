@@ -3,9 +3,13 @@
 //! Exit codes: 0 ok, 1 regression against the baseline, 2 setup error
 //! (oracle and corpus disagree, unreadable input, bad arguments).
 
+use al_host::dotnet::DotNetHost;
+use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
 use al_test_cli::{corpus, oracle, output, report, runner::Runner, runtime};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(serde::Deserialize)]
 struct OracleConfig {
@@ -25,6 +29,17 @@ struct Args {
     markdown: Option<PathBuf>,
     junit: Option<PathBuf>,
     update_baseline: bool,
+    /// `--dotnet-sidecar PATH`: the built sidecar (default: next to this binary, else built once
+    /// into a cache from `tools/dotnet-sidecar`).
+    dotnet_sidecar: Option<PathBuf>,
+    /// `--dotnet-assembly-dir DIR` (repeatable): where community assemblies are searched.
+    dotnet_assembly_dirs: Vec<PathBuf>,
+    /// `--dotnet-allow-roll-forward`: run the sidecar on a newer .NET major than 8, with a warning.
+    dotnet_allow_roll_forward: bool,
+    /// `--dotnet-timeout-secs N`: the deadline of one `DotNet` call (default 60).
+    dotnet_timeout_secs: Option<u64>,
+    /// `--require-dotnet`: a machine without a usable .NET is an error, not a skip (CI).
+    require_dotnet: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -44,6 +59,18 @@ fn parse_args() -> Result<Args, String> {
             "--markdown" => a.markdown = Some(val()?),
             "--junit" => a.junit = Some(val()?),
             "--update-baseline" => a.update_baseline = true,
+            "--dotnet-sidecar" => a.dotnet_sidecar = Some(val()?),
+            "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(val()?),
+            "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
+            "--require-dotnet" => a.require_dotnet = true,
+            "--dotnet-timeout-secs" => {
+                let v = val()?;
+                a.dotnet_timeout_secs = Some(
+                    v.to_string_lossy()
+                        .parse()
+                        .map_err(|_| format!("{flag} needs a number of seconds"))?,
+                );
+            }
             _ => return Err(format!("unknown argument `{flag}`")),
         }
     }
@@ -111,7 +138,25 @@ fn run() -> Result<ExitCode, String> {
         .iter()
         .map(|d| runtime::load_manifest(d))
         .collect::<Result<Vec<_>, _>>()?;
-    let rt = runtime::CorpusRuntime::run_with_manifests(apps, &manifests, &symbols);
+    // ADR-014: the sidecar starts lazily, at the first `DotNet` call that reaches it.
+    let host = Arc::new(SidecarHost::new(SidecarConfig {
+        sidecar: args.dotnet_sidecar.clone(),
+        source_root: Some(root.clone()),
+        assembly_dirs: args.dotnet_assembly_dirs.clone(),
+        allow_roll_forward: args.dotnet_allow_roll_forward,
+        timeout: Duration::from_secs(args.dotnet_timeout_secs.unwrap_or(60)),
+        ..Default::default()
+    }));
+    if args.require_dotnet {
+        if let Err(why) = host.availability() {
+            return Err(format!("--require-dotnet: DotNet {why}"));
+        }
+    }
+    let dotnet = al_vm::dotnet::DotNetConfig {
+        host,
+        ..Default::default()
+    };
+    let rt = runtime::CorpusRuntime::run_with_dotnet(apps, &manifests, &symbols, dotnet);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",
@@ -154,17 +199,31 @@ fn run() -> Result<ExitCode, String> {
         .unwrap_or_else(|| root.join("metrics/passing.txt"));
     let baseline =
         report::parse_baseline(&read(&baseline_path)?).map_err(|e| format!("{}: {e}", baseline_path.display()))?;
-    let regressed = report::regressions(&baseline, &outcome);
-    if !regressed.is_empty() {
+    let ratchet = report::ratchet(&baseline, &outcome);
+    if !ratchet.skipped.is_empty() {
+        // ADR-014 section 11: not a regression, but never silent.
         eprintln!(
-            "{} regression(s): cases in {} no longer pass:",
-            regressed.len(),
-            baseline_path.display()
+            "{} baseline case(s) skipped, .NET is unavailable on this machine (CI uses --require-dotnet):",
+            ratchet.skipped.len()
         );
-        for c in &regressed {
-            eprintln!("  {} {}", c.codeunit, c.name);
+        for (c, why) in &ratchet.skipped {
+            eprintln!("  {} {}: {why}", c.codeunit, c.name);
         }
-        return Ok(ExitCode::from(1));
+    }
+    match report::decide(&ratchet, args.update_baseline, args.require_dotnet) {
+        report::Decision::Ok => {}
+        report::Decision::Setup(why) => return Err(why),
+        report::Decision::Regression => {
+            eprintln!(
+                "{} regression(s): cases in {} no longer pass:",
+                ratchet.regressions.len(),
+                baseline_path.display()
+            );
+            for c in &ratchet.regressions {
+                eprintln!("  {} {}", c.codeunit, c.name);
+            }
+            return Ok(ExitCode::from(1));
+        }
     }
     if args.update_baseline {
         let passing = cases

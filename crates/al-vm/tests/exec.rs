@@ -271,3 +271,42 @@ fn calling_an_event_publisher_is_unsupported_until_events_exist() {
         run(&src, "F", vec![])
     );
 }
+
+#[test]
+fn lists() {
+    let src = cu("procedure F(): Text var L: List of [Integer]; M: List of [Integer]; I: Integer; S: Text; begin
+        L.Add(3); L.Add(1); L.Add(2); L.Insert(1, 9);
+        M := L;
+        M.Add(4);
+        foreach I in L do S += Format(I);
+        L.Reverse();
+        exit(S + '|' + Format(L.Count()) + Format(L.Get(1)) + Format(L.IndexOf(9)) + Format(L.Contains(7)) + Format(L.Remove(9)) + Format(L.Count()));
+    end;");
+    // Lists are reference types: M := L shares (ADR-010), so M.Add(4) is visible in L.
+    assert_eq!(text(run(&src, "F", vec![])), "93124|545NoYes4");
+}
+
+#[test]
+fn list_elements_convert_to_the_element_type() {
+    let src = cu("procedure F(): Text var L: List of [Code[10]]; begin L.Add('abc'); exit(L.Get(1)); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "ABC");
+}
+
+#[test]
+fn dictionaries() {
+    let src = cu(
+        "procedure F(): Text var D: Dictionary of [Text, Integer]; V: Integer; K: Text; S: Text; begin
+        D.Add('b', 2); D.Add('a', 1); D.Set('b', 20);
+        foreach K in D.Keys() do S += K;
+        if D.Get('a', V) then S += Format(V);
+        exit(S + Format(D.Get('b')) + Format(D.ContainsKey('z')) + Format(D.Remove('a')) + Format(D.Count()));
+    end;",
+    );
+    assert_eq!(text(run(&src, "F", vec![])), "ba120NoYes1");
+}
+
+#[test]
+fn collection_errors_are_not_guessed() {
+    let src = cu("procedure F(): Integer var L: List of [Integer]; begin exit(L.Get(1)); end;");
+    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))));
+}

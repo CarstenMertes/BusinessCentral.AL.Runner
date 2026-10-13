@@ -66,7 +66,12 @@ impl Signature {
             name: name.trim().to_string(),
             instance,
             params: parse_params(&call[open + 1..close])?,
-            ret: e.return_type.trim().to_string(),
+            // The scrape truncates generic return types (`List of [TKey`): balance them.
+            ret: {
+                let r = e.return_type.trim();
+                let open = r.matches('[').count().saturating_sub(r.matches(']').count());
+                format!("{r}{}", "]".repeat(open))
+            },
             ret_optional: e.return_optional,
         })
     }

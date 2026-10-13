@@ -916,8 +916,17 @@ impl Lowerer<'_> {
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
                         continue;
                     }
+                    // Generic parameters convert to the collection's element types.
+                    let elem = match (p.ty.as_str(), receiver_node.as_ref().map(|r| self.ty_of(r))) {
+                        ("T", Some(Ty::List(el))) => Some(*el),
+                        ("TKey", Some(Ty::Dictionary(k, _))) => Some(*k),
+                        ("TValue", Some(Ty::Dictionary(_, v))) => Some(*v),
+                        _ => None,
+                    };
                     out.push(if p.by_var {
                         ir::Arg::Ref(self.place(a)?)
+                    } else if let Some(el) = elem {
+                        ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });

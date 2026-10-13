@@ -691,6 +691,9 @@ impl al_builtins::native::Ctx for Session {
         al_data::Store::commit(&mut self.store);
         Ok(())
     }
+    fn ret_used(&self) -> bool {
+        self.ret_used
+    }
 }
 
 #[cfg(test)]

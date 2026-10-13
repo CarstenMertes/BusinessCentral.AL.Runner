@@ -116,16 +116,16 @@ Dictionary.ContainsKey inst (Key: TKey) -> Boolean
 Dictionary.Count inst () -> Integer
 Dictionary.Get inst (Key: TKey) -> TValue
 Dictionary.Get inst (Key: TKey, var Value: TValue) -> Boolean?
-Dictionary.Keys inst () -> List of [TKey
+Dictionary.Keys inst () -> List of [TKey]
 Dictionary.Remove inst (Key: TKey) -> Boolean?
 Dictionary.Set inst (Key: TKey, Value: TValue)
 Dictionary.Set inst (Key: TKey, Value: TValue, var OldValue: TValue) -> Boolean?
-Dictionary.Values inst () -> List of [TValue
+Dictionary.Values inst () -> List of [TValue]
 Duration.ToText inst (?Invariant: Boolean) -> Text
 Enum.AsInteger inst () -> Integer
 Enum.FromInteger static (Value: Integer) -> Any
-Enum.Names inst () -> List of [Text
-Enum.Ordinals inst () -> List of [Integer
+Enum.Names inst () -> List of [Text]
+Enum.Ordinals inst () -> List of [Integer]
 ErrorInfo.AddAction inst (Caption: Text, CodeunitID: Integer, MethodName: Text)
 ErrorInfo.AddAction inst (Caption: Text, CodeunitID: Integer, MethodName: Text, Description: Text)
 ErrorInfo.AddNavigationAction inst (?Caption: Text)
@@ -136,7 +136,7 @@ ErrorInfo.ControlName inst (?ControlName: Text) -> Text?
 ErrorInfo.Create static () -> ErrorInfo
 ErrorInfo.Create static (Message: String, ?Collectible: Boolean, ?var Record: Record, ?FieldNo: Integer, ?PageNo: Integer, ?ControlName: String, ?Verbosity: Verbosity, ?DataClassification: DataClassification, ?CustomDimensions: Dictionary of [Text, Text]) -> ErrorInfo
 ErrorInfo.Create static (Message: Text, ?Collectible: Boolean, ?var Record: Record, ?FieldNo: Integer, ?PageNo: Integer, ?ControlName: Text, ?Verbosity: Verbosity, ?DataClassification: DataClassification, ?CustomDimensions: Dictionary of [Text, Text]) -> ErrorInfo
-ErrorInfo.CustomDimensions inst (?CustomDimensions: Dictionary of [Text, Text]) -> Dictionary of [Text, Text?
+ErrorInfo.CustomDimensions inst (?CustomDimensions: Dictionary of [Text, Text]) -> Dictionary of [Text, Text]?
 ErrorInfo.DataClassification inst (?DataClassification: DataClassification) -> DataClassification?
 ErrorInfo.DetailedMessage inst (?DetailedMessage: Text) -> Text?
 ErrorInfo.ErrorType inst (?ErrorType: ErrorType) -> ErrorType?
@@ -320,13 +320,13 @@ HttpHeaders.GetSecretValues inst (Key: Text, Values: List of [SecretText]) -> Bo
 HttpHeaders.GetValues inst (Key: String, Values: Array of [Text]) -> Boolean?
 HttpHeaders.GetValues inst (Key: Text, Values: Array of [Text]) -> Boolean?
 HttpHeaders.GetValues inst (Key: Text, Values: List of [Text]) -> Boolean?
-HttpHeaders.Keys inst () -> List of [Text
+HttpHeaders.Keys inst () -> List of [Text]
 HttpHeaders.Remove inst (Name: Text) -> Boolean?
 HttpHeaders.TryAddWithoutValidation inst (Name: Text, Value: SecretText) -> Boolean?
 HttpHeaders.TryAddWithoutValidation inst (Name: Text, Value: Text) -> Boolean?
 HttpRequestMessage.Content inst (?SetContent: HttpContent) -> HttpContent?
 HttpRequestMessage.GetCookie inst (Name: Text, var Cookie: Cookie) -> Boolean?
-HttpRequestMessage.GetCookieNames inst () -> List of [Text
+HttpRequestMessage.GetCookieNames inst () -> List of [Text]
 HttpRequestMessage.GetHeaders inst (var Headers: HttpHeaders) -> Boolean?
 HttpRequestMessage.GetRequestUri inst () -> Text
 HttpRequestMessage.GetSecretRequestUri inst () -> SecretText
@@ -338,7 +338,7 @@ HttpRequestMessage.SetRequestUri inst (RequestUri: Text) -> Boolean?
 HttpRequestMessage.SetSecretRequestUri inst (RequestUri: SecretText) -> Boolean?
 HttpResponseMessage.Content inst () -> HttpContent
 HttpResponseMessage.GetCookie inst (Name: Text, var Cookie: Cookie) -> Boolean?
-HttpResponseMessage.GetCookieNames inst () -> List of [Text
+HttpResponseMessage.GetCookieNames inst () -> List of [Text]
 HttpResponseMessage.Headers inst () -> HttpHeaders
 HttpResponseMessage.HttpStatusCode inst () -> Integer
 HttpResponseMessage.IsBlockedByEnvironment inst () -> Boolean
@@ -494,7 +494,7 @@ JsonObject.GetObject inst (Key: Text, ?DefaultIfNotFound: Boolean) -> JsonObject
 JsonObject.GetOption inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Option
 JsonObject.GetText inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Text
 JsonObject.GetTime inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Time
-JsonObject.Keys inst () -> List of [Text
+JsonObject.Keys inst () -> List of [Text]
 JsonObject.Path inst () -> Text
 JsonObject.ReadFrom inst (InStream: InStream) -> Boolean?
 JsonObject.ReadFrom inst (String: Text) -> Boolean?
@@ -519,7 +519,7 @@ JsonObject.Replace inst (Key: Text, Value: Text) -> Boolean?
 JsonObject.Replace inst (Key: Text, Value: Time) -> Boolean?
 JsonObject.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
 JsonObject.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean?
-JsonObject.Values inst () -> List of [JsonToken
+JsonObject.Values inst () -> List of [JsonToken]
 JsonObject.WriteTo inst (OutStream: OutStream) -> Boolean?
 JsonObject.WriteTo inst (var String: Text) -> Boolean?
 JsonObject.WriteToYaml inst (OutStream: OutStream) -> Boolean?
@@ -591,9 +591,9 @@ Label.PadLeft inst (Count: Integer, ?Char: Char) -> Text
 Label.PadRight inst (Count: Integer, ?Char: Char) -> Text
 Label.Remove inst (StartIndex: Integer, ?Count: Integer) -> Text
 Label.Replace inst (OldValue: Text, NewValue: Text) -> Text
-Label.Split inst (?Separators: Text*) -> List of [Text
-Label.Split inst (Separators: List of [Char]) -> List of [Text
-Label.Split inst (Separators: List of [Text]) -> List of [Text
+Label.Split inst (?Separators: Text*) -> List of [Text]
+Label.Split inst (Separators: List of [Char]) -> List of [Text]
+Label.Split inst (Separators: List of [Text]) -> List of [Text]
 Label.StartsWith inst (Value: Text) -> Boolean
 Label.Substring inst (StartIndex: Integer, ?Count: Integer) -> Text
 Label.ToLower inst () -> Text
@@ -608,7 +608,7 @@ List.Contains inst (Value: T) -> Boolean
 List.Count inst () -> Integer
 List.Get inst (Index: Integer) -> T
 List.Get inst (Index: Integer, var Result: T) -> Boolean?
-List.GetRange inst (Index: Integer, Count: Integer) -> List of [T
+List.GetRange inst (Index: Integer, Count: Integer) -> List of [T]
 List.GetRange inst (Index: Integer, Count: Integer, var Result: List of [T]) -> Boolean?
 List.IndexOf inst (Value: T) -> Integer
 List.Insert inst (Index: Integer, Value: T) -> Boolean?
@@ -621,7 +621,7 @@ List.Set inst (Index: Integer, NewValue: T) -> Boolean?
 List.Set inst (Index: Integer, NewValue: T, var OldValue: T) -> Boolean?
 Media.ExportFile inst (Filename: Text) -> Boolean?
 Media.ExportStream inst (Stream: OutStream) -> Boolean?
-Media.FindOrphans static () -> List of [Guid
+Media.FindOrphans static () -> List of [Guid]
 Media.HasValue inst () -> Boolean
 Media.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?
 Media.ImportStream inst (Stream: InStream, Description: Text, ?MimeType: Text) -> Guid?
@@ -629,7 +629,7 @@ Media.ImportStream inst (Stream: InStream, Description: Text, MimeType: Text, Fi
 Media.MediaId inst () -> Guid
 MediaSet.Count inst () -> Integer
 MediaSet.ExportFile inst (FilenamePrefix: Text) -> Integer?
-MediaSet.FindOrphans static () -> List of [Guid
+MediaSet.FindOrphans static () -> List of [Guid]
 MediaSet.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?
 MediaSet.ImportStream inst (Stream: InStream, Description: Text, ?MimeType: Text) -> Guid?
 MediaSet.Insert inst (MediaId: Guid) -> Boolean?
@@ -641,7 +641,7 @@ ModuleDependencyInfo.Name inst () -> Text
 ModuleDependencyInfo.Publisher inst () -> Text
 ModuleInfo.AppVersion inst () -> Version
 ModuleInfo.DataVersion inst () -> Version
-ModuleInfo.Dependencies inst () -> List of [ModuleDependencyInfo
+ModuleInfo.Dependencies inst () -> List of [ModuleDependencyInfo]
 ModuleInfo.Id inst () -> Guid
 ModuleInfo.Name inst () -> Text
 ModuleInfo.PackageId inst () -> Guid
@@ -649,9 +649,9 @@ ModuleInfo.Publisher inst () -> Text
 NavApp.DeleteArchiveData static (TableNo: Integer)
 NavApp.GetArchiveRecordRef static (TableNo: Integer, var RecordRef: RecordRef) -> Boolean?
 NavApp.GetArchiveVersion static () -> Text
-NavApp.GetCallerCallstackModuleInfos static () -> List of [ModuleInfo
+NavApp.GetCallerCallstackModuleInfos static () -> List of [ModuleInfo]
 NavApp.GetCallerModuleInfo static (var Info: ModuleInfo) -> Boolean?
-NavApp.GetCallstackModuleInfos static () -> List of [ModuleInfo
+NavApp.GetCallstackModuleInfos static () -> List of [ModuleInfo]
 NavApp.GetCurrentModuleInfo static (var Info: ModuleInfo) -> Boolean?
 NavApp.GetModuleInfo static (AppId: Guid, var Info: ModuleInfo) -> Boolean?
 NavApp.GetResource static (ResourceName: Text, var ResourceStream: InStream, ?Encoding: TextEncoding)
@@ -660,7 +660,7 @@ NavApp.GetResourceAsText static (ResourceName: Text, ?Encoding: TextEncoding) ->
 NavApp.IsEntitled static (Id: Text, ?AppId: Guid) -> Boolean?
 NavApp.IsInstalling static () -> Boolean
 NavApp.IsUnlicensed static (?AppId: Guid) -> Boolean?
-NavApp.ListResources static (?Filter: Text) -> List of [Text
+NavApp.ListResources static (?Filter: Text) -> List of [Text]
 NavApp.LoadPackageData static (TableNo: Integer)
 NavApp.RestoreArchiveData static (TableNo: Integer, ?RunTrigger: Boolean) -> Boolean?
 Notification.AddAction inst (Caption: Text, CodeunitID: Integer, MethodName: Text)
@@ -710,7 +710,7 @@ Page.Caption inst (?NewCaption: Text) -> Text?
 Page.Close inst ()
 Page.Editable inst (?NewEditable: Boolean) -> Boolean?
 Page.EnqueueBackgroundTask inst (var TaskId: Integer, CodeunitId: Integer, ?var Parameters: Dictionary of [Text, Text], ?Timeout: Integer, ?ErrorLevel: PageBackgroundTaskErrorLevel) -> Boolean?
-Page.GetBackgroundParameters static () -> Dictionary of [Text, Text
+Page.GetBackgroundParameters static () -> Dictionary of [Text, Text]
 Page.GetRecord inst (var Record: Record)
 Page.LookupMode inst (?NewLookupMode: Boolean) -> Boolean?
 Page.ObjectId inst (?UseNames: Boolean) -> Text
@@ -1104,7 +1104,7 @@ System.ExportEncryptionKey static (Password: Text) -> Text
 System.ExportObjects static (FileName: Text, var ObjectRecord: Record, ?Format: Integer)
 System.Format static (Value: Any, ?Length: Integer, ?FormatNumber: Integer) -> Text
 System.Format static (Value: Any, Length: Integer, FormatString: Text) -> Text
-System.GetCollectedErrors static (?Clear: Boolean) -> List of [ErrorInfo
+System.GetCollectedErrors static (?Clear: Boolean) -> List of [ErrorInfo]
 System.GetDocumentUrl static (ID: Guid) -> Text
 System.GetDotNetType static (Expression: Any) -> DotNet
 System.GetLastErrorCallStack static () -> Text
@@ -1182,7 +1182,7 @@ TestFilter.SetCurrentKey inst (Field1: TestFilterField, ?Field2: TestFilterField
 TestFilter.SetFilter inst (Field: TestFilterField, String: Text)
 TestHttpRequestMessage.HasSecretUri inst () -> Boolean
 TestHttpRequestMessage.Path inst () -> Text
-TestHttpRequestMessage.QueryParameters inst () -> Dictionary of [Text, Text
+TestHttpRequestMessage.QueryParameters inst () -> Dictionary of [Text, Text]
 TestHttpRequestMessage.RequestType inst () -> HttpRequestType
 TestHttpResponseMessage.Content inst () -> HttpContent
 TestHttpResponseMessage.Headers inst () -> HttpHeaders
@@ -1215,7 +1215,7 @@ TestPage.OpenNew inst ()
 TestPage.OpenView inst ()
 TestPage.Prev inst () -> Boolean?
 TestPage.Previous inst () -> Boolean?
-TestPage.RunPageBackgroundTask inst (CodeunitId: Integer, ?var Parameters: Dictionary of [Text, Text], ?RunCompletionTriggers: Boolean) -> Dictionary of [Text, Text
+TestPage.RunPageBackgroundTask inst (CodeunitId: Integer, ?var Parameters: Dictionary of [Text, Text], ?RunCompletionTriggers: Boolean) -> Dictionary of [Text, Text]
 TestPage.Trap inst ()
 TestPage.ValidationErrorCount inst () -> Integer
 TestPage.View inst () -> TestAction
@@ -1287,9 +1287,9 @@ Text.PadStr static (String: Text, Length: Integer, ?FillCharacter: Text) -> Text
 Text.Remove inst (StartIndex: Integer, ?Count: Integer) -> Text
 Text.Replace inst (OldValue: Text, NewValue: Text) -> Text
 Text.SelectStr static (Number: Integer, CommaString: Text) -> Text
-Text.Split inst (?Separators: Text*) -> List of [Text
-Text.Split inst (Separators: List of [Char]) -> List of [Text
-Text.Split inst (Separators: List of [Text]) -> List of [Text
+Text.Split inst (?Separators: Text*) -> List of [Text]
+Text.Split inst (Separators: List of [Char]) -> List of [Text]
+Text.Split inst (Separators: List of [Text]) -> List of [Text]
 Text.StartsWith inst (Value: Text) -> Boolean
 Text.StrCheckSum static (String: Text, ?WeightString: Text, ?Modulus: Integer) -> Integer
 Text.StrLen static (String: Text) -> Integer
@@ -1325,9 +1325,9 @@ TextConst.PadLeft inst (Count: Integer, ?Char: Char) -> Text
 TextConst.PadRight inst (Count: Integer, ?Char: Char) -> Text
 TextConst.Remove inst (StartIndex: Integer, ?Count: Integer) -> Text
 TextConst.Replace inst (OldValue: Text, NewValue: Text) -> Text
-TextConst.Split inst (?Separators: Text*) -> List of [Text
-TextConst.Split inst (Separators: List of [Char]) -> List of [Text
-TextConst.Split inst (Separators: List of [Text]) -> List of [Text
+TextConst.Split inst (?Separators: Text*) -> List of [Text]
+TextConst.Split inst (Separators: List of [Char]) -> List of [Text]
+TextConst.Split inst (Separators: List of [Text]) -> List of [Text]
 TextConst.StartsWith inst (Value: Text) -> Boolean
 TextConst.Substring inst (StartIndex: Integer, ?Count: Integer) -> Text
 TextConst.ToLower inst () -> Text

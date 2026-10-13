@@ -5,6 +5,7 @@ pub mod signature;
 pub mod value;
 
 pub mod catalog;
+pub mod collections;
 pub mod filter;
 pub mod format;
 pub mod native;

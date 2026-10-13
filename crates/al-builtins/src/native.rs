@@ -31,6 +31,11 @@ pub trait Ctx: FormatCtx {
     fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal>;
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
+    /// Whether the result of the builtin being called is used (`[Ok :=]` forms
+    /// return false instead of raising when it is).
+    fn ret_used(&self) -> bool {
+        true
+    }
 }
 
 pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result<Value, Signal>;
@@ -100,14 +105,18 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
 ];
 
+fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
+    REGISTRY.iter().chain(crate::collections::REGISTRY)
+}
+
 /// The implementation registered for overload `id`, if any.
 pub fn lookup(id: &str) -> Option<NativeFn> {
-    REGISTRY.iter().find(|(i, _)| *i == id).map(|(_, f)| *f)
+    all().find(|(i, _)| *i == id).map(|(_, f)| *f)
 }
 
 /// Every registered id, for the conformance test.
 pub fn registered_ids() -> Vec<&'static str> {
-    REGISTRY.iter().map(|(i, _)| *i).collect()
+    all().map(|(i, _)| *i).collect()
 }
 
 fn unsupported<T>(what: &str) -> Result<T, Signal> {

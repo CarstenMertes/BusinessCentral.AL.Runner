@@ -15,13 +15,13 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [004](004-snapshot-store.md) | Snapshots live on a separate `SnapshotStore` trait | Accepted |
 | [005](005-company-and-access-context.md) | Company in every table identity; access context on every data op | Accepted |
 | [006](006-core-purity.md) | No OS access in core crates; WASM-compatible | Accepted |
-| [007](007-oracle-and-ratchet.md) | Oracle = corpus CI JUnit for BC 27.5; passing set is a ratchet | Accepted |
+| [007](007-oracle-and-ratchet.md) | Oracle = corpus CI JUnit for BC 27.5; passing set is a ratchet (one oracle and one ratchet per BC major since ADR-015) | Accepted |
 | [009](009-observable-equivalence.md) | The contract is observable behaviour; internals, performance, diagnostics and tooling may improve on BC | Accepted |
 | [008](008-builtins-catalog.md) | Builtin signatures generated from the docs; implementations registered by overload id; value model in al-builtins | Accepted |
 | [010](010-value-model.md) | One Value enum in al-builtins; value types copy, reference types share; records are handles | Accepted |
 | [011](011-ir-and-execution.md) | Fully resolved typed IR; tree-walking interpreter first, bytecode only if budgets need it; Result-based control flow; BC test-runner semantics from the corpus | Accepted |
 | [012](012-testpage-runtime.md) | Headless page objects in the IR and a TestPage client over page instances in the same session | Accepted |
 | [013](013-external-objects.md) | Dependency apps compiled from Microsoft's own artifacts (source, cached outside the repo); native providers only for platform objects with no AL body; version selection from app.json as in AL Runner; AL Runner's identity values and install baseline | Accepted |
-| [014](014-dotnet-provider-seam.md) | `DotNet` calls: a trait in `al-host`; a .NET 8 sidecar process per Session loads real assemblies; a runtime registry in front serves server classes that need a service tier; refused without .NET | Proposed |
+| [014](014-dotnet-provider-seam.md) | `DotNet` calls: a trait in `al-host`; a .NET 8 sidecar process per Session loads real assemblies; a runtime registry in front serves server classes that need a service tier; refused without .NET | Accepted |
 | [015](015-version-independent-runtime.md) | One codebase for BC 27 and every later major: a `Target` value, version-tagged builtin catalog, named behaviour gates, one oracle and one ratchet per version | Proposed |
 | [016](016-release-al-runner-v3.md) | Release: the runtime ships as AL Runner v3 with its own user command line (`alrunner`), a plain GitHub Actions release matrix, an optional .NET helper asset, WebAssembly hosts, and readiness gates; v2 feature parity tracked in `docs/al-runner-v2-parity.md` | Proposed |

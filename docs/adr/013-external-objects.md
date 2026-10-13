@@ -368,6 +368,11 @@ Two findings drive the decision:
       A stray build of another major never becomes the default.
    3. The default never selects a build below the floor. An explicit
       `--bc-version` below the floor runs, with a printed warning.
+   3a. **Amended by ADR-015 (accepted 2026-10-13).** If the major of the floor is
+      below 27, the target is BC 27 and the run prints a note. The runtime
+      supports BC 27 and later only, and an app that declares an older floor
+      still runs on a BC 27 or newer server. An app `runtime` below 16.0 is
+      treated as 16.0, with a note. `--bc-version` below 27 exits 2.
    4. No match is an error. It names the request, the builds available and the
       cache directory. It never falls back silently.
 
@@ -624,6 +629,62 @@ no `DotNet` shim yet.
 5. The install baseline (decision 5), once the providers in step 4 that install
    code reads exist. Until then an app whose install code needs a missing
    provider refuses its dependent tests.
+
+## First increment as built (2026-10-13)
+
+Built, in the order of the list above:
+
+- **`al-deps`** (a crate that may touch the OS). `version` and `select` are pure
+  functions: Layer B as decision 2 describes it, with the owner's lookup order
+  added. A candidate carries a *tier*: 0 is the project's `.alpackages`, then each
+  `--deps` directory, then (later) the artifact cache. A package with source beats
+  one without, then the nearest tier wins, then the highest version. An app built
+  from source in this run (the internals fixture) beats every package. The platform
+  and application floors are optional implicit roots. A Microsoft platform app below
+  its minimum is used with a note. `zip` and `package` read the NAVX `.app`
+  container: central directory, CRC-32 and size of every entry checked, nested
+  wrapper `.app` unwrapped, `NavxManifest.xml` parsed. `load` scans the pool,
+  resolves, and reads the chosen packages. There is no `DependencySource` trait in
+  `al-host` yet: `al-test-cli` calls `al-deps` directly. The trait comes with the
+  download.
+- **Not built:** Layer A (`--bc-version`, build selection, `AL_RUNTIME_CACHE`), the
+  download, `Source.zip` reading, loading the platform `System.app` (found and
+  selected, then left out: its tables have no row providers, and a declared table
+  without behaviour answers wrong), the install baseline.
+  The corpus names two test-library apps that no `.alpackages` holds
+  (System Application Test Library, Permissions Mock); they are skipped with a
+  printed line and their objects stay unresolved.
+- **Workspace.** `AppKind` (per app, in `Workspace::kinds`; `AppSource` is
+  unchanged so existing constructors still compile). The files of a dependency
+  app are *scanned* at load (`al_syntax::scan`: lexer plus preprocessor, objects,
+  namespace, `using`s, `extends`, `implements`, event subscribers; a test compares
+  it with the parser on every corpus file and every Microsoft file) and parsed
+  the first time something needs them (`Workspace::green`). An object whose file
+  does not parse cleanly is not resolvable (`usable`). `MemberTable` computes the
+  members of an object, extensions merged, when first asked.
+- **Demand-driven compile** (`al-sema/src/check/demand.rs`, decision 6). The checker
+  checks all of the workspace's own code and follows what it uses in the dependency
+  apps: calls, record variables and their writes, event subscribers, interface
+  implementers, the pages a TestPage drives. A table is *read* (variable, `Get`,
+  fields: lowered with the tables it relates to, nothing runs), or *written*
+  (`Insert`, `Modify`, `Delete`, `Rename`, `Validate`): then the trigger and the
+  subscribers of that operation are reached. An object only named (`Page::"X"`,
+  `Database::"X"`) is lowered with its routines stubbed. After the check,
+  `Workspace::restrict_to` makes everything not reached stop resolving, so what
+  needs it anyway is refused as outside the workspace. A routine nothing reached
+  is a stub whose reason says "not compiled". An object nothing reached is a shell
+  of kind `uncompiled table` and so on, so lookups by id do not find it and run it
+  as empty; the two lookups that would answer BC's "no such object" refuse
+  instead. `AL_EAGER_DEPENDENCIES=1` compiles every dependency routine, for
+  comparison: on the corpus it gives the same outcome for all 4836 tests.
+- **Parser gaps found in Microsoft's source** (540 of 9572 files did not parse):
+  attributes on variable declarations (`[SecurityFiltering(...)] Rec: Record X;`)
+  now parse. 71 files remain: control add-ins, `trigger Name::Event()`, `event`.
+- **Behaviour the new tests exposed**, each pinned by a corpus test and fixed or
+  refused: `Format` of an option field answers its `OptionCaption`; a page's
+  `SourceTableView` applies in filter group 2; the error text for a control of a
+  page from a dependency app names an internal ID that is not understood, so it
+  is refused (`docs/probes-needed.md`).
 
 ## Rejected options
 

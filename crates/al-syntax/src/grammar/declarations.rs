@@ -85,7 +85,7 @@ const OBJECT_TYPES: &[&str] = &[
     "enum",
     "interface",
     "testfield",
-    // `DotNet Convert`, `DotNet "Dotted.Name"`: Microsoft's apps declare .NET types by name.
+    // `DotNet Alias`: the alias a `dotnet { }` block declares.
     "dotnet",
 ];
 
@@ -294,6 +294,12 @@ mod tests {
             "(TypeRef Codeunit System . Utilities . \"Temp Blob\")"
         );
         assert_eq!(t("TestPage \"ALT Card\""), "(TypeRef TestPage \"ALT Card\")");
+    }
+
+    #[test]
+    fn dotnet_alias_type() {
+        assert_eq!(t("DotNet Convert"), "(TypeRef DotNet Convert)");
+        assert_eq!(t("DotNet \"Array\""), "(TypeRef DotNet \"Array\")");
     }
 
     #[test]

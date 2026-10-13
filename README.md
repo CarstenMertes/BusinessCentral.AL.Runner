@@ -66,5 +66,5 @@ its own.
 - `docs/corpus-inventory.md`: what the corpus contains.
 - `CLAUDE.md`: the rules every contributor and agent follows.
 - `oracle/`: the real-BC results the pass rate is measured against.
-- `metrics/passing.txt`: the ratchet, i.e. cases that must keep passing.
+- `metrics/<major>/passing.txt`: the ratchet per BC major, i.e. cases that must keep passing.
 - `docs/history/`: the original spike brief and the end-of-spike report.

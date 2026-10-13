@@ -37,7 +37,7 @@ fn main() {
     let root = std::path::PathBuf::from(args.next().unwrap_or_else(|| ".".into()));
     let runs: usize = args.next().map_or(5, |r| r.parse().expect("RUNS is a number"));
     let with_deps = args.next().is_some_and(|a| a == "deps");
-    let syms = ["BC27PLUS".to_string()].into();
+    let syms = al_version::corpus_symbols(27);
     let mut laps = Laps {
         best: [Duration::MAX; 8],
         lap: Instant::now(),

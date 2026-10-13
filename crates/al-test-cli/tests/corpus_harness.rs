@@ -76,7 +76,8 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
         ),
     )
     .unwrap();
-    std::fs::copy(root().join("oracle/junit-27.5.xml"), dir.path().join("junit-27.5.xml")).unwrap();
+    std::fs::create_dir(dir.path().join("27")).unwrap();
+    std::fs::copy(root().join("oracle/27/junit.xml"), dir.path().join("27/junit.xml")).unwrap();
     let (code, _, err) = cli(&["--oracle", bad.to_str().unwrap()]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("corpus pin"), "{err}");
@@ -101,4 +102,94 @@ fn markdown_summary_is_written() {
     let (code, _, _) = cli(&["--markdown", md.to_str().unwrap()]);
     assert_eq!(code, 0);
     assert!(std::fs::read_to_string(md).unwrap().contains("| **overall** | 4836 |"));
+}
+
+#[test]
+fn the_first_line_names_the_target() {
+    require_corpus();
+    let (code, out, err) = cli(&["--bc-version", "27"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().next(), Some("target: BC 27.5, runtime 16.0"), "{out}");
+    let (code, out, err) = cli(&["--bc-version", "28"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().next(), Some("target: BC 28.5, runtime 16.0"), "{out}");
+}
+
+#[test]
+fn an_unknown_bc_version_exits_2_and_lists_the_known_ones() {
+    require_corpus();
+    let (code, _, err) = cli(&["--bc-version", "99"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("no oracle for BC 99") && err.contains("27.5"), "{err}");
+}
+
+#[test]
+fn bc_26_is_not_supported() {
+    require_corpus();
+    let (code, _, err) = cli(&["--bc-version", "26"]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("27 and later only"), "{err}");
+}
+
+#[test]
+fn every_bc_major_has_an_oracle_with_the_same_cases() {
+    require_corpus();
+    // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
+    // run stops with exit 2 (ADR-015 1.6).
+    for v in ["27", "28", "29"] {
+        let (code, r) = json(&["--bc-version", v]);
+        assert_eq!(code, 0, "BC {v}");
+        assert_eq!(r["overall"]["total"], 4836, "BC {v}");
+        assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "BC {v}");
+    }
+}
+
+#[test]
+fn the_default_is_the_newest_version_with_an_oracle() {
+    require_corpus();
+    let (code, out, err) = cli(&[]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().next(), Some("target: BC 29.0, runtime 16.0"), "{out}");
+}
+
+#[test]
+fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
+    require_corpus();
+    let dir = tempfile::tempdir().unwrap();
+    let json = dir.path().join("pass-rate.json");
+    let (code, out, err) = cli(&["--all-versions", "--json", json.to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+    for v in ["27", "28", "29"] {
+        let f = dir.path().join(format!("pass-rate-{v}.json"));
+        assert!(f.exists(), "no report for BC {v}; stdout:\n{out}");
+    }
+    assert!(!json.exists(), "all-versions writes only per-version files");
+    assert!(out.contains("Version comparison"), "{out}");
+    assert!(out.contains("oracle: same cases in every version"), "{out}");
+    // The three known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same
+    // cases on every version. A new difference would be listed here.
+    assert!(out.contains("runtime: same cases in every version"), "{out}");
+}
+
+#[test]
+fn all_versions_cannot_be_combined_with_one_version() {
+    require_corpus();
+    let (code, _, err) = cli(&["--all-versions", "--bc-version", "28"]);
+    assert_eq!(code, 2, "{err}");
+}
+
+#[test]
+fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
+    require_corpus();
+    // ADR-014 section 11: CI passes --require-dotnet so that "no .NET" is never mistaken for a pass.
+    let (code, _, err) = cli(&[
+        "--require-dotnet",
+        "--dotnet-sidecar",
+        "/nonexistent/AlDotNetSidecar.dll",
+    ]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("--require-dotnet") && err.contains("DotNet"), "{err}");
+    // Without the flag the same machine still runs the corpus.
+    let (code, _, err) = cli(&["--dotnet-sidecar", "/nonexistent/AlDotNetSidecar.dll"]);
+    assert_eq!(code, 0, "{err}");
 }

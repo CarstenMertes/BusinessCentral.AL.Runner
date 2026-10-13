@@ -111,6 +111,62 @@ pub fn regressions(baseline: &BTreeSet<CaseId>, outcome: &dyn Fn(&CaseId) -> Out
         .collect()
 }
 
+/// The marker the VM puts on a refusal that comes from the machine having no usable .NET
+/// (`al_vm::dotnet::UNAVAILABLE`, ADR-014 section 11).
+pub const DOTNET_UNAVAILABLE: &str = al_vm::dotnet::UNAVAILABLE;
+
+/// The ratchet over a baseline: regressions, and cases skipped because .NET is unavailable.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Ratchet {
+    pub regressions: Vec<CaseId>,
+    /// Baseline cases that did not run only because the machine has no usable .NET, with the
+    /// reason. They are listed, not counted as regressions, and no line leaves the baseline.
+    pub skipped: Vec<(CaseId, String)>,
+}
+
+pub fn ratchet(baseline: &BTreeSet<CaseId>, outcome: &dyn Fn(&CaseId) -> Outcome) -> Ratchet {
+    let mut r = Ratchet::default();
+    for c in baseline {
+        match outcome(c) {
+            Outcome::Pass => {}
+            Outcome::NotRun(why) if why.contains(DOTNET_UNAVAILABLE) => r.skipped.push((c.clone(), why)),
+            _ => r.regressions.push(c.clone()),
+        }
+    }
+    r
+}
+
+/// What the CLI does about a ratchet result.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Decision {
+    Ok,
+    /// Exit 1: a baseline case no longer passes.
+    Regression,
+    /// Exit 2: the run cannot be trusted or the update cannot be made; the text says why.
+    Setup(String),
+}
+
+pub fn decide(r: &Ratchet, update_baseline: bool, require_dotnet: bool) -> Decision {
+    if !r.regressions.is_empty() {
+        return Decision::Regression;
+    }
+    if !r.skipped.is_empty() {
+        if require_dotnet {
+            return Decision::Setup(format!(
+                "--require-dotnet: {} baseline case(s) could not run because .NET is unavailable",
+                r.skipped.len()
+            ));
+        }
+        if update_baseline {
+            return Decision::Setup(format!(
+                "--update-baseline refused: {} baseline case(s) were skipped because .NET is unavailable, so the new baseline would be incomplete",
+                r.skipped.len()
+            ));
+        }
+    }
+    Decision::Ok
+}
+
 /// Baseline file format: one `<codeunit> <procedure>` per line, `#` comments.
 pub fn parse_baseline(text: &str) -> Result<BTreeSet<CaseId>, String> {
     let mut set = BTreeSet::new();
@@ -284,6 +340,58 @@ mod tests {
     fn a_baseline_case_that_no_longer_passes_is_a_regression() {
         let base: BTreeSet<_> = [id(1, "a"), id(1, "b"), id(3, "d")].into();
         assert_eq!(regressions(&base, &outcome), vec![id(1, "b"), id(3, "d")]);
+    }
+
+    fn dotnet_outcome(c: &CaseId) -> Outcome {
+        match (c.codeunit, c.name.as_str()) {
+            (1, "a") => Outcome::Pass,
+            (2, "needs_dotnet") => Outcome::NotRun(
+                "dotnet-unavailable: DotNet 'System.Convert' needs the .NET 8 runtime; 'dotnet' not found".into(),
+            ),
+            (2, "dotnet_crashed") => Outcome::NotRun("DotNet System.Convert.X: the sidecar process ended".into()),
+            _ => Outcome::Fail("x".into()),
+        }
+    }
+
+    #[test]
+    fn a_baseline_case_refused_because_dotnet_is_unavailable_is_skipped_not_a_regression() {
+        let base: BTreeSet<_> = [id(1, "a"), id(2, "needs_dotnet"), id(2, "dotnet_crashed"), id(3, "d")].into();
+        let r = ratchet(&base, &dotnet_outcome);
+        assert_eq!(
+            r.regressions,
+            vec![id(2, "dotnet_crashed"), id(3, "d")],
+            "a crashed sidecar is a regression"
+        );
+        assert_eq!(r.skipped.len(), 1);
+        assert_eq!(r.skipped[0].0, id(2, "needs_dotnet"));
+        assert!(r.skipped[0].1.contains("'dotnet' not found"));
+    }
+
+    #[test]
+    fn exit_codes_follow_the_ratchet_the_update_flag_and_require_dotnet() {
+        let base: BTreeSet<_> = [id(1, "a"), id(2, "needs_dotnet")].into();
+        let r = ratchet(&base, &dotnet_outcome);
+        // Local run without .NET: reported, not a failure.
+        assert_eq!(decide(&r, false, false), Decision::Ok);
+        // The baseline cannot be rewritten while cases were skipped.
+        let Decision::Setup(why) = decide(&r, true, false) else {
+            panic!()
+        };
+        assert!(why.contains("--update-baseline") && why.contains("skipped"), "{why}");
+        // CI: unavailability is a hard error, so the ratchet means what it says.
+        let Decision::Setup(why) = decide(&r, false, true) else {
+            panic!()
+        };
+        assert!(why.contains("--require-dotnet"), "{why}");
+        // A real regression still wins over a skip.
+        let base: BTreeSet<_> = [id(3, "d"), id(2, "needs_dotnet")].into();
+        assert_eq!(
+            decide(&ratchet(&base, &dotnet_outcome), false, false),
+            Decision::Regression
+        );
+        // Nothing skipped, nothing regressed.
+        let base: BTreeSet<_> = [id(1, "a")].into();
+        assert_eq!(decide(&ratchet(&base, &dotnet_outcome), true, true), Decision::Ok);
     }
 
     #[test]

@@ -167,10 +167,21 @@ pub struct ObjectSym {
     pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
 }
 
+/// A `DotNet` alias declared by a `dotnet { }` block (ADR-014).
+#[derive(Debug, Clone)]
+pub struct DotNetSym {
+    pub app: usize,
+    pub file: usize,
+    pub decl: ast::DotNetTypeDecl,
+}
+
 pub struct Workspace {
     pub apps: Vec<AppSource>,
     pub files: Vec<SourceFileData>,
     pub objects: Vec<ObjectSym>,
+    /// Every declared `DotNet` alias, in file and source order. The index is the one
+    /// `RtType::DotNet` and `ir::Program::dotnet_types` use.
+    pub dotnet: Vec<DotNetSym>,
     pub diagnostics: Vec<Diagnostic>,
     /// The kind of each app, by index in `apps`.
     pub kinds: Vec<AppKind>,
@@ -211,6 +222,7 @@ impl Workspace {
             visible: Vec::new(),
             files: Vec::new(),
             objects: Vec::new(),
+            dotnet: Vec::new(),
             diagnostics: Vec::new(),
             by_name: HashMap::new(),
             by_id: HashMap::new(),
@@ -271,6 +283,13 @@ impl Workspace {
                 namespace: file.namespace.clone(),
                 usings: file.usings,
             });
+            for decl in file.dotnet {
+                ws.dotnet.push(DotNetSym {
+                    app: ai,
+                    file: fi,
+                    decl,
+                });
+            }
             for (ordinal, o) in file.objects.into_iter().enumerate() {
                 ws.add_object(ObjectSym {
                     app: ai,
@@ -444,6 +463,18 @@ impl Workspace {
             .iter()
             .filter_map(|f| Some((f.path.clone(), f.problem.get()?.clone()?)))
             .collect()
+    }
+
+    /// The `DotNet` alias `alias` as seen from `file`: the file's own app first, then the apps
+    /// it depends on. Aliases are case-insensitive.
+    pub fn resolve_dotnet(&self, file: usize, alias: &str) -> Option<usize> {
+        let app = self.files[file].app;
+        let find = |a: usize| {
+            self.dotnet
+                .iter()
+                .position(|d| d.app == a && d.decl.alias.eq_ignore_ascii_case(alias))
+        };
+        find(app).or_else(|| self.visible[app].iter().find_map(|&a| find(a)))
     }
 
     fn add_object(&mut self, o: ObjectSym) {
@@ -687,6 +718,8 @@ struct ParsedFile {
     usings: Vec<String>,
     /// The objects of the file, in source order.
     objects: Vec<FileObject>,
+    /// The `type(..)` declarations of the file's `dotnet { }` blocks.
+    dotnet: Vec<ast::DotNetTypeDecl>,
 }
 
 struct FileObject {
@@ -717,6 +750,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 subscribers: Vec::new(),
             })
             .collect(),
+        dotnet: root.dotnet_types(),
         green: Some(parse.green),
         errors: parse.errors,
     }
@@ -725,7 +759,18 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
 /// The index entry of a file that is not parsed at load.
 fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
     let scan = al_syntax::scan::scan(src, symbols);
+    // A `dotnet { }` block declares type aliases other apps use; it holds no object, so reading
+    // such a file at load costs nothing a lazy parse would have saved.
+    let dotnet = if scan.dotnet_block {
+        let parse = al_syntax::parse(src, symbols);
+        ast::SourceFile::cast(parse.syntax())
+            .map(|r| r.dotnet_types())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     ParsedFile {
+        dotnet,
         green: None,
         errors: Vec::new(),
         namespace: scan.namespace,
@@ -791,7 +836,7 @@ mod tests {
     }
 
     fn load(apps: Vec<AppSource>) -> Workspace {
-        Workspace::load(apps, &["BC27PLUS".to_string()].into())
+        Workspace::load(apps, &al_version::corpus_symbols(27))
     }
 
     fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {

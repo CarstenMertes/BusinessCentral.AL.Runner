@@ -12,6 +12,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 name = "al-builtins"
 version = "0.1.0"
 dependencies = [
+ "al-version",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -59,6 +60,7 @@ dependencies = [
  "al-builtins",
  "al-ir",
  "al-syntax",
+ "al-version",
  "rayon",
  "rowan",
  "rust_decimal",
@@ -70,6 +72,7 @@ dependencies = [
 name = "al-syntax"
 version = "0.1.0"
 dependencies = [
+ "al-version",
  "libc",
  "rowan",
 ]
@@ -85,6 +88,7 @@ dependencies = [
  "al-ir",
  "al-sema",
  "al-syntax",
+ "al-version",
  "al-vm",
  "quick-xml",
  "serde",
@@ -92,6 +96,10 @@ dependencies = [
  "tempfile",
  "toml",
 ]
+
+[[package]]
+name = "al-version"
+version = "0.1.0"
 
 [[package]]
 name = "al-vm"
@@ -102,6 +110,7 @@ dependencies = [
  "al-host",
  "al-ir",
  "al-sema",
+ "al-version",
  "rust_decimal",
 ]
 

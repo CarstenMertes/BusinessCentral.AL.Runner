@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 mod autoinc;
 mod dispatch;
+pub mod dotnet;
 pub mod events;
 mod flowfields;
 mod hostvalues;
@@ -40,10 +41,42 @@ pub struct Engine {
     pub tables: Vec<Option<al_data::TableDef>>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
+    /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
+    pub target: Option<al_version::Target>,
+    /// The .NET host, the registry of runtime-provided classes and the policy (ADR-014).
+    pub dotnet: dotnet::DotNetConfig,
 }
 
 impl Engine {
     pub fn new(program: ir::Program, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
+        Engine::with_config(program, blocked, None, dotnet::DotNetConfig::default())
+    }
+
+    /// An engine that runs as `target`: version-gated behaviour follows it (ADR-015 3.4).
+    pub fn with_target(
+        program: ir::Program,
+        blocked: Vec<Vec<Option<String>>>,
+        target: Option<al_version::Target>,
+    ) -> Arc<Engine> {
+        Engine::with_config(program, blocked, target, dotnet::DotNetConfig::default())
+    }
+
+    /// An engine whose `DotNet` calls are served by `dotnet` (ADR-014). `new` uses no .NET.
+    pub fn with_dotnet(
+        program: ir::Program,
+        blocked: Vec<Vec<Option<String>>>,
+        dotnet: dotnet::DotNetConfig,
+    ) -> Arc<Engine> {
+        Engine::with_config(program, blocked, None, dotnet)
+    }
+
+    /// Target and .NET host together.
+    pub fn with_config(
+        program: ir::Program,
+        blocked: Vec<Vec<Option<String>>>,
+        target: Option<al_version::Target>,
+        dotnet: dotnet::DotNetConfig,
+    ) -> Arc<Engine> {
         let tables = program
             .objects
             .iter()
@@ -73,6 +106,8 @@ impl Engine {
             blocked,
             tables,
             events,
+            target,
+            dotnet,
         })
     }
 }
@@ -144,6 +179,8 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
+    pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
     /// empty text, which enables every area. The test runner empties it before each test method
     /// (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
@@ -215,6 +252,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            dotnet: Default::default(),
             application_areas: String::new(),
             report_init_depth: None,
             report_quit: false,
@@ -714,6 +752,11 @@ impl Session {
             E::QueryColumn { query, column } => {
                 let q = self.eval(query, f)?;
                 self.query_column(q, *column)
+            }
+            E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
+            E::DotNetCoerce(t, e) => {
+                let v = self.eval(e, f)?;
+                self.dotnet_coerce(v, t)
             }
             E::Builtin {
                 id,

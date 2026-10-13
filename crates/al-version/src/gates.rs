@@ -1,0 +1,114 @@
+//! Behaviour that differs between BC versions, as named facts in one table (ADR-015 3.4).
+//!
+//! A gate is added only when the per-version oracles pin both sides (the corpus has a
+//! `#if BCnnPLUS` guard for it). Code asks [`Target::has`]; it never compares a version.
+//! A target newer than every gate gets every behaviour: a new major inherits the newest
+//! known behaviour until an oracle case says otherwise.
+
+use crate::Target;
+
+/// A corpus test file and the lines of its `#if BCnnPLUS` guards, relative to `corpus/tests/al-language/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Evidence {
+    pub file: &'static str,
+    pub lines: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Gate {
+    /// A FlowField Sum or Average over an `Integer` source into a `BigInteger` FlowField is
+    /// accepted (and the reverse). Before, it is refused with "The following fields must have
+    /// the same type".
+    FlowFieldSumIntegerIntoBigInteger,
+    /// Min and max FlowFields over `SystemRowVersion` are refused when calculated. Before, they
+    /// calculate.
+    FlowFieldMinMaxOverRowVersionRefused,
+    /// Looking up the `SUPER` or `SECURITY` Metadata Permission Set under any App ID finds the
+    /// null-App-ID row. Before, the lookup keys on the App ID. Not consumed yet: the
+    /// permission provider is not implemented.
+    SuperPermissionSetIgnoresAppId,
+}
+
+impl Gate {
+    pub const ALL: &'static [Gate] = &[
+        Gate::FlowFieldSumIntegerIntoBigInteger,
+        Gate::FlowFieldMinMaxOverRowVersionRefused,
+        Gate::SuperPermissionSetIgnoresAppId,
+    ];
+
+    /// The first BC major with the new behaviour.
+    pub fn since_bc(self) -> u16 {
+        match self {
+            Gate::FlowFieldSumIntegerIntoBigInteger
+            | Gate::FlowFieldMinMaxOverRowVersionRefused
+            | Gate::SuperPermissionSetIgnoresAppId => 29,
+        }
+    }
+
+    /// The corpus guards that pin both sides.
+    pub fn evidence(self) -> &'static [Evidence] {
+        match self {
+            Gate::FlowFieldSumIntegerIntoBigInteger => &[Evidence {
+                file: "record/TestCalcFormulaValidationTests.Codeunit.al",
+                lines: "205,227",
+            }],
+            Gate::FlowFieldMinMaxOverRowVersionRefused => &[Evidence {
+                file: "record/TestCalcFormulaSystemFieldsTests.Codeunit.al",
+                lines: "298,306,353",
+            }],
+            Gate::SuperPermissionSetIgnoresAppId => &[Evidence {
+                file: "permissions/TestMetadataPermissionSet.al",
+                lines: "98,106",
+            }],
+        }
+    }
+}
+
+impl Target {
+    /// Whether the target has the newer behaviour of `gate`.
+    pub fn has(&self, gate: Gate) -> bool {
+        self.bc.major >= gate.since_bc()
+    }
+}
+
+/// [`Target::has`] for a run that may have no target: none means the newest behaviour.
+pub fn has(target: Option<&Target>, gate: Gate) -> bool {
+    target.is_none_or(|t| t.has(gate))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::BcVersion;
+
+    fn target(bc: &str) -> Target {
+        Target::for_bc(BcVersion::parse(bc).unwrap())
+    }
+
+    #[test]
+    fn a_gate_opens_at_its_major() {
+        for g in Gate::ALL {
+            assert!(!target("27.5").has(*g), "{g:?}");
+            assert!(!target("28.5").has(*g), "{g:?}");
+            assert!(target("29").has(*g), "{g:?}");
+        }
+    }
+
+    #[test]
+    fn a_newer_major_than_every_gate_has_every_behaviour() {
+        for g in Gate::ALL {
+            assert!(target("30").has(*g));
+            assert!(has(None, *g), "no target means the newest");
+        }
+        assert!(!has(Some(&target("27")), Gate::FlowFieldSumIntegerIntoBigInteger));
+    }
+
+    #[test]
+    fn every_gate_is_listed_once_and_has_evidence() {
+        let mut seen = std::collections::BTreeSet::new();
+        for g in Gate::ALL {
+            assert!(seen.insert(*g), "{g:?} listed twice");
+            assert!(!g.evidence().is_empty(), "{g:?} has no corpus evidence");
+        }
+    }
+}

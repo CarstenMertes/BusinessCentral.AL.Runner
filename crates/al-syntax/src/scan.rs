@@ -21,6 +21,8 @@ pub struct FileScan {
     pub namespace: Option<String>,
     pub usings: Vec<String>,
     pub objects: Vec<ScannedObject>,
+    /// The file has a `dotnet { }` block. The scan does not read it; the caller parses such a file.
+    pub dotnet_block: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +153,9 @@ pub fn scan(src: &str, symbols: &BTreeSet<String>) -> FileScan {
             if i < sig.len() && sig[i].kind == Semicolon {
                 i += 1;
             }
+        } else if t.is_kw("dotnet") && sig.get(i + 1).is_some_and(|n| n.kind == LBrace) {
+            out.dotnet_block = true;
+            i += 1;
         } else if OBJECT_KINDS.iter().any(|k| t.is_kw(k))
             && sig
                 .get(i + 1)

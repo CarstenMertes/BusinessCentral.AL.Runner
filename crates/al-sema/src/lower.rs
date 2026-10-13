@@ -82,6 +82,18 @@ pub fn lower(ws: &Workspace, members: &MemberTable<'_>, checked: &CheckResult) -
                     dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
                 })
                 .collect(),
+            dotnet_types: ws
+                .dotnet
+                .iter()
+                .map(|d| ir::DotNetDecl {
+                    alias: d.decl.alias.clone(),
+                    assembly: d.decl.assembly.clone(),
+                    version: d.decl.version.clone(),
+                    culture: d.decl.culture.clone(),
+                    public_key_token: d.decl.public_key_token.clone(),
+                    type_name: d.decl.type_name.clone(),
+                })
+                .collect(),
         },
         unsupported: Vec::new(),
         calls: Vec::new(),
@@ -423,7 +435,6 @@ pub fn lower(ws: &Workspace, members: &MemberTable<'_>, checked: &CheckResult) -
         oi,
         file: ws.objects[oi].file,
         globals: HashMap::new(),
-        failed_globals: HashMap::new(),
         locals: HashMap::new(),
         global_labels: HashMap::new(),
         local_labels: HashMap::new(),
@@ -434,6 +445,7 @@ pub fn lower(ws: &Workspace, members: &MemberTable<'_>, checked: &CheckResult) -
         xmlports: &xml_irs,
         reports: &report_irs,
         attrs: Default::default(),
+        ret_ty: None,
         routine_nodes: &routine_nodes,
         ext_slots: &ext_slots,
         page_extensions: &page_extensions,
@@ -604,10 +616,6 @@ pub fn lower(ws: &Workspace, members: &MemberTable<'_>, checked: &CheckResult) -
                     Ok(rt) => {
                         lw.globals.insert(n.to_lowercase(), globals.len());
                         globals.push(ir::Slot { name: n, ty: rt });
-                    }
-                    // A .NET variable refuses the routines that use it, not every routine of the object.
-                    Err(e) if e.contains(".NET type") => {
-                        lw.failed_globals.insert(n.to_lowercase(), format!("global `{n}`: {e}"));
                     }
                     Err(e) => global_reasons.push(format!("global `{n}`: {e}")),
                 }
@@ -1011,8 +1019,6 @@ struct Lowerer<'a> {
     oi: usize,
     file: usize,
     globals: HashMap<String, usize>,
-    /// Globals that could not be lowered because of their .NET type, with the reason.
-    failed_globals: HashMap<String, String>,
     locals: HashMap<String, usize>,
     /// Declared text of Label variables, by lowercase name; reads lower to that constant.
     global_labels: HashMap<String, String>,
@@ -1028,6 +1034,8 @@ struct Lowerer<'a> {
     reports: &'a [Option<ir::Report>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+    /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
+    ret_ty: Option<RtType>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.
     routine_nodes: &'a [Vec<ast::Routine>],
     /// The global slot of each variable of a page extension (see `lower`).
@@ -1864,14 +1872,18 @@ impl Lowerer<'_> {
             Ty::Builtin(n) if al_builtins::sysenum::members(n).is_some() => {
                 RtType::Option(al_builtins::sysenum::option_members(n).expect("checked"))
             }
-            // ADR-013 decision 8: every `DotNet` use is refused until the owner decides how.
-            Ty::Builtin(n) if n.starts_with("DotNet ") => {
-                return Err(format!(
-                    "the .NET type `{}` is not supported (ADR-013 decision 8)",
-                    &n[7..]
-                ));
-            }
             Ty::Builtin(n) => RtType::Library(n.clone()),
+            Ty::DotNet(alias) if alias.is_empty() => {
+                return Err("a DotNet value whose type is only known at run time cannot be stored as such".into());
+            }
+            Ty::DotNet(alias) => match self.ws.resolve_dotnet(self.file, alias) {
+                Some(i) => RtType::DotNet(i as u32),
+                None => {
+                    return Err(format!(
+                        "DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies"
+                    ));
+                }
+            },
             Ty::Record { table, temporary } => {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
                 // `TableType = Temporary` makes every record of the table temporary (corpus
@@ -1898,6 +1910,10 @@ impl Lowerer<'_> {
     /// is refused.
     fn convert_to(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
         let slot = self.rt(target)?;
+        // A DotNet result has no static type: it must fit the target exactly (ADR-014).
+        if matches!(src, Ty::DotNet(a) if a.is_empty()) && !matches!(slot, RtType::DotNet(_)) {
+            return Ok(ir::Expr::DotNetCoerce(slot, Box::new(value)));
+        }
         let RtType::Interface(iface) = slot else {
             return Ok(ir::Expr::Convert(slot, Box::new(value)));
         };
@@ -2086,6 +2102,7 @@ impl Lowerer<'_> {
             },
             None => None,
         };
+        self.ret_ty = ret.clone();
         let mut ret_local = None;
         if let (Some(n), Some(t)) = (r.return_name(), &ret_ty) {
             ret_local = Some(locals.len());
@@ -2250,7 +2267,7 @@ impl Lowerer<'_> {
                     .iter()
                     .find(|t| t.text().eq_ignore_ascii_case("else"))
                     .map(|t| t.text_range().start());
-                let cond = self.expr(&kids[0]);
+                let cond = self.condition(&kids[0]);
                 let (mut then_s, mut else_s) = (Vec::new(), Vec::new());
                 for k in kids.iter().skip(1) {
                     let lowered = self.stmt(k);
@@ -2263,7 +2280,7 @@ impl Lowerer<'_> {
                 cond.map(|c| ir::Stmt::If(c, then_s, else_s))
             }
             WhileStmt => {
-                let cond = self.expr(&kids[0]);
+                let cond = self.condition(&kids[0]);
                 let body = self.stmt_or_empty(kids.get(1));
                 cond.map(|c| ir::Stmt::While(c, body))
             }
@@ -2273,7 +2290,7 @@ impl Lowerer<'_> {
                 for b in body_nodes {
                     body.extend(self.stmt(b));
                 }
-                self.expr(until).map(|u| ir::Stmt::Repeat(body, u))
+                self.condition(until).map(|u| ir::Stmt::Repeat(body, u))
             }
             ForStmt => {
                 let down = sig_tokens(n).iter().any(|t| t.text().eq_ignore_ascii_case("downto"));
@@ -2291,6 +2308,9 @@ impl Lowerer<'_> {
                     })
                 })()
             }
+            ForeachStmt if matches!(self.ty_of(&kids[1]), Ty::DotNet(_)) => {
+                Err("foreach over a DotNet value is refused until a corpus test pins it (ADR-014)".into())
+            }
             ForeachStmt => {
                 let var = self.place(&kids[0]);
                 let coll = self.expr(&kids[1]);
@@ -2306,7 +2326,15 @@ impl Lowerer<'_> {
             CaseStmt => self.case(&kids),
             ExitStmt => match kids.first() {
                 None => Ok(ir::Stmt::Exit(None)),
-                Some(e) => self.expr(e).map(|v| ir::Stmt::Exit(Some(v))),
+                Some(e) => self.expr(e).map(|v| {
+                    // A DotNet result must fit the return type exactly (ADR-014).
+                    ir::Stmt::Exit(Some(match (&self.ty_of(e), &self.ret_ty) {
+                        (Ty::DotNet(a), Some(rt)) if a.is_empty() && !matches!(rt, RtType::DotNet(_)) => {
+                            ir::Expr::DotNetCoerce(rt.clone(), Box::new(v))
+                        }
+                        _ => v,
+                    }))
+                }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
             AssertErrorStmt => Ok(ir::Stmt::AssertError(self.stmt_or_empty(kids.first()))),
@@ -2322,6 +2350,26 @@ impl Lowerer<'_> {
     }
 
     fn assign(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Stmt> {
+        // `X.Property := value` on a DotNet value (ADR-014).
+        if let Some(Res::DotNetMember(name)) = self.res(&kids[0]).cloned() {
+            if kids[0].kind() == SyntaxKind::MemberExpr {
+                if sig_tokens(n).iter().any(|t| {
+                    matches!(
+                        t.kind(),
+                        SyntaxKind::PlusAssign
+                            | SyntaxKind::MinusAssign
+                            | SyntaxKind::StarAssign
+                            | SyntaxKind::SlashAssign
+                    )
+                }) {
+                    return Err("compound assignment to a DotNet property is not lowered yet".into());
+                }
+                let value = self.dotnet_arg(&kids[1])?;
+                return self
+                    .dotnet_member(&kids[0], &kids[0], &name, ir::DotNetOp::Set(name.clone()), vec![value])
+                    .map(ir::Stmt::Expr);
+            }
+        }
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
@@ -2463,12 +2511,11 @@ impl Lowerer<'_> {
                     .get(name)
                     .map(|i| ir::Place::Local(*i))
                     .ok_or_else(|| format!("local `{name}`")),
-                Some(Res::Global(name)) => self.globals.get(name).map(|i| ir::Place::Global(*i)).ok_or_else(|| {
-                    self.failed_globals
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| format!("implicit variable `{name}` is not lowered yet"))
-                }),
+                Some(Res::Global(name)) => self
+                    .globals
+                    .get(name)
+                    .map(|i| ir::Place::Global(*i))
+                    .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::Field { table, id }) => {
                     let (table, id) = (*table, *id);
                     let pos = self.readable_field_pos(table, id)?;
@@ -2540,6 +2587,7 @@ impl Lowerer<'_> {
             Literal => Ok(ir::Expr::Const(self.constant(n)?)),
             ParenExpr => self.expr(&kids[0]),
             PrefixExpr => {
+                self.no_dotnet_operand(&kids[0])?;
                 let op = match sig_tokens(n)[0].text().to_ascii_lowercase().as_str() {
                     "not" => ir::UnOp::Not,
                     "-" => ir::UnOp::Neg,
@@ -2549,6 +2597,10 @@ impl Lowerer<'_> {
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
+                self.no_dotnet_operand(&kids[0])?;
+                if op != "in" {
+                    self.no_dotnet_operand(&kids[1])?;
+                }
                 let l = self.expr(&kids[0])?;
                 if op == "in" {
                     let set = &kids[1];
@@ -2579,6 +2631,12 @@ impl Lowerer<'_> {
                 };
                 Ok(ir::Expr::Binary(op, Box::new(l), Box::new(r)))
             }
+            TernaryExpr if kids.iter().any(|k| matches!(self.ty_of(k), Ty::DotNet(_))) => {
+                Err("a DotNet value in a conditional expression: its type is only known at run time".into())
+            }
+            IndexExpr if matches!(kids.first().map(|k| self.ty_of(k)), Some(Ty::DotNet(_))) => {
+                Err("indexing a DotNet value is not lowered yet (call get_Item / GetValue instead)".into())
+            }
             TernaryExpr => Ok(ir::Expr::Ternary(
                 Box::new(self.expr(&kids[0])?),
                 Box::new(self.expr(&kids[1])?),
@@ -2607,7 +2665,7 @@ impl Lowerer<'_> {
                 self.control(&part)
             }
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
-                Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
+                Some(Res::Proc { .. }) | Some(Res::Builtin(_)) | Some(Res::DotNetMember(_)) => self.call(n, n, &[]),
                 // `Q.Amount`: the current row's value of a query column.
                 Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
                     let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
@@ -2728,8 +2786,104 @@ impl Lowerer<'_> {
             .unwrap_or_default()
     }
 
+    /// An operand whose type is only known at run time is refused (ADR-014): BC types it from the
+    /// assembly, which lowering never opens.
+    fn no_dotnet_operand(&self, n: &SyntaxNode) -> L<()> {
+        match self.ty_of(n) {
+            Ty::DotNet(_) => Err(format!(
+                "`{}` is a DotNet value used as an operand: its type is only known at run time; assign it to a typed variable first",
+                n.text().to_string().trim()
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// A condition: a DotNet result must be a Boolean.
+    fn condition(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
+        let e = self.expr(n)?;
+        Ok(match self.ty_of(n) {
+            Ty::DotNet(a) if a.is_empty() => ir::Expr::DotNetCoerce(RtType::Boolean, Box::new(e)),
+            _ => e,
+        })
+    }
+
+    /// An argument of a DotNet member: a plain variable goes by place, so a by-reference .NET
+    /// parameter can write it back (ADR-014 section 4); anything else by value.
+    fn dotnet_arg(&mut self, a: &SyntaxNode) -> L<ir::Arg> {
+        let is_label = match self.res(a) {
+            Some(Res::Local(n)) => self.local_labels.contains_key(n),
+            Some(Res::Global(n)) => self.global_labels.contains_key(n),
+            _ => false,
+        };
+        let variable = matches!(self.res(a), Some(Res::Local(_) | Res::Global(_) | Res::Field { .. }));
+        if !is_label
+            && variable
+            && matches!(
+                a.kind(),
+                SyntaxKind::NameRef | SyntaxKind::MemberExpr | SyntaxKind::IndexExpr
+            )
+        {
+            if let Ok(p) = self.place(a) {
+                return Ok(ir::Arg::Ref(p));
+            }
+        }
+        Ok(ir::Arg::Value(self.expr(a)?))
+    }
+
+    /// A member of a DotNet value (ADR-014): `callee` is the member expression, `op` says what to
+    /// do to it. A call named like the receiver's alias is the constructor.
+    fn dotnet_member(
+        &mut self,
+        _node: &SyntaxNode,
+        callee: &SyntaxNode,
+        name: &str,
+        op: ir::DotNetOp,
+        args: Vec<ir::Arg>,
+    ) -> L<ir::Expr> {
+        let recv = callee
+            .children()
+            .next()
+            .filter(|_| callee.kind() == SyntaxKind::MemberExpr)
+            .ok_or("a DotNet member without a receiver is not lowered")?;
+        let Ty::DotNet(alias) = self.ty_of(&recv) else {
+            return Err(format!("`{name}` is not a member of a DotNet value"));
+        };
+        let ty = if alias.is_empty() {
+            None
+        } else {
+            Some(self.ws.resolve_dotnet(self.file, &alias).ok_or_else(|| {
+                format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies")
+            })?)
+        };
+        if let (Some(i), ir::DotNetOp::Call(_)) = (ty, &op) {
+            if self.ws.dotnet[i].decl.alias.eq_ignore_ascii_case(name) {
+                return Ok(ir::Expr::DotNet {
+                    ty,
+                    receiver: None,
+                    op: ir::DotNetOp::Construct,
+                    args,
+                });
+            }
+        }
+        Ok(ir::Expr::DotNet {
+            ty,
+            receiver: Some(Box::new(self.expr(&recv)?)),
+            op,
+            args,
+        })
+    }
+
     /// A call resolved on `node` (the CallExpr, or the callee for a call without parentheses).
     fn call(&mut self, node: &SyntaxNode, callee: &SyntaxNode, args: &[SyntaxNode]) -> L<ir::Expr> {
+        if let Some(Res::DotNetMember(name)) = self.res(node).cloned() {
+            let args = args.iter().map(|a| self.dotnet_arg(a)).collect::<L<Vec<_>>>()?;
+            let op = if node.kind() == SyntaxKind::CallExpr {
+                ir::DotNetOp::Call(name.clone())
+            } else {
+                ir::DotNetOp::Get(name.clone())
+            };
+            return self.dotnet_member(node, callee, &name, op, args);
+        }
         let receiver_node = (callee.kind() == SyntaxKind::MemberExpr)
             .then(|| callee.children().next())
             .flatten();
@@ -2860,6 +3014,11 @@ impl Lowerer<'_> {
                 };
                 let mut out = Vec::new();
                 for (i, a) in args.iter().enumerate() {
+                    if matches!(self.ty_of(a), Ty::DotNet(_)) {
+                        return Err(format!(
+                            "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
+                        ));
+                    }
                     let p = sig
                         .params
                         .get(i)
@@ -2905,12 +3064,25 @@ impl Lowerer<'_> {
                     ret_used: true,
                 })
             }
+            // The checker refused a builtin of a newer runtime (ADR-015 3.3): say why.
+            None if self.runtime_refusal(node).is_some() => Err(self.runtime_refusal(node).unwrap_or_default()),
             other => Err(format!("call `{}` ({other:?}) is not lowered yet", node.text())),
         }
     }
+
+    /// The checker's AR1005 on this call, if any.
+    fn runtime_refusal(&self, node: &SyntaxNode) -> Option<String> {
+        let path = &self.ws.files[self.file].path;
+        let at: usize = node.text_range().start().into();
+        self.checked
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "AR1005" && d.offset == at && &d.file == path)
+            .map(|d| format!("AR1005 {}", d.message))
+    }
 }
 
-/// Load, check and lower in one go.
+/// Load, check and lower in one go, against the newest catalog (nothing hidden).
 pub fn compile(
     apps: Vec<crate::workspace::AppSource>,
     symbols: &std::collections::BTreeSet<String>,
@@ -2919,15 +3091,45 @@ pub fn compile(
     compile_apps(apps, kinds, symbols)
 }
 
-/// Like `compile`, with the kind of each app (dependency apps, ADR-013).
+/// Like [`compile`], with the kind of each app (dependency apps, ADR-013).
 pub fn compile_apps(
     apps: Vec<crate::workspace::AppSource>,
     kinds: Vec<crate::workspace::AppKind>,
     symbols: &std::collections::BTreeSet<String>,
 ) -> (Workspace, Lowered) {
+    compile_with(apps, kinds, symbols, &al_builtins::catalog::Catalog::load())
+}
+
+/// Like [`compile`], for a run target: builtins newer than the target's runtime are
+/// refused (ADR-015 3.3).
+pub fn compile_for(
+    apps: Vec<crate::workspace::AppSource>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: &al_version::Target,
+) -> (Workspace, Lowered) {
+    let kinds = vec![crate::workspace::AppKind::Workspace; apps.len()];
+    compile_apps_for(apps, kinds, symbols, target)
+}
+
+/// [`compile_for`] with the kind of each app.
+pub fn compile_apps_for(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: &al_version::Target,
+) -> (Workspace, Lowered) {
+    compile_with(apps, kinds, symbols, &al_builtins::catalog::Catalog::for_target(target))
+}
+
+fn compile_with(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    catalog: &al_builtins::catalog::Catalog,
+) -> (Workspace, Lowered) {
     let ws = Workspace::load_apps(apps, kinds, symbols);
     let members = crate::members::build(&ws);
-    let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let checked = crate::check::check(&ws, &members, catalog);
     let lowered = lower(&ws, &members, &checked);
     (ws, lowered)
 }
@@ -2956,6 +3158,105 @@ mod tests {
             .enumerate()
             .find(|(_, r)| r.name == name)
             .expect("routine")
+    }
+
+    const DOTNET: &str = "dotnet { assembly(\"netstandard\") { Culture = 'neutral'; PublicKeyToken = 'cc7b13ffcd2ddd51'; type(\"System.Convert\"; \"Convert\") { } type(\"System.IO.MemoryStream\"; \"MemoryStream\") { } } }\n";
+
+    #[test]
+    fn dotnet_calls_lower_to_dynamic_member_calls_on_the_declared_type() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Integer var Convert: DotNet Convert; I: Integer; begin I := Convert.ToInt32('12'); exit(I); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        assert_eq!(l.program.dotnet_types.len(), 2);
+        let d = &l.program.dotnet_types[0];
+        assert_eq!(
+            (d.alias.as_str(), d.type_name.as_str(), d.assembly.as_str()),
+            ("Convert", "System.Convert", "netstandard")
+        );
+        assert_eq!(d.public_key_token.as_deref(), Some("cc7b13ffcd2ddd51"));
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        assert_eq!(r.locals[0].ty, RtType::DotNet(0));
+        assert_eq!(
+            r.body[0],
+            ir::Stmt::Assign(
+                ir::Place::Local(1),
+                ir::Expr::DotNetCoerce(
+                    RtType::Integer,
+                    Box::new(ir::Expr::DotNet {
+                        ty: Some(0),
+                        receiver: Some(Box::new(ir::Expr::Load(ir::Place::Local(0)))),
+                        op: ir::DotNetOp::Call("ToInt32".into()),
+                        args: vec![ir::Arg::Value(ir::Expr::Const(ir::Const::Text("12".into())))],
+                    })
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn dotnet_constructors_properties_and_by_reference_arguments_lower() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P() var M: DotNet MemoryStream; N: Integer; begin M := M.MemoryStream(16); M.Position := 3; N := M.Length; M.Read(N); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        let ir::Stmt::Assign(_, ir::Expr::Convert(RtType::DotNet(1), ctor)) = &r.body[0] else {
+            panic!("{:?}", r.body[0])
+        };
+        assert!(matches!(
+            **ctor,
+            ir::Expr::DotNet {
+                ty: Some(1),
+                op: ir::DotNetOp::Construct,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &r.body[1],
+            ir::Stmt::Expr(ir::Expr::DotNet { op: ir::DotNetOp::Set(n), args, .. }) if n == "Position" && args.len() == 1
+        ));
+        assert!(matches!(
+            &r.body[2],
+            ir::Stmt::Assign(_, ir::Expr::DotNetCoerce(RtType::Integer, e))
+                if matches!(**e, ir::Expr::DotNet { op: ir::DotNetOp::Get(ref n), .. } if n == "Length")
+        ));
+        // A plain variable argument is passed by place, so a by-reference parameter can write it back.
+        assert!(matches!(
+            &r.body[3],
+            ir::Stmt::Expr(ir::Expr::DotNet { op: ir::DotNetOp::Call(n), args, .. })
+                if n == "Read" && matches!(args[0], ir::Arg::Ref(ir::Place::Local(1)))
+        ));
+    }
+
+    #[test]
+    fn a_dotnet_alias_without_a_declaration_is_a_lowering_reason() {
+        let (_, l) = lower_src("codeunit 50100 C { procedure P() var X: DotNet Missing; begin end; }");
+        let (oi, _) = routine(&l, "P");
+        assert!(
+            l.unsupported[oi][0]
+                .iter()
+                .any(|r| r.contains("DotNet 'Missing'") && r.contains("no dotnet")),
+            "{:?}",
+            l.unsupported[oi][0]
+        );
+    }
+
+    #[test]
+    fn dotnet_results_used_as_operands_or_in_foreach_are_refused_statically() {
+        let (_, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Boolean var Convert: DotNet Convert; begin exit(Convert.ToInt32('1') > 0); end; }}"
+        ));
+        let (oi, _) = routine(&l, "P");
+        assert!(
+            l.unsupported[oi][0]
+                .iter()
+                .any(|r| r.contains("DotNet") && r.contains("only known at run time")),
+            "{:?}",
+            l.unsupported[oi][0]
+        );
     }
 
     #[test]
@@ -3051,32 +3352,6 @@ mod tests {
     }
 
     #[test]
-    fn a_dotnet_local_refuses_its_routine_naming_the_type() {
-        // ADR-013 decision 8: .NET types are refused until the owner decides how to support them.
-        let (_, l) = lower_src(
-            "codeunit 1 C { procedure Plain() begin end; procedure Uses() var Conv: DotNet Convert; begin end; }",
-        );
-        let reasons = |n: &str| l.unsupported[0][routine(&l, n).0].clone();
-        assert!(reasons("Plain").is_empty());
-        let r = reasons("Uses");
-        assert!(
-            r.len() == 1 && r[0].contains("Convert") && r[0].contains(".NET"),
-            "{r:?}"
-        );
-    }
-
-    #[test]
-    fn a_dotnet_global_refuses_only_the_routines_that_use_it() {
-        let (_, l) = lower_src(
-            "codeunit 1 C { var Conv: DotNet Convert; Text: Text; procedure Plain() begin Text := 'a'; end; procedure Uses() begin Conv := Conv; end; }",
-        );
-        let reasons = |n: &str| l.unsupported[0][routine(&l, n).0].clone();
-        assert!(reasons("Plain").is_empty(), "{:?}", reasons("Plain"));
-        let r = reasons("Uses");
-        assert!(r.iter().any(|x| x.contains("Convert") && x.contains(".NET")), "{r:?}");
-    }
-
-    #[test]
     fn format_of_an_option_field_with_captions_formats_the_caption() {
         // corpus fieldref/TestPrecompiledFieldOptionCaption.al:47-55
         let (_, l) = lower_src(
@@ -3115,6 +3390,37 @@ mod tests {
             l.unsupported[c][w].iter().any(|r| r.contains("not pinned")),
             "{:?}",
             l.unsupported[c][w]
+        );
+    }
+
+    #[test]
+    fn a_builtin_newer_than_the_target_runtime_makes_the_routine_unsupported() {
+        let src =
+            "codeunit 50100 C { procedure P() begin Codeunit.Run('Some Codeunit'); end; procedure Ok() begin end; }";
+        let apps = || {
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }]
+        };
+        let target = |bc: &str| al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+        let (_, l) = compile_for(apps(), &Default::default(), &target("27.5"));
+        let (pi, _) = routine(&l, "P");
+        let (oi, _) = routine(&l, "Ok");
+        assert_eq!(
+            l.unsupported[0][pi],
+            vec!["AR1005 `Run` is not available in runtime 16.0 (introduced in 17.0)".to_string()],
+            "refused at runtime 16.0"
+        );
+        assert!(l.unsupported[0][oi].is_empty());
+        // At runtime 17.0 the by-name overload exists; the call lowers (the VM refuses it later).
+        let (_, l) = compile_for(apps(), &Default::default(), &target("28"));
+        assert!(
+            !l.unsupported[0][pi].iter().any(|r| r.contains("AR1005")),
+            "{:?}",
+            l.unsupported[0][pi]
         );
     }
 

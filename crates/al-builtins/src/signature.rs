@@ -23,6 +23,9 @@ pub struct Signature {
     pub ret: String,
     /// `[Ok := ]`: the return value may be ignored; ignoring it turns a failure into a runtime error.
     pub ret_optional: bool,
+    /// Available from this app runtime on (`@17.0` in the catalog); `None` for
+    /// everything at or below the runtime floor (ADR-015 3.3).
+    pub since: Option<al_version::Runtime>,
 }
 
 /// One overload as stored in `al-surface.json`.
@@ -35,6 +38,9 @@ pub struct DocEntry {
     pub return_type: String,
     #[serde(default)]
     pub return_optional: bool,
+    /// "Available or changed with runtime version X", for example `17.0.`.
+    #[serde(default)]
+    pub runtime_version: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -73,6 +79,7 @@ impl Signature {
                 format!("{r}{}", "]".repeat(open))
             },
             ret_optional: e.return_optional,
+            since: e.runtime_version.as_deref().and_then(tag_of),
         })
     }
 
@@ -84,6 +91,10 @@ impl Signature {
         let (receiver, name) = qual.rsplit_once('.').ok_or_else(bad)?;
         let close = rest.rfind(')').ok_or_else(bad)?;
         let (params_s, tail) = (&rest[..close], rest[close + 1..].trim());
+        let (tail, since) = match tail.rsplit_once('@') {
+            Some((t, v)) => (t.trim_end(), Some(al_version::Runtime::parse(v).map_err(|_| bad())?)),
+            None => (tail, None),
+        };
         let (ret, ret_optional) = match tail.strip_prefix("-> ") {
             Some(r) => match r.strip_suffix('?') {
                 Some(r) => (r.to_string(), true),
@@ -132,6 +143,7 @@ impl Signature {
             params,
             ret,
             ret_optional,
+            since,
         })
     }
 
@@ -161,8 +173,19 @@ impl Signature {
         if !self.ret.is_empty() {
             line.push_str(&format!(" -> {}{}", self.ret, if self.ret_optional { "?" } else { "" }));
         }
+        if let Some(r) = self.since {
+            line.push_str(&format!(" @{r}"));
+        }
         line
     }
+}
+
+/// The catalog tag for a docs "available or changed with runtime version" value:
+/// only versions above the runtime floor are tagged (ADR-015 3.3). The docs
+/// write `17.0.` with a trailing dot; an unreadable value is no tag.
+fn tag_of(runtime_version: &str) -> Option<al_version::Runtime> {
+    let r = al_version::Runtime::parse(runtime_version.trim().trim_end_matches('.')).ok()?;
+    (r > al_version::Runtime::floor()).then_some(r)
 }
 
 /// Parses the text between the parentheses of a syntax line.
@@ -347,6 +370,7 @@ mod tests {
             }],
             return_type: ret.into(),
             return_optional: ret_optional,
+            runtime_version: None,
         }
     }
 

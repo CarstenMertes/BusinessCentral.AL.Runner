@@ -107,19 +107,47 @@ impl CorpusRuntime {
         manifests: &[Manifest],
         symbols: &BTreeSet<String>,
     ) -> CorpusRuntime {
-        let kinds = vec![al_sema::AppKind::Workspace; apps.len()];
-        CorpusRuntime::run_apps(apps, kinds, manifests, symbols)
+        Self::run_with_dotnet(apps, manifests, symbols, al_vm::dotnet::DotNetConfig::default())
     }
 
-    /// Like `run_with_manifests`, with the kind of each app. Dependency apps are compiled but no
+    /// [`run_with_manifests`](Self::run_with_manifests) with a `DotNet` host (ADR-014); the
+    /// default has none.
+    pub fn run_with_dotnet(
+        apps: Vec<al_sema::workspace::AppSource>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+    ) -> CorpusRuntime {
+        Self::run_for(apps, manifests, symbols, None, dotnet)
+    }
+
+    /// Runs for a target: builtins newer than the target's runtime are refused and version gates
+    /// follow it (ADR-015). Without a target, the newest catalog and behaviour are used.
+    pub fn run_for(
+        apps: Vec<al_sema::workspace::AppSource>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+    ) -> CorpusRuntime {
+        let kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+        Self::run_for_apps(apps, kinds, manifests, symbols, target, dotnet)
+    }
+
+    /// [`run_for`](Self::run_for) with the kind of each app. Dependency apps are compiled but no
     /// test is run in them (ADR-013 decision 4).
-    pub fn run_apps(
+    pub fn run_for_apps(
         apps: Vec<al_sema::workspace::AppSource>,
         kinds: Vec<al_sema::AppKind>,
         manifests: &[Manifest],
         symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
     ) -> CorpusRuntime {
-        let (_ws, mut lowered) = al_sema::lower::compile_apps(apps, kinds, symbols);
+        let (_ws, mut lowered) = match target {
+            Some(t) => al_sema::lower::compile_apps_for(apps, kinds, symbols, t),
+            None => al_sema::lower::compile_apps(apps, kinds, symbols),
+        };
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
@@ -130,7 +158,7 @@ impl CorpusRuntime {
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
-        let engine = Engine::new(lowered.program.clone(), blocked);
+        let engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
         let mut outcomes = std::collections::HashMap::new();
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {

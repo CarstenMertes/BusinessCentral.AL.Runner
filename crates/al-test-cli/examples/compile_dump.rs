@@ -15,7 +15,7 @@ fn main() {
         runtime::load_app(&tests.join("al-language-internals-fixture")).unwrap(),
         runtime::load_app(&tests.join("al-language")).unwrap(),
     ];
-    let syms = ["BC27PLUS".to_string()].into();
+    let syms = al_version::corpus_symbols(27);
     let ws = al_sema::workspace::Workspace::load(apps, &syms);
     let members = al_sema::members::build(&ws);
     let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());

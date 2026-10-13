@@ -35,9 +35,9 @@ needs more.
 | `al-ir` | Typed IR: program, objects, routines, places, expressions, table and page schemas |
 | `al-vm` | Engine (immutable, `Arc`) and Session (all mutable state). Records, triggers, events and subscribers, FlowFields, AutoIncrement, RecordRef/FieldRef, relations and rename propagation, UI dialogs and handlers, the headless page client |
 | `al-data` | The `Store` trait (ADR-003), `MemStore` on `im` persistent maps, and its contract suite |
-| `al-host` | Capability traits for the host (ADR-006): `Clock` and `Identity` with AL Runner's defaults (ADR-013); the session reads them for `Today`, `UserId`, the system field stamps and the like. The command line injects the system clock (`al-test-cli/src/host.rs`) |
+| `al-host` | Capability traits for the host (ADR-006): `Clock` and `Identity` with AL Runner's defaults (ADR-013); the session reads them for `Today`, `UserId`, the system field stamps and the like. The command line injects the system clock (`al-test-cli/src/host.rs`). Also `DotNetHost` / `DotNetSession` and the default `NoDotNet` (ADR-014) |
 | `al-deps` | Dependency apps (ADR-013): version selection, the ZIP and NAVX reader (CRC checked), the `.alpackages` pool. May touch the OS |
-| `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet |
+| `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet; `SidecarHost` (`dotnet.rs`), the one place that starts a process (the .NET sidecar) |
 
 ## Runtime model
 
@@ -71,6 +71,17 @@ needs more.
   and `SetTableView` run in `al-vm/src/reports.rs`: processing only, with no
   request page, layout or output (those are refused).
 - **Culture.** Fixed en-US, which matches the oracle.
+- **DotNet (ADR-014).** A `dotnet { assembly(..) { type(..; Alias) } }` block declares
+  aliases; `X: DotNet Alias` lowers to `RtType::DotNet` and member uses to `Expr::DotNet`
+  (constructor, call, property get and set), whose results have no static type and are coerced
+  exactly where they are stored. In `al-vm/src/dotnet/` a call goes to the registry of
+  runtime-provided classes (`registry.rs`, empty until probes pin members), then through the
+  policy (`policy.txt`, section 8 of the ADR), then to the host (`al-host::dotnet`), else it is
+  refused. `al-test-cli/src/dotnet.rs` implements the host with a .NET 8 helper process
+  (`tools/dotnet-sidecar`), one per Session, started at the first call that reaches it. A
+  .NET exception is `Signal::Unsupported` with its CLR type and message until a probe pins
+  BC's text. A machine without .NET refuses with the `dotnet-unavailable` marker; the ratchet
+  skips such baseline cases locally and `--require-dotnet` (CI) makes them an error.
 
 ## Budgets (tests, run in CI in release)
 

@@ -200,6 +200,11 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Guid(a), V::Guid(b)) => a.cmp(b),
         (V::Option(a, _), V::Option(b, _)) => a.cmp(b),
         (V::Option(a, _), V::Integer(b)) | (V::Integer(a), V::Option(b, _)) => a.cmp(b),
+        // A Duration compares with a whole number of milliseconds (json/TestJsonComplete.al: `Dur > 0`).
+        (V::Duration(a), V::Integer(b)) => a.cmp(&i64::from(*b)),
+        (V::Integer(a), V::Duration(b)) => i64::from(*a).cmp(b),
+        (V::Duration(a), V::BigInteger(b)) => a.cmp(b),
+        (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => a.cmp(b),
         _ => return unsupported(format!("comparison of {l:?} and {r:?}")),
@@ -346,5 +351,14 @@ mod tests {
             Ordering::Equal
         );
         assert!(compare(&Value::Integer(1), &Value::Text("1".into())).is_err());
+        // json/TestJsonComplete.al JsonObject_GetDuration_ReturnsDuration: `Dur > 0`.
+        assert_eq!(
+            compare(&Value::Duration(3_600_000), &Value::Integer(0)).unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare(&Value::Integer(0), &Value::Duration(5)).unwrap(),
+            Ordering::Less
+        );
     }
 }

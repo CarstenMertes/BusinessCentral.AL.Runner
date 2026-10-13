@@ -21,3 +21,13 @@ comment as a corpus citation and is deleted here.
 | Temporary records | not affected by `asserterror` rollback | none | `al-vm` `AssertError` |
 | Install | OnInstallAppPerDatabase runs before OnInstallAppPerCompany | doc "Writing extension install code" | `al-test-cli/src/runtime.rs` |
 | SetFilter | text filter values on a Code field upper-case before matching (`'ap*'` = `'AP*'`); Boolean filter text accepts Yes/No/true/false | Code conversion rule; corpus uses `Format(false)` as a filter value | `al-builtins/src/filter.rs` |
+| JSON | `WriteTo` writes compact JSON (no whitespace, keys in insertion order); the corpus only pins `{}`, `[]` and `"key"` appearing | json/TestJsonXmlDeepContracts.al, TestJsonObject.al | `al-builtins/src/json.rs` `write` |
+| JSON | `ReadFrom` of invalid JSON (or JSON of the wrong top-level kind) returns false when the result is used | doc: "returns false if the operation was not successful"; no corpus test feeds invalid JSON | `json.rs` `read_from` |
+| JSON | Adding a token that already has a parent copies it, an unattached one is shared (Newtonsoft `JContainer.Add`); a later change to the added object is therefore visible through the parent only in the shared case | none (the corpus never mutates after `Add`) | `json.rs` `attachable` |
+| JSON | `Path` is Newtonsoft's (`a.b[0]`, root is empty) | corpus only asserts it contains the key (json/TestJsonTypedGetters.al `JsonToken_Path_ReturnsPath`) | `json.rs` `path_of` |
+| JSON | ISO text read as Date/DateTime/Time; a DateTime without an offset is UTC; numbers read as Duration are milliseconds | corpus only asserts the results are non-zero (json/TestJsonComplete.al) | `json.rs`, `iso.rs` |
+| JSON | the error texts of a missing key, an out-of-range index, `AsValue` on an object, `Add` of an existing key, `GetX(Key, true)` | corpus only asserts a non-empty `GetLastErrorText` (json/TestJsonTypedGetters.al); the runtime refuses instead of inventing a text | `json.rs` |
+| JSON | `ReadFromYaml` / `WriteToYaml` throw on Cloud | session/TestFinalCoverage.al:258 pins only "an error"; not implemented, text unknown | not registered |
+| Evaluate | a two-digit year in `MM/DD/YY` is read as 1930-2029 (the .NET default pivot) | none; the corpus only round-trips `Format(Date)` for 2024 and today | `al-builtins/src/evaluate.rs` `date` |
+| Evaluate | Boolean accepts exactly `true`, `false`, `Yes`, `No`; other texts are refused | corpus pins `true`/`false` (text/TestEvaluate.al) and `Format(true)` = `Yes` (types/TestFormatBooleanContracts.al:112) | `evaluate.rs` `boolean` |
+| Evaluate | a failed `Evaluate` leaves the variable unchanged | none | `evaluate.rs` |

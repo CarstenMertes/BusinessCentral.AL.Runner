@@ -101,6 +101,8 @@ pub enum LibraryValue {
     #[default]
     Empty,
     Text(String),
+    /// A JSON node behind a JsonObject / JsonArray / JsonToken / JsonValue handle.
+    Json(crate::json::JsonCell),
 }
 
 impl Value {

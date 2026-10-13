@@ -44,6 +44,7 @@ pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result
 
 const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
+    ("System.Evaluate#1", crate::evaluate::evaluate),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     ("System.GetLastErrorCode#1", get_last_error_code),
@@ -116,14 +117,34 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
     REGISTRY.iter().chain(crate::collections::REGISTRY)
 }
 
+/// Implementations chosen per catalog signature instead of being listed by id
+/// (families with many near-identical overloads: JSON, XML, streams). Built once
+/// from the catalog, so a lookup is a hash probe.
+fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
+    static TABLE: std::sync::OnceLock<std::collections::HashMap<String, NativeFn>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let cat = crate::catalog::Catalog::load();
+        cat.signatures
+            .iter()
+            .filter_map(|sig| crate::json::native_for(sig).map(|f| (cat.id(sig), f)))
+            .collect()
+    })
+}
+
 /// The implementation registered for overload `id`, if any.
 pub fn lookup(id: &str) -> Option<NativeFn> {
-    all().find(|(i, _)| *i == id).map(|(_, f)| *f)
+    all()
+        .find(|(i, _)| *i == id)
+        .map(|(_, f)| *f)
+        .or_else(|| derived().get(id).copied())
 }
 
 /// Every registered id, for the conformance test.
 pub fn registered_ids() -> Vec<&'static str> {
-    all().map(|(i, _)| *i).collect()
+    all()
+        .map(|(i, _)| *i)
+        .chain(derived().keys().map(String::as_str))
+        .collect()
 }
 
 fn unsupported<T>(what: &str) -> Result<T, Signal> {

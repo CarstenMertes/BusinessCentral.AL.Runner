@@ -6,7 +6,10 @@ pub mod value;
 
 pub mod catalog;
 pub mod collections;
+pub mod evaluate;
 pub mod filter;
 pub mod format;
+pub mod iso;
+pub mod json;
 pub mod native;
 pub mod ops;

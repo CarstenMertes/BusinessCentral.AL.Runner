@@ -38,6 +38,12 @@ fn handle(name: &str, v: LibraryValue) -> Value {
     Value::Library(name.into(), Rc::new(RefCell::new(v)))
 }
 
+/// A `RecordRef` handle on a copy of the record `rec` (what an event hands its subscriber).
+pub(crate) fn record_ref_value(rec: &crate::records::Rec) -> Value {
+    let copy = rec.borrow().clone();
+    handle("RecordRef", LibraryValue::RecordRef(Rc::new(RefCell::new(copy))))
+}
+
 fn al_error(message: String) -> Signal {
     Signal::Error(AlError {
         message,

@@ -105,6 +105,12 @@ impl Session {
                 "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed. Please remove the events subscriptions or use DeleteAll.",
             );
         }
+        if self.global_enabled(t, crate::globaltriggers::GlobalOp::Delete)? {
+            return unsupported(format!(
+                "Truncate on {}, which has the OnDatabaseDelete event enabled (whether BC refuses it is not pinned)",
+                t.name
+            ));
+        }
         let (filters, flow_field_filters) = self.split_filters(rec);
         if !flow_field_filters.is_empty() {
             return error("Truncate does not support filters on FlowFields.");

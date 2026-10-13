@@ -26,6 +26,9 @@ use crate::workspace::Resolution;
 use std::collections::HashSet;
 use std::rc::Rc;
 
+/// Base Application's `Company-Initialize`, which a new company runs once.
+pub const COMPANY_INITIALIZE: u32 = 2;
+
 /// An object nothing in the compile refers to.
 pub const NONE: u8 = 0;
 /// Lowered, with its routines stubbed.
@@ -65,6 +68,10 @@ pub(super) struct State {
     ops: Vec<u8>,
     /// Tables with a write operation not processed yet.
     fresh_ops: Vec<(usize, u8)>,
+    /// The write operations (any table, any app) whose `Global Triggers` subscribers are reached.
+    global_ops: u8,
+    /// Write operations not yet processed for `Global Triggers`.
+    fresh_global: u8,
     ctxs: HashMap<usize, Rc<ObjCtx>>,
     routines: HashMap<usize, Rc<Vec<ast::Routine>>>,
 }
@@ -78,6 +85,8 @@ impl State {
             fresh: Vec::new(),
             ops: vec![0; objects],
             fresh_ops: Vec::new(),
+            global_ops: 0,
+            fresh_global: 0,
             ctxs: HashMap::new(),
             routines: HashMap::new(),
         }
@@ -158,7 +167,19 @@ impl Checker<'_> {
     /// Reached code writes to table `i` (`ops`): that runs its triggers and the subscribers
     /// to its events for those operations.
     pub(super) fn touch_ops(&self, i: usize, ops: u8) {
-        if !self.ws.is_dependency(i) || ops == 0 {
+        if ops == 0 {
+            return;
+        }
+        // Any write, to a table of any app, raises the events of the platform's `Global Triggers`
+        // codeunit, whose subscribers can sit in a dependency app.
+        if let Some(st) = self.demand.borrow_mut().as_mut() {
+            let new = ops & !st.global_ops;
+            if new != 0 {
+                st.global_ops |= new;
+                st.fresh_global |= new;
+            }
+        }
+        if !self.ws.is_dependency(i) {
             return;
         }
         self.raise(i, FULL);
@@ -219,6 +240,30 @@ impl Checker<'_> {
         if let Some(st) = self.demand.borrow_mut().as_mut() {
             if st.reached.insert((object, offset)) {
                 st.queue.push((object, offset));
+            }
+        }
+    }
+
+    /// The install baseline's roots (ADR-013 decision 5): every install codeunit of a dependency
+    /// app, with its install triggers, and Base Application's `Company-Initialize`.
+    pub(super) fn reach_baseline(&self) {
+        for i in 0..self.ws.objects.len() {
+            let o = &self.ws.objects[i];
+            if !self.ws.is_dependency(i) || o.kind != ObjKind::Codeunit || !self.ws.usable(i) {
+                continue;
+            }
+            if o.install {
+                self.touch_full(i);
+                for r in self.routines_of(i).iter() {
+                    if r.is_trigger()
+                        && (r.name().eq_ignore_ascii_case("OnInstallAppPerCompany")
+                            || r.name().eq_ignore_ascii_case("OnInstallAppPerDatabase"))
+                    {
+                        self.reach(i, usize::from(r.syntax().text_range().start()));
+                    }
+                }
+            } else if o.id == Some(COMPANY_INITIALIZE) && o.name.eq_ignore_ascii_case("Company-Initialize") {
+                self.reach_run(i);
             }
         }
     }
@@ -403,7 +448,11 @@ impl Checker<'_> {
                 }
                 self.touch_ops_object(o);
                 for r in self.routines_of(o).iter() {
-                    if r.is_trigger() && r.name().eq_ignore_ascii_case(trigger) {
+                    // A table extension's `modify(Field)` triggers bracket a field's OnValidate.
+                    let ext_field_trigger = op == VALIDATE
+                        && (r.name().eq_ignore_ascii_case("OnBeforeValidate")
+                            || r.name().eq_ignore_ascii_case("OnAfterValidate"));
+                    if r.is_trigger() && (r.name().eq_ignore_ascii_case(trigger) || ext_field_trigger) {
                         self.reach(o, usize::from(r.syntax().text_range().start()));
                     }
                 }
@@ -413,6 +462,30 @@ impl Checker<'_> {
                 if events.iter().any(|e| event.eq_ignore_ascii_case(e)) {
                     self.reach_subscriber(o, k);
                 }
+            }
+        }
+    }
+
+    /// Writes (`ops`) raise the events of the platform codeunit `Global Triggers`: reach the
+    /// subscribers in dependency apps. The setup events are asked for every table; the others
+    /// are those the runtime raises for the operation (the global events of Insert, Modify and
+    /// Delete are not published by BC, record/TestTriggerDispatchOrder.al).
+    fn activate_global(&mut self, ops: u8) {
+        let mut events: Vec<&str> = vec!["getglobaltabletriggermask", "getdatabasetabletriggersetup"];
+        for (op, names) in [
+            (INSERT, &["ondatabaseinsert"][..]),
+            (MODIFY, &["ondatabasemodify"][..]),
+            (DELETE, &["ondatabasedelete"][..]),
+            (RENAME, &["onglobalrename", "ondatabaserename"][..]),
+        ] {
+            if ops & op != 0 {
+                events.extend(names.iter().copied());
+            }
+        }
+        for (o, k) in self.ws.global_trigger_subscribers() {
+            let event = &self.ws.objects[o].subscribers[k].event;
+            if events.iter().any(|e| event.eq_ignore_ascii_case(e)) {
+                self.reach_subscriber(o, k);
             }
         }
     }
@@ -579,6 +652,16 @@ impl Checker<'_> {
             let op = self.demand.borrow_mut().as_mut().and_then(|s| s.fresh_ops.pop());
             if let Some((t, ops)) = op {
                 self.activate_ops(t, ops);
+                continue;
+            }
+            let global = self
+                .demand
+                .borrow_mut()
+                .as_mut()
+                .map(|s| std::mem::take(&mut s.fresh_global))
+                .unwrap_or(0);
+            if global != 0 {
+                self.activate_global(global);
                 continue;
             }
             let next = self.demand.borrow_mut().as_mut().and_then(|s| s.queue.pop());
@@ -807,6 +890,43 @@ mod tests {
         );
         assert!(compiled(&l, "Subs", "A"));
         assert!(!compiled(&l, "Subs", "B"), "the publisher never raises OnNever");
+    }
+
+    #[test]
+    fn a_write_anywhere_reaches_the_global_triggers_subscribers_of_that_operation() {
+        // `Global Triggers` (2000000002) is a platform codeunit no app declares here; the runtime
+        // raises its events around writes, so a dependency's subscribers to them are reached by a
+        // write to any table, the workspace's own included.
+        let dep = [(
+            "s.al",
+            "codeunit 20 Subs {\n\
+             [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'GetDatabaseTableTriggerSetup', '', false, false)]\n\
+             local procedure Setup(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean) begin end;\n\
+             [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnDatabaseInsert', '', false, false)]\n\
+             local procedure Ins(RecRef: RecordRef) begin end;\n\
+             [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnDatabaseModify', '', false, false)]\n\
+             local procedure Mod(RecRef: RecordRef) begin end; }",
+        )];
+        let (_, l) = compile(
+            "table 5 Mine { fields { field(1; K; Code[10]) { } } }\n\
+             codeunit 1 Main { procedure Go() var R: Record Mine; begin R.Insert(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "Subs", "Setup"));
+        assert!(compiled(&l, "Subs", "Ins"));
+        assert!(
+            !compiled(&l, "Subs", "Mod"),
+            "only the operations used raise their events"
+        );
+        let (_, l) = compile(
+            "table 5 Mine { fields { field(1; K; Code[10]) { } } }\n\
+             codeunit 1 Main { procedure Go() var R: Record Mine; begin R.FindFirst(); end; }",
+            &dep,
+        );
+        assert!(
+            l.program.objects[object(&l, "Subs")].routines.is_empty(),
+            "reading raises nothing, so the subscribers are not compiled"
+        );
     }
 
     #[test]

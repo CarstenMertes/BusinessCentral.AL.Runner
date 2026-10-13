@@ -880,6 +880,12 @@ fn big_text() {
         "B.AddText('foo'); B.AddText('bar'); B.GetSubText(S, 1, 6); exit(S + Format(B.Length()));",
     );
     assert_eq!(t, "foobar6");
+    // session/TestSystemExtended.al BigTextTextPos_*: 1-based, 0 when absent.
+    let t = text_of(
+        "B: BigText;",
+        "B.AddText('Hello World'); exit(Format(B.TextPos('World')) + Format(B.TextPos('Hello')) + Format(B.TextPos('xyz')));",
+    );
+    assert_eq!(t, "7".to_string() + "10");
     // Position in AddText is not pinned.
     assert!(unsupported("B: BigText;", "B.AddText('x', 1); exit('');"));
 }
@@ -892,4 +898,166 @@ fn max_str_len_reads_the_declared_length() {
         "exit(Format(MaxStrLen(T50)) + '|' + Format(MaxStrLen(U)) + '|' + Format(MaxStrLen(C)));",
     );
     assert_eq!(t, "50|2147483647|10");
+}
+
+// ----------------------------------------------------------- SecretText
+
+#[test]
+fn secret_text_is_observable_only_through_is_empty() {
+    // types/TestSecretText.al: construction, emptiness, composition, copying and containers.
+    let t = text_of(
+        "S: SecretText; E: SecretText; P: Text; C: SecretText; D: SecretText;",
+        "S := SecretStrSubstNo('a-constant-template'); P := ''; C := P;
+         D := SecretStrSubstNo('pwd=%1', E);
+         exit(Format(S.IsEmpty()) + Format(SecretStrSubstNo('').IsEmpty()) + Format(E.IsEmpty()) + Format(C.IsEmpty()) + Format(SecretStrSubstNo('%1', E).IsEmpty()) + Format(D.IsEmpty()));",
+    );
+    assert_eq!(t, "NoYesYesYesYesNo");
+    let t = text_of(
+        "S: SecretText; P: Text; Pw: SecretText; U: SecretText; Composed: SecretText; Copy: SecretText;",
+        "P := ' '; S := P; Pw := SecretStrSubstNo('p4ssw0rd'); U := SecretStrSubstNo('admin'); Composed := SecretStrSubstNo('user=%1;pwd=%2', U, Pw);
+         Copy := Composed; Composed := SecretStrSubstNo('');
+         exit(Format(S.IsEmpty()) + Format(Copy.IsEmpty()) + Format(Composed.IsEmpty()));",
+    );
+    assert_eq!(t, "NoNoYes");
+    let t = text_of(
+        "L: List of [SecretText]; D: Dictionary of [Text, SecretText]; S: SecretText; R: SecretText; R2: SecretText;",
+        "S := SecretStrSubstNo('in-a-list'); L.Add(S); R := L.Get(1); D.Add('api-key', S); R2 := D.Get('api-key');
+         exit(Format(L.Count()) + Format(R.IsEmpty()) + Format(R2.IsEmpty()) + Format(D.ContainsKey('api-key')));",
+    );
+    assert_eq!(t, "1NoNoYes");
+}
+
+// ------------------------------------------------- parser edge cases
+
+#[test]
+fn json_parser_edge_cases() {
+    // Escapes, surrogate pairs, number forms and white space (no corpus pin beyond the round trips;
+    // these guard the hand-written parser).
+    let t = text_of(
+        "J: JsonObject; S: Text;",
+        "J.ReadFrom('  { \"a\" : \"\\u00e9\\n\\\\\\\"x\\ud83d\\ude00\" , \"b\":[ ] , \"c\" : { } }  '); J.WriteTo(S); exit(S);",
+    );
+    assert_eq!(t, "{\"a\":\"é\\n\\\\\\\"x😀\",\"b\":[],\"c\":{}}");
+    let t = text_of(
+        "J: JsonObject;",
+        "J.ReadFrom('{\"a\":1e3,\"b\":-0.5,\"c\":1.0,\"d\":12345678901234567890,\"e\":-7}');
+         exit(Format(J.GetDecimal('a'), 0, 2) + '|' + Format(J.GetDecimal('b'), 0, 2) + '|' + Format(J.GetDecimal('c'), 0, 2) + '|' + Format(J.GetDecimal('d'), 0, 2) + '|' + Format(J.GetInteger('e')));",
+    );
+    assert_eq!(t, "1000|-0.5|1|12345678901234567890|-7");
+    for bad in [
+        "{",
+        "{\"a\":}",
+        "[1,]",
+        "{\"a\" 1}",
+        "01",
+        "'x'",
+        "{} x",
+        "",
+        "{\"a\":\"\\x\"}",
+        "[1 2]",
+        "nul",
+    ] {
+        let src = "J: JsonObject; A: JsonArray; Ok: Boolean;";
+        let body = format!("Ok := J.ReadFrom('{}'); exit(Format(Ok));", bad.replace('\'', "''"));
+        // Objects and arrays differ in the accepted top-level kind; both reject invalid text.
+        assert_eq!(text_of(src, &body), "No", "{bad}");
+    }
+    // A top-level kind mismatch is a failed ReadFrom, not a silent success.
+    let t = text_of(
+        "J: JsonObject; Ok: Boolean;",
+        "Ok := J.ReadFrom('[1]'); exit(Format(Ok));",
+    );
+    assert_eq!(t, "No");
+    let t = text_of(
+        "A: JsonArray; Ok: Boolean;",
+        "Ok := A.ReadFrom('{}'); exit(Format(Ok));",
+    );
+    assert_eq!(t, "No");
+    // Duplicate keys in the input are refused (the winner is not pinned).
+    assert!(unsupported(
+        "J: JsonObject;",
+        "J.ReadFrom('{\"a\":1,\"a\":2}'); exit('');"
+    ));
+}
+
+#[test]
+fn json_tree_sharing_and_paths() {
+    // A free node is shared by Add, an attached one is copied; Path walks parents.
+    let t = text_of(
+        "J: JsonObject; I: JsonObject; T: JsonToken; K: JsonObject; S: Text;",
+        "J.Add('inner', I); I.Add('late', 1); K.Add('again', I); I.Add('later', 2); J.WriteTo(S); exit(S + '|' + Format(K.Contains('again')));",
+    );
+    assert_eq!(t, "{\"inner\":{\"late\":1,\"later\":2}}|Yes");
+    let t = text_of(
+        "A: JsonArray; J: JsonObject; T: JsonToken;",
+        "J.ReadFrom('{\"a\":{\"b\":[10,{\"c\":1}]}}'); J.SelectToken('a.b[1].c', T); exit(T.Path());",
+    );
+    assert_eq!(t, "a.b[1].c");
+    // A removed child no longer reports a parent.
+    let t = text_of(
+        "J: JsonObject; T: JsonToken;",
+        "J.ReadFrom('{\"x\":{\"y\":1}}'); J.Get('x', T); J.Remove('x'); exit('[' + T.Path() + ']');",
+    );
+    assert_eq!(t, "[]");
+    // ReadFrom into an object that is itself a child keeps it attached.
+    let t = text_of(
+        "J: JsonObject; T: JsonToken; O: JsonObject;",
+        "J.ReadFrom('{\"x\":{}}'); J.Get('x', T); O := T.AsObject(); O.ReadFrom('{\"y\":2}'); exit(T.Path() + Format(O.GetInteger('y')));",
+    );
+    assert_eq!(t, "x2");
+}
+
+#[test]
+fn xml_parser_edge_cases() {
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; S: Text;",
+        "XmlDocument.ReadFrom('<?xml version=\"1.0\" encoding=\"utf-8\"?><!-- c --><r a=''x&amp;y'' b=\"&#65;&#x42;\"><![CDATA[<>]]>t&lt;&gt;&quot;&apos;</r>', D);
+         D.GetRoot(E); exit(E.InnerText() + '|' + Format(E.Attributes().Count()));",
+    );
+    assert_eq!(t, "<>t<>\"'|2");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; A: XmlAttribute;",
+        "XmlDocument.ReadFrom('<r a=''x&amp;y'' b=\"&#65;&#x42;\"/>', D); D.GetRoot(E); E.Attributes().Get('a', A); exit(A.Value()); ",
+    );
+    assert_eq!(t, "x&y");
+    for bad in [
+        "<a>",
+        "<a></b>",
+        "<a/><b/>",
+        "text",
+        "<a b=1/>",
+        "<a b='1' b='2'/>",
+        "<a>&nope;</a>",
+        "<a:b/>",
+        "<a><b></a></b>",
+        "<>",
+        "<a",
+        "<a>]]></a>",
+        "<a x='<'/>",
+        "",
+    ] {
+        let body = format!(
+            "Ok := XmlDocument.ReadFrom('{}', D); exit(Format(Ok));",
+            bad.replace('\'', "''")
+        );
+        assert_eq!(text_of("D: XmlDocument; Ok: Boolean;", &body), "No", "{bad}");
+    }
+    // Namespaces: undeclaring the default puts `a` in no namespace, so both lookups find it, and `p:b` is in u2.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; L: XmlNodeList; N: XmlNode; C: XmlElement; A: XmlAttribute;",
+        "XmlDocument.ReadFrom('<r xmlns=\"u1\" xmlns:p=\"u2\"><a xmlns=\"\" x=\"1\"/><p:b p:y=\"2\" z=\"3\"/></r>', D); D.GetRoot(E);
+         exit(E.NamespaceUri() + '|' + Format(E.GetChildElements('a').Count()) + '|' + Format(E.GetChildElements('a', '').Count()) + '|' + Format(E.GetChildElements('b', 'u2').Count()));",
+    );
+    assert_eq!(t, "u1|1|1|1");
+    // Serialisation round trip keeps prefixes and declares what a created tree needs.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; S: Text;",
+        "XmlDocument.ReadFrom('<r xmlns:p=\"u2\"><p:b p:y=\"2\"/></r>', D); D.WriteTo(S); exit(S);",
+    );
+    assert_eq!(t, "<r xmlns:p=\"u2\"><p:b p:y=\"2\" /></r>");
+    let t = text_of(
+        "E: XmlElement; C: XmlElement; S: Text;",
+        "E := XmlElement.Create('root', 'urn:x'); C := XmlElement.Create('child', 'urn:x'); E.Add(C); E.SetAttribute('a', 'v\"&<'); E.WriteTo(S); exit(S);",
+    );
+    assert_eq!(t, "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\"><child /></root>");
 }

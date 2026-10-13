@@ -2,9 +2,11 @@
 //! (ADR-010: conversions live next to the value model).
 
 use crate::native::Signal;
-use crate::value::{RtType, Value};
+use crate::value::{LibraryValue, RtType, Value};
 use rust_decimal::Decimal;
+use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 fn unsupported<T>(what: String) -> Result<T, Signal> {
     Err(Signal::Unsupported(what))
@@ -27,6 +29,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Codeunit(_), T::Codeunit(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
         (v @ Value::Blob(_), T::Library(n)) if n.eq_ignore_ascii_case("Blob") => v,
+        // A Text (not a literal) assigns into a SecretText (types/TestSecretText.al).
+        (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => {
+            Value::Library("SecretText".into(), Rc::new(RefCell::new(LibraryValue::Text(s))))
+        }
         (v @ Value::Enum(..), T::Enum(_)) => v,
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
         (Value::Option(o, _), T::Integer) => Value::Integer(o),

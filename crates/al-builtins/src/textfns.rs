@@ -425,6 +425,41 @@ fn select_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResul
     }
 }
 
+// ----------------------------------------------------------- SecretText
+
+fn secret(content: String) -> Value {
+    Value::Library("SecretText".into(), Rc::new(RefCell::new(LibraryValue::Text(content))))
+}
+
+/// The content of a SecretText value; a never-assigned one is empty.
+fn secret_content(v: &Value) -> Result<String, Signal> {
+    match v {
+        Value::Library(_, h) => match &*h.borrow() {
+            LibraryValue::Empty => Ok(String::new()),
+            LibraryValue::Text(s) => Ok(s.clone()),
+            _ => unsupported("SecretText holding something else"),
+        },
+        other => unsupported(format!("{other:?} used as a SecretText")),
+    }
+}
+
+/// Emptiness is zero length: a single space is content (types/TestSecretText.al).
+fn secret_is_empty(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    match r {
+        Some(v) => Ok(Value::Boolean(secret_content(v)?.is_empty())),
+        None => unsupported("SecretText.IsEmpty without a receiver"),
+    }
+}
+
+fn secret_str_subst_no(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let template = text(a, 0)?;
+    let args: Vec<Value> = a[1..]
+        .iter()
+        .map(|v| secret_content(v).map(Value::Text))
+        .collect::<Result<_, _>>()?;
+    Ok(secret(crate::native::substitute(&template, &args, c)?))
+}
+
 // ----------------------------------------------- TextBuilder, BigText
 
 fn string_of(r: Option<&mut Value>) -> Result<Rc<RefCell<LibraryValue>>, Signal> {
@@ -557,6 +592,16 @@ fn bt_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult
     Ok(Value::Integer(with_string(&h, |s| Value::text_len(s)) as i32))
 }
 
+/// 1-based position of the first occurrence, 0 when absent (session/TestSystemExtended.al BigTextTextPos_*).
+fn bt_text_pos(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let (hay, needle) = (with_string(&h, |s| u16s(s)), u16s(&text(a, 0)?));
+    if needle.is_empty() {
+        return unsupported("BigText.TextPos of an empty text (not pinned)");
+    }
+    Ok(Value::Integer(find(&hay, &needle, 0).map_or(0, |p| p as i32 + 1)))
+}
+
 /// `GetSubText(var Text, Position [, Length])`; returns the number of characters.
 fn bt_get_sub_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
@@ -603,6 +648,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("Text", "DelStr", _) => del_str,
         ("Text", "InsStr", [_, _, _]) => ins_str,
         ("Text", "SelectStr", [_, _]) => select_str,
+        ("SecretText", "IsEmpty", []) => secret_is_empty,
+        ("SecretText", "SecretStrSubstNo", _) => secret_str_subst_no,
         ("TextBuilder", "Append", [_]) => tb_append,
         ("TextBuilder", "AppendLine", _) => tb_append_line,
         ("TextBuilder", "ToText", _) => tb_to_text,
@@ -614,6 +661,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("TextBuilder", "Replace", [_, _]) => tb_replace,
         ("BigText", "AddText", ["Text", ..]) => bt_add_text,
         ("BigText", "Length", []) => bt_length,
+        ("BigText", "TextPos", [_]) => bt_text_pos,
         ("BigText", "GetSubText", ["Text", ..]) => bt_get_sub_text,
         _ => return None,
     };

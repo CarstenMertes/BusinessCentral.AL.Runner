@@ -889,7 +889,6 @@ impl Session {
                         });
                     }
                     if id == "Database.IsInWriteTransaction#1" {
-                        self.bg_refuse_transaction_call("Database.IsInWriteTransaction")?;
                         return Ok(Value::Boolean(self.in_write_transaction()));
                     }
                     if id.starts_with("Xmlport.") {

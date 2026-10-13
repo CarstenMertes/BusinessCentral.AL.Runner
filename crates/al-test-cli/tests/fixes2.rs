@@ -30,6 +30,30 @@ page 63010 "F2 Veto Modal"
     trigger OnOpenPage() var Row: Record "F2 Row"; begin Row."No." := 'OPENED'; Row.Val := 42; Row.Insert(); end;
     trigger OnQueryClosePage(CloseAction: Action): Boolean begin Error('close refused'); end;
 }
+
+codeunit 63020 "F2 Noop" { trigger OnRun() begin end; }
+codeunit 63021 "F2 Failing" { trigger OnRun() begin Error('guarded failure'); end; }
+codeunit 63022 "F2 Tx Worker"
+{
+    trigger OnRun()
+    var Params: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; Mode: Text; Ok: Boolean;
+    begin
+        Params := Page.GetBackgroundParameters();
+        if not Params.Get('Mode', Mode) then Mode := '';
+        R.Add('InWriteTx', BoolText(Database.IsInWriteTransaction()));
+        if Mode = 'unguarded' then Codeunit.Run(Codeunit::"F2 Noop")
+        else if Mode = 'failing' then R.Add('Guarded', BoolText(Codeunit.Run(Codeunit::"F2 Failing")))
+        else R.Add('Guarded', BoolText(Codeunit.Run(Codeunit::"F2 Noop")));
+        R.Add('InWriteTxAfter', BoolText(Database.IsInWriteTransaction()));
+        Page.SetBackgroundTaskResult(R);
+    end;
+    local procedure BoolText(B: Boolean): Text begin if B then exit('true'); exit('false'); end;
+}
+page 63011 "F2 Card"
+{
+    PageType = Card; SourceTable = "F2 Row";
+    layout { area(Content) { field("No."; Rec."No.") { } } }
+}
 "#;
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
@@ -82,4 +106,61 @@ fn a_modal_whose_query_close_page_errors_delivers_the_message_twice_and_reports_
         [ModalPageHandler] procedure OkHandler(var T: TestPage \"F2 Veto Modal\") begin T.OK().Invoke(); end;
         [MessageHandler] procedure MsgHandler(Msg: Text[1024]) var P: Codeunit \"F2 Probe\"; begin P.Note(Msg); end;"
     ));
+}
+
+const TX_HELPERS: &str = "procedure Work(Mode: Text): Dictionary of [Text, Text] var C: TestPage \"F2 Card\"; P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; begin
+    P.Add('Mode', Mode); C.OpenView(); R := C.RunPageBackgroundTask(Codeunit::\"F2 Tx Worker\", P, false); C.Close(); exit(R); end;
+procedure Seed(No: Code[20]) var Row: Record \"F2 Row\"; begin Row.DeleteAll(); Commit(); Row.\"No.\" := No; Row.Insert(); end;";
+
+// handlers/TestPageBgTaskTx_Tests.al: RunPageBackgroundTask_WorkerIsOutsideCallersWriteTransaction
+// (the worker reports no write transaction, a guarded Codeunit.Run inside it runs, the caller's
+// write transaction is still open afterwards) and ..._WorkerCommitLeavesCallersRowsUncommitted
+// (the caller's row is still rolled back by a later error).
+#[test]
+fn a_worker_is_outside_the_callers_write_transaction_and_its_guarded_run_leaves_it_alone() {
+    passes(&format!(
+        "{HELPERS} {TX_HELPERS}
+        [Test]
+        procedure Outside() var R: Dictionary of [Text, Text]; V: Text; Row: Record \"F2 Row\"; begin
+            Seed('TX-1');
+            if not Database.IsInWriteTransaction() then Error('precondition');
+            R := Work('');
+            R.Get('InWriteTx', V); Check('false', V);
+            R.Get('Guarded', V); Check('true', V);
+            R.Get('InWriteTxAfter', V); Check('false', V);
+            if not Database.IsInWriteTransaction() then Error('the callers write transaction must stay open');
+            asserterror Error('probe');
+            if Row.Get('TX-1') then Error('the callers row must have been rolled back'); end;"
+    ));
+}
+
+// The same separation for a guarded run that fails inside the worker: it undoes the worker's own
+// writes (none), not the caller's (handlers/TestPageBgTaskTx_Tests.al:
+// RunPageBackgroundTask_WorkerCommitLeavesCallersRowsUncommitted gives the separation).
+#[test]
+fn a_failing_guarded_run_in_a_worker_does_not_roll_back_the_callers_row() {
+    passes(&format!(
+        "{HELPERS} {TX_HELPERS}
+        [Test]
+        procedure Failing() var R: Dictionary of [Text, Text]; V: Text; Row: Record \"F2 Row\"; begin
+            Seed('TX-2');
+            R := Work('failing');
+            R.Get('Guarded', V); Check('false', V);
+            if not Row.Get('TX-2') then Error('the callers row must survive'); 
+            if not Database.IsInWriteTransaction() then Error('still open'); end;"
+    ));
+}
+
+// An unguarded Codeunit.Run in a worker is not pinned: refused.
+#[test]
+fn an_unguarded_codeunit_run_in_a_worker_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS} {TX_HELPERS}
+        [Test]
+        procedure Unguarded() var R: Dictionary of [Text, Text]; begin R := Work('unguarded'); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("Codeunit.Run in a page background task")),
+        "{o:?}"
+    );
 }

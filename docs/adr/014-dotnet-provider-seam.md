@@ -1,6 +1,6 @@
 # ADR-014: DotNet provider seam
 
-- Status: Proposed
+- Status: Accepted (by the project owner, 2026-10-13)
 - Date: 2026-10-13
 
 ## Context

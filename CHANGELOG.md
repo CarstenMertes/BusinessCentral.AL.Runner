@@ -30,6 +30,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **emit:** ExcludedObjectTriage reads declarations and Subtype from BC's syntax tree
 - **emit:** count PARTIAL-EMIT-DROP objects from BC's syntax tree; pin coverage source-map attribution
 - **tests:** DapSourceBreakpointsTests race test guarantees its reader ran
 - **cecil:** one whole-body owner per Ncl target, enforced by an ownership audit

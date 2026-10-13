@@ -322,6 +322,105 @@ impl Lowerer<'_> {
         self.members[table].fields.iter().position(|f| f.id == id)
     }
 
+    /// The arms of a field's `TableRelation`, with names resolved from the declaring file's scope.
+    fn relation_arms(&self, oi: usize, f: &crate::members::FieldInfo) -> Vec<ir::RelationArm> {
+        let Some(text) = f
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("TableRelation"))
+            .map(|(_, v)| v)
+        else {
+            return Vec::new();
+        };
+        let Some(parsed) = crate::relation::parse(text) else {
+            return Vec::new();
+        };
+        let file = f
+            .declared_in
+            .map_or(self.ws.objects[oi].file, |d| self.ws.objects[d].file);
+        let own = &self.members[oi];
+        let field_pos =
+            |m: &crate::members::Members, name: &str| m.fields.iter().position(|x| x.name.eq_ignore_ascii_case(name));
+        let mut arms = Vec::new();
+        for a in parsed {
+            let mut conditions = Vec::new();
+            for (name, value) in &a.conditions {
+                let Some(pos) = field_pos(own, name) else {
+                    return Vec::new();
+                };
+                let Some(value) = self.condition_const(file, value, &own.fields[pos].ty) else {
+                    return Vec::new();
+                };
+                conditions.push(ir::RelationCond { field: pos, value });
+            }
+            // The whole path names a table, or all but the last part do and the last is a field.
+            let resolve = |parts: &[String]| match self.ws.resolve_ref_certain(file, ObjKind::Table, parts) {
+                Resolution::Found(t) => Some(t),
+                _ => None,
+            };
+            let (table, field) = match resolve(&a.path) {
+                Some(t) => (Some(t), None),
+                None if a.path.len() > 1 => match resolve(&a.path[..a.path.len() - 1]) {
+                    Some(t) => match field_pos(&self.members[t], &a.path[a.path.len() - 1]) {
+                        Some(p) => (Some(t), Some(p)),
+                        None => return Vec::new(),
+                    },
+                    None => (None, None),
+                },
+                None => (None, None),
+            };
+            // A relation onto SystemRowVersion relates to the primary key instead (BC encodes
+            // the field as id 0): corpus record/TestCalcFormulaSystemFieldsTests.Codeunit.al:229-260.
+            let field = match (table, field) {
+                (Some(t), Some(p)) if self.members[t].fields[p].id == 2_000_000_005 => None,
+                (_, f) => f,
+            };
+            let wheres = match (&a.wheres, table) {
+                (Some(ws), Some(t)) => ws
+                    .iter()
+                    .map(|w| match w {
+                        crate::relation::ParsedWhere::Value { related, text } => Some(ir::RelationWhere::Value {
+                            related: field_pos(&self.members[t], related)?,
+                            text: text.clone(),
+                        }),
+                        crate::relation::ParsedWhere::Field { related, own: o } => Some(ir::RelationWhere::Field {
+                            related: field_pos(&self.members[t], related)?,
+                            own: field_pos(own, o)?,
+                        }),
+                    })
+                    .collect(),
+                (Some(ws), None) if ws.is_empty() => Some(Vec::new()),
+                _ => None,
+            };
+            arms.push(ir::RelationArm {
+                conditions,
+                table,
+                table_name: a.path.join("."),
+                field,
+                wheres,
+            });
+        }
+        arms
+    }
+
+    /// The constant of a `Field = const(x)` condition, typed by the field.
+    fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
+        if let Ty::Enum(name) = ty {
+            let Resolution::Found(e) = self
+                .ws
+                .resolve_ref_certain(file, ObjKind::Enum, std::slice::from_ref(name))
+            else {
+                return None;
+            };
+            let (value, _) = self.members[e]
+                .enum_values
+                .iter()
+                .find(|(_, n)| n.eq_ignore_ascii_case(text.trim()))?;
+            return Some(ir::Const::Enum(e as u32, *value as i32));
+        }
+        init_const(text, ty)
+    }
+
     /// The position of field `id`, refusing the audit system fields (SystemCreatedAt/By,
     /// SystemModifiedAt/By, ids 2000000001-4): the core has no clock or user (ADR-006), so
     /// the runtime stamps no values into them and would read defaults.
@@ -368,6 +467,8 @@ impl Lowerer<'_> {
                     init_text: f.init_value.clone(),
                     relation_table: f.relation_table.clone(),
                     relation_tables: f.relation_tables.clone(),
+                    properties: f.properties.clone(),
+                    relation_arms: self.relation_arms(oi, f),
                     on_validate: match (f.declared_in, f.on_validate) {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,
@@ -388,6 +489,14 @@ impl Lowerer<'_> {
                 .filter(|s| s.name().eq_ignore_ascii_case("keys"))
             {
                 for k in sec.sections().filter(|k| k.name().eq_ignore_ascii_case("key")) {
+                    // A Removed key is gone: it takes no index position
+                    // (corpus recordref/TestKeyMetadataRowVersionRemoved.al:10-20, :150-170).
+                    if k.properties().any(|p| {
+                        p.name().eq_ignore_ascii_case("ObsoleteState")
+                            && p.value_text().trim().eq_ignore_ascii_case("Removed")
+                    }) {
+                        continue;
+                    }
                     let names: Vec<String> = k
                         .args()
                         .get(1)
@@ -610,6 +719,9 @@ impl Lowerer<'_> {
             Ty::List(t) => RtType::List(Box::new(self.rt(t)?)),
             Ty::Dictionary(k, v) => RtType::Dictionary(Box::new(self.rt(k)?), Box::new(self.rt(v)?)),
             Ty::Array(d, t) => RtType::Array(d.clone(), Box::new(self.rt(t)?)),
+            Ty::Builtin(n) if al_builtins::sysenum::members(n).is_some() => {
+                RtType::Option(al_builtins::sysenum::option_members(n).expect("checked"))
+            }
             Ty::Builtin(n) => RtType::Library(n.clone()),
             Ty::Record { table, temporary } => {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
@@ -835,6 +947,43 @@ impl Lowerer<'_> {
     }
 
     fn assign(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Stmt> {
+        // `FieldRef.Value := x` is the setter form of the `Value` method
+        // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
+        if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
+            let setter = self
+                .catalog
+                .by_id(&id)
+                .is_some_and(|s| s.receiver == "FieldRef" && s.name == "Value");
+            if setter && kids[0].kind() == SyntaxKind::MemberExpr {
+                if al_builtins::native::lookup(&id).is_none() {
+                    return Err(format!("builtin {id} is not implemented"));
+                }
+                let compound = sig_tokens(n).iter().any(|t| {
+                    matches!(
+                        t.kind(),
+                        SyntaxKind::PlusAssign
+                            | SyntaxKind::MinusAssign
+                            | SyntaxKind::StarAssign
+                            | SyntaxKind::SlashAssign
+                    )
+                });
+                if compound {
+                    return Err("compound assignment to FieldRef.Value is not lowered yet".into());
+                }
+                let recv = kids[0].children().next().ok_or("member base")?;
+                let receiver = match self.place(&recv) {
+                    Ok(p) => ir::Arg::Ref(p),
+                    Err(_) => ir::Arg::Value(self.expr(&recv)?),
+                };
+                let rhs = self.expr(&kids[1])?;
+                return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
+                    id,
+                    receiver: Some(Box::new(receiver)),
+                    args: vec![ir::Arg::Value(rhs)],
+                    ret_used: false,
+                }));
+            }
+        }
         let place = self.place(&kids[0])?;
         let slot = self.rt(&self.ty_of(&kids[0]))?;
         let rhs = self.expr(&kids[1])?;
@@ -1062,6 +1211,9 @@ impl Lowerer<'_> {
                 Some(Res::EnumValue { object, value }) => Ok(ir::Expr::Const(ir::Const::Enum(object as u32, value))),
                 Some(Res::OptionValue(i)) => match self.ty_of(n) {
                     Ty::Option(m) => Ok(ir::Expr::Const(ir::Const::Option(i, m))),
+                    Ty::Builtin(b) if al_builtins::sysenum::members(&b).is_some() => Ok(ir::Expr::Const(
+                        ir::Const::Option(i, al_builtins::sysenum::option_members(&b).expect("checked")),
+                    )),
                     _ => Err("option value without its option type".into()),
                 },
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
@@ -1719,6 +1871,18 @@ table 50921 H { fields { field(1; K; Integer) { }
             vec!["system field SystemCreatedBy is not stamped by the runtime yet".to_string()]
         );
         assert!(l.unsupported[1][find("Ok")].is_empty());
+    }
+
+    #[test]
+    fn a_removed_key_takes_no_index_position() {
+        // corpus recordref/TestKeyMetadataRowVersionRemoved.al:10-20: KeyIndex() skips the
+        // Removed key's position while a Pending key stays.
+        let (_, l) = lower_src(
+            "table 50901 R { fields { field(1; A; Integer) { } field(2; B; Integer) { } field(3; C; Integer) { } }
+             keys { key(PK; A) { } key(P; B) { ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; }
+                    key(Gone; B) { ObsoleteState = Removed; ObsoleteReason = 'x'; ObsoleteTag = '1'; } key(Live; C) { } } }",
+        );
+        assert_eq!(table_ir(&l).keys, vec![vec![0], vec![1], vec![2]]);
     }
 
     #[test]

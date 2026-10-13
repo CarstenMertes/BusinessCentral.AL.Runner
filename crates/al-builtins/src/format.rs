@@ -47,7 +47,19 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
         Value::Time(t) if standard == 2 => format_time_12h(t - 1),
         Value::DateTime(t) if standard == 2 || standard == 9 => format_datetime(t - 1, standard),
         Value::DateFormula(f) => f.clone(),
-        // Time, DateTime, Duration and reference types get their formats with
+        // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs
+        // the key values in it; the layout is docs/probes-needed.md).
+        Value::Library(name, l) if name == "RecordId" => match &*l.borrow() {
+            crate::value::LibraryValue::RecordId { name, key, .. } => {
+                let key = key
+                    .iter()
+                    .map(|k| try_format(k, 0, 0, ctx))
+                    .collect::<Result<Vec<_>, _>>()?;
+                format!("{name}: {}", key.join(","))
+            }
+            _ => String::new(),
+        },
+        // Duration and the other reference types get their formats with
         // the corpus tests that pin them.
         other => {
             return Err(format!(

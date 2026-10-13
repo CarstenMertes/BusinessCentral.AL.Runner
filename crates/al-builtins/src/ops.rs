@@ -234,8 +234,42 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => a.cmp(b),
+        (V::Library(_, a), V::Library(_, b)) => {
+            use crate::value::LibraryValue as L;
+            match (&*a.borrow(), &*b.borrow()) {
+                (L::Empty, L::Empty) => Ordering::Equal,
+                (L::Empty, L::RecordId { .. }) => Ordering::Less,
+                (L::RecordId { .. }, L::Empty) => Ordering::Greater,
+                (
+                    L::RecordId {
+                        table_no: ta, key: ka, ..
+                    },
+                    L::RecordId {
+                        table_no: tb, key: kb, ..
+                    },
+                ) => {
+                    let mut o = ta.cmp(tb);
+                    for (x, y) in ka.iter().zip(kb) {
+                        if o != Ordering::Equal {
+                            break;
+                        }
+                        o = compare(x, y)?;
+                    }
+                    o.then(ka.len().cmp(&kb.len()))
+                }
+                _ => return unsupported(format!("comparison of {l:?} and {r:?}")),
+            }
+        }
         _ => return unsupported(format!("comparison of {l:?} and {r:?}")),
     })
+}
+
+/// Whether two primary keys are the same value for value.
+pub fn compare_keys(a: &[Value], b: &[Value]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(x, y)| compare(x, y).ok() == Some(Ordering::Equal))
 }
 
 pub fn truthy(v: &Value) -> Result<bool, Signal> {

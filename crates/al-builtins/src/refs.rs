@@ -1,0 +1,239 @@
+//! `RecordRef`, `FieldRef` and `KeyRef` methods. They need the table schema
+//! and the store, so every implementation forwards its overload id to the VM
+//! through [`Ctx::ref_op`]; the VM resolves the id to the method through the
+//! catalog. Overloads not listed here are not implemented: the lowerer
+//! refuses a call to them (hard rule 4).
+
+use crate::native::{Ctx, NativeFn};
+
+macro_rules! forward {
+    ($($id:literal),* $(,)?) => {
+        &[$(($id, (|c: &mut dyn Ctx, r, a| c.ref_op($id, r, a)) as NativeFn)),*]
+    };
+}
+
+pub const REGISTRY: &[(&str, NativeFn)] = forward![
+    // RecordRef: the id numbers follow the catalog order, see `tests` below.
+    "RecordRef.Open#2",
+    "RecordRef.Close#1",
+    "RecordRef.Number#1",
+    "RecordRef.Name#1",
+    "RecordRef.IsEmpty#1",
+    "RecordRef.Count#1",
+    "RecordRef.Field#2",
+    "RecordRef.FieldCount#1",
+    "RecordRef.FieldExist#2",
+    "RecordRef.FieldIndex#1",
+    "RecordRef.Init#1",
+    "RecordRef.Insert#1",
+    "RecordRef.Insert#2",
+    "RecordRef.Insert#3",
+    "RecordRef.Modify#1",
+    "RecordRef.Delete#1",
+    "RecordRef.DeleteAll#1",
+    "RecordRef.Find#1",
+    "RecordRef.FindFirst#1",
+    "RecordRef.FindLast#1",
+    "RecordRef.FindSet#1",
+    "RecordRef.FindSet#2",
+    "RecordRef.Next#1",
+    "RecordRef.Reset#1",
+    "RecordRef.Rename#1",
+    "RecordRef.GetTable#1",
+    "RecordRef.SetTable#1",
+    "RecordRef.KeyCount#1",
+    "RecordRef.KeyIndex#1",
+    "RecordRef.Caption#1",
+    "RecordRef.CurrentCompany#1",
+    "RecordRef.IsTemporary#1",
+    "RecordRef.HasFilter#1",
+    "RecordRef.GetFilters#1",
+    "RecordRef.GetView#1",
+    "RecordRef.SetView#1",
+    "RecordRef.Duplicate#1",
+    "RecordRef.RecordId#1",
+    "RecordRef.GetPosition#1",
+    "RecordRef.SetPosition#1",
+    "RecordRef.LockTable#1",
+    "RecordRef.ReadConsistency#1",
+    "RecordRef.RecordLevelLocking#1",
+    "RecordRef.ReadPermission#1",
+    "RecordRef.WritePermission#1",
+    "RecordRef.CountApprox#1",
+    "RecordRef.ReadIsolation#1",
+    "RecordRef.SecurityFiltering#1",
+    "RecordRef.Get#1",
+    "RecordId.TableNo#1",
+    "RecordRef.SystemIdNo#1",
+    "RecordRef.SystemCreatedAtNo#1",
+    "RecordRef.SystemCreatedByNo#1",
+    "RecordRef.SystemModifiedAtNo#1",
+    "RecordRef.SystemModifiedByNo#1",
+    // KeyRef
+    "KeyRef.Active#1",
+    "KeyRef.FieldCount#1",
+    "KeyRef.FieldIndex#1",
+    // FieldRef
+    "FieldRef.Active#1",
+    "FieldRef.Length#1",
+    "FieldRef.Name#1",
+    "FieldRef.Number#1",
+    "FieldRef.SetRange#1",
+    "FieldRef.SetFilter#1",
+    "FieldRef.Value#1",
+    "FieldRef.Caption#1",
+    "FieldRef.Relation#1",
+    "FieldRef.Type#1",
+    "FieldRef.Class#1",
+    "FieldRef.GetFilter#1",
+    "FieldRef.Record#1",
+    "FieldRef.Validate#1",
+    "FieldRef.IsOptimizedForTextSearch#1",
+    "FieldRef.IsEnum#1",
+    "FieldRef.EnumValueCount#1",
+    "FieldRef.GetEnumValueName#1",
+    "FieldRef.GetEnumValueCaption#1",
+    "FieldRef.GetEnumValueOrdinal#1",
+    "FieldRef.GetEnumValueNameFromOrdinalValue#1",
+    "FieldRef.GetEnumValueCaptionFromOrdinalValue#1",
+    "FieldRef.OptionCaption#1",
+    "FieldRef.OptionMembers#1",
+    "FieldRef.OptionString#1",
+    // FieldRef.TestField: the untyped, `Any` and typed Value overloads (not the ErrorInfo ones).
+    "FieldRef.TestField#1",
+    "FieldRef.TestField#3",
+    "FieldRef.TestField#5",
+    "FieldRef.TestField#7",
+    "FieldRef.TestField#9",
+    "FieldRef.TestField#11",
+    "FieldRef.TestField#13",
+    "FieldRef.TestField#15",
+    "FieldRef.TestField#17",
+    "FieldRef.TestField#19",
+    "FieldRef.TestField#21",
+    "FieldRef.TestField#23",
+    "FieldRef.TestField#25",
+    "FieldRef.TestField#27",
+    "FieldRef.TestField#29",
+    "FieldRef.TestField#31",
+    "FieldRef.TestField#33",
+    "FieldRef.TestField#35",
+    "FieldRef.FieldError#1",
+    "FieldRef.FieldError#2",
+    "KeyRef.Record#1",
+];
+
+macro_rules! record_methods {
+    ($($id:literal => $m:literal),* $(,)?) => {
+        pub const RECORD_REGISTRY: &[(&str, NativeFn)] =
+            &[$(($id, (|c: &mut dyn Ctx, r, a| c.record($m, r, a)) as NativeFn)),*];
+        /// Each Record overload id with the record method it forwards to.
+        pub const RECORD_METHODS: &[(&str, &str)] = &[$(($id, $m)),*];
+    };
+}
+
+// Record builtins that read table metadata or guard on session state.
+record_methods! {
+    "Record.TestField#1" => "TestField",
+    "Record.TestField#3" => "TestField",
+    "Record.TestField#5" => "TestField",
+    "Record.TestField#7" => "TestField",
+    "Record.TestField#9" => "TestField",
+    "Record.TestField#11" => "TestField",
+    "Record.TestField#13" => "TestField",
+    "Record.TestField#15" => "TestField",
+    "Record.TestField#17" => "TestField",
+    "Record.TestField#19" => "TestField",
+    "Record.TestField#21" => "TestField",
+    "Record.TestField#23" => "TestField",
+    "Record.FieldCaption#1" => "FieldCaption",
+    "Record.FieldName#1" => "FieldName",
+    "Record.FieldNo#1" => "FieldNo",
+    "Record.TableCaption#1" => "TableCaption",
+    "Record.TableName#1" => "TableName",
+    "Record.RecordId#1" => "RecordId",
+    "Record.Insert#3" => "Insert",
+    "Record.Mark#1" => "Mark",
+    "Record.MarkedOnly#1" => "MarkedOnly",
+    "Record.ClearMarks#1" => "ClearMarks",
+    "Record.GetRangeMin#1" => "GetRangeMin",
+    "Record.GetRangeMax#1" => "GetRangeMax",
+    "Record.GetBySystemId#1" => "GetBySystemId",
+    "Record.Relation#1" => "Relation",
+    "Record.GetPosition#1" => "GetPosition",
+    "Record.SetPosition#1" => "SetPosition",
+    "Record.TransferFields#1" => "TransferFields",
+    "Record.TransferFields#2" => "TransferFields",
+    "Record.LockTable#1" => "LockTable",
+    "Record.Consistent#1" => "Consistent",
+    "Record.ReadConsistency#1" => "ReadConsistency",
+    "Record.RecordLevelLocking#1" => "RecordLevelLocking",
+    "Record.ReadPermission#1" => "ReadPermission",
+    "Record.WritePermission#1" => "WritePermission",
+    "Record.CountApprox#1" => "CountApprox",
+    "Record.CurrentCompany#1" => "CurrentCompany",
+    "Record.ReadIsolation#1" => "ReadIsolation",
+    "Record.SecurityFiltering#1" => "SecurityFiltering",
+    "Record.ModifyAll#1" => "ModifyAll",
+    "Record.IsTemporary#1" => "IsTemporary",
+    "Record.Ascending#1" => "Ascending",
+    "Record.CurrentKey#1" => "CurrentKey",
+    "Record.HasFilter#1" => "HasFilter",
+    "Record.GetFilters#1" => "GetFilters",
+    "Record.GetFilter#1" => "GetFilter",
+    "Record.GetView#1" => "GetView",
+    "Record.SetView#1" => "SetView",
+    "Record.FilterGroup#1" => "FilterGroup",
+    "Record.SetRecFilter#1" => "SetRecFilter",
+    "Record.CopyFilters#1" => "CopyFilters",
+    "Record.Copy#1" => "Copy",
+    "Record.FieldError#1" => "FieldError",
+    "Record.FieldError#2" => "FieldError",
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::catalog::Catalog;
+
+    /// An id that drifts from the catalog (a corpus bump reorders overloads)
+    /// must not silently bind to another method: each id's method name is
+    /// the text in the id, and its first parameter is what this table says.
+    #[test]
+    fn ids_name_the_methods_and_overloads_they_claim() {
+        let cat = Catalog::load();
+        let params = |id: &str| {
+            let s = cat.by_id(id).unwrap_or_else(|| panic!("{id} is not in the catalog"));
+            let (recv, name) = id.rsplit_once('#').unwrap().0.split_once('.').unwrap();
+            assert!(
+                s.receiver == recv && s.name == name,
+                "{id} is {}.{}",
+                s.receiver,
+                s.name
+            );
+            s.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(params("RecordRef.Open#2")[0], "Integer");
+        assert_eq!(params("RecordRef.Field#2")[0], "Integer");
+        assert_eq!(params("RecordRef.FieldExist#2")[0], "Integer");
+        assert!(params("RecordRef.Insert#1").is_empty());
+        assert_eq!(params("RecordRef.Insert#2"), ["Boolean"]);
+        assert!(params("RecordRef.FindSet#1").len() == 1 && params("RecordRef.FindSet#2").len() == 2);
+        assert_eq!(params("RecordRef.GetTable#1"), ["Record"]);
+        assert_eq!(params("RecordRef.SetTable#1"), ["Record"]);
+        for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
+            params(id);
+        }
+        // The Record overloads forward to a method name: it must be the id's own method.
+        for (id, method) in RECORD_METHODS {
+            assert_eq!(&cat.by_id(id).unwrap().name, method, "{id}");
+        }
+        // No ErrorInfo overload of TestField or FieldError is registered.
+        for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
+            assert!(
+                !cat.by_id(id).unwrap().params.iter().any(|p| p.ty == "ErrorInfo"),
+                "{id}"
+            );
+        }
+    }
+}

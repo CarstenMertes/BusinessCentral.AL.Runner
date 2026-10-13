@@ -752,6 +752,14 @@ impl<'a> Checker<'a> {
                                     self.record(sc, node, Res::OptionValue(i as i32));
                                 }
                             }
+                            // `FieldClass::Normal`: platform option types.
+                            Ty::Builtin(n) => {
+                                if let Some(i) = al_builtins::sysenum::members(n)
+                                    .and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(&rhs)))
+                                {
+                                    self.record(sc, node, Res::OptionValue(i as i32));
+                                }
+                            }
                             _ => {}
                         }
                         E::Val(t)

@@ -4,6 +4,7 @@ pub mod calcformula;
 pub mod check;
 pub mod lower;
 pub mod members;
+pub mod relation;
 pub mod types;
 pub mod workspace;
 

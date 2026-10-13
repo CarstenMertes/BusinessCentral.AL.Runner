@@ -63,6 +63,11 @@ pub struct Field {
     pub relation: bool,
     /// (object, routine) of the field's OnValidate trigger, if any.
     pub on_validate: Option<(usize, usize)>,
+    /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
+    pub properties: Vec<(String, String)>,
+    /// The `TableRelation` arms in written order; empty when the field has none or its shape is
+    /// not understood (`relation` tells the two apart).
+    pub relation_arms: Vec<RelationArm>,
     /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
     pub flow_filter: bool,
     /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither
@@ -70,6 +75,36 @@ pub struct Field {
     pub calc: Option<CalcFormula>,
     /// Why a declared `CalcFormula` cannot be calculated yet.
     pub calc_refusal: Option<String>,
+}
+
+/// One arm of a `TableRelation`: `if (Kind = const(A)) Table.Field where(...)`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationArm {
+    /// The arm applies when every condition holds (none: always, as the else arm does).
+    pub conditions: Vec<RelationCond>,
+    /// Object index of the related table; `None` when the workspace does not declare it.
+    pub table: Option<usize>,
+    /// The related table as written.
+    pub table_name: String,
+    /// Position of the related field in the related table; `None`: the first primary key field.
+    pub field: Option<usize>,
+    /// Which related rows are valid; `None` when a where() clause is there but not understood.
+    pub wheres: Option<Vec<RelationWhere>>,
+}
+
+/// `Field = const(x)` on the referencing table: `field` is a position in its own field list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelationCond {
+    pub field: usize,
+    pub value: Const,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum RelationWhere {
+    /// `related = const(text)` / `filter(text)`: `text` is a filter on the related field.
+    Value { related: usize, text: String },
+    /// `related = field(own)`: the related field equals the referencing row's field.
+    Field { related: usize, own: usize },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

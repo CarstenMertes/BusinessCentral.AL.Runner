@@ -29,6 +29,12 @@ pub trait Ctx: FormatCtx {
     /// Record methods (`Record.Insert`, ...) need the store, triggers and
     /// table metadata: the VM implements them. `method` is the catalog name.
     fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal>;
+    /// `RecordRef`, `FieldRef` and `KeyRef` methods need the table schema and
+    /// the store, like record methods. `id` is the catalog overload id
+    /// (`RecordRef.Open#2`); the VM resolves it to the method.
+    fn ref_op(&mut self, id: &str, _receiver: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("builtin {id}")))
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -143,7 +149,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
 ];
 
 fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
-    REGISTRY.iter().chain(crate::collections::REGISTRY)
+    REGISTRY
+        .iter()
+        .chain(crate::collections::REGISTRY)
+        .chain(crate::refs::REGISTRY)
+        .chain(crate::refs::RECORD_REGISTRY)
 }
 
 /// Implementations chosen per catalog signature instead of being listed by id
@@ -386,6 +396,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     let v = &mut args[0];
     *v = match v {
         Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
+        // Clearing a RecordRef/FieldRef/KeyRef closes it: a fresh, unopened handle.
+        Value::Library(name, _) if matches!(name.as_str(), "RecordRef" | "FieldRef" | "KeyRef" | "RecordId") => {
+            Value::Library(name.clone(), Default::default())
+        }
         Value::Boolean(_) => Value::Boolean(false),
         Value::Integer(_) => Value::Integer(0),
         Value::BigInteger(_) => Value::BigInteger(0),

@@ -31,6 +31,8 @@ pub struct FieldInfo {
     pub relation_tables: Vec<String>,
     /// Offset of the field's OnValidate trigger node (in `declared_in`'s file).
     pub on_validate: Option<usize>,
+    /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
+    pub properties: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,6 +92,31 @@ pub fn build(ws: &Workspace) -> Vec<Members> {
             target.enum_values.extend(ext.enum_values);
             target.enum_captions.extend(ext.enum_captions);
             target.procedures.extend(ext.procedures);
+            // `modify(Field) { Caption = ...; }` changes properties of an existing field
+            // (corpus tableextension/TestTableExtFieldModify.al:40-67, record/TestRecordCaptionSeparators.al:79-85).
+            if o.kind == ObjKind::TableExtension {
+                for sec in ws
+                    .object_ast(i)
+                    .sections()
+                    .filter(|s| s.name().eq_ignore_ascii_case("fields"))
+                {
+                    for m in sec.sections().filter(|m| m.name().eq_ignore_ascii_case("modify")) {
+                        let Some(name) = m.args().first().cloned() else {
+                            continue;
+                        };
+                        let Some(field) = out[t].fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&name)) else {
+                            continue;
+                        };
+                        for p in m.properties() {
+                            let (k, v) = (p.name(), p.value_text());
+                            match field.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(&k)) {
+                                Some(slot) => slot.1 = v,
+                                None => field.properties.push((k, v)),
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     out
@@ -178,6 +205,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     relation_table: prop("TableRelation").map(|v| relation_target(&v)),
                     relation_tables: prop("TableRelation").map(|v| relation_targets(&v)).unwrap_or_default(),
                     on_validate,
+                    properties: f.properties().map(|p| (p.name(), p.value_text())).collect(),
                 });
             }
         } else if name == "value" {
@@ -209,6 +237,12 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 relation_table: None,
                 relation_tables: Vec::new(),
                 on_validate: None,
+                // Only SystemId's caption is pinned (corpus record/TestRecordSystemId.al:178).
+                properties: if *id == 2000000000 {
+                    vec![("Caption".into(), "'System ID'".into())]
+                } else {
+                    Vec::new()
+                },
             });
         }
     }
@@ -459,6 +493,31 @@ tableextension 50901 "ALT Ext" extends "ALT Universal"
         let m = members_of(&w, ObjKind::Table, "ALT Universal");
         assert_eq!(m.field("Ext Field").unwrap().ty, Ty::Text(Some(50)));
         assert_eq!(m.procedures_named("FromExt").len(), 1);
+    }
+
+    #[test]
+    fn a_tableextension_modify_block_overrides_field_properties() {
+        // corpus tableextension/TestTableExtFieldModify.al:40-67
+        let w = ws(&[(
+            "t.al",
+            "table 50920 T { fields { field(1; A; Integer) { Caption = 'Orig A'; } field(2; B; Integer) { Caption = 'Orig B'; } } keys { key(PK; A) { } } }
+             tableextension 50921 X extends T { fields { modify(A) { Caption = 'New A'; } } }",
+        )]);
+        let m = members_of(&w, ObjKind::Table, "T");
+        let caption = |n: &str| {
+            m.field(n)
+                .unwrap()
+                .properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(caption("A").as_deref(), Some("'New A'"));
+        assert_eq!(
+            caption("B").as_deref(),
+            Some("'Orig B'"),
+            "an unmodified field keeps its caption"
+        );
     }
 
     #[test]

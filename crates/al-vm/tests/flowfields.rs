@@ -1130,24 +1130,28 @@ fn set_filter_on_an_enum_field_names_members() {
 }
 
 // corpus record/TestRenamePropagationCond*.al (Record_Rename_ConditionalRelation_ElseArm_Propagates):
-// a table named only by the else arm of a conditional TableRelation is related too, so renaming
-// its rows (which would have to re-key the related rows) is refused until propagation exists.
+// a table named only by the else arm of a conditional TableRelation is related too: its rename
+// re-keys the related rows (was refused until propagation existed; corpus
+// record/TestRenamePropagationConditional.al:71-111 pins that the else arm carries no condition).
 #[test]
-fn renaming_a_table_named_by_the_else_arm_of_a_conditional_relation_is_refused() {
+fn renaming_a_table_named_by_the_else_arm_of_a_conditional_relation_rewrites_the_related_rows() {
     let r = run_with(
         "table 60500 \"RL Parent A\" { fields { field(1; Code; Code[10]) { } } }
          table 60501 \"RL Parent B\" { fields { field(1; Code; Code[10]) { } } }
          table 60502 \"RL Child\" { fields { field(1; K; Integer) { } field(2; Kind; Option) { OptionMembers = A,B; }
             field(3; Ref; Code[10]) { TableRelation = if (Kind = const(A)) \"RL Parent A\".Code else \"RL Parent B\".Code; } } }",
-        "procedure F()
-        var B: Record \"RL Parent B\";
+        "procedure F(): Text
+        var B: Record \"RL Parent B\"; C: Record \"RL Child\";
         begin
             B.Code := 'OLD'; B.Insert();
+            C.K := 1; C.Kind := C.Kind::A; C.Ref := 'OLD'; C.Insert();
             B.Rename('NEW');
+            C.Get(1);
+            exit(C.Ref);
         end;",
         "F",
     );
-    assert!(unsupported(r).contains("relate"));
+    assert_eq!(text(r), "NEW");
 }
 
 // corpus record/TestXRecContracts.al:133 (an OnValidate that nests a Validate on the same record:

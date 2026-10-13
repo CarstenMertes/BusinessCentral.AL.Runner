@@ -365,6 +365,8 @@ impl Parser<'_> {
 pub struct FieldFilter {
     pub field: usize,
     pub expr: FilterExpr,
+    /// The filter group it was set in (`FilterGroup(n)`); every group applies at once.
+    pub group: i32,
 }
 
 /// Total order on key tuples (field-wise `compare`; incomparable counts as equal).
@@ -551,6 +553,27 @@ mod tests {
         assert!(hits(&empty, "''").is_err());
         assert_eq!(hits(&empty, "2").unwrap(), [2]);
         assert!(hits(&empty, "Purple").is_err());
+    }
+
+    #[test]
+    fn option_filter_matches_member_names_trimmed_case_blind_and_skips_zero_length_members() {
+        // corpus types/TestEnumBlankOptionFilterTests.Codeunit.al:1-12, :187-205
+        let members: Vec<String> = vec!["".into(), "Draft".into(), " ".into()];
+        let ty = RtType::Option(members);
+        let ord = |f: &FilterExpr| {
+            (0..3)
+                .map(|i| f.matches(&Value::Option(i, Default::default())))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ord(&pf(" draft ", &[], ty.clone())), [false, true, false]);
+        assert_eq!(ord(&pf("'DRAFT'", &[], ty.clone())), [false, true, false]);
+        // The empty string names the blank member " " (trimmed), never the zero-length one.
+        assert_eq!(ord(&pf("''", &[], ty.clone())), [false, false, true]);
+        let zero_length_only = RtType::Option(vec!["".into(), "Draft".into()]);
+        assert!(
+            parse_filter("''", &[], &zero_length_only).is_err(),
+            "'' names no member here"
+        );
     }
 
     #[test]

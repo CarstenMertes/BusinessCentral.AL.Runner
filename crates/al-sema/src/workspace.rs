@@ -261,6 +261,21 @@ impl Workspace {
     /// unique match in any namespace (corpus evidence: files with neither
     /// namespace nor `using` reference namespaced Base App tables and compile).
     pub fn resolve_ref(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
+        self.resolve_in_scope(file, kind, parts, false)
+    }
+
+    /// What a name means at run time (a `TableRelation` target), where BC resolves it against
+    /// every installed app: this workspace has no Base Application, so a hit is only certain
+    /// when no tier above it could hold a Base Application object of that name. That is the
+    /// file's own namespace; the `using`s when the file has no namespace of its own; the global
+    /// namespace when it has neither. Anything else is `Missing`, never a guess (corpus fieldref/
+    /// TestRelationTargetNamespaceScope.al and TestRelationOwnNamespaceDependency.al: an
+    /// imported or global workspace table must not stand in for a Base Application one).
+    pub fn resolve_ref_certain(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
+        self.resolve_in_scope(file, kind, parts, true)
+    }
+
+    fn resolve_in_scope(&self, file: usize, kind: ObjKind, parts: &[String], certain_only: bool) -> Resolution {
         let f = &self.files[file];
         let visible = |i: &usize| self.visible[f.app].contains(&self.objects[*i].app);
         let Some(name) = parts.last() else {
@@ -303,14 +318,23 @@ impl Workspace {
                 .filter(|&i| eq_ns(&self.objects[i].namespace, ns))
                 .collect::<Vec<_>>()
         };
+        let no_ns = f.namespace.is_none();
         let tiers = [
             f.namespace
                 .as_ref()
                 .map(|n| in_ns(&Some(n.clone())))
                 .unwrap_or_default(),
-            f.usings.iter().flat_map(|u| in_ns(&Some(u.clone()))).collect(),
-            in_ns(&None),
-            cands.clone(),
+            if certain_only && !no_ns {
+                Vec::new()
+            } else {
+                f.usings.iter().flat_map(|u| in_ns(&Some(u.clone()))).collect()
+            },
+            if certain_only && !(no_ns && f.usings.is_empty()) {
+                Vec::new()
+            } else {
+                in_ns(&None)
+            },
+            if certain_only { Vec::new() } else { cands.clone() },
         ];
         for tier in tiers {
             if !tier.is_empty() {
@@ -479,6 +503,66 @@ mod tests {
 
     fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {
         ws.diagnostics.iter().map(|d| (d.code, d.message.clone())).collect()
+    }
+
+    #[test]
+    fn run_time_resolution_only_trusts_tiers_no_absent_app_could_shadow() {
+        // corpus fieldref/TestRelationOwnNamespaceDependency.al, TestRelationTargetNamespaceScope.al:
+        // a workspace table must not stand in for a Base Application one that is not here.
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[
+                ("t.al", "namespace Imported; table 50900 \"Agent\" { }"),
+                ("g.al", "table 50901 \"Global Agent\" { }"),
+                ("own.al", "namespace Own; table 50902 \"Own Agent\" { }"),
+                ("c1.al", "namespace Own; using Imported; codeunit 60100 C1 { }"),
+                ("c2.al", "using Imported; codeunit 60101 C2 { }"),
+                ("c3.al", "codeunit 60102 C3 { }"),
+                ("c4.al", "namespace Other; codeunit 60103 C4 { }"),
+            ],
+        )]);
+        let file = |name: &str| ws.objects.iter().find(|o| o.name == name).unwrap().file;
+        let found = |r: Resolution| matches!(r, Resolution::Found(_));
+        let one = |n: &str| vec![n.to_string()];
+        // The ordinary compile-time resolution finds each of them.
+        assert!(found(ws.resolve_ref(file("C1"), ObjKind::Table, &one("Agent"))));
+        // Own namespace: certain.
+        assert!(found(ws.resolve_ref_certain(
+            file("C1"),
+            ObjKind::Table,
+            &one("Own Agent")
+        )));
+        // A `using` hit under a namespaced file could be shadowed by a Base Application table of the
+        // file's own namespace: not certain. Without a namespace of its own it is.
+        assert!(!found(ws.resolve_ref_certain(
+            file("C1"),
+            ObjKind::Table,
+            &one("Agent")
+        )));
+        assert!(found(ws.resolve_ref_certain(file("C2"), ObjKind::Table, &one("Agent"))));
+        // A global table is only certain for a file with neither namespace nor usings.
+        assert!(!found(ws.resolve_ref_certain(
+            file("C2"),
+            ObjKind::Table,
+            &one("Global Agent")
+        )));
+        assert!(found(ws.resolve_ref_certain(
+            file("C3"),
+            ObjKind::Table,
+            &one("Global Agent")
+        )));
+        assert!(!found(ws.resolve_ref_certain(
+            file("C4"),
+            ObjKind::Table,
+            &one("Global Agent")
+        )));
+        // Qualified names are exact.
+        assert!(found(ws.resolve_ref_certain(
+            file("C4"),
+            ObjKind::Table,
+            &["Imported".to_string(), "Agent".to_string()]
+        )));
     }
 
     #[test]

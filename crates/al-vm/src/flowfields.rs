@@ -410,7 +410,7 @@ impl Session {
         Ok(parts
             .into_iter()
             .filter(|(field, _, is_override)| *is_override || !overridden.contains(field))
-            .map(|(field, expr, _)| FieldFilter { field, expr })
+            .map(|(field, expr, _)| FieldFilter { field, expr, group: 0 })
             .collect())
     }
 

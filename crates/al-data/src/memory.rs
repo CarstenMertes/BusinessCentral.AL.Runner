@@ -51,6 +51,11 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 }
 
 impl MemStore {
+    /// Whether any write since the last commit or rollback is pending.
+    pub fn has_uncommitted(&self) -> bool {
+        !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
+    }
+
     fn table(&self, cx: &AccessContext, t: &TableDef) -> Option<&Table> {
         self.tables.get(&slot(cx, t))
     }
@@ -190,6 +195,35 @@ mod tests {
     #[test]
     fn passes_the_store_contract() {
         crate::contract::run_all(MemStore::default);
+    }
+
+    #[test]
+    fn reports_uncommitted_writes() {
+        let cx = AccessContext {
+            company: "C".into(),
+            user: "U".into(),
+        };
+        let t = TableDef {
+            object: 0,
+            name: "T".into(),
+            fields: vec![FieldDef {
+                id: 1,
+                name: "K".into(),
+                ty: al_builtins::value::RtType::Integer,
+                stored: true,
+            }],
+            keys: vec![vec![0]],
+            per_company: true,
+        };
+        let mut s = MemStore::default();
+        assert!(!s.has_uncommitted());
+        s.insert(&cx, &t, vec![Value::Integer(1)]).unwrap();
+        assert!(s.has_uncommitted());
+        s.commit();
+        assert!(!s.has_uncommitted());
+        s.insert(&cx, &t, vec![Value::Integer(2)]).unwrap();
+        s.rollback();
+        assert!(!s.has_uncommitted());
     }
 
     #[test]

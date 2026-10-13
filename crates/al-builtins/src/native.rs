@@ -38,6 +38,21 @@ pub trait Ctx: FormatCtx {
     fn ret_used(&self) -> bool {
         true
     }
+    /// `Message(text)` after argument substitution. The runner decides what a
+    /// message does (a test handler, an "Unhandled UI" refusal); a context
+    /// with no UI refuses explicitly.
+    fn ui_message(&mut self, _text: String) -> Result<(), Signal> {
+        Err(Signal::Unsupported("Message: this context has no UI".into()))
+    }
+    /// `Confirm(question, default)`: the question is NOT substituted
+    /// (corpus handlers/TestConfirmFormatArgs.al).
+    fn ui_confirm(&mut self, _question: String, _default: bool) -> Result<bool, Signal> {
+        Err(Signal::Unsupported("Confirm: this context has no UI".into()))
+    }
+    /// `StrMenu(options, default, instruction)`: the chosen option, 1-based, 0 for none.
+    fn ui_str_menu(&mut self, _options: String, _default: i32, _instruction: String) -> Result<i32, Signal> {
+        Err(Signal::Unsupported("StrMenu: this context has no UI".into()))
+    }
 }
 
 pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result<Value, Signal>;
@@ -51,6 +66,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
     ("Dialog.Error#2", error_text),
+    ("Dialog.Message#1", message),
+    ("Dialog.Confirm#1", confirm),
+    ("Dialog.StrMenu#1", str_menu),
     ("Text.StrLen#1", strlen),
     ("Text.StrPos#1", strpos),
     ("Text.CopyStr#1", copystr),
@@ -76,6 +94,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.IsEmpty#1", |c, r, a| c.record("IsEmpty", r, a)),
     ("Record.SetRange#1", |c, r, a| c.record("SetRange", r, a)),
     ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
+    // Event subscriptions are session state; the VM intercepts these ids
+    // (al-vm dispatch.rs). Registered so lowering accepts them.
+    ("Session.BindSubscription#1", vm_only),
+    ("Session.UnbindSubscription#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
@@ -85,6 +107,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
+    ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
+    ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetAutoCalcFields#1", |c, r, a| {
+        c.record("SetAutoCalcFields", r, a)
+    }),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -103,12 +130,13 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsList#1", |_, r, _| is(r, "List")),
     ("Variant.IsDictionary#1", |_, r, _| is(r, "Dictionary")),
     ("Variant.IsCodeunit#1", |_, r, _| is(r, "Codeunit")),
-    // Kinds the value model has no variant for yet are never true.
-    ("Variant.IsRecordId#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
+    // RecordId, RecordRef and FieldRef variables are library handles named after their type.
+    ("Variant.IsRecordId#1", |_, r, _| is(r, "RecordId")),
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
-    ("Variant.IsRecordRef#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsFieldRef#1", |_, _, _| Ok(Value::Boolean(false))),
+    ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
+    ("Variant.IsFieldRef#1", |_, r, _| is(r, "FieldRef")),
+    // Kinds the value model has no variant for yet are never true.
+    ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsDotNet#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsAutomation#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
@@ -154,6 +182,10 @@ pub fn registered_ids() -> Vec<&'static str> {
         .collect()
 }
 
+fn vm_only(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    unsupported("a builtin the VM runs itself")
+}
+
 fn unsupported<T>(what: &str) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.to_string()))
 }
@@ -168,9 +200,14 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
     }
 }
 
-/// Text of a Text/Code/Char argument (Text parameters accept all three).
+/// Stands for a call stack that exists in BC but is not tracked here (a private-use character).
+pub const UNTRACKED_CALL_STACK: &str = "\u{E000}";
+
+/// Text of a Text/Code/Char argument (Text parameters accept all three). Text that holds the
+/// untracked call stack marker is refused, so its content is never silently wrong.
 pub fn text_of(v: &Value) -> Option<String> {
     match v {
+        Value::Text(s) | Value::Code(s) if s.contains(UNTRACKED_CALL_STACK) => None,
         Value::Text(s) | Value::Code(s) => Some(s.clone()),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from),
         _ => None,
@@ -212,8 +249,11 @@ fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
     if e.call_stack.is_empty() && !(e.message.is_empty() && e.code.is_empty()) {
-        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al); they are not tracked.
-        return unsupported("GetLastErrorCallStack after an error (call stacks are not tracked)");
+        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al); they are not
+        // tracked. The answer is non-empty, as in BC, but its content is a marker that every text
+        // function refuses to read ([`text_of`]), so a test that inspects the frames is not run
+        // while one that only calls the function (error-handling/TestGetLastError.al) still passes.
+        return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string()));
     }
     Ok(Value::Text(e.call_stack))
 }
@@ -234,6 +274,43 @@ fn error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
         code: "Dialog".into(),
         call_stack: String::new(),
     }))
+}
+
+/// `Message(String, Values...)`: the text is substituted like `StrSubstNo`
+/// before it reaches the UI (corpus handlers/TestMessageHandler.al
+/// Message_FormattedString_HandlerGetsFormatted).
+fn message(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let text = substitute(&text_arg(args, 0)?, &args[1..], ctx)?;
+    ctx.ui_message(text)?;
+    Ok(Value::Null)
+}
+
+/// `Confirm(String, Default, Values...)`. Values are not substituted into the
+/// question a handler sees (corpus handlers/TestConfirmFormatArgs.al). An
+/// omitted Default is false (docs/probes-needed.md).
+fn confirm(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let question = text_arg(args, 0)?;
+    let default = match args.get(1) {
+        None => false,
+        Some(Value::Boolean(b)) => *b,
+        Some(other) => return unsupported(&format!("Confirm default {other:?}")),
+    };
+    Ok(Value::Boolean(ctx.ui_confirm(question, default)?))
+}
+
+/// `StrMenu(Options, Default, Instruction)`. An omitted Default is 1 and an
+/// omitted Instruction is empty (docs/probes-needed.md).
+fn str_menu(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let options = text_arg(args, 0)?;
+    let default = match args.get(1) {
+        None => 1,
+        Some(_) => int_arg(args, 1).map_or_else(|| unsupported("StrMenu default"), |n| Ok(n as i32))?,
+    };
+    let instruction = match args.get(2) {
+        None => String::new(),
+        Some(_) => text_arg(args, 2)?,
+    };
+    Ok(Value::Integer(ctx.ui_str_menu(options, default, instruction)?))
 }
 
 /// `%1`..`%9` replaced by `Format(arg)`. A placeholder without an argument
@@ -412,6 +489,18 @@ mod tests {
         );
     }
 
+    // The formats of Time, DateTime and Duration are not pinned by the corpus yet: Format of
+    // them is a refusal the test can report, not a panic that takes the whole codeunit down.
+    #[test]
+    fn format_of_a_value_without_a_pinned_format_is_a_refusal() {
+        for v in [Value::Duration(3_600_000), Value::Time(43_200_001), Value::DateTime(5)] {
+            assert!(
+                matches!(call("System.Format#1", vec![v]), Err(Signal::Unsupported(_))),
+                "Format must refuse"
+            );
+        }
+    }
+
     #[test]
     fn formats_that_are_not_pinned_are_refused_not_panics() {
         // Format of a Duration is not pinned by the corpus yet: Unsupported, so the test is
@@ -429,7 +518,7 @@ mod tests {
     #[test]
     fn the_call_stack_of_a_recorded_error_is_refused_not_invented() {
         // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`; call
-        // stacks are not tracked, so only the no-error answer ('') is given.
+        // stacks are not tracked: after an error the answer is a marker no text function reads.
         let mut ctx = TestCtx::default();
         let f = lookup("System.GetLastErrorCallStack#1").unwrap();
         assert!(matches!(f(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s.is_empty()));
@@ -438,7 +527,11 @@ mod tests {
             code: "Dialog".into(),
             call_stack: String::new(),
         });
-        assert!(matches!(f(&mut ctx, None, &mut []), Err(Signal::Unsupported(_))));
+        let Ok(stack @ Value::Text(_)) = f(&mut ctx, None, &mut []) else {
+            panic!("a call stack is returned after an error")
+        };
+        assert!(matches!(&stack, Value::Text(s) if !s.is_empty()));
+        assert!(text_of(&stack).is_none(), "its content cannot be inspected");
     }
 
     #[test]

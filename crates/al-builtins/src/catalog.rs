@@ -1,6 +1,7 @@
 //! Generating the signature catalog from the docs scrape (ADR-008).
 
 use crate::signature::{DocEntry, Signature};
+use al_version::{Runtime, Target};
 use std::collections::{BTreeMap, HashMap};
 
 /// The checked-in catalog, compiled into the binary (no file access at runtime, ADR-006).
@@ -49,22 +50,41 @@ pub fn apply_overrides(lines: &[&str], overrides: &str) -> Result<Vec<String>, S
 pub const GLOBAL_RECEIVERS: &[&str] = &["System", "Dialog", "Text", "Database", "Session", "SecretText"];
 
 pub struct Catalog {
+    /// Every overload of every version, in id order: untagged first, then by tag (ADR-015 3.3).
     pub signatures: Vec<Signature>,
     by_method: HashMap<(String, String), Vec<usize>>,
     globals: HashMap<String, Vec<usize>>,
+    /// The app runtime this catalog serves; `None` shows every overload (the newest).
+    runtime: Option<Runtime>,
 }
 
 impl Catalog {
+    /// The whole catalog, as for the newest runtime: nothing is hidden.
     pub fn load() -> Catalog {
+        Catalog::build(None)
+    }
+
+    /// The catalog an app of the target's runtime sees: `overloads` and `global`
+    /// leave out what is tagged newer; [`Catalog::hidden`] returns it. Ids and
+    /// `by_id` do not depend on the target (ADR-015 3.3).
+    pub fn for_target(target: &Target) -> Catalog {
+        Catalog::build(Some(target.runtime))
+    }
+
+    fn build(runtime: Option<Runtime>) -> Catalog {
         let base: Vec<&str> = SIGNATURES
             .lines()
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
             .collect();
         let lines = apply_overrides(&base, OVERRIDES).unwrap_or_else(|e| panic!("{e}"));
-        let signatures: Vec<Signature> = lines
+        let mut signatures: Vec<Signature> = lines
             .iter()
             .map(|l| Signature::from_line(l).unwrap_or_else(|e| panic!("bad catalog line `{l}`: {e}")))
             .collect();
+        // Overload ids are positions: a tagged overload is numbered after every older one, so
+        // a version that adds an overload never renumbers an existing one. The sort is stable,
+        // so inside one tag the order stays the sorted line order.
+        signatures.sort_by_key(|s| s.since);
         let mut by_method: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, s) in signatures.iter().enumerate() {
@@ -80,22 +100,82 @@ impl Catalog {
             signatures,
             by_method,
             globals,
+            runtime,
         }
     }
 
-    /// Overloads of `receiver.method` (case-insensitive), static and instance.
+    /// The runtime this catalog serves, or `None` when it shows everything.
+    pub fn runtime(&self) -> Option<Runtime> {
+        self.runtime
+    }
+
+    /// The newest runtime any overload is tagged with, else the runtime floor:
+    /// how far the docs behind this catalog reach (ADR-015 3.3).
+    pub fn newest_documented_runtime(&self) -> Runtime {
+        self.signatures
+            .iter()
+            .filter_map(|s| s.since)
+            .max()
+            .unwrap_or_else(Runtime::floor)
+    }
+
+    fn visible(&self, s: &Signature) -> bool {
+        match (s.since, self.runtime) {
+            (Some(since), Some(rt)) => since <= rt,
+            _ => true,
+        }
+    }
+
+    /// Overloads of `receiver.method` (case-insensitive), static and instance,
+    /// that exist at this catalog's runtime.
     pub fn overloads(&self, receiver: &str, method: &str) -> Vec<&Signature> {
         self.by_method
             .get(&(receiver.to_lowercase(), method.to_lowercase()))
-            .map(|v| v.iter().map(|&i| &self.signatures[i]).collect())
+            .map(|v| {
+                v.iter()
+                    .map(|&i| &self.signatures[i])
+                    .filter(|s| self.visible(s))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
-    /// Overloads callable unqualified as `name(...)`.
+    /// Overloads of `receiver.method` that exist only in a newer runtime.
+    pub fn hidden(&self, receiver: &str, method: &str) -> Vec<&Signature> {
+        self.by_method
+            .get(&(receiver.to_lowercase(), method.to_lowercase()))
+            .map(|v| {
+                v.iter()
+                    .map(|&i| &self.signatures[i])
+                    .filter(|s| !self.visible(s))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Overloads callable unqualified as `name(...)` at this catalog's runtime.
     pub fn global(&self, name: &str) -> Vec<&Signature> {
         self.globals
             .get(&name.to_lowercase())
-            .map(|v| v.iter().map(|&i| &self.signatures[i]).collect())
+            .map(|v| {
+                v.iter()
+                    .map(|&i| &self.signatures[i])
+                    .filter(|s| self.visible(s))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Unqualified overloads that exist only in a newer runtime.
+    pub fn hidden_global(&self, name: &str) -> Vec<&Signature> {
+        self.globals
+            .get(&name.to_lowercase())
+            .map(|v| {
+                v.iter()
+                    .map(|&i| &self.signatures[i])
+                    .filter(|s| !self.visible(s))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -216,6 +296,95 @@ mod tests {
             assert_eq!(c.by_id(&c.id(s)), Some(s));
         }
         assert!(c.by_id("Record.Insert#9").is_none());
+    }
+
+    fn sig(line: &str) -> Signature {
+        Signature::from_line(line).unwrap()
+    }
+
+    #[test]
+    fn a_runtime_tag_round_trips() {
+        for l in [
+            "A.x inst (P: Text) -> Boolean? @17.0",
+            "A.y static () @18.0",
+            "A.z inst () -> Text @17.1",
+        ] {
+            let s = sig(l);
+            assert_eq!(s.to_line(), l);
+            assert!(s.since.is_some());
+        }
+        assert_eq!(
+            sig("A.y static () @18.0").since,
+            Some(al_version::Runtime { major: 18, minor: 0 })
+        );
+        assert_eq!(sig("A.y static ()").since, None);
+        assert!(Signature::from_line("A.y static () @x").is_err());
+        assert!(Signature::from_line("A.y static () @17.0 junk").is_err());
+    }
+
+    const SURFACE: &str = r#"{"Record":{
+        "Old":[{"syntax":"Record.Old()","runtime_version":"1.0."}],
+        "Floor":[{"syntax":"Record.Floor()","runtime_version":"16.0."}],
+        "New":[{"syntax":"Record.New()","runtime_version":"17.0."}],
+        "Newer":[{"syntax":"Record.Newer()","runtime_version":"18.0."}],
+        "Untagged":[{"syntax":"Record.Untagged()"}]}}"#;
+
+    #[test]
+    fn generate_tags_only_overloads_above_the_floor() {
+        let lines = generate(SURFACE).unwrap();
+        assert_eq!(
+            lines,
+            vec![
+                "Record.Floor static ()",
+                "Record.New static () @17.0",
+                "Record.Newer static () @18.0",
+                "Record.Old static ()",
+                "Record.Untagged static ()",
+            ]
+        );
+    }
+
+    fn target(bc: &str) -> al_version::Target {
+        al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap())
+    }
+
+    #[test]
+    fn a_target_sees_only_overloads_up_to_its_runtime() {
+        let c27 = Catalog::for_target(&target("27.5"));
+        assert!(c27.overloads("Record", "FullyQualifiedName").is_empty());
+        let hidden = c27.hidden("Record", "FullyQualifiedName");
+        assert_eq!(hidden.len(), 1);
+        assert_eq!(hidden[0].since, Some(al_version::Runtime { major: 17, minor: 0 }));
+        assert!(!c27.overloads("Record", "Insert").is_empty());
+        assert!(c27.hidden("Record", "Insert").is_empty());
+
+        let c28 = Catalog::for_target(&target("28"));
+        assert_eq!(c28.overloads("Record", "FullyQualifiedName").len(), 1);
+        assert!(c28.hidden("Record", "FullyQualifiedName").is_empty());
+        // `load()` is the newest: everything is visible.
+        assert_eq!(Catalog::load().overloads("Record", "FullyQualifiedName").len(), 1);
+    }
+
+    #[test]
+    fn hidden_overloads_do_not_leak_into_globals_and_ids_still_resolve() {
+        let c27 = Catalog::for_target(&target("27"));
+        // An id resolves whatever the target (the IR holds ids, ADR-008).
+        let all = Catalog::load();
+        let tagged = all.overloads("Record", "FullyQualifiedName")[0];
+        assert_eq!(c27.by_id(&all.id(tagged)), Some(tagged));
+        assert_eq!(c27.id(tagged), all.id(tagged));
+    }
+
+    #[test]
+    fn a_later_tag_never_renumbers_an_earlier_overload() {
+        // Codeunit.Run has untagged overloads and one @17.0 overload.
+        let c = Catalog::load();
+        let runs = c.overloads("Codeunit", "Run");
+        let ids: Vec<String> = runs.iter().map(|s| c.id(s)).collect();
+        let n = runs.len();
+        assert!(runs[n - 1].since.is_some(), "the tagged overload is numbered last");
+        assert!(runs[..n - 1].iter().all(|s| s.since.is_none()));
+        assert_eq!(ids[n - 1], format!("Codeunit.Run#{n}"));
     }
 
     #[test]

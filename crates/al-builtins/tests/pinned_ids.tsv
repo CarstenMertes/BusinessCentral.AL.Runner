@@ -1,0 +1,1727 @@
+BigInteger.ToText#1	BigInteger.ToText inst () -> Text
+BigText.AddText#1	BigText.AddText inst (String: BigText, ?Position: Integer)
+BigText.AddText#2	BigText.AddText inst (String: Text, ?Position: Integer)
+BigText.GetSubText#1	BigText.GetSubText inst (var Variable: BigText, Position: Integer, ?Length: Integer) -> Integer?
+BigText.GetSubText#2	BigText.GetSubText inst (var Variable: Text, Position: Integer, ?Length: Integer) -> Integer?
+BigText.Length#1	BigText.Length inst () -> Integer
+BigText.Read#1	BigText.Read inst (InStream: InStream) -> Boolean?
+BigText.TextPos#1	BigText.TextPos inst (String: Text) -> Integer
+BigText.Write#1	BigText.Write inst (OutStream: OutStream) -> Boolean?
+Blob.CreateInStream#1	Blob.CreateInStream inst (InStream: InStream, ?Encoding: TextEncoding)
+Blob.CreateOutStream#1	Blob.CreateOutStream inst (OutStream: OutStream, ?Encoding: TextEncoding)
+Blob.Export#1	Blob.Export inst (Name: Text) -> Text?
+Blob.HasValue#1	Blob.HasValue inst () -> Boolean
+Blob.Import#1	Blob.Import inst (Name: Text) -> Text?
+Blob.Length#1	Blob.Length inst () -> Integer
+Boolean.ToText#1	Boolean.ToText inst () -> Text
+Boolean.ToText#2	Boolean.ToText inst (?Invariant: Boolean) -> Text
+Byte.ToText#1	Byte.ToText inst () -> Text
+Byte.ToText#2	Byte.ToText inst (?Invariant: Boolean) -> Text
+Codeunit.Run#1	Codeunit.Run inst (?var Record: Record) -> Boolean?
+Codeunit.Run#2	Codeunit.Run static (Number: Integer, ?var Record: Record) -> Boolean?
+CompanyProperty.DisplayName#1	CompanyProperty.DisplayName static () -> Text
+CompanyProperty.ID#1	CompanyProperty.ID static () -> Guid
+CompanyProperty.UrlName#1	CompanyProperty.UrlName static () -> Text
+Cookie.Domain#1	Cookie.Domain inst () -> Text
+Cookie.Expires#1	Cookie.Expires inst () -> DateTime
+Cookie.HttpOnly#1	Cookie.HttpOnly inst () -> Boolean
+Cookie.Name#1	Cookie.Name inst (?Name: Text) -> Text
+Cookie.Path#1	Cookie.Path inst () -> Text
+Cookie.Secure#1	Cookie.Secure inst () -> Boolean
+Cookie.Value#1	Cookie.Value inst (?Value: Text) -> Text
+DataTransfer.AddConstantValue#1	DataTransfer.AddConstantValue inst (Value: Any, DestinationField: Integer)
+DataTransfer.AddFieldValue#1	DataTransfer.AddFieldValue inst (SourceField: Integer, DestinationField: Integer)
+DataTransfer.AddJoin#1	DataTransfer.AddJoin inst (SourceField: Integer, DestinationField: Integer)
+DataTransfer.AddSourceFilter#1	DataTransfer.AddSourceFilter inst (SourceField: Integer, String: Text, ?Value: Any*)
+DataTransfer.CopyFields#1	DataTransfer.CopyFields inst ()
+DataTransfer.CopyRows#1	DataTransfer.CopyRows inst ()
+DataTransfer.SetTables#1	DataTransfer.SetTables inst (SourceTable: Integer, DestinationTable: Integer)
+DataTransfer.UpdateAuditFields#1	DataTransfer.UpdateAuditFields inst (?UpdateAuditFields: Boolean) -> Boolean?
+Database.AlterKey#1	Database.AlterKey static (KeyRef: KeyRef, Enable: Boolean)
+Database.ChangeUserPassword#1	Database.ChangeUserPassword static (OldPassword: Text, NewPassword: Text) -> Boolean?
+Database.CheckLicenseFile#1	Database.CheckLicenseFile static (KeyNumber: Integer)
+Database.Commit#1	Database.Commit static ()
+Database.CompanyName#1	Database.CompanyName static () -> Text
+Database.CopyCompany#1	Database.CopyCompany static (SourceName: Text, DestinationName: Text) -> Boolean?
+Database.CurrentTransactionType#1	Database.CurrentTransactionType static (?TransactionType: TransactionType) -> TransactionType?
+Database.DataFileInformation#1	Database.DataFileInformation static (ShowDialog: Boolean, var FileName: Text, var Description: Text, var HasApplication: Boolean, var HasApplicationData: Boolean, var HasGlobalData: Boolean, var tenantId: Text, var exportDate: DateTime, var CompanyRecord: Record) -> Boolean?
+Database.ExportData#1	Database.ExportData static (ShowDialog: Boolean, var FileName: Text, ?Description: Text, ?IncludeApplication: Boolean, ?IncludeApplicationData: Boolean, ?IncludeGlobalData: Boolean, ?CompanyRecord: Record) -> Boolean?
+Database.GetDefaultTableConnection#1	Database.GetDefaultTableConnection static (Type: TableConnectionType) -> Text
+Database.HasTableConnection#1	Database.HasTableConnection static (Type: TableConnectionType, Name: Text) -> Boolean
+Database.ImportData#1	Database.ImportData static (ShowDialog: Boolean, var FileName: Text, ?IncludeApplicationData: Boolean, ?IncludeGlobalData: Boolean, ?CompanyRecord: Record) -> Boolean?
+Database.IsInWriteTransaction#1	Database.IsInWriteTransaction static () -> Boolean
+Database.LastUsedRowVersion#1	Database.LastUsedRowVersion static () -> BigInteger
+Database.LockTimeout#1	Database.LockTimeout static (?LockTimeout: Boolean) -> Boolean?
+Database.LockTimeoutDuration#1	Database.LockTimeoutDuration static (?LockTimeoutDuration: Integer) -> Integer?
+Database.MinimumActiveRowVersion#1	Database.MinimumActiveRowVersion static () -> BigInteger
+Database.RegisterTableConnection#1	Database.RegisterTableConnection static (Type: TableConnectionType, Name: Text, Connection: Text)
+Database.SID#1	Database.SID static (?UserAccount: Text) -> Text
+Database.SelectLatestVersion#1	Database.SelectLatestVersion static ()
+Database.SelectLatestVersion#2	Database.SelectLatestVersion static (Table: Integer)
+Database.SerialNumber#1	Database.SerialNumber static () -> Text
+Database.ServiceInstanceId#1	Database.ServiceInstanceId static () -> Integer
+Database.SessionId#1	Database.SessionId static () -> Integer
+Database.SetDefaultTableConnection#1	Database.SetDefaultTableConnection static (Type: TableConnectionType, Name: Text, ?Scoped: Boolean)
+Database.SetUserPassword#1	Database.SetUserPassword static (USID: Guid, Password: Text) -> Boolean?
+Database.TenantId#1	Database.TenantId static () -> Text
+Database.UnregisterTableConnection#1	Database.UnregisterTableConnection static (Type: TableConnectionType, Name: Text)
+Database.UserId#1	Database.UserId static () -> Text
+Database.UserSecurityId#1	Database.UserSecurityId static () -> Guid
+Date.Day#1	Date.Day inst () -> Integer
+Date.DayOfWeek#1	Date.DayOfWeek inst () -> Integer
+Date.Month#1	Date.Month inst () -> Integer
+Date.ToText#1	Date.ToText inst (?Invariant: Boolean) -> Text
+Date.WeekNo#1	Date.WeekNo inst () -> Integer
+Date.Year#1	Date.Year inst () -> Integer
+DateTime.Date#1	DateTime.Date inst () -> Date
+DateTime.Time#1	DateTime.Time inst () -> Time
+DateTime.ToText#1	DateTime.ToText inst (?Invariant: Boolean) -> Text
+Debugger.Activate#1	Debugger.Activate static () -> Boolean?
+Debugger.Attach#1	Debugger.Attach static (SessionID: Integer) -> Boolean?
+Debugger.Break#1	Debugger.Break static () -> Boolean?
+Debugger.BreakOnError#1	Debugger.BreakOnError static (Ok: Boolean) -> Boolean?
+Debugger.BreakOnRecordChanges#1	Debugger.BreakOnRecordChanges static (Ok: Boolean) -> Boolean?
+Debugger.Continue#1	Debugger.Continue static () -> Boolean?
+Debugger.Deactivate#1	Debugger.Deactivate static () -> Boolean?
+Debugger.DebuggedSessionID#1	Debugger.DebuggedSessionID static () -> Integer
+Debugger.DebuggingSessionID#1	Debugger.DebuggingSessionID static () -> Integer
+Debugger.EnableSqlTrace#1	Debugger.EnableSqlTrace static (SessionID: Integer, ?NewIsEnabled: Boolean) -> Boolean?
+Debugger.GetLastErrorText#1	Debugger.GetLastErrorText static () -> Text
+Debugger.IsActive#1	Debugger.IsActive static () -> Boolean
+Debugger.IsAttached#1	Debugger.IsAttached static () -> Boolean
+Debugger.IsBreakpointHit#1	Debugger.IsBreakpointHit static () -> Boolean
+Debugger.SkipSystemTriggers#1	Debugger.SkipSystemTriggers static (Ok: Boolean) -> Boolean?
+Debugger.StepInto#1	Debugger.StepInto static () -> Boolean?
+Debugger.StepOut#1	Debugger.StepOut static () -> Boolean?
+Debugger.StepOver#1	Debugger.StepOver static () -> Boolean?
+Debugger.Stop#1	Debugger.Stop static () -> Boolean?
+Decimal.ToText#1	Decimal.ToText inst () -> Text
+Decimal.ToText#2	Decimal.ToText inst (?Invariant: Boolean) -> Text
+Dialog.Close#1	Dialog.Close inst ()
+Dialog.Confirm#1	Dialog.Confirm static (String: Text, ?Default: Boolean, ?Value1: Any*) -> Boolean
+Dialog.Error#1	Dialog.Error static (Message: ErrorInfo)
+Dialog.Error#2	Dialog.Error static (Message: Text, ?Value: Any*)
+Dialog.HideSubsequentDialogs#1	Dialog.HideSubsequentDialogs inst (?HideSubsequentDialogs: Boolean) -> Boolean?
+Dialog.LogInternalError#1	Dialog.LogInternalError static (Message: Text, DataClassificationInstance: DataClassification, VerbosityInstance: Verbosity)
+Dialog.LogInternalError#2	Dialog.LogInternalError static (Message: Text, SubstitutionString: Text, DataClassificationInstance: DataClassification, VerbosityInstance: Verbosity)
+Dialog.Message#1	Dialog.Message static (String: Text, ?Value: Any*)
+Dialog.Open#1	Dialog.Open inst (String: Text, ?var Variable1: Any*)
+Dialog.StrMenu#1	Dialog.StrMenu static (OptionMembers: Text, ?DefaultNumber: Integer, ?Instruction: Text) -> Integer
+Dialog.Update#1	Dialog.Update inst (?Number: Integer, ?Value: Any)
+Dictionary.Add#1	Dictionary.Add inst (Key: TKey, Value: TValue) -> Boolean?
+Dictionary.ContainsKey#1	Dictionary.ContainsKey inst (Key: TKey) -> Boolean
+Dictionary.Count#1	Dictionary.Count inst () -> Integer
+Dictionary.Get#1	Dictionary.Get inst (Key: TKey) -> TValue
+Dictionary.Get#2	Dictionary.Get inst (Key: TKey, var Value: TValue) -> Boolean?
+Dictionary.Keys#1	Dictionary.Keys inst () -> List of [TKey]
+Dictionary.Remove#1	Dictionary.Remove inst (Key: TKey) -> Boolean?
+Dictionary.Set#1	Dictionary.Set inst (Key: TKey, Value: TValue)
+Dictionary.Set#2	Dictionary.Set inst (Key: TKey, Value: TValue, var OldValue: TValue) -> Boolean?
+Dictionary.Values#1	Dictionary.Values inst () -> List of [TValue]
+Duration.ToText#1	Duration.ToText inst (?Invariant: Boolean) -> Text
+Enum.AsInteger#1	Enum.AsInteger inst () -> Integer
+Enum.FromInteger#1	Enum.FromInteger static (Value: Integer) -> Any
+Enum.Names#1	Enum.Names inst () -> List of [Text]
+Enum.Ordinals#1	Enum.Ordinals inst () -> List of [Integer]
+ErrorInfo.AddAction#1	ErrorInfo.AddAction inst (Caption: Text, CodeunitID: Integer, MethodName: Text)
+ErrorInfo.AddAction#2	ErrorInfo.AddAction inst (Caption: Text, CodeunitID: Integer, MethodName: Text, Description: Text)
+ErrorInfo.AddNavigationAction#1	ErrorInfo.AddNavigationAction inst (?Caption: Text)
+ErrorInfo.AddNavigationAction#2	ErrorInfo.AddNavigationAction inst (?Caption: Text, ?Description: Text)
+ErrorInfo.Callstack#1	ErrorInfo.Callstack inst () -> Text
+ErrorInfo.Collectible#1	ErrorInfo.Collectible inst (?Collectible: Boolean) -> Boolean?
+ErrorInfo.ControlName#1	ErrorInfo.ControlName inst (?ControlName: Text) -> Text?
+ErrorInfo.Create#1	ErrorInfo.Create static () -> ErrorInfo
+ErrorInfo.Create#2	ErrorInfo.Create static (Message: String, ?Collectible: Boolean, ?var Record: Record, ?FieldNo: Integer, ?PageNo: Integer, ?ControlName: String, ?Verbosity: Verbosity, ?DataClassification: DataClassification, ?CustomDimensions: Dictionary of [Text, Text]) -> ErrorInfo
+ErrorInfo.Create#3	ErrorInfo.Create static (Message: Text, ?Collectible: Boolean, ?var Record: Record, ?FieldNo: Integer, ?PageNo: Integer, ?ControlName: Text, ?Verbosity: Verbosity, ?DataClassification: DataClassification, ?CustomDimensions: Dictionary of [Text, Text]) -> ErrorInfo
+ErrorInfo.CustomDimensions#1	ErrorInfo.CustomDimensions inst (?CustomDimensions: Dictionary of [Text, Text]) -> Dictionary of [Text, Text]?
+ErrorInfo.DataClassification#1	ErrorInfo.DataClassification inst (?DataClassification: DataClassification) -> DataClassification?
+ErrorInfo.DetailedMessage#1	ErrorInfo.DetailedMessage inst (?DetailedMessage: Text) -> Text?
+ErrorInfo.ErrorType#1	ErrorInfo.ErrorType inst (?ErrorType: ErrorType) -> ErrorType?
+ErrorInfo.FieldNo#1	ErrorInfo.FieldNo inst (?FieldNo: Integer) -> Integer?
+ErrorInfo.Message#1	ErrorInfo.Message inst (?Message: Text) -> Text?
+ErrorInfo.PageNo#1	ErrorInfo.PageNo inst (?PageNo: Integer) -> Integer?
+ErrorInfo.RecordId#1	ErrorInfo.RecordId inst (?RecordId: RecordId) -> RecordId?
+ErrorInfo.SystemId#1	ErrorInfo.SystemId inst (?SystemId: Guid) -> Guid?
+ErrorInfo.TableId#1	ErrorInfo.TableId inst (?TableId: Integer) -> Integer?
+ErrorInfo.Title#1	ErrorInfo.Title inst (?Title: Text) -> Text?
+ErrorInfo.Verbosity#1	ErrorInfo.Verbosity inst (?Verbosity: Verbosity) -> Verbosity?
+FieldRef.Active#1	FieldRef.Active inst () -> Boolean
+FieldRef.CalcField#1	FieldRef.CalcField inst () -> Boolean?
+FieldRef.CalcSum#1	FieldRef.CalcSum inst () -> Boolean?
+FieldRef.Caption#1	FieldRef.Caption inst () -> Text
+FieldRef.Class#1	FieldRef.Class inst () -> FieldClass
+FieldRef.EnumValueCount#1	FieldRef.EnumValueCount inst () -> Integer
+FieldRef.FieldError#1	FieldRef.FieldError inst (?Text: String)
+FieldRef.FieldError#2	FieldRef.FieldError inst (?Text: Text)
+FieldRef.FieldError#3	FieldRef.FieldError inst (ErrorInfo: ErrorInfo)
+FieldRef.GetEnumValueCaption#1	FieldRef.GetEnumValueCaption inst (Index: Integer) -> Text
+FieldRef.GetEnumValueCaptionFromOrdinalValue#1	FieldRef.GetEnumValueCaptionFromOrdinalValue inst (Ordinal: Integer) -> Text
+FieldRef.GetEnumValueName#1	FieldRef.GetEnumValueName inst (Index: Integer) -> Text
+FieldRef.GetEnumValueNameFromOrdinalValue#1	FieldRef.GetEnumValueNameFromOrdinalValue inst (Ordinal: Integer) -> Text
+FieldRef.GetEnumValueOrdinal#1	FieldRef.GetEnumValueOrdinal inst (Index: Integer) -> Integer
+FieldRef.GetFilter#1	FieldRef.GetFilter inst () -> Text
+FieldRef.GetRangeMax#1	FieldRef.GetRangeMax inst () -> Any
+FieldRef.GetRangeMin#1	FieldRef.GetRangeMin inst () -> Any
+FieldRef.IsEnum#1	FieldRef.IsEnum inst () -> Boolean
+FieldRef.IsOptimizedForTextSearch#1	FieldRef.IsOptimizedForTextSearch inst () -> Boolean
+FieldRef.Length#1	FieldRef.Length inst () -> Integer
+FieldRef.Name#1	FieldRef.Name inst () -> Text
+FieldRef.Number#1	FieldRef.Number inst () -> Integer
+FieldRef.OptionCaption#1	FieldRef.OptionCaption inst () -> Text
+FieldRef.OptionMembers#1	FieldRef.OptionMembers inst () -> Text
+FieldRef.OptionString#1	FieldRef.OptionString inst () -> Text
+FieldRef.Record#1	FieldRef.Record inst () -> RecordRef
+FieldRef.Relation#1	FieldRef.Relation inst () -> Integer
+FieldRef.SetFilter#1	FieldRef.SetFilter inst (String: Text, ?Value: Any*)
+FieldRef.SetRange#1	FieldRef.SetRange inst (?FromValue: Any, ?ToValue: Any)
+FieldRef.TestField#1	FieldRef.TestField inst ()
+FieldRef.TestField#2	FieldRef.TestField inst (ErrorInfo: ErrorInfo)
+FieldRef.TestField#3	FieldRef.TestField inst (Value: Any)
+FieldRef.TestField#4	FieldRef.TestField inst (Value: Any, ErrorInfo: ErrorInfo)
+FieldRef.TestField#5	FieldRef.TestField inst (Value: BigInteger)
+FieldRef.TestField#6	FieldRef.TestField inst (Value: BigInteger, ErrorInfo: ErrorInfo)
+FieldRef.TestField#7	FieldRef.TestField inst (Value: Boolean)
+FieldRef.TestField#8	FieldRef.TestField inst (Value: Boolean, ErrorInfo: ErrorInfo)
+FieldRef.TestField#9	FieldRef.TestField inst (Value: Byte)
+FieldRef.TestField#10	FieldRef.TestField inst (Value: Byte, ErrorInfo: ErrorInfo)
+FieldRef.TestField#11	FieldRef.TestField inst (Value: Char)
+FieldRef.TestField#12	FieldRef.TestField inst (Value: Char, ErrorInfo: ErrorInfo)
+FieldRef.TestField#13	FieldRef.TestField inst (Value: Code)
+FieldRef.TestField#14	FieldRef.TestField inst (Value: Code, ErrorInfo: ErrorInfo)
+FieldRef.TestField#15	FieldRef.TestField inst (Value: Date)
+FieldRef.TestField#16	FieldRef.TestField inst (Value: Date, ErrorInfo: ErrorInfo)
+FieldRef.TestField#17	FieldRef.TestField inst (Value: DateTime)
+FieldRef.TestField#18	FieldRef.TestField inst (Value: DateTime, ErrorInfo: ErrorInfo)
+FieldRef.TestField#19	FieldRef.TestField inst (Value: Decimal)
+FieldRef.TestField#20	FieldRef.TestField inst (Value: Decimal, ErrorInfo: ErrorInfo)
+FieldRef.TestField#21	FieldRef.TestField inst (Value: Enum)
+FieldRef.TestField#22	FieldRef.TestField inst (Value: Enum, ErrorInfo: ErrorInfo)
+FieldRef.TestField#23	FieldRef.TestField inst (Value: Guid)
+FieldRef.TestField#24	FieldRef.TestField inst (Value: Guid, ErrorInfo: ErrorInfo)
+FieldRef.TestField#25	FieldRef.TestField inst (Value: Integer)
+FieldRef.TestField#26	FieldRef.TestField inst (Value: Integer, ErrorInfo: ErrorInfo)
+FieldRef.TestField#27	FieldRef.TestField inst (Value: Label)
+FieldRef.TestField#28	FieldRef.TestField inst (Value: Label, ErrorInfo: ErrorInfo)
+FieldRef.TestField#29	FieldRef.TestField inst (Value: Option)
+FieldRef.TestField#30	FieldRef.TestField inst (Value: Option, ErrorInfo: ErrorInfo)
+FieldRef.TestField#31	FieldRef.TestField inst (Value: Text)
+FieldRef.TestField#32	FieldRef.TestField inst (Value: Text, ErrorInfo: ErrorInfo)
+FieldRef.TestField#33	FieldRef.TestField inst (Value: Time)
+FieldRef.TestField#34	FieldRef.TestField inst (Value: Time, ErrorInfo: ErrorInfo)
+FieldRef.TestField#35	FieldRef.TestField inst (Value: Variant)
+FieldRef.TestField#36	FieldRef.TestField inst (Value: Variant, ErrorInfo: ErrorInfo)
+FieldRef.Type#1	FieldRef.Type inst () -> FieldType
+FieldRef.Validate#1	FieldRef.Validate inst (?NewValue: Any)
+FieldRef.Value#1	FieldRef.Value inst (?NewValue: Any) -> Any?
+File.Close#1	File.Close inst ()
+File.Copy#1	File.Copy static (FromName: Text, ToName: Text) -> Boolean?
+File.Create#1	File.Create inst (Name: Text, ?Encoding: TextEncoding) -> Boolean?
+File.CreateInStream#1	File.CreateInStream inst (InStream: InStream)
+File.CreateOutStream#1	File.CreateOutStream inst (OutStream: OutStream)
+File.CreateTempFile#1	File.CreateTempFile inst (?Encoding: TextEncoding) -> Boolean?
+File.Download#1	File.Download static (FromFile: Text, DialogTitle: Text, ToFolder: Text, ToFilter: Text, var ToFile: Text) -> Boolean?
+File.DownloadFromStream#1	File.DownloadFromStream static (InStream: InStream, DialogTitle: Text, ToFolder: Text, ToFilter: Text, var ToFile: Text) -> Boolean?
+File.Erase#1	File.Erase static (Name: Text) -> Boolean?
+File.Exists#1	File.Exists static (Name: Text) -> Boolean?
+File.GetStamp#1	File.GetStamp static (Name: Text, var Date: Date, ?var Time: Time) -> Boolean?
+File.IsPathTemporary#1	File.IsPathTemporary static (Name: Text) -> Boolean?
+File.Len#1	File.Len inst () -> Integer
+File.Name#1	File.Name inst () -> Text
+File.Open#1	File.Open inst (Name: Text, ?Encoding: TextEncoding) -> Boolean?
+File.Pos#1	File.Pos inst () -> Integer
+File.Read#1	File.Read inst (var Read: Any) -> Integer?
+File.Rename#1	File.Rename static (OldName: Text, NewName: Text) -> Boolean?
+File.Seek#1	File.Seek inst (Position: Integer)
+File.SetStamp#1	File.SetStamp static (Name: Text, Date: Date, ?Time: Time) -> Boolean?
+File.TextMode#1	File.TextMode inst (?Mode: Boolean) -> Boolean?
+File.Trunc#1	File.Trunc inst ()
+File.Upload#1	File.Upload static (DialogTitle: Text, FromFolder: Text, FromFilter: Text, FromFile: Text, var ToFile: Text) -> Boolean?
+File.UploadIntoStream#1	File.UploadIntoStream static (DialogTitle: Text, FromFolder: Text, FromFilter: Text, var FromFile: Text, var InStream: InStream) -> Boolean?
+File.UploadIntoStream#2	File.UploadIntoStream static (FromFilter: Text, var InStream: InStream) -> Boolean?
+File.View#1	File.View static (FromFile: Text, ?AllowDownloadAndPrint: Boolean) -> Boolean?
+File.ViewFromStream#1	File.ViewFromStream static (InStream: InStream, FileName: Text, ?AllowDownloadAndPrint: Boolean) -> Boolean?
+File.Write#1	File.Write inst (Value: Any)
+File.Write#2	File.Write inst (Value: BigInteger)
+File.Write#3	File.Write inst (Value: BigText)
+File.Write#4	File.Write inst (Value: Boolean)
+File.Write#5	File.Write inst (Value: Byte)
+File.Write#6	File.Write inst (Value: Char)
+File.Write#7	File.Write inst (Value: Code)
+File.Write#8	File.Write inst (Value: Date)
+File.Write#9	File.Write inst (Value: DateFormula)
+File.Write#10	File.Write inst (Value: DateTime)
+File.Write#11	File.Write inst (Value: Decimal)
+File.Write#12	File.Write inst (Value: Duration)
+File.Write#13	File.Write inst (Value: Guid)
+File.Write#14	File.Write inst (Value: Integer)
+File.Write#15	File.Write inst (Value: Label)
+File.Write#16	File.Write inst (Value: Option)
+File.Write#17	File.Write inst (Value: Record)
+File.Write#18	File.Write inst (Value: RecordId)
+File.Write#19	File.Write inst (Value: Text)
+File.Write#20	File.Write inst (Value: Time)
+File.WriteMode#1	File.WriteMode inst (?Mode: Boolean) -> Boolean?
+FileUpload.CreateInStream#1	FileUpload.CreateInStream inst (InStream: InStream)
+FileUpload.CreateInStream#2	FileUpload.CreateInStream inst (InStream: InStream, Encoding: TextEncoding)
+FileUpload.FileName#1	FileUpload.FileName inst () -> Text
+FilterPageBuilder.AddField#1	FilterPageBuilder.AddField inst (Name: Text, Field: Any, ?Filter: Text) -> Boolean?
+FilterPageBuilder.AddField#2	FilterPageBuilder.AddField inst (Name: Text, Field: FieldRef, ?Filter: Text) -> Boolean?
+FilterPageBuilder.AddFieldNo#1	FilterPageBuilder.AddFieldNo inst (Name: Text, FieldNo: Integer, ?Filter: Text) -> Boolean?
+FilterPageBuilder.AddRecord#1	FilterPageBuilder.AddRecord inst (Name: Text, Record: Record) -> Text?
+FilterPageBuilder.AddRecordRef#1	FilterPageBuilder.AddRecordRef inst (Name: Text, RecordRef: RecordRef) -> Text?
+FilterPageBuilder.AddTable#1	FilterPageBuilder.AddTable inst (Name: Text, TableNo: Integer) -> Text?
+FilterPageBuilder.Count#1	FilterPageBuilder.Count inst () -> Integer
+FilterPageBuilder.GetView#1	FilterPageBuilder.GetView inst (Name: Text, ?UseNames: Boolean) -> Text
+FilterPageBuilder.Name#1	FilterPageBuilder.Name inst (Index: Integer) -> Text
+FilterPageBuilder.PageCaption#1	FilterPageBuilder.PageCaption inst (?PageCaption: Text) -> Text?
+FilterPageBuilder.RunModal#1	FilterPageBuilder.RunModal inst () -> Boolean?
+FilterPageBuilder.SetView#1	FilterPageBuilder.SetView inst (Name: Text, View: Text) -> Boolean?
+Guid.CreateGuid#1	Guid.CreateGuid static () -> Guid
+Guid.CreateSequentialGuid#1	Guid.CreateSequentialGuid static () -> Guid
+Guid.ToText#1	Guid.ToText inst () -> Text
+Guid.ToText#2	Guid.ToText inst (?Invariant: Boolean) -> Text
+HttpClient.AddCertificate#1	HttpClient.AddCertificate inst (Certificate: SecretText, ?Password: SecretText)
+HttpClient.AddCertificate#2	HttpClient.AddCertificate inst (Certificate: Text, ?Password: Text)
+HttpClient.Clear#1	HttpClient.Clear inst ()
+HttpClient.DefaultRequestHeaders#1	HttpClient.DefaultRequestHeaders inst () -> HttpHeaders
+HttpClient.Delete#1	HttpClient.Delete inst (Path: Text, var Response: HttpResponseMessage) -> Boolean?
+HttpClient.Get#1	HttpClient.Get inst (Path: Text, var Response: HttpResponseMessage) -> Boolean?
+HttpClient.GetBaseAddress#1	HttpClient.GetBaseAddress inst () -> Text
+HttpClient.Patch#1	HttpClient.Patch inst (Path: Text, Content: HttpContent, var Response: HttpResponseMessage) -> Boolean?
+HttpClient.Post#1	HttpClient.Post inst (Path: Text, Content: HttpContent, var Response: HttpResponseMessage) -> Boolean?
+HttpClient.Put#1	HttpClient.Put inst (Path: Text, Content: HttpContent, var Response: HttpResponseMessage) -> Boolean?
+HttpClient.Send#1	HttpClient.Send inst (Request: HttpRequestMessage, var Response: HttpResponseMessage) -> Boolean?
+HttpClient.SetBaseAddress#1	HttpClient.SetBaseAddress inst (NewBaseAddress: Text) -> Boolean?
+HttpClient.Timeout#1	HttpClient.Timeout inst (?SetTimeout: Duration) -> Duration?
+HttpClient.UseDefaultNetworkWindowsAuthentication#1	HttpClient.UseDefaultNetworkWindowsAuthentication inst () -> Boolean?
+HttpClient.UseResponseCookies#1	HttpClient.UseResponseCookies inst (UseResponseCookies: Boolean)
+HttpClient.UseServerCertificateValidation#1	HttpClient.UseServerCertificateValidation inst (UseServerCertificateValidation: Boolean) -> Boolean?
+HttpClient.UseWindowsAuthentication#1	HttpClient.UseWindowsAuthentication inst (UserName: SecretText, Password: SecretText, ?Domain: SecretText) -> Boolean?
+HttpClient.UseWindowsAuthentication#2	HttpClient.UseWindowsAuthentication inst (UserName: Text, Password: Text, ?Domain: Text) -> Boolean?
+HttpContent.Clear#1	HttpContent.Clear inst ()
+HttpContent.GetHeaders#1	HttpContent.GetHeaders inst (var Headers: HttpHeaders) -> Boolean?
+HttpContent.IsSecretContent#1	HttpContent.IsSecretContent inst () -> Boolean?
+HttpContent.ReadAs#1	HttpContent.ReadAs inst (var InStream: InStream) -> Boolean?
+HttpContent.ReadAs#2	HttpContent.ReadAs inst (var OutputSecretText: SecretText) -> Boolean?
+HttpContent.ReadAs#3	HttpContent.ReadAs inst (var OutputString: Text) -> Boolean?
+HttpContent.WriteFrom#1	HttpContent.WriteFrom inst (InStream: InStream)
+HttpContent.WriteFrom#2	HttpContent.WriteFrom inst (SecretText: SecretText)
+HttpContent.WriteFrom#3	HttpContent.WriteFrom inst (Text: Text)
+HttpHeaders.Add#1	HttpHeaders.Add inst (Name: Text, Value: SecretText) -> Boolean?
+HttpHeaders.Add#2	HttpHeaders.Add inst (Name: Text, Value: Text) -> Boolean?
+HttpHeaders.Clear#1	HttpHeaders.Clear inst ()
+HttpHeaders.Contains#1	HttpHeaders.Contains inst (Name: Text) -> Boolean
+HttpHeaders.ContainsSecret#1	HttpHeaders.ContainsSecret inst (Key: Text) -> Boolean?
+HttpHeaders.GetSecretValues#1	HttpHeaders.GetSecretValues inst (Key: Text, Values: Array of [SecretText]) -> Boolean?
+HttpHeaders.GetSecretValues#2	HttpHeaders.GetSecretValues inst (Key: Text, Values: List of [SecretText]) -> Boolean?
+HttpHeaders.GetValues#1	HttpHeaders.GetValues inst (Key: String, Values: Array of [Text]) -> Boolean?
+HttpHeaders.GetValues#2	HttpHeaders.GetValues inst (Key: Text, Values: Array of [Text]) -> Boolean?
+HttpHeaders.GetValues#3	HttpHeaders.GetValues inst (Key: Text, Values: List of [Text]) -> Boolean?
+HttpHeaders.Keys#1	HttpHeaders.Keys inst () -> List of [Text]
+HttpHeaders.Remove#1	HttpHeaders.Remove inst (Name: Text) -> Boolean?
+HttpHeaders.TryAddWithoutValidation#1	HttpHeaders.TryAddWithoutValidation inst (Name: Text, Value: SecretText) -> Boolean?
+HttpHeaders.TryAddWithoutValidation#2	HttpHeaders.TryAddWithoutValidation inst (Name: Text, Value: Text) -> Boolean?
+HttpRequestMessage.Content#1	HttpRequestMessage.Content inst (?SetContent: HttpContent) -> HttpContent?
+HttpRequestMessage.GetCookie#1	HttpRequestMessage.GetCookie inst (Name: Text, var Cookie: Cookie) -> Boolean?
+HttpRequestMessage.GetCookieNames#1	HttpRequestMessage.GetCookieNames inst () -> List of [Text]
+HttpRequestMessage.GetHeaders#1	HttpRequestMessage.GetHeaders inst (var Headers: HttpHeaders) -> Boolean?
+HttpRequestMessage.GetRequestUri#1	HttpRequestMessage.GetRequestUri inst () -> Text
+HttpRequestMessage.GetSecretRequestUri#1	HttpRequestMessage.GetSecretRequestUri inst () -> SecretText
+HttpRequestMessage.Method#1	HttpRequestMessage.Method inst (?NewMethod: Text) -> Text?
+HttpRequestMessage.RemoveCookie#1	HttpRequestMessage.RemoveCookie inst (Name: Text) -> Boolean?
+HttpRequestMessage.SetCookie#1	HttpRequestMessage.SetCookie inst (Cookie: Cookie) -> Boolean?
+HttpRequestMessage.SetCookie#2	HttpRequestMessage.SetCookie inst (Name: Text, Value: Text) -> Boolean?
+HttpRequestMessage.SetRequestUri#1	HttpRequestMessage.SetRequestUri inst (RequestUri: Text) -> Boolean?
+HttpRequestMessage.SetSecretRequestUri#1	HttpRequestMessage.SetSecretRequestUri inst (RequestUri: SecretText) -> Boolean?
+HttpResponseMessage.Content#1	HttpResponseMessage.Content inst () -> HttpContent
+HttpResponseMessage.GetCookie#1	HttpResponseMessage.GetCookie inst (Name: Text, var Cookie: Cookie) -> Boolean?
+HttpResponseMessage.GetCookieNames#1	HttpResponseMessage.GetCookieNames inst () -> List of [Text]
+HttpResponseMessage.Headers#1	HttpResponseMessage.Headers inst () -> HttpHeaders
+HttpResponseMessage.HttpStatusCode#1	HttpResponseMessage.HttpStatusCode inst () -> Integer
+HttpResponseMessage.IsBlockedByEnvironment#1	HttpResponseMessage.IsBlockedByEnvironment inst () -> Boolean
+HttpResponseMessage.IsSuccessStatusCode#1	HttpResponseMessage.IsSuccessStatusCode inst () -> Boolean
+HttpResponseMessage.ReasonPhrase#1	HttpResponseMessage.ReasonPhrase inst () -> Text
+InStream.EOS#1	InStream.EOS inst () -> Boolean
+InStream.Length#1	InStream.Length inst () -> BigInteger
+InStream.Position#1	InStream.Position inst (?Length: BigInteger) -> BigInteger?
+InStream.Read#1	InStream.Read inst (var Variable: Any, ?Length: Integer) -> Integer?
+InStream.Read#2	InStream.Read inst (var Variable: BigInteger, ?Length: Integer) -> Integer?
+InStream.Read#3	InStream.Read inst (var Variable: Boolean, ?Length: Integer) -> Integer?
+InStream.Read#4	InStream.Read inst (var Variable: Byte, ?Length: Integer) -> Integer?
+InStream.Read#5	InStream.Read inst (var Variable: Char, ?Length: Integer) -> Integer?
+InStream.Read#6	InStream.Read inst (var Variable: Decimal, ?Length: Integer) -> Integer?
+InStream.Read#7	InStream.Read inst (var Variable: Guid, ?Length: Integer) -> Integer?
+InStream.Read#8	InStream.Read inst (var Variable: Integer, ?Length: Integer) -> Integer?
+InStream.Read#9	InStream.Read inst (var Variable: Text, ?Length: Integer) -> Integer?
+InStream.ReadText#1	InStream.ReadText inst (var Variable: Text, ?Length: Integer) -> Integer?
+InStream.ResetPosition#1	InStream.ResetPosition inst () -> Boolean?
+Integer.ToText#1	Integer.ToText inst () -> Text
+IsolatedStorage.Contains#1	IsolatedStorage.Contains static (Key: Text, ?DataScope: DataScope) -> Boolean
+IsolatedStorage.Contains#2	IsolatedStorage.Contains static (Key: Text, ?DataScope: DataScope, var isSecret: Boolean) -> Boolean
+IsolatedStorage.Delete#1	IsolatedStorage.Delete static (Key: Text, ?DataScope: DataScope) -> Boolean?
+IsolatedStorage.Get#1	IsolatedStorage.Get static (Key: Text, ?DataScope: DataScope, var Value: SecretText) -> Boolean?
+IsolatedStorage.Get#2	IsolatedStorage.Get static (Key: Text, ?DataScope: DataScope, var Value: Text) -> Boolean?
+IsolatedStorage.Get#3	IsolatedStorage.Get static (Key: Text, var Value: SecretText) -> Boolean?
+IsolatedStorage.Get#4	IsolatedStorage.Get static (Key: Text, var Value: Text) -> Boolean?
+IsolatedStorage.Set#1	IsolatedStorage.Set static (Key: Text, Value: SecretText, ?DataScope: DataScope) -> Boolean?
+IsolatedStorage.Set#2	IsolatedStorage.Set static (Key: Text, Value: Text, ?DataScope: DataScope) -> Boolean?
+IsolatedStorage.SetEncrypted#1	IsolatedStorage.SetEncrypted static (Key: Text, Value: SecretText, ?DataScope: DataScope) -> Boolean?
+IsolatedStorage.SetEncrypted#2	IsolatedStorage.SetEncrypted static (Key: Text, Value: Text, ?DataScope: DataScope) -> Boolean?
+JsonArray.Add#1	JsonArray.Add inst (Value: BigInteger)
+JsonArray.Add#2	JsonArray.Add inst (Value: Boolean)
+JsonArray.Add#3	JsonArray.Add inst (Value: Byte)
+JsonArray.Add#4	JsonArray.Add inst (Value: Char)
+JsonArray.Add#5	JsonArray.Add inst (Value: Date)
+JsonArray.Add#6	JsonArray.Add inst (Value: DateTime)
+JsonArray.Add#7	JsonArray.Add inst (Value: Decimal)
+JsonArray.Add#8	JsonArray.Add inst (Value: Duration)
+JsonArray.Add#9	JsonArray.Add inst (Value: Integer)
+JsonArray.Add#10	JsonArray.Add inst (Value: JsonArray)
+JsonArray.Add#11	JsonArray.Add inst (Value: JsonObject)
+JsonArray.Add#12	JsonArray.Add inst (Value: JsonToken)
+JsonArray.Add#13	JsonArray.Add inst (Value: JsonValue)
+JsonArray.Add#14	JsonArray.Add inst (Value: Option)
+JsonArray.Add#15	JsonArray.Add inst (Value: Text)
+JsonArray.Add#16	JsonArray.Add inst (Value: Time)
+JsonArray.AsToken#1	JsonArray.AsToken inst () -> JsonToken
+JsonArray.Clone#1	JsonArray.Clone inst () -> JsonToken
+JsonArray.Count#1	JsonArray.Count inst () -> Integer
+JsonArray.Get#1	JsonArray.Get inst (Index: Integer, var Result: JsonToken) -> Boolean?
+JsonArray.GetArray#1	JsonArray.GetArray inst (Index: Integer) -> JsonArray
+JsonArray.GetBigInteger#1	JsonArray.GetBigInteger inst (Index: Integer) -> BigInteger
+JsonArray.GetBoolean#1	JsonArray.GetBoolean inst (Index: Integer) -> Boolean
+JsonArray.GetByte#1	JsonArray.GetByte inst (Index: Integer) -> Byte
+JsonArray.GetChar#1	JsonArray.GetChar inst (Index: Integer) -> Char
+JsonArray.GetDate#1	JsonArray.GetDate inst (Index: Integer) -> Date
+JsonArray.GetDateTime#1	JsonArray.GetDateTime inst (Index: Integer) -> DateTime
+JsonArray.GetDecimal#1	JsonArray.GetDecimal inst (Index: Integer) -> Decimal
+JsonArray.GetDuration#1	JsonArray.GetDuration inst (Index: Integer) -> Option
+JsonArray.GetInteger#1	JsonArray.GetInteger inst (Index: Integer) -> Integer
+JsonArray.GetObject#1	JsonArray.GetObject inst (Index: Integer) -> JsonObject
+JsonArray.GetOption#1	JsonArray.GetOption inst (Index: Integer) -> Option
+JsonArray.GetText#1	JsonArray.GetText inst (Index: Integer) -> Text
+JsonArray.GetTime#1	JsonArray.GetTime inst (Index: Integer) -> Time
+JsonArray.IndexOf#1	JsonArray.IndexOf inst (Value: BigInteger) -> Integer
+JsonArray.IndexOf#2	JsonArray.IndexOf inst (Value: Boolean) -> Integer
+JsonArray.IndexOf#3	JsonArray.IndexOf inst (Value: Byte) -> Integer
+JsonArray.IndexOf#4	JsonArray.IndexOf inst (Value: Char) -> Integer
+JsonArray.IndexOf#5	JsonArray.IndexOf inst (Value: Date) -> Integer
+JsonArray.IndexOf#6	JsonArray.IndexOf inst (Value: DateTime) -> Integer
+JsonArray.IndexOf#7	JsonArray.IndexOf inst (Value: Decimal) -> Integer
+JsonArray.IndexOf#8	JsonArray.IndexOf inst (Value: Duration) -> Integer
+JsonArray.IndexOf#9	JsonArray.IndexOf inst (Value: Integer) -> Integer
+JsonArray.IndexOf#10	JsonArray.IndexOf inst (Value: JsonArray) -> Integer
+JsonArray.IndexOf#11	JsonArray.IndexOf inst (Value: JsonObject) -> Integer
+JsonArray.IndexOf#12	JsonArray.IndexOf inst (Value: JsonToken) -> Integer
+JsonArray.IndexOf#13	JsonArray.IndexOf inst (Value: JsonValue) -> Integer
+JsonArray.IndexOf#14	JsonArray.IndexOf inst (Value: Option) -> Integer
+JsonArray.IndexOf#15	JsonArray.IndexOf inst (Value: Text) -> Integer
+JsonArray.IndexOf#16	JsonArray.IndexOf inst (Value: Time) -> Integer
+JsonArray.Insert#1	JsonArray.Insert inst (Index: Integer, Value: BigInteger) -> Boolean?
+JsonArray.Insert#2	JsonArray.Insert inst (Index: Integer, Value: Boolean) -> Boolean?
+JsonArray.Insert#3	JsonArray.Insert inst (Index: Integer, Value: Byte) -> Boolean?
+JsonArray.Insert#4	JsonArray.Insert inst (Index: Integer, Value: Char) -> Boolean?
+JsonArray.Insert#5	JsonArray.Insert inst (Index: Integer, Value: Date) -> Boolean?
+JsonArray.Insert#6	JsonArray.Insert inst (Index: Integer, Value: DateTime) -> Boolean?
+JsonArray.Insert#7	JsonArray.Insert inst (Index: Integer, Value: Decimal) -> Boolean?
+JsonArray.Insert#8	JsonArray.Insert inst (Index: Integer, Value: Duration) -> Boolean?
+JsonArray.Insert#9	JsonArray.Insert inst (Index: Integer, Value: Integer) -> Boolean?
+JsonArray.Insert#10	JsonArray.Insert inst (Index: Integer, Value: JsonArray) -> Boolean?
+JsonArray.Insert#11	JsonArray.Insert inst (Index: Integer, Value: JsonObject) -> Boolean?
+JsonArray.Insert#12	JsonArray.Insert inst (Index: Integer, Value: JsonToken) -> Boolean?
+JsonArray.Insert#13	JsonArray.Insert inst (Index: Integer, Value: JsonValue) -> Boolean?
+JsonArray.Insert#14	JsonArray.Insert inst (Index: Integer, Value: Option) -> Boolean?
+JsonArray.Insert#15	JsonArray.Insert inst (Index: Integer, Value: Text) -> Boolean?
+JsonArray.Insert#16	JsonArray.Insert inst (Index: Integer, Value: Time) -> Boolean?
+JsonArray.Path#1	JsonArray.Path inst () -> Text
+JsonArray.ReadFrom#1	JsonArray.ReadFrom inst (Data: InStream) -> Boolean?
+JsonArray.ReadFrom#2	JsonArray.ReadFrom inst (String: Text) -> Boolean?
+JsonArray.RemoveAt#1	JsonArray.RemoveAt inst (Index: Integer) -> Boolean?
+JsonArray.SelectToken#1	JsonArray.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
+JsonArray.Set#1	JsonArray.Set inst (Index: Integer, Result: BigInteger) -> Boolean?
+JsonArray.Set#2	JsonArray.Set inst (Index: Integer, Result: Boolean) -> Boolean?
+JsonArray.Set#3	JsonArray.Set inst (Index: Integer, Result: Byte) -> Boolean?
+JsonArray.Set#4	JsonArray.Set inst (Index: Integer, Result: Char) -> Boolean?
+JsonArray.Set#5	JsonArray.Set inst (Index: Integer, Result: Date) -> Boolean?
+JsonArray.Set#6	JsonArray.Set inst (Index: Integer, Result: DateTime) -> Boolean?
+JsonArray.Set#7	JsonArray.Set inst (Index: Integer, Result: Decimal) -> Boolean?
+JsonArray.Set#8	JsonArray.Set inst (Index: Integer, Result: Duration) -> Boolean?
+JsonArray.Set#9	JsonArray.Set inst (Index: Integer, Result: Integer) -> Boolean?
+JsonArray.Set#10	JsonArray.Set inst (Index: Integer, Result: JsonArray) -> Boolean?
+JsonArray.Set#11	JsonArray.Set inst (Index: Integer, Result: JsonObject) -> Boolean?
+JsonArray.Set#12	JsonArray.Set inst (Index: Integer, Result: JsonToken) -> Boolean?
+JsonArray.Set#13	JsonArray.Set inst (Index: Integer, Result: JsonValue) -> Boolean?
+JsonArray.Set#14	JsonArray.Set inst (Index: Integer, Result: Option) -> Boolean?
+JsonArray.Set#15	JsonArray.Set inst (Index: Integer, Result: Text) -> Boolean?
+JsonArray.Set#16	JsonArray.Set inst (Index: Integer, Result: Time) -> Boolean?
+JsonArray.WriteTo#1	JsonArray.WriteTo inst (OutStream: OutStream) -> Boolean?
+JsonArray.WriteTo#2	JsonArray.WriteTo inst (var String: Text) -> Boolean?
+JsonObject.Add#1	JsonObject.Add inst (Key: Text, Value: BigInteger) -> Boolean?
+JsonObject.Add#2	JsonObject.Add inst (Key: Text, Value: Boolean) -> Boolean?
+JsonObject.Add#3	JsonObject.Add inst (Key: Text, Value: Byte) -> Boolean?
+JsonObject.Add#4	JsonObject.Add inst (Key: Text, Value: Char) -> Boolean?
+JsonObject.Add#5	JsonObject.Add inst (Key: Text, Value: Date) -> Boolean?
+JsonObject.Add#6	JsonObject.Add inst (Key: Text, Value: DateTime) -> Boolean?
+JsonObject.Add#7	JsonObject.Add inst (Key: Text, Value: Decimal) -> Boolean?
+JsonObject.Add#8	JsonObject.Add inst (Key: Text, Value: Duration) -> Boolean?
+JsonObject.Add#9	JsonObject.Add inst (Key: Text, Value: Integer) -> Boolean?
+JsonObject.Add#10	JsonObject.Add inst (Key: Text, Value: JsonArray) -> Boolean?
+JsonObject.Add#11	JsonObject.Add inst (Key: Text, Value: JsonObject) -> Boolean?
+JsonObject.Add#12	JsonObject.Add inst (Key: Text, Value: JsonToken) -> Boolean?
+JsonObject.Add#13	JsonObject.Add inst (Key: Text, Value: JsonValue) -> Boolean?
+JsonObject.Add#14	JsonObject.Add inst (Key: Text, Value: Option) -> Boolean?
+JsonObject.Add#15	JsonObject.Add inst (Key: Text, Value: Text) -> Boolean?
+JsonObject.Add#16	JsonObject.Add inst (Key: Text, Value: Time) -> Boolean?
+JsonObject.AsToken#1	JsonObject.AsToken inst () -> JsonToken
+JsonObject.Clone#1	JsonObject.Clone inst () -> JsonToken
+JsonObject.Contains#1	JsonObject.Contains inst (Key: Text) -> Boolean
+JsonObject.Get#1	JsonObject.Get inst (Key: Text, var Result: JsonToken) -> Boolean?
+JsonObject.GetArray#1	JsonObject.GetArray inst (Key: Text, ?DefaultIfNotFound: Boolean) -> JsonArray
+JsonObject.GetBigInteger#1	JsonObject.GetBigInteger inst (Key: Text, ?DefaultIfNotFound: Boolean) -> BigInteger
+JsonObject.GetBoolean#1	JsonObject.GetBoolean inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Boolean
+JsonObject.GetByte#1	JsonObject.GetByte inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Byte
+JsonObject.GetChar#1	JsonObject.GetChar inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Char
+JsonObject.GetDate#1	JsonObject.GetDate inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Date
+JsonObject.GetDateTime#1	JsonObject.GetDateTime inst (Key: Text, ?DefaultIfNotFound: Boolean) -> DateTime
+JsonObject.GetDecimal#1	JsonObject.GetDecimal inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Decimal
+JsonObject.GetDuration#1	JsonObject.GetDuration inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Duration
+JsonObject.GetInteger#1	JsonObject.GetInteger inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Integer
+JsonObject.GetObject#1	JsonObject.GetObject inst (Key: Text, ?DefaultIfNotFound: Boolean) -> JsonObject
+JsonObject.GetOption#1	JsonObject.GetOption inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Option
+JsonObject.GetText#1	JsonObject.GetText inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Text
+JsonObject.GetTime#1	JsonObject.GetTime inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Time
+JsonObject.Keys#1	JsonObject.Keys inst () -> List of [Text]
+JsonObject.Path#1	JsonObject.Path inst () -> Text
+JsonObject.ReadFrom#1	JsonObject.ReadFrom inst (InStream: InStream) -> Boolean?
+JsonObject.ReadFrom#2	JsonObject.ReadFrom inst (String: Text) -> Boolean?
+JsonObject.ReadFromYaml#1	JsonObject.ReadFromYaml inst (InStream: InStream) -> Boolean?
+JsonObject.ReadFromYaml#2	JsonObject.ReadFromYaml inst (String: Text) -> Boolean?
+JsonObject.Remove#1	JsonObject.Remove inst (Key: Text) -> Boolean?
+JsonObject.Replace#1	JsonObject.Replace inst (Key: Text, Value: BigInteger) -> Boolean?
+JsonObject.Replace#2	JsonObject.Replace inst (Key: Text, Value: Boolean) -> Boolean?
+JsonObject.Replace#3	JsonObject.Replace inst (Key: Text, Value: Byte) -> Boolean?
+JsonObject.Replace#4	JsonObject.Replace inst (Key: Text, Value: Char) -> Boolean?
+JsonObject.Replace#5	JsonObject.Replace inst (Key: Text, Value: Date) -> Boolean?
+JsonObject.Replace#6	JsonObject.Replace inst (Key: Text, Value: DateTime) -> Boolean?
+JsonObject.Replace#7	JsonObject.Replace inst (Key: Text, Value: Decimal) -> Boolean?
+JsonObject.Replace#8	JsonObject.Replace inst (Key: Text, Value: Duration) -> Boolean?
+JsonObject.Replace#9	JsonObject.Replace inst (Key: Text, Value: Integer) -> Boolean?
+JsonObject.Replace#10	JsonObject.Replace inst (Key: Text, Value: JsonArray) -> Boolean?
+JsonObject.Replace#11	JsonObject.Replace inst (Key: Text, Value: JsonObject) -> Boolean?
+JsonObject.Replace#12	JsonObject.Replace inst (Key: Text, Value: JsonToken) -> Boolean?
+JsonObject.Replace#13	JsonObject.Replace inst (Key: Text, Value: JsonValue) -> Boolean?
+JsonObject.Replace#14	JsonObject.Replace inst (Key: Text, Value: Option) -> Boolean?
+JsonObject.Replace#15	JsonObject.Replace inst (Key: Text, Value: Text) -> Boolean?
+JsonObject.Replace#16	JsonObject.Replace inst (Key: Text, Value: Time) -> Boolean?
+JsonObject.SelectToken#1	JsonObject.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
+JsonObject.Values#1	JsonObject.Values inst () -> List of [JsonToken]
+JsonObject.WriteTo#1	JsonObject.WriteTo inst (OutStream: OutStream) -> Boolean?
+JsonObject.WriteTo#2	JsonObject.WriteTo inst (var String: Text) -> Boolean?
+JsonObject.WriteToYaml#1	JsonObject.WriteToYaml inst (OutStream: OutStream) -> Boolean?
+JsonObject.WriteToYaml#2	JsonObject.WriteToYaml inst (var String: Text) -> Boolean?
+JsonObject.WriteWithSecretsTo#1	JsonObject.WriteWithSecretsTo inst (Path: Text, Secret: SecretText, var Result: SecretText) -> Boolean?
+JsonObject.WriteWithSecretsTo#2	JsonObject.WriteWithSecretsTo inst (Secrets: Dictionary of [Text, SecretText], var Result: SecretText) -> Boolean?
+JsonToken.AsArray#1	JsonToken.AsArray inst () -> JsonArray
+JsonToken.AsObject#1	JsonToken.AsObject inst () -> JsonObject
+JsonToken.AsValue#1	JsonToken.AsValue inst () -> JsonValue
+JsonToken.Clone#1	JsonToken.Clone inst () -> JsonToken
+JsonToken.IsArray#1	JsonToken.IsArray inst () -> Boolean
+JsonToken.IsObject#1	JsonToken.IsObject inst () -> Boolean
+JsonToken.IsValue#1	JsonToken.IsValue inst () -> Boolean
+JsonToken.Path#1	JsonToken.Path inst () -> Text
+JsonToken.ReadFrom#1	JsonToken.ReadFrom inst (InStream: InStream) -> Boolean?
+JsonToken.ReadFrom#2	JsonToken.ReadFrom inst (String: Text) -> Boolean?
+JsonToken.SelectToken#1	JsonToken.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
+JsonToken.WriteTo#1	JsonToken.WriteTo inst (Data: OutStream) -> Boolean?
+JsonToken.WriteTo#2	JsonToken.WriteTo inst (var String: Text) -> Boolean?
+JsonValue.AsBigInteger#1	JsonValue.AsBigInteger inst () -> BigInteger
+JsonValue.AsBoolean#1	JsonValue.AsBoolean inst () -> Boolean
+JsonValue.AsByte#1	JsonValue.AsByte inst () -> Byte
+JsonValue.AsChar#1	JsonValue.AsChar inst () -> Char
+JsonValue.AsCode#1	JsonValue.AsCode inst () -> Code
+JsonValue.AsDate#1	JsonValue.AsDate inst () -> Date
+JsonValue.AsDateTime#1	JsonValue.AsDateTime inst () -> DateTime
+JsonValue.AsDecimal#1	JsonValue.AsDecimal inst () -> Decimal
+JsonValue.AsDuration#1	JsonValue.AsDuration inst () -> Duration
+JsonValue.AsInteger#1	JsonValue.AsInteger inst () -> Integer
+JsonValue.AsOption#1	JsonValue.AsOption inst () -> Option
+JsonValue.AsText#1	JsonValue.AsText inst () -> Text
+JsonValue.AsTime#1	JsonValue.AsTime inst () -> Time
+JsonValue.AsToken#1	JsonValue.AsToken inst () -> JsonToken
+JsonValue.Clone#1	JsonValue.Clone inst () -> JsonToken
+JsonValue.IsNull#1	JsonValue.IsNull inst () -> Boolean
+JsonValue.IsUndefined#1	JsonValue.IsUndefined inst () -> Boolean
+JsonValue.Path#1	JsonValue.Path inst () -> Text
+JsonValue.ReadFrom#1	JsonValue.ReadFrom inst (Data: InStream) -> Boolean?
+JsonValue.ReadFrom#2	JsonValue.ReadFrom inst (Data: Text) -> Boolean?
+JsonValue.SelectToken#1	JsonValue.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
+JsonValue.SetValue#1	JsonValue.SetValue inst (Value: BigInteger)
+JsonValue.SetValue#2	JsonValue.SetValue inst (Value: Boolean)
+JsonValue.SetValue#3	JsonValue.SetValue inst (Value: Byte)
+JsonValue.SetValue#4	JsonValue.SetValue inst (Value: Char)
+JsonValue.SetValue#5	JsonValue.SetValue inst (Value: Date)
+JsonValue.SetValue#6	JsonValue.SetValue inst (Value: DateTime)
+JsonValue.SetValue#7	JsonValue.SetValue inst (Value: Decimal)
+JsonValue.SetValue#8	JsonValue.SetValue inst (Value: Duration)
+JsonValue.SetValue#9	JsonValue.SetValue inst (Value: Integer)
+JsonValue.SetValue#10	JsonValue.SetValue inst (Value: Option)
+JsonValue.SetValue#11	JsonValue.SetValue inst (Value: Text)
+JsonValue.SetValue#12	JsonValue.SetValue inst (Value: Time)
+JsonValue.SetValueToNull#1	JsonValue.SetValueToNull inst ()
+JsonValue.SetValueToUndefined#1	JsonValue.SetValueToUndefined inst ()
+JsonValue.WriteTo#1	JsonValue.WriteTo inst (Data: OutStream) -> Boolean?
+JsonValue.WriteTo#2	JsonValue.WriteTo inst (var Data: Text) -> Boolean?
+KeyRef.Active#1	KeyRef.Active inst () -> Boolean
+KeyRef.FieldCount#1	KeyRef.FieldCount inst () -> Integer
+KeyRef.FieldIndex#1	KeyRef.FieldIndex inst (Index: Integer) -> FieldRef
+KeyRef.Record#1	KeyRef.Record inst () -> RecordRef
+Label.Contains#1	Label.Contains inst (Value: Text) -> Boolean
+Label.EndsWith#1	Label.EndsWith inst (Value: Text) -> Boolean
+Label.IndexOf#1	Label.IndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer
+Label.IndexOfAny#1	Label.IndexOfAny inst (Values: List of [Char], ?StartIndex: Integer) -> Integer
+Label.IndexOfAny#2	Label.IndexOfAny inst (Values: Text, ?StartIndex: Integer) -> Integer
+Label.LastIndexOf#1	Label.LastIndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer
+Label.PadLeft#1	Label.PadLeft inst (Count: Integer, ?Char: Char) -> Text
+Label.PadRight#1	Label.PadRight inst (Count: Integer, ?Char: Char) -> Text
+Label.Remove#1	Label.Remove inst (StartIndex: Integer, ?Count: Integer) -> Text
+Label.Replace#1	Label.Replace inst (OldValue: Text, NewValue: Text) -> Text
+Label.Split#1	Label.Split inst (?Separators: Text*) -> List of [Text]
+Label.Split#2	Label.Split inst (Separators: List of [Char]) -> List of [Text]
+Label.Split#3	Label.Split inst (Separators: List of [Text]) -> List of [Text]
+Label.StartsWith#1	Label.StartsWith inst (Value: Text) -> Boolean
+Label.Substring#1	Label.Substring inst (StartIndex: Integer, ?Count: Integer) -> Text
+Label.ToLower#1	Label.ToLower inst () -> Text
+Label.ToUpper#1	Label.ToUpper inst () -> Text
+Label.Trim#1	Label.Trim inst () -> Text
+Label.TrimEnd#1	Label.TrimEnd inst (?Chars: Text) -> Text
+Label.TrimStart#1	Label.TrimStart inst (?Chars: Text) -> Text
+List.Add#1	List.Add inst (Value: T)
+List.AddRange#1	List.AddRange inst (Value: T, ?Values: T*)
+List.AddRange#2	List.AddRange inst (Values: List of [T])
+List.Contains#1	List.Contains inst (Value: T) -> Boolean
+List.Count#1	List.Count inst () -> Integer
+List.Get#1	List.Get inst (Index: Integer) -> T
+List.Get#2	List.Get inst (Index: Integer, var Result: T) -> Boolean?
+List.GetRange#1	List.GetRange inst (Index: Integer, Count: Integer) -> List of [T]
+List.GetRange#2	List.GetRange inst (Index: Integer, Count: Integer, var Result: List of [T]) -> Boolean?
+List.IndexOf#1	List.IndexOf inst (Value: T) -> Integer
+List.Insert#1	List.Insert inst (Index: Integer, Value: T) -> Boolean?
+List.LastIndexOf#1	List.LastIndexOf inst (Value: T) -> Integer
+List.Remove#1	List.Remove inst (Value: T) -> Boolean?
+List.RemoveAt#1	List.RemoveAt inst (Index: Integer) -> Boolean?
+List.RemoveRange#1	List.RemoveRange inst (Index: Integer, Count: Integer) -> Boolean?
+List.Reverse#1	List.Reverse inst ()
+List.Set#1	List.Set inst (Index: Integer, NewValue: T) -> Boolean?
+List.Set#2	List.Set inst (Index: Integer, NewValue: T, var OldValue: T) -> Boolean?
+Media.ExportFile#1	Media.ExportFile inst (Filename: Text) -> Boolean?
+Media.ExportStream#1	Media.ExportStream inst (Stream: OutStream) -> Boolean?
+Media.FindOrphans#1	Media.FindOrphans static () -> List of [Guid]
+Media.HasValue#1	Media.HasValue inst () -> Boolean
+Media.ImportFile#1	Media.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?
+Media.ImportStream#1	Media.ImportStream inst (Stream: InStream, Description: Text, ?MimeType: Text) -> Guid?
+Media.ImportStream#2	Media.ImportStream inst (Stream: InStream, Description: Text, MimeType: Text, FileName: Text) -> Guid?
+Media.MediaId#1	Media.MediaId inst () -> Guid
+MediaSet.Count#1	MediaSet.Count inst () -> Integer
+MediaSet.ExportFile#1	MediaSet.ExportFile inst (FilenamePrefix: Text) -> Integer?
+MediaSet.FindOrphans#1	MediaSet.FindOrphans static () -> List of [Guid]
+MediaSet.ImportFile#1	MediaSet.ImportFile inst (Filename: Text, Description: Text, ?MimeType: Text) -> Guid?
+MediaSet.ImportStream#1	MediaSet.ImportStream inst (Stream: InStream, Description: Text, ?MimeType: Text) -> Guid?
+MediaSet.Insert#1	MediaSet.Insert inst (MediaId: Guid) -> Boolean?
+MediaSet.Item#1	MediaSet.Item inst (Index: Integer) -> Guid
+MediaSet.MediaId#1	MediaSet.MediaId inst () -> Guid
+MediaSet.Remove#1	MediaSet.Remove inst (MediaId: Guid) -> Boolean?
+ModuleDependencyInfo.Id#1	ModuleDependencyInfo.Id inst () -> Guid
+ModuleDependencyInfo.Name#1	ModuleDependencyInfo.Name inst () -> Text
+ModuleDependencyInfo.Publisher#1	ModuleDependencyInfo.Publisher inst () -> Text
+ModuleInfo.AppVersion#1	ModuleInfo.AppVersion inst () -> Version
+ModuleInfo.DataVersion#1	ModuleInfo.DataVersion inst () -> Version
+ModuleInfo.Dependencies#1	ModuleInfo.Dependencies inst () -> List of [ModuleDependencyInfo]
+ModuleInfo.Id#1	ModuleInfo.Id inst () -> Guid
+ModuleInfo.Name#1	ModuleInfo.Name inst () -> Text
+ModuleInfo.PackageId#1	ModuleInfo.PackageId inst () -> Guid
+ModuleInfo.Publisher#1	ModuleInfo.Publisher inst () -> Text
+NavApp.DeleteArchiveData#1	NavApp.DeleteArchiveData static (TableNo: Integer)
+NavApp.GetArchiveRecordRef#1	NavApp.GetArchiveRecordRef static (TableNo: Integer, var RecordRef: RecordRef) -> Boolean?
+NavApp.GetArchiveVersion#1	NavApp.GetArchiveVersion static () -> Text
+NavApp.GetCallerCallstackModuleInfos#1	NavApp.GetCallerCallstackModuleInfos static () -> List of [ModuleInfo]
+NavApp.GetCallerModuleInfo#1	NavApp.GetCallerModuleInfo static (var Info: ModuleInfo) -> Boolean?
+NavApp.GetCallstackModuleInfos#1	NavApp.GetCallstackModuleInfos static () -> List of [ModuleInfo]
+NavApp.GetCurrentModuleInfo#1	NavApp.GetCurrentModuleInfo static (var Info: ModuleInfo) -> Boolean?
+NavApp.GetModuleInfo#1	NavApp.GetModuleInfo static (AppId: Guid, var Info: ModuleInfo) -> Boolean?
+NavApp.GetResource#1	NavApp.GetResource static (ResourceName: Text, var ResourceStream: InStream, ?Encoding: TextEncoding)
+NavApp.GetResourceAsJson#1	NavApp.GetResourceAsJson static (ResourceName: Text, ?Encoding: TextEncoding) -> JsonObject
+NavApp.GetResourceAsText#1	NavApp.GetResourceAsText static (ResourceName: Text, ?Encoding: TextEncoding) -> Text
+NavApp.IsEntitled#1	NavApp.IsEntitled static (Id: Text, ?AppId: Guid) -> Boolean?
+NavApp.IsInstalling#1	NavApp.IsInstalling static () -> Boolean
+NavApp.IsUnlicensed#1	NavApp.IsUnlicensed static (?AppId: Guid) -> Boolean?
+NavApp.ListResources#1	NavApp.ListResources static (?Filter: Text) -> List of [Text]
+NavApp.LoadPackageData#1	NavApp.LoadPackageData static (TableNo: Integer)
+NavApp.RestoreArchiveData#1	NavApp.RestoreArchiveData static (TableNo: Integer, ?RunTrigger: Boolean) -> Boolean?
+Notification.AddAction#1	Notification.AddAction inst (Caption: Text, CodeunitID: Integer, MethodName: Text)
+Notification.AddAction#2	Notification.AddAction inst (Caption: Text, CodeunitID: Integer, MethodName: Text, Description: Text)
+Notification.GetData#1	Notification.GetData inst (Name: Text) -> Text
+Notification.HasData#1	Notification.HasData inst (Name: Text) -> Boolean
+Notification.Id#1	Notification.Id inst (?Id: Guid) -> Guid?
+Notification.Message#1	Notification.Message inst (?Message: Text) -> Text?
+Notification.Recall#1	Notification.Recall inst () -> Boolean?
+Notification.Scope#1	Notification.Scope inst (?Scope: NotificationScope) -> NotificationScope?
+Notification.Send#1	Notification.Send inst () -> Boolean?
+Notification.SetData#1	Notification.SetData inst (Name: Text, Value: Text)
+NumberSequence.Current#1	NumberSequence.Current static (Name: Text, ?CompanySpecific: Boolean) -> BigInteger
+NumberSequence.Delete#1	NumberSequence.Delete static (Name: Text, ?CompanySpecific: Boolean)
+NumberSequence.Exists#1	NumberSequence.Exists static (Name: Text, ?CompanySpecific: Boolean) -> Boolean
+NumberSequence.Insert#1	NumberSequence.Insert static (Name: Text, ?Seed: BigInteger, ?Increment: BigInteger, ?CompanySpecific: Boolean)
+NumberSequence.Next#1	NumberSequence.Next static (Name: Text, ?CompanySpecific: Boolean) -> BigInteger
+NumberSequence.Range#1	NumberSequence.Range static (Name: Text, Count: Integer, ?CompanySpecific: Boolean) -> BigInteger
+NumberSequence.Range#2	NumberSequence.Range static (Name: Text, Count: Integer, var Increment: BigInteger, ?CompanySpecific: Boolean) -> BigInteger
+NumberSequence.Restart#1	NumberSequence.Restart static (Name: Text, ?Seed: BigInteger, ?CompanySpecific: Boolean)
+OutStream.Write#1	OutStream.Write inst (Value: Any, ?Length: Integer) -> Integer?
+OutStream.Write#2	OutStream.Write inst (Value: BigInteger, ?Length: Integer) -> Integer?
+OutStream.Write#3	OutStream.Write inst (Value: BigText, ?Length: Integer) -> Integer?
+OutStream.Write#4	OutStream.Write inst (Value: Boolean, ?Length: Integer) -> Integer?
+OutStream.Write#5	OutStream.Write inst (Value: Byte, ?Length: Integer) -> Integer?
+OutStream.Write#6	OutStream.Write inst (Value: Char, ?Length: Integer) -> Integer?
+OutStream.Write#7	OutStream.Write inst (Value: Code, ?Length: Integer) -> Integer?
+OutStream.Write#8	OutStream.Write inst (Value: Date, ?Length: Integer) -> Integer?
+OutStream.Write#9	OutStream.Write inst (Value: DateFormula, ?Length: Integer) -> Integer?
+OutStream.Write#10	OutStream.Write inst (Value: DateTime, ?Length: Integer) -> Integer?
+OutStream.Write#11	OutStream.Write inst (Value: Decimal, ?Length: Integer) -> Integer?
+OutStream.Write#12	OutStream.Write inst (Value: Duration, ?Length: Integer) -> Integer?
+OutStream.Write#13	OutStream.Write inst (Value: Guid, ?Length: Integer) -> Integer?
+OutStream.Write#14	OutStream.Write inst (Value: Integer, ?Length: Integer) -> Integer?
+OutStream.Write#15	OutStream.Write inst (Value: Label, ?Length: Integer) -> Integer?
+OutStream.Write#16	OutStream.Write inst (Value: Option, ?Length: Integer) -> Integer?
+OutStream.Write#17	OutStream.Write inst (Value: Record, ?Length: Integer) -> Integer?
+OutStream.Write#18	OutStream.Write inst (Value: RecordId, ?Length: Integer) -> Integer?
+OutStream.Write#19	OutStream.Write inst (Value: Text, ?Length: Integer) -> Integer?
+OutStream.Write#20	OutStream.Write inst (Value: TextConst, ?Length: Integer) -> Integer?
+OutStream.Write#21	OutStream.Write inst (Value: Time, ?Length: Integer) -> Integer?
+OutStream.Write#22	OutStream.Write inst (Value: Variant, ?Length: Integer) -> Integer?
+OutStream.WriteText#1	OutStream.WriteText inst (?Text: Text, ?Length: Integer) -> Integer?
+Page.Activate#1	Page.Activate inst (?Refresh: Boolean) -> Boolean?
+Page.CancelBackgroundTask#1	Page.CancelBackgroundTask inst (TaskId: Integer) -> Boolean?
+Page.Caption#1	Page.Caption inst (?NewCaption: Text) -> Text?
+Page.Close#1	Page.Close inst ()
+Page.Editable#1	Page.Editable inst (?NewEditable: Boolean) -> Boolean?
+Page.EnqueueBackgroundTask#1	Page.EnqueueBackgroundTask inst (var TaskId: Integer, CodeunitId: Integer, ?var Parameters: Dictionary of [Text, Text], ?Timeout: Integer, ?ErrorLevel: PageBackgroundTaskErrorLevel) -> Boolean?
+Page.GetBackgroundParameters#1	Page.GetBackgroundParameters static () -> Dictionary of [Text, Text]
+Page.GetRecord#1	Page.GetRecord inst (var Record: Record)
+Page.LookupMode#1	Page.LookupMode inst (?NewLookupMode: Boolean) -> Boolean?
+Page.ObjectId#1	Page.ObjectId inst (?UseNames: Boolean) -> Text
+Page.PromptMode#1	Page.PromptMode inst (?NewPromptMode: PromptMode) -> PromptMode?
+Page.Run#1	Page.Run inst ()
+Page.Run#2	Page.Run static (Number: Integer, ?Record: Record, ?Field: Any)
+Page.Run#3	Page.Run static (Number: Integer, Record: Record, FieldNo: Integer)
+Page.RunModal#1	Page.RunModal inst () -> Action?
+Page.RunModal#2	Page.RunModal static (Number: Integer, ?Record: Record, ?Field: Any) -> Action?
+Page.RunModal#3	Page.RunModal static (Number: Integer, Record: Record, FieldNo: Integer) -> Action?
+Page.RunModal#4	Page.RunModal static (Number: Integer, Record: Record, FieldRef: FieldRef) -> Action?
+Page.SaveRecord#1	Page.SaveRecord inst ()
+Page.SetBackgroundTaskResult#1	Page.SetBackgroundTaskResult static (Results: Dictionary of [Text, Text])
+Page.SetRecord#1	Page.SetRecord inst (var Record: Record)
+Page.SetSelectionFilter#1	Page.SetSelectionFilter inst (var Record: Record)
+Page.SetTableView#1	Page.SetTableView inst (var Record: Record)
+Page.Update#1	Page.Update inst (?SaveRecord: Boolean)
+ProductName.Full#1	ProductName.Full static () -> Text
+ProductName.Marketing#1	ProductName.Marketing static () -> Text
+ProductName.Short#1	ProductName.Short static () -> Text
+Query.Close#1	Query.Close inst ()
+Query.ColumnCaption#1	Query.ColumnCaption inst (Column: Any) -> Text
+Query.ColumnName#1	Query.ColumnName inst (Column: Any) -> Text
+Query.ColumnNo#1	Query.ColumnNo inst (Column: Any) -> Integer
+Query.GetFilter#1	Query.GetFilter inst (Column: Any) -> Text
+Query.GetFilters#1	Query.GetFilters inst () -> Text
+Query.Open#1	Query.Open inst () -> Boolean?
+Query.Read#1	Query.Read inst () -> Boolean?
+Query.SaveAsCsv#1	Query.SaveAsCsv inst (FileName: Text, ?Format: Integer, ?FormatArgument: Text) -> Boolean?
+Query.SaveAsCsv#2	Query.SaveAsCsv inst (OutStream: OutStream, ?Format: Integer, ?FormatArgument: Text) -> Boolean?
+Query.SaveAsCsv#3	Query.SaveAsCsv static (Number: Integer, FileName: Text, ?Format: Integer, ?FormatArgument: Text) -> Boolean?
+Query.SaveAsCsv#4	Query.SaveAsCsv static (Number: Integer, OutStream: OutStream, ?Format: Integer, ?FormatArgument: Text) -> Boolean?
+Query.SaveAsJson#1	Query.SaveAsJson inst (OutStream: OutStream) -> Boolean?
+Query.SaveAsJson#2	Query.SaveAsJson static (Number: Integer, OutStream: OutStream) -> Boolean?
+Query.SaveAsXml#1	Query.SaveAsXml inst (FileName: Text) -> Boolean?
+Query.SaveAsXml#2	Query.SaveAsXml inst (OutStream: OutStream) -> Boolean?
+Query.SaveAsXml#3	Query.SaveAsXml static (Number: Integer, FileName: Text) -> Boolean?
+Query.SaveAsXml#4	Query.SaveAsXml static (Number: Integer, OutStream: OutStream) -> Boolean?
+Query.SecurityFiltering#1	Query.SecurityFiltering inst (?NewSecurityFiltering: SecurityFilter) -> SecurityFilter?
+Query.SetFilter#1	Query.SetFilter inst (Column: Any, String: Text, ?Value: Any*)
+Query.SetRange#1	Query.SetRange inst (Column: Any, ?FromValue: Any, ?ToValue: Any)
+Query.TopNumberOfRows#1	Query.TopNumberOfRows inst (?NewRows: Integer) -> Integer?
+Record.AddLink#1	Record.AddLink inst (URL: Text, ?Description: Text) -> Integer?
+Record.AddLoadFields#1	Record.AddLoadFields inst (?Fields: Any*) -> Boolean?
+Record.AreFieldsLoaded#1	Record.AreFieldsLoaded inst (Fields: Any*) -> Boolean
+Record.Ascending#1	Record.Ascending inst (?Ascending: Boolean) -> Boolean?
+Record.CalcFields#1	Record.CalcFields inst (Field1: Any, ?Field2: Any*) -> Boolean?
+Record.CalcSums#1	Record.CalcSums inst (Field1: Any, ?Field2: Any*) -> Boolean?
+Record.ChangeCompany#1	Record.ChangeCompany inst (?CompanyName: Text) -> Boolean?
+Record.ClearMarks#1	Record.ClearMarks inst ()
+Record.Consistent#1	Record.Consistent inst (Consistent: Boolean)
+Record.Copy#1	Record.Copy inst (FromRecord: Record, ?ShareTable: Boolean)
+Record.CopyFilter#1	Record.CopyFilter inst (FromField: Any, ToField: Any)
+Record.CopyFilters#1	Record.CopyFilters inst (var FromRecord: Record)
+Record.CopyLinks#1	Record.CopyLinks inst (FromRecordRef: RecordRef)
+Record.CopyLinks#2	Record.CopyLinks inst (var FromRecord: Record)
+Record.Count#1	Record.Count inst () -> Integer
+Record.CountApprox#1	Record.CountApprox inst () -> Integer
+Record.CurrentCompany#1	Record.CurrentCompany inst () -> Text
+Record.CurrentKey#1	Record.CurrentKey inst () -> Text
+Record.Delete#1	Record.Delete inst (?RunTrigger: Boolean) -> Boolean?
+Record.DeleteAll#1	Record.DeleteAll inst (?RunTrigger: Boolean)
+Record.DeleteLink#1	Record.DeleteLink inst (ID: Integer)
+Record.DeleteLinks#1	Record.DeleteLinks inst ()
+Record.FieldActive#1	Record.FieldActive inst (Field: Any) -> Boolean
+Record.FieldCaption#1	Record.FieldCaption inst (Field: Any) -> Text
+Record.FieldError#1	Record.FieldError inst (Field: Any, ?Text: String)
+Record.FieldError#2	Record.FieldError inst (Field: Any, ?Text: Text)
+Record.FieldError#3	Record.FieldError inst (Field: Any, ErrorInfo: ErrorInfo)
+Record.FieldName#1	Record.FieldName inst (Field: Any) -> Text
+Record.FieldNo#1	Record.FieldNo inst (Field: Any) -> Integer
+Record.FilterGroup#1	Record.FilterGroup inst (?Group: Integer) -> Integer?
+Record.Find#1	Record.Find inst (?Which: Text) -> Boolean?
+Record.FindFirst#1	Record.FindFirst inst () -> Boolean?
+Record.FindLast#1	Record.FindLast inst () -> Boolean?
+Record.FindSet#1	Record.FindSet inst (?ForUpdate: Boolean) -> Boolean?
+Record.FindSet#2	Record.FindSet inst (ForUpdate: Boolean, UpdateKey: Boolean) -> Boolean?
+Record.Get#1	Record.Get inst (?Value: Any*) -> Boolean?
+Record.GetAscending#1	Record.GetAscending inst (Field: Any) -> Boolean
+Record.GetBySystemId#1	Record.GetBySystemId inst (SystemId: Guid) -> Boolean?
+Record.GetFilter#1	Record.GetFilter inst (Field: Any) -> Text
+Record.GetFilters#1	Record.GetFilters inst () -> Text
+Record.GetPosition#1	Record.GetPosition inst (?UseNames: Boolean) -> Text
+Record.GetRangeMax#1	Record.GetRangeMax inst (Field: Any) -> Any
+Record.GetRangeMin#1	Record.GetRangeMin inst (Field: Any) -> Any
+Record.GetView#1	Record.GetView inst (?UseNames: Boolean) -> Text
+Record.HasFilter#1	Record.HasFilter inst () -> Boolean
+Record.HasLinks#1	Record.HasLinks inst () -> Boolean
+Record.Init#1	Record.Init inst ()
+Record.Insert#1	Record.Insert inst () -> Boolean?
+Record.Insert#2	Record.Insert inst (RunTrigger: Boolean) -> Boolean?
+Record.Insert#3	Record.Insert inst (RunTrigger: Boolean, InsertWithSystemId: Boolean) -> Boolean?
+Record.IsEmpty#1	Record.IsEmpty inst () -> Boolean
+Record.IsTemporary#1	Record.IsTemporary inst () -> Boolean
+Record.LoadFields#1	Record.LoadFields inst (Fields: Any*) -> Boolean?
+Record.LockTable#1	Record.LockTable inst (?Wait: Boolean, ?VersionCheck: Boolean)
+Record.Mark#1	Record.Mark inst (?Mark: Boolean) -> Boolean?
+Record.MarkedOnly#1	Record.MarkedOnly inst (?MarkedOnly: Boolean) -> Boolean?
+Record.Modify#1	Record.Modify inst (?RunTrigger: Boolean) -> Boolean?
+Record.ModifyAll#1	Record.ModifyAll inst (Field: Any, NewValue: Any, ?RunTrigger: Boolean)
+Record.Next#1	Record.Next inst (?Steps: Integer) -> Integer?
+Record.ReadConsistency#1	Record.ReadConsistency inst () -> Boolean
+Record.ReadIsolation#1	Record.ReadIsolation inst (?ReadIsolation: IsolationLevel) -> IsolationLevel?
+Record.ReadPermission#1	Record.ReadPermission inst () -> Boolean
+Record.RecordId#1	Record.RecordId inst () -> RecordId
+Record.RecordLevelLocking#1	Record.RecordLevelLocking inst () -> Boolean
+Record.Relation#1	Record.Relation inst (Field: Any) -> Integer
+Record.Rename#1	Record.Rename inst (Value1: Any, ?Value2: Any*) -> Boolean?
+Record.Reset#1	Record.Reset inst ()
+Record.SecurityFiltering#1	Record.SecurityFiltering inst (?SecurityFiltering: SecurityFilter) -> SecurityFilter?
+Record.SetAscending#1	Record.SetAscending inst (Field: Any, Ascending: Boolean)
+Record.SetAutoCalcFields#1	Record.SetAutoCalcFields inst (?Field1: Any*) -> Boolean?
+Record.SetBaseLoadFields#1	Record.SetBaseLoadFields inst () -> Boolean?
+Record.SetCurrentKey#1	Record.SetCurrentKey inst (Field1: Any, ?Field2: Any*) -> Boolean?
+Record.SetFilter#1	Record.SetFilter inst (Field: Any, String: Text, ?Value: Any*)
+Record.SetLoadFields#1	Record.SetLoadFields inst (?Fields: Any*) -> Boolean?
+Record.SetPermissionFilter#1	Record.SetPermissionFilter inst ()
+Record.SetPosition#1	Record.SetPosition inst (String: Text)
+Record.SetRange#1	Record.SetRange inst (Field: Any, ?FromValue: Any, ?ToValue: Any)
+Record.SetRecFilter#1	Record.SetRecFilter inst ()
+Record.SetView#1	Record.SetView inst (String: Text)
+Record.TableCaption#1	Record.TableCaption inst () -> Text
+Record.TableName#1	Record.TableName inst () -> Text
+Record.TestField#1	Record.TestField inst (Field: Any)
+Record.TestField#2	Record.TestField inst (Field: Any, ErrorInfo: ErrorInfo)
+Record.TestField#3	Record.TestField inst (Field: Any, Value: Any)
+Record.TestField#4	Record.TestField inst (Field: Any, Value: Any, ErrorInfo: ErrorInfo)
+Record.TestField#5	Record.TestField inst (Field: Any, Value: BigInteger)
+Record.TestField#6	Record.TestField inst (Field: Any, Value: BigInteger, ErrorInfo: ErrorInfo)
+Record.TestField#7	Record.TestField inst (Field: Any, Value: Boolean)
+Record.TestField#8	Record.TestField inst (Field: Any, Value: Boolean, ErrorInfo: ErrorInfo)
+Record.TestField#9	Record.TestField inst (Field: Any, Value: Code)
+Record.TestField#10	Record.TestField inst (Field: Any, Value: Code, ErrorInfo: ErrorInfo)
+Record.TestField#11	Record.TestField inst (Field: Any, Value: Decimal)
+Record.TestField#12	Record.TestField inst (Field: Any, Value: Decimal, ErrorInfo: ErrorInfo)
+Record.TestField#13	Record.TestField inst (Field: Any, Value: Enum)
+Record.TestField#14	Record.TestField inst (Field: Any, Value: Enum, ErrorInfo: ErrorInfo)
+Record.TestField#15	Record.TestField inst (Field: Any, Value: Guid)
+Record.TestField#16	Record.TestField inst (Field: Any, Value: Guid, ErrorInfo: ErrorInfo)
+Record.TestField#17	Record.TestField inst (Field: Any, Value: Integer)
+Record.TestField#18	Record.TestField inst (Field: Any, Value: Integer, ErrorInfo: ErrorInfo)
+Record.TestField#19	Record.TestField inst (Field: Any, Value: Label)
+Record.TestField#20	Record.TestField inst (Field: Any, Value: Label, ErrorInfo: ErrorInfo)
+Record.TestField#21	Record.TestField inst (Field: Any, Value: Text)
+Record.TestField#22	Record.TestField inst (Field: Any, Value: Text, ErrorInfo: ErrorInfo)
+Record.TestField#23	Record.TestField inst (Field: Any, Value: TextConst)
+Record.TestField#24	Record.TestField inst (Field: Any, Value: TextConst, ErrorInfo: ErrorInfo)
+Record.TransferFields#1	Record.TransferFields inst (var FromRecord: Record, ?InitPrimaryKeyFields: Boolean)
+Record.TransferFields#2	Record.TransferFields inst (var FromRecord: Record, InitPrimaryKeyFields: Boolean, SkipFieldsNotMatchingType: Boolean)
+Record.Truncate#1	Record.Truncate inst (?ResetAutoIncrement: Boolean) -> Boolean?
+Record.Validate#1	Record.Validate inst (Field: Any, ?NewValue: Any)
+Record.WritePermission#1	Record.WritePermission inst () -> Boolean
+RecordId.GetRecord#1	RecordId.GetRecord inst () -> RecordRef
+RecordId.TableNo#1	RecordId.TableNo inst () -> Integer
+RecordRef.AddLink#1	RecordRef.AddLink inst (URL: Text, ?Description: Text) -> Integer?
+RecordRef.AddLoadFields#1	RecordRef.AddLoadFields inst (?Fields: Integer*) -> Boolean?
+RecordRef.AreFieldsLoaded#1	RecordRef.AreFieldsLoaded inst (Fields: Integer*) -> Boolean
+RecordRef.Ascending#1	RecordRef.Ascending inst (?SetAscending: Boolean) -> Boolean?
+RecordRef.Caption#1	RecordRef.Caption inst () -> Text
+RecordRef.ChangeCompany#1	RecordRef.ChangeCompany inst (?CompanyName: Text) -> Boolean?
+RecordRef.ClearMarks#1	RecordRef.ClearMarks inst ()
+RecordRef.Close#1	RecordRef.Close inst ()
+RecordRef.Copy#1	RecordRef.Copy inst (FromRecordRef: RecordRef, ?ShareTable: Boolean)
+RecordRef.Copy#2	RecordRef.Copy inst (var FromRecord: Record, ?ShareTable: Boolean)
+RecordRef.CopyLinks#1	RecordRef.CopyLinks inst (FromRecord: Record)
+RecordRef.CopyLinks#2	RecordRef.CopyLinks inst (FromRecord: RecordRef)
+RecordRef.CopyLinks#3	RecordRef.CopyLinks inst (FromRecordOrRecordRef: Variant)
+RecordRef.Count#1	RecordRef.Count inst () -> Integer
+RecordRef.CountApprox#1	RecordRef.CountApprox inst () -> Integer
+RecordRef.CurrentCompany#1	RecordRef.CurrentCompany inst () -> Text
+RecordRef.CurrentKey#1	RecordRef.CurrentKey inst () -> Text
+RecordRef.CurrentKeyIndex#1	RecordRef.CurrentKeyIndex inst (?NewKeyIndex: Integer) -> Integer?
+RecordRef.Delete#1	RecordRef.Delete inst (?RunTrigger: Boolean) -> Boolean?
+RecordRef.DeleteAll#1	RecordRef.DeleteAll inst (?RunTrigger: Boolean)
+RecordRef.DeleteLink#1	RecordRef.DeleteLink inst (ID: Integer)
+RecordRef.DeleteLinks#1	RecordRef.DeleteLinks inst ()
+RecordRef.Duplicate#1	RecordRef.Duplicate inst () -> RecordRef
+RecordRef.Field#1	RecordRef.Field inst (FieldName: Text) -> FieldRef
+RecordRef.Field#2	RecordRef.Field inst (FieldNo: Integer) -> FieldRef
+RecordRef.FieldCount#1	RecordRef.FieldCount inst () -> Integer
+RecordRef.FieldExist#1	RecordRef.FieldExist inst (FieldName: Text) -> Boolean
+RecordRef.FieldExist#2	RecordRef.FieldExist inst (FieldNo: Integer) -> Boolean
+RecordRef.FieldIndex#1	RecordRef.FieldIndex inst (Index: Integer) -> FieldRef
+RecordRef.FilterGroup#1	RecordRef.FilterGroup inst (?NewGroup: Integer) -> Integer?
+RecordRef.Find#1	RecordRef.Find inst (?Which: Text) -> Boolean?
+RecordRef.FindFirst#1	RecordRef.FindFirst inst () -> Boolean?
+RecordRef.FindLast#1	RecordRef.FindLast inst () -> Boolean?
+RecordRef.FindSet#1	RecordRef.FindSet inst (?ForUpdate: Boolean) -> Boolean?
+RecordRef.FindSet#2	RecordRef.FindSet inst (ForUpdate: Boolean, UpdateKey: Boolean) -> Boolean?
+RecordRef.Get#1	RecordRef.Get inst (RecordID: RecordId) -> Boolean?
+RecordRef.GetBySystemId#1	RecordRef.GetBySystemId inst (SystemId: Guid) -> Boolean?
+RecordRef.GetFilters#1	RecordRef.GetFilters inst () -> Text
+RecordRef.GetPosition#1	RecordRef.GetPosition inst (?UseNames: Boolean) -> Text
+RecordRef.GetTable#1	RecordRef.GetTable inst (Rec: Record)
+RecordRef.GetView#1	RecordRef.GetView inst (?UseNames: Boolean) -> Text
+RecordRef.HasFilter#1	RecordRef.HasFilter inst () -> Boolean
+RecordRef.HasLinks#1	RecordRef.HasLinks inst () -> Boolean
+RecordRef.Init#1	RecordRef.Init inst ()
+RecordRef.Insert#1	RecordRef.Insert inst () -> Boolean?
+RecordRef.Insert#2	RecordRef.Insert inst (RunTrigger: Boolean) -> Boolean?
+RecordRef.Insert#3	RecordRef.Insert inst (RunTrigger: Boolean, InsertWithSystemId: Boolean) -> Boolean?
+RecordRef.IsDirty#1	RecordRef.IsDirty inst () -> Boolean
+RecordRef.IsEmpty#1	RecordRef.IsEmpty inst () -> Boolean
+RecordRef.IsTemporary#1	RecordRef.IsTemporary inst () -> Boolean
+RecordRef.KeyCount#1	RecordRef.KeyCount inst () -> Integer
+RecordRef.KeyIndex#1	RecordRef.KeyIndex inst (Index: Integer) -> KeyRef
+RecordRef.LoadFields#1	RecordRef.LoadFields inst (Fields: Integer*) -> Boolean?
+RecordRef.LockTable#1	RecordRef.LockTable inst (?Wait: Boolean, ?VersionCheck: Boolean)
+RecordRef.Mark#1	RecordRef.Mark inst (?Mark: Boolean) -> Boolean?
+RecordRef.MarkedOnly#1	RecordRef.MarkedOnly inst (?MarkedOnly: Boolean) -> Boolean?
+RecordRef.Modify#1	RecordRef.Modify inst (?RunTrigger: Boolean) -> Boolean?
+RecordRef.Name#1	RecordRef.Name inst () -> Text
+RecordRef.Next#1	RecordRef.Next inst (?Steps: Integer) -> Integer?
+RecordRef.Number#1	RecordRef.Number inst () -> Integer
+RecordRef.Open#1	RecordRef.Open inst (No: Integer, ?Temp: Boolean, ?CompanyName: Text)
+RecordRef.ReadConsistency#1	RecordRef.ReadConsistency inst () -> Boolean
+RecordRef.ReadIsolation#1	RecordRef.ReadIsolation inst (?ReadIsolation: IsolationLevel) -> IsolationLevel?
+RecordRef.ReadPermission#1	RecordRef.ReadPermission inst () -> Boolean
+RecordRef.RecordId#1	RecordRef.RecordId inst () -> RecordId
+RecordRef.RecordLevelLocking#1	RecordRef.RecordLevelLocking inst () -> Boolean
+RecordRef.Rename#1	RecordRef.Rename inst (Value1: Any, ?Value2: Any*) -> Boolean?
+RecordRef.Reset#1	RecordRef.Reset inst ()
+RecordRef.SecurityFiltering#1	RecordRef.SecurityFiltering inst (?NewSecurityFiltering: SecurityFilter) -> SecurityFilter?
+RecordRef.SetAutoCalcFields#1	RecordRef.SetAutoCalcFields inst (?Fields: Integer*) -> Boolean?
+RecordRef.SetLoadFields#1	RecordRef.SetLoadFields inst (?Fields: Integer*) -> Boolean?
+RecordRef.SetPermissionFilter#1	RecordRef.SetPermissionFilter inst ()
+RecordRef.SetPosition#1	RecordRef.SetPosition inst (String: Text)
+RecordRef.SetRecFilter#1	RecordRef.SetRecFilter inst ()
+RecordRef.SetTable#1	RecordRef.SetTable inst (Rec: Record)
+RecordRef.SetTable#2	RecordRef.SetTable inst (Rec: Record, ShareTable: Boolean)
+RecordRef.SetView#1	RecordRef.SetView inst (String: Text)
+RecordRef.SystemCreatedAtNo#1	RecordRef.SystemCreatedAtNo inst () -> Integer
+RecordRef.SystemCreatedByNo#1	RecordRef.SystemCreatedByNo inst () -> Integer
+RecordRef.SystemIdNo#1	RecordRef.SystemIdNo inst () -> Integer
+RecordRef.SystemModifiedAtNo#1	RecordRef.SystemModifiedAtNo inst () -> Integer
+RecordRef.SystemModifiedByNo#1	RecordRef.SystemModifiedByNo inst () -> Integer
+RecordRef.Truncate#1	RecordRef.Truncate inst (?ResetAutoIncrement: Boolean) -> Boolean?
+RecordRef.WritePermission#1	RecordRef.WritePermission inst () -> Boolean
+Report.Break#1	Report.Break inst ()
+Report.CreateTotals#1	Report.CreateTotals inst (Vars: Array of [Decimal])
+Report.CreateTotals#2	Report.CreateTotals inst (var Var1: Decimal, ?var Var2: Decimal*)
+Report.DefaultLayout#1	Report.DefaultLayout inst () -> DefaultLayout
+Report.DefaultLayout#2	Report.DefaultLayout static (Number: Integer) -> DefaultLayout
+Report.ExcelLayout#1	Report.ExcelLayout inst (var InStream: InStream) -> Boolean?
+Report.ExcelLayout#2	Report.ExcelLayout static (Number: Integer, InStream: InStream) -> Boolean?
+Report.Execute#1	Report.Execute inst (Parameters: Text, ?RecordRef: RecordRef)
+Report.Execute#2	Report.Execute static (Number: Integer, Parameters: Text, ?RecordRef: RecordRef)
+Report.FormatRegion#1	Report.FormatRegion inst (?FormatRegion: Text) -> Text?
+Report.GetSubstituteReportId#1	Report.GetSubstituteReportId static (ReportId: Integer) -> Integer
+Report.IsReadOnly#1	Report.IsReadOnly inst () -> Boolean
+Report.Language#1	Report.Language inst (?Language: Integer) -> Integer?
+Report.NewPage#1	Report.NewPage inst ()
+Report.NewPagePerRecord#1	Report.NewPagePerRecord inst (?SetNewPagePerRecord: Boolean) -> Boolean?
+Report.ObjectId#1	Report.ObjectId inst (?UseNames: Boolean) -> Text
+Report.PageNo#1	Report.PageNo inst (?NewPageNo: Integer) -> Integer?
+Report.PaperSource#1	Report.PaperSource inst (PaperBinNo: Integer, ?PhysicalPage: Integer)
+Report.Preview#1	Report.Preview inst () -> Boolean
+Report.Print#1	Report.Print inst (Parameters: Text, ?PrinterName: Text, ?RecordRef: RecordRef)
+Report.Print#2	Report.Print static (Number: Integer, Parameters: Text, ?PrinterName: Text, ?RecordRef: RecordRef)
+Report.PrintOnlyIfDetail#1	Report.PrintOnlyIfDetail inst (?SetPrintOnlyIfDetail: Boolean) -> Boolean?
+Report.Quit#1	Report.Quit inst ()
+Report.RDLCLayout#1	Report.RDLCLayout inst (var InStream: InStream) -> Boolean?
+Report.RdlcLayout#2	Report.RdlcLayout static (Number: Integer, InStream: InStream) -> Boolean?
+Report.Run#1	Report.Run inst ()
+Report.Run#2	Report.Run static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
+Report.RunModal#1	Report.RunModal inst ()
+Report.RunModal#2	Report.RunModal static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
+Report.RunRequestPage#1	Report.RunRequestPage inst (?PageParameters: Text) -> Text
+Report.RunRequestPage#2	Report.RunRequestPage static (Number: Integer, ?Parameters: Text) -> Text
+Report.SaveAs#1	Report.SaveAs inst (Parameters: Text, Format: ReportFormat, var OutStream: OutStream, ?RecordRef: RecordRef) -> Boolean?
+Report.SaveAs#2	Report.SaveAs static (Number: Integer, Parameters: Text, Format: ReportFormat, var OutStream: OutStream, ?RecordRef: RecordRef) -> Boolean?
+Report.SaveAsExcel#1	Report.SaveAsExcel inst (FileName: Text) -> Boolean?
+Report.SaveAsExcel#2	Report.SaveAsExcel static (Number: Integer, FileName: Text, ?var Record: Record) -> Boolean?
+Report.SaveAsHtml#1	Report.SaveAsHtml inst (FileName: Text) -> Boolean?
+Report.SaveAsHtml#2	Report.SaveAsHtml static (Number: Integer, FileName: Text, ?var Record: Record) -> Boolean?
+Report.SaveAsPdf#1	Report.SaveAsPdf inst (FileName: Text) -> Boolean?
+Report.SaveAsPdf#2	Report.SaveAsPdf static (Number: Integer, FileName: Text, ?var Record: Record) -> Boolean?
+Report.SaveAsWord#1	Report.SaveAsWord inst (FileName: Text) -> Boolean?
+Report.SaveAsWord#2	Report.SaveAsWord static (Number: Integer, FileName: Text, ?var Record: Record) -> Boolean?
+Report.SaveAsXml#1	Report.SaveAsXml inst (FileName: Text) -> Boolean?
+Report.SaveAsXml#2	Report.SaveAsXml static (Number: Integer, FileName: Text, ?var Record: Record) -> Boolean?
+Report.SetTableView#1	Report.SetTableView inst (var Record: Record)
+Report.ShowOutput#1	Report.ShowOutput inst () -> Boolean
+Report.ShowOutput#2	Report.ShowOutput inst (Value: Boolean) -> Boolean?
+Report.Skip#1	Report.Skip inst ()
+Report.TargetFormat#1	Report.TargetFormat inst () -> ReportFormat
+Report.TotalsCausedBy#1	Report.TotalsCausedBy inst () -> Integer
+Report.UseRequestPage#1	Report.UseRequestPage inst (?SetUseRequestPage: Boolean) -> Boolean?
+Report.ValidateAndPrepareLayout#1	Report.ValidateAndPrepareLayout inst (LayoutStream: InStream, var PreparedLayoutStream: InStream, ReportLayoutType: ReportLayoutType) -> Boolean?
+Report.ValidateAndPrepareLayout#2	Report.ValidateAndPrepareLayout static (Number: Integer, LayoutStream: InStream, var PreparedLayoutStream: InStream, ReportLayoutType: ReportLayoutType) -> Boolean?
+Report.WordLayout#1	Report.WordLayout inst (var InStream: InStream) -> Boolean?
+Report.WordLayout#2	Report.WordLayout static (Number: Integer, InStream: InStream) -> Boolean?
+Report.WordXmlPart#1	Report.WordXmlPart inst (?ExtendedFormat: Boolean) -> Text
+Report.WordXmlPart#2	Report.WordXmlPart static (Number: Integer, ?ExtendedFormat: Boolean) -> Text
+RequestPage.Activate#1	RequestPage.Activate inst (?Refresh: Boolean) -> Boolean?
+RequestPage.Caption#1	RequestPage.Caption inst (?NewCaption: Text) -> Text?
+RequestPage.Close#1	RequestPage.Close inst ()
+RequestPage.Editable#1	RequestPage.Editable inst (?NewEditable: Boolean) -> Boolean?
+RequestPage.LookupMode#1	RequestPage.LookupMode inst (?NewLookupMode: Boolean) -> Boolean?
+RequestPage.ObjectId#1	RequestPage.ObjectId inst (?UseNames: Boolean) -> Text
+RequestPage.SaveRecord#1	RequestPage.SaveRecord inst ()
+RequestPage.SetSelectionFilter#1	RequestPage.SetSelectionFilter inst (var Record: Record)
+RequestPage.Update#1	RequestPage.Update inst (?SaveRecord: Boolean)
+SecretText.IsEmpty#1	SecretText.IsEmpty inst () -> Boolean
+SecretText.SecretStrSubstNo#1	SecretText.SecretStrSubstNo static (String: Text, ?Value1: SecretText*) -> SecretText
+SecretText.Unwrap#1	SecretText.Unwrap inst () -> Text
+Session.ApplicationArea#1	Session.ApplicationArea static (?ApplicationArea: Text) -> Text?
+Session.ApplicationIdentifier#1	Session.ApplicationIdentifier static () -> Text
+Session.BindSubscription#1	Session.BindSubscription static (Codeunit: Codeunit) -> Boolean?
+Session.CurrentClientType#1	Session.CurrentClientType static () -> ClientType
+Session.CurrentExecutionMode#1	Session.CurrentExecutionMode static () -> ExecutionMode
+Session.DefaultClientType#1	Session.DefaultClientType static () -> ClientType
+Session.EnableVerboseTelemetry#1	Session.EnableVerboseTelemetry static (EnableFullALFunctionTracing: Boolean, Duration: Duration)
+Session.GetCurrentModuleExecutionContext#1	Session.GetCurrentModuleExecutionContext static () -> ExecutionContext
+Session.GetExecutionContext#1	Session.GetExecutionContext static () -> ExecutionContext
+Session.GetModuleExecutionContext#1	Session.GetModuleExecutionContext static (?AppId: Guid) -> ExecutionContext
+Session.IsSessionActive#1	Session.IsSessionActive static (SessionID: Integer) -> Boolean
+Session.LogAuditMessage#1	Session.LogAuditMessage static (SecurityAuditDescription: Text, SecurityAuditOperationResult: SecurityOperationResult, SecurityAuditCategory: AuditCategory, AuditMessageOperation: Integer, AuditMessageOperationResult: Integer, ?CustomDimensions: Dictionary of [Text, Text])
+Session.LogMessage#1	Session.LogMessage static (EventId: Text, Message: Text, Verbosity: Verbosity, DataClassification: DataClassification, TelemetryScope: TelemetryScope, CustomDimensions: Dictionary of [Text, Text])
+Session.LogMessage#2	Session.LogMessage static (EventId: Text, Message: Text, Verbosity: Verbosity, DataClassification: DataClassification, TelemetryScope: TelemetryScope, Dimension1: Text, Value1: Text, ?Dimension2: Text, ?Value2: Text)
+Session.LogSecurityAudit#1	Session.LogSecurityAudit static (Description: Text, Result: SecurityOperationResult, ResultDescription: Text, AuditCategory: AuditCategory, ?TargetType: Array of [Text], ?TargetName: Array of [Text])
+Session.SendTraceTag#1	Session.SendTraceTag static (Tag: Text, Category: Text, Verbosity: Verbosity, Message: Text, ?DataClassification: DataClassification)
+Session.SetDocumentServiceToken#1	Session.SetDocumentServiceToken static (Token: Text)
+Session.StartSession#1	Session.StartSession static (var SessionId: Integer, CodeunitId: Integer, ?Company: Text, ?var Record: Record) -> Boolean?
+Session.StartSession#2	Session.StartSession static (var SessionId: Integer, CodeunitId: Integer, Company: Text, var Record: Record, Timeout: Duration) -> Boolean?
+Session.StartSession#3	Session.StartSession static (var SessionId: Integer, CodeunitId: Integer, Timeout: Duration, ?Company: Text, ?var Record: Record) -> Boolean?
+Session.StopSession#1	Session.StopSession static (SessionId: Integer, ?Comment: Text) -> Boolean?
+Session.UnbindSubscription#1	Session.UnbindSubscription static (Codeunit: Codeunit) -> Boolean?
+SessionInformation.AITokensUsed#1	SessionInformation.AITokensUsed static () -> BigInteger
+SessionInformation.Callstack#1	SessionInformation.Callstack static () -> Text
+SessionInformation.SqlRowsRead#1	SessionInformation.SqlRowsRead static () -> BigInteger
+SessionInformation.SqlStatementsExecuted#1	SessionInformation.SqlStatementsExecuted static () -> BigInteger
+SessionSettings.Company#1	SessionSettings.Company inst (?NewCompanyName: Text) -> Text?
+SessionSettings.Init#1	SessionSettings.Init inst ()
+SessionSettings.LanguageId#1	SessionSettings.LanguageId inst (?NewLanguageId: Integer) -> Integer?
+SessionSettings.LocaleId#1	SessionSettings.LocaleId inst (?NewLocaleId: Integer) -> Integer?
+SessionSettings.ProfileAppId#1	SessionSettings.ProfileAppId inst (?NewProfileAppId: Guid) -> Guid?
+SessionSettings.ProfileId#1	SessionSettings.ProfileId inst (?NewProfileId: Text) -> Text?
+SessionSettings.ProfileSystemScope#1	SessionSettings.ProfileSystemScope inst (?NewProfileScope: Boolean) -> Boolean?
+SessionSettings.RequestSessionUpdate#1	SessionSettings.RequestSessionUpdate inst (saveSettings: Boolean)
+SessionSettings.TimeZone#1	SessionSettings.TimeZone inst (?NewTimeZone: Text) -> Text?
+System.Abs#1	System.Abs static (Number: Decimal) -> Decimal
+System.ApplicationPath#1	System.ApplicationPath static () -> Text
+System.ArrayLen#1	System.ArrayLen static (Array: Array of [Any], ?Dimension: Integer) -> Integer
+System.CalcDate#1	System.CalcDate static (DateExpression: DateFormula, ?Date: Date) -> Date
+System.CalcDate#2	System.CalcDate static (DateExpression: Text, ?Date: Date) -> Date
+System.CanLoadType#1	System.CanLoadType static (DotNet: DotNet) -> Boolean
+System.CaptionClassTranslate#1	System.CaptionClassTranslate static (CaptionClassText: Text) -> Text
+System.Clear#1	System.Clear static (var Variable: Any)
+System.Clear#2	System.Clear static (var Variable: Array of [Any])
+System.Clear#3	System.Clear static (var Variable: SecretText)
+System.ClearAll#1	System.ClearAll static ()
+System.ClearCollectedErrors#1	System.ClearCollectedErrors static ()
+System.ClearLastError#1	System.ClearLastError static ()
+System.ClosingDate#1	System.ClosingDate static (Date: Date) -> Date
+System.CodeCoverageInclude#1	System.CodeCoverageInclude static (var ObjectRecord: Record)
+System.CodeCoverageLoad#1	System.CodeCoverageLoad static ()
+System.CodeCoverageLog#1	System.CodeCoverageLog static (?NewIsActive: Boolean, ?MultiSession: Boolean) -> Boolean?
+System.CodeCoverageRefresh#1	System.CodeCoverageRefresh static ()
+System.CompressArray#1	System.CompressArray static (StringArray: Array of [Text]) -> Integer?
+System.CopyArray#1	System.CopyArray static (NewArray: Array of [Any], Array: Array of [Any], Position: Integer, ?Length: Integer)
+System.CopyStream#1	System.CopyStream static (OutStream: OutStream, InStream: InStream, ?BytesToRead: Integer) -> Boolean?
+System.CreateDateTime#1	System.CreateDateTime static (Date: Date, Time: Time) -> DateTime
+System.CreateEncryptionKey#1	System.CreateEncryptionKey static () -> Boolean?
+System.CreateGuid#1	System.CreateGuid static () -> Guid
+System.CurrentDateTime#1	System.CurrentDateTime static () -> DateTime
+System.DMY2Date#1	System.DMY2Date static (Day: Integer, ?Month: Integer, ?Year: Integer) -> Date
+System.DT2Date#1	System.DT2Date static (Datetime: DateTime) -> Date
+System.DT2Time#1	System.DT2Time static (Datetime: DateTime) -> Time
+System.DWY2Date#1	System.DWY2Date static (WeekDay: Integer, ?Week: Integer, ?Year: Integer) -> Date
+System.DaTi2Variant#1	System.DaTi2Variant static (Date: Date, Time: Time) -> Variant
+System.Date2DMY#1	System.Date2DMY static (Date: Date, Value: Integer) -> Integer
+System.Date2DWY#1	System.Date2DWY static (Date: Date, Value: Integer) -> Integer
+System.Decrypt#1	System.Decrypt static (EncryptedString: Text) -> Text
+System.DeleteEncryptionKey#1	System.DeleteEncryptionKey static ()
+System.Encrypt#1	System.Encrypt static (PlainTextString: Text) -> Text
+System.EncryptionEnabled#1	System.EncryptionEnabled static () -> Boolean
+System.EncryptionKeyExists#1	System.EncryptionKeyExists static () -> Boolean
+System.Evaluate#1	System.Evaluate static (var Variable: Any, String: Text, ?Number: Integer) -> Boolean?
+System.ExportEncryptionKey#1	System.ExportEncryptionKey static (Password: Text) -> Text
+System.ExportObjects#1	System.ExportObjects static (FileName: Text, var ObjectRecord: Record, ?Format: Integer)
+System.Format#1	System.Format static (Value: Any, ?Length: Integer, ?FormatNumber: Integer) -> Text
+System.Format#2	System.Format static (Value: Any, Length: Integer, FormatString: Text) -> Text
+System.GetCollectedErrors#1	System.GetCollectedErrors static (?Clear: Boolean) -> List of [ErrorInfo]
+System.GetDocumentUrl#1	System.GetDocumentUrl static (ID: Guid) -> Text
+System.GetDotNetType#1	System.GetDotNetType static (Expression: Any) -> DotNet
+System.GetLastErrorCallStack#1	System.GetLastErrorCallStack static () -> Text
+System.GetLastErrorCode#1	System.GetLastErrorCode static () -> Text
+System.GetLastErrorObject#1	System.GetLastErrorObject static () -> DotNet
+System.GetLastErrorText#1	System.GetLastErrorText static () -> Text
+System.GetLastErrorText#2	System.GetLastErrorText static (ExcludeCustomerContent: Boolean) -> Text
+System.GetUrl#1	System.GetUrl static (ClientType: ClientType, ?Company: Text, ?ObjectType: ObjectType, ?ObjectId: Integer, ?Record: Record, ?UseFilters: Boolean) -> Text
+System.GetUrl#2	System.GetUrl static (ClientType: ClientType, ?Company: Text, ?ObjectType: ObjectType, ?ObjectId: Integer, ?Record: Record, ?UseFilters: Boolean, ?Layout: Text) -> Text
+System.GetUrl#3	System.GetUrl static (ClientType: ClientType, Company: Text, ObjectType: ObjectType, ObjectId: Integer, RecordRef: RecordRef, ?UseFilters: Boolean) -> Text
+System.GetUrl#4	System.GetUrl static (ClientType: ClientType, Company: Text, ObjectType: ObjectType, ObjectId: Integer, RecordRef: RecordRef, ?UseFilters: Boolean, ?Layout: Text) -> Text
+System.GlobalLanguage#1	System.GlobalLanguage static (?NewLanguageID: Integer) -> Integer?
+System.GuiAllowed#1	System.GuiAllowed static () -> Boolean
+System.HasCollectedErrors#1	System.HasCollectedErrors static () -> Boolean
+System.Hyperlink#1	System.Hyperlink static (URL: Text)
+System.ImportEncryptionKey#1	System.ImportEncryptionKey static (Path: Text, Password: Text) -> Boolean?
+System.ImportObjects#1	System.ImportObjects static (FileName: Text, ?Format: Integer)
+System.ImportStreamWithUrlAccess#1	System.ImportStreamWithUrlAccess static (InStream: InStream, Filename: Text, ?MinutesToExpire: Integer) -> Guid
+System.IsCollectingErrors#1	System.IsCollectingErrors static () -> Boolean
+System.IsNull#1	System.IsNull static (DotNet: DotNet) -> Boolean
+System.IsNullGuid#1	System.IsNullGuid static (Guid: Guid) -> Boolean
+System.IsServiceTier#1	System.IsServiceTier static () -> Boolean
+System.NormalDate#1	System.NormalDate static (Date: Date) -> Date
+System.Power#1	System.Power static (Number: Decimal, Power: Decimal) -> Decimal
+System.Random#1	System.Random static (MaxNumber: Integer) -> Integer
+System.Randomize#1	System.Randomize static (?Seed: Integer)
+System.Round#1	System.Round static (Number: Decimal, ?Precision: Decimal, ?Direction: Text) -> Decimal
+System.RoundDateTime#1	System.RoundDateTime static (Datetime: DateTime, ?Precision: BigInteger, ?Direction: Text) -> DateTime
+System.Sleep#1	System.Sleep static (Duration: Integer)
+System.TemporaryPath#1	System.TemporaryPath static () -> Text
+System.Time#1	System.Time static () -> Time
+System.Today#1	System.Today static () -> Date
+System.Variant2Date#1	System.Variant2Date static (Variant: Variant) -> Date
+System.Variant2Time#1	System.Variant2Time static (Variant: Variant) -> Time
+System.WindowsLanguage#1	System.WindowsLanguage static () -> Integer
+System.WorkDate#1	System.WorkDate static (?NewDate: Date) -> Date?
+TaskScheduler.CanCreateTask#1	TaskScheduler.CanCreateTask static () -> Boolean
+TaskScheduler.CancelTask#1	TaskScheduler.CancelTask static (Task: Guid) -> Boolean?
+TaskScheduler.CreateTask#1	TaskScheduler.CreateTask static (CodeunitId: Integer, FailureCodeunitId: Integer, ?IsReady: Boolean, ?Company: Text, ?NotBefore: DateTime, ?RecordID: RecordId) -> Guid?
+TaskScheduler.CreateTask#2	TaskScheduler.CreateTask static (CodeunitId: Integer, FailureCodeunitId: Integer, IsReady: Boolean, Company: Text, NotBefore: DateTime, RecordID: RecordId, Timeout: Duration) -> Guid?
+TaskScheduler.SetTaskReady#1	TaskScheduler.SetTaskReady static (Task: Guid, ?NotBefore: DateTime) -> Boolean?
+TaskScheduler.TaskExists#1	TaskScheduler.TaskExists static (Task: Guid) -> Boolean
+TestAction.Enabled#1	TestAction.Enabled inst () -> Boolean
+TestAction.Invoke#1	TestAction.Invoke inst ()
+TestAction.Visible#1	TestAction.Visible inst () -> Boolean
+TestField.Activate#1	TestField.Activate inst ()
+TestField.AsBoolean#1	TestField.AsBoolean inst () -> Boolean
+TestField.AsDate#1	TestField.AsDate inst () -> Date
+TestField.AsDateTime#1	TestField.AsDateTime inst () -> DateTime
+TestField.AsDecimal#1	TestField.AsDecimal inst () -> Decimal
+TestField.AsInteger#1	TestField.AsInteger inst () -> Integer
+TestField.AsTime#1	TestField.AsTime inst () -> Time
+TestField.AssertEquals#1	TestField.AssertEquals inst (Value: Any)
+TestField.AssistEdit#1	TestField.AssistEdit inst ()
+TestField.Caption#1	TestField.Caption inst () -> Text
+TestField.Drilldown#1	TestField.Drilldown inst ()
+TestField.Editable#1	TestField.Editable inst () -> Boolean
+TestField.Enabled#1	TestField.Enabled inst () -> Boolean
+TestField.GetOption#1	TestField.GetOption inst (?Index: Integer) -> Text
+TestField.GetValidationError#1	TestField.GetValidationError inst (?Index: Integer) -> Text
+TestField.HideValue#1	TestField.HideValue inst () -> Boolean
+TestField.Invoke#1	TestField.Invoke inst ()
+TestField.Lookup#1	TestField.Lookup inst ()
+TestField.Lookup#2	TestField.Lookup inst (Selected: RecordRef)
+TestField.OptionCount#1	TestField.OptionCount inst () -> Integer
+TestField.SetValue#1	TestField.SetValue inst (Value: Any)
+TestField.ShowMandatory#1	TestField.ShowMandatory inst () -> Boolean
+TestField.ValidationErrorCount#1	TestField.ValidationErrorCount inst () -> Integer
+TestField.Value#1	TestField.Value inst (?Value: Text) -> Text?
+TestField.Visible#1	TestField.Visible inst () -> Boolean
+TestFilter.Ascending#1	TestFilter.Ascending inst (?Value: Boolean) -> Boolean?
+TestFilter.CurrentKey#1	TestFilter.CurrentKey inst () -> Text
+TestFilter.GetFilter#1	TestFilter.GetFilter inst (Field: TestFilterField) -> Text
+TestFilter.SetCurrentKey#1	TestFilter.SetCurrentKey inst (Field1: TestFilterField, ?Field2: TestFilterField*) -> Boolean?
+TestFilter.SetFilter#1	TestFilter.SetFilter inst (Field: TestFilterField, String: Text)
+TestHttpRequestMessage.HasSecretUri#1	TestHttpRequestMessage.HasSecretUri inst () -> Boolean
+TestHttpRequestMessage.Path#1	TestHttpRequestMessage.Path inst () -> Text
+TestHttpRequestMessage.QueryParameters#1	TestHttpRequestMessage.QueryParameters inst () -> Dictionary of [Text, Text]
+TestHttpRequestMessage.RequestType#1	TestHttpRequestMessage.RequestType inst () -> HttpRequestType
+TestHttpResponseMessage.Content#1	TestHttpResponseMessage.Content inst () -> HttpContent
+TestHttpResponseMessage.Headers#1	TestHttpResponseMessage.Headers inst () -> HttpHeaders
+TestHttpResponseMessage.HttpStatusCode#1	TestHttpResponseMessage.HttpStatusCode inst (?SetStatusCode: Integer) -> Integer?
+TestHttpResponseMessage.IsBlockedByEnvironment#1	TestHttpResponseMessage.IsBlockedByEnvironment inst (?SetIsBlockedByEnvironment: Boolean) -> Boolean?
+TestHttpResponseMessage.IsSuccessfulRequest#1	TestHttpResponseMessage.IsSuccessfulRequest inst (?SetIsSuccessfulRequest: Boolean) -> Boolean?
+TestHttpResponseMessage.ReasonPhrase#1	TestHttpResponseMessage.ReasonPhrase inst (?SetReasonPhrase: Text) -> Text?
+TestPage.Cancel#1	TestPage.Cancel inst () -> TestAction
+TestPage.Caption#1	TestPage.Caption inst () -> Text
+TestPage.Close#1	TestPage.Close inst ()
+TestPage.Edit#1	TestPage.Edit inst () -> TestAction
+TestPage.Editable#1	TestPage.Editable inst () -> Boolean
+TestPage.Expand#1	TestPage.Expand inst (Expand: Boolean)
+TestPage.Filter#1	TestPage.Filter inst () -> TestFilter
+TestPage.FindFirstField#1	TestPage.FindFirstField inst (Field: TestField, Value: Any) -> Boolean?
+TestPage.FindNextField#1	TestPage.FindNextField inst (Field: TestField, Value: Any) -> Boolean?
+TestPage.FindPreviousField#1	TestPage.FindPreviousField inst (Field: TestField, Value: Any) -> Boolean?
+TestPage.First#1	TestPage.First inst () -> Boolean?
+TestPage.GetField#1	TestPage.GetField inst (Id: Integer) -> TestField
+TestPage.GetValidationError#1	TestPage.GetValidationError inst (?Index: Integer) -> Text
+TestPage.GoToKey#1	TestPage.GoToKey inst (?Value: Any*) -> Boolean?
+TestPage.GoToRecord#1	TestPage.GoToRecord inst (Rec: Record) -> Boolean?
+TestPage.IsExpanded#1	TestPage.IsExpanded inst () -> Boolean
+TestPage.Last#1	TestPage.Last inst () -> Boolean?
+TestPage.New#1	TestPage.New inst ()
+TestPage.Next#1	TestPage.Next inst () -> Boolean?
+TestPage.No#1	TestPage.No inst () -> TestAction
+TestPage.OK#1	TestPage.OK inst () -> TestAction
+TestPage.OpenEdit#1	TestPage.OpenEdit inst ()
+TestPage.OpenNew#1	TestPage.OpenNew inst ()
+TestPage.OpenView#1	TestPage.OpenView inst ()
+TestPage.Prev#1	TestPage.Prev inst () -> Boolean?
+TestPage.Previous#1	TestPage.Previous inst () -> Boolean?
+TestPage.RunPageBackgroundTask#1	TestPage.RunPageBackgroundTask inst (CodeunitId: Integer, ?var Parameters: Dictionary of [Text, Text], ?RunCompletionTriggers: Boolean) -> Dictionary of [Text, Text]
+TestPage.Trap#1	TestPage.Trap inst ()
+TestPage.ValidationErrorCount#1	TestPage.ValidationErrorCount inst () -> Integer
+TestPage.View#1	TestPage.View inst () -> TestAction
+TestPage.Yes#1	TestPage.Yes inst () -> TestAction
+TestPart.Caption#1	TestPart.Caption inst () -> Text
+TestPart.Editable#1	TestPart.Editable inst () -> Boolean
+TestPart.Enabled#1	TestPart.Enabled inst () -> Boolean
+TestPart.Expand#1	TestPart.Expand inst (Expand: Boolean)
+TestPart.Filter#1	TestPart.Filter inst () -> TestFilter
+TestPart.FindFirstField#1	TestPart.FindFirstField inst (Field: TestField, Value: Any) -> Boolean?
+TestPart.FindNextField#1	TestPart.FindNextField inst (Field: TestField, Value: Any) -> Boolean?
+TestPart.FindPreviousField#1	TestPart.FindPreviousField inst (Field: TestField, Value: Any) -> Boolean?
+TestPart.First#1	TestPart.First inst () -> Boolean?
+TestPart.GetField#1	TestPart.GetField inst (Id: Integer) -> TestField
+TestPart.GetValidationError#1	TestPart.GetValidationError inst (?Index: Integer) -> Text
+TestPart.GoToKey#1	TestPart.GoToKey inst (?Value: Any*) -> Boolean?
+TestPart.GoToRecord#1	TestPart.GoToRecord inst (Rec: Record) -> Boolean?
+TestPart.IsExpanded#1	TestPart.IsExpanded inst () -> Boolean
+TestPart.Last#1	TestPart.Last inst () -> Boolean?
+TestPart.New#1	TestPart.New inst ()
+TestPart.Next#1	TestPart.Next inst () -> Boolean?
+TestPart.Prev#1	TestPart.Prev inst () -> Boolean?
+TestPart.Previous#1	TestPart.Previous inst () -> Boolean?
+TestPart.ValidationErrorCount#1	TestPart.ValidationErrorCount inst () -> Integer
+TestPart.Visible#1	TestPart.Visible inst () -> Boolean
+TestRequestPage.Cancel#1	TestRequestPage.Cancel inst () -> TestAction
+TestRequestPage.Caption#1	TestRequestPage.Caption inst () -> Text
+TestRequestPage.Editable#1	TestRequestPage.Editable inst () -> Boolean
+TestRequestPage.Expand#1	TestRequestPage.Expand inst (Expand: Boolean)
+TestRequestPage.FindFirstField#1	TestRequestPage.FindFirstField inst (Field: TestField, Value: Any) -> Boolean?
+TestRequestPage.FindNextField#1	TestRequestPage.FindNextField inst (Field: TestField, Value: Any) -> Boolean?
+TestRequestPage.FindPreviousField#1	TestRequestPage.FindPreviousField inst (Field: TestField, Value: Any) -> Boolean?
+TestRequestPage.First#1	TestRequestPage.First inst () -> Boolean?
+TestRequestPage.GetValidationError#1	TestRequestPage.GetValidationError inst (?Index: Integer) -> Text
+TestRequestPage.GoToKey#1	TestRequestPage.GoToKey inst (?Value: Any*) -> Boolean?
+TestRequestPage.GoToRecord#1	TestRequestPage.GoToRecord inst (Rec: Record) -> Boolean?
+TestRequestPage.IsExpanded#1	TestRequestPage.IsExpanded inst () -> Boolean
+TestRequestPage.Last#1	TestRequestPage.Last inst () -> Boolean?
+TestRequestPage.New#1	TestRequestPage.New inst ()
+TestRequestPage.Next#1	TestRequestPage.Next inst () -> Boolean?
+TestRequestPage.OK#1	TestRequestPage.OK inst () -> TestAction
+TestRequestPage.Preview#1	TestRequestPage.Preview inst () -> TestAction
+TestRequestPage.Previous#1	TestRequestPage.Previous inst () -> Boolean?
+TestRequestPage.Print#1	TestRequestPage.Print inst () -> TestAction
+TestRequestPage.SaveAsExcel#1	TestRequestPage.SaveAsExcel inst (FileName: Text)
+TestRequestPage.SaveAsPdf#1	TestRequestPage.SaveAsPdf inst (FileName: Text)
+TestRequestPage.SaveAsWord#1	TestRequestPage.SaveAsWord inst (FileName: Text)
+TestRequestPage.SaveAsXml#1	TestRequestPage.SaveAsXml inst (ParameterFileName: Text, DataSetFileName: Text)
+TestRequestPage.Schedule#1	TestRequestPage.Schedule inst () -> TestAction
+TestRequestPage.ValidationErrorCount#1	TestRequestPage.ValidationErrorCount inst () -> Integer
+Text.Contains#1	Text.Contains inst (Value: Text) -> Boolean
+Text.ConvertStr#1	Text.ConvertStr static (String: Text, FromCharacters: Text, ToCharacters: Text) -> Text
+Text.CopyStr#1	Text.CopyStr static (String: Text, Position: Integer, ?Length: Integer) -> Text
+Text.DelChr#1	Text.DelChr static (String: Text, ?Where: Text, ?Which: Text) -> Text
+Text.DelStr#1	Text.DelStr static (String: Text, Position: Integer, ?Length: Integer) -> Text
+Text.EndsWith#1	Text.EndsWith inst (Value: Text) -> Boolean
+Text.IncStr#1	Text.IncStr static (String: Text) -> Text
+Text.IncStr#2	Text.IncStr static (String: Text, Increment: BigInteger) -> Text
+Text.IndexOf#1	Text.IndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer
+Text.IndexOfAny#1	Text.IndexOfAny inst (Values: List of [Char], ?StartIndex: Integer) -> Integer
+Text.IndexOfAny#2	Text.IndexOfAny inst (Values: Text, ?StartIndex: Integer) -> Integer
+Text.InsStr#1	Text.InsStr static (String: Text, SubString: Text, Position: Integer) -> Text
+Text.LastIndexOf#1	Text.LastIndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer
+Text.LowerCase#1	Text.LowerCase static (String: Text) -> Text
+Text.MaxStrLen#1	Text.MaxStrLen static (String: Text) -> Integer
+Text.MaxStrLen#2	Text.MaxStrLen static (Variant: Variant) -> Integer
+Text.PadLeft#1	Text.PadLeft inst (Count: Integer, ?Char: Char) -> Text
+Text.PadRight#1	Text.PadRight inst (Count: Integer, ?Char: Char) -> Text
+Text.PadStr#1	Text.PadStr static (String: Text, Length: Integer, ?FillCharacter: Text) -> Text
+Text.Remove#1	Text.Remove inst (StartIndex: Integer, ?Count: Integer) -> Text
+Text.Replace#1	Text.Replace inst (OldValue: Text, NewValue: Text) -> Text
+Text.SelectStr#1	Text.SelectStr static (Number: Integer, CommaString: Text) -> Text
+Text.Split#1	Text.Split inst (?Separators: Text*) -> List of [Text]
+Text.Split#2	Text.Split inst (Separators: List of [Char]) -> List of [Text]
+Text.Split#3	Text.Split inst (Separators: List of [Text]) -> List of [Text]
+Text.StartsWith#1	Text.StartsWith inst (Value: Text) -> Boolean
+Text.StrCheckSum#1	Text.StrCheckSum static (String: Text, ?WeightString: Text, ?Modulus: Integer) -> Integer
+Text.StrLen#1	Text.StrLen static (String: Text) -> Integer
+Text.StrPos#1	Text.StrPos static (String: Text, SubString: Text) -> Integer
+Text.StrSubstNo#1	Text.StrSubstNo static (String: Text, ?Value1: Any*) -> Text
+Text.Substring#1	Text.Substring inst (StartIndex: Integer, ?Count: Integer) -> Text
+Text.ToLower#1	Text.ToLower inst () -> Text
+Text.ToUpper#1	Text.ToUpper inst () -> Text
+Text.Trim#1	Text.Trim inst () -> Text
+Text.TrimEnd#1	Text.TrimEnd inst (?Chars: Text) -> Text
+Text.TrimStart#1	Text.TrimStart inst (?Chars: Text) -> Text
+Text.UpperCase#1	Text.UpperCase static (String: Text) -> Text
+TextBuilder.Append#1	TextBuilder.Append inst (Text: Text) -> Boolean?
+TextBuilder.AppendLine#1	TextBuilder.AppendLine inst (?Text: Text) -> Boolean?
+TextBuilder.Capacity#1	TextBuilder.Capacity inst (?NewCapacity: Integer) -> Integer?
+TextBuilder.Clear#1	TextBuilder.Clear inst ()
+TextBuilder.EnsureCapacity#1	TextBuilder.EnsureCapacity inst (NewCapacity: Integer) -> Boolean?
+TextBuilder.Insert#1	TextBuilder.Insert inst (Position: Integer, Text: Text) -> Boolean?
+TextBuilder.Length#1	TextBuilder.Length inst (?NewLength: Integer) -> Integer?
+TextBuilder.MaxCapacity#1	TextBuilder.MaxCapacity inst () -> Integer
+TextBuilder.Remove#1	TextBuilder.Remove inst (StartIndex: Integer, Count: Integer) -> Boolean?
+TextBuilder.Replace#1	TextBuilder.Replace inst (OldText: Text, NewText: Text) -> Boolean?
+TextBuilder.Replace#2	TextBuilder.Replace inst (OldText: Text, NewText: Text, StartIndex: Integer, Count: Integer) -> Boolean?
+TextBuilder.ToText#1	TextBuilder.ToText inst () -> Text
+TextBuilder.ToText#2	TextBuilder.ToText inst (StartIndex: Integer, Count: Integer) -> Text
+TextConst.Contains#1	TextConst.Contains inst (Value: Text) -> Boolean
+TextConst.EndsWith#1	TextConst.EndsWith inst (Value: Text) -> Boolean
+TextConst.IndexOf#1	TextConst.IndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer
+TextConst.IndexOfAny#1	TextConst.IndexOfAny inst (Values: List of [Char], ?StartIndex: Integer) -> Integer
+TextConst.IndexOfAny#2	TextConst.IndexOfAny inst (Values: Text, ?StartIndex: Integer) -> Integer
+TextConst.LastIndexOf#1	TextConst.LastIndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer
+TextConst.PadLeft#1	TextConst.PadLeft inst (Count: Integer, ?Char: Char) -> Text
+TextConst.PadRight#1	TextConst.PadRight inst (Count: Integer, ?Char: Char) -> Text
+TextConst.Remove#1	TextConst.Remove inst (StartIndex: Integer, ?Count: Integer) -> Text
+TextConst.Replace#1	TextConst.Replace inst (OldValue: Text, NewValue: Text) -> Text
+TextConst.Split#1	TextConst.Split inst (?Separators: Text*) -> List of [Text]
+TextConst.Split#2	TextConst.Split inst (Separators: List of [Char]) -> List of [Text]
+TextConst.Split#3	TextConst.Split inst (Separators: List of [Text]) -> List of [Text]
+TextConst.StartsWith#1	TextConst.StartsWith inst (Value: Text) -> Boolean
+TextConst.Substring#1	TextConst.Substring inst (StartIndex: Integer, ?Count: Integer) -> Text
+TextConst.ToLower#1	TextConst.ToLower inst () -> Text
+TextConst.ToUpper#1	TextConst.ToUpper inst () -> Text
+TextConst.Trim#1	TextConst.Trim inst () -> Text
+TextConst.TrimEnd#1	TextConst.TrimEnd inst (?Chars: Text) -> Text
+TextConst.TrimStart#1	TextConst.TrimStart inst (?Chars: Text) -> Text
+Time.Hour#1	Time.Hour inst () -> Integer
+Time.Millisecond#1	Time.Millisecond inst () -> Integer
+Time.Minute#1	Time.Minute inst () -> Integer
+Time.Second#1	Time.Second inst () -> Integer
+Time.ToText#1	Time.ToText inst (?Invariant: Boolean) -> Text
+Variant.IsAction#1	Variant.IsAction inst () -> Boolean
+Variant.IsAutomation#1	Variant.IsAutomation inst () -> Boolean
+Variant.IsBigInteger#1	Variant.IsBigInteger inst () -> Boolean
+Variant.IsBinary#1	Variant.IsBinary inst () -> Boolean
+Variant.IsBoolean#1	Variant.IsBoolean inst () -> Boolean
+Variant.IsByte#1	Variant.IsByte inst () -> Boolean
+Variant.IsChar#1	Variant.IsChar inst () -> Boolean
+Variant.IsClientType#1	Variant.IsClientType inst () -> Boolean
+Variant.IsCode#1	Variant.IsCode inst () -> Boolean
+Variant.IsCodeunit#1	Variant.IsCodeunit inst () -> Boolean
+Variant.IsDataClassification#1	Variant.IsDataClassification inst () -> Boolean
+Variant.IsDataClassificationType#1	Variant.IsDataClassificationType inst () -> Boolean
+Variant.IsDate#1	Variant.IsDate inst () -> Boolean
+Variant.IsDateFormula#1	Variant.IsDateFormula inst () -> Boolean
+Variant.IsDateTime#1	Variant.IsDateTime inst () -> Boolean
+Variant.IsDecimal#1	Variant.IsDecimal inst () -> Boolean
+Variant.IsDefaultLayout#1	Variant.IsDefaultLayout inst () -> Boolean
+Variant.IsDictionary#1	Variant.IsDictionary inst () -> Boolean
+Variant.IsDotNet#1	Variant.IsDotNet inst () -> Boolean
+Variant.IsDuration#1	Variant.IsDuration inst () -> Boolean
+Variant.IsExecutionMode#1	Variant.IsExecutionMode inst () -> Boolean
+Variant.IsFieldRef#1	Variant.IsFieldRef inst () -> Boolean
+Variant.IsFile#1	Variant.IsFile inst () -> Boolean
+Variant.IsFilterPageBuilder#1	Variant.IsFilterPageBuilder inst () -> Boolean
+Variant.IsGuid#1	Variant.IsGuid inst () -> Boolean
+Variant.IsInStream#1	Variant.IsInStream inst () -> Boolean
+Variant.IsInteger#1	Variant.IsInteger inst () -> Boolean
+Variant.IsJsonArray#1	Variant.IsJsonArray inst () -> Boolean
+Variant.IsJsonObject#1	Variant.IsJsonObject inst () -> Boolean
+Variant.IsJsonToken#1	Variant.IsJsonToken inst () -> Boolean
+Variant.IsJsonValue#1	Variant.IsJsonValue inst () -> Boolean
+Variant.IsList#1	Variant.IsList inst () -> Boolean
+Variant.IsNotification#1	Variant.IsNotification inst () -> Boolean
+Variant.IsObjectType#1	Variant.IsObjectType inst () -> Boolean
+Variant.IsOption#1	Variant.IsOption inst () -> Boolean
+Variant.IsOutStream#1	Variant.IsOutStream inst () -> Boolean
+Variant.IsPromptMode#1	Variant.IsPromptMode inst () -> Boolean
+Variant.IsRecord#1	Variant.IsRecord inst () -> Boolean
+Variant.IsRecordId#1	Variant.IsRecordId inst () -> Boolean
+Variant.IsRecordRef#1	Variant.IsRecordRef inst () -> Boolean
+Variant.IsReportFormat#1	Variant.IsReportFormat inst () -> Boolean
+Variant.IsSecurityFiltering#1	Variant.IsSecurityFiltering inst () -> Boolean
+Variant.IsTableConnectionType#1	Variant.IsTableConnectionType inst () -> Boolean
+Variant.IsTestPermissions#1	Variant.IsTestPermissions inst () -> Boolean
+Variant.IsText#1	Variant.IsText inst () -> Boolean
+Variant.IsTextBuilder#1	Variant.IsTextBuilder inst () -> Boolean
+Variant.IsTextConstant#1	Variant.IsTextConstant inst () -> Boolean
+Variant.IsTextEncoding#1	Variant.IsTextEncoding inst () -> Boolean
+Variant.IsTime#1	Variant.IsTime inst () -> Boolean
+Variant.IsTransactionType#1	Variant.IsTransactionType inst () -> Boolean
+Variant.IsWideChar#1	Variant.IsWideChar inst () -> Boolean
+Variant.IsXmlAttribute#1	Variant.IsXmlAttribute inst () -> Boolean
+Variant.IsXmlAttributeCollection#1	Variant.IsXmlAttributeCollection inst () -> Boolean
+Variant.IsXmlCData#1	Variant.IsXmlCData inst () -> Boolean
+Variant.IsXmlComment#1	Variant.IsXmlComment inst () -> Boolean
+Variant.IsXmlDeclaration#1	Variant.IsXmlDeclaration inst () -> Boolean
+Variant.IsXmlDocument#1	Variant.IsXmlDocument inst () -> Boolean
+Variant.IsXmlDocumentType#1	Variant.IsXmlDocumentType inst () -> Boolean
+Variant.IsXmlElement#1	Variant.IsXmlElement inst () -> Boolean
+Variant.IsXmlNameTable#1	Variant.IsXmlNameTable inst () -> Boolean
+Variant.IsXmlNamespaceManager#1	Variant.IsXmlNamespaceManager inst () -> Boolean
+Variant.IsXmlNode#1	Variant.IsXmlNode inst () -> Boolean
+Variant.IsXmlNodeList#1	Variant.IsXmlNodeList inst () -> Boolean
+Variant.IsXmlProcessingInstruction#1	Variant.IsXmlProcessingInstruction inst () -> Boolean
+Variant.IsXmlReadOptions#1	Variant.IsXmlReadOptions inst () -> Boolean
+Variant.IsXmlText#1	Variant.IsXmlText inst () -> Boolean
+Variant.IsXmlWriteOptions#1	Variant.IsXmlWriteOptions inst () -> Boolean
+Version.Build#1	Version.Build inst () -> Integer
+Version.Create#1	Version.Create static (Major: Integer, Minor: Integer, ?Build: Integer, ?Revision: Integer) -> Version
+Version.Create#2	Version.Create static (Version: Text) -> Version
+Version.Major#1	Version.Major inst () -> Integer
+Version.Minor#1	Version.Minor inst () -> Integer
+Version.Revision#1	Version.Revision inst () -> Integer
+Version.ToText#1	Version.ToText inst () -> Text
+WebServiceActionContext.AddEntityKey#1	WebServiceActionContext.AddEntityKey inst (FieldId: Integer, FieldValue: Any) -> Boolean?
+WebServiceActionContext.GetObjectId#1	WebServiceActionContext.GetObjectId inst () -> Integer
+WebServiceActionContext.GetObjectType#1	WebServiceActionContext.GetObjectType inst () -> ObjectType
+WebServiceActionContext.GetResultCode#1	WebServiceActionContext.GetResultCode inst () -> WebServiceActionResultCode
+WebServiceActionContext.SetObjectId#1	WebServiceActionContext.SetObjectId inst (ObjectId: Integer)
+WebServiceActionContext.SetObjectType#1	WebServiceActionContext.SetObjectType inst (ObjectType: ObjectType)
+WebServiceActionContext.SetResultCode#1	WebServiceActionContext.SetResultCode inst (ResultCode: WebServiceActionResultCode)
+XmlAttribute.AddAfterSelf#1	XmlAttribute.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlAttribute.AddBeforeSelf#1	XmlAttribute.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlAttribute.AsXmlNode#1	XmlAttribute.AsXmlNode inst () -> XmlNode
+XmlAttribute.Create#1	XmlAttribute.Create static (LocalName: Text, NamespaceUri: Text, Value: Text) -> XmlAttribute
+XmlAttribute.Create#2	XmlAttribute.Create static (Name: Text, Value: Text) -> XmlAttribute
+XmlAttribute.CreateNamespaceDeclaration#1	XmlAttribute.CreateNamespaceDeclaration static (Prefix: Text, NamespaceUri: Text) -> XmlAttribute
+XmlAttribute.GetDocument#1	XmlAttribute.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlAttribute.GetParent#1	XmlAttribute.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlAttribute.IsNamespaceDeclaration#1	XmlAttribute.IsNamespaceDeclaration inst () -> Boolean
+XmlAttribute.LocalName#1	XmlAttribute.LocalName inst () -> Text
+XmlAttribute.Name#1	XmlAttribute.Name inst () -> Text
+XmlAttribute.NamespacePrefix#1	XmlAttribute.NamespacePrefix inst () -> Text
+XmlAttribute.NamespaceUri#1	XmlAttribute.NamespaceUri inst () -> Text
+XmlAttribute.Remove#1	XmlAttribute.Remove inst () -> Boolean?
+XmlAttribute.ReplaceWith#1	XmlAttribute.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlAttribute.SelectNodes#1	XmlAttribute.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlAttribute.SelectNodes#2	XmlAttribute.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlAttribute.SelectSingleNode#1	XmlAttribute.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlAttribute.SelectSingleNode#2	XmlAttribute.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlAttribute.Value#1	XmlAttribute.Value inst (?NewValue: Text) -> Text?
+XmlAttribute.WriteTo#1	XmlAttribute.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlAttribute.WriteTo#2	XmlAttribute.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlAttribute.WriteTo#3	XmlAttribute.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlAttribute.WriteTo#4	XmlAttribute.WriteTo inst (var Text: Text) -> Boolean?
+XmlAttributeCollection.Count#1	XmlAttributeCollection.Count inst () -> Integer
+XmlAttributeCollection.Get#1	XmlAttributeCollection.Get inst (Index: Integer, var Result: XmlAttribute) -> Boolean?
+XmlAttributeCollection.Get#2	XmlAttributeCollection.Get inst (LocalName: Text, NamespaceUri: Text, var Result: XmlAttribute) -> Boolean?
+XmlAttributeCollection.Get#3	XmlAttributeCollection.Get inst (Name: Text, var Result: XmlAttribute) -> Boolean?
+XmlAttributeCollection.Remove#1	XmlAttributeCollection.Remove inst (Attribute: XmlAttribute)
+XmlAttributeCollection.Remove#2	XmlAttributeCollection.Remove inst (LocalName: Text, NamespaceUri: Text)
+XmlAttributeCollection.Remove#3	XmlAttributeCollection.Remove inst (Name: Text)
+XmlAttributeCollection.RemoveAll#1	XmlAttributeCollection.RemoveAll inst ()
+XmlAttributeCollection.Set#1	XmlAttributeCollection.Set inst (LocalName: Text, NamespaceUri: Text, Value: Text)
+XmlAttributeCollection.Set#2	XmlAttributeCollection.Set inst (Name: Text, Value: Text)
+XmlCData.AddAfterSelf#1	XmlCData.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlCData.AddBeforeSelf#1	XmlCData.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlCData.AsXmlNode#1	XmlCData.AsXmlNode inst () -> XmlNode
+XmlCData.Create#1	XmlCData.Create static (Value: Text) -> XmlCData
+XmlCData.GetDocument#1	XmlCData.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlCData.GetParent#1	XmlCData.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlCData.Remove#1	XmlCData.Remove inst () -> Boolean?
+XmlCData.ReplaceWith#1	XmlCData.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlCData.SelectNodes#1	XmlCData.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlCData.SelectNodes#2	XmlCData.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlCData.SelectSingleNode#1	XmlCData.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlCData.SelectSingleNode#2	XmlCData.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlCData.Value#1	XmlCData.Value inst (?NewValue: Text) -> Text?
+XmlCData.WriteTo#1	XmlCData.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlCData.WriteTo#2	XmlCData.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlCData.WriteTo#3	XmlCData.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlCData.WriteTo#4	XmlCData.WriteTo inst (var Text: Text) -> Boolean?
+XmlComment.AddAfterSelf#1	XmlComment.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlComment.AddBeforeSelf#1	XmlComment.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlComment.AsXmlNode#1	XmlComment.AsXmlNode inst () -> XmlNode
+XmlComment.Create#1	XmlComment.Create static (Value: Text) -> XmlComment
+XmlComment.GetDocument#1	XmlComment.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlComment.GetParent#1	XmlComment.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlComment.Remove#1	XmlComment.Remove inst () -> Boolean?
+XmlComment.ReplaceWith#1	XmlComment.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlComment.SelectNodes#1	XmlComment.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlComment.SelectNodes#2	XmlComment.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlComment.SelectSingleNode#1	XmlComment.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlComment.SelectSingleNode#2	XmlComment.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlComment.Value#1	XmlComment.Value inst (?NewValue: Text) -> Text?
+XmlComment.WriteTo#1	XmlComment.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlComment.WriteTo#2	XmlComment.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlComment.WriteTo#3	XmlComment.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlComment.WriteTo#4	XmlComment.WriteTo inst (var Text: Text) -> Boolean?
+XmlDeclaration.AddAfterSelf#1	XmlDeclaration.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlDeclaration.AddBeforeSelf#1	XmlDeclaration.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlDeclaration.AsXmlNode#1	XmlDeclaration.AsXmlNode inst () -> XmlNode
+XmlDeclaration.Create#1	XmlDeclaration.Create static (Version: Text, Encoding: Text, Standalone: Text) -> XmlDeclaration
+XmlDeclaration.Encoding#1	XmlDeclaration.Encoding inst (?NewValue: Text) -> Text?
+XmlDeclaration.GetDocument#1	XmlDeclaration.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlDeclaration.GetParent#1	XmlDeclaration.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlDeclaration.Remove#1	XmlDeclaration.Remove inst () -> Boolean?
+XmlDeclaration.ReplaceWith#1	XmlDeclaration.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlDeclaration.SelectNodes#1	XmlDeclaration.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlDeclaration.SelectNodes#2	XmlDeclaration.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlDeclaration.SelectSingleNode#1	XmlDeclaration.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlDeclaration.SelectSingleNode#2	XmlDeclaration.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlDeclaration.Standalone#1	XmlDeclaration.Standalone inst (?NewValue: Text) -> Text?
+XmlDeclaration.Version#1	XmlDeclaration.Version inst (?NewValue: Text) -> Text?
+XmlDeclaration.WriteTo#1	XmlDeclaration.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlDeclaration.WriteTo#2	XmlDeclaration.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlDeclaration.WriteTo#3	XmlDeclaration.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlDeclaration.WriteTo#4	XmlDeclaration.WriteTo inst (var Text: Text) -> Boolean?
+XmlDocument.Add#1	XmlDocument.Add inst (Content: Any*) -> Boolean?
+XmlDocument.AddAfterSelf#1	XmlDocument.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlDocument.AddBeforeSelf#1	XmlDocument.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlDocument.AddFirst#1	XmlDocument.AddFirst inst (Content: Any*) -> Boolean?
+XmlDocument.AsXmlNode#1	XmlDocument.AsXmlNode inst () -> XmlNode
+XmlDocument.Create#1	XmlDocument.Create static () -> XmlDocument
+XmlDocument.Create#2	XmlDocument.Create static (Content: Any*) -> XmlDocument
+XmlDocument.GetChildElements#1	XmlDocument.GetChildElements inst () -> XmlNodeList
+XmlDocument.GetChildElements#2	XmlDocument.GetChildElements inst (LocalName: Text, NamespaceUri: Text) -> XmlNodeList
+XmlDocument.GetChildElements#3	XmlDocument.GetChildElements inst (Name: Text) -> XmlNodeList
+XmlDocument.GetChildNodes#1	XmlDocument.GetChildNodes inst () -> XmlNodeList
+XmlDocument.GetDeclaration#1	XmlDocument.GetDeclaration inst (var Result: XmlDeclaration) -> Boolean?
+XmlDocument.GetDescendantElements#1	XmlDocument.GetDescendantElements inst () -> XmlNodeList
+XmlDocument.GetDescendantElements#2	XmlDocument.GetDescendantElements inst (LocalName: Text, NamespaceUri: Text) -> XmlNodeList
+XmlDocument.GetDescendantElements#3	XmlDocument.GetDescendantElements inst (Name: Text) -> XmlNodeList
+XmlDocument.GetDescendantNodes#1	XmlDocument.GetDescendantNodes inst () -> XmlNodeList
+XmlDocument.GetDocument#1	XmlDocument.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlDocument.GetDocumentType#1	XmlDocument.GetDocumentType inst (var DocumentType: XmlDocumentType) -> Boolean?
+XmlDocument.GetParent#1	XmlDocument.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlDocument.GetRoot#1	XmlDocument.GetRoot inst (var Result: XmlElement) -> Boolean?
+XmlDocument.NameTable#1	XmlDocument.NameTable inst () -> XmlNameTable
+XmlDocument.ReadFrom#1	XmlDocument.ReadFrom static (InStream: InStream, ReadOptions: XmlReadOptions, var Result: XmlDocument) -> Boolean?
+XmlDocument.ReadFrom#2	XmlDocument.ReadFrom static (InStream: InStream, var Result: XmlDocument) -> Boolean?
+XmlDocument.ReadFrom#3	XmlDocument.ReadFrom static (Text: Text, ReadOptions: XmlReadOptions, var Result: XmlDocument) -> Boolean?
+XmlDocument.ReadFrom#4	XmlDocument.ReadFrom static (Text: Text, var Result: XmlDocument) -> Boolean?
+XmlDocument.Remove#1	XmlDocument.Remove inst () -> Boolean?
+XmlDocument.RemoveNodes#1	XmlDocument.RemoveNodes inst ()
+XmlDocument.ReplaceNodes#1	XmlDocument.ReplaceNodes inst (Content: Any*) -> Boolean?
+XmlDocument.ReplaceWith#1	XmlDocument.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlDocument.SelectNodes#1	XmlDocument.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlDocument.SelectNodes#2	XmlDocument.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlDocument.SelectSingleNode#1	XmlDocument.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlDocument.SelectSingleNode#2	XmlDocument.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlDocument.SetDeclaration#1	XmlDocument.SetDeclaration inst (Declaration: XmlDeclaration) -> Boolean?
+XmlDocument.WriteTo#1	XmlDocument.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlDocument.WriteTo#2	XmlDocument.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlDocument.WriteTo#3	XmlDocument.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlDocument.WriteTo#4	XmlDocument.WriteTo inst (var Text: Text) -> Boolean?
+XmlDocumentType.AddAfterSelf#1	XmlDocumentType.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlDocumentType.AddBeforeSelf#1	XmlDocumentType.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlDocumentType.AsXmlNode#1	XmlDocumentType.AsXmlNode inst () -> XmlNode
+XmlDocumentType.Create#1	XmlDocumentType.Create static (Name: Text) -> XmlDocumentType
+XmlDocumentType.Create#2	XmlDocumentType.Create static (Name: Text, PublicId: Text) -> XmlDocumentType
+XmlDocumentType.Create#3	XmlDocumentType.Create static (Name: Text, PublicId: Text, SystemId: Text) -> XmlDocumentType
+XmlDocumentType.Create#4	XmlDocumentType.Create static (Name: Text, PublicId: Text, SystemId: Text, InternalSubSet: Text) -> XmlDocumentType
+XmlDocumentType.GetDocument#1	XmlDocumentType.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlDocumentType.GetInternalSubset#1	XmlDocumentType.GetInternalSubset inst (var Result: Text) -> Boolean?
+XmlDocumentType.GetName#1	XmlDocumentType.GetName inst (var Result: Text) -> Boolean?
+XmlDocumentType.GetParent#1	XmlDocumentType.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlDocumentType.GetPublicId#1	XmlDocumentType.GetPublicId inst (var Result: Text) -> Boolean?
+XmlDocumentType.GetSystemId#1	XmlDocumentType.GetSystemId inst (var Result: Text) -> Boolean?
+XmlDocumentType.Remove#1	XmlDocumentType.Remove inst () -> Boolean?
+XmlDocumentType.ReplaceWith#1	XmlDocumentType.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlDocumentType.SelectNodes#1	XmlDocumentType.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlDocumentType.SelectNodes#2	XmlDocumentType.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlDocumentType.SelectSingleNode#1	XmlDocumentType.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlDocumentType.SelectSingleNode#2	XmlDocumentType.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlDocumentType.SetInternalSubset#1	XmlDocumentType.SetInternalSubset inst (Value: Text) -> Boolean?
+XmlDocumentType.SetName#1	XmlDocumentType.SetName inst (Value: Text) -> Boolean?
+XmlDocumentType.SetPublicId#1	XmlDocumentType.SetPublicId inst (Value: Text) -> Boolean?
+XmlDocumentType.SetSystemId#1	XmlDocumentType.SetSystemId inst (Value: Text) -> Boolean?
+XmlDocumentType.WriteTo#1	XmlDocumentType.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlDocumentType.WriteTo#2	XmlDocumentType.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlDocumentType.WriteTo#3	XmlDocumentType.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlDocumentType.WriteTo#4	XmlDocumentType.WriteTo inst (var Text: Text) -> Boolean?
+XmlElement.Add#1	XmlElement.Add inst (Content: Any*) -> Boolean?
+XmlElement.AddAfterSelf#1	XmlElement.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlElement.AddBeforeSelf#1	XmlElement.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlElement.AddFirst#1	XmlElement.AddFirst inst (Content: Any*) -> Boolean?
+XmlElement.AsXmlNode#1	XmlElement.AsXmlNode inst () -> XmlNode
+XmlElement.Attributes#1	XmlElement.Attributes inst () -> XmlAttributeCollection
+XmlElement.Create#1	XmlElement.Create static (LocalName: Text, NamespaceUri: Text) -> XmlElement
+XmlElement.Create#2	XmlElement.Create static (LocalName: Text, NamespaceUri: Text, Content: Any*) -> XmlElement
+XmlElement.Create#3	XmlElement.Create static (Name: Text) -> XmlElement
+XmlElement.Create#4	XmlElement.Create static (Name: Text, Content: Any*) -> XmlElement
+XmlElement.GetChildElements#1	XmlElement.GetChildElements inst () -> XmlNodeList
+XmlElement.GetChildElements#2	XmlElement.GetChildElements inst (LocalName: Text, NamespaceUri: Text) -> XmlNodeList
+XmlElement.GetChildElements#3	XmlElement.GetChildElements inst (Name: Text) -> XmlNodeList
+XmlElement.GetChildNodes#1	XmlElement.GetChildNodes inst () -> XmlNodeList
+XmlElement.GetDescendantElements#1	XmlElement.GetDescendantElements inst () -> XmlNodeList
+XmlElement.GetDescendantElements#2	XmlElement.GetDescendantElements inst (LocalName: Text, NamespaceUri: Text) -> XmlNodeList
+XmlElement.GetDescendantElements#3	XmlElement.GetDescendantElements inst (Name: Text) -> XmlNodeList
+XmlElement.GetDescendantNodes#1	XmlElement.GetDescendantNodes inst () -> XmlNodeList
+XmlElement.GetDocument#1	XmlElement.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlElement.GetNamespaceOfPrefix#1	XmlElement.GetNamespaceOfPrefix inst (Prefix: Text, var Result: Text) -> Boolean?
+XmlElement.GetParent#1	XmlElement.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlElement.GetPrefixOfNamespace#1	XmlElement.GetPrefixOfNamespace inst (Namespace: Text, var Result: Text) -> Boolean?
+XmlElement.HasAttributes#1	XmlElement.HasAttributes inst () -> Boolean
+XmlElement.HasElements#1	XmlElement.HasElements inst () -> Boolean
+XmlElement.InnerText#1	XmlElement.InnerText inst () -> Text
+XmlElement.InnerXml#1	XmlElement.InnerXml inst () -> Text
+XmlElement.IsEmpty#1	XmlElement.IsEmpty inst () -> Boolean
+XmlElement.LocalName#1	XmlElement.LocalName inst () -> Text
+XmlElement.Name#1	XmlElement.Name inst () -> Text
+XmlElement.NamespaceUri#1	XmlElement.NamespaceUri inst () -> Text
+XmlElement.Remove#1	XmlElement.Remove inst () -> Boolean?
+XmlElement.RemoveAllAttributes#1	XmlElement.RemoveAllAttributes inst ()
+XmlElement.RemoveAttribute#1	XmlElement.RemoveAttribute inst (Attribute: XmlAttribute)
+XmlElement.RemoveAttribute#2	XmlElement.RemoveAttribute inst (LocalName: Text, NamespaceUri: Text)
+XmlElement.RemoveAttribute#3	XmlElement.RemoveAttribute inst (Name: Text)
+XmlElement.RemoveNodes#1	XmlElement.RemoveNodes inst ()
+XmlElement.ReplaceNodes#1	XmlElement.ReplaceNodes inst (Content: Any*) -> Boolean?
+XmlElement.ReplaceWith#1	XmlElement.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlElement.SelectNodes#1	XmlElement.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlElement.SelectNodes#2	XmlElement.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlElement.SelectSingleNode#1	XmlElement.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlElement.SelectSingleNode#2	XmlElement.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlElement.SetAttribute#1	XmlElement.SetAttribute inst (LocalName: Text, NamespaceUri: Text, Value: Text)
+XmlElement.SetAttribute#2	XmlElement.SetAttribute inst (Name: Text, Value: Text)
+XmlElement.WriteTo#1	XmlElement.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlElement.WriteTo#2	XmlElement.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlElement.WriteTo#3	XmlElement.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlElement.WriteTo#4	XmlElement.WriteTo inst (var Text: Text) -> Boolean?
+XmlNameTable.Add#1	XmlNameTable.Add inst (Key: Text) -> Text?
+XmlNameTable.Get#1	XmlNameTable.Get inst (Key: Text, var Result: Text) -> Boolean?
+XmlNamespaceManager.AddNamespace#1	XmlNamespaceManager.AddNamespace inst (Prefix: Text, Uri: Text)
+XmlNamespaceManager.HasNamespace#1	XmlNamespaceManager.HasNamespace inst (Prefix: Text) -> Boolean
+XmlNamespaceManager.LookupNamespace#1	XmlNamespaceManager.LookupNamespace inst (Prefix: Text, var Result: Text) -> Boolean?
+XmlNamespaceManager.LookupPrefix#1	XmlNamespaceManager.LookupPrefix inst (Uri: Text, var Result: Text) -> Boolean?
+XmlNamespaceManager.NameTable#1	XmlNamespaceManager.NameTable inst (?NewValue: XmlNameTable) -> XmlNameTable?
+XmlNamespaceManager.PopScope#1	XmlNamespaceManager.PopScope inst ()
+XmlNamespaceManager.PushScope#1	XmlNamespaceManager.PushScope inst ()
+XmlNamespaceManager.RemoveNamespace#1	XmlNamespaceManager.RemoveNamespace inst (Prefix: Text, Uri: Text)
+XmlNode.AddAfterSelf#1	XmlNode.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlNode.AddBeforeSelf#1	XmlNode.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlNode.AsXmlAttribute#1	XmlNode.AsXmlAttribute inst () -> XmlAttribute
+XmlNode.AsXmlCData#1	XmlNode.AsXmlCData inst () -> XmlCData
+XmlNode.AsXmlComment#1	XmlNode.AsXmlComment inst () -> XmlComment
+XmlNode.AsXmlDeclaration#1	XmlNode.AsXmlDeclaration inst () -> XmlDeclaration
+XmlNode.AsXmlDocument#1	XmlNode.AsXmlDocument inst () -> XmlDocument
+XmlNode.AsXmlDocumentType#1	XmlNode.AsXmlDocumentType inst () -> XmlDocumentType
+XmlNode.AsXmlElement#1	XmlNode.AsXmlElement inst () -> XmlElement
+XmlNode.AsXmlProcessingInstruction#1	XmlNode.AsXmlProcessingInstruction inst () -> XmlProcessingInstruction
+XmlNode.AsXmlText#1	XmlNode.AsXmlText inst () -> XmlText
+XmlNode.GetDocument#1	XmlNode.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlNode.GetParent#1	XmlNode.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlNode.IsXmlAttribute#1	XmlNode.IsXmlAttribute inst () -> Boolean
+XmlNode.IsXmlCData#1	XmlNode.IsXmlCData inst () -> Boolean
+XmlNode.IsXmlComment#1	XmlNode.IsXmlComment inst () -> Boolean
+XmlNode.IsXmlDeclaration#1	XmlNode.IsXmlDeclaration inst () -> Boolean
+XmlNode.IsXmlDocument#1	XmlNode.IsXmlDocument inst () -> Boolean
+XmlNode.IsXmlDocumentType#1	XmlNode.IsXmlDocumentType inst () -> Boolean
+XmlNode.IsXmlElement#1	XmlNode.IsXmlElement inst () -> Boolean
+XmlNode.IsXmlProcessingInstruction#1	XmlNode.IsXmlProcessingInstruction inst () -> Boolean
+XmlNode.IsXmlText#1	XmlNode.IsXmlText inst () -> Boolean
+XmlNode.Remove#1	XmlNode.Remove inst () -> Boolean?
+XmlNode.ReplaceWith#1	XmlNode.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlNode.SelectNodes#1	XmlNode.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlNode.SelectNodes#2	XmlNode.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlNode.SelectSingleNode#1	XmlNode.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlNode.SelectSingleNode#2	XmlNode.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlNode.WriteTo#1	XmlNode.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlNode.WriteTo#2	XmlNode.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlNode.WriteTo#3	XmlNode.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlNode.WriteTo#4	XmlNode.WriteTo inst (var Text: Text) -> Boolean?
+XmlNodeList.Count#1	XmlNodeList.Count inst () -> Integer
+XmlNodeList.Get#1	XmlNodeList.Get inst (Index: Integer, var Node: XmlNode) -> Boolean?
+XmlProcessingInstruction.AddAfterSelf#1	XmlProcessingInstruction.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlProcessingInstruction.AddBeforeSelf#1	XmlProcessingInstruction.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlProcessingInstruction.AsXmlNode#1	XmlProcessingInstruction.AsXmlNode inst () -> XmlNode
+XmlProcessingInstruction.Create#1	XmlProcessingInstruction.Create static (Target: Text, Data: Text) -> XmlProcessingInstruction
+XmlProcessingInstruction.GetData#1	XmlProcessingInstruction.GetData inst (var Result: Text) -> Boolean?
+XmlProcessingInstruction.GetDocument#1	XmlProcessingInstruction.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlProcessingInstruction.GetParent#1	XmlProcessingInstruction.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlProcessingInstruction.GetTarget#1	XmlProcessingInstruction.GetTarget inst (var Result: Text) -> Boolean?
+XmlProcessingInstruction.Remove#1	XmlProcessingInstruction.Remove inst () -> Boolean?
+XmlProcessingInstruction.ReplaceWith#1	XmlProcessingInstruction.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlProcessingInstruction.SelectNodes#1	XmlProcessingInstruction.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlProcessingInstruction.SelectNodes#2	XmlProcessingInstruction.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlProcessingInstruction.SelectSingleNode#1	XmlProcessingInstruction.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlProcessingInstruction.SelectSingleNode#2	XmlProcessingInstruction.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlProcessingInstruction.SetData#1	XmlProcessingInstruction.SetData inst (Value: Text) -> Boolean?
+XmlProcessingInstruction.SetTarget#1	XmlProcessingInstruction.SetTarget inst (Value: Text) -> Boolean?
+XmlProcessingInstruction.WriteTo#1	XmlProcessingInstruction.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlProcessingInstruction.WriteTo#2	XmlProcessingInstruction.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlProcessingInstruction.WriteTo#3	XmlProcessingInstruction.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlProcessingInstruction.WriteTo#4	XmlProcessingInstruction.WriteTo inst (var Text: Text) -> Boolean?
+XmlText.AddAfterSelf#1	XmlText.AddAfterSelf inst (Content: Any*) -> Boolean?
+XmlText.AddBeforeSelf#1	XmlText.AddBeforeSelf inst (Content: Any*) -> Boolean?
+XmlText.AsXmlNode#1	XmlText.AsXmlNode inst () -> XmlNode
+XmlText.Create#1	XmlText.Create static (Content: Text) -> XmlText
+XmlText.GetDocument#1	XmlText.GetDocument inst (var Document: XmlDocument) -> Boolean?
+XmlText.GetParent#1	XmlText.GetParent inst (var Parent: XmlElement) -> Boolean?
+XmlText.Remove#1	XmlText.Remove inst () -> Boolean?
+XmlText.ReplaceWith#1	XmlText.ReplaceWith inst (Node: Any*) -> Boolean?
+XmlText.SelectNodes#1	XmlText.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?
+XmlText.SelectNodes#2	XmlText.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?
+XmlText.SelectSingleNode#1	XmlText.SelectSingleNode inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var Node: XmlNode) -> Boolean?
+XmlText.SelectSingleNode#2	XmlText.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?
+XmlText.Value#1	XmlText.Value inst (?NewValue: Text) -> Text?
+XmlText.WriteTo#1	XmlText.WriteTo inst (OutStream: OutStream) -> Boolean?
+XmlText.WriteTo#2	XmlText.WriteTo inst (WriteOptions: XmlWriteOptions, OutStream: OutStream) -> Boolean?
+XmlText.WriteTo#3	XmlText.WriteTo inst (WriteOptions: XmlWriteOptions, var Text: Text) -> Boolean?
+XmlText.WriteTo#4	XmlText.WriteTo inst (var Text: Text) -> Boolean?
+Xmlport.Break#1	Xmlport.Break inst ()
+Xmlport.BreakUnbound#1	Xmlport.BreakUnbound inst ()
+Xmlport.CurrentPath#1	Xmlport.CurrentPath inst () -> Text
+Xmlport.Export#1	Xmlport.Export inst () -> Boolean?
+Xmlport.Export#2	Xmlport.Export static (Number: Integer, var OutStream: OutStream, ?var Record: Record) -> Boolean?
+Xmlport.FieldDelimiter#1	Xmlport.FieldDelimiter inst (?Delimiter: Text) -> Text?
+Xmlport.FieldSeparator#1	Xmlport.FieldSeparator inst (?Separator: Text) -> Text?
+Xmlport.Filename#1	Xmlport.Filename inst (?FileName: Text) -> Text?
+Xmlport.Import#1	Xmlport.Import inst () -> Boolean?
+Xmlport.Import#2	Xmlport.Import static (Number: Integer, var InStream: InStream, ?var Record: Record) -> Boolean?
+Xmlport.ImportFile#1	Xmlport.ImportFile inst (?ImportFile: Boolean) -> Boolean?
+Xmlport.Quit#1	Xmlport.Quit inst ()
+Xmlport.RecordSeparator#1	Xmlport.RecordSeparator inst (?Separator: Text) -> Text?
+Xmlport.Run#1	Xmlport.Run inst ()
+Xmlport.Run#2	Xmlport.Run static (Number: Integer, ?RequestWindow: Boolean, ?Import: Boolean, ?var Record: Record)
+Xmlport.SetDestination#1	Xmlport.SetDestination inst (var OutStream: OutStream)
+Xmlport.SetSource#1	Xmlport.SetSource inst (var InStream: InStream)
+Xmlport.SetTableView#1	Xmlport.SetTableView inst (var Record: Record)
+Xmlport.Skip#1	Xmlport.Skip inst ()
+Xmlport.TableSeparator#1	Xmlport.TableSeparator inst (?Separator: Text) -> Text?
+Xmlport.TextEncoding#1	Xmlport.TextEncoding inst (?Encoding: TextEncoding) -> TextEncoding?
+Codeunit.Run#3	Codeunit.Run static (FullyQualifiedName: Text, ?var Record: Record) -> Boolean? @17.0
+DataTransfer.AddDestinationFilter#1	DataTransfer.AddDestinationFilter inst (DestinationField: Integer, String: Text, ?Value: Any*) @17.0
+JsonArray.SelectTokens#1	JsonArray.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
+JsonObject.SelectTokens#1	JsonObject.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
+JsonToken.SelectTokens#1	JsonToken.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
+Page.Run#4	Page.Run static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) @17.0
+Page.Run#5	Page.Run static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) @17.0
+Page.RunModal#5	Page.RunModal static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) -> Action? @17.0
+Page.RunModal#6	Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) -> Action? @17.0
+Page.RunModal#7	Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldRef: FieldRef) -> Action? @17.0
+Record.FullyQualifiedName#1	Record.FullyQualifiedName inst () -> Text @17.0
+RecordRef.FullyQualifiedName#1	RecordRef.FullyQualifiedName inst () -> Text @17.0
+RecordRef.Open#2	RecordRef.Open inst (FullyQualifiedName: Text, ?Temp: Boolean, ?CompanyName: Text) @17.0
+Report.Execute#3	Report.Execute static (FullyQualifiedName: Text, Parameters: Text, ?RecordRef: RecordRef) @17.0
+Report.Run#3	Report.Run static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0
+Report.RunModal#3	Report.RunModal static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0

@@ -125,7 +125,7 @@ impl Session {
         Ok(())
     }
 
-    /// `Codeunit.Run`: `Codeunit.Run#1` is the instance form, `#3` the static form by id. The
+    /// `Codeunit.Run`: `Codeunit.Run#1` is the instance form, `#2` the static form by id. The
     /// call is guarded when its result is used (`ret_used`).
     pub(crate) fn codeunit_run(
         &mut self,
@@ -136,7 +136,7 @@ impl Session {
     ) -> Result<Value, Signal> {
         let (inst, record_arg) = match (id, receiver) {
             ("Codeunit.Run#1", Some(Value::Codeunit(rc))) => (self.shared_instance(rc), args.first()),
-            ("Codeunit.Run#3", None) => {
+            ("Codeunit.Run#2", None) => {
                 let Some(Value::Integer(n)) = args.first() else {
                     return unsupported("Codeunit.Run with an id that is not an integer");
                 };

@@ -12,8 +12,6 @@ serde_json.workspace = true
 rowan = "0.16"
 al-builtins.workspace = true
 al-ir.workspace = true
+al-version.workspace = true
 rust_decimal = "1"
 rayon = "1"
-
-[dev-dependencies]
-al-version.workspace = true

@@ -108,7 +108,7 @@ fn run() -> Result<ExitCode, String> {
         runtime::load_app(&corpus_tests.join("al-language-internals-fixture"))?,
         runtime::load_app(&root.join(&cfg.corpus_app))?,
     ];
-    let rt = runtime::CorpusRuntime::run(apps, &symbols);
+    let rt = runtime::CorpusRuntime::run_for(apps, &symbols, Some(&chosen.target));
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",

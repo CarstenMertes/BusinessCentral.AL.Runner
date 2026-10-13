@@ -52,7 +52,20 @@ pub struct CorpusRuntime {
 
 impl CorpusRuntime {
     pub fn run(apps: Vec<al_sema::workspace::AppSource>, symbols: &BTreeSet<String>) -> CorpusRuntime {
-        let (_ws, lowered) = al_sema::lower::compile(apps, symbols);
+        CorpusRuntime::run_for(apps, symbols, None)
+    }
+
+    /// Runs for a target: builtins newer than the target's runtime are refused (ADR-015).
+    /// Without a target, the newest catalog is used.
+    pub fn run_for(
+        apps: Vec<al_sema::workspace::AppSource>,
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+    ) -> CorpusRuntime {
+        let (_ws, lowered) = match target {
+            Some(t) => al_sema::lower::compile_for(apps, symbols, t),
+            None => al_sema::lower::compile(apps, symbols),
+        };
         let blocked = lowered
             .unsupported
             .iter()

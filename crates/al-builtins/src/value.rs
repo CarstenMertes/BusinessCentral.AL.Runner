@@ -85,6 +85,9 @@ pub struct RecordState {
     /// Primary keys marked with `Mark(true)`, and whether `MarkedOnly` restricts the set to them.
     pub marks: Vec<Vec<Value>>,
     pub marked_only: bool,
+    /// `ReadIsolation` and `SecurityFiltering` as member indexes of their platform option types.
+    pub read_isolation: i32,
+    pub security_filtering: i32,
     /// Index of the current key in the table's keys.
     pub key: usize,
     pub ascending: bool,

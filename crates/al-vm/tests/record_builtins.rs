@@ -203,17 +203,15 @@ fn truncate_with_a_normal_filter_or_reset_counter_is_refused_not_guessed() {
 }
 
 #[test]
-fn rename_is_refused_when_an_else_arm_of_a_conditional_relation_points_at_the_table() {
-    // corpus record/TestRenamePropagationConditional.al:71-90: a rename must follow the else
-    // arm's table too, so with re-keying unimplemented the rename of that table is refused.
+fn rename_is_refused_when_a_referencing_relation_has_a_shape_that_is_not_understood() {
+    // The conditional-relation shapes themselves propagate (rename.rs); a where() form the parser does
+    // not read (`upperlimit`) cannot be applied faithfully, so the rename of the table it names refuses.
     let src = r#"
-table 50910 "Parent B" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { } } }
-table 50911 "Parent A" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { } } }
+table 50910 "Parent B" { fields { field(1; Code; Code[20]) { } field(2; Lim; Code[20]) { } } keys { key(PK; Code) { } } }
 table 50912 "Child" {
     fields {
         field(1; Id; Integer) { }
-        field(2; Kind; Option) { OptionMembers = A,B; }
-        field(3; Ref; Code[20]) { TableRelation = if (Kind = const(A)) "Parent A".Code else "Parent B".Code; }
+        field(3; Ref; Code[20]) { TableRelation = "Parent B".Code where(Lim = upperlimit(Id)); }
     }
     keys { key(PK; Id) { } }
 }
@@ -240,7 +238,7 @@ codeunit 50100 C { procedure F() var P: Record "Parent B"; begin P.Code := 'OLD'
     let inst = s.instance(oi);
     let r = s.call(oi, 0, inst, vec![]);
     assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("re-keying")),
+        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("where()") && m.contains("not understood")),
         "{r:?}"
     );
 }
@@ -607,4 +605,98 @@ codeunit 50100 C { procedure F(): Text var R: Record "Temp Only"; S: Record "Tem
     let inst = s.instance(oi);
     let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
     assert_eq!(text(r), "Yes0Yes");
+}
+
+#[test]
+fn locking_isolation_and_security_settings_round_trip() {
+    // corpus record/TestRecordLock.al:13-104, TestSecurityFilteringContracts.al:16-175, session/TestBCLockingContracts.al
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; s: Text; begin
+            R.LockTable(); R.LockTable(true); R.Consistent(true); R.Consistent(false);
+            s := Format(R.ReadConsistency()) + Format(R.ReadPermission()) + Format(R.WritePermission()) + Format(R.RecordLevelLocking());
+            s += '|' + Format(R.SecurityFiltering()) + '|' + Format(R.SecurityFiltering() = SecurityFilter::Validated);
+            R.SecurityFiltering(SecurityFilter::Ignored);
+            s += Format(R.SecurityFiltering() = SecurityFilter::Ignored) + Format(R.SecurityFiltering() = SecurityFilter::Filtered);
+            R.SecurityFiltering(SecurityFilter::Filtered);
+            s += Format(R.SecurityFiltering());
+            s += '|' + Format(R.ReadIsolation());
+            R.ReadIsolation(IsolationLevel::ReadCommitted);
+            s += Format(R.ReadIsolation() = IsolationLevel::ReadCommitted);
+            RR.Open(50900);
+            RR.SecurityFiltering(SecurityFilter::Ignored);
+            s += '|' + Format(RR.SecurityFiltering()) + Format(RR.ReadPermission()) + Format(RR.CountApprox());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "NoYesYesYes|Validated|YesYesNoFiltered|DefaultYes|IgnoredYes0");
+}
+
+#[test]
+fn lock_table_without_waiting_is_refused_not_guessed() {
+    // corpus record/TestRecordLock.al:33-41 expects an error containing 'not supported'; the rest of the text is unpinned
+    let r = run(
+        "procedure F() var R: Record \"ALT T\"; begin R.LockTable(false, true); end;",
+        "F",
+    );
+    assert!(
+        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("LockTable")),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn count_approx_and_current_company() {
+    // corpus record/TestRecordCount.al:52-76 (> 0 with rows), TestRecordChangeCompanyRows.al (CurrentCompany names the company)
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; i: Integer; begin
+            for i := 1 to 3 do begin R.\"No.\" := Format(i); R.Insert(); end;
+            exit(Format(R.CountApprox()) + Format(R.CurrentCompany() <> ''));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "3Yes");
+}
+
+#[test]
+fn positions_round_trip_and_set_position_restores_the_key_fields() {
+    // corpus record/TestRecordExtended.al:188-206, TestRecordFilter.al:480-520, recordref/TestBCMetadataContracts.al:195-212
+    let r = run(
+        "procedure F(): Text var A: Record \"ALT T\"; B: Record \"ALT T\"; P: Text; s: Text; begin
+            A.\"No.\" := 'K1'; A.Grp := 5; A.Insert(); A.\"No.\" := 'K2'; A.Grp := 6; A.Insert();
+            A.FindFirst();
+            P := A.GetPosition();
+            s := P + '|' + A.GetPosition(false) + '|';
+            B.FindLast();
+            B.SetPosition(P);
+            s += B.\"No.\" + Format(B.Grp);
+            B.Find('=');
+            s += '/' + Format(B.Grp);
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "No.=CONST(K1)|Field1=CONST(K1)|K16/5");
+}
+
+#[test]
+fn transfer_fields_copies_by_field_number_and_honours_the_key_flag() {
+    // corpus record/TestRecordTransferFields.al:14-95
+    let r = run(
+        "procedure F(): Text var S: Record \"ALT T\"; D: Record \"ALT T\"; res: Text; begin
+            S.\"No.\" := 'SRC'; S.Grp := 42; S.Descr := 'hello';
+            D.TransferFields(S);
+            res := D.\"No.\" + Format(D.Grp) + D.Descr;
+            Clear(D);
+            D.\"No.\" := 'KEEP';
+            D.TransferFields(S, false);
+            res += '|' + D.\"No.\" + Format(D.Grp);
+            Clear(D);
+            D.TransferFields(S, true, true);
+            res += '|' + D.\"No.\";
+            exit(res);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "SRC42hello|KEEP42|SRC");
 }

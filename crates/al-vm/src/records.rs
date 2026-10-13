@@ -194,7 +194,7 @@ impl Session {
 
     /// Every write gets a new, increasing SystemRowVersion. It is returned, not stored: a
     /// refused write must not hand the buffer one (corpus record/TestRowVersion*, 60247).
-    fn next_row_version(&mut self, t: &TableDef) -> Option<(usize, Value)> {
+    pub(crate) fn next_row_version(&mut self, t: &TableDef) -> Option<(usize, Value)> {
         let i = t.fields.iter().position(|f| f.id == 2_000_000_005)?;
         self.next_row_version += 1;
         Some((i, Value::BigInteger(self.next_row_version)))
@@ -261,7 +261,7 @@ impl Session {
     }
 
     /// Rows passing the filters (and the marks, with `MarkedOnly`).
-    fn count_rows(&mut self, rec: &Rec, t: &TableDef) -> Result<usize, Signal> {
+    pub(crate) fn count_rows(&mut self, rec: &Rec, t: &TableDef) -> Result<usize, Signal> {
         if !rec.borrow().marked_only {
             let filters = rec.borrow().filters.clone();
             let cx = self.cx.clone();
@@ -643,28 +643,12 @@ impl Session {
             }
             "Rename" => {
                 self.check_writable(&t, "Rename")?;
-                let name = t.name.to_lowercase();
-                let related = self
-                    .engine
-                    .program
-                    .objects
-                    .iter()
-                    .filter_map(|o| o.table.as_ref())
-                    .flat_map(|tb| &tb.fields)
-                    .any(|f| {
-                        f.relation_table.as_deref() == Some(name.as_str())
-                            // Any arm of a conditional relation counts, not only the first
-                            // (corpus record/TestRenamePropagationConditional.al:71-111).
-                            || f.properties.iter().any(|(k, v)| {
-                                k.eq_ignore_ascii_case("TableRelation") && crate::recmeta::mentions_table(v, &name)
-                            })
-                    });
-                if related {
-                    return unsupported(format!(
-                        "Rename of {}: other tables relate to it (re-keying related rows is not implemented yet)",
-                        t.name
-                    ));
-                }
+                // Tables are re-keyed through the real store: a temporary record has no relations.
+                let refs = if rec.borrow().temporary {
+                    Vec::new()
+                } else {
+                    self.rename_references(&t)?
+                };
                 let old = rec.borrow().fields.clone();
                 let mut new = old.clone();
                 for (n, &field) in t.keys[0].iter().enumerate() {
@@ -692,6 +676,8 @@ impl Session {
                         if let Some((i, v)) = version {
                             rec.borrow_mut().fields[i] = v;
                         }
+                        let fields = rec.borrow().fields.clone();
+                        self.propagate_rename(&t, &refs, &old, &fields)?;
                         Ok(Value::Boolean(true))
                     }
                     RenameOutcome::NotFound => {

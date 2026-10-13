@@ -461,3 +461,20 @@ fn field_type_and_class_are_system_options() {
     );
     assert_eq!(text(r), "Integer/Normal/YesYesNo|OptionCodeTextBoolean|FlowFieldYes");
 }
+
+#[test]
+fn gettable_works_on_a_ref_that_was_never_opened_even_through_a_variant() {
+    // corpus _fixtures/Assert.al:95-130 (Assert.RecordIsEmpty(RecVariant): `RecRef.GetTable(RecVariant)` on a fresh ref)
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; V: Variant; RR: RecordRef; s: Text; begin
+            R.\"No.\" := 'A'; R.Insert();
+            R.SetRange(Grp, 5);
+            V := R;
+            RR.GetTable(V);
+            s := Format(RR.Number) + Format(RR.IsEmpty()) + Format(RR.HasFilter()) + RR.GetFilters();
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "50900YesYesGrp: 5");
+}

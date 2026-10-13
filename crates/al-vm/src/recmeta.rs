@@ -216,6 +216,57 @@ impl Session {
                 }
                 self.field_relation(rec, t, pos).map(Value::Integer)
             }
+            // Locking and permissions are not observable in one session: only the answers the corpus pins.
+            "LockTable" => {
+                // corpus record/TestRecordLock.al:33-41 expects an error mentioning 'not supported' for Wait = false.
+                if matches!(args.first(), Some(Value::Boolean(false))) {
+                    return unsupported("LockTable(false) is rejected in the cloud (error text not pinned)");
+                }
+                Ok(Value::Null)
+            }
+            "Consistent" => Ok(Value::Null),
+            "ReadConsistency" => Ok(Value::Boolean(false)),
+            "RecordLevelLocking" => Ok(Value::Boolean(true)),
+            "ReadPermission" | "WritePermission" => Ok(Value::Boolean(true)),
+            "CountApprox" => self.count_rows(rec, t).map(|n| Value::Integer(n as i32)),
+            "CurrentCompany" => Ok(Value::Text(self.cx.company.clone())),
+            "ReadIsolation" | "SecurityFiltering" => {
+                let (enum_name, is_iso) = if method == "ReadIsolation" {
+                    ("IsolationLevel", true)
+                } else {
+                    ("SecurityFilter", false)
+                };
+                let members = al_builtins::sysenum::option_members(enum_name).expect("known");
+                match args.first() {
+                    None => {
+                        let r = rec.borrow();
+                        let i = if is_iso { r.read_isolation } else { r.security_filtering };
+                        Ok(Value::Option(i, members.into()))
+                    }
+                    Some(Value::Option(i, _)) => {
+                        let mut r = rec.borrow_mut();
+                        if is_iso {
+                            r.read_isolation = *i;
+                        } else {
+                            r.security_filtering = *i;
+                        }
+                        Ok(Value::Null)
+                    }
+                    Some(other) => unsupported(format!("{method}({other:?})")),
+                }
+            }
+            "GetPosition" => {
+                let use_names = match args.first() {
+                    Some(v) => ops::truthy(v)?,
+                    None => true,
+                };
+                self.get_position(rec, t, use_names).map(Value::Text)
+            }
+            "SetPosition" => {
+                let text = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
+                self.set_position(rec, t, &text).map(|()| Value::Null)
+            }
+            "TransferFields" => self.transfer_fields(rec, t, args),
             "GetBySystemId" => self.get_by_system_id(rec, t, args),
             "ModifyAll" => self.modify_all(rec, t, args),
             // Doc (Record.Ascending): with an argument sets the sort direction of the current key,
@@ -371,6 +422,121 @@ impl Session {
                     ));
                 }
             }
+        }
+        Ok(Value::Null)
+    }
+
+    /// `GetPosition`: the current key's fields, then the primary key fields it lacks, as
+    /// `Name=CONST(value)` (`Field<n>` with `UseNames = false`). The corpus only round-trips it
+    /// through SetPosition (docs/probes-needed.md).
+    fn get_position(&self, rec: &Rec, t: &TableDef, use_names: bool) -> Result<String, Signal> {
+        let r = rec.borrow();
+        let mut fields: Vec<usize> = t.keys[r.key].clone();
+        let missing: Vec<usize> = t.keys[0].iter().copied().filter(|p| !fields.contains(p)).collect();
+        fields.extend(missing);
+        let mut parts = Vec::new();
+        for p in fields {
+            let value = self.message_value(&r.fields[p])?;
+            if value.contains([')', ',', '\'', '"']) {
+                return unsupported("a position value that needs quoting");
+            }
+            let name = if use_names {
+                t.fields[p].name.clone()
+            } else {
+                format!("Field{}", t.fields[p].id)
+            };
+            parts.push(format!("{name}=CONST({value})"));
+        }
+        Ok(parts.join(","))
+    }
+
+    /// `SetPosition`: puts the key values of a position into the buffer (the row is not read).
+    fn set_position(&self, rec: &Rec, t: &TableDef, text: &str) -> Result<(), Signal> {
+        let mut values = Vec::new();
+        for item in text.split(',') {
+            let (name, rest) = item
+                .split_once('=')
+                .ok_or_else(|| Signal::Unsupported(format!("position `{text}`")))?;
+            let value = rest
+                .trim()
+                .strip_prefix("CONST(")
+                .and_then(|v| v.strip_suffix(')'))
+                .ok_or_else(|| Signal::Unsupported(format!("position `{text}`")))?;
+            let name = name.trim();
+            let pos = t
+                .fields
+                .iter()
+                .position(|f| f.name.eq_ignore_ascii_case(name))
+                .or_else(|| {
+                    name.strip_prefix("Field")
+                        .and_then(|n| n.parse::<u32>().ok())
+                        .and_then(|id| t.fields.iter().position(|f| f.id == id))
+                })
+                .ok_or_else(|| Signal::Unsupported(format!("position field `{name}`")))?;
+            let expr = al_builtins::filter::parse_filter(value, &[], &t.fields[pos].ty)
+                .map_err(|e| Signal::Unsupported(format!("SetPosition: {e}")))?;
+            let al_builtins::filter::FilterExpr::Eq(v) = expr else {
+                return unsupported(format!("position value `{value}`"));
+            };
+            values.push((pos, v));
+        }
+        let mut r = rec.borrow_mut();
+        for (pos, v) in values {
+            r.fields[pos] = v;
+        }
+        Ok(())
+    }
+
+    /// `TransferFields(From [, InitPrimaryKeyFields [, SkipFieldsNotMatchingType]])`: normal fields
+    /// are matched by field number; a primary key field is only taken when asked for; a field of
+    /// another type is skipped or refused (corpus record/TestRecordTransferFields.al:14-95).
+    fn transfer_fields(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
+        let Some(Value::Record(src)) = args.first() else {
+            return unsupported(format!("TransferFields from {:?}", args.first()));
+        };
+        let init_pk = match args.get(1) {
+            Some(v) => ops::truthy(v)?,
+            None => true,
+        };
+        let skip_mismatch = match args.get(2) {
+            Some(v) => ops::truthy(v)?,
+            None => false,
+        };
+        if Rc::ptr_eq(src, rec) {
+            return Ok(Value::Null);
+        }
+        let (src_table, src_fields) = {
+            let s = src.borrow();
+            (s.table as usize, s.fields.clone())
+        };
+        let from = self.engine.tables[src_table]
+            .clone()
+            .ok_or_else(|| Signal::Unsupported("TransferFields from a table without a schema".into()))?;
+        let same_kind = |a: &al_builtins::value::RtType, b: &al_builtins::value::RtType| {
+            std::mem::discriminant(a) == std::mem::discriminant(b)
+        };
+        let mut updates = Vec::new();
+        for (dp, df) in t.fields.iter().enumerate() {
+            if df.id >= 2_000_000_000 || !df.stored {
+                continue;
+            }
+            if !init_pk && t.keys[0].contains(&dp) {
+                continue;
+            }
+            let Some(sp) = from.fields.iter().position(|f| f.id == df.id && f.stored) else {
+                continue;
+            };
+            if !same_kind(&from.fields[sp].ty, &df.ty) {
+                if skip_mismatch {
+                    continue;
+                }
+                return unsupported("TransferFields across fields of different types (error text not pinned)");
+            }
+            updates.push((dp, ops::convert(src_fields[sp].clone(), &df.ty)?));
+        }
+        let mut r = rec.borrow_mut();
+        for (dp, v) in updates {
+            r.fields[dp] = v;
         }
         Ok(Value::Null)
     }

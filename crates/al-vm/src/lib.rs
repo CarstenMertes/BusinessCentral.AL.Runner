@@ -14,6 +14,7 @@ mod recmeta;
 mod records;
 mod refs;
 mod relations;
+mod rename;
 mod views;
 
 pub struct Engine {
@@ -166,6 +167,9 @@ impl Session {
                     filter_group: 0,
                     marks: Vec::new(),
                     marked_only: false,
+                    read_isolation: 0,
+                    // A record in a test run is Validated (corpus record/TestSecurityFilteringContracts.al:161-175).
+                    security_filtering: 2,
                     key: 0,
                     ascending: true,
                     position: None,

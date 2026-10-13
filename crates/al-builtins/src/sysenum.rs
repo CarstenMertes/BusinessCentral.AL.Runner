@@ -9,6 +9,16 @@
 pub fn members(name: &str) -> Option<&'static [&'static str]> {
     match name.to_ascii_lowercase().as_str() {
         "fieldclass" => Some(&["Normal", "FlowField", "FlowFilter"]),
+        // Ordinals of these two are not pinned; the corpus only sets a member and reads it back
+        // (record/TestSecurityFilteringContracts.al, TestRecordLock.al).
+        "securityfilter" => Some(&["Filtered", "Ignored", "Validated", "Disallowed"]),
+        "isolationlevel" => Some(&[
+            "Default",
+            "ReadUncommitted",
+            "ReadCommitted",
+            "RepeatableRead",
+            "UpdLock",
+        ]),
         "fieldtype" => Some(&[
             "TableFilter",
             "RecordID",

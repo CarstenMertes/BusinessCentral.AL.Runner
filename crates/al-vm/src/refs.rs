@@ -158,6 +158,19 @@ impl Session {
                 *lib.borrow_mut() = LibraryValue::Empty;
                 return Ok(Value::Null);
             }
+            // Doc (RecordRef.GetTable): the ref takes the record variable's table, buffer and
+            // filters. The corpus pins the other half: the Record is left alone
+            // (recordref/TestRecordRefGetSetTableContracts.al:30-60).
+            // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
+            "GetTable" => {
+                let Some(Value::Record(src)) = args.first() else {
+                    return unsupported(format!("RecordRef.GetTable of {:?}", args.first()));
+                };
+                let copy = src.borrow().clone();
+                *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));
+                return Ok(Value::Null);
+            }
+
             "Number" => {
                 if let LibraryValue::SystemTable(n) = &*lib.borrow() {
                     return Ok(Value::Integer(*n as i32));
@@ -191,6 +204,10 @@ impl Session {
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),
+            "LockTable" | "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission"
+            | "CountApprox" | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" => {
+                self.record_meta_op(method, &rec, &t, args)
+            }
             // Doc (RecordRef.Get): loads the row a RecordId names; the table must be the ref's own.
             "Get" => {
                 let key = match args.first() {
@@ -263,17 +280,6 @@ impl Session {
                         "RecordRef.KeyIndex({i}) out of range (error text not pinned yet)"
                     )),
                 }
-            }
-            // Doc (RecordRef.GetTable): the ref takes the record variable's table, buffer and
-            // filters. The corpus pins the other half: the Record is left alone
-            // (recordref/TestRecordRefGetSetTableContracts.al:30-60).
-            "GetTable" => {
-                let Some(Value::Record(src)) = args.first() else {
-                    return unsupported(format!("RecordRef.GetTable of {:?}", args.first()));
-                };
-                let copy = src.borrow().clone();
-                *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));
-                Ok(Value::Null)
             }
             // Doc (RecordRef.SetTable): the record variable takes the ref's buffer and
             // filters. The corpus pins that the Record's old buffer does not flow into the

@@ -32,4 +32,9 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "IsolatedStorage.SetEncrypted#1",
     "IsolatedStorage.SetEncrypted#2",
     "System.CodeCoverageLog#1",
+    "Database.RegisterTableConnection#1",
+    "Database.UnregisterTableConnection#1",
+    "Database.HasTableConnection#1",
+    "Database.SetDefaultTableConnection#1",
+    "Database.GetDefaultTableConnection#1",
 ];

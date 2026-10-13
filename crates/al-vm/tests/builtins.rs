@@ -986,3 +986,67 @@ fn guiallowed_is_true_in_a_test_session_with_or_without_the_system_prefix() {
     let r = text_of("", "exit(Format(GuiAllowed()) + Format(System.GuiAllowed()));");
     assert_eq!(r.unwrap(), "YesYes");
 }
+
+#[test]
+fn table_connections_are_registered_found_by_any_case_and_unregistered() {
+    // session/TestDatabaseTableConnectionCrm.al:34-117.
+    let r = text_of(
+        "",
+        "exit(Format(HasTableConnection(TableConnectionType::CRM, 'ALTTEST'))
+            + '|' + GetDefaultTableConnection(TableConnectionType::CRM)
+            + '|' + Reg(TableConnectionType::CRM, 'ALTTEST', '@@test@@')
+            + '|' + Format(HasTableConnection(TableConnectionType::CRM, 'ALTTEST'))
+            + Format(HasTableConnection(TableConnectionType::CRM, 'alttest'))
+            + Format(HasTableConnection(TableConnectionType::CRM, 'ALTNEVER'))
+            + '|' + SetDef('ALTTEST')
+            + '|' + GetDefaultTableConnection(TableConnectionType::CRM)
+            + '|' + Unreg()
+            + '|' + Format(HasTableConnection(TableConnectionType::CRM, 'ALTTEST'))
+            + '|' + GetDefaultTableConnection(TableConnectionType::CRM));
+         end;
+         local procedure Reg(T: TableConnectionType; N: Text; C: Text): Text
+         begin RegisterTableConnection(T, N, C); exit('reg');
+         end;
+         local procedure SetDef(N: Text): Text
+         begin SetDefaultTableConnection(TableConnectionType::CRM, N); exit('def');
+         end;
+         local procedure Unreg(): Text
+         begin UnregisterTableConnection(TableConnectionType::CRM, 'ALTTEST'); exit('unreg');",
+    );
+    assert_eq!(r.unwrap(), "No||reg|YesYesNo|def|ALTTEST|unreg|No|");
+}
+
+#[test]
+fn registering_a_table_connection_twice_names_it_in_the_error() {
+    // session/TestDatabaseTableConnectionCrm.al:76-87 (the name is the pinned fragment).
+    let r = text_of(
+        "",
+        "RegisterTableConnection(TableConnectionType::CRM, 'ALTTEST', '@@test@@');
+         asserterror RegisterTableConnection(TableConnectionType::CRM, 'ALTTEST', '@@test@@');
+         exit(GetLastErrorText());",
+    );
+    assert!(r.unwrap().contains("ALTTEST"));
+}
+
+#[test]
+fn registering_an_external_sql_connection_is_a_permission_error() {
+    // session/TestMiscComplete.al:185-194 (the word `permission` is the pinned fragment).
+    let r = text_of(
+        "",
+        "asserterror Database.RegisterTableConnection(TableConnectionType::ExternalSQL, 'TestConn', '');
+         exit(GetLastErrorText());",
+    );
+    assert!(r.unwrap().contains("permission"));
+}
+
+#[test]
+fn a_connection_string_other_than_the_test_connection_is_refused() {
+    let r = text_of(
+        "",
+        "RegisterTableConnection(TableConnectionType::CRM, 'ALTTEST', 'Url=https://example.invalid'); exit('x');",
+    );
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("@@test@@"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}

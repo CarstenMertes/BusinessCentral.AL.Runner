@@ -1470,6 +1470,21 @@ impl Lowerer<'_> {
             Ty::Builtin(n) => RtType::Library(n.clone()),
             Ty::Record { table, temporary } => {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
+                // A table of another type (CRM, ExternalSQL, ...) is served by a table connection.
+                let kind = self
+                    .ws
+                    .object_ast(t)
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("TableType"))
+                    .map(|p| p.value_text().trim().to_string());
+                if let Some(k) =
+                    kind.filter(|k| !k.eq_ignore_ascii_case("normal") && !k.eq_ignore_ascii_case("temporary"))
+                {
+                    return Err(format!(
+                        "table \"{}\" has TableType = {k}: it is served by a table connection, which the runtime does not model",
+                        crate::types::display_name(table)
+                    ));
+                }
                 // `TableType = Temporary` makes every record of the table temporary (corpus
                 // record/TestTempTableContracts.al:16).
                 RtType::Record(t as u32, *temporary || self.is_temporary_table(t))
@@ -2777,6 +2792,31 @@ table 50912 \"ALT Head\"
         // "Date Filter" is position 1 of ALT Head, Totaling position 2.
         assert_eq!(m.conds[0].value, ir::CalcValue::UpperLimit(1));
         assert_eq!(m.conds[1].value, ir::CalcValue::FieldFilter(2));
+    }
+
+    #[test]
+    fn a_record_of_a_table_that_is_not_normal_or_temporary_is_refused() {
+        // session/TestDatabaseTableConnectionCrm.al:162-176: a TableType = CRM table is served
+        // by a table connection, which the runtime does not model.
+        let (_, l) = lower_src(
+            "table 50960 Crm { TableType = CRM; fields { field(1; Id; Guid) { } } }
+             table 50961 Plain { TableType = Normal; fields { field(1; Id; Integer) { } } }
+             codeunit 50962 C {
+                procedure A() var R: Record Crm; begin R.Init(); end;
+                procedure B() var R: Record Plain; begin R.Init(); end;
+             }",
+        );
+        let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+        let reasons = |n: &str| {
+            let ri = l.program.objects[oi].routines.iter().position(|r| r.name == n).unwrap();
+            l.unsupported[oi][ri].clone()
+        };
+        assert!(
+            reasons("A").iter().any(|r| r.contains("TableType = CRM")),
+            "{:?}",
+            reasons("A")
+        );
+        assert!(reasons("B").is_empty(), "{:?}", reasons("B"));
     }
 
     #[test]

@@ -91,6 +91,9 @@ pub struct Session {
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
+    /// Registered table connections by (type member, lower-case name), and the default name per type.
+    pub(crate) table_connections: std::collections::HashSet<(i32, String)>,
+    pub(crate) default_table_connection: std::collections::HashMap<i32, String>,
     /// Number sequences by (company, name); a global sequence has an empty company.
     pub(crate) sequences: std::collections::HashMap<(String, String), sessionops::Sequence>,
     /// The one instance of each `SingleInstance = true` codeunit in this session.
@@ -179,6 +182,8 @@ impl Session {
             isolated_storage: Default::default(),
             install_scope: false,
             sequences: Default::default(),
+            table_connections: Default::default(),
+            default_table_connection: Default::default(),
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,

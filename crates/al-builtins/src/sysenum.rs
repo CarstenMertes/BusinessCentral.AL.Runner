@@ -51,6 +51,9 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "SystemMetadata",
             "AnonymousData",
         ]),
+        // Only CRM and ExternalSQL are named by the corpus (session/TestDatabaseTableConnectionCrm.al,
+        // session/TestMiscComplete.al:192); the ordinals are not pinned.
+        "tableconnectiontype" => Some(&["CRM", "ExternalSQL"]),
         "errortype" => Some(&["Client", "Internal"]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).

@@ -1878,10 +1878,12 @@ impl Lowerer<'_> {
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
-            let setter = self
-                .catalog
-                .by_id(&id)
-                .is_some_and(|s| s.receiver == "FieldRef" && s.name == "Value");
+            // `CurrPage.Editable := x` is the setter form of `CurrPage.Editable(x)` (corpus
+            // handlers/TestPageModalNewRowLine_Objects.al:69, outcomes in
+            // TestPageModalNewRowLine_Tests.al).
+            let setter = self.catalog.by_id(&id).is_some_and(|s| {
+                (s.receiver == "FieldRef" && s.name == "Value") || (s.receiver == "Page" && s.name == "Editable")
+            });
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));
@@ -1896,7 +1898,7 @@ impl Lowerer<'_> {
                     )
                 });
                 if compound {
-                    return Err("compound assignment to FieldRef.Value is not lowered yet".into());
+                    return Err("compound assignment to a setter-form builtin is not lowered yet".into());
                 }
                 let recv = kids[0].children().next().ok_or("member base")?;
                 let receiver = match self.place(&recv) {

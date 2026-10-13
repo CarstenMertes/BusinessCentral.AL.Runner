@@ -87,6 +87,22 @@ page 50999 "PG Wizard"
     procedure GetTrace(): Text begin exit(Trace + ':' + Format(Step)); end;
 }
 
+page 50997 "PG EditAssign"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    trigger OnOpenPage() begin CurrPage.Editable := false; end;
+}
+
+page 50996 "PG EditCall"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    trigger OnOpenPage() begin CurrPage.Editable(false); end;
+}
+
 page 50005 "PG Maker"
 {
     PageType = List;
@@ -961,4 +977,24 @@ fn clear_of_an_open_testpage_variable_is_refused() {
         Err(Signal::Unsupported(why)) => assert!(why.contains("Clear of a TestPage that is open"), "{why}"),
         other => panic!("{other:?}"),
     }
+}
+
+// handlers/TestPageModalNewRowLine_Objects.al:69: `CurrPage.Editable := x` is the setter form of
+// `CurrPage.Editable(x)`; the outcome of the method form is pinned by
+// handlers/TestPageEditable_Tests.al:150-180.
+#[test]
+fn assigning_currpage_editable_is_the_same_as_calling_it() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; A: TestPage \"PG EditAssign\"; B: TestPage \"PG EditCall\"; X: Text; begin
+                {}
+                A.OpenEdit(); B.OpenEdit();
+                X := Format(A.Editable()) + Format(A.NoCtl.Editable()) + '|' + Format(B.Editable()) + Format(B.NoCtl.Editable());
+                exit(X);
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "NoNo|NoNo");
 }

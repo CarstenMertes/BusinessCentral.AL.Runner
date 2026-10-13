@@ -69,6 +69,30 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         let l = crate::pages::layout(&obj);
         page_reasons[oi].extend(l.reasons.iter().cloned());
         for c in l.controls.iter().filter(|c| c.kind == ir::ControlKind::Part) {
+            let prop_of = |n: &str| {
+                c.section
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case(n))
+                    .map(|p| p.value_text())
+            };
+            if let Some(link) = prop_of("SubPageLink") {
+                if let Err(why) = crate::pages::parse_sub_page_link(&link) {
+                    page_reasons[oi].push(format!("part {}: {why} is not supported yet", c.name));
+                }
+            }
+            if let Some(provider) = prop_of("Provider") {
+                let provider = provider.trim().trim_matches('"').to_string();
+                if !l
+                    .controls
+                    .iter()
+                    .any(|p| p.kind == ir::ControlKind::Part && p.name.eq_ignore_ascii_case(&provider))
+                {
+                    page_reasons[oi].push(format!(
+                        "part {}: Provider `{provider}` is not a part of the page",
+                        c.name
+                    ));
+                }
+            }
             match c.section.args().get(1) {
                 Some(n) => match ws.resolve_ref(o.file, ObjKind::Page, &crate::types::qualified_parts(n)) {
                     Resolution::Found(p) => page_parts[oi].push(p),

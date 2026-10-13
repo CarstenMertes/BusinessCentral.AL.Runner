@@ -145,3 +145,28 @@ fn the_default_is_the_newest_version_with_an_oracle() {
     assert_eq!(code, 0, "{err}");
     assert_eq!(out.lines().next(), Some("target: BC 29.0, runtime 16.0"), "{out}");
 }
+
+#[test]
+fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
+    require_corpus();
+    let dir = tempfile::tempdir().unwrap();
+    let json = dir.path().join("pass-rate.json");
+    let (code, out, err) = cli(&["--all-versions", "--json", json.to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+    for v in ["27", "28", "29"] {
+        let f = dir.path().join(format!("pass-rate-{v}.json"));
+        assert!(f.exists(), "no report for BC {v}; stdout:\n{out}");
+    }
+    assert!(!json.exists(), "all-versions writes only per-version files");
+    assert!(out.contains("Version comparison"), "{out}");
+    assert!(out.contains("oracle: same cases in every version"), "{out}");
+    // The BC 29 differences the runtime does not model yet show up here.
+    assert!(out.contains("runtime:") && out.contains("differ"), "{out}");
+}
+
+#[test]
+fn all_versions_cannot_be_combined_with_one_version() {
+    require_corpus();
+    let (code, _, err) = cli(&["--all-versions", "--bc-version", "28"]);
+    assert_eq!(code, 2, "{err}");
+}

@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod corpus;
+pub mod drift;
 pub mod oracle;
 pub mod output;
 pub mod report;

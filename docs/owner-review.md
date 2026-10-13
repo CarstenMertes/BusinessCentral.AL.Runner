@@ -115,4 +115,17 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
-
+- 2026-10-14, ADR-018: a column of a platform table that no corpus test pins is refused where code names it
+  (at lowering), not filled with a default.
+- 2026-10-14, ADR-018: package ids are a function of the app id (not empty, one per app, different between apps);
+  objects of the platform app have none.
+- 2026-10-14, ADR-018: the default host lists five Windows time zones; Windows Language holds three rows (1031,
+  1033, 2057) and refuses a read that needs any other id up to 65535.
+- 2026-10-14, ADR-018: a static event subscriber that cannot reach a global of its codeunit runs, whatever the
+  instance lifetime is; one that can stays refused until a probe pins the lifetime (44 tests moved).
+- 2026-10-14, ADR-018: a `Get` that finds nothing in an empty table of a dependency app, in that app's code, is
+  refused when its result is used, until the install baseline exists.
+- 2026-10-14, ADR-018: the session seeds the Company (`My Company`), the User (`TESTUSER`) and the SUPER Access
+  Control row when it starts, as ordinary stored rows. The install baseline branch must not seed them again.
+- 2026-10-14, ADR-018: Page Metadata and Page Control Field spellings the corpus does not pin (declared
+  `Visible`/`Enabled`/`Editable` in lower case, `SourceTableView` only for one `where(f = const(v))`).

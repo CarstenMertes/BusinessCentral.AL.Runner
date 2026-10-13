@@ -30,7 +30,8 @@ fn main() {
             x.app,
             x.namespace,
             x.usings,
-            x.green.text_len()
+            ws.green(ws.files.iter().position(|g| g.path == x.path).unwrap())
+                .text_len()
         )
         .unwrap();
     }

@@ -2,7 +2,7 @@
 //! (with extensions merged), and procedure signatures.
 
 use crate::types::Ty;
-use crate::workspace::{ObjKind, Resolution, Workspace};
+use crate::workspace::{ObjKind, Workspace};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldClass {
@@ -100,51 +100,97 @@ impl Members {
     }
 }
 
-/// Builds members for every object; an extended object's members include
-/// those of its extensions.
-pub fn build(ws: &Workspace) -> Vec<Members> {
-    let mut out: Vec<Members> = (0..ws.objects.len()).map(|i| own_members(ws, i)).collect();
-    for (i, o) in ws.objects.iter().enumerate() {
-        let Some(target_kind) = o.kind.extended() else { continue };
-        let Some(base) = ws.object_ast(i).extends_parts() else {
+/// The members of every object, computed when first asked for. An extended object's
+/// members include those of its extensions. Asking parses the object's file if it is a
+/// dependency file that was only scanned at load (ADR-013 decision 6).
+pub struct MemberTable<'a> {
+    ws: &'a Workspace,
+    cells: Vec<std::sync::OnceLock<Members>>,
+}
+
+impl<'a> MemberTable<'a> {
+    pub fn new(ws: &'a Workspace) -> MemberTable<'a> {
+        MemberTable {
+            ws,
+            cells: (0..ws.objects.len()).map(|_| std::sync::OnceLock::new()).collect(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.cells.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty()
+    }
+
+    pub fn get(&self, i: usize) -> &Members {
+        self.cells[i].get_or_init(|| merged_members(self.ws, i))
+    }
+
+    /// Every object's members, computing the ones not asked for yet.
+    pub fn iter(&self) -> impl Iterator<Item = &Members> {
+        (0..self.cells.len()).map(|i| self.get(i))
+    }
+}
+
+impl std::ops::Index<usize> for MemberTable<'_> {
+    type Output = Members;
+    fn index(&self, i: usize) -> &Members {
+        self.get(i)
+    }
+}
+
+/// Builds the member table; an extended object's members include those of its extensions.
+pub fn build(ws: &Workspace) -> MemberTable<'_> {
+    MemberTable::new(ws)
+}
+
+/// Members of object `i` with its extensions merged in. An object whose source cannot be
+/// used (a dependency file that does not parse) has none.
+fn merged_members(ws: &Workspace, i: usize) -> Members {
+    if !ws.usable(i) {
+        return Members::default();
+    }
+    let mut target = own_members(ws, i);
+    for &e in ws.extensions_of(i) {
+        let o = &ws.objects[e];
+        if !ws.usable(e) {
             continue;
-        };
-        if let Resolution::Found(t) = ws.resolve_ref(o.file, target_kind, &base) {
-            let ext = out[i].clone();
-            let target = &mut out[t];
-            target.fields.extend(ext.fields);
-            target.enum_values.extend(ext.enum_values);
-            target.enum_captions.extend(ext.enum_captions);
-            target.enum_impls.extend(ext.enum_impls);
-            target.procedures.extend(ext.procedures);
-            // `modify(Field) { Caption = ...; }` changes properties of an existing field
-            // (corpus tableextension/TestTableExtFieldModify.al:40-67, record/TestRecordCaptionSeparators.al:79-85).
-            if o.kind == ObjKind::TableExtension {
-                for sec in ws
-                    .object_ast(i)
-                    .sections()
-                    .filter(|s| s.name().eq_ignore_ascii_case("fields"))
-                {
-                    for m in sec.sections().filter(|m| m.name().eq_ignore_ascii_case("modify")) {
-                        let Some(name) = m.args().first().cloned() else {
-                            continue;
-                        };
-                        let Some(field) = out[t].fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&name)) else {
-                            continue;
-                        };
-                        for p in m.properties() {
-                            let (k, v) = (p.name(), p.value_text());
-                            match field.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(&k)) {
-                                Some(slot) => slot.1 = v,
-                                None => field.properties.push((k, v)),
-                            }
+        }
+        let ext = own_members(ws, e);
+        target.fields.extend(ext.fields);
+        target.enum_values.extend(ext.enum_values);
+        target.enum_captions.extend(ext.enum_captions);
+        target.enum_impls.extend(ext.enum_impls);
+        target.procedures.extend(ext.procedures);
+        // `modify(Field) { Caption = ...; }` changes properties of an existing field
+        // (corpus tableextension/TestTableExtFieldModify.al:40-67, record/TestRecordCaptionSeparators.al:79-85).
+        if o.kind == ObjKind::TableExtension {
+            for sec in ws
+                .object_ast(e)
+                .sections()
+                .filter(|s| s.name().eq_ignore_ascii_case("fields"))
+            {
+                for m in sec.sections().filter(|m| m.name().eq_ignore_ascii_case("modify")) {
+                    let Some(name) = m.args().first().cloned() else {
+                        continue;
+                    };
+                    let Some(field) = target.fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&name)) else {
+                        continue;
+                    };
+                    for p in m.properties() {
+                        let (k, v) = (p.name(), p.value_text());
+                        match field.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(&k)) {
+                            Some(slot) => slot.1 = v,
+                            None => field.properties.push((k, v)),
                         }
                     }
                 }
             }
         }
     }
-    out
+    target
 }
 
 /// Platform fields every table has (learn.microsoft.com, "System fields").
@@ -158,7 +204,7 @@ const SYSTEM_FIELDS: &[(u32, &str, Ty)] = &[
 ];
 
 /// The text of the first `'…'` literal in a property value (`'It''s', Locked = true` → `It's`).
-fn first_string_literal(value: &str) -> Option<String> {
+pub(crate) fn first_string_literal(value: &str) -> Option<String> {
     let rest = value.trim().strip_prefix('\'')?;
     let mut out = String::new();
     let mut chars = rest.chars().peekable();
@@ -449,7 +495,7 @@ fn relation_target(v: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::AppSource;
+    use crate::workspace::{AppSource, Resolution};
 
     fn ws(files: &[(&str, &str)]) -> Workspace {
         Workspace::load(

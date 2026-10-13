@@ -95,6 +95,31 @@ fn main() {
             lowered.program.objects.len(),
             checked.diagnostics.len()
         );
+        if let Some(d) = &checked.demand {
+            let mut by_kind = std::collections::BTreeMap::<(&str, u8), usize>::new();
+            for (i, l) in d.level.iter().enumerate() {
+                if *l > 0 {
+                    *by_kind.entry((ws.objects[i].kind.label(), *l)).or_default() += 1;
+                }
+            }
+            let parsed = ws.files.iter().filter(|f| f.lazy).count();
+            let dep_objects = (0..ws.objects.len()).filter(|&i| ws.is_dependency(i)).count();
+            let routines: usize = lowered
+                .program
+                .objects
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| ws.is_dependency(*i))
+                .map(|(_, o)| o.routines.len())
+                .sum();
+            summary += &format!(
+                "\ndemand: {} of {dep_objects} dependency objects active ({} files lazy of {}), {} routines reached of {routines} listed\n{by_kind:?}",
+                d.level.iter().filter(|l| **l > 0).count(),
+                parsed,
+                ws.files.len(),
+                d.reached.len()
+            );
+        }
         drop(engine);
     }
     println!("corpus: {:.2} MB of .al, {summary}, best of {runs}", bytes as f64 / 1e6);

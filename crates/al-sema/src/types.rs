@@ -104,6 +104,8 @@ impl Ty {
             },
             "testpage" => Ty::TestPage(obj()),
             "testrequestpage" => Ty::TestRequestPage(obj()),
+            // A .NET type is named, not modelled: the type keeps its name so a refusal can say which.
+            "dotnet" => Ty::Builtin(format!("DotNet {}", display_name(&obj()))),
             "list" => Ty::List(arg(0)),
             "dictionary" => Ty::Dictionary(arg(0), arg(1)),
             "array" => Ty::Array(t.size_args(), arg(0)),

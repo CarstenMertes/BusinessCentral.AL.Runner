@@ -6,7 +6,7 @@
 
 use crate::calcformula::{CondValue, parse_conditions};
 use crate::lower::{calc_const, rewrite_quotes, scalar_rt};
-use crate::members::{FieldClass, Members};
+use crate::members::{FieldClass, MemberTable};
 use crate::types::Ty;
 use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_builtins::value::RtType;
@@ -53,7 +53,7 @@ const HARMLESS_QUERY_PROPERTIES: &[&str] = &[
     "querycategory",
 ];
 
-pub fn layout(ws: &Workspace, members: &[Members], oi: usize) -> QueryLayout {
+pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayout {
     let obj = ws.object_ast(oi);
     let mut b = Builder {
         ws,
@@ -115,7 +115,7 @@ pub fn layout(ws: &Workspace, members: &[Members], oi: usize) -> QueryLayout {
 
 struct Builder<'a> {
     ws: &'a Workspace,
-    members: &'a [Members],
+    members: &'a MemberTable<'a>,
     file: usize,
     reasons: Vec<String>,
     items: Vec<ir::QueryItem>,

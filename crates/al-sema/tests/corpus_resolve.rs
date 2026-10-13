@@ -151,7 +151,10 @@ fn explore_body_resolution() {
     if let Ok(pat) = std::env::var("SHOW") {
         for d in r.diagnostics.iter().filter(|d| d.message.contains(&pat)).take(6) {
             let f = ws.files.iter().find(|f| f.path == d.file).unwrap();
-            let src = al_syntax::SyntaxNode::new_root(f.green.clone()).text().to_string();
+            let src =
+                al_syntax::SyntaxNode::new_root(ws.green(ws.files.iter().position(|g| g.path == f.path).unwrap()))
+                    .text()
+                    .to_string();
             let line = src[..d.offset].matches('\n').count() + 1;
             let text = src.lines().nth(line - 1).unwrap_or("").trim();
             println!("  {}:{line}: {text}", d.file);

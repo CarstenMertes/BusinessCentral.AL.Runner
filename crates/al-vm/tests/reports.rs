@@ -1,0 +1,1002 @@
+//! Report objects, end to end: processing without a request page or a layout. Each test names
+//! the corpus test that pins it.
+//!
+//! The corpus reports drive their loop with `dataitem(X; Integer)`. The Integer virtual table is
+//! a platform table the workspace does not have yet (ADR-013), so these fixtures use a real table
+//! of numbers instead: "Num Row" holds the rows 1..4, and `where(Number = const(1))` picks one.
+
+use al_builtins::native::Signal;
+use al_builtins::value::Value;
+use al_sema::workspace::AppSource;
+use al_vm::{Engine, Session, TxModel};
+
+const FIXTURES: &str = r#"
+table 60860 "Num Row"
+{
+    fields { field(1; Number; Integer) { } }
+    keys { key(PK; Number) { } }
+}
+
+table 60866 "RRE Row"
+{
+    fields { field(1; "Entry No."; Integer) { } field(2; Name; Text[50]) { } }
+    keys { key(PK; "Entry No.") { } }
+}
+
+table 60867 "RRE Log"
+{
+    fields { field(1; "Entry No."; Integer) { } field(2; Marker; Text[250]) { } }
+    keys { key(PK; "Entry No.") { } }
+
+    procedure Log(NewMarker: Text[250])
+    var
+        Log: Record "RRE Log";
+        NextNo: Integer;
+    begin
+        if Log.FindLast() then
+            NextNo := Log."Entry No.";
+        Log.Init();
+        Log."Entry No." := NextNo + 1;
+        Log.Marker := NewMarker;
+        Log.Insert();
+    end;
+}
+
+table 60007 "ALT Base"
+{
+    fields { field(1; "Entry No."; Integer) { } field(2; Name; Text[50]) { } }
+    keys { key(PK; "Entry No.") { } }
+}
+
+// corpus handlers/TestReportOnInitReportTimingFixtures.al
+codeunit 60005 "OIR Log"
+{
+    SingleInstance = true;
+    var InitCount: Integer; BodyCount: Integer; BodySaw: Text;
+    procedure Reset() begin InitCount := 0; BodyCount := 0; BodySaw := ''; end;
+    procedure NoteInit() begin InitCount += 1; end;
+    procedure NoteBody(Seen: Text) begin BodyCount += 1; BodySaw := Seen; end;
+    procedure GetInitCount(): Integer begin exit(InitCount); end;
+    procedure GetBodyCount(): Integer begin exit(BodyCount); end;
+    procedure GetBodySaw(): Text begin exit(BodySaw); end;
+}
+
+report 60005 "OIR Init Probe"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    UsageCategory = None;
+    dataset
+    {
+        dataitem(I; "Num Row")
+        {
+            DataItemTableView = where(Number = const(1));
+            trigger OnAfterGetRecord()
+            begin
+                Log.NoteBody(Setting);
+            end;
+        }
+    }
+    trigger OnInitReport()
+    begin
+        Log.NoteInit();
+        Setting := 'from-oninitreport';
+    end;
+    procedure SetSetting(NewSetting: Text) begin Setting := NewSetting; end;
+    var Log: Codeunit "OIR Log"; Setting: Text;
+}
+
+report 60006 "OIR Quit Probe"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    UsageCategory = None;
+    dataset
+    {
+        dataitem(I; "Num Row")
+        {
+            DataItemTableView = where(Number = const(1));
+            trigger OnAfterGetRecord()
+            begin
+                Log.NoteBody('body-ran');
+            end;
+        }
+    }
+    trigger OnInitReport()
+    begin
+        Log.NoteInit();
+        CurrReport.Quit();
+    end;
+    trigger OnPreReport()
+    begin
+        Log.NoteBody('onprereport-ran');
+    end;
+    var Log: Codeunit "OIR Log";
+}
+
+// corpus handlers/RreProcessingOnlyReport.Report.al
+report 60868 "RRE ProcessingOnly Report"
+{
+    Caption = 'RRE ProcessingOnly Report';
+    UsageCategory = ReportsAndAnalysis;
+    ApplicationArea = All;
+    ProcessingOnly = true;
+    dataset
+    {
+        dataitem(Rows; "RRE Row")
+        {
+            trigger OnAfterGetRecord()
+            var LogRec: Record "RRE Log";
+            begin
+                RowCount += 1;
+                LogRec.Log('A-row');
+            end;
+        }
+    }
+    var RowCount: Integer; PreReportRan: Boolean; PostReportRan: Boolean;
+    trigger OnPreReport()
+    var LogRec: Record "RRE Log";
+    begin
+        PreReportRan := true;
+        LogRec.Log('A-pre');
+    end;
+    trigger OnPostReport()
+    var LogRec: Record "RRE Log";
+    begin
+        PostReportRan := true;
+        LogRec.Log('A-post');
+    end;
+    procedure RowsProcessed(): Integer begin exit(RowCount); end;
+}
+
+// corpus handlers/RreSetTableViewReport.Report.al
+report 60913 "STV Counting Report"
+{
+    Caption = 'STV Counting Report';
+    UsageCategory = ReportsAndAnalysis;
+    ApplicationArea = All;
+    ProcessingOnly = true;
+    dataset
+    {
+        dataitem(Rows; "RRE Row")
+        {
+            trigger OnAfterGetRecord()
+            var LogRec: Record "RRE Log";
+            begin
+                LogRec.Log(CopyStr('STV-' + Rows.Name, 1, 50));
+            end;
+        }
+    }
+}
+
+// corpus handlers/RgfFilterReport.Report.al
+report 60998 "RGF Filter Report"
+{
+    Caption = 'RGF Filter Report';
+    UsageCategory = ReportsAndAnalysis;
+    ApplicationArea = All;
+    ProcessingOnly = true;
+    dataset
+    {
+        dataitem(Rows; "RRE Row")
+        {
+            trigger OnPreDataItem()
+            var LogRec: Record "RRE Log";
+            begin
+                LogRec.Log(CopyStr('RGF-PRE-DI:' + Rows.GetFilter("Entry No."), 1, 50));
+            end;
+        }
+    }
+    trigger OnPreReport()
+    var LogRec: Record "RRE Log";
+    begin
+        LogRec.Log(CopyStr('RGF-PRE-REPORT:' + Rows.GetFilter("Entry No."), 1, 50));
+    end;
+}
+
+// corpus record/TestTxModelReportRunMarker.Reports.al, with a one-row table for Integer.
+report 60026 "TxRpt ReqPage Marker"
+{
+    Caption = 'TxRpt ReqPage Marker';
+    ProcessingOnly = true;
+    dataset
+    {
+        dataitem(Loop; "Num Row")
+        {
+            DataItemTableView = sorting(Number) where(Number = const(1));
+            trigger OnAfterGetRecord()
+            var ALTBase: Record "ALT Base";
+            begin
+                ALTBase.Init(); ALTBase."Entry No." := MarkerNo; ALTBase.Insert();
+            end;
+        }
+    }
+    requestpage
+    {
+        layout { area(Content) { group(Options) { field(EchoText; EchoText) { ApplicationArea = All; } } } }
+    }
+    var MarkerNo: Integer; EchoText: Text[30];
+    procedure SetMarker(NewMarkerNo: Integer) begin MarkerNo := NewMarkerNo; end;
+}
+
+report 60027 "TxRpt Update Marker"
+{
+    Caption = 'TxRpt Update Marker';
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    TransactionType = Update;
+    dataset
+    {
+        dataitem(Loop; "Num Row")
+        {
+            DataItemTableView = sorting(Number) where(Number = const(1));
+            trigger OnAfterGetRecord()
+            var ALTBase: Record "ALT Base";
+            begin
+                ALTBase.Init(); ALTBase."Entry No." := MarkerNo; ALTBase.Insert();
+            end;
+        }
+    }
+    var MarkerNo: Integer;
+    procedure SetMarker(NewMarkerNo: Integer) begin MarkerNo := NewMarkerNo; end;
+}
+
+report 60028 "TxRpt Plain Marker"
+{
+    Caption = 'TxRpt Plain Marker';
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(Loop; "Num Row")
+        {
+            DataItemTableView = sorting(Number) where(Number = const(1));
+            trigger OnAfterGetRecord()
+            var ALTBase: Record "ALT Base";
+            begin
+                ALTBase.Init(); ALTBase."Entry No." := MarkerNo; ALTBase.Insert();
+            end;
+        }
+    }
+    var MarkerNo: Integer;
+    procedure SetMarker(NewMarkerNo: Integer) begin MarkerNo := NewMarkerNo; end;
+}
+
+report 60029 "TxRpt Error Marker"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(Loop; "Num Row")
+        {
+            DataItemTableView = sorting(Number) where(Number = const(1));
+            trigger OnAfterGetRecord()
+            var ALTBase: Record "ALT Base";
+            begin
+                ALTBase.Init(); ALTBase."Entry No." := 77; ALTBase.Insert();
+                Error('txrpt report body error');
+            end;
+        }
+    }
+}
+
+// Not from the corpus: a parent and a child over real tables, linked.
+table 60870 "Link Parent" { fields { field(1; No; Integer) { } } keys { key(PK; No) { } } }
+table 60871 "Link Child" { fields { field(1; Id; Integer) { } field(2; ParentNo; Integer) { } } keys { key(PK; Id) { } } }
+
+report 60872 "Link Report"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(Parent; "Link Parent")
+        {
+            trigger OnPreDataItem() var L: Record "RRE Log"; begin L.Log('parent-pre'); end;
+            trigger OnAfterGetRecord() var L: Record "RRE Log"; begin L.Log('parent-' + Format(Parent.No)); end;
+            trigger OnPostDataItem() var L: Record "RRE Log"; begin L.Log('parent-post'); end;
+            dataitem(Child; "Link Child")
+            {
+                DataItemLink = ParentNo = field(No);
+                trigger OnPreDataItem() var L: Record "RRE Log"; begin L.Log('child-pre'); end;
+                trigger OnAfterGetRecord() var L: Record "RRE Log"; begin L.Log('child-' + Format(Child.Id)); end;
+                trigger OnPostDataItem() var L: Record "RRE Log"; begin L.Log('child-post'); end;
+            }
+        }
+    }
+    trigger OnPreReport() var L: Record "RRE Log"; begin L.Log('pre-report'); end;
+    trigger OnPostReport() var L: Record "RRE Log"; begin L.Log('post-report'); end;
+}
+
+report 60873 "Sibling Report"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(First; "Link Parent") { trigger OnAfterGetRecord() var L: Record "RRE Log"; begin L.Log('first-' + Format(First.No)); end; }
+        dataitem(Second; "Link Parent") { trigger OnAfterGetRecord() var L: Record "RRE Log"; begin L.Log('second-' + Format(Second.No)); end; }
+    }
+}
+
+report 60874 "Skipper Report"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(Rows; "RRE Row") { trigger OnAfterGetRecord() begin CurrReport.Skip(); end; }
+    }
+}
+
+report 60875 "Layout Report"
+{
+    DefaultRenderingLayout = Wordish;
+    UseRequestPage = false;
+    dataset { dataitem(Rows; "RRE Row") { column(EntryNo; "Entry No.") { } } }
+    rendering { layout(Wordish) { Type = RDLC; LayoutFile = './x.rdl'; } }
+}
+
+report 60876 "Default Page Report"
+{
+    ProcessingOnly = true;
+    dataset { dataitem(Rows; "RRE Row") { } }
+}
+
+codeunit 50110 Helpers
+{
+    procedure Seed()
+    var R: Record "RRE Row"; L: Record "RRE Log"; N: Record "Num Row"; i: Integer;
+    begin
+        R.DeleteAll(); L.DeleteAll(); N.DeleteAll();
+        R.Init(); R."Entry No." := 1; R.Name := 'first'; R.Insert();
+        R.Init(); R."Entry No." := 2; R.Name := 'second'; R.Insert();
+        R.Init(); R."Entry No." := 3; R.Name := 'third'; R.Insert();
+        for i := 1 to 4 do begin N.Number := i; N.Insert(); end;
+    end;
+
+    procedure Visited(Prefix: Text): Text
+    var L: Record "RRE Log"; Out: Text;
+    begin
+        L.SetFilter(Marker, Prefix + '*');
+        if L.FindSet() then
+            repeat
+                if Out <> '' then Out += ',';
+                Out += L.Marker;
+            until L.Next() = 0;
+        exit(Out);
+    end;
+
+    procedure Count(M: Text): Integer
+    var L: Record "RRE Log";
+    begin
+        L.SetRange(Marker, M);
+        exit(L.Count());
+    end;
+
+    procedure Has(EntryNo: Integer): Boolean
+    var B: Record "ALT Base";
+    begin
+        exit(B.Get(EntryNo));
+    end;
+
+    procedure Insert(EntryNo: Integer)
+    var B: Record "ALT Base";
+    begin
+        B.Init(); B."Entry No." := EntryNo; B.Insert();
+    end;
+}
+"#;
+
+fn build(body: &str) -> (Engine0, usize, usize) {
+    let src = format!("{FIXTURES}\ncodeunit 50100 C {{ {body} }}");
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
+    (
+        Engine0 {
+            program: l.program,
+            blocked,
+        },
+        oi,
+        ri,
+    )
+}
+
+struct Engine0 {
+    program: al_ir::Program,
+    blocked: Vec<Vec<Option<String>>>,
+}
+
+fn run_model(body: &str, model: TxModel) -> Result<Value, Signal> {
+    let (e, oi, ri) = build(body);
+    if let Some(Some(r)) = e.blocked.get(oi).and_then(|o| o.get(ri)) {
+        return Err(Signal::Unsupported(r.clone()));
+    }
+    let setup = e.program.objects[oi].routines.iter().position(|r| r.name == "Setup");
+    let engine = Engine::new(e.program, e.blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    // `Setup` seeds and commits under the default model, before the test's model is in force.
+    if let Some(setup) = setup {
+        s.call(oi, setup, inst.clone(), vec![]).expect("Setup");
+        s.commit_transaction();
+    }
+    s.tx_model = model;
+    s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
+}
+
+fn text_model(vars_and_body: &str, model: TxModel) -> String {
+    match run_model(&format!("procedure F(): Text {vars_and_body}"), model) {
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Like `text_model`, with a `Setup` that seeds and commits before the test's model is in force.
+fn text_after_setup(vars_and_body: &str, model: TxModel) -> String {
+    let body =
+        format!("procedure Setup() var H: Codeunit Helpers; begin H.Seed(); end; procedure F(): Text {vars_and_body}");
+    match run_model(&body, model) {
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn f(vars_and_body: &str) -> String {
+    text_model(vars_and_body, TxModel::AutoCommit)
+}
+
+fn refusal(vars_and_body: &str) -> String {
+    match run_model(&format!("procedure F(): Text {vars_and_body}"), TxModel::AutoCommit) {
+        Err(Signal::Unsupported(r)) => r,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------- OnInitReport
+
+// handlers/TestReportOnInitReportTiming.al:ReportVarRun_OnInitReportRunsOnceBeforeTheBody (:36-47)
+#[test]
+fn run_runs_oninitreport_once_before_the_body() {
+    assert_eq!(
+        f(
+            "var Probe: Report \"OIR Init Probe\"; Log: Codeunit \"OIR Log\"; H: Codeunit Helpers; begin
+            H.Seed();
+            Log.Reset();
+            Probe.Run();
+            exit(Format(Log.GetInitCount()) + '|' + Format(Log.GetBodyCount()) + '|' + Log.GetBodySaw());
+        end;"
+        ),
+        "1|1|from-oninitreport"
+    );
+}
+
+// handlers/TestReportOnInitReportTiming.al:ReportVarFirstUse_RunsOnInitReport_BeforeRunIsCalled (:50-60)
+#[test]
+fn the_first_use_of_a_report_variable_runs_oninitreport() {
+    assert_eq!(
+        f(
+            "var Probe: Report \"OIR Init Probe\"; Log: Codeunit \"OIR Log\"; H: Codeunit Helpers; begin
+            H.Seed();
+            Log.Reset();
+            Probe.SetSetting('from-caller');
+            exit(Format(Log.GetInitCount()) + '|' + Format(Log.GetBodyCount()));
+        end;"
+        ),
+        "1|0"
+    );
+}
+
+// handlers/TestReportOnInitReportTiming.al:ReportVarSetterBeforeRun_SurvivesOnInitReport (:63-74)
+#[test]
+fn a_value_set_before_run_survives_oninitreport() {
+    assert_eq!(
+        f(
+            "var Probe: Report \"OIR Init Probe\"; Log: Codeunit \"OIR Log\"; H: Codeunit Helpers; begin
+            H.Seed();
+            Log.Reset();
+            Probe.SetSetting('from-caller');
+            Probe.Run();
+            exit(Log.GetBodySaw() + '|' + Format(Log.GetInitCount()));
+        end;"
+        ),
+        "from-caller|1"
+    );
+}
+
+// handlers/TestReportOnInitReportTiming.al:StaticReportRun_OnInitReportRunsOnce (:77-85)
+#[test]
+fn the_static_run_runs_oninitreport_once() {
+    assert_eq!(
+        f("var Log: Codeunit \"OIR Log\"; H: Codeunit Helpers; begin
+            H.Seed();
+            Log.Reset();
+            Report.Run(Report::\"OIR Init Probe\");
+            exit(Format(Log.GetInitCount()) + '|' + Log.GetBodySaw());
+        end;"),
+        "1|from-oninitreport"
+    );
+}
+
+// handlers/TestReportOnInitReportTiming.al:QuitInOnInitReport_StopsPreReportAndBody (:88-98)
+#[test]
+fn quit_in_oninitreport_stops_the_prereport_trigger_and_the_body() {
+    assert_eq!(
+        f(
+            "var Probe: Report \"OIR Quit Probe\"; Log: Codeunit \"OIR Log\"; H: Codeunit Helpers; begin
+            H.Seed();
+            Log.Reset();
+            Probe.Run();
+            exit(Format(Log.GetInitCount()) + '|' + Format(Log.GetBodyCount()));
+        end;"
+        ),
+        "1|0"
+    );
+}
+
+// ---------------------------------------------------------------- static Run and RunModal
+
+// handlers/TestReportRunExecution.al:StaticRun_ExecutesTriggersAndBody (:128-142)
+#[test]
+fn the_static_run_executes_the_triggers_and_the_body() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; begin
+            H.Seed();
+            Report.Run(Report::\"RRE ProcessingOnly Report\", false, false);
+            exit(Format(H.Count('A-pre')) + '|' + Format(H.Count('A-row')));
+        end;"),
+        "1|3"
+    );
+}
+
+// handlers/TestReportRunExecution.al:StaticRunModal_ExecutesTriggersAndBody (:145-158)
+#[test]
+fn the_static_runmodal_executes_the_triggers_and_the_body() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; begin
+            H.Seed();
+            Report.RunModal(Report::\"RRE ProcessingOnly Report\", false, false);
+            exit(Format(H.Count('A-pre')) + '|' + Format(H.Count('A-row')));
+        end;"),
+        "1|3"
+    );
+}
+
+// handlers/TestReportRunExecution.al:StaticRun_ExecutesTriggersAndBody; OnPostReport after the
+// body is pinned only in its order against OnPreReport (reportextensiontrigger/TestReportExtensionTriggers.al:244-250).
+#[test]
+fn the_report_triggers_run_in_order() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; begin
+            H.Seed();
+            Report.Run(Report::\"RRE ProcessingOnly Report\", false, false);
+            exit(H.Visited('A-'));
+        end;"),
+        "A-pre,A-row,A-row,A-row,A-post"
+    );
+}
+
+// ---------------------------------------------------------------- SetTableView
+
+// handlers/TestReportSetTableView.al:Report_SetTableView_FiltersDataItemToTheAppliedView (:72-86)
+#[test]
+fn settableview_restricts_the_data_item_to_the_view() {
+    assert_eq!(
+        f(
+            "var H: Codeunit Helpers; Row: Record \"RRE Row\"; R: Report \"STV Counting Report\"; begin
+            H.Seed();
+            Row.SetRange(\"Entry No.\", 1, 2);
+            R.SetTableView(Row);
+            R.UseRequestPage(false);
+            R.Run();
+            exit(H.Visited('STV-'));
+        end;"
+        ),
+        "STV-first,STV-second"
+    );
+}
+
+// handlers/TestReportSetTableView.al:Report_Run_WithoutSetTableView_IteratesEveryRowInTheTable (:89-104)
+#[test]
+fn without_a_view_the_data_item_iterates_every_row() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"STV Counting Report\"; begin
+            H.Seed();
+            R.UseRequestPage(false);
+            R.Run();
+            exit(H.Visited('STV-'));
+        end;"),
+        "STV-first,STV-second,STV-third"
+    );
+}
+
+// ---------------------------------------------------------------- GetFilter inside triggers
+
+// handlers/TestReportGetFilterInTriggers.al:Report_InstanceSetTableView_GetFilter_ReadsAppliedFilter_InOnPreReportAndOnPreDataItem (:58-73)
+#[test]
+fn the_view_is_visible_to_getfilter_in_onprereport_and_onpredataitem() {
+    assert_eq!(
+        f(
+            "var H: Codeunit Helpers; Row: Record \"RRE Row\"; Probe: Report \"RGF Filter Report\"; begin
+            H.Seed();
+            Row.SetRange(\"Entry No.\", 1, 2);
+            Probe.SetTableView(Row);
+            Probe.UseRequestPage(false);
+            Probe.RunModal();
+            exit(H.Visited('RGF-'));
+        end;"
+        ),
+        "RGF-PRE-REPORT:1..2,RGF-PRE-DI:1..2"
+    );
+}
+
+// handlers/TestReportGetFilterInTriggers.al:Report_StaticRunModalRecordParam_GetFilter_ReadsAppliedFilter_InOnPreReportAndOnPreDataItem (:76-89)
+#[test]
+fn the_static_record_parameter_is_the_view() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Row: Record \"RRE Row\"; begin
+            H.Seed();
+            Row.Get(1);
+            Row.SetRecFilter();
+            Report.RunModal(Report::\"RGF Filter Report\", false, false, Row);
+            exit(H.Visited('RGF-'));
+        end;"),
+        "RGF-PRE-REPORT:1,RGF-PRE-DI:1"
+    );
+}
+
+// handlers/TestReportGetFilterInTriggers.al:Report_NoFilterApplied_GetFilter_ReadsEmpty_InOnPreReportAndOnPreDataItem (:92-108)
+#[test]
+fn without_a_view_getfilter_reads_empty() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Probe: Report \"RGF Filter Report\"; begin
+            H.Seed();
+            Probe.UseRequestPage(false);
+            Probe.RunModal();
+            exit(H.Visited('RGF-'));
+        end;"),
+        "RGF-PRE-REPORT:,RGF-PRE-DI:"
+    );
+}
+
+// ---------------------------------------------------------------- DataItemTableView, nesting
+
+// handlers/TestReportMultiDataItemNested.al:5-25 (the inner item runs again for every outer row)
+// and handlers/TestReportNestedLinkImplicitParent.al:113-134 (a DataItemLink without a reference
+// joins to the enclosing item; each parent row sees only its own children).
+#[test]
+fn a_nested_item_runs_once_per_parent_row_over_the_rows_linked_to_it() {
+    assert_eq!(
+        f(
+            "var H: Codeunit Helpers; P: Record \"Link Parent\"; C: Record \"Link Child\"; begin
+            H.Seed();
+            P.No := 1; P.Insert(); P.No := 2; P.Insert();
+            C.Id := 10; C.ParentNo := 1; C.Insert();
+            C.Id := 11; C.ParentNo := 1; C.Insert();
+            C.Id := 12; C.ParentNo := 2; C.Insert();
+            Report.Run(Report::\"Link Report\", false, false);
+            exit(H.Visited(''));
+        end;"
+        ),
+        // The relative order of a parent's OnAfterGetRecord and its children is not pinned by
+        // the corpus (docs/probes-needed.md); this is the documented BC order.
+        "pre-report,parent-pre,parent-1,child-pre,child-10,child-11,child-post,parent-2,child-pre,child-12,child-post,parent-post,post-report"
+    );
+}
+
+// handlers/TestReportMultiDataItemSiblings.al:5-25: sibling items run one after the other.
+#[test]
+fn sibling_items_run_one_after_the_other() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; P: Record \"Link Parent\"; begin
+            H.Seed();
+            P.No := 1; P.Insert(); P.No := 2; P.Insert();
+            Report.Run(Report::\"Sibling Report\", false, false);
+            exit(H.Visited(''));
+        end;"),
+        "first-1,first-2,second-1,second-2"
+    );
+}
+
+// ---------------------------------------------------------------- transactions
+
+// record/TestTxModelReportRun.al:TxReportRun_Test03_PlainReportWithPendingWriteRunsAndIsNotACommit (:94-114)
+#[test]
+fn a_plain_report_joins_the_callers_transaction() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Plain: Report \"TxRpt Plain Marker\"; begin
+            H.Seed(); Commit();
+            H.Insert(60040031);
+            Plain.SetMarker(60040032);
+            Plain.Run();
+            if not H.Has(60040032) then exit('body did not run');
+            asserterror Error('txrpt plain probe');
+            exit(Format(H.Has(60040031)) + '|' + Format(H.Has(60040032)));
+        end;"),
+        "No|No"
+    );
+}
+
+// record/TestTxModelReportRun.al:TxReportRun_Test07_TransactionTypeUpdateReportCommitsItsOwnWrites (:177-196)
+#[test]
+fn an_update_report_commits_its_own_writes() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Update Marker\"; begin
+            H.Seed(); Commit();
+            R.SetMarker(60040071);
+            R.Run();
+            H.Insert(60040072);
+            asserterror Error('txrpt update probe');
+            exit(Format(H.Has(60040071)) + '|' + Format(H.Has(60040072)));
+        end;"),
+        "Yes|No"
+    );
+}
+
+// record/TestTxModelReportRun.al:TxReportRun_Test08_TransactionTypeUpdateReportWithPendingWriteIsRefused (:199-211)
+#[test]
+fn an_update_report_is_refused_while_the_caller_has_an_uncommitted_write() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Update Marker\"; begin
+            H.Seed(); Commit();
+            H.Insert(60040081);
+            R.SetMarker(60040082);
+            asserterror R.Run();
+            exit(GetLastErrorText() + '|' + Format(H.Has(60040082)) + '|' + Format(H.Has(60040081)));
+        end;"),
+        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No"
+    );
+}
+
+// record/TestTxModelReportRun.al:TxReportRun_Test04 and Test05 (:117-148): a report that uses a
+// request page enters a transaction world before the page is shown, and is refused with a
+// pending write. Run and RunModal alike.
+#[test]
+fn a_request_page_report_is_refused_while_the_caller_has_an_uncommitted_write() {
+    for call in ["R.Run()", "R.RunModal()"] {
+        assert_eq!(
+            f(&format!(
+                "var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; begin
+                    H.Seed(); Commit();
+                    H.Insert(60040041);
+                    R.SetMarker(60040042);
+                    asserterror {call};
+                    exit(GetLastErrorText() + '|' + Format(H.Has(60040042)) + '|' + Format(H.Has(60040041)));
+                end;"
+            )),
+            "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No",
+            "{call}"
+        );
+    }
+}
+
+// codeunit/TestWriteTxTestBoundary.al:WriteTxBoundary_Test11_AReportMayWriteUnderNone (:259-279)
+#[test]
+fn a_report_may_write_under_transactionmodel_none() {
+    assert_eq!(
+        text_after_setup(
+            "var H: Codeunit Helpers; R: Report \"TxRpt Plain Marker\"; begin
+                R.SetMarker(9412);
+                R.UseRequestPage(false);
+                R.RunModal();
+                exit(Format(H.Has(9412)) + '|' + Format(Database.IsInWriteTransaction()));
+            end;",
+            TxModel::None
+        ),
+        "Yes|No"
+    );
+}
+
+// record/TestTxModelReportExec.al:TxReportExec_Test12 (:243-257): under AutoRollback the report
+// runs and its write stays readable.
+#[test]
+fn an_update_report_runs_under_autorollback_without_committing() {
+    assert_eq!(
+        text_after_setup(
+            "var H: Codeunit Helpers; R: Report \"TxRpt Update Marker\"; begin
+                R.SetMarker(60029122);
+                R.Run();
+                exit(Format(H.Has(60029122)));
+            end;",
+            TxModel::AutoRollback
+        ),
+        "Yes"
+    );
+}
+
+// record/TestTxModelReportRun.al:TxReportRun_Test12 (:252-269), without the request page: a
+// report that raises inside its transaction world does not commit the write made before.
+#[test]
+fn an_error_in_the_body_propagates() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Error Marker\"; begin
+            H.Seed(); Commit();
+            asserterror R.Run();
+            exit(GetLastErrorText() + '|' + Format(H.Has(77)));
+        end;"),
+        "txrpt report body error|No"
+    );
+}
+
+// ---------------------------------------------------------------- Execute, Print, RunRequestPage
+
+// record/TestTxModelReportExec.al:TxReportExec_Test08_ExecutePlainReportWithPendingWriteRunsAndIsNotACommit (:174-190)
+#[test]
+fn execute_runs_a_plain_report_inside_the_callers_transaction() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Plain Marker\"; begin
+            H.Seed(); Commit();
+            H.Insert(60029081);
+            R.SetMarker(60029082);
+            R.Execute('');
+            if not H.Has(60029082) then exit('body did not run');
+            asserterror Error('txexec plain probe');
+            exit(Format(H.Has(60029081)) + '|' + Format(H.Has(60029082)));
+        end;"),
+        "No|No"
+    );
+}
+
+// record/TestTxModelReportExec.al:TxReportExec_Test09 (:193-211): Execute never shows the
+// request page, so a report that has one runs without a handler.
+#[test]
+fn execute_does_not_show_the_request_page() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; begin
+            H.Seed(); Commit();
+            H.Insert(60029091);
+            R.SetMarker(60029092);
+            R.Execute('');
+            if not H.Has(60029092) then exit('body did not run');
+            asserterror Error('txexec reqpage probe');
+            exit(Format(H.Has(60029091)) + '|' + Format(H.Has(60029092)));
+        end;"),
+        "No|No"
+    );
+}
+
+// record/TestTxModelReportExec.al:TxReportExec_Test06 (:138-150) and Test07 (:153-171)
+#[test]
+fn execute_of_an_update_report_commits_its_writes_or_is_refused() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Update Marker\"; begin
+            H.Seed(); Commit();
+            R.SetMarker(60029071);
+            R.Execute('');
+            H.Insert(60029072);
+            asserterror Error('txexec update probe');
+            exit(Format(H.Has(60029071)) + '|' + Format(H.Has(60029072)));
+        end;"),
+        "Yes|No"
+    );
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Update Marker\"; begin
+            H.Seed(); Commit();
+            H.Insert(60029061);
+            R.SetMarker(60029062);
+            asserterror R.Execute('');
+            exit(GetLastErrorText() + '|' + Format(H.Has(60029062)) + '|' + Format(H.Has(60029061)));
+        end;"),
+        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No"
+    );
+}
+
+// record/TestTxModelReportExec.al:TxReportExec_Test10 (:214-224): the static Execute.
+#[test]
+fn the_static_execute_is_refused_the_same_way() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; begin
+            H.Seed(); Commit();
+            H.Insert(60029101);
+            asserterror Report.Execute(Report::\"TxRpt Update Marker\", '');
+            exit(GetLastErrorText() + '|' + Format(H.Has(60029101)));
+        end;"),
+        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No"
+    );
+}
+
+// record/TestTxModelReportExec.al:TxReportExec_Test11 (:227-239): Print of an update report.
+#[test]
+fn print_of_an_update_report_is_refused_with_a_pending_write() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Update Marker\"; begin
+            H.Seed(); Commit();
+            H.Insert(60029111);
+            R.SetMarker(60029112);
+            asserterror R.Print('');
+            exit(GetLastErrorText() + '|' + Format(H.Has(60029112)) + '|' + Format(H.Has(60029111)));
+        end;"),
+        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No"
+    );
+}
+
+// record/TestTxModelReportExec.al:TxReportExec_Test02 and Test03 (:77-102)
+#[test]
+fn runrequestpage_is_refused_with_a_pending_write() {
+    assert_eq!(
+        f(
+            "var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; P: Text; begin
+            H.Seed(); Commit();
+            H.Insert(60029021);
+            asserterror P := R.RunRequestPage();
+            exit(GetLastErrorText() + '|' + Format(H.Has(60029021)));
+        end;"
+        ),
+        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No"
+    );
+    assert_eq!(
+        f("var H: Codeunit Helpers; P: Text; begin
+            H.Seed(); Commit();
+            H.Insert(60029031);
+            asserterror P := Report.RunRequestPage(Report::\"TxRpt ReqPage Marker\");
+            exit(GetLastErrorText() + '|' + Format(H.Has(60029031)));
+        end;"),
+        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No"
+    );
+}
+
+// ---------------------------------------------------------------- refusals
+
+#[test]
+fn a_request_page_that_would_open_is_refused() {
+    // handlers/TestReportRunWithRequestPage.al:78-99: the page opens for a run that does not
+    // switch it off, and only a handler can answer it. Request pages are not implemented.
+    let why = refusal(
+        "var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; begin
+            H.Seed(); Commit(); R.Run(); exit('ran');
+        end;",
+    );
+    assert!(why.contains("request page"), "{why}");
+}
+
+#[test]
+fn a_report_without_a_request_page_section_still_counts_as_using_one_by_default() {
+    // No corpus test runs such a report without switching the page off, so whether an empty
+    // default page opens is not pinned: the run is refused.
+    let why = refusal(
+        "var H: Codeunit Helpers; begin
+            H.Seed(); Commit(); Report.Run(Report::\"Default Page Report\"); exit('ran');
+        end;",
+    );
+    assert!(why.contains("request page"), "{why}");
+}
+
+#[test]
+fn currreport_skip_is_refused_statically() {
+    let why = refusal(
+        "var R: Report \"Skipper Report\"; H: Codeunit Helpers; begin
+            H.Seed(); R.UseRequestPage(false); R.Run(); exit('ran');
+        end;",
+    );
+    assert!(why.contains("Report.Skip"), "{why}");
+}
+
+#[test]
+fn a_report_that_renders_output_is_refused() {
+    let why = refusal(
+        "var H: Codeunit Helpers; begin
+            H.Seed(); Report.Run(Report::\"Layout Report\", false, false); exit('ran');
+        end;",
+    );
+    assert!(why.contains("Layout Report"), "{why}");
+}

@@ -22,6 +22,7 @@ mod records;
 mod refs;
 mod relations;
 mod rename;
+mod reports;
 mod transactions;
 mod ui;
 mod views;
@@ -124,6 +125,10 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The call depth of the `OnInitReport` trigger being run, and whether it called
+    /// `CurrReport.Quit` (al-vm reports.rs).
+    pub(crate) report_init_depth: Option<usize>,
+    pub(crate) report_quit: bool,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -161,6 +166,8 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            report_init_depth: None,
+            report_quit: false,
         }
     }
 
@@ -299,7 +306,7 @@ impl Session {
         instance: Rc<RefCell<Instance>>,
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
-        self.ensure_initialized(&instance);
+        self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
@@ -620,6 +627,7 @@ impl Session {
                 }
                 if id.starts_with("Codeunit.Run#")
                     || id.starts_with("Xmlport.")
+                    || id.starts_with("Report.")
                     || id == "Database.IsInWriteTransaction#1"
                 {
                     let recv = match receiver.as_deref() {
@@ -639,6 +647,9 @@ impl Session {
                     }
                     if id.starts_with("Xmlport.") {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
+                    }
+                    if id.starts_with("Report.") {
+                        return self.report_builtin(id, recv, &values, f.instance.clone());
                     }
                     return self.codeunit_run(id, recv, &values, *ret_used);
                 }

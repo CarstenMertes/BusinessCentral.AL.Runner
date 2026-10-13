@@ -179,15 +179,26 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
                     let result = session.call(object, r, instance.clone(), Vec::new());
                     let unexecuted = session.end_ui_scope();
                     match result {
-                        Ok(_) if unexecuted.is_empty() => Outcome::Pass,
+                        // The default TransactionModel commits at the test boundary; a failed
+                        // test's transaction is rolled back (corpus codeunit/TestWriteTxTestBoundary.al:26).
+                        Ok(_) if unexecuted.is_empty() => {
+                            al_builtins::native::Ctx::commit(&mut session).expect("commit");
+                            Outcome::Pass
+                        }
                         // corpus handlers/TestPageQueryCloseMessageHandler_Tests.al:51: a declared
                         // handler that never fires is a test failure. The text after the prefix
                         // is not pinned (docs/probes-needed.md).
-                        Ok(_) => Outcome::Fail(format!(
-                            "The following UI handlers were not executed: {}",
-                            unexecuted.join(", ")
-                        )),
-                        Err(Signal::Error(e)) => Outcome::Fail(e.message),
+                        Ok(_) => {
+                            session.rollback_transaction();
+                            Outcome::Fail(format!(
+                                "The following UI handlers were not executed: {}",
+                                unexecuted.join(", ")
+                            ))
+                        }
+                        Err(Signal::Error(e)) => {
+                            session.rollback_transaction();
+                            Outcome::Fail(e.message)
+                        }
                         Err(Signal::Unsupported(r)) => Outcome::NotRun(r),
                         Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
                     }
@@ -313,7 +324,7 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
                 },
             };
             if let Some(why) = why {
-                al_data::Store::rollback(session.store_mut());
+                session.rollback_transaction();
                 // Subscribers to events the installer raises are not in its static calls,
                 // but they are what it would have written through.
                 let mut touched = tables_touched(lowered, oi, ri);
@@ -546,6 +557,25 @@ mod tests {
                 .all(|(_, x)| matches!(x, Outcome::NotRun(r) if r.contains("TransactionModel"))),
             "{o:?}"
         );
+    }
+
+    // The default TransactionModel commits a test's work at the test boundary (corpus
+    // codeunit/TestWriteTxTestBoundary.al:26; record/TestCalcFormulaFlowFieldValueTests.Codeunit.al:182,
+    // whose asserterror rolls back to "whatever the previous test committed").
+    #[test]
+    fn a_passing_test_commits_so_a_later_asserterror_rolls_back_only_to_that_point() {
+        let o = outcomes(
+            "table 60900 S { fields { field(1; K; Code[10]) { } } }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure A() var R: Record S; begin R.K := 'A'; R.Insert(); end;
+                [Test] procedure B() var R: Record S; begin
+                    R.K := 'B'; R.Insert();
+                    asserterror Error('x');
+                    if not R.Get('A') then Error('the first test was not committed');
+                    if R.Get('B') then Error('the second tests own write was not rolled back');
+                end; }",
+        );
+        assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
     }
 
     #[test]

@@ -101,6 +101,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
+    ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
+    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
+    ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetAutoCalcFields#1", |c, r, a| {
+        c.record("SetAutoCalcFields", r, a)
+    }),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -177,6 +183,9 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
+    if !crate::format::is_pinned(&args[0]) {
+        return unsupported(&format!("Format of {:?} (its format is not pinned yet)", args[0]));
+    }
     Ok(Value::Text(format(&args[0], len, std, ctx)))
 }
 
@@ -427,6 +436,18 @@ mod tests {
             )),
             "1"
         );
+    }
+
+    // The formats of Time, DateTime and Duration are not pinned by the corpus yet: Format of
+    // them is a refusal the test can report, not a panic that takes the whole codeunit down.
+    #[test]
+    fn format_of_a_value_without_a_pinned_format_is_a_refusal() {
+        for v in [Value::Duration(3_600_000), Value::Time(43_200_001), Value::DateTime(5)] {
+            assert!(
+                matches!(call("System.Format#1", vec![v]), Err(Signal::Unsupported(_))),
+                "Format must refuse"
+            );
+        }
     }
 
     #[test]

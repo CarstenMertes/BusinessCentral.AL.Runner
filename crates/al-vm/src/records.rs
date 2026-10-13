@@ -12,7 +12,7 @@ use al_data::{InsertOutcome, RenameOutcome, Scan, Store, TableDef, WriteOutcome,
 use std::cell::RefCell;
 use std::rc::Rc;
 
-type Rec = Rc<RefCell<RecordState>>;
+pub(crate) type Rec = Rc<RefCell<RecordState>>;
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
@@ -33,7 +33,7 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 }
 
 impl Session {
-    fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
+    pub(crate) fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
         let t = rec.borrow().table as usize;
         self.engine.tables[t]
             .clone()
@@ -61,7 +61,7 @@ impl Session {
         }
     }
 
-    fn caption(&self, t: &TableDef) -> String {
+    pub(crate) fn caption(&self, t: &TableDef) -> String {
         self.engine.program.objects[t.object as usize]
             .properties
             .iter()
@@ -152,6 +152,95 @@ impl Session {
         Ok(())
     }
 
+    /// The row as the store keeps it: FlowFields and FlowFilters hold no data, whatever the
+    /// buffer shows after CalcFields or an assignment.
+    fn stored_view(&mut self, t: &TableDef, row: &[Value]) -> Vec<Value> {
+        row.iter()
+            .enumerate()
+            .map(|(i, v)| {
+                if t.fields[i].stored {
+                    v.clone()
+                } else {
+                    self.default_value(&t.fields[i].ty)
+                }
+            })
+            .collect()
+    }
+
+    /// Whether inserting `row` would repeat the values of a unique secondary key (a row with
+    /// the same primary key is the duplicate-key failure instead).
+    fn violates_unique_key(&mut self, rec: &Rec, t: &TableDef, row: &[Value]) -> Result<bool, Signal> {
+        let unique: Vec<usize> = {
+            let schema = self.engine.program.objects[t.object as usize]
+                .table
+                .as_ref()
+                .expect("table");
+            (1..t.keys.len())
+                .filter(|k| schema.unique_keys.get(*k).copied().unwrap_or(false))
+                .collect()
+        };
+        if unique.is_empty() {
+            return Ok(false);
+        }
+        let cx = self.cx.clone();
+        let pk = t.primary_key(row);
+        if self
+            .store_for(rec)
+            .get(&cx, t, &pk)
+            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        for k in unique {
+            let filters: Vec<FieldFilter> = t.keys[k]
+                .iter()
+                .map(|&f| FieldFilter {
+                    field: f,
+                    expr: FilterExpr::Eq(row[f].clone()),
+                })
+                .collect();
+            let n = self
+                .store_for(rec)
+                .count(&cx, t, &filters)
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            if n > 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The refusal of a unique index; only the start of BC's message is pinned.
+    fn fail_unique(&mut self, t: &TableDef) -> Result<Value, Signal> {
+        if self.ret_used {
+            return Ok(Value::Boolean(false));
+        }
+        Err(Signal::Error(AlError {
+            message: format!(
+                "There is already a record in table {} that has the same values in a unique index.",
+                self.caption(t)
+            ),
+            code: String::new(),
+            call_stack: String::new(),
+        }))
+    }
+
+    /// Unique secondary keys are only enforced on Insert, so other writes to such tables are refused.
+    pub(crate) fn check_unique_keys(&self, t: &TableDef) -> Result<(), Signal> {
+        let schema = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .expect("table");
+        if schema.unique_keys.iter().skip(1).any(|u| *u) {
+            return unsupported(format!(
+                "write to {}: unique secondary keys are not enforced yet",
+                t.name
+            ));
+        }
+        Ok(())
+    }
+
     fn table_trigger(&self, t: &TableDef, name: &str) -> Option<usize> {
         self.engine.program.objects[t.object as usize]
             .routines
@@ -221,28 +310,41 @@ impl Session {
         ascending: bool,
         after: Option<Vec<Value>>,
     ) -> Result<Option<Vec<Value>>, Signal> {
-        let (key, filters) = {
-            let r = rec.borrow();
-            (r.key, r.filters.clone())
-        };
+        let key = rec.borrow().key;
+        // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
+        let (filters, flow_field_filters) = self.split_filters(rec);
         let cx = self.cx.clone();
-        let store = self.store_for(rec);
-        store
-            .next(
-                &cx,
-                t,
-                &Scan {
-                    key,
-                    filters: &filters,
-                    ascending,
-                    after: after.as_deref(),
-                },
-            )
-            .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))
+        let mut after = after;
+        loop {
+            let store = self.store_for(rec);
+            let row = store
+                .next(
+                    &cx,
+                    t,
+                    &Scan {
+                        key,
+                        filters: &filters,
+                        ascending,
+                        after: after.as_deref(),
+                    },
+                )
+                .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+            match row {
+                Some(row) if !flow_field_filters.is_empty() => {
+                    if self.passes_flow_field_filters(rec, &row, &flow_field_filters)? {
+                        return Ok(Some(row));
+                    }
+                    after = Some(position(t, key, &row));
+                }
+                other => return Ok(other),
+            }
+        }
     }
 
-    fn load(rec: &Rec, row: Vec<Value>) {
+    /// Reads a row into the record, then calculates its `SetAutoCalcFields` fields.
+    fn load(&mut self, rec: &Rec, row: Vec<Value>) -> Result<(), Signal> {
         rec.borrow_mut().fields = row;
+        self.auto_calculate(rec)
     }
 
     pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
@@ -271,6 +373,9 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
+                if !rec.borrow().auto_calc.is_empty() {
+                    return unsupported("Clear after SetAutoCalcFields (what resets it is not pinned yet)");
+                }
                 if rec.borrow().temporary {
                     return unsupported("Clear of a temporary record (table reset not pinned yet)");
                 }
@@ -285,15 +390,13 @@ impl Session {
             }
             "Insert" => {
                 self.check_writable(&t, "Insert")?;
-                let schema = self.engine.program.objects[t.object as usize]
-                    .table
-                    .clone()
-                    .expect("table");
-                if schema.fields.iter().any(|f| f.auto_increment) {
-                    return unsupported(
-                        "Insert into a table with an AutoIncrement field (counter semantics not implemented yet)",
-                    );
-                }
+                // A temporary record has no sequence: the key stays as it is (corpus
+                // record/TestTempTableContracts.al:52).
+                let auto = if rec.borrow().temporary {
+                    None
+                } else {
+                    self.auto_increment_field(&t)?
+                };
                 if arg_bool(args, 0)? {
                     if let Some(tr) = self.table_trigger(&t, "OnInsert") {
                         self.run_trigger(t.object as usize, tr, rec, None)?;
@@ -301,18 +404,52 @@ impl Session {
                 }
                 self.assign_system_id(&t, rec);
                 self.bump_row_version(&t, rec);
+                // The key is chosen below the trigger: OnInsert starts with it still 0 and a
+                // refused Insert never takes a value (corpus record/TestAutoIncrementExplicitKey.al:63,
+                // TestAutoIncrementEdges.al:354).
+                let mut taken = false;
+                if let Some(a) = auto {
+                    let mut row = rec.borrow().fields.clone();
+                    taken = self.take_auto_increment(&t, a, &mut row)?;
+                    rec.borrow_mut().fields = row;
+                }
                 let row = rec.borrow().fields.clone();
+                // A unique secondary key refuses the row after its AutoIncrement value was taken
+                // (corpus record/TestAutoIncrementExplicitKey.al:131,163).
+                if self.violates_unique_key(rec, &t, &row)? {
+                    if let Some(a) = auto {
+                        if taken {
+                            rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
+                        } else {
+                            self.note_explicit_key(&t, a, &row);
+                        }
+                    }
+                    return self.fail_unique(&t);
+                }
+                let stored = self.stored_view(&t, &row);
                 match self
                     .store_for(rec)
-                    .insert(&cx, &t, row.clone())
+                    .insert(&cx, &t, stored.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
-                    InsertOutcome::Inserted => Ok(Value::Boolean(true)),
-                    InsertOutcome::AlreadyExists => self.fail(&t, &row, true),
+                    InsertOutcome::Inserted => {
+                        if let (Some(a), false) = (auto, taken) {
+                            self.note_explicit_key(&t, a, &row);
+                        }
+                        Ok(Value::Boolean(true))
+                    }
+                    InsertOutcome::AlreadyExists => {
+                        // The value stays consumed; the key it took does not stay on the record.
+                        if let (Some(a), true) = (auto, taken) {
+                            rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
+                        }
+                        self.fail(&t, &row, true)
+                    }
                 }
             }
             "Modify" => {
                 self.check_writable(&t, "Modify")?;
+                self.check_unique_keys(&t)?;
                 let pk = t.primary_key(&rec.borrow().fields);
                 let stored = self
                     .store_for(rec)
@@ -325,9 +462,10 @@ impl Session {
                 }
                 self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
+                let stored = self.stored_view(&t, &row);
                 match self
                     .store_for(rec)
-                    .modify(&cx, &t, row.clone())
+                    .modify(&cx, &t, stored.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     WriteOutcome::Done => Ok(Value::Boolean(true)),
@@ -358,7 +496,10 @@ impl Session {
                 if arg_bool(args, 0)? && self.table_trigger(&t, "OnDelete").is_some() {
                     return unsupported("DeleteAll(true) with an OnDelete trigger");
                 }
-                let filters = rec.borrow().filters.clone();
+                let (filters, flow_field_filters) = self.split_filters(rec);
+                if !flow_field_filters.is_empty() {
+                    return unsupported("DeleteAll with a filter on a FlowField");
+                }
                 self.store_for(rec)
                     .delete_all(&cx, &t, &filters)
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
@@ -379,7 +520,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     Some(row) => {
-                        Self::load(rec, row);
+                        self.load(rec, row)?;
                         Ok(Value::Boolean(true))
                     }
                     None => {
@@ -417,7 +558,7 @@ impl Session {
                 };
                 match found {
                     Some(row) => {
-                        Self::load(rec, row);
+                        self.load(rec, row)?;
                         Ok(Value::Boolean(true))
                     }
                     None if self.ret_used => Ok(Value::Boolean(false)),
@@ -441,7 +582,7 @@ impl Session {
                     let pos = position(&t, key, &rec.borrow().fields);
                     match self.scan(rec, &t, forward, Some(pos))? {
                         Some(row) => {
-                            Self::load(rec, row);
+                            self.load(rec, row)?;
                             moved += 1;
                         }
                         None => break,
@@ -450,11 +591,24 @@ impl Session {
                 Ok(Value::Integer(if steps < 0 { -moved } else { moved }))
             }
             "Count" | "IsEmpty" => {
-                let filters = rec.borrow().filters.clone();
-                let n = self
-                    .store_for(rec)
-                    .count(&cx, &t, &filters)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                let (filters, flow_field_filters) = self.split_filters(rec);
+                let n = if flow_field_filters.is_empty() {
+                    self.store_for(rec)
+                        .count(&cx, &t, &filters)
+                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                } else {
+                    // Rows are tested one by one against the calculated FlowFields.
+                    let mut n = 0;
+                    let mut after = None;
+                    while let Some(row) = self.scan(rec, &t, true, after)? {
+                        n += 1;
+                        if method == "IsEmpty" {
+                            break;
+                        }
+                        after = Some(position(&t, rec.borrow().key, &row));
+                    }
+                    n
+                };
                 Ok(if method == "Count" {
                     Value::Integer(n as i32)
                 } else {
@@ -483,7 +637,9 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
-                let expr = al_builtins::filter::parse_filter(&text, &args[2..], &ty)
+                let engine = self.engine.clone();
+                let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+                let expr = al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
                     .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?;
                 let mut r = rec.borrow_mut();
                 r.filters.retain(|f| f.field != pos);
@@ -491,6 +647,9 @@ impl Session {
                 Ok(Value::Null)
             }
             "Reset" => {
+                if !rec.borrow().auto_calc.is_empty() {
+                    return unsupported("Reset after SetAutoCalcFields (whether it keeps them is not pinned yet)");
+                }
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
                 r.key = 0;
@@ -522,18 +681,34 @@ impl Session {
                 if field.relation {
                     return unsupported("Validate of a field with a TableRelation");
                 }
-                let before = rec.borrow().fields.clone();
+                // A Validate nested in an OnValidate of the same record keeps the outer call's
+                // before-image as xRec (corpus record/TestXRecContracts.al:133).
+                let handle = Rc::as_ptr(rec) as usize;
+                let outer = self
+                    .validating
+                    .iter()
+                    .find(|(h, _)| *h == handle)
+                    .map(|(_, b)| b.clone());
+                let before = outer.clone().unwrap_or_else(|| rec.borrow().fields.clone());
                 if let Some(v) = args.get(1) {
                     let v = ops::convert(v.clone(), &field.ty)?;
                     rec.borrow_mut().fields[pos] = v;
                 }
                 if let Some((object, routine)) = field.on_validate {
-                    self.run_trigger(object, routine, rec, Some(before))?;
+                    if outer.is_none() {
+                        self.validating.push((handle, before.clone()));
+                    }
+                    let r = self.run_trigger(object, routine, rec, Some(before));
+                    if outer.is_none() {
+                        self.validating.pop();
+                    }
+                    r?;
                 }
                 Ok(Value::Null)
             }
             "Rename" => {
                 self.check_writable(&t, "Rename")?;
+                self.check_unique_keys(&t)?;
                 let name = t.name.to_lowercase();
                 let related = self
                     .engine
@@ -542,7 +717,7 @@ impl Session {
                     .iter()
                     .filter_map(|o| o.table.as_ref())
                     .flat_map(|tb| &tb.fields)
-                    .any(|f| f.relation_table.as_deref() == Some(name.as_str()));
+                    .any(|f| f.relation_tables.contains(&name));
                 if related {
                     return unsupported(format!(
                         "Rename of {}: other tables relate to it (re-keying related rows is not implemented yet)",
@@ -557,6 +732,7 @@ impl Session {
                         new[field] = ops::convert(v.clone(), &ty)?;
                     }
                 }
+                self.check_rename_auto_increment(&t, &old, &new)?;
                 rec.borrow_mut().fields = new.clone();
                 if let Some(tr) = self.table_trigger(&t, "OnRename") {
                     self.run_trigger(t.object as usize, tr, rec, Some(old.clone()))?;
@@ -564,9 +740,10 @@ impl Session {
                 self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
                 let old_pk = t.primary_key(&old);
+                let stored = self.stored_view(&t, &row);
                 match self
                     .store_for(rec)
-                    .rename(&cx, &t, &old_pk, row.clone())
+                    .rename(&cx, &t, &old_pk, stored.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     RenameOutcome::Renamed => Ok(Value::Boolean(true)),
@@ -580,6 +757,8 @@ impl Session {
                     }
                 }
             }
+            "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
+            "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
             other => unsupported(format!("Record.{other}")),
         }
     }

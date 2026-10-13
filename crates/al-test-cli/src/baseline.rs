@@ -159,7 +159,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
         out: &'a mut BTreeSet<u32>,
     }
     impl W<'_> {
-        fn root<'p>(p: &'p Place) -> Option<&'p Place> {
+        fn root(p: &Place) -> Option<&Place> {
             match p {
                 Place::Local(_) | Place::Global(_) => Some(p),
                 Place::Index(inner, _) => Self::root(inner),

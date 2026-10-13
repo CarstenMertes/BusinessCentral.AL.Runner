@@ -11,6 +11,10 @@ pub struct Program {
     /// indexes this). Publisher and version come from the runner, which reads the manifests.
     #[serde(default)]
     pub apps: Vec<AppInfo>,
+    /// Every `type(..; Alias)` of every `dotnet { }` block in the workspace (ADR-014). A
+    /// `DotNet` variable's `RtType::DotNet(i)` and `Expr::DotNet::ty` index this list.
+    #[serde(default)]
+    pub dotnet_types: Vec<DotNetDecl>,
     /// The source files the positions refer to (`SrcPos::file` indexes this).
     #[serde(default)]
     pub sources: Vec<SourceFile>,
@@ -68,6 +72,31 @@ pub struct AppInfo {
     /// The packaged resources (`resourceFolders` of the manifest): name relative to its folder, content.
     #[serde(default)]
     pub resources: Vec<(String, Vec<u8>)>,
+}
+
+/// A `.NET` type declared by a `dotnet { }` block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DotNetDecl {
+    pub alias: String,
+    pub assembly: String,
+    pub version: Option<String>,
+    pub culture: Option<String>,
+    pub public_key_token: Option<String>,
+    /// The CLR type name as declared.
+    pub type_name: String,
+}
+
+/// What an `Expr::DotNet` does to its receiver (ADR-014).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DotNetOp {
+    /// `Alias.Alias(args)`: construct an instance of the declared type.
+    Construct,
+    /// `X.Member(args)`.
+    Call(String),
+    /// `X.Member` without parentheses: a property or field read.
+    Get(String),
+    /// `X.Member := value`; the value is the only argument.
+    Set(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -332,6 +361,14 @@ pub struct Page {
     pub curr_page_slot: usize,
     /// Why the test client cannot drive this page yet; empty = it can.
     pub unsupported: Vec<String>,
+    /// The page extensions merged into `controls`, in the order they apply: each runs on an
+    /// instance of its own that shares the page's `Rec`, `xRec` and `CurrPage`.
+    #[serde(default)]
+    pub extensions: Vec<usize>,
+    /// Page triggers the extensions declare, by lower-case name: (name, extension object, routine).
+    /// They run after the page's own trigger of that name.
+    #[serde(default)]
+    pub ext_triggers: Vec<(String, usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -363,7 +400,10 @@ pub enum Binding {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PropVal {
     Lit(String),
+    /// A routine of the control's owner (the page, or the extension that declares the control).
     Routine(usize),
+    /// A routine of an extension that modified the control: (extension object, routine).
+    Ext(usize, usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -381,6 +421,67 @@ pub struct Control {
     /// For parts: how the part's rows follow the host's current row.
     #[serde(default)]
     pub part_link: Option<PartLink>,
+    /// The page extension that declares the control; `None` for the page's own controls. The
+    /// routines and global slots in `binding`, `triggers` and `PropVal::Routine` belong to it.
+    #[serde(default)]
+    pub owner: Option<usize>,
+    /// Triggers that `modify` blocks of page extensions add to the control, by lower-case name
+    /// (`onbeforevalidate`, `onaftervalidate`, `ondrilldown`, ...): (name, extension object,
+    /// routine), in the order the extensions apply.
+    #[serde(default)]
+    pub ext_triggers: Vec<(String, usize, usize)>,
+    /// For actions: what `RunObject` runs (ADR-012 follow-up).
+    #[serde(default)]
+    pub run_object: Option<RunObject>,
+    /// For `actionref(Name; Target)` controls: the action they stand for.
+    #[serde(default)]
+    pub action_ref: Option<ActionRef>,
+}
+
+/// The action an `actionref` delegates to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActionRef {
+    /// Index of the action control on the same page.
+    Target(usize),
+    /// Why the target is not an action of this page the client can follow.
+    Unresolved(String),
+}
+
+/// The kind of object a `RunObject` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RunKind {
+    Page,
+    Codeunit,
+    Report,
+    XmlPort,
+    Query,
+}
+
+/// `RunPageMode` of an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RunMode {
+    #[default]
+    Default,
+    View,
+    Edit,
+    Create,
+}
+
+/// The `RunObject` property of an action, with the properties that go with it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunObject {
+    pub kind: RunKind,
+    /// The page or codeunit object; `None` for a report, xmlport or query (the test client
+    /// refuses those before it looks at the target) and for a target that did not resolve.
+    pub object: Option<usize>,
+    /// `RunPageOnRec = true`.
+    pub on_rec: bool,
+    pub mode: RunMode,
+    /// `RunPageLink` as entries (target field, host field or filter) and `RunPageView` as
+    /// written; `provider` is unused.
+    pub link: Option<PartLink>,
+    /// Why the test client cannot run this action yet; `None` = it can.
+    pub unsupported: Option<String>,
 }
 
 /// `SubPageLink`, `SubPageView` and `Provider` of a part control (ADR-012 follow-up).
@@ -688,6 +789,21 @@ pub enum Expr {
         query: Box<Expr>,
         column: usize,
     },
+    /// A member of a `DotNet` value (ADR-014). `ty` is the declared alias of the receiver
+    /// variable (`None` when the receiver is the result of another DotNet call); a receiver
+    /// that holds no object is the static member access of the declared type. Plain variable
+    /// arguments are `Arg::Ref` so a by-reference .NET parameter can write them back. The result
+    /// has no static type: an assignment wraps it in `DotNetCoerce`.
+    DotNet {
+        ty: Option<usize>,
+        receiver: Option<Box<Expr>>,
+        op: DotNetOp,
+        args: Vec<Arg>,
+    },
+    /// A DotNet result stored into a slot of this type. The kinds must match exactly (Text and
+    /// Code, Integer and BigInteger and Decimal widen); anything else is Unsupported, because
+    /// BC's conversion of a .NET result to a differently typed AL variable is not pinned.
+    DotNetCoerce(RtType, Box<Expr>),
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
     /// result report failure as `false` instead of raising an error.
@@ -744,6 +860,14 @@ mod tests {
     #[test]
     fn program_round_trips_through_serde() {
         let p = Program {
+            dotnet_types: vec![DotNetDecl {
+                alias: "Convert".into(),
+                assembly: "netstandard".into(),
+                version: None,
+                culture: Some("neutral".into()),
+                public_key_token: None,
+                type_name: "System.Convert".into(),
+            }],
             apps: vec![],
             sources: vec![],
             positions: vec![],
@@ -795,6 +919,15 @@ mod tests {
                                 Box::new(Expr::Load(Place::Global(0))),
                             ),
                         ),
+                        Stmt::Expr(Expr::DotNetCoerce(
+                            RtType::Text(None),
+                            Box::new(Expr::DotNet {
+                                ty: Some(0),
+                                receiver: Some(Box::new(Expr::Load(Place::Global(0)))),
+                                op: DotNetOp::Call("ToBase64String".into()),
+                                args: vec![Arg::Ref(Place::Local(0))],
+                            }),
+                        )),
                         Stmt::AssertError(vec![Stmt::Expr(Expr::Builtin {
                             id: "Dialog.Error#2".into(),
                             receiver: None,

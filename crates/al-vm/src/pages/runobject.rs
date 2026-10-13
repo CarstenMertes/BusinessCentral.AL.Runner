@@ -1,0 +1,312 @@
+//! `RunObject` actions (ADR-012 follow-up): invoking an action that names an object instead of
+//! running an `OnAction` trigger. The platform alone decides what happens, so every rule below
+//! cites the corpus test that measured it on real BC.
+
+use super::*;
+use al_builtins::filter::{FieldFilter, FilterExpr};
+
+/// Filter group `RunPageLink` filters land in (corpus handlers/TestActionRunPageLinkFilterGroup.al:
+/// `g0=AAA|g2=|g4=`, unlike a part's SubPageLink).
+const RUN_LINK_GROUP: i32 = 0;
+/// Filter group the `where(...)` of `RunPageView` lands in (corpus
+/// handlers/TestPageActionRunPageView.al:RunPageView_Where_FiltersTheOpenedPage, `g3=KEEP`).
+const RUN_VIEW_GROUP: i32 = 3;
+
+impl Session {
+    /// Invokes the `RunObject` of action control `idx` of the open page `st`.
+    pub(super) fn run_object_action(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
+        let engine = self.engine();
+        let ro = page_of(&engine, st).controls[idx]
+            .run_object
+            .clone()
+            .expect("an action with a RunObject");
+        if let Some(why) = &ro.unsupported {
+            return unsupported(format!("RunObject action: {why}"));
+        }
+        // The test surface refuses these three before it looks at the target (corpus
+        // handlers/TestPageActionRunObjectKinds_Tests.al: RunObjectNamingAReportIsRefusedByTheTestPageSurface,
+        // ...ReportWithNoRequestPageIsRefusedTheSameWay, ...AnXmlPortIsRefused..., ...AQueryIsRefusedBeforeItsMetadataIsResolved;
+        // the same texts for objects of a precompiled app: ...KindsPrecompiled_Tests.al).
+        match ro.kind {
+            ir::RunKind::Report => return Err(error("The method RunReport is not supported for TestPages.")),
+            ir::RunKind::XmlPort => return Err(error("The method RunXmlPort is not supported for TestPages.")),
+            ir::RunKind::Query => {
+                return Err(error(
+                    "The method GetQueryTableMetadata is not supported for TestPages.",
+                ));
+            }
+            ir::RunKind::Codeunit => self.run_object_codeunit(st, &ro)?,
+            ir::RunKind::Page => self.run_object_page(st, &ro)?,
+        }
+        Ok(Value::Null)
+    }
+
+    /// A codeunit target runs on the host's own record, filters and position included, whether or
+    /// not `RunPageOnRec` is declared: what the codeunit moves or writes the host shows (corpus
+    /// handlers/TestPageActionRunObjectKinds_Tests.al:RunObjectNamingACodeunitRunsItOnTheHostsRow,
+    /// ...WithRunPageOnRecIsHandedTheHostsRow; handlers/TestPageActionRunObjectCodeunitRec_Tests.al).
+    fn run_object_codeunit(&mut self, st: &St, ro: &ir::RunObject) -> Result<(), Signal> {
+        let engine = self.engine();
+        let cu = ro.object.expect("a codeunit target");
+        let obj = &engine.program.objects[cu];
+        let declares = |name: &str, value: &str| {
+            obj.properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case(name) && v.trim().eq_ignore_ascii_case(value))
+        };
+        if declares("Subtype", "Test") || declares("SingleInstance", "true") {
+            return unsupported("RunObject of a test or SingleInstance codeunit (not pinned)");
+        }
+        if ro.link.is_some() || ro.mode != ir::RunMode::Default {
+            return unsupported("RunPageLink, RunPageView or RunPageMode on a codeunit target (not pinned)");
+        }
+        let on_run = obj
+            .routines
+            .iter()
+            .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnRun"));
+        let inst = match obj.rec_slot {
+            Some(slot) => {
+                let wants = match &obj.globals[slot].ty {
+                    RtType::Record(t, _) => *t,
+                    _ => return unsupported("RunObject of a codeunit whose Rec is not a record"),
+                };
+                if !self.has_source(st) {
+                    return unsupported("RunObject of a codeunit with TableNo from a page without a source table");
+                }
+                let rec = self.page_rec(st);
+                if rec.borrow().table != wants {
+                    return unsupported("RunObject of a codeunit whose TableNo is not the host's source table");
+                }
+                self.record_instance(cu, rec, None)?
+            }
+            None => self.instance(cu),
+        };
+        if let Some(on_run) = on_run {
+            self.call(cu, on_run, inst, Vec::new())?;
+        }
+        // What the codeunit did to the host's row is shown like the effects of an OnAction.
+        self.settle_after_action(st)?;
+        self.run_refresh(st)
+    }
+
+    /// A page target opens like `Page.Run` does, except in two things: the page opens and runs
+    /// its OnOpenPage (and OnNewRecord) before BC looks for a handler, and nothing bound is no
+    /// error for an ordinary page, while a dialog is refused afterwards (corpus
+    /// handlers/TestPageActionRunObjectNoHandler_Tests.al: arms 1 and 7-9;
+    /// handlers/TestPageCreateModeNewRecordArgs.al:ActionCreate_NoHandler_*, DialogCreate_NoHandler_*).
+    fn run_object_page(&mut self, st: &St, ro: &ir::RunObject) -> Result<(), Signal> {
+        let engine = self.engine();
+        let target = ro.object.expect("a page target");
+        let obj = &engine.program.objects[target];
+        let page_type = obj
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("PageType"))
+            .map(|(_, v)| v.trim().to_ascii_lowercase())
+            .unwrap_or_else(|| "card".into());
+        // A StandardDialog is shown as a dialog and answered by a [ModalPageHandler]; a Card or a
+        // List is answered by a [PageHandler] (TestPageActionRunObject_Tests.al:
+        // RunObjectActionToAStandardDialogTargetIsAnsweredByTheModalHandler). Other page types are
+        // not pinned.
+        let modal = match page_type.as_str() {
+            "standarddialog" => true,
+            "card" | "list" => false,
+            other => return unsupported(format!("RunObject of a {other} page (the handler kind is not pinned)")),
+        };
+        let mode = match ro.mode {
+            ir::RunMode::Default | ir::RunMode::Edit => PageMode::Edit,
+            ir::RunMode::View => PageMode::View,
+            ir::RunMode::Create => PageMode::New,
+        };
+        // A page caught by TestPage.Trap() is not answered by a handler (corpus
+        // handlers/TestPageActionRunPageMode.al:RunPageModeCreate_Trapped_Triggers).
+        let mut target_state = Rc::new(RefCell::new(PageState::closed(target as u32)));
+        let mut trapped = false;
+        if !modal {
+            if let Some(trap) = self.trap.take() {
+                if trap.borrow().object != target as u32 {
+                    return unsupported("a Trap() for another page than the one the action opens");
+                }
+                trap.borrow_mut().trapping = false;
+                trap.borrow_mut().instance = None;
+                target_state = trap;
+                trapped = true;
+            }
+        }
+        if target_state.borrow().open {
+            return unsupported("running a page that is already open");
+        }
+        target_state.borrow_mut().modal = modal;
+        let record = self.run_object_record(st, &target_state, ro, mode)?;
+        let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
+        self.open_page(&target_state, mode, record, None)?;
+        // The host re-reads its row once the target is done, but keeps its xRec (corpus
+        // handlers/TestPageActionRunObjectPageRec_Tests.al:HostOnAfterGetRecordAfterTheTargetWroteTheRow,
+        // HostSaveAfterTheTargetEditedTheRowCarriesXRec).
+        let handler = if trapped {
+            None
+        } else {
+            self.try_bind_page_handler(kind, target as u32)?
+        };
+        let answered = match handler {
+            Some(h) => self.answer_page(&target_state, h, modal).map(|_| ()),
+            None if trapped => Ok(()),
+            None if modal => {
+                // BC refuses a dialog nobody answers, after it opened (NoHandler_Tests.al arms 7 and 8).
+                self.mark_closed(&target_state);
+                let id = obj.id.unwrap_or(0);
+                Err(error(format!(
+                    "TestPages that are invoked from a RunObject action must have a handler. Page No. = {id}"
+                )))
+            }
+            None => {
+                // An ordinary page opens with nobody to answer it and AL is told nothing (arm 1).
+                // What happens to its close triggers is not pinned.
+                let closes = page_of(&engine, &target_state)
+                    .triggers
+                    .iter()
+                    .any(|(n, _)| n == "onclosepage" || n == "onqueryclosepage");
+                if closes {
+                    self.mark_closed(&target_state);
+                    return unsupported(
+                        "an unattended RunObject page with a close trigger (when it closes is not pinned)",
+                    );
+                }
+                self.mark_closed(&target_state);
+                Ok(())
+            }
+        };
+        target_state.borrow_mut().modal = false;
+        answered?;
+        self.settle_after_action(st)?;
+        self.reread_host_row(st)
+    }
+
+    /// The record the target opens on: the host's stored row for `RunPageOnRec`, narrowed by
+    /// `RunPageLink` (filter group 0) and `RunPageView` (sorting, order and `where` in group 3).
+    /// `None` when the action declares none of them: the target opens on its own view.
+    fn run_object_record(
+        &mut self,
+        host: &St,
+        target: &St,
+        ro: &ir::RunObject,
+        mode: PageMode,
+    ) -> Result<Option<Rec>, Signal> {
+        let engine = self.engine();
+        if !ro.on_rec && ro.link.is_none() {
+            return Ok(None);
+        }
+        let object = target.borrow().object as usize;
+        let obj = &engine.program.objects[object];
+        if obj.rec_slot.is_none() {
+            return unsupported("RunPageOnRec, RunPageLink or RunPageView on a target page without a source table");
+        }
+        if mode == PageMode::New {
+            return unsupported("RunPageMode = Create with RunPageOnRec, RunPageLink or RunPageView (not pinned)");
+        }
+        // How the target's own SourceTableView combines with a handed record is not pinned
+        // (open_page refuses it for Page.Run as well).
+        if obj
+            .properties
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"))
+        {
+            return unsupported("RunPageOnRec, RunPageLink or RunPageView on a target that declares SourceTableView");
+        }
+        self.page_instance(target)?;
+        let base = self.page_rec(target);
+        let rec = Rc::new(RefCell::new(base.borrow().clone()));
+        let table = self.table(&rec)?;
+        let host_rec = if self.has_source(host) {
+            Some(self.page_rec(host))
+        } else {
+            None
+        };
+        if ro.on_rec {
+            // The target's Rec is the STORED row, not what the host's page code left in its buffer,
+            // and it carries none of the host's filters (corpus
+            // handlers/TestPageActionRunObjectPageStoredRow_Tests.al:TargetOnOpenPageSeesHostRow,
+            // handlers/TestPageActionRunObjectPageRec_Tests.al:FilteredHostTargetRowSet).
+            let Some(host_rec) = &host_rec else {
+                return unsupported("RunPageOnRec from a page without a source table");
+            };
+            if host_rec.borrow().table != rec.borrow().table {
+                return unsupported("RunPageOnRec to a page over another table (not pinned)");
+            }
+            let mut pk = table.primary_key(&host_rec.borrow().fields);
+            self.ret_used = true;
+            if !matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true)) {
+                return unsupported("RunPageOnRec from a host row that is not stored (not pinned)");
+            }
+        }
+        if let Some(link) = &ro.link {
+            for entry in &link.entries {
+                let (field, expr) = match entry {
+                    ir::LinkEntry::Field(pf, hf) => {
+                        let ty = table.fields[*pf].ty.clone();
+                        let Some(host_rec) = &host_rec else {
+                            return unsupported("RunPageLink from a page without a source table");
+                        };
+                        // The host's current row; a host that shows no row links to the blank value
+                        // (as a part's link does, testpart/TestPartProviderMove.al).
+                        let value = if host.borrow().cursor == Cursor::None {
+                            let host_ty = self.table(host_rec)?.fields[*hf].ty.clone();
+                            Value::default_for(&host_ty)
+                        } else {
+                            host_rec.borrow().fields[*hf].clone()
+                        };
+                        let value = ops::convert(value, &ty)?;
+                        (*pf, FilterExpr::Range(Some(value.clone()), Some(value)))
+                    }
+                    ir::LinkEntry::Filter(pf, text) => {
+                        let ty = table.fields[*pf].ty.clone();
+                        let expr = self
+                            .parse_filter_text(text, &ty)
+                            .map_err(|e| Signal::Unsupported(format!("RunPageLink filter: {e}")))?;
+                        (*pf, expr)
+                    }
+                };
+                let mut r = rec.borrow_mut();
+                r.filters.retain(|f| !(f.group == RUN_LINK_GROUP && f.field == field));
+                r.filters.push(FieldFilter {
+                    field,
+                    expr,
+                    group: RUN_LINK_GROUP,
+                });
+            }
+            if let Some(view) = &link.view {
+                self.set_view_in(&rec, &table, view, Some(RUN_VIEW_GROUP), false, false)?;
+            }
+        }
+        Ok(Some(rec))
+    }
+
+    /// After a page target closed: the host shows its current row as stored now, and its
+    /// OnAfterGetRecord and OnAfterGetCurrRecord ran again for it. The row it holds in `xRec` stays
+    /// the one it loaded (corpus handlers/TestPageActionRunObjectPageRec_Tests.al:
+    /// HostSaveAfterTheTargetEditedTheRowCarriesXRec, HostOnAfterGetRecordAfterTheTargetWroteTheRow).
+    /// Whether the triggers also run when the target wrote nothing is not pinned.
+    fn reread_host_row(&mut self, st: &St) -> Result<(), Signal> {
+        if !st.borrow().open || !self.has_source(st) {
+            return Ok(());
+        }
+        if st.borrow().cursor != Cursor::Row || st.borrow().draft || st.borrow().dirty {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        if self.stored_row(&rec)?.is_none() {
+            return Ok(());
+        }
+        let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+        self.ret_used = true;
+        self.record_op("Get", &rec, &mut pk)?;
+        let r = (|| {
+            self.calc_row_flowfields(st)?;
+            self.populate_expressions(st)?;
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None).map(|_| ())
+        })();
+        self.torn_down_on_error(st, r)
+    }
+}

@@ -74,3 +74,14 @@ reviewed it.
   placeholder `CRONUS`.
 - 2026-10-13, ADR-013, host values: temporary records are not stamped with the system
   created and modified fields.
+- 2026-10-14, ADR-012, pages-misc: a `Page` variable is constructed (OnInit once) at its first procedure call.
+- 2026-10-14, ADR-012, pages-misc: lists with OnFindRecord/OnNextRecord are walked through the triggers; `Which` is `-`/`+`
+  for First/Last (BC passes `=`-forms the corpus does not pin).
+- 2026-10-14, ADR-012, pages-misc: the deleted-row sequence on such lists is inferred from four tests and refused elsewhere.
+- 2026-10-14, ADR-012, pages-misc: `TestField.Lookup` order is control trigger, table field trigger, TableRelation page; a
+  table-field OnLookup marks the row edited.
+- 2026-10-14, ADR-012, pages-misc: page background tasks run synchronously in a read-only session; tasks queued for
+  other rows are not cancelled.
+- 2026-10-14, ADR-012, pages-misc: `asserterror` rollback extent around a failing TestPage lookup is left as is and the case is refused
+  while writes are pending.
+

@@ -617,6 +617,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Dictionary(_) => Value::Dictionary(Default::default()),
         // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
         Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
+        // A codeunit or report variable nothing has used yet has no instance to release, so
+        // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`
+        // before `Probe.Run()`). Clearing one in use is not pinned.
+        Value::Codeunit(rc) if !rc.borrow().initialized => return Ok(Value::Null),
         other => return unsupported(&format!("Clear of {other:?}")),
     };
     Ok(Value::Null)

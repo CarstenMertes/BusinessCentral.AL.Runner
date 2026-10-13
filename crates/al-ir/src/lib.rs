@@ -302,6 +302,9 @@ pub enum ControlKind {
     SystemAction,
     ActionGroup,
     Part,
+    /// A data item of a report's request page: its `binding` is the global slot of the item's
+    /// record, and the test client reads and writes that record's filters.
+    DataItem,
 }
 
 /// Where a field control reads and writes its value.

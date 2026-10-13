@@ -66,6 +66,8 @@ type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
 mod filter;
 mod parts;
+mod request;
+pub(crate) use request::RequestClosed;
 mod runobject;
 
 impl Session {
@@ -174,6 +176,9 @@ impl Session {
         let object = st.borrow().object as usize;
         if !engine.events.is_subscribed(object, event) {
             return Ok(allow.unwrap_or(true));
+        }
+        if engine.program.objects[object].rec_slot.is_none() {
+            return unsupported(format!("page event {event} on a page without a source table"));
         }
         let rec = Value::Record(self.page_rec(st));
         let xobj = &engine.program.objects[object];
@@ -939,6 +944,9 @@ impl Session {
     /// StandardDialog both; a NavigatePage only OK; a PromptDialog Cancel, and OK unless it declares
     /// systemaction(OK); a ConfirmationDialog neither).
     fn builtin_offered(&self, st: &St, which: &str) -> bool {
+        if self.is_request_page(st) {
+            return self.request_builtin_offered(st, which);
+        }
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let page_type = engine.program.objects[object]
@@ -2217,6 +2225,15 @@ impl Session {
             }
             _ => return unsupported(format!("{method} on a built-in control")),
         };
+        // The data items and actions of a report's request page.
+        if self.is_request_page(st) {
+            let kind = page_of(&self.engine(), st).controls[idx].kind.clone();
+            match kind {
+                ir::ControlKind::DataItem => return self.request_item_op(method, st, idx, args),
+                ir::ControlKind::Action if m == "Invoke" => return self.request_action_invoke(st, idx),
+                _ => {}
+            }
+        }
         // A control whose Visible is the literal false, or that sits in a group whose Visible is,
         // is not on the runtime page at all (corpus handlers/TestPageFieldVisibleGroup_Tests.al:1-30).
         if self.control_eliminated(st, idx) {

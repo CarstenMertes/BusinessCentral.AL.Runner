@@ -155,7 +155,8 @@ pub fn expand(src: &str, symbols: &BTreeSet<String>) -> Option<String> {
     let root = ast::SourceFile::cast(parse.syntax())?;
     let mut inserts: Vec<(usize, String)> = Vec::new();
     for obj in root.objects() {
-        if !obj.kind().eq_ignore_ascii_case("page") {
+        // A report's request page has the same controls (corpus handlers/TestReportRequestPageControl.al).
+        if !obj.kind().eq_ignore_ascii_case("page") && !obj.kind().eq_ignore_ascii_case("report") {
             continue;
         }
         let Some(close) = obj.close_brace_offset() else {
@@ -205,11 +206,17 @@ pub struct Layout {
 
 /// Walks the `layout` and `actions` sections of page object `obj`.
 pub fn layout(obj: &ast::Object) -> Layout {
+    layout_of(obj.sections())
+}
+
+/// Walks the `layout` and `actions` sections among `sections`: the top-level sections of a page, or
+/// the sections of a report's `requestpage`.
+pub fn layout_of(sections: impl Iterator<Item = ast::Section>) -> Layout {
     let mut out = Layout {
         controls: Vec::new(),
         reasons: Vec::new(),
     };
-    for top in obj.sections() {
+    for top in sections {
         let n = top.name().to_ascii_lowercase();
         if n == "layout" || n == "actions" {
             visit(&top, None, n == "actions", &mut out);

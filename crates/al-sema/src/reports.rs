@@ -130,6 +130,85 @@ pub fn layout(obj: &ast::Object) -> Layout {
     out
 }
 
+/// Request page properties that change nothing a test client can observe.
+const INERT_REQUEST_PAGE_PROPERTIES: &[&str] = &[
+    "captionml",
+    "abouttitle",
+    "abouttitleml",
+    "abouttext",
+    "abouttextml",
+    "contextsensitivehelppage",
+];
+
+/// Request page triggers the test client runs: it opens the page (`OnInit`, `OnOpenPage`) and
+/// closes it (`OnQueryClosePage`, `OnClosePage`).
+const REQUEST_PAGE_TRIGGERS: &[&str] = &["oninit", "onopenpage", "onqueryclosepage", "onclosepage"];
+
+/// The request page of report `obj`: the controls its `requestpage` section declares, then one
+/// `DataItem` control per data item of `items` (the filters a handler sets on the page), and the
+/// `requestpage` section itself when the report declares one. A report without one still has a
+/// request page showing its data items' filters.
+pub fn request_layout(obj: &ast::Object, items: &[RawItem]) -> (crate::pages::Layout, Option<ast::Section>) {
+    let section = obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage"));
+    let mut layout = match &section {
+        Some(s) => crate::pages::layout_of(s.sections()),
+        None => crate::pages::layout_of(std::iter::empty()),
+    };
+    if let Some(s) = &section {
+        for p in s.properties() {
+            let name = p.name().to_ascii_lowercase();
+            if !["caption", "savevalues"].contains(&name.as_str())
+                && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
+            {
+                layout
+                    .reasons
+                    .push(format!("request page property {name} is not supported yet"));
+            }
+        }
+        for t in s.triggers() {
+            let name = t.name().to_ascii_lowercase();
+            if !REQUEST_PAGE_TRIGGERS.contains(&name.as_str()) {
+                layout
+                    .reasons
+                    .push(format!("request page trigger {name} is not supported yet"));
+            }
+        }
+        for sub in s.sections() {
+            let name = sub.name().to_ascii_lowercase();
+            if name != "layout" && name != "actions" {
+                layout
+                    .reasons
+                    .push(format!("request page section {name} is not supported yet"));
+            }
+        }
+    }
+    let mut kinds = Vec::new();
+    for c in &layout.controls {
+        match c.kind {
+            ir::ControlKind::Part | ir::ControlKind::Repeater => kinds.push(format!(
+                "request page control {} is a {} (not supported yet)",
+                c.name,
+                if c.kind == ir::ControlKind::Part {
+                    "part"
+                } else {
+                    "repeater"
+                }
+            )),
+            _ => {}
+        }
+    }
+    layout.reasons.extend(kinds);
+    for i in items {
+        layout.controls.push(crate::pages::RawControl {
+            name: i.name.clone(),
+            kind: ir::ControlKind::DataItem,
+            parent: None,
+            section: i.section.clone(),
+        });
+    }
+    (layout, section)
+}
+
 /// The data items under `section` (a `dataset`, a `dataitem` or an extension's `addlast`), nested
 /// ones with `parent` set. `target` names the item a reportextension adds the top-level ones under.
 fn visit(

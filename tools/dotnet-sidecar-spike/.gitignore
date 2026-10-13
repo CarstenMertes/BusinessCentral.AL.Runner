@@ -1,0 +1,4 @@
+sidecar/bin/
+sidecar/obj/
+target/
+Cargo.lock

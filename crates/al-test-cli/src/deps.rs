@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 pub struct Dependencies {
     /// Dependency apps in dependency order.
     pub apps: Vec<AppSource>,
+    /// The manifest facts `ModuleInfo` reports for each (publisher and version).
+    pub manifests: Vec<crate::runtime::Manifest>,
     /// `name version` of each, for the report.
     pub summary: Vec<String>,
     /// One line per app loaded, and one per problem, for the run's log.
@@ -51,6 +53,7 @@ pub fn load(app_dir: &Path, source_dirs: &[PathBuf], extra_dirs: &[PathBuf]) -> 
     }
     let mut apps = Vec::new();
     let mut summary = Vec::new();
+    let mut manifests = Vec::new();
     for d in loaded.apps {
         let files = d.app.files.len();
         if d.role == Role::Platform {
@@ -68,8 +71,18 @@ pub fn load(app_dir: &Path, source_dirs: &[PathBuf], extra_dirs: &[PathBuf]) -> 
             d.version,
             d.path.display()
         ));
+        manifests.push(crate::runtime::Manifest {
+            publisher: d.publisher.clone(),
+            version: d.version.to_string(),
+            resources: Vec::new(),
+        });
         summary.push(format!("{} {}", d.app.name, d.version));
         apps.push(d.app);
     }
-    Ok(Dependencies { apps, summary, log })
+    Ok(Dependencies {
+        apps,
+        manifests,
+        summary,
+        log,
+    })
 }

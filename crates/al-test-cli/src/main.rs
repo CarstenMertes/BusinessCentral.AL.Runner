@@ -106,10 +106,15 @@ fn run() -> Result<ExitCode, String> {
         .map(Path::to_path_buf)
         .unwrap_or_default();
     let fixture_dir = corpus_tests.join("al-language-internals-fixture");
-    let mut apps = vec![
-        runtime::load_app(&fixture_dir)?,
-        runtime::load_app(&root.join(&cfg.corpus_app))?,
-    ];
+    let app_dirs = [fixture_dir.clone(), root.join(&cfg.corpus_app)];
+    let mut apps = app_dirs
+        .iter()
+        .map(|d| runtime::load_app(d))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut manifests = app_dirs
+        .iter()
+        .map(|d| runtime::load_manifest(d))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
     let mut dependency_summary = Vec::new();
     if !args.no_deps {
@@ -119,10 +124,11 @@ fn run() -> Result<ExitCode, String> {
             eprintln!("{line}");
         }
         kinds.extend(deps.apps.iter().map(|_| al_sema::AppKind::Dependency));
+        manifests.extend(deps.manifests);
         dependency_summary = deps.summary;
         apps.extend(deps.apps);
     }
-    let rt = runtime::CorpusRuntime::run_apps(apps, kinds, &symbols);
+    let rt = runtime::CorpusRuntime::run_apps(apps, kinds, &manifests, &symbols);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",

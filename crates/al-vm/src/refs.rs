@@ -135,6 +135,18 @@ impl Session {
                 n if n >= i64::from(SYSTEM_FIELD_BASE) => unsupported(format!(
                     "RecordRef.Open on system table {n} (whether a Cloud target may open it is not pinned)"
                 )),
+                // A table of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
+                n if self
+                    .engine
+                    .program
+                    .objects
+                    .iter()
+                    .any(|o| o.kind == "uncompiled table" && i64::from(o.id.unwrap_or(0)) == n) =>
+                {
+                    unsupported(format!(
+                        "RecordRef.Open on table {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                    ))
+                }
                 // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; how
                 // BC names the calling object is not pinned (docs/probes-needed.md).
                 n => Err(al_error(format!(
@@ -297,6 +309,9 @@ impl Session {
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
+                    if s.field_descending {
+                        return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
+                    }
                     let mut d = dst.borrow_mut();
                     d.fields = s.fields.clone();
                     d.filters = s.filters.clone();

@@ -1,0 +1,52 @@
+//! Builtins that act on session state. The VM implements them (`Ctx::session_op`); this table
+//! only registers the overload ids so lowering accepts them.
+
+use crate::native::NativeFn;
+
+macro_rules! via_session {
+    ($($id:literal),* $(,)?) => {
+        &[$(($id, |c, _, a| c.session_op($id, a))),*]
+    };
+}
+
+pub const REGISTRY: &[(&str, NativeFn)] = via_session![
+    "NumberSequence.Insert#1",
+    "NumberSequence.Delete#1",
+    "NumberSequence.Exists#1",
+    "NumberSequence.Next#1",
+    "NumberSequence.Current#1",
+    "NumberSequence.Range#1",
+    "NumberSequence.Range#2",
+    "NumberSequence.Restart#1",
+    "Database.IsInWriteTransaction#1",
+    "Database.CompanyName#1",
+    "IsolatedStorage.Contains#1",
+    "IsolatedStorage.Contains#2",
+    "IsolatedStorage.Delete#1",
+    "IsolatedStorage.Get#1",
+    "IsolatedStorage.Get#2",
+    "IsolatedStorage.Get#3",
+    "IsolatedStorage.Get#4",
+    "IsolatedStorage.Set#1",
+    "IsolatedStorage.Set#2",
+    "IsolatedStorage.SetEncrypted#1",
+    "IsolatedStorage.SetEncrypted#2",
+    "System.CodeCoverageLog#1",
+    // The host's clock and identity (al-vm hostvalues.rs).
+    "System.Today#1",
+    "System.Time#1",
+    "System.CurrentDateTime#1",
+    "System.WorkDate#1",
+    "System.Sleep#1",
+    "Database.UserId#1",
+    "Database.UserSecurityId#1",
+    "Database.SessionId#1",
+    "Database.ServiceInstanceId#1",
+    "Database.TenantId#1",
+    "System.GuiAllowed#1",
+    "System.IsServiceTier#1",
+    "System.WindowsLanguage#1",
+    "System.GlobalLanguage#1",
+    "Session.CurrentClientType#1",
+    "Session.DefaultClientType#1",
+];

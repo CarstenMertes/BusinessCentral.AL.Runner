@@ -31,11 +31,11 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 | tableextensiontrigger | 13 | 6 | 7 | 46.2% |
 | handlers | 1115 | 497 | 618 | 44.6% |
 | session | 427 | 80 | 347 | 18.7% |
-| testpart | 80 | 10 | 70 | 12.5% |
+| testpart | 80 | 71 | 9 | 88.8% |
 | query | 129 | 0 | 129 | 0% |
 | permissions | 58 | 0 | 58 | 0% |
 | pageapplicationarea | 76 | 0 | 76 | 0% |
-| xmlport | 40 | 0 | 40 | 0% |
+| xmlport | 40 | 25 | 15 | 62.5% |
 | other areas (17) | 257 | 17 | 240 | |
 
 ## What is implemented
@@ -58,12 +58,19 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
   extension triggers, Isolated events.
 - **Data formats.** JSON, XML DOM with simple XPath, Blob streams, text
   functions, TextBuilder, BigText, SecretText.
+- **XmlPorts (Format = Xml).** `Import` and `Export` (instance and static),
+  `SetSource`, `SetDestination`, `SetTableView`; table, field, text elements and
+  attributes, nested table elements with `LinkFields`, `AutoSave`, `AutoUpdate`,
+  `AutoReplace`, `UseTemporary`, and the triggers the corpus uses. The 15
+  remaining xmlport tests need dependency apps (ADR-013).
 - **Test runner.** Install codeunits. `[HandlerFunctions]` with Message,
   Confirm, StrMenu, page and modal page handlers.
 - **Pages (ADR-012).** TestPage on Card and List pages: lifecycle,
   navigation, SetValue and validation, actions, page triggers,
   `CurrPage.Update`, `Page.Run` and `RunModal`, lookup mode, SaveValues,
-  control-text formatting.
+  control-text formatting. Parts and `TestPart` (SubPageLink, SubPageView,
+  Provider, navigation, new rows with AutoSplitKey, `CurrPage.<Part>.Page`
+  calls), `TestFilter`, `Page.SetRecord`, SourceTableTemporary pages.
 
 ## Largest remaining blockers
 
@@ -72,7 +79,7 @@ Each test is counted under the first thing that stops it.
 | Tests | Blocker | Plan |
 |---:|---|---|
 | ~550 | Objects outside the workspace: tables (452), codeunits (51), pages (46) | ADR-013 (Proposed): compile Microsoft's real apps from the artifact feed; native providers for system tables |
-| 180 | TestPage parts and TestPart | ADR-012 follow-up; groundwork in place |
+| 23 | Tests that use parts but stop on something else: `DMY2Date` (7), `Session.ApplicationArea` (5), RunObject action (4), the Integer system table (4), page extensions (3) | Each is counted under its own blocker |
 | 121 | Query objects | Not started |
 | 96 | Request and filter pages | ADR-012 follow-up |
 | 94 | Page extensions | ADR-012 follow-up |
@@ -80,7 +87,7 @@ Each test is counted under the first thing that stops it.
 | 73 | RunObject actions | ADR-012 follow-up |
 | 58 | `[TransactionModel]` | Not started; corpus pins it (record/TestTransactionModelAutoRollback.al) |
 | 43 | Guarded `Codeunit.Run` (`if Codeunit.Run(...)`) | Not started |
-| ~150 | Single builtins: NavApp.GetCurrentModuleInfo, Report.Run, DMY2Date, CreateDateTime, CalcDate, Enum.Names, FilterPageBuilder, Session.ApplicationArea, … | Pick up one by one |
+| ~50 | Single builtins that remain: Session.ApplicationArea, TestFilter, FilterPageBuilder and Report.Run (page and report infrastructure), Today, CurrentDateTime and WorkDate (host clock), UserSecurityId and SessionId (host identity), Record.SetLoadFields (partial records), error collection (`[ErrorBehavior]`) | Needs the objects or host values named; see `docs/probes-needed.md` for what the done ones assume |
 | 31 | SystemCreatedAt/By and SystemModifiedAt/By are not stamped | Needs the clock and identity host values (ADR-013 identity table) |
 
 ## Open decisions for the project owner
@@ -110,9 +117,6 @@ Answered on 2026-10-13 and recorded in ADR-013:
 
 ## Known issues and debt
 
-- `al-builtins/src/format.rs`: the legacy `format()` wrapper still panics
-  (`unimplemented!`) on an unpinned format. Callers must use `try_format`.
-  Move the remaining callers over and delete the wrapper.
 - `GetLastErrorCallStack` returns a marker that refuses to be read; real call
   stacks need source lines in the IR.
 - Red/green discipline slipped in places during the parallel build-out (the
@@ -124,3 +128,16 @@ Answered on 2026-10-13 and recorded in ADR-013:
   formatting, and the `Format` of Time and DateTime.
 - `al-host` is still a placeholder. Clock, identity and network go through it
   once ADR-013 lands.
+
+## Next targets after the corpus (owner, 2026-10-13)
+
+Start these when the corpus is green or nearly green and nothing big is left:
+
+1. **Microsoft's own Base App test buckets.** AL Runner has a skill for this:
+   `BusinessCentral.AL.Runner/.claude/skills/running-ms-test-buckets/SKILL.md`.
+   It measures how many of Microsoft's own test cases this runtime can run.
+   The tests need CRONUS demo data (`--test-data`), not an empty database.
+2. **CRONUS demo data in native Rust.** `bcdb` (repo `BusinessCentral.BakReader`, C#) reads BC
+   data straight from a `.bak` or `.bacpac` file, with no SQL Server. AL Runner uses it
+   for `--test-data`. Port it to Rust: here at first, possibly in that repo later.
+   This gives speed and native support for loading CRONUS into the store.

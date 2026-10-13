@@ -110,6 +110,7 @@ pub enum Role {
 #[derive(Debug, Clone)]
 pub struct DependencyApp {
     pub app: AppSource,
+    pub publisher: String,
     pub version: Version,
     pub path: PathBuf,
     pub role: Role,
@@ -220,6 +221,7 @@ pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
                     .map(|(p, text)| (format!("{}/{p}", manifest.name), text))
                     .collect(),
             },
+            publisher: manifest.publisher.clone(),
             version: manifest.version,
             path,
             role,

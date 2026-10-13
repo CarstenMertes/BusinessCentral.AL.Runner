@@ -2,6 +2,7 @@
 
 pub mod corpus;
 pub mod deps;
+pub mod host;
 pub mod oracle;
 pub mod output;
 pub mod report;

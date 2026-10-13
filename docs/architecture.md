@@ -35,7 +35,7 @@ needs more.
 | `al-ir` | Typed IR: program, objects, routines, places, expressions, table and page schemas |
 | `al-vm` | Engine (immutable, `Arc`) and Session (all mutable state). Records, triggers, events and subscribers, FlowFields, AutoIncrement, RecordRef/FieldRef, relations and rename propagation, UI dialogs and handlers, the headless page client |
 | `al-data` | The `Store` trait (ADR-003), `MemStore` on `im` persistent maps, and its contract suite |
-| `al-host` | Capability traits for the host (placeholder; ADR-006) |
+| `al-host` | Capability traits for the host (ADR-006): `Clock` and `Identity` with AL Runner's defaults (ADR-013); the session reads them for `Today`, `UserId`, the system field stamps and the like. The command line injects the system clock (`al-test-cli/src/host.rs`) |
 | `al-deps` | Dependency apps (ADR-013): version selection, the ZIP and NAVX reader (CRC checked), the `.alpackages` pool. May touch the OS |
 | `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet |
 
@@ -59,6 +59,17 @@ needs more.
   ordinary routines. A headless client in `al-vm/src/pages.rs` plays the BC
   test client: open/close, navigation, SetValue and validation, actions, and
   modal and page handlers.
+- **XmlPorts.** An xmlport lowers to an object whose first globals are its
+  element variables (text and table elements, in schema order), two hidden
+  stream slots, then its declared variables; the schema is `Object::xmlport`.
+  A variable is a codeunit-like instance. `Import` and `Export` run in
+  `al-vm/src/xmlports.rs` over the document tree of `al-builtins/src/xmlport.rs`.
+- **Reports.** A report lowers to an object whose first globals are its data item
+  records (source order), then a hidden request-page flag, then its declared
+  variables; the dataset is `Object::report`. A variable is a codeunit-like
+  instance and its first use runs `OnInitReport`. `Run`, `RunModal`, `Execute`
+  and `SetTableView` run in `al-vm/src/reports.rs`: processing only, with no
+  request page, layout or output (those are refused).
 - **Culture.** Fixed en-US, which matches the oracle.
 
 ## Budgets (tests, run in CI in release)

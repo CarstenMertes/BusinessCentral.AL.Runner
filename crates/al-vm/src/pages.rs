@@ -64,14 +64,29 @@ fn is_true(s: &str) -> bool {
 
 type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
+mod areas;
+mod filter;
+mod parts;
+mod runobject;
+
 impl Session {
     /// `TP.Ctl`: a handle on control `control` of the test page `page`.
     pub(crate) fn page_control(&mut self, page: Value, control: usize) -> Result<Value, Signal> {
         match page {
-            Value::TestPage(p) => Ok(Value::TestControl(Rc::new(ControlRef {
-                page: p,
-                target: ControlTarget::Control(control),
-            }))),
+            Value::TestPage(p) => {
+                // A part control reads as the page it shows (a `TestPart`).
+                let is_part = {
+                    let engine = self.engine();
+                    page_of(&engine, &p).controls[control].kind == ir::ControlKind::Part
+                };
+                if is_part {
+                    return self.part_page(&p, control).map(Value::TestPage);
+                }
+                Ok(Value::TestControl(Rc::new(ControlRef {
+                    page: p,
+                    target: ControlTarget::Control(control),
+                })))
+            }
             other => Err(Signal::Unsupported(format!("control of {other:?}"))),
         }
     }
@@ -98,20 +113,65 @@ impl Session {
         if st.borrow().open { Ok(()) } else { Err(error(NOT_OPEN)) }
     }
 
-    /// Runs page trigger `name` (lower case) if the page declares it.
+    /// Runs page trigger `name` (lower case) if the page declares it, then the same trigger of
+    /// each page extension that declares it. The page's own trigger runs first (assumed, see
+    /// docs/probes-needed.md "Page extensions"); the lowering refuses two extensions that
+    /// declare one trigger and extension triggers that answer a Boolean. The answer returned
+    /// is the page's own.
     fn page_trigger(&mut self, st: &St, name: &str, args: Vec<Value>) -> Result<Option<Value>, Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let Some(r) = page_of(&engine, st)
-            .triggers
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, r)| *r)
-        else {
-            return Ok(None);
-        };
-        let inst = st.borrow().instance.clone().expect("open page");
-        self.call(object, r, inst, args).map(|(v, _)| Some(v))
+        let page = page_of(&engine, st);
+        let mut answer = None;
+        let mut result = Ok(());
+        if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {
+            let inst = st.borrow().instance.clone().expect("open page");
+            match self.call(object, r, inst, args.clone()) {
+                Ok((v, _)) => answer = Some(v),
+                Err(e) => result = Err(e),
+            }
+        }
+        if result.is_ok() {
+            for (n, e, r) in &page.ext_triggers {
+                if n == name {
+                    let inst = self.owner_instance(st, Some(*e));
+                    if let Err(err) = self.call(*e, *r, inst, args.clone()) {
+                        result = Err(err);
+                        break;
+                    }
+                }
+            }
+        }
+        self.end_page_call(st);
+        result.map(|()| answer)
+    }
+
+    /// The instance that runs the code of `owner`: the page itself, or one of its extensions.
+    fn owner_instance(&self, st: &St, owner: Option<usize>) -> Rc<RefCell<al_builtins::value::Instance>> {
+        let s = st.borrow();
+        match owner {
+            None => s.instance.clone().expect("open page"),
+            Some(e) => s
+                .ext_instances
+                .iter()
+                .find(|(o, _)| *o == e)
+                .map(|(_, i)| i.clone())
+                .expect("an extension of the page has an instance"),
+        }
+    }
+
+    /// A page-driven call ends: the client takes the page's view back, which carries the key and
+    /// `Ascending` but not a per-field `SetAscending` (corpus handlers/TestPageViewRoundTripRoutes.al,
+    /// Action_SetAscending_ReadInTheSameTrigger_IsDescending against ..._ReadByALaterAction).
+    fn end_page_call(&mut self, st: &St) {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        if engine.program.objects[object].rec_slot.is_none() {
+            return;
+        }
+        if st.borrow().instance.is_some() {
+            self.page_rec(st).borrow_mut().field_descending = false;
+        }
     }
 
     /// A page trigger that answers Boolean: `Some(answer)` when the trigger exists and can state one,
@@ -223,11 +283,29 @@ impl Session {
         Ok(())
     }
 
-    /// Calls routine `r` of the page.
-    fn page_routine(&mut self, st: &St, r: usize) -> Result<Value, Signal> {
-        let object = st.borrow().object as usize;
-        let inst = st.borrow().instance.clone().expect("open page");
-        self.call(object, r, inst, vec![]).map(|(v, _)| v)
+    /// Calls routine `r` of `owner` (the page, or one of its extensions) on its instance.
+    fn owner_routine(&mut self, st: &St, owner: Option<usize>, r: usize) -> Result<Value, Signal> {
+        let object = owner.unwrap_or(st.borrow().object as usize);
+        let inst = self.owner_instance(st, owner);
+        let result = self.call(object, r, inst, vec![]).map(|(v, _)| v);
+        self.end_page_call(st);
+        result
+    }
+
+    /// Calls routine `r` written in control `idx`: in the extension that declares the control, else the page.
+    fn control_routine(&mut self, st: &St, idx: usize, r: usize) -> Result<Value, Signal> {
+        let engine = self.engine();
+        let owner = page_of(&engine, st).controls[idx].owner;
+        self.owner_routine(st, owner, r)
+    }
+
+    /// The value of the routine behind property value `v` of control `idx`; `None` for a literal.
+    fn prop_routine_value(&mut self, st: &St, idx: usize, v: &ir::PropVal) -> Result<Option<Value>, Signal> {
+        match v {
+            ir::PropVal::Lit(_) => Ok(None),
+            ir::PropVal::Routine(r) => self.control_routine(st, idx, *r).map(Some),
+            ir::PropVal::Ext(e, r) => self.owner_routine(st, Some(*e), *r).map(Some),
+        }
     }
 
     /// The `TestPage.*` / `TestField.*` methods (ADR-012).
@@ -293,6 +371,17 @@ impl Session {
                     .iter()
                     .position(|o| o.kind == "page" && o.id == Some(id))
                 else {
+                    // A page of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
+                    if engine
+                        .program
+                        .objects
+                        .iter()
+                        .any(|o| o.kind == "uncompiled page" && o.id == Some(id))
+                    {
+                        return unsupported(format!(
+                            "page {n} belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                        ));
+                    }
                     return Err(error(format!("You tried to invoke the Page object with the ID {n}")));
                 };
                 let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
@@ -316,7 +405,58 @@ impl Session {
     }
 
     fn test_page_op(&mut self, method: &str, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
+        let name = method.split_once('.').map(|(_, m)| m).unwrap_or(method);
+        let r = self.test_page_op_inner(method, st, args)?;
+        // A move of the host re-points its parts; a move of a part re-points the parts that take
+        // their link from it (corpus testpart/TestPartProviderMove.al).
+        let moved = match name {
+            "First" | "Last" | "Next" | "Previous" | "GoToKey" | "GoToRecord" | "FindFirstField" | "FindNextField"
+            | "FindPreviousField" => !matches!(r, Value::Boolean(false)),
+            "New" => true,
+            // CurrPage.Update leaves a host's parts as they are: they are not opened again (corpus
+            // handlers/TestPageNoSrcPart_Tests.al:DirectOpen_NoSrcHost_HostWriteIsVisibleThroughTheSameInstance);
+            // whether they read their rows again is docs/probes-needed.md.
+            _ => false,
+        };
+        if moved && st.borrow().open {
+            if st.borrow().host.is_some() {
+                self.sync_dependents(st)?;
+            } else {
+                self.sync_parts(st)?;
+            }
+        }
+        Ok(r)
+    }
+
+    fn test_page_op_inner(&mut self, method: &str, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         match method.split_once('.').map(|(_, m)| m).unwrap_or(method) {
+            // `TestPart.Visible` / `.Enabled` read the part control of the host: a part that is
+            // reachable at all is visible (corpus testpart/TestTestPart.al:TestPart_Visible_*).
+            "Visible" if method.starts_with("TestPart.") => {
+                self.require_open(st)?;
+                Ok(Value::Boolean(true))
+            }
+            "Enabled" if method.starts_with("TestPart.") => {
+                self.require_open(st)?;
+                let host = st.borrow().host.clone();
+                match host.and_then(|(h, i)| h.upgrade().map(|h| (h, i))) {
+                    Some((h, i)) => Ok(Value::Boolean(self.control_enabled(&h, i)?)),
+                    None => unsupported("TestPart.Enabled on a page that is not a part"),
+                }
+            }
+            // The id is a compiler-generated control id; the corpus pins only that a table field
+            // number is not one (testpart/TestTestPart.al:TestPart_GetField_TakesAControlIdNotATableFieldNo).
+            "Filter" => {
+                self.require_open(st)?;
+                Ok(self.filter_handle(st))
+            }
+            "GetField" => {
+                self.require_open(st)?;
+                match args.first() {
+                    Some(Value::Integer(n)) => Err(error(format!("The field with ID = {n} is not found on the page."))),
+                    _ => unsupported("TestPart.GetField without an id"),
+                }
+            }
             "OpenEdit" => self.page_open(st, PageMode::Edit),
             "OpenView" => self.page_open(st, PageMode::View),
             "OpenNew" => self.page_open(st, PageMode::New),
@@ -408,8 +548,24 @@ impl Session {
                 }
                 None => Ok(Value::Boolean(st.borrow().lookup)),
             },
-            "Run" => self.run_page_ui(st, None, false),
-            "RunModal" => self.run_page_ui(st, None, true),
+            // `P.SetRecord(Rec)` hands the page variable the record it shows when it runs (corpus
+            // handlers/TestPageSetRecord.al).
+            "SetRecord" => match args.first() {
+                Some(Value::Record(r)) => {
+                    let copy = Rc::new(RefCell::new(r.borrow().clone()));
+                    st.borrow_mut().set_record = Some(copy);
+                    Ok(Value::Null)
+                }
+                other => unsupported(format!("Page.SetRecord with {other:?}")),
+            },
+            "Run" => {
+                let record = st.borrow().set_record.clone();
+                self.run_page_ui(st, record, false)
+            }
+            "RunModal" => {
+                let record = st.borrow().set_record.clone();
+                self.run_page_ui(st, record, true)
+            }
             "Close" if method.starts_with("Page.") => {
                 self.require_open(st)?;
                 let a = self.close_action(st, "Close");
@@ -513,6 +669,26 @@ impl Session {
         }
         let inst = self.instance(object);
         inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(st.clone());
+        // Each extension runs on an instance of its own that shares the page's Rec, xRec and CurrPage.
+        let mut exts = Vec::new();
+        for &e in &page.extensions {
+            let ext = self.instance(e);
+            let (page_object, ext_object) = (&engine.program.objects[object], &engine.program.objects[e]);
+            for (from, to) in [
+                (page_object.rec_slot, ext_object.rec_slot),
+                (page_object.xrec_slot, ext_object.xrec_slot),
+            ] {
+                if let (Some(from), Some(to)) = (from, to) {
+                    let shared = inst.borrow().globals[from].clone();
+                    ext.borrow_mut().globals[to] = shared;
+                }
+            }
+            if let Some(slot) = ext_object.globals.iter().position(|g| g.name == "CurrPage") {
+                ext.borrow_mut().globals[slot] = Value::TestPage(st.clone());
+            }
+            exts.push((e, ext));
+        }
+        st.borrow_mut().ext_instances = exts;
         st.borrow_mut().instance = Some(inst.clone());
         Ok(inst)
     }
@@ -530,6 +706,19 @@ impl Session {
         mode: PageMode,
         record: Option<Rec>,
         bind: Option<UiKind>,
+    ) -> Result<Option<Handler>, Signal> {
+        self.open_page_as(st, mode, record, bind, false)
+    }
+
+    /// `open_page`, or with `as_part` the opening of a part's page: everything up to and including
+    /// the page's OnOpenPage, leaving its rows to the host (`sync_part`), which knows the link.
+    fn open_page_as(
+        &mut self,
+        st: &St,
+        mode: PageMode,
+        record: Option<Rec>,
+        bind: Option<UiKind>,
+        as_part: bool,
     ) -> Result<Option<Handler>, Signal> {
         let mut handler = None;
         let engine = self.engine();
@@ -552,6 +741,12 @@ impl Session {
             s.result = None;
             s.editable_off = false;
             s.opening = true;
+            s.parts = Vec::new();
+            s.areas = self.application_areas.clone();
+        }
+        if let Err(e) = self.create_parts(st) {
+            self.mark_closed(st);
+            return Err(e);
         }
         let has_source = self.has_source(st);
         // The rowset a page serves from OnFindRecord / OnNextRecord is not modelled: refused rather
@@ -561,7 +756,7 @@ impl Session {
             .iter()
             .find(|(n, _)| n == "onfindrecord" || n == "onnextrecord")
         {
-            st.borrow_mut().open = false;
+            self.mark_closed(st);
             return unsupported(format!("a page with an {} trigger (the rowset page code serves)", t.0));
         }
         // SourceTableView is the page's own view of its table (corpus
@@ -572,14 +767,26 @@ impl Session {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"))
             .map(|(_, v)| v.trim().to_string());
+        // The part control's SubPageView comes first: its filters land in the link group, its
+        // sorting and order set the key and direction. The part page's own SourceTableView then
+        // sets only the halves it names (corpus handlers/TestPartOwnSortVsSubPageView.al:1-45).
+        let sub_view = self.sub_page_view(st);
+        if let (Some(view), true) = (&sub_view, has_source) {
+            let rec = self.page_rec(st);
+            let table = self.table(&rec)?;
+            self.set_view_in(&rec, &table, view, Some(parts::LINK_GROUP), false, true)?;
+        }
         if let (Some(view), true) = (source_view, has_source) {
             if record.is_some() {
-                st.borrow_mut().open = false;
+                self.mark_closed(st);
                 return unsupported("Page.Run with a record on a page that declares SourceTableView");
             }
             let rec = self.page_rec(st);
             let table = self.table(&rec)?;
-            self.set_view(&rec, &table, &view)?;
+            // The platform applies the view in filter group 2: the page's own AL reads it with
+            // FilterGroup(2) and finds group 0 empty (corpus handlers/TestPageSourceTableView.al:
+            // FiltersAreInFilterGroup2WhenOnOpenPageRuns).
+            self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
         }
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
@@ -611,45 +818,58 @@ impl Session {
                 frozen.push(self.prop_bool_now(st, i, "visible", true)?);
             }
             st.borrow_mut().frozen_visible = frozen;
-            if !has_source {
-                // A page over no table shows its one implicit row: the expressions, then OnAfterGetRecord.
-                st.borrow_mut().cursor = Cursor::Row;
-                self.populate_expressions(st)?;
-                self.page_trigger(st, "onaftergetrecord", vec![])?;
-                self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
-                self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+            // The parts open right after the host's own OnOpenPage, before its first row is read
+            // (corpus handlers/TestPagePartAgcr_Tests.al:PartFiresOnHostOpen_NoTouch).
+            self.open_parts(st)?;
+            if as_part {
                 return Ok(());
             }
-            if mode == PageMode::New {
-                // corpus handlers/TestPageCreateModeNewRecordArgs.al:243-270: OnOpenPage, then
-                // OnNewRecord with BelowxRec true and xRec on the last row.
-                self.ret_used = true;
-                let rec = self.page_rec(st);
-                self.record_op("FindLast", &rec, &mut [])?;
-                return self.start_draft(st, false);
-            }
-            if record.is_some() {
-                // The page opens on the record the caller handed it, when that row exists
-                // (corpus handlers/TestPageRunHandler_Tests.al:PageHandlerReceivesTheRecordPassedToPageRun).
-                let rec = self.page_rec(st);
-                if self.stored_row(&rec)?.is_some() {
-                    self.ret_used = true;
-                    let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
-                    if matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true)) {
-                        st.borrow_mut().cursor = Cursor::Row;
-                        return self.arrive(st);
-                    }
-                }
-            }
-            self.page_first_row(st)
+            self.load_first_row(st, mode, record.is_some())?;
+            self.sync_parts(st)
         })();
         if let Err(e) = result {
             // The open raises the error itself and leaves the variable closed
             // (corpus testpageteardown/TestPageTeardown.al:3-24).
-            st.borrow_mut().open = false;
+            self.mark_closed(st);
             return Err(e);
         }
         Ok(handler)
+    }
+
+    /// The first row a page shows when it opens (or when a part is linked afresh).
+    fn load_first_row(&mut self, st: &St, mode: PageMode, with_record: bool) -> Result<(), Signal> {
+        let has_source = self.has_source(st);
+        if !has_source {
+            // A page over no table shows its one implicit row: the expressions, then OnAfterGetRecord.
+            st.borrow_mut().cursor = Cursor::Row;
+            self.populate_expressions(st)?;
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+            return Ok(());
+        }
+        if mode == PageMode::New {
+            // corpus handlers/TestPageCreateModeNewRecordArgs.al:243-270: OnOpenPage, then
+            // OnNewRecord with BelowxRec true and xRec on the last row.
+            self.ret_used = true;
+            let rec = self.page_rec(st);
+            self.record_op("FindLast", &rec, &mut [])?;
+            return self.start_draft(st, false);
+        }
+        if with_record {
+            // The page opens on the record the caller handed it, when that row exists
+            // (corpus handlers/TestPageRunHandler_Tests.al:PageHandlerReceivesTheRecordPassedToPageRun).
+            let rec = self.page_rec(st);
+            if self.stored_row(&rec)?.is_some() {
+                self.ret_used = true;
+                let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+                if matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true)) {
+                    st.borrow_mut().cursor = Cursor::Row;
+                    return self.arrive(st);
+                }
+            }
+        }
+        self.page_first_row(st)
     }
 
     fn save_values(&self, st: &St) -> bool {
@@ -666,8 +886,8 @@ impl Session {
             .controls
             .iter()
             .filter_map(|c| {
-                if let ir::Binding::Var(slot) = c.binding {
-                    Some(slot)
+                if let (ir::Binding::Var(slot), None) = (&c.binding, c.owner) {
+                    Some(*slot)
                 } else {
                     None
                 }
@@ -714,7 +934,7 @@ impl Session {
         // A refused TestPage.Close() leaves the variable not open all the same (corpus
         // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen).
         if r.is_ok() {
-            st.borrow_mut().open = false;
+            self.mark_closed(st);
         }
         r
     }
@@ -741,6 +961,9 @@ impl Session {
             s.draft = false;
             s.dirty = false;
         }
+        // BC's client saves the child forms before the form's own record on a saving close
+        // (corpus testpart/TestOkPartRow.al:OkInvoke_HeaderOnModifySeesThePartRowSavedFirst).
+        self.save_parts(st)?;
         let pending = st.borrow_mut().pending.take();
         if let Some(fields) = pending {
             let rec = self.page_rec(st);
@@ -787,9 +1010,8 @@ impl Session {
         if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
             self.store_page_values(st);
         }
-        let mut s = st.borrow_mut();
-        s.open = false;
-        s.result = Some(action.to_string());
+        self.mark_closed(st);
+        st.borrow_mut().result = Some(action.to_string());
         Ok(Value::Null)
     }
 
@@ -874,11 +1096,189 @@ impl Session {
     fn land_on_new_line(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
         let table = rec.borrow().table as usize;
+        self.note_lower_key(st)?;
         let fresh = self.initial_fields(table);
         rec.borrow_mut().fields = fresh;
-        let mut s = st.borrow_mut();
-        s.cursor = Cursor::NewLine;
-        s.draft = true;
+        {
+            let mut s = st.borrow_mut();
+            s.cursor = Cursor::NewLine;
+            s.draft = true;
+        }
+        // The blank line of a part is a started record: the client runs NewRecord when it becomes
+        // current (corpus handlers/TestPagePartDraftLineLink.al:LinkedPart_DraftLine_*,
+        // handlers/TestPagePartOnNewRecordCount.al). A top-level list is not pinned.
+        if st.borrow().host.is_some() {
+            self.stamp_from_filters(st, true)?;
+            self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+            self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        }
+        Ok(())
+    }
+
+    /// Remembers the stored row the cursor stands on as the lower neighbour of the row about to
+    /// start, for AutoSplitKey.
+    fn note_lower_key(&mut self, st: &St) -> Result<(), Signal> {
+        let lower = if st.borrow().cursor == Cursor::Row && !st.borrow().draft {
+            let rec = self.page_rec(st);
+            Some(self.row_key(&rec)?)
+        } else {
+            None
+        };
+        st.borrow_mut().lower_key = lower;
+        Ok(())
+    }
+
+    /// What the client's NewRecord copies onto a fresh buffer of a part: a field whose combined
+    /// filter is a single value, when the field is part of the primary key or the page sets
+    /// PopulateAllFields; then the table's OnValidate runs for each (corpus
+    /// handlers/TestPageSubpagePartFieldLink.al, TestPageSubpagePartConstFilter.al,
+    /// TestPageSubpagePartNewRecordInit.al:New_StampsTheLinkedFieldAndValidatesIt).
+    fn stamp_from_filters(&mut self, st: &St, validate: bool) -> Result<(), Signal> {
+        if !self.has_source(st) {
+            return Ok(());
+        }
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let populate_all = engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("PopulateAllFields") && is_true(v));
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let mut stamped: Vec<(usize, Value)> = Vec::new();
+        for pos in 0..table.fields.len() {
+            if !(populate_all || table.keys[0].contains(&pos)) {
+                continue;
+            }
+            let single: Vec<Option<Value>> = rec
+                .borrow()
+                .filters
+                .iter()
+                .filter(|f| f.field == pos)
+                .map(|f| match &f.expr {
+                    al_builtins::filter::FilterExpr::Eq(v) => Some(v.clone()),
+                    al_builtins::filter::FilterExpr::Range(Some(a), Some(b))
+                        if ops::compare(a, b).is_ok_and(|o| o.is_eq()) =>
+                    {
+                        Some(a.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let [Some(v)] = single.as_slice() else { continue };
+            stamped.push((pos, v.clone()));
+        }
+        for (pos, v) in stamped {
+            rec.borrow_mut().fields[pos] = v.clone();
+            if validate {
+                self.ret_used = false;
+                self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), v])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// AutoSplitKey: the last field of the primary key of a new line is numbered from its
+    /// neighbours when it is saved (corpus handlers/TestPageAutoSplitKey_Tests.al,
+    /// TestPageAutoSplitKeyRanges_Tests.al). Only the shapes the corpus pins are numbered; any
+    /// other raises Signal::Unsupported.
+    fn auto_split_key(&mut self, st: &St) -> Result<(), Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let on = engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("AutoSplitKey") && is_true(v));
+        if !on {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let Some(&last) = table.keys[0].last() else {
+            return Ok(());
+        };
+        let ty = table.fields[last].ty.clone();
+        if !matches!(ty, RtType::Integer | RtType::BigInteger | RtType::Decimal) {
+            return unsupported(format!("AutoSplitKey on a key field of type {ty:?}"));
+        }
+        let dec = |v: &Value| match v {
+            Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
+            Value::BigInteger(i) => Some(rust_decimal::Decimal::from(*i)),
+            Value::Decimal(d) => Some(*d),
+            _ => None,
+        };
+        // A key the test typed stays; the number is assigned to an unset one.
+        let current = rec.borrow().fields[last].clone();
+        if dec(&current).is_none_or(|d| !d.is_zero()) {
+            return Ok(());
+        }
+        if rec.borrow().key != 0 || !rec.borrow().ascending {
+            return unsupported("AutoSplitKey on a part that is not read in primary key order");
+        }
+        let lower = st
+            .borrow()
+            .lower_key
+            .as_ref()
+            .and_then(|k| k.get(table.keys[0].len() - 1))
+            .and_then(dec);
+        // The next line after the lower one in the part's view, within the same leading key.
+        let upper = match lower {
+            None => None,
+            Some(l) => {
+                let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+                {
+                    let fields = rec.borrow().fields.clone();
+                    let mut p = probe.borrow_mut();
+                    for &k in &table.keys[0][..table.keys[0].len() - 1] {
+                        p.filters.push(al_builtins::filter::FieldFilter {
+                            field: k,
+                            expr: al_builtins::filter::FilterExpr::Range(
+                                Some(fields[k].clone()),
+                                Some(fields[k].clone()),
+                            ),
+                            group: 99,
+                        });
+                    }
+                    let lv = ops::convert(Value::Decimal(l), &ty)?;
+                    p.filters.push(al_builtins::filter::FieldFilter {
+                        field: last,
+                        expr: al_builtins::filter::FilterExpr::Gt(lv),
+                        group: 99,
+                    });
+                }
+                self.ret_used = true;
+                if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
+                    dec(&probe.borrow().fields[last])
+                } else {
+                    None
+                }
+            }
+        };
+        use rust_decimal::Decimal as D;
+        let step = D::from(10000);
+        let number = match (lower, upper) {
+            // An empty grid burns one interval on the blank placeholder row.
+            (None, _) => D::from(20000),
+            (Some(l), None) if l >= D::ZERO => l + step,
+            (Some(l), None) if l == D::from(-10000) => l + (-l / D::from(3)).trunc(),
+            (Some(l), Some(u)) if l >= D::ZERO && u > l => {
+                if matches!(ty, RtType::Decimal) {
+                    return unsupported("AutoSplitKey between two lines of a Decimal key");
+                }
+                let half = ((u - l) / D::from(2)).trunc();
+                if half < D::ONE {
+                    return unsupported("AutoSplitKey between two adjacent lines");
+                }
+                l + half.min(step)
+            }
+            (Some(l), Some(u)) if l == D::from(-10000) && u == D::from(10000) => D::from(-1),
+            (l, u) => {
+                return unsupported(format!(
+                    "AutoSplitKey between {l:?} and {u:?} (the corpus does not pin it)"
+                ));
+            }
+        };
+        rec.borrow_mut().fields[last] = ops::convert(Value::Decimal(number), &ty)?;
         Ok(())
     }
 
@@ -888,11 +1288,13 @@ impl Session {
     fn populate_expressions(&mut self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
-        for c in &page.controls {
+        for (idx, c) in page.controls.iter().enumerate() {
             for name in ["autoformatexpression", "captionclass"] {
                 match c.prop(name) {
-                    Some(ir::PropVal::Routine(r)) => {
-                        let v = self.page_routine(st, *r)?;
+                    Some(routine @ (ir::PropVal::Routine(_) | ir::PropVal::Ext(..))) => {
+                        let v = self
+                            .prop_routine_value(st, idx, routine)?
+                            .expect("a routine-valued property");
                         if name == "captionclass" {
                             if let Value::Text(t) | Value::Code(t) = &v {
                                 if !t.starts_with("3,") {
@@ -1000,8 +1402,14 @@ impl Session {
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
         for i in 0..Self::WINDOW {
-            keys.push(self.row_key(&rec)?);
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
             self.populate_current(st)?;
+            keys.push(al_builtins::value::WindowRow {
+                key,
+                stored,
+                shown: rec.borrow().fields.clone(),
+            });
             if i + 1 == Self::WINDOW {
                 break;
             }
@@ -1016,28 +1424,56 @@ impl Session {
         // Back on the row the cursor is on.
         self.ret_used = true;
         self.record_op("Get", &rec, &mut start.clone())?;
+        // The row buffer the page keeps for the row it stands on is what OnAfterGetRecord left.
+        if let Some(row) = keys.first() {
+            rec.borrow_mut().fields = row.shown.clone();
+            self.set_xrec_fields(st, row.stored.clone());
+        }
         st.borrow_mut().window = keys;
         Ok(())
     }
 
     fn in_window(&self, st: &St, key: &[Value]) -> bool {
-        st.borrow().window.iter().any(|k| {
-            k.len() == key.len()
-                && k.iter().zip(key).all(|(a, b)| {
-                    ops::compare(a, b)
-                        .map(|o| o == std::cmp::Ordering::Equal)
-                        .unwrap_or(false)
-                })
-        })
+        st.borrow().window.iter().any(|k| Self::same_key(&k.key, key))
+    }
+
+    fn same_key(a: &[Value], b: &[Value]) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(a, b)| {
+                ops::compare(a, b)
+                    .map(|o| o == std::cmp::Ordering::Equal)
+                    .unwrap_or(false)
+            })
     }
 
     /// The cursor has landed on a stored row: populate it as the page type does, then
     /// OnAfterGetCurrRecord.
     fn arrive(&mut self, st: &St) -> Result<(), Signal> {
+        // A stored row is not the started record the cursor may have left (corpus
+        // handlers/TestPageOpenNewPartLink.al:OpenNew_LinesInsertedInCode_LastThenWriteLandsOnTheLastLine).
+        st.borrow_mut().draft = false;
         if self.is_list(st) {
             let key = self.row_key(&self.page_rec(st))?;
             if !self.in_window(st, &key) {
                 self.populate_window(st)?;
+            } else {
+                // A row of the window shows the buffer OnAfterGetRecord left, as long as the stored
+                // row is still the one that buffer was made from.
+                let rec = self.page_rec(st);
+                let row = st
+                    .borrow()
+                    .window
+                    .iter()
+                    .find(|w| Self::same_key(&w.key, &key))
+                    .filter(|w| Self::same_values(&w.stored, &rec.borrow().fields))
+                    .cloned();
+                match row {
+                    Some(w) => {
+                        rec.borrow_mut().fields = w.shown;
+                        self.set_xrec_fields(st, w.stored);
+                    }
+                    None => self.set_xrec(st),
+                }
             }
         } else {
             self.populate_current(st)?;
@@ -1066,7 +1502,7 @@ impl Session {
     fn torn_down_on_error<T>(&mut self, st: &St, r: Result<T, Signal>) -> Result<T, Signal> {
         match r {
             Err(Signal::Error(e)) => {
-                st.borrow_mut().open = false;
+                self.mark_closed(st);
                 if self.is_list(st) {
                     Err(Signal::Error(e))
                 } else {
@@ -1096,6 +1532,7 @@ impl Session {
                     } else if st.borrow().new_line {
                         // corpus handlers/TestPageNewRowLine_Tests.al: Next() past the last data
                         // row lands on the blank line and answers true.
+                        self.refuse_read_only_part(st, "Next() onto the new-row line")?;
                         self.land_on_new_line(st)?;
                         return Ok(true);
                     } else {
@@ -1126,6 +1563,18 @@ impl Session {
     fn page_go_to_key(&mut self, st: &St, key: &mut [Value]) -> Result<Value, Signal> {
         if !self.has_source(st) {
             return unsupported("GoToKey on a page without a source table");
+        }
+        let result_used = self.ret_used;
+        // A TestPart raises when the key has the wrong number of fields, and when the key is
+        // missing and the result is not used (corpus testpart/TestTestPart.al:
+        // TestPart_GoToKey_ErrorsWhenTheKeyFieldCountIsWrong, _ErrorsForAMissingKeyWhenTheReturnIsDiscarded).
+        // The corpus pins that an error is raised, not its text: refused.
+        if st.borrow().host.is_some() {
+            let rec = self.page_rec(st);
+            let wanted = self.table(&rec)?.keys[0].len();
+            if key.len() != wanted {
+                return unsupported("TestPart.GoToKey with the wrong number of key values (error text not pinned)");
+            }
         }
         self.save_row(st)?;
         let rec = self.page_rec(st);
@@ -1166,6 +1615,10 @@ impl Session {
             let mut s = st.borrow_mut();
             s.cursor = before_cursor;
             s.draft = before_draft;
+            drop(s);
+            if st.borrow().host.is_some() && !result_used {
+                return unsupported("TestPart.GoToKey of a missing key with the result unused (error text not pinned)");
+            }
         }
         Ok(Value::Boolean(found))
     }
@@ -1316,11 +1769,22 @@ impl Session {
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         st.borrow_mut().modal = modal && !trapped;
         let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
-        let Some((hobject, hroutine, hinst)) = handler else {
+        let Some(handler) = handler else {
             return Ok(Value::Null);
         };
-        if let Err(e) = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]) {
-            st.borrow_mut().open = false;
+        self.answer_page(&st, handler, modal)
+    }
+
+    /// Hands the open page `st` to its handler, closes it if the handler left it open, and for a
+    /// modal page reports how it closed.
+    fn answer_page(&mut self, st: &St, handler: Handler, modal: bool) -> Result<Value, Signal> {
+        let (hobject, hroutine, hinst) = handler;
+        let st = st.clone();
+        self.page_handler_depth += 1;
+        let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
+        self.page_handler_depth -= 1;
+        if let Err(e) = handled {
+            self.mark_closed(&st);
             return Err(e);
         }
         if st.borrow().open {
@@ -1358,6 +1822,7 @@ impl Session {
     /// `TestPage.New()` (corpus handlers/TestPageInsertAllowed_Tests.al:70 New_OnInsertAllowedFalsePage_IsDenied,
     /// handlers/TestPageOpenNewAfterGetCurrRecord.al New_OnAnOpenCard_RunsOnAfterGetCurrRecordForTheNewRecord).
     fn new_record(&mut self, st: &St) -> Result<Value, Signal> {
+        self.refuse_read_only_part(st, "New()")?;
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let insert_denied = engine.program.objects[object]
@@ -1425,11 +1890,19 @@ impl Session {
         if !self.has_source(st) {
             return;
         }
+        let fields = self.page_rec(st).borrow().fields.clone();
+        self.set_xrec_fields(st, fields);
+    }
+
+    /// xRec holds `fields`: the row as it was read.
+    fn set_xrec_fields(&mut self, st: &St, fields: Vec<Value>) {
+        if !self.has_source(st) {
+            return;
+        }
         let object = st.borrow().object as usize;
         let Some(slot) = self.engine.program.objects[object].xrec_slot else {
             return;
         };
-        let fields = self.page_rec(st).borrow().fields.clone();
         let inst = st.borrow().instance.clone().expect("open page");
         if let Value::Record(x) = &inst.borrow().globals[slot] {
             x.borrow_mut().fields = fields;
@@ -1482,9 +1955,11 @@ impl Session {
         }
         let rec = self.page_rec(st);
         self.set_xrec(st);
+        self.note_lower_key(st)?;
         let table = rec.borrow().table as usize;
         let fresh = self.initial_fields(table);
         rec.borrow_mut().fields = fresh;
+        self.stamp_from_filters(st, true)?;
         let engine = self.engine();
         let page = page_of(&engine, st);
         let first = page.controls.iter().position(|c| c.kind == ir::ControlKind::Field);
@@ -1554,7 +2029,10 @@ impl Session {
             return Ok(());
         }
         self.ret_used = false;
-        self.record_op("Modify", &rec, &mut [Value::Boolean(true)])?;
+        self.page_xrec = Some(self.page_xrec_fields(st));
+        let modified = self.record_op("Modify", &rec, &mut [Value::Boolean(true)]);
+        self.page_xrec = None;
+        modified?;
         st.borrow_mut().dirty = false;
         self.set_xrec(st);
         Ok(())
@@ -1571,6 +2049,7 @@ impl Session {
         if !self.page_event(st, "oninsertrecordevent", Some(true), Some(false))? {
             return Ok(());
         }
+        self.auto_split_key(st)?;
         self.ret_used = false;
         self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
         {
@@ -1580,6 +2059,11 @@ impl Session {
             s.cursor = Cursor::Row;
         }
         self.set_xrec(st);
+        // The parts of a new host row link to it once it is stored, with the number its OnInsert
+        // gave it (corpus handlers/TestPageOpenNewPartLink.al).
+        if !st.borrow().parts.is_empty() {
+            self.sync_parts(st)?;
+        }
         Ok(())
     }
 
@@ -1628,6 +2112,7 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
+        self.refuse_read_only_part(st, "SetValue")?;
         self.activate(st, idx)?;
         // Only an Update() requested by this call's triggers refreshes at its end.
         st.borrow_mut().refresh = false;
@@ -1639,8 +2124,33 @@ impl Session {
             return unsupported("SetValue on a control whose type is not known");
         };
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
+        // OnBeforeValidate and OnAfterValidate of `modify` blocks wrap the control's own OnValidate
+        // (corpus pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al:
+        // ModifiedControlBeforeAndAfterValidateWrapTheBaseControlsOwnOnValidate). Only that
+        // measured shape runs: a control bound to a record field whose table has no OnValidate of its own.
+        let ext_validate = |name: &str| -> Vec<(usize, usize)> {
+            ctl.ext_triggers
+                .iter()
+                .filter(|(n, _, _)| n == name)
+                .map(|(_, e, r)| (*e, *r))
+                .collect()
+        };
+        let (ext_before, ext_after) = (ext_validate("onbeforevalidate"), ext_validate("onaftervalidate"));
+        if !ext_before.is_empty() || !ext_after.is_empty() {
+            if !rec_bound {
+                return unsupported("OnBeforeValidate/OnAfterValidate on a control bound to a variable (not pinned)");
+            }
+            if self.control_field(st, idx).is_some_and(|f| f.on_validate.is_some()) {
+                return unsupported(
+                    "OnBeforeValidate/OnAfterValidate on a control whose field has a table OnValidate (their order is not pinned)",
+                );
+            }
+        }
         let caption = self.control_caption(st, idx)?;
-        let fmt = self.control_format(st, idx)?;
+        let fmt = al_builtins::pagefmt::ControlFormat {
+            work_date: self.work_date_day(),
+            ..self.control_format(st, idx)?
+        };
         let arg = args.first().cloned().unwrap_or(Value::Null);
         let text = match &arg {
             Value::Text(t) | Value::Code(t) => t.clone(),
@@ -1652,10 +2162,15 @@ impl Session {
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
-            o.enum_captions
+            // An enum control resolves by caption only; a value without a caption shows its name.
+            // The bare member name of a captioned value is rejected, as on a real service tier
+            // (handlers/TestPageEnumVariableControl_Tests.al:50-56,86-90,137-140).
+            o.enum_values
                 .iter()
-                .chain(o.enum_values.iter())
-                .find(|(_, c)| c.eq_ignore_ascii_case(t))
+                .find(|(v, name)| {
+                    let shown = o.enum_captions.iter().find(|(c, _)| c == v).map_or(name, |(_, c)| c);
+                    shown.eq_ignore_ascii_case(t)
+                })
                 .map(|(v, _)| *v)
         };
         let suffix = if rec_bound {
@@ -1733,13 +2248,19 @@ impl Session {
                     self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()])?;
                 }
                 ir::Binding::Var(slot) => {
-                    let inst = st.borrow().instance.clone().expect("open page");
+                    let inst = self.owner_instance(st, ctl.owner);
                     inst.borrow_mut().globals[slot] = parsed.clone();
                 }
                 _ => return unsupported("SetValue on a read-only control"),
             }
+            for (e, r) in &ext_before {
+                self.owner_routine(st, Some(*e), *r)?;
+            }
             if let Some(r) = ctl.trigger("onvalidate") {
-                self.page_routine(st, r)?;
+                self.control_routine(st, idx, r)?;
+            }
+            for (e, r) in &ext_after {
+                self.owner_routine(st, Some(*e), *r)?;
             }
             Ok(())
         })();
@@ -1756,7 +2277,7 @@ impl Session {
                 if let (Some(rec), Some(before)) = (&rec, before) {
                     rec.borrow_mut().fields = before;
                 } else if let ir::Binding::Var(slot) = ctl.binding {
-                    let inst = st.borrow().instance.clone().expect("open page");
+                    let inst = self.owner_instance(st, ctl.owner);
                     inst.borrow_mut().globals[slot] = current.clone();
                 }
                 Err(refuse(self, e.message))
@@ -1788,12 +2309,20 @@ impl Session {
                     "Enabled" => Ok(Value::Boolean(applies)),
                     "Invoke" => {
                         if applies {
-                            st.borrow_mut().mode = if name == "Edit" { PageMode::Edit } else { PageMode::View };
+                            let mode = if name == "Edit" { PageMode::Edit } else { PageMode::View };
+                            st.borrow_mut().mode = mode;
+                            // The parts follow the host (corpus handlers/TestPageControlEditableRoutes.al:
+                            // Part_HostOpenEdit_ThenViewAction).
+                            self.set_part_modes(st, mode);
                         }
                         Ok(Value::Null)
                     }
                     other => unsupported(format!("TestAction.{other}")),
                 };
+            }
+            ControlTarget::Filter => {
+                let m = m.to_string();
+                return self.test_filter_op(&m, st, args);
             }
             ControlTarget::BuiltIn(name) if m == "Invoke" => {
                 // OK and Yes confirm, Cancel and No cancel; a refused save keeps the page open
@@ -1802,12 +2331,56 @@ impl Session {
             }
             _ => return unsupported(format!("{method} on a built-in control")),
         };
+        // The compiler emits no call for a `Value()` whose result is thrown away: nothing is
+        // evaluated, on a control that is on the page or not (corpus
+        // pageapplicationarea/TestPageDiscardedFieldValueCall.al: RemovedControl_DiscardedValueCall_RaisesNothing,
+        // FoundControl_DiscardedValueCall_RaisesNothing).
+        if m == "Value" && args.is_empty() && !self.ret_used {
+            return Ok(Value::Null);
+        }
         // A control whose Visible is the literal false, or that sits in a group whose Visible is,
         // is not on the runtime page at all (corpus handlers/TestPageFieldVisibleGroup_Tests.al:1-30).
-        if self.control_eliminated(st, idx) {
+        // Neither is one that application areas removed.
+        self.check_areas_pinned(st, idx)?;
+        if self.control_eliminated(st, idx) || self.area_removed(st, idx) {
             let engine = self.engine();
             let ctl = &page_of(&engine, st).controls[idx];
-            return Err(error(format!("The field {} is not found on the page.", ctl.name)));
+            let what = match ctl.kind {
+                ir::ControlKind::Action | ir::ControlKind::SystemAction => "action",
+                _ => "field",
+            };
+            // A page that ships precompiled names the control by an internal number in this
+            // message (corpus pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:92
+            // pins `ID = 301776846` for a Base Application control). How the number derives from the
+            // control is not known, so the text is refused rather than guessed.
+            let object = st.borrow().object as usize;
+            let app = engine.program.objects[object].app as usize;
+            if engine.program.apps.get(app).is_some_and(|a| a.dependency) {
+                return unsupported(format!(
+                    "the error text for the {what} {} of a page from a dependency app (it names the control by an internal ID)",
+                    ctl.name
+                ));
+            }
+            return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
+        }
+        // Only Invoke of an actionref is pinned: it runs the action it stands for. A found actionref
+        // reads Visible true when neither it nor its target states a Visible (corpus
+        // pageapplicationarea/TestPageApplicationAreaExtensionActionPartRemoval.al:
+        // ExtActionRef_TargetEnabled_IsFound, ExtActionRef_TargetNotEnabled_IsNotFound).
+        if m != "Invoke" {
+            let engine = self.engine();
+            let page = page_of(&engine, st);
+            let ctl = &page.controls[idx];
+            if let Some(action_ref) = &ctl.action_ref {
+                let target_plain = match action_ref {
+                    ir::ActionRef::Target(t) => page.controls[*t].prop("visible").is_none(),
+                    ir::ActionRef::Unresolved(_) => false,
+                };
+                if m == "Visible" && target_plain && ctl.prop("visible").is_none() {
+                    return Ok(Value::Boolean(true));
+                }
+                return unsupported(format!("TestAction.{m} of an actionref"));
+            }
         }
         match m {
             "Value" => {
@@ -1873,7 +2446,12 @@ impl Session {
             "Enabled" => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
             "Visible" => Ok(Value::Boolean(self.control_visible(st, idx)?)),
             "Invoke" => self.action_invoke(st, idx),
-            "SetValue" => self.control_set_value(st, idx, args),
+            "DrillDown" | "AssistEdit" | "Lookup" => self.control_navigate(st, idx, m),
+            "SetValue" => {
+                let r = self.control_set_value(st, idx, args)?;
+                self.resync_parts_linked_by(st, idx)?;
+                Ok(r)
+            }
             "Activate" => {
                 self.activate(st, idx)?;
                 Ok(Value::Null)
@@ -1923,23 +2501,98 @@ impl Session {
         false
     }
 
+    /// `TestField.DrillDown`, `AssistEdit` and `Lookup`: run the control's trigger of that name, the
+    /// one it states itself or the one a page extension's `modify` block adds (corpus
+    /// pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al: AModifyBlocksOnDrillDownRunsForTheModifiedControl,
+    /// AModifyBlocksOnLookupRunsForTheModifiedControl, ABaseControlsOwnOnAssistEditRuns,
+    /// AModifyBlocksOnAssistEditRunsForTheModifiedControl, OnAssistEditIsRaisedOnlyForTheControlItWasCalledOn).
+    /// A DrillDown on a control with no trigger raises a fixed platform error (handlers/TestPageFieldDrillDown_Tests.al:
+    /// FieldDrillDownWithNoTriggerIsRefused). What AssistEdit and Lookup do without a trigger (a table
+    /// relation's lookup page) is not modelled.
+    fn control_navigate(&mut self, st: &St, idx: usize, method: &str) -> Result<Value, Signal> {
+        let engine = self.engine();
+        let ctl = &page_of(&engine, st).controls[idx];
+        let name = method.to_ascii_lowercase();
+        let name = match name.as_str() {
+            "drilldown" => "ondrilldown",
+            "assistedit" => "onassistedit",
+            _ => "onlookup",
+        };
+        let own = ctl.trigger(name).map(|r| (ctl.owner, r));
+        let added: Vec<(usize, usize)> = ctl
+            .ext_triggers
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, e, r)| (*e, *r))
+            .collect();
+        let found: Vec<(Option<usize>, usize)> = own
+            .into_iter()
+            .chain(added.into_iter().map(|(e, r)| (Some(e), r)))
+            .collect();
+        let (owner, routine) = match found.as_slice() {
+            [one] => *one,
+            [] if method == "DrillDown" => {
+                return Err(error("The NavDrilldownAction method is not supported."));
+            }
+            [] => return unsupported(format!("TestField.{method} on a control with no {name} trigger")),
+            _ => {
+                return unsupported(format!(
+                    "TestField.{method} on a control with more than one {name} trigger"
+                ));
+            }
+        };
+        st.borrow_mut().refresh = false;
+        let result = if method == "Lookup" {
+            // OnLookup(var Text): Boolean. A trigger that returns true hands the text back to the
+            // control; what that writes is not pinned.
+            let object = owner.unwrap_or(st.borrow().object as usize);
+            let inst = self.owner_instance(st, owner);
+            self.call(object, routine, inst, vec![Value::Text(String::new())])
+                .and_then(|(v, _)| match v {
+                    Value::Boolean(true) => unsupported("an OnLookup trigger that returns true"),
+                    _ => Ok(Value::Null),
+                })
+        } else {
+            self.owner_routine(st, owner, routine).map(|_| Value::Null)
+        };
+        if result.is_err() {
+            st.borrow_mut().refresh = false;
+        }
+        let v = result?;
+        self.run_refresh(st)?;
+        Ok(v)
+    }
+
     /// `TestAction.Invoke`: runs the action's OnAction when it is enabled; a disabled action
     /// does nothing and raises nothing (corpus handlers/TestPageActionEnabledSourceField_Tests.al,
     /// TPAE_ActionEnabledBoolField_FalseRow_IsDisabledAndItsTriggerIsSkipped).
     fn action_invoke(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
+        // An actionref invokes the action it stands for.
+        let idx = match page_of(&self.engine(), st).controls[idx].action_ref.clone() {
+            None => idx,
+            Some(ir::ActionRef::Target(t)) => t,
+            Some(ir::ActionRef::Unresolved(why)) => return unsupported(why),
+        };
         if !self.control_enabled(st, idx)? {
             return Ok(Value::Null);
         }
         let engine = self.engine();
+        // A client sends the row it stands on to the server before it runs an action (corpus
+        // handlers/TestPageAutoSplitKey_Tests.al:TestPage_ActionInvoke_OnANewSubpageRow_*).
+        if st.borrow().host.is_some() {
+            self.save_row(st)?;
+        }
         st.borrow_mut().refresh = false;
         if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
-            let r = self.page_routine(st, r);
+            let r = self.control_routine(st, idx, r);
             if r.is_err() {
                 st.borrow_mut().refresh = false;
             }
             r?;
             self.settle_after_action(st)?;
             self.run_refresh(st)?;
+        } else if page_of(&engine, st).controls[idx].run_object.is_some() {
+            return self.run_object_action(st, idx);
         }
         Ok(Value::Null)
     }
@@ -1992,7 +2645,7 @@ impl Session {
         }
         if !self.is_list(st) {
             self.page_trigger(st, "onclosepage", vec![])?;
-            st.borrow_mut().open = false;
+            self.mark_closed(st);
             return Ok(());
         }
         if self.engine.program.objects[st.borrow().object as usize]
@@ -2058,6 +2711,12 @@ impl Session {
         self.ret_used = true;
         if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
             let fields = probe.borrow().fields.clone();
+            // The probe replaced the view's filters on key fields with the key; the row must still
+            // pass the filters the page has (a Get of a row the view hides shows nothing:
+            // testpart/BnrBlankPart.al NoRow_Action_GetOfARowTheFilterHides_StaysBlank).
+            if !rec.borrow().filters.iter().all(|f| f.expr.matches(&fields[f.field])) {
+                return Ok(());
+            }
             rec.borrow_mut().fields = fields;
             st.borrow_mut().cursor = Cursor::Row;
             let r = self.arrive(st);
@@ -2072,11 +2731,11 @@ impl Session {
         match page_of(&engine, st).controls[idx].binding.clone() {
             ir::Binding::Field(pos) => Ok(self.page_rec(st).borrow().fields[pos].clone()),
             ir::Binding::Var(slot) => {
-                let inst = st.borrow().instance.clone().expect("open page");
+                let inst = self.owner_instance(st, page_of(&engine, st).controls[idx].owner);
                 let v = inst.borrow().globals[slot].clone();
                 Ok(v)
             }
-            ir::Binding::Expr(r) => self.page_routine(st, r),
+            ir::Binding::Expr(r) => self.control_routine(st, idx, r),
             ir::Binding::None => unsupported("a control without a source"),
         }
     }
@@ -2143,8 +2802,8 @@ impl Session {
         if f.decimal_places.is_none() {
             let expr = match ctl.prop("autoformatexpression") {
                 Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
-                Some(ir::PropVal::Routine(r)) => match self.page_routine(st, *r)? {
-                    Value::Text(t) | Value::Code(t) => Some(t),
+                Some(routine) => match self.prop_routine_value(st, idx, routine)? {
+                    Some(Value::Text(t) | Value::Code(t)) => Some(t),
                     _ => None,
                 },
                 None => None,
@@ -2162,8 +2821,12 @@ impl Session {
             .map(|c| unquote(&c).split(',').map(str::to_string).collect());
         if f.option_captions.is_none() {
             // Without captions an option shows its member names, a blank member as nothing.
-            f.option_captions =
-                from_field("optionmembers").map(|c| unquote(&c).split(',').map(|m| m.trim().to_string()).collect());
+            f.option_captions = from_field("optionmembers").map(|c| {
+                unquote(&c)
+                    .split(',')
+                    .map(|m| m.trim().trim_matches('"').to_string())
+                    .collect()
+            });
         }
         Ok(f)
     }
@@ -2192,8 +2855,9 @@ impl Session {
             return Some(f.ty);
         }
         let engine = self.engine();
-        if let ir::Binding::Var(slot) = page_of(&engine, st).controls[idx].binding {
-            let object = st.borrow().object as usize;
+        let ctl = &page_of(&engine, st).controls[idx];
+        if let ir::Binding::Var(slot) = ctl.binding {
+            let object = ctl.owner.unwrap_or(st.borrow().object as usize);
             return Some(engine.program.objects[object].globals[slot].ty.clone());
         }
         let _ = v;
@@ -2240,8 +2904,8 @@ impl Session {
         // (corpus autoformat/TestAutoFormatExpressionTiming.al, WorkingCaptionClass_OpensAndReadsItsCaption).
         let class = match ctl.prop("captionclass") {
             Some(ir::PropVal::Lit(c)) => Some(unquote(c)),
-            Some(ir::PropVal::Routine(r)) => match self.page_routine(st, *r)? {
-                Value::Text(t) | Value::Code(t) => Some(t),
+            Some(routine) => match self.prop_routine_value(st, idx, routine)? {
+                Some(Value::Text(t) | Value::Code(t)) => Some(t),
                 _ => None,
             },
             None => None,
@@ -2270,7 +2934,10 @@ impl Session {
         match page_of(&engine, st).controls[idx].prop(name) {
             None => Ok(default),
             Some(ir::PropVal::Lit(v)) => Ok(is_true(v)),
-            Some(ir::PropVal::Routine(r)) => ops::truthy(&self.page_routine(st, *r)?),
+            Some(routine) => match self.prop_routine_value(st, idx, routine)? {
+                Some(v) => ops::truthy(&v),
+                None => Ok(default),
+            },
         }
     }
 

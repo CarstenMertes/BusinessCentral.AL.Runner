@@ -481,6 +481,12 @@ impl Workspace {
         self.objects.push(o);
     }
 
+    /// How many apps `app` can see (itself and its transitive dependencies). A dependent sees
+    /// more than anything it depends on, so this orders dependencies before their dependents.
+    pub fn app_depth(&self, app: usize) -> usize {
+        self.visible[app].len()
+    }
+
     /// Resolves an object reference written in `file`. `parts` is the name
     /// split into namespace segments, or a single numeric id.
     ///

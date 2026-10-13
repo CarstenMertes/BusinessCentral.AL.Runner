@@ -143,10 +143,6 @@ impl Builder<'_> {
             self.reason(format!("{what}: `{name}` is not a stored field"));
             return None;
         }
-        if (2_000_000_001..=2_000_000_004).contains(&f.id) {
-            self.reason(format!("{what}: system field {name} is not stamped by the runtime yet"));
-            return None;
-        }
         Some(pos)
     }
 
@@ -350,13 +346,7 @@ impl Builder<'_> {
         let mut ty = Ty::Unknown;
         if let Some(pos) = source {
             let f = &self.members[table].fields[pos];
-            let (class, fty, id) = (f.class.clone(), f.ty.clone(), f.id);
-            if (2_000_000_001..=2_000_000_004).contains(&id) {
-                self.reason(format!(
-                    "column {name}: system field {} is not stamped by the runtime yet",
-                    f.name
-                ));
-            }
+            let (class, fty) = (f.class.clone(), f.ty.clone());
             match (&class, filter_element) {
                 (FieldClass::Normal, _) | (FieldClass::FlowFilter, true) => {}
                 (FieldClass::FlowField, false) if method.is_none() => {}

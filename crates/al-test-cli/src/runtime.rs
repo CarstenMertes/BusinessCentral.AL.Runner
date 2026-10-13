@@ -44,6 +44,52 @@ pub fn load_app(dir: &std::path::Path) -> Result<al_sema::workspace::AppSource, 
     })
 }
 
+/// What only an app's manifest says that `ModuleInfo` reports (publisher and version).
+#[derive(Debug, Clone, Default)]
+pub struct Manifest {
+    pub publisher: String,
+    pub version: String,
+    /// The files under the manifest's `resourceFolders`, named relative to their folder.
+    pub resources: Vec<(String, Vec<u8>)>,
+}
+
+/// The manifest fields `NavApp.GetCurrentModuleInfo` reports, from `dir/app.json`.
+pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("app.json")).map_err(|e| format!("{}: {e}", dir.display()))?,
+    )
+    .map_err(|e| format!("{}/app.json: {e}", dir.display()))?;
+    let s = |k: &str| manifest[k].as_str().unwrap_or_default().to_string();
+    let mut resources = Vec::new();
+    for folder in manifest["resourceFolders"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_str())
+    {
+        let root = dir.join(folder);
+        let mut stack = vec![root.clone()];
+        while let Some(d) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&d) else { continue };
+            for e in entries {
+                let p = e.map_err(|e| e.to_string())?.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    let rel = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                    resources.push((rel, std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?));
+                }
+            }
+        }
+    }
+    resources.sort();
+    Ok(Manifest {
+        publisher: s("publisher"),
+        version: s("version"),
+        resources,
+    })
+}
+
 /// Every corpus test's outcome on this runtime, keyed by (codeunit id, procedure).
 pub struct CorpusRuntime {
     outcomes: std::collections::HashMap<(u32, String), Outcome>,
@@ -52,18 +98,33 @@ pub struct CorpusRuntime {
 
 impl CorpusRuntime {
     pub fn run(apps: Vec<al_sema::workspace::AppSource>, symbols: &BTreeSet<String>) -> CorpusRuntime {
-        let kinds = vec![al_sema::AppKind::Workspace; apps.len()];
-        CorpusRuntime::run_apps(apps, kinds, symbols)
+        Self::run_with_manifests(apps, &[], symbols)
     }
 
-    /// Like `run`, with the kind of each app. Dependency apps are compiled but no test
-    /// is run in them (ADR-013 decision 4).
+    /// `manifests[i]` belongs to `apps[i]`: the publisher and version `ModuleInfo` reports.
+    pub fn run_with_manifests(
+        apps: Vec<al_sema::workspace::AppSource>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+    ) -> CorpusRuntime {
+        let kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+        CorpusRuntime::run_apps(apps, kinds, manifests, symbols)
+    }
+
+    /// Like `run_with_manifests`, with the kind of each app. Dependency apps are compiled but no
+    /// test is run in them (ADR-013 decision 4).
     pub fn run_apps(
         apps: Vec<al_sema::workspace::AppSource>,
         kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
         symbols: &BTreeSet<String>,
     ) -> CorpusRuntime {
-        let (_ws, lowered) = al_sema::lower::compile_apps(apps, kinds, symbols);
+        let (_ws, mut lowered) = al_sema::lower::compile_apps(apps, kinds, symbols);
+        for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
+            app.publisher = m.publisher.clone();
+            app.version = m.version.clone();
+            app.resources = m.resources.clone();
+        }
         let blocked = lowered
             .unsupported
             .iter()
@@ -123,7 +184,7 @@ impl crate::runner::Runner for CorpusRuntime {
 /// Outcomes of every `[Test]` procedure of test codeunit `object`, in order.
 pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
-    let mut session = Session::new(engine.clone());
+    let mut session = Session::with_host(engine.clone(), crate::host::system_host());
     let instance = session.instance(object);
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
@@ -165,7 +226,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
         }
     }
     // What publishing the app does first: run its install codeunits, then commit.
+    session.set_install_scope(true);
     let skipped_installs = run_install_codeunits(lowered, &mut session);
+    session.set_install_scope(false);
     session.in_test_codeunit = true;
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
@@ -207,6 +270,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
+                    // The AL test runner enables every application area before each test method
+                    // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
+                    session.application_areas.clear();
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -379,6 +445,11 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
                     Err(_) => None,
                 },
             };
+            // A trigger that ran is durable before the next one starts: a later trigger that
+            // cannot run must not take its writes with it.
+            if why.is_none() {
+                al_builtins::native::Ctx::commit(session).expect("commit");
+            }
             if let Some(why) = why {
                 session.rollback_transaction();
                 // Subscribers to events the installer raises are not in its static calls,
@@ -548,7 +619,7 @@ mod tests {
 
     local procedure Helper()
     begin
-        Sleep(1);
+        LastUsedRowVersion();
     end;
 
     procedure NotATest()
@@ -581,7 +652,7 @@ mod tests {
     fn unreachable_code_does_not_block_but_reachable_unsupported_code_does() {
         let o = outcomes(SRC);
         assert!(
-            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("Sleep")),
+            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("LastUsedRowVersion")),
             "{:?}",
             o[2].1
         );
@@ -822,6 +893,25 @@ mod tests {
         assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
     }
 
+    // install/TestInstallSeeder.al: OnInstallAppPerDatabase seeds one table, OnInstallAppPerCompany
+    // is one the runtime cannot run. The per-database seed ran and stays; only the trigger that
+    // could not run is skipped, with its tables.
+    #[test]
+    fn an_installer_trigger_that_ran_keeps_its_rows_when_the_next_one_cannot_run() {
+        let o = outcomes(
+            "table 60900 Db { fields { field(1; K; Code[10]) { } } }
+            table 60901 Co { fields { field(1; K; Code[10]) { } } }
+            codeunit 60901 Inst { Subtype = Install;
+                trigger OnInstallAppPerDatabase() var R: Record Db; begin R.K := 'DB'; R.Insert(); end;
+                trigger OnInstallAppPerCompany() var R: Record Co; begin LastUsedRowVersion(); R.K := 'CO'; R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure SeededByTheTriggerThatRan() var R: Record Db; begin if not R.Get('DB') then Error('the per-database seed was rolled back'); end;
+                [Test] procedure SeededByTheTriggerThatDidNot() var R: Record Co; begin if R.Count() = 0 then Error('unseeded'); end; }",
+        );
+        assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+        assert!(matches!(&o[1].1, Outcome::NotRun(r) if r.contains("install")), "{o:?}");
+    }
+
     #[test]
     fn a_blocked_installer_also_blocks_tests_on_tables_its_event_subscribers_touch() {
         // install/TestInstallEventDispatch_*.al: the installer raises an event whose
@@ -834,7 +924,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnSeed', '', false, false)]
                 local procedure Seed() var R: Record Seed; begin R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin Sleep(1); P.OnSeed(); end; }
+                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin LastUsedRowVersion(); P.OnSeed(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -852,7 +942,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Table, Database::Src, 'OnAfterInsertEvent', '', false, false)]
                 local procedure Seed(var Rec: Record Src) var R: Record Seed; begin R.K := 'X'; R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var S: Record Src; begin Sleep(1); S.K := 'A'; S.Insert(); end; }
+                trigger OnInstallAppPerCompany() var S: Record Src; begin LastUsedRowVersion(); S.K := 'A'; S.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -865,7 +955,7 @@ mod tests {
             "table 60900 S { fields { field(1; K; Code[10]) { } } }
             table 60903 Other { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var R: Record S; begin Sleep(1); R.Insert(); end; }
+                trigger OnInstallAppPerCompany() var R: Record S; begin LastUsedRowVersion(); R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesS() var R: Record S; begin end;
                 [Test] procedure UsesOther() var R: Record Other; begin end; }",
@@ -1000,7 +1090,7 @@ mod tests {
         [MessageHandler] procedure Msg(M: Text[1024]) begin Seen := M; end;
         [MessageHandler] procedure Msg2(M: Text[1024]) begin end;
         [MessageHandler] procedure Boom(M: Text[1024]) begin Error('boom in handler'); end;
-        [MessageHandler] procedure Blocked(M: Text[1024]) begin Sleep(1); end;
+        [MessageHandler] procedure Blocked(M: Text[1024]) begin LastUsedRowVersion(); end;
         [ConfirmHandler] procedure Yes(Q: Text[1024]; var Reply: Boolean) begin Reply := true; end;
         [ConfirmHandler] procedure No(Q: Text[1024]; var Reply: Boolean) begin Fired += 1; Asked := Q; Reply := false; end;
         [ConfirmHandler] procedure Silent(Q: Text[1024]; var Reply: Boolean) begin end;
@@ -1064,7 +1154,7 @@ mod tests {
         };
         assert!(nr("UnknownHandlerNameIsRefused").contains("Nope"));
         assert!(nr("NamingARoutineThatIsNoHandlerIsRefused").contains("Helper"));
-        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("Sleep"));
+        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("LastUsedRowVersion"));
         assert!(nr("TwoHandlersOfOneKindAreRefused").contains("Msg2"));
     }
 
@@ -1307,5 +1397,171 @@ codeunit 60703 PhT
         ] {
             assert_eq!(ph(n), Outcome::Pass, "{n}");
         }
+    }
+
+    // session/TestSessionApplicationAreaTestBoundary.al:67552 (A_FirstTest_StartsWithEveryAreaEnabled_EvenAfterOnRunSetOne,
+    // C_NextTest_StartsWithEveryAreaEnabled): every test method starts with every application area enabled.
+    #[test]
+    fn every_test_starts_with_every_application_area_enabled() {
+        let src = "codeunit 60110 T
+{
+    Subtype = Test;
+    trigger OnRun() begin ApplicationArea('#Basic,#FromOnRun'); end;
+
+    [Test]
+    procedure A_StartsEmptyEvenAfterOnRunSetOne()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure B_SetsAreasForTheRestOfTheTest()
+    begin
+        ApplicationArea('#Basic,#Probe');
+        if ApplicationArea() <> '#Basic,#Probe' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure C_StartsEmptyAgain()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+}";
+        let o = outcomes_of(src, "T");
+        for (n, r) in &o {
+            assert_eq!(*r, Outcome::Pass, "{n}");
+        }
+        assert_eq!(o.len(), 3);
+    }
+
+    #[test]
+    fn a_page_source_table_view_applies_in_filter_group_2() {
+        // corpus handlers/TestPageSourceTableView.al:129-151, reproduced without a dependency app.
+        let o = outcomes(
+            r#"
+enum 50000 "S" { value(0; Open) { } value(1; Active) { } value(2; Closed) { } }
+table 50000 "K" { fields { field(1; "Entry No."; Integer) { } field(2; Status; Enum "S") { } } keys { key(PK; "Entry No.") { Clustered = true; } } }
+table 50001 "Log" { fields { field(1; "Id"; Integer) { AutoIncrement = true; } field(2; "NewValue"; Text[100]) { } field(3; "OldValue"; Text[100]) { } } keys { key(PK; "Id") { Clustered = true; } } }
+page 50000 "P" { PageType = List; SourceTable = "K"; SourceTableView = where(Status = const(Active));
+  layout { area(Content) { repeater(Lines) { field("Entry No."; Rec."Entry No.") { } field(Status; Rec.Status) { } } } }
+  trigger OnOpenPage() var L: Record "Log"; begin
+    L."OldValue" := CopyStr(Rec.GetFilter(Status), 1, 100);
+    Rec.FilterGroup(2);
+    L."NewValue" := CopyStr(Rec.GetFilter(Status), 1, 100);
+    Rec.FilterGroup(0);
+    L.Insert();
+  end; }
+codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Go() var L: Record "Log"; P: TestPage "P"; begin
+    P.OpenView(); P.Close();
+    L.FindLast();
+    if L."NewValue" <> 'Active' then Error('new=[%1] old=[%2]', L."NewValue", L."OldValue");
+  end; }
+"#,
+        );
+        assert_eq!(o, vec![("Go".to_string(), Outcome::Pass)]);
+    }
+
+    /// Outcomes of the test codeunit of a workspace app `main` over a dependency app `dep`.
+    fn outcomes_over_dependency(main: &str, dep: &str) -> Vec<(String, Outcome)> {
+        let app = |id: &str, deps: &[&str], src: &str| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files: vec![(format!("{id}.al"), src.into())],
+        };
+        let (_, l) = al_sema::lower::compile_apps(
+            vec![app("main", &["dep"], main), app("dep", &[], dep)],
+            vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+            &Default::default(),
+        );
+        let blocked = l
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let engine = Engine::new(l.program.clone(), blocked);
+        let oi = l
+            .program
+            .objects
+            .iter()
+            .position(|o| {
+                o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.eq_ignore_ascii_case("Test"))
+            })
+            .unwrap();
+        run_codeunit(&engine, &l, oi)
+    }
+
+    const HIDDEN_FIELD_PAGE: &str = r#"
+table 50000 "K" { fields { field(1; "No."; Integer) { } field(2; Name; Text[20]) { } } keys { key(PK; "No.") { Clustered = true; } } }
+page 50000 "P" { PageType = List; SourceTable = "K";
+  layout { area(Content) { repeater(Lines) { field("No."; Rec."No.") { } field(Name; Rec.Name) { Visible = false; } } } } }
+"#;
+    const SETS_HIDDEN_FIELD: &str = r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Go() var P: TestPage "P"; begin P.OpenView(); P.Name.SetValue('X'); end; }"#;
+
+    #[test]
+    fn a_missing_control_of_a_local_page_is_reported_by_name() {
+        let o = outcomes(&format!("{HIDDEN_FIELD_PAGE}{SETS_HIDDEN_FIELD}"));
+        assert_eq!(
+            o,
+            vec![(
+                "Go".to_string(),
+                Outcome::Fail("The field Name is not found on the page.".to_string())
+            )]
+        );
+    }
+
+    #[test]
+    fn a_missing_control_of_a_dependency_page_is_refused_because_its_text_names_an_internal_id() {
+        // corpus pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:92 pins
+        // `ID = 301776846` for a Base Application control; the number's derivation is not known.
+        let o = outcomes_over_dependency(SETS_HIDDEN_FIELD, HIDDEN_FIELD_PAGE);
+        let [(name, Outcome::NotRun(why))] = o.as_slice() else {
+            panic!("{o:?}")
+        };
+        assert_eq!(name, "Go");
+        assert!(why.contains("dependency app") && why.contains("internal ID"), "{why}");
+    }
+
+    #[test]
+    fn running_a_dependency_codeunit_nothing_compiled_by_its_id_is_refused_not_run_as_empty() {
+        // Nothing names codeunit 50100 but the number: it is not compiled, and running it must not
+        // quietly do nothing.
+        let o = outcomes_over_dependency(
+            "codeunit 50001 \"T\" { Subtype = Test; [Test] procedure Go() begin Codeunit.Run(50100); end; }",
+            "codeunit 50100 \"Lib\" { trigger OnRun() begin Error('ran'); end; }",
+        );
+        let [(name, Outcome::NotRun(why))] = o.as_slice() else {
+            panic!("{o:?}")
+        };
+        assert_eq!(name, "Go");
+        assert!(why.contains("50100"), "{why}");
+    }
+
+    #[test]
+    fn opening_a_dependency_table_nothing_compiled_by_its_id_is_refused() {
+        let o = outcomes_over_dependency(
+            "codeunit 50001 \"T\" { Subtype = Test; [Test] procedure Go() var R: RecordRef; begin R.Open(50100); end; }",
+            "table 50100 \"Lib\" { fields { field(1; K; Code[10]) { } } }",
+        );
+        let [(_, outcome)] = o.as_slice() else { panic!("{o:?}") };
+        assert!(matches!(outcome, Outcome::NotRun(_)), "{o:?}");
+    }
+
+    #[test]
+    fn running_a_dependency_page_nothing_compiled_by_its_id_is_refused() {
+        let o = outcomes_over_dependency(
+            "codeunit 50001 \"T\" { Subtype = Test; [Test] procedure Go() begin Page.Run(50100); end; }",
+            "table 50100 \"K\" { fields { field(1; \"No.\"; Integer) { } } }\n\
+             page 50100 \"Lib\" { PageType = List; SourceTable = \"K\"; layout { area(Content) { repeater(Lines) { field(\"No.\"; Rec.\"No.\") { } } } } }",
+        );
+        let [(_, outcome)] = o.as_slice() else { panic!("{o:?}") };
+        assert!(
+            matches!(outcome, Outcome::NotRun(why) if why.contains("50100")),
+            "{o:?}"
+        );
     }
 }

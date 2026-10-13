@@ -41,6 +41,9 @@ pub struct ControlFormat {
     pub blank: Blank,
     /// `OptionCaption` of the control, else of the source field.
     pub option_captions: Option<Vec<String>>,
+    /// The session's work date, which a Date control reads from the shorthand `w`
+    /// (handlers/TestPageTemporalSetValue_Tests.al:272-286). `None` where the caller has none.
+    pub work_date: Option<i32>,
 }
 
 /// `2 : 2`, `0 : 5` or `3` as (min, max) places.
@@ -297,17 +300,29 @@ fn parse_typed(
         T::Date => {
             if t.is_empty() {
                 Value::Date(0, false)
+            } else if t == "w" {
+                Value::Date(f.work_date?, false)
             } else {
+                // The ISO spelling, else `M/D/Y` as the control shows it; a two-digit year is
+                // read as 1930-2029, as Evaluate does.
+                if let Some(d) = crate::iso::parse_date(t).filter(|_| t.len() == 10) {
+                    return Some(Value::Date(d, false));
+                }
                 let mut p = t.split('/');
-                let (m, d, y): (u32, u32, i32) = (
-                    p.next()?.parse().ok()?,
-                    p.next()?.parse().ok()?,
-                    p.next()?.parse().ok()?,
-                );
-                if p.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+                let (m, d, y) = (p.next()?, p.next()?, p.next()?);
+                let (m, d, mut yy): (u32, u32, i32) = (m.parse().ok()?, d.parse().ok()?, y.parse().ok()?);
+                if y.len() <= 2 {
+                    yy += if yy < 30 { 2000 } else { 1900 };
+                }
+                if p.next().is_some()
+                    || !(1..=12).contains(&m)
+                    || !(1..=9999).contains(&yy)
+                    || d < 1
+                    || d > crate::iso::days_in_month(yy, m)
+                {
                     return None;
                 }
-                Value::Date(crate::format::day_from_civil(y, m, d), false)
+                Value::Date(crate::format::day_from_civil(yy, m, d), false)
             }
         }
         T::Time => {
@@ -567,6 +582,27 @@ mod tests {
             parse_control_text("Alpha", &o, &cap, &none),
             Ok(Value::Option(0, _))
         ));
+    }
+
+    // handlers/TestPageTemporalSetValue_Tests.al:TemporalSetValue_PageVariableDateControlTakesIsoText
+    // and ...TakesFormattedText: a Date control takes the ISO spelling and the `Format(Date)` text
+    // (`01/01/24`, a two-digit year read as in Evaluate: 1930-2029).
+    #[test]
+    fn a_date_control_takes_iso_text_and_a_two_digit_year() {
+        use crate::value::RtType as T;
+        let f = ControlFormat::default();
+        let none = |_: u32, _: &str| None;
+        let date = |text: &str| match parse_control_text(text, &T::Date, &f, &none) {
+            Ok(Value::Date(d, false)) => Some(d),
+            _ => None,
+        };
+        let jan1 = crate::format::day_from_civil(2024, 1, 1);
+        assert_eq!(date("2024-01-01"), Some(jan1));
+        assert_eq!(date("01/01/24"), Some(jan1));
+        assert_eq!(date("1/1/2024"), Some(jan1));
+        assert_eq!(date("12/31/99"), Some(crate::format::day_from_civil(1999, 12, 31)));
+        assert_eq!(date("2024-13-01"), None);
+        assert_eq!(date("not-a-date"), None);
     }
 
     #[test]

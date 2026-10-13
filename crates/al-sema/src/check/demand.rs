@@ -90,6 +90,7 @@ pub const MODIFY: u8 = 2;
 pub const DELETE: u8 = 4;
 pub const RENAME: u8 = 8;
 pub const VALIDATE: u8 = 16;
+pub const ALL_OPS: u8 = INSERT | MODIFY | DELETE | RENAME | VALIDATE;
 
 /// The table triggers an operation runs, and the events it raises.
 const OP_TRIGGERS: [(u8, &str, [&str; 2]); 5] = [
@@ -259,6 +260,12 @@ impl Checker<'_> {
         routines
     }
 
+    fn reach_all(&self, i: usize) {
+        for r in self.routines_of(i).iter() {
+            self.reach(i, usize::from(r.syntax().text_range().start()));
+        }
+    }
+
     fn reach_triggers(&self, i: usize) {
         for r in self.routines_of(i).iter() {
             if r.is_trigger() {
@@ -300,11 +307,19 @@ impl Checker<'_> {
         match kind {
             ObjKind::Table => self.activate_table(i, level),
             ObjKind::TableExtension => {}
-            ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension | ObjKind::XmlPort => {
+            // The test client drives a page: any of its routines can run, and so can the
+            // operations on its table, so all of them are reached (the call graph the lowering
+            // builds for a TestPage assumes the same).
+            ObjKind::Page | ObjKind::PageExtension => {
+                self.activate_page_shape(i);
                 if level == FULL {
-                    self.reach_triggers(i);
+                    self.reach_all(i);
                     self.activate_source_table(i);
                 }
+            }
+            ObjKind::Report | ObjKind::ReportExtension | ObjKind::XmlPort if level == FULL => {
+                self.reach_triggers(i);
+                self.activate_source_table(i);
             }
             ObjKind::Query => {
                 if level == FULL {
@@ -406,6 +421,31 @@ impl Checker<'_> {
         self.raise(o, FULL);
     }
 
+    /// A page lowers with its source table and the pages it shows as parts; without them it
+    /// would be refused as pointing outside the workspace.
+    fn activate_page_shape(&mut self, i: usize) {
+        let obj = self.ws.object_ast(i);
+        let file = self.ws.objects[i].file;
+        let source = obj
+            .properties()
+            .find(|p| p.name().eq_ignore_ascii_case("SourceTable"))
+            .map(|p| p.value_text().trim().trim_matches('"').to_string());
+        if let Some(t) = source.and_then(|name| self.resolve_quiet(file, ObjKind::Table, &name)) {
+            self.touch_schema(t);
+        }
+        for sec in ast::sections_in(obj.syntax()) {
+            if sec.name().eq_ignore_ascii_case("part") {
+                if let Some(p) = sec
+                    .args()
+                    .get(1)
+                    .and_then(|n| self.resolve_quiet(file, ObjKind::Page, n))
+                {
+                    self.touch_schema(p);
+                }
+            }
+        }
+    }
+
     /// A page, report or XML port runs against the table it is built on.
     fn activate_source_table(&mut self, i: usize) {
         let obj = self.ws.object_ast(i);
@@ -415,7 +455,11 @@ impl Checker<'_> {
             .find(|p| p.name().eq_ignore_ascii_case("SourceTable"))
             .map(|p| p.value_text().trim().trim_matches('"').to_string());
         if let Some(name) = source {
-            self.resolve_at(file, ObjKind::Table, &name);
+            if let Some(t) = self.resolve_at(file, ObjKind::Table, &name) {
+                if matches!(self.ws.objects[i].kind, ObjKind::Page | ObjKind::PageExtension) {
+                    self.touch_ops(t, ALL_OPS);
+                }
+            }
         }
         for sec in ast::sections_in(obj.syntax()) {
             let n = sec.name().to_ascii_lowercase();
@@ -424,10 +468,12 @@ impl Checker<'_> {
                     self.resolve_at(file, ObjKind::Table, table);
                 }
             }
-            // A part is a page the client can open.
+            // A part opens with its host.
             if n == "part" {
                 if let Some(page) = sec.args().get(1) {
-                    self.resolve_at(file, ObjKind::Page, page);
+                    if let Some(p) = self.resolve_at(file, ObjKind::Page, page) {
+                        self.touch_full(p);
+                    }
                 }
             }
         }

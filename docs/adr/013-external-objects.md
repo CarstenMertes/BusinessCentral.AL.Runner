@@ -135,7 +135,7 @@ Microsoft's AL. Where this ADR differs, the owner's direction has priority.
    - `CompanyName()` is `"My Company"` (line 1309; `docs/scope.md`); its company
      id is `{C0A1BDFA-0000-0000-0000-43524F4E5553}`; one Company row is seeded
      (`Patches/RecordPatches.CompanySystemTable.cs`).
-   - `SessionId()` is 0; the Session table has exactly one row, the reading
+   - `SessionId()` is positive (1; first written as 0, corrected below); the Session table has exactly one row, the reading
      session, as BC's own provider returns, and Active Session one row
      (`Patches/RecordPatches.SessionVirtualTable.cs`,
      `RecordPatches.ActiveSessionSystemTable.cs`).
@@ -552,7 +552,7 @@ Two findings drive the decision:
    | `UserSecurityId()` | `{C0A1BDFA-0000-0000-0000-545553545553}` | `BcRuntime.cs:1441` |
    | `CompanyName()` | `My Company` | `BcRuntime.cs:1309` |
    | Company id | `{C0A1BDFA-0000-0000-0000-43524F4E5553}` | `BcRuntime.cs` (company seed) |
-   | `SessionId()`, Session `Connection ID` | `0` | `RecordPatches.SessionVirtualTable.cs` |
+   | `SessionId()`, Session `Connection ID` | `1` (positive) | `RecordPatches.SessionVirtualTable.cs` |
    | Session / Active Session | one row, the running session | same file, `ActiveSessionSystemTable.cs` |
    | Culture | en-US (1033) | `BcRuntime.cs` (cultureSettings seed) |
    | Environment type | Production: `IsProduction()` true, `IsSandbox()` false, `IsSaaS()` false | `MetadataPatches.cs:781-835`, `CliText.cs:311-322` |
@@ -763,3 +763,35 @@ The project owner accepted this ADR and gave three further answers.
      each backed by the identity configuration or a probe on real BC.
 
    Until the owner decides, decision 8 applies: refuse.
+
+## Decided without owner review (2026-10-13/14)
+
+The host-values work (branch `host`) needed these choices. The owner was away; each follows
+AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, which codeunit
+60023 (`session/TestSessionIdentityValues.al`) corrected after the table was written.
+
+1. **`SessionId()` and `ServiceInstanceId()` are 1, not 0.** Options: keep 0 as the table said;
+   answer a positive id. The corpus asserts `> 0` for both and for the Active Session row, and
+   AL Runner moved to positive ids for the same reason (`EnvironmentPatches.cs`,
+   `SessionPatches.cs`, its changelog entry for 5144). The Session table row (`Connection ID`)
+   follows `SessionId()` when the table exists.
+2. **The clock is a capability, frozen by default.** `al-host` has a `Clock` trait. The
+   deterministic host (`Session::new`, all unit tests) answers 2024-01-15T12:00:00Z every time;
+   the command line injects the system clock. AL Runner always uses the real clock. Options:
+   real clock everywhere (matches AL Runner, makes library tests flaky near midnight); frozen
+   everywhere (the corpus then runs on a date that is not today); frozen in tests and real on
+   the command line (chosen). `Sleep` does not wait; it advances the session's view of the
+   clock, which is all AL can observe. System stamps are strictly increasing within a session,
+   because the corpus compares them with `>` after writes that land in one millisecond.
+3. **The session time zone is UTC.** AL Runner seeds the host's local zone, which makes its
+   results depend on the machine. The corpus pins no zone, and UTC was already the model of
+   `DT2Date`, `CreateDateTime` and `Format`. `SessionSettings.Init` therefore answers `UTC`.
+4. **`WorkDate` is session state, today until set.** A new test codeunit gets a new session and
+   so starts at today again, which is what the Test Runner's reset after each codeunit gives.
+5. **`Session.CurrentClientType()` is `Background` (AL Runner) and `DefaultClientType()` is
+   `Web`.** AL Runner does not set the second. Nothing in the corpus reads either value.
+6. **`CompanyName()` is `My Company`** (decision 9), replacing the placeholder `CRONUS`.
+   There is still no Company row: the Company table is outside the workspace.
+7. **Temporary records are not stamped** with `SystemCreatedAt/By` and `SystemModifiedAt/By`.
+   Evidence is AL Runner's reading of the platform: the stamps come from the SQL layer, which a
+   temporary record never reaches. No corpus test reads one. Probe wanted (docs/probes-needed.md).

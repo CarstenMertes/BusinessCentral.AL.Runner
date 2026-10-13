@@ -20,3 +20,4 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [008](008-builtins-catalog.md) | Builtin signatures generated from the docs; implementations registered by overload id; value model in al-builtins | Accepted |
 | [010](010-value-model.md) | One Value enum in al-builtins; value types copy, reference types share; records are handles | Accepted |
 | [011](011-ir-and-execution.md) | Fully resolved typed IR; tree-walking interpreter first, bytecode only if budgets need it; Result-based control flow; BC test-runner semantics from the corpus | Accepted |
+| [012](012-testpage-runtime.md) | Headless page objects in the IR and a TestPage client over page instances in the same session (number provisional) | Proposed |

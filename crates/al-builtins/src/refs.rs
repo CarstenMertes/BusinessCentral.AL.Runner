@@ -14,7 +14,7 @@ macro_rules! forward {
 
 pub const REGISTRY: &[(&str, NativeFn)] = forward![
     // RecordRef: the id numbers follow the catalog order, see `tests` below.
-    "RecordRef.Open#1",
+    "RecordRef.Open#2",
     "RecordRef.Close#1",
     "RecordRef.Number#1",
     "RecordRef.Name#1",
@@ -177,6 +177,9 @@ record_methods! {
     "Record.ModifyAll#1" => "ModifyAll",
     "Record.IsTemporary#1" => "IsTemporary",
     "Record.Ascending#1" => "Ascending",
+    "Record.ChangeCompany#1" => "ChangeCompany",
+    "Record.SetAscending#1" => "SetAscending",
+    "Record.GetAscending#1" => "GetAscending",
     "Record.CurrentKey#1" => "CurrentKey",
     "Record.HasFilter#1" => "HasFilter",
     "Record.GetFilters#1" => "GetFilters",
@@ -213,7 +216,7 @@ mod tests {
             );
             s.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>()
         };
-        assert_eq!(params("RecordRef.Open#1")[0], "Integer");
+        assert_eq!(params("RecordRef.Open#2")[0], "Integer");
         assert_eq!(params("RecordRef.Field#2")[0], "Integer");
         assert_eq!(params("RecordRef.FieldExist#2")[0], "Integer");
         assert!(params("RecordRef.Insert#1").is_empty());

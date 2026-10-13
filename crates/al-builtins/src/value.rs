@@ -151,6 +151,17 @@ pub enum PageMode {
     New,
 }
 
+/// A row a repeater has populated: its primary key, the fields as stored when it was read and as
+/// the page showed them after OnAfterGetRecord (the page keeps that buffer for the row while it
+/// stays in the window, corpus handlers/TestPageActionRunObjectPageStoredRow_Tests.al:
+/// OpenHostOnB reads `CALC`, which only the host's OnAfterGetRecord puts into Rec.Grp).
+#[derive(Debug, Clone)]
+pub struct WindowRow {
+    pub key: Vec<Value>,
+    pub stored: Vec<Value>,
+    pub shown: Vec<Value>,
+}
+
 /// Where the test client's cursor stands on a page (ADR-012).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cursor {
@@ -185,7 +196,7 @@ pub struct PageState {
     /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
     pub frozen_visible: Vec<bool>,
     /// Primary keys of the rows a repeater page has populated (its window).
-    pub window: Vec<Vec<Value>>,
+    pub window: Vec<WindowRow>,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -308,10 +319,81 @@ pub struct RecordState {
     /// Index of the current key in the table's keys.
     pub key: usize,
     pub ascending: bool,
+    /// `SetAscending(Field, false)` on the single field of the current key. Unlike `ascending` it
+    /// does not survive a page's view round trip (handlers/TestPageViewRoundTripRoutes.al).
+    pub field_descending: bool,
     /// Position of the last row found (key fields then primary key), for `Next`.
     pub position: Option<Vec<Value>>,
     /// Field positions of `SetAutoCalcFields`: calculated whenever a row is read.
     pub auto_calc: Vec<usize>,
+}
+
+/// What a `WebServiceActionContext` holds: the object an API action points the OData layer at.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebServiceActionState {
+    pub object_id: i32,
+    /// Ordinal in the platform's object type option; 0 is the unnamed default.
+    pub object_type: i32,
+    /// Index into the `WebServiceActionResultCode` members; 0 is `None`.
+    pub result_code: i32,
+    /// Field ids that have an entity key.
+    pub keys: Vec<i32>,
+}
+
+/// What a `SessionSettings` holds. A property nobody wrote is `None`: the corpus does not say what
+/// a pristine language id, locale id, time zone or profile id reads as, so reading one is refused.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionSettingsState {
+    pub language_id: Option<i32>,
+    pub locale_id: Option<i32>,
+    pub time_zone: Option<String>,
+    pub profile_id: Option<String>,
+    pub profile_app_id: Option<[u8; 16]>,
+    pub company: String,
+}
+
+/// What a `Notification` holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NotificationState {
+    pub message: Option<String>,
+    /// Ordinal in the `NotificationScope` members.
+    pub scope: Option<i32>,
+    pub data: Vec<(String, String)>,
+    /// (Caption, codeunit id, method name, description): kept, never run.
+    pub actions: Vec<(String, i32, String, Option<String>)>,
+}
+
+/// What an `ErrorInfo` holds (corpus errorinfo/TestErrorInfoType.al).
+#[derive(Debug, Clone)]
+pub struct ErrorInfoState {
+    pub message: String,
+    pub title: String,
+    pub detailed_message: String,
+    pub control_name: String,
+    /// Indexes into the `Verbosity` and `DataClassification` members.
+    pub verbosity: i32,
+    pub data_classification: i32,
+    /// `None` until a test sets one: the default is not pinned.
+    pub error_type: Option<i32>,
+    pub collectible: bool,
+    pub table_id: i32,
+    /// The `RecordId` value of the record `Create` was given.
+    pub record_id: Option<Value>,
+    pub field_no: i32,
+    pub page_no: i32,
+    pub custom_dimensions: Vec<(String, String)>,
+}
+
+/// What a `ModuleInfo` reports: an app's manifest (corpus session/TestNavAppExtended.al,
+/// session/TestBCPlatformContracts.al, session/TestMiscTypes.al).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleInfoState {
+    pub id: [u8; 16],
+    pub name: String,
+    pub publisher: String,
+    /// `None` when the manifest gave none the runtime can read.
+    pub version: Option<[i32; 4]>,
+    pub dependencies: Vec<[u8; 16]>,
 }
 
 /// The global variables of one codeunit instance.
@@ -345,6 +427,20 @@ pub enum LibraryValue {
         name: String,
         key: Vec<Value>,
     },
+    /// A `WebServiceActionContext` that has been written to (an untouched one is `Empty`).
+    WebServiceAction(WebServiceActionState),
+    /// A `SessionSettings` that has been written to (an untouched one is `Empty`).
+    SessionSettings(SessionSettingsState),
+    /// A `Notification` that has been written to (an untouched one is `Empty`).
+    Notification(NotificationState),
+    /// A `ModuleInfo`: what one app reports about itself.
+    ModuleInfo(ModuleInfoState),
+    /// A `DataTransfer` that `SetTables` staged: (source table, destination table).
+    DataTransfer(Option<(i32, i32)>),
+    /// A `Version`: major, minor, build, revision.
+    Version([i32; 4]),
+    /// An `ErrorInfo` (the zero-argument `Create` and `Create(Message, ...)` build one).
+    ErrorInfo(ErrorInfoState),
     /// A JSON node behind a JsonObject / JsonArray / JsonToken / JsonValue handle.
     Json(crate::json::JsonCell),
     /// A node behind an Xml* handle.

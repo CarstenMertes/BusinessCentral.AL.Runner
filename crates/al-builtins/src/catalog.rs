@@ -81,10 +81,7 @@ impl Catalog {
             .iter()
             .map(|l| Signature::from_line(l).unwrap_or_else(|e| panic!("bad catalog line `{l}`: {e}")))
             .collect();
-        // Overload ids are positions: a tagged overload is numbered after every older one, so
-        // a version that adds an overload never renumbers an existing one. The sort is stable,
-        // so inside one tag the order stays the sorted line order.
-        signatures.sort_by_key(|s| s.since);
+        number_order(&mut signatures);
         let mut by_method: HashMap<(String, String), Vec<usize>> = HashMap::new();
         let mut globals: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, s) in signatures.iter().enumerate() {
@@ -200,6 +197,19 @@ impl Catalog {
             + 1;
         format!("{}.{}#{n}", sig.receiver, sig.name)
     }
+}
+
+/// Tags up to this runtime keep their place in the sorted line order. Overload ids existed
+/// before tags did (`Page.Run#4`, `Report.Run#3`), and registered implementations are keyed by
+/// them, so the sixteen overloads tagged 17.0 when tags were introduced keep their numbers.
+const NUMBERED_IN_PLACE_UP_TO: Runtime = Runtime { major: 17, minor: 0 };
+
+/// Puts `signatures` (sorted by line) in id order: an overload tagged newer than
+/// [`NUMBERED_IN_PLACE_UP_TO`] comes after every other one, so a later runtime that adds an
+/// overload never renumbers an existing one (ADR-015 3.3 point 6). The sort is stable, so
+/// inside one tag the order stays the sorted line order.
+fn number_order(signatures: &mut [Signature]) {
+    signatures.sort_by_key(|s| s.since.filter(|r| *r > NUMBERED_IN_PLACE_UP_TO));
 }
 
 /// All overloads in `al-surface.json`, one catalog line each, sorted. Entries
@@ -376,15 +386,38 @@ mod tests {
     }
 
     #[test]
-    fn a_later_tag_never_renumbers_an_earlier_overload() {
-        // Codeunit.Run has untagged overloads and one @17.0 overload.
+    fn an_overload_tagged_after_the_numbered_in_place_runtime_is_numbered_last() {
+        let mut v: Vec<Signature> = [
+            "A.m static (V: Text) @18.0",
+            "A.m static (W: Text) @17.0",
+            "A.m static (X: Text)",
+            "A.m static (Y: Text) @19.0",
+            "A.m static (Z: Text)",
+        ]
+        .iter()
+        .map(|l| sig(l))
+        .collect();
+        number_order(&mut v);
+        let order: Vec<String> = v.iter().map(|s| s.params[0].name.clone()).collect();
+        // 17.0 and untagged keep their sorted places; 18.0 and 19.0 follow, oldest first.
+        assert_eq!(order, ["W", "X", "Z", "V", "Y"]);
+    }
+
+    #[test]
+    fn the_overloads_tagged_17_keep_the_ids_they_had_before_tags() {
         let c = Catalog::load();
-        let runs = c.overloads("Codeunit", "Run");
-        let ids: Vec<String> = runs.iter().map(|s| c.id(s)).collect();
-        let n = runs.len();
-        assert!(runs[n - 1].since.is_some(), "the tagged overload is numbered last");
-        assert!(runs[..n - 1].iter().all(|s| s.since.is_none()));
-        assert_eq!(ids[n - 1], format!("Codeunit.Run#{n}"));
+        let by_name = c
+            .overloads("Codeunit", "Run")
+            .into_iter()
+            .find(|s| s.since.is_some())
+            .unwrap();
+        assert_eq!(c.id(by_name), "Codeunit.Run#2");
+        let by_number = c
+            .overloads("Codeunit", "Run")
+            .into_iter()
+            .find(|s| s.since.is_none() && !s.instance)
+            .unwrap();
+        assert_eq!(c.id(by_number), "Codeunit.Run#3");
     }
 
     #[test]

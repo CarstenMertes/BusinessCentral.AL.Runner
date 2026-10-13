@@ -19,17 +19,3 @@ fn every_pinned_overload_id_still_names_the_same_overload() {
     }
     assert!(moved.is_empty(), "overload ids changed:\n{}", moved.join("\n"));
 }
-
-#[test]
-fn a_later_tagged_overload_is_numbered_after_every_untagged_one() {
-    let cat = Catalog::load();
-    for s in cat.signatures.iter().filter(|s| s.since.is_some()) {
-        let all: Vec<_> = cat.overloads(&s.receiver, &s.name);
-        let n = all.iter().position(|x| *x == s).unwrap();
-        assert!(
-            all[n..].iter().all(|x| x.since.is_some()),
-            "{}: an untagged overload follows a tagged one",
-            cat.id(s)
-        );
-    }
-}

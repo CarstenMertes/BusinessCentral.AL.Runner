@@ -443,6 +443,14 @@ fn secret_content(v: &Value) -> Result<String, Signal> {
     }
 }
 
+/// The text of a Text or SecretText argument (IsolatedStorage takes both).
+pub fn secret_or_text(v: &Value) -> Result<String, Signal> {
+    match crate::native::text_of(v) {
+        Some(t) => Ok(t),
+        None => secret_content(v),
+    }
+}
+
 /// Emptiness is zero length: a single space is content (types/TestSecretText.al).
 fn secret_is_empty(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     match r {

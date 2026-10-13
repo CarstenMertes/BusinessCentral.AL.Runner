@@ -18,7 +18,8 @@ Boolean.ToText#2	Boolean.ToText inst (?Invariant: Boolean) -> Text
 Byte.ToText#1	Byte.ToText inst () -> Text
 Byte.ToText#2	Byte.ToText inst (?Invariant: Boolean) -> Text
 Codeunit.Run#1	Codeunit.Run inst (?var Record: Record) -> Boolean?
-Codeunit.Run#2	Codeunit.Run static (Number: Integer, ?var Record: Record) -> Boolean?
+Codeunit.Run#2	Codeunit.Run static (FullyQualifiedName: Text, ?var Record: Record) -> Boolean? @17.0
+Codeunit.Run#3	Codeunit.Run static (Number: Integer, ?var Record: Record) -> Boolean?
 CompanyProperty.DisplayName#1	CompanyProperty.DisplayName static () -> Text
 CompanyProperty.ID#1	CompanyProperty.ID static () -> Guid
 CompanyProperty.UrlName#1	CompanyProperty.UrlName static () -> Text
@@ -30,6 +31,7 @@ Cookie.Path#1	Cookie.Path inst () -> Text
 Cookie.Secure#1	Cookie.Secure inst () -> Boolean
 Cookie.Value#1	Cookie.Value inst (?Value: Text) -> Text
 DataTransfer.AddConstantValue#1	DataTransfer.AddConstantValue inst (Value: Any, DestinationField: Integer)
+DataTransfer.AddDestinationFilter#1	DataTransfer.AddDestinationFilter inst (DestinationField: Integer, String: Text, ?Value: Any*) @17.0
 DataTransfer.AddFieldValue#1	DataTransfer.AddFieldValue inst (SourceField: Integer, DestinationField: Integer)
 DataTransfer.AddJoin#1	DataTransfer.AddJoin inst (SourceField: Integer, DestinationField: Integer)
 DataTransfer.AddSourceFilter#1	DataTransfer.AddSourceFilter inst (SourceField: Integer, String: Text, ?Value: Any*)
@@ -438,6 +440,7 @@ JsonArray.ReadFrom#1	JsonArray.ReadFrom inst (Data: InStream) -> Boolean?
 JsonArray.ReadFrom#2	JsonArray.ReadFrom inst (String: Text) -> Boolean?
 JsonArray.RemoveAt#1	JsonArray.RemoveAt inst (Index: Integer) -> Boolean?
 JsonArray.SelectToken#1	JsonArray.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
+JsonArray.SelectTokens#1	JsonArray.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
 JsonArray.Set#1	JsonArray.Set inst (Index: Integer, Result: BigInteger) -> Boolean?
 JsonArray.Set#2	JsonArray.Set inst (Index: Integer, Result: Boolean) -> Boolean?
 JsonArray.Set#3	JsonArray.Set inst (Index: Integer, Result: Byte) -> Boolean?
@@ -514,6 +517,7 @@ JsonObject.Replace#14	JsonObject.Replace inst (Key: Text, Value: Option) -> Bool
 JsonObject.Replace#15	JsonObject.Replace inst (Key: Text, Value: Text) -> Boolean?
 JsonObject.Replace#16	JsonObject.Replace inst (Key: Text, Value: Time) -> Boolean?
 JsonObject.SelectToken#1	JsonObject.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
+JsonObject.SelectTokens#1	JsonObject.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
 JsonObject.Values#1	JsonObject.Values inst () -> List of [JsonToken]
 JsonObject.WriteTo#1	JsonObject.WriteTo inst (OutStream: OutStream) -> Boolean?
 JsonObject.WriteTo#2	JsonObject.WriteTo inst (var String: Text) -> Boolean?
@@ -532,6 +536,7 @@ JsonToken.Path#1	JsonToken.Path inst () -> Text
 JsonToken.ReadFrom#1	JsonToken.ReadFrom inst (InStream: InStream) -> Boolean?
 JsonToken.ReadFrom#2	JsonToken.ReadFrom inst (String: Text) -> Boolean?
 JsonToken.SelectToken#1	JsonToken.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
+JsonToken.SelectTokens#1	JsonToken.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
 JsonToken.WriteTo#1	JsonToken.WriteTo inst (Data: OutStream) -> Boolean?
 JsonToken.WriteTo#2	JsonToken.WriteTo inst (var String: Text) -> Boolean?
 JsonValue.AsBigInteger#1	JsonValue.AsBigInteger inst () -> BigInteger
@@ -710,12 +715,17 @@ Page.LookupMode#1	Page.LookupMode inst (?NewLookupMode: Boolean) -> Boolean?
 Page.ObjectId#1	Page.ObjectId inst (?UseNames: Boolean) -> Text
 Page.PromptMode#1	Page.PromptMode inst (?NewPromptMode: PromptMode) -> PromptMode?
 Page.Run#1	Page.Run inst ()
-Page.Run#2	Page.Run static (Number: Integer, ?Record: Record, ?Field: Any)
-Page.Run#3	Page.Run static (Number: Integer, Record: Record, FieldNo: Integer)
+Page.Run#2	Page.Run static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) @17.0
+Page.Run#3	Page.Run static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) @17.0
+Page.Run#4	Page.Run static (Number: Integer, ?Record: Record, ?Field: Any)
+Page.Run#5	Page.Run static (Number: Integer, Record: Record, FieldNo: Integer)
 Page.RunModal#1	Page.RunModal inst () -> Action?
-Page.RunModal#2	Page.RunModal static (Number: Integer, ?Record: Record, ?Field: Any) -> Action?
-Page.RunModal#3	Page.RunModal static (Number: Integer, Record: Record, FieldNo: Integer) -> Action?
-Page.RunModal#4	Page.RunModal static (Number: Integer, Record: Record, FieldRef: FieldRef) -> Action?
+Page.RunModal#2	Page.RunModal static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) -> Action? @17.0
+Page.RunModal#3	Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) -> Action? @17.0
+Page.RunModal#4	Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldRef: FieldRef) -> Action? @17.0
+Page.RunModal#5	Page.RunModal static (Number: Integer, ?Record: Record, ?Field: Any) -> Action?
+Page.RunModal#6	Page.RunModal static (Number: Integer, Record: Record, FieldNo: Integer) -> Action?
+Page.RunModal#7	Page.RunModal static (Number: Integer, Record: Record, FieldRef: FieldRef) -> Action?
 Page.SaveRecord#1	Page.SaveRecord inst ()
 Page.SetBackgroundTaskResult#1	Page.SetBackgroundTaskResult static (Results: Dictionary of [Text, Text])
 Page.SetRecord#1	Page.SetRecord inst (var Record: Record)
@@ -782,6 +792,7 @@ Record.FindFirst#1	Record.FindFirst inst () -> Boolean?
 Record.FindLast#1	Record.FindLast inst () -> Boolean?
 Record.FindSet#1	Record.FindSet inst (?ForUpdate: Boolean) -> Boolean?
 Record.FindSet#2	Record.FindSet inst (ForUpdate: Boolean, UpdateKey: Boolean) -> Boolean?
+Record.FullyQualifiedName#1	Record.FullyQualifiedName inst () -> Text @17.0
 Record.Get#1	Record.Get inst (?Value: Any*) -> Boolean?
 Record.GetAscending#1	Record.GetAscending inst (Field: Any) -> Boolean
 Record.GetBySystemId#1	Record.GetBySystemId inst (SystemId: Guid) -> Boolean?
@@ -894,6 +905,7 @@ RecordRef.FindFirst#1	RecordRef.FindFirst inst () -> Boolean?
 RecordRef.FindLast#1	RecordRef.FindLast inst () -> Boolean?
 RecordRef.FindSet#1	RecordRef.FindSet inst (?ForUpdate: Boolean) -> Boolean?
 RecordRef.FindSet#2	RecordRef.FindSet inst (ForUpdate: Boolean, UpdateKey: Boolean) -> Boolean?
+RecordRef.FullyQualifiedName#1	RecordRef.FullyQualifiedName inst () -> Text @17.0
 RecordRef.Get#1	RecordRef.Get inst (RecordID: RecordId) -> Boolean?
 RecordRef.GetBySystemId#1	RecordRef.GetBySystemId inst (SystemId: Guid) -> Boolean?
 RecordRef.GetFilters#1	RecordRef.GetFilters inst () -> Text
@@ -919,7 +931,8 @@ RecordRef.Modify#1	RecordRef.Modify inst (?RunTrigger: Boolean) -> Boolean?
 RecordRef.Name#1	RecordRef.Name inst () -> Text
 RecordRef.Next#1	RecordRef.Next inst (?Steps: Integer) -> Integer?
 RecordRef.Number#1	RecordRef.Number inst () -> Integer
-RecordRef.Open#1	RecordRef.Open inst (No: Integer, ?Temp: Boolean, ?CompanyName: Text)
+RecordRef.Open#1	RecordRef.Open inst (FullyQualifiedName: Text, ?Temp: Boolean, ?CompanyName: Text) @17.0
+RecordRef.Open#2	RecordRef.Open inst (No: Integer, ?Temp: Boolean, ?CompanyName: Text)
 RecordRef.ReadConsistency#1	RecordRef.ReadConsistency inst () -> Boolean
 RecordRef.ReadIsolation#1	RecordRef.ReadIsolation inst (?ReadIsolation: IsolationLevel) -> IsolationLevel?
 RecordRef.ReadPermission#1	RecordRef.ReadPermission inst () -> Boolean
@@ -951,7 +964,8 @@ Report.DefaultLayout#2	Report.DefaultLayout static (Number: Integer) -> DefaultL
 Report.ExcelLayout#1	Report.ExcelLayout inst (var InStream: InStream) -> Boolean?
 Report.ExcelLayout#2	Report.ExcelLayout static (Number: Integer, InStream: InStream) -> Boolean?
 Report.Execute#1	Report.Execute inst (Parameters: Text, ?RecordRef: RecordRef)
-Report.Execute#2	Report.Execute static (Number: Integer, Parameters: Text, ?RecordRef: RecordRef)
+Report.Execute#2	Report.Execute static (FullyQualifiedName: Text, Parameters: Text, ?RecordRef: RecordRef) @17.0
+Report.Execute#3	Report.Execute static (Number: Integer, Parameters: Text, ?RecordRef: RecordRef)
 Report.FormatRegion#1	Report.FormatRegion inst (?FormatRegion: Text) -> Text?
 Report.GetSubstituteReportId#1	Report.GetSubstituteReportId static (ReportId: Integer) -> Integer
 Report.IsReadOnly#1	Report.IsReadOnly inst () -> Boolean
@@ -969,9 +983,11 @@ Report.Quit#1	Report.Quit inst ()
 Report.RDLCLayout#1	Report.RDLCLayout inst (var InStream: InStream) -> Boolean?
 Report.RdlcLayout#2	Report.RdlcLayout static (Number: Integer, InStream: InStream) -> Boolean?
 Report.Run#1	Report.Run inst ()
-Report.Run#2	Report.Run static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
+Report.Run#2	Report.Run static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0
+Report.Run#3	Report.Run static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
 Report.RunModal#1	Report.RunModal inst ()
-Report.RunModal#2	Report.RunModal static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
+Report.RunModal#2	Report.RunModal static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0
+Report.RunModal#3	Report.RunModal static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
 Report.RunRequestPage#1	Report.RunRequestPage inst (?PageParameters: Text) -> Text
 Report.RunRequestPage#2	Report.RunRequestPage static (Number: Integer, ?Parameters: Text) -> Text
 Report.SaveAs#1	Report.SaveAs inst (Parameters: Text, Format: ReportFormat, var OutStream: OutStream, ?RecordRef: RecordRef) -> Boolean?
@@ -1709,19 +1725,3 @@ Xmlport.SetTableView#1	Xmlport.SetTableView inst (var Record: Record)
 Xmlport.Skip#1	Xmlport.Skip inst ()
 Xmlport.TableSeparator#1	Xmlport.TableSeparator inst (?Separator: Text) -> Text?
 Xmlport.TextEncoding#1	Xmlport.TextEncoding inst (?Encoding: TextEncoding) -> TextEncoding?
-Codeunit.Run#3	Codeunit.Run static (FullyQualifiedName: Text, ?var Record: Record) -> Boolean? @17.0
-DataTransfer.AddDestinationFilter#1	DataTransfer.AddDestinationFilter inst (DestinationField: Integer, String: Text, ?Value: Any*) @17.0
-JsonArray.SelectTokens#1	JsonArray.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
-JsonObject.SelectTokens#1	JsonObject.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
-JsonToken.SelectTokens#1	JsonToken.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
-Page.Run#4	Page.Run static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) @17.0
-Page.Run#5	Page.Run static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) @17.0
-Page.RunModal#5	Page.RunModal static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) -> Action? @17.0
-Page.RunModal#6	Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) -> Action? @17.0
-Page.RunModal#7	Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldRef: FieldRef) -> Action? @17.0
-Record.FullyQualifiedName#1	Record.FullyQualifiedName inst () -> Text @17.0
-RecordRef.FullyQualifiedName#1	RecordRef.FullyQualifiedName inst () -> Text @17.0
-RecordRef.Open#2	RecordRef.Open inst (FullyQualifiedName: Text, ?Temp: Boolean, ?CompanyName: Text) @17.0
-Report.Execute#3	Report.Execute static (FullyQualifiedName: Text, Parameters: Text, ?RecordRef: RecordRef) @17.0
-Report.Run#3	Report.Run static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0
-Report.RunModal#3	Report.RunModal static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0

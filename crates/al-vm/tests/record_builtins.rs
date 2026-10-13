@@ -18,7 +18,7 @@ table 50900 "ALT T"
         field(5; Flag; Boolean) { }
         field(6; Total; Decimal) { FieldClass = FlowField; }
     }
-    keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } }
+    keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } key(ByAmt; Amount) { } }
 }
 "#;
 
@@ -677,4 +677,97 @@ fn transfer_fields_copies_by_field_number_and_honours_the_key_flag() {
         "F",
     );
     assert_eq!(text(r), "SRC42hello|KEEP42|SRC");
+}
+
+// record/TestRecordSort.al:184-203 (SetAscending(false) makes FindFirst return the largest) and :205-.
+#[test]
+fn set_ascending_on_a_single_field_key_reverses_the_order() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin
+            R.\"No.\" := 'A'; R.Amount := 5; R.Insert();
+            R.\"No.\" := 'B'; R.Amount := 15; R.Insert();
+            R.SetCurrentKey(Amount);
+            R.SetAscending(Amount, false);
+            R.FindFirst();
+            s := Format(R.Amount);
+            R.SetAscending(Amount, true);
+            R.FindFirst();
+            exit(s + '|' + Format(R.Amount));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "15|5");
+}
+
+// record/TestRecordSort.al:158-181: GetAscending reads what SetAscending wrote; the default is true.
+// `Ascending()` after a per-field SetAscending is not pinned and is refused.
+#[test]
+fn get_ascending_reads_the_direction_of_a_key_field() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin
+            R.SetCurrentKey(Amount);
+            s := Format(R.GetAscending(Amount));
+            R.SetAscending(Amount, false);
+            exit(s + '|' + Format(R.GetAscending(Amount)));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes|No");
+    let r = run(
+        "procedure F(): Boolean var R: Record \"ALT T\"; begin
+            R.SetCurrentKey(Amount);
+            R.SetAscending(Amount, false);
+            exit(R.Ascending());
+        end;",
+        "F",
+    );
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+// A per-field direction on a multi-field key, or on a field outside the key, is not pinned.
+#[test]
+fn set_ascending_outside_a_single_field_key_is_refused() {
+    for body in [
+        "R.SetCurrentKey(Grp, \"No.\"); R.SetAscending(Grp, false);",
+        "R.SetCurrentKey(Amount); R.SetAscending(Grp, false);",
+        "R.SetCurrentKey(Amount); if R.GetAscending(Grp) then;",
+    ] {
+        let r = run(
+            &format!("procedure F() var R: Record \"ALT T\"; begin {body} end;"),
+            "F",
+        );
+        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
+    }
+}
+
+// A key value whose Format is not pinned (a Duration) used to panic the whole codeunit when a failed
+// write named the row; it is a refusal the test can report instead.
+#[test]
+fn a_duplicate_key_with_an_unpinned_format_is_refused_not_a_panic() {
+    let src = r#"
+table 50902 "ALT Dur" { fields { field(1; Span; Duration) { } } keys { key(PK; Span) { } } }
+codeunit 50100 C { procedure F() var R: Record "ALT Dur"; begin
+    R.Span := 5000; R.Insert(); R.Insert();
+end; }"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    let r = s.call(oi, 0, inst, vec![]);
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }

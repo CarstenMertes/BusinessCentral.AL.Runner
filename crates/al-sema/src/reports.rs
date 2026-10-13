@@ -211,11 +211,14 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                 .push(format!("reportextension property {name} is not supported yet"));
         }
     }
-    // A procedure could be called through a variable of the base report, which the checker
-    // does not resolve (the extension's procedures are not merged into the report's members).
-    if obj.routines().next().is_some() {
+    // A procedure is called through a variable of the base report, on an instance of the
+    // extension that variable keeps (extensionevents/TestExtensionDeclaredEvents.al:105-117 pins a
+    // procedure that raises an event of its own). What state that instance keeps is not pinned,
+    // so a procedure next to a global variable or an added data item is refused.
+    let has_procedures = obj.routines().next().is_some();
+    if has_procedures && obj.var_decls().next().is_some() {
         out.reasons
-            .push("a reportextension that declares procedures is not supported yet".into());
+            .push("a reportextension that declares procedures and global variables is not supported yet".into());
     }
     for t in obj.triggers() {
         let n = t.name().to_ascii_lowercase();
@@ -268,6 +271,10 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                 .reasons
                 .push(format!("reportextension section {other} is not supported yet")),
         }
+    }
+    if has_procedures && !out.items.is_empty() {
+        out.reasons
+            .push("a reportextension that declares procedures and adds data items is not supported yet".into());
     }
     out
 }
@@ -624,7 +631,7 @@ mod tests {
     #[test]
     fn what_an_extension_may_not_do_becomes_a_reason() {
         let l = ext_layout_of(
-            "reportextension 1 E extends R { dataset { addfirst(A) { dataitem(B; Ledger) { } } modify(A) { Caption = 'x'; trigger OnFoo() begin end; } } procedure P() begin end; trigger OnInitReport() begin end; }",
+            "reportextension 1 E extends R { dataset { addfirst(A) { dataitem(B; Ledger) { } } modify(A) { Caption = 'x'; trigger OnFoo() begin end; } } procedure P() begin end; var G: Integer; trigger OnInitReport() begin end; }",
         );
         let all = l.reasons.join("; ");
         assert!(all.contains("addfirst(A)"), "{all}");

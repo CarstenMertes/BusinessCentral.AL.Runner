@@ -62,9 +62,13 @@ fn flag(args: &[String], i: usize) -> bool {
 impl Registry {
     pub fn build(program: &ir::Program) -> Registry {
         let mut reg = Registry::default();
-        // Events declared in a table extension are subscribed to on the base table.
+        // Events declared in a table or report extension are subscribed to on the base object
+        // (corpus extensionevents/TestExtensionDeclaredEvents.al:105-117 for a reportextension).
         let mut base_of: HashMap<usize, usize> = HashMap::new();
         for (oi, o) in program.objects.iter().enumerate() {
+            if let Some(x) = &o.report_ext {
+                base_of.insert(oi, x.base);
+            }
             if let Some(t) = &o.table {
                 for &e in &t.extensions {
                     base_of.insert(e, oi);

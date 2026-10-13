@@ -5,7 +5,7 @@
 //! not understand becomes a reason on the xmlport, so a variable of that xmlport is refused
 //! statically (hard rule 4) instead of running with a guessed behaviour.
 
-use crate::members::{FieldClass, Members};
+use crate::members::FieldClass;
 use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_ir as ir;
 use al_syntax::ast;
@@ -236,7 +236,7 @@ fn split_top(text: &str, sep: char) -> Vec<String> {
 /// Everything `build` needs to know about the object being lowered.
 pub struct Context<'a> {
     pub ws: &'a Workspace,
-    pub members: &'a [Members],
+    pub members: &'a crate::members::MemberTable<'a>,
     pub oi: usize,
     pub file: usize,
     pub layout: &'a Layout,

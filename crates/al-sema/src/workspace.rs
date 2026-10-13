@@ -4,6 +4,7 @@
 use al_syntax::ast;
 use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ObjKind {
@@ -31,6 +32,15 @@ pub struct AppSource {
     pub name: String,
     pub dependencies: Vec<String>,
     pub files: Vec<(String, String)>,
+}
+
+/// Whether an app is the code being tested or a dependency it was compiled against.
+/// No test is discovered or run in a dependency (ADR-013 decision 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AppKind {
+    #[default]
+    Workspace,
+    Dependency,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -115,12 +125,23 @@ impl ObjKind {
 pub struct SourceFileData {
     pub path: String,
     pub app: usize,
-    pub green: rowan::GreenNode,
+    /// Position of the file in `apps[app].files`.
+    pub file_in_app: usize,
+    /// The parse tree. A file of a dependency app is only scanned at load and parsed
+    /// the first time something needs it (`Workspace::green`).
+    green: OnceLock<rowan::GreenNode>,
+    /// For a lazily parsed file: why its objects cannot be used, if its source does not
+    /// parse cleanly (the first parse error, with its line).
+    problem: OnceLock<Option<String>>,
+    /// Whether the file was only scanned at load (a dependency app's file).
+    pub lazy: bool,
+    /// Whether the file declares a page or report, the only objects `pages::expand_ranges` changes.
+    has_page: bool,
     pub namespace: Option<String>,
     pub usings: Vec<String>,
     /// Byte ranges of the text the compiler added to the file (page expression routines). The
-    /// green tree holds that text; source positions leave it out.
-    pub synthetic: Vec<ByteRange>,
+    /// green tree holds that text; source positions leave it out. Known once the file is parsed.
+    synthetic: OnceLock<Vec<ByteRange>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,15 +159,19 @@ pub struct ObjectSym {
     pub id: Option<u32>,
     pub name: String,
     pub namespace: Option<String>,
-    /// Offset of the object node in its file.
+    /// Offset of the object node in its file (in the original text for a scanned file).
     pub offset: usize,
+    /// Position among the objects of its file, which finds its node after a (lazy) parse.
+    pub ordinal: usize,
+    /// `extends X` of an extension object, as name parts.
+    pub extends: Option<Vec<String>>,
+    pub implements: Vec<Vec<String>>,
+    /// Event subscriptions it declares, for objects of scanned files.
+    pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
 }
 
 /// A byte range of a parsed text.
 type ByteRange = (usize, usize);
-
-/// A file's text with the page expression routines added, and where they are.
-type Expanded = (String, Vec<ByteRange>);
 
 /// A `DotNet` alias declared by a `dotnet { }` block (ADR-014).
 #[derive(Debug, Clone)]
@@ -164,15 +189,42 @@ pub struct Workspace {
     /// `RtType::DotNet` and `ir::Program::dotnet_types` use.
     pub dotnet: Vec<DotNetSym>,
     pub diagnostics: Vec<Diagnostic>,
+    /// The kind of each app, by index in `apps`.
+    pub kinds: Vec<AppKind>,
     /// For each app, the set of apps it can see (itself + transitive dependencies).
     visible: Vec<BTreeSet<usize>>,
     by_name: HashMap<(ObjKind, String), Vec<usize>>,
     by_id: HashMap<(ObjKind, u32), Vec<usize>>,
+    /// The preprocessor symbols, for parsing files later.
+    symbols: BTreeSet<String>,
+    /// For an extension object, the object it extends (found without parsing its target).
+    ext_target: Vec<Option<usize>>,
+    /// For an extended object, its extensions in object order.
+    ext_of: HashMap<usize, Vec<usize>>,
+    /// Event subscribers of scanned objects by publisher: (kind, lower-case name or id) to
+    /// (subscriber object, index in its `subscribers`).
+    subscribers_of: HashMap<(ObjKind, String), Vec<(usize, usize)>>,
+    /// Scanned objects that implement an interface, by lower-case interface name.
+    implementers_of: HashMap<String, Vec<usize>>,
+    /// Per object: whether it can be used (see `usable`); filled on first ask.
+    usable_cache: Vec<OnceLock<bool>>,
+    /// Once set, the dependency objects that take part in the compile (see `restrict_to`).
+    compiled: OnceLock<Vec<bool>>,
 }
 
 impl Workspace {
     pub fn load(apps: Vec<AppSource>, symbols: &BTreeSet<String>) -> Workspace {
+        let kinds = vec![AppKind::Workspace; apps.len()];
+        Workspace::load_apps(apps, kinds, symbols)
+    }
+
+    /// Like `load`, with the kind of each app. The files of a dependency app are not parsed
+    /// here: a cheap scan indexes their objects, and a file is parsed when something needs
+    /// one of its objects (ADR-013 decision 6).
+    pub fn load_apps(apps: Vec<AppSource>, kinds: Vec<AppKind>, symbols: &BTreeSet<String>) -> Workspace {
+        assert_eq!(apps.len(), kinds.len(), "one kind per app");
         let mut ws = Workspace {
+            kinds,
             visible: Vec::new(),
             files: Vec::new(),
             objects: Vec::new(),
@@ -181,42 +233,44 @@ impl Workspace {
             by_name: HashMap::new(),
             by_id: HashMap::new(),
             apps: Vec::new(),
+            symbols: symbols.clone(),
+            ext_target: Vec::new(),
+            ext_of: HashMap::new(),
+            subscribers_of: HashMap::new(),
+            implementers_of: HashMap::new(),
+            usable_cache: Vec::new(),
+            compiled: OnceLock::new(),
         };
         ws.visible = (0..apps.len()).map(|i| visible_from(&apps, i)).collect();
         // Parsing dominates loading and each file is independent, so it runs on
         // all cores. `collect` keeps the input order, so the sequential merge
         // below sees files, diagnostics and objects exactly as a serial load would.
         // Expression-valued page properties become routines first (ADR-012).
-        let expanded: Vec<Vec<Option<Expanded>>> = apps
-            .iter()
-            .map(|app| {
-                app.files
-                    .iter()
-                    .map(|(_, src)| crate::pages::expand_ranges(src, symbols))
-                    .collect()
-            })
-            .collect();
-        let inputs: Vec<(usize, &str, &str, &[ByteRange])> = apps
+        let inputs: Vec<(usize, usize, bool, &str, &str)> = apps
             .iter()
             .enumerate()
             .flat_map(|(ai, app)| {
-                let expanded = &expanded[ai];
+                let lazy = ws.kinds[ai] == AppKind::Dependency;
                 app.files
                     .iter()
                     .enumerate()
-                    .map(move |(fi, (path, src))| match &expanded[fi] {
-                        Some((text, added)) => (ai, path.as_str(), text.as_str(), added.as_slice()),
-                        None => (ai, path.as_str(), src.as_str(), &[][..]),
-                    })
+                    .map(move |(fi, (path, src))| (ai, fi, lazy, path.as_str(), src.as_str()))
             })
             .collect();
-        let parsed: Vec<ParsedFile> = inputs
+        let parsed: Vec<(ParsedFile, Vec<ByteRange>)> = inputs
             .par_iter()
-            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, src, _)| {
-                parse_file(src, symbols, cache)
+            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, lazy, _, src)| {
+                if lazy {
+                    (scanned_file(src, symbols), Vec::new())
+                } else {
+                    match crate::pages::expand_ranges(src, symbols) {
+                        Some((text, added)) => (parse_file(&text, symbols, cache), added),
+                        None => (parse_file(src, symbols, cache), Vec::new()),
+                    }
+                }
             })
             .collect();
-        for ((ai, path, _, added), file) in inputs.into_iter().zip(parsed) {
+        for ((ai, file_in_app, lazy, path, _), (file, added)) in inputs.into_iter().zip(parsed) {
             for e in &file.errors {
                 ws.diagnostics.push(Diagnostic {
                     file: path.to_string(),
@@ -229,10 +283,19 @@ impl Workspace {
             ws.files.push(SourceFileData {
                 path: path.to_string(),
                 app: ai,
-                green: file.green,
+                file_in_app,
+                green: file.green.map(OnceLock::from).unwrap_or_default(),
+                problem: OnceLock::new(),
+                lazy,
+                has_page: file.objects.iter().any(|o| {
+                    matches!(
+                        o.kind,
+                        ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension
+                    )
+                }),
                 namespace: file.namespace.clone(),
                 usings: file.usings,
-                synthetic: added.to_vec(),
+                synthetic: if lazy { OnceLock::new() } else { OnceLock::from(added) },
             });
             for decl in file.dotnet {
                 ws.dotnet.push(DotNetSym {
@@ -241,27 +304,191 @@ impl Workspace {
                     decl,
                 });
             }
-            for (kind, id, name, offset) in file.objects {
+            for (ordinal, o) in file.objects.into_iter().enumerate() {
                 ws.add_object(ObjectSym {
                     app: ai,
                     file: fi,
-                    kind,
-                    id,
-                    name,
+                    kind: o.kind,
+                    id: o.id,
+                    name: o.name,
                     namespace: file.namespace.clone(),
-                    offset,
+                    offset: o.offset,
+                    ordinal,
+                    extends: o.extends,
+                    implements: o.implements,
+                    subscribers: o.subscribers,
                 });
             }
         }
         ws.apps = apps;
+        ws.usable_cache = (0..ws.objects.len()).map(|_| OnceLock::new()).collect();
+        ws.index_extensions_and_subscribers();
         ws.resolve_references();
-        ws.diagnostics.sort_by_key(|d| {
-            (
-                ws.files.iter().position(|f| f.path == d.file).unwrap_or(usize::MAX),
-                d.offset,
-            )
-        });
+        let positions: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
+        let key = |d: &Diagnostic| (positions.get(d.file.as_str()).copied().unwrap_or(usize::MAX), d.offset);
+        let mut diagnostics = std::mem::take(&mut ws.diagnostics);
+        diagnostics.sort_by_key(key);
+        ws.diagnostics = diagnostics;
         ws
+    }
+
+    /// Extension targets and event subscribers, found from the object index alone.
+    fn index_extensions_and_subscribers(&mut self) {
+        self.ext_target = vec![None; self.objects.len()];
+        for i in 0..self.objects.len() {
+            let o = &self.objects[i];
+            if let (Some(kind), Some(parts)) = (o.kind.extended(), &o.extends) {
+                // Not `resolve_ref`: that would parse the target's file, and an index of
+                // thousands of extensions must not parse their targets.
+                if let Resolution::Found(t) = self.resolve_in_scope(o.file, kind, parts, false, false) {
+                    self.ext_target[i] = Some(t);
+                    self.ext_of.entry(t).or_default().push(i);
+                }
+            }
+        }
+        for (i, o) in self.objects.iter().enumerate() {
+            for (si, sub) in o.subscribers.iter().enumerate() {
+                let kind = ObjKind::from_keyword(&sub.publisher_kind);
+                let name = sub.publisher.join(".").to_lowercase();
+                self.subscribers_of.entry((kind, name)).or_default().push((i, si));
+            }
+            for imp in &o.implements {
+                if let Some(last) = imp.last() {
+                    self.implementers_of.entry(last.to_lowercase()).or_default().push(i);
+                }
+            }
+        }
+    }
+
+    /// The object `i` extends, if it is an extension and the target is in the workspace.
+    pub fn extension_target(&self, i: usize) -> Option<usize> {
+        self.ext_target[i]
+    }
+
+    /// The extensions of object `i`, in object order.
+    pub fn extensions_of(&self, i: usize) -> &[usize] {
+        self.ext_of.get(&i).map_or(&[], Vec::as_slice)
+    }
+
+    /// Subscribers (object, index in its `subscribers`) of scanned objects that name `publisher`
+    /// as their publisher, by name or by id.
+    pub fn subscribers_of(&self, publisher: usize) -> Vec<(usize, usize)> {
+        let o = &self.objects[publisher];
+        let mut keys = vec![o.name.to_lowercase()];
+        if let Some(id) = o.id {
+            keys.push(id.to_string());
+        }
+        // `Codeunit::Microsoft.Foo."Name"` writes the namespace; the index key is the written text.
+        if let Some(ns) = &o.namespace {
+            keys.push(format!("{ns}.{}", o.name).to_lowercase());
+        }
+        keys.into_iter()
+            .flat_map(|k| self.subscribers_of.get(&(o.kind, k)).into_iter().flatten().copied())
+            .collect()
+    }
+
+    /// Objects of scanned files that list `interface` (by its last name part) in `implements`.
+    pub fn implementers_of(&self, interface: &str) -> &[usize] {
+        self.implementers_of
+            .get(&interface.to_lowercase())
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// The parse tree of file `fi`, parsing it now if it was only scanned at load.
+    pub fn green(&self, fi: usize) -> rowan::GreenNode {
+        let f = &self.files[fi];
+        f.green
+            .get_or_init(|| {
+                thread_local! {
+                    static CACHE: std::cell::RefCell<al_syntax::TreeCache> = Default::default();
+                }
+                let src = &self.apps[f.app].files[f.file_in_app].1;
+                // Only a page can have properties to turn into routines; skip the extra parse otherwise.
+                let expanded = f
+                    .has_page
+                    .then(|| crate::pages::expand_ranges(src, &self.symbols))
+                    .flatten();
+                let src = expanded.as_ref().map(|(t, _)| t.as_str()).unwrap_or(src);
+                let _ = f
+                    .synthetic
+                    .set(expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default());
+                let parsed = CACHE.with(|c| match c.try_borrow_mut() {
+                    Ok(mut cache) => parse_file(src, &self.symbols, &mut cache),
+                    Err(_) => parse_file(src, &self.symbols, &mut al_syntax::TreeCache::default()),
+                });
+                let problem = parsed.errors.first().map(|e| {
+                    let line = src[..e.offset.min(src.len())].matches('\n').count() + 1;
+                    let text = src.lines().nth(line - 1).unwrap_or("").trim();
+                    format!("{}:{line}: {} (`{text}`)", f.path, e.message)
+                });
+                let _ = f.problem.set(problem);
+                parsed.green.expect("a parsed file has a tree")
+            })
+            .clone()
+    }
+
+    /// The byte ranges of file `fi`'s parsed text that the compiler added (page expression routines).
+    pub fn synthetic(&self, fi: usize) -> &[ByteRange] {
+        self.green(fi);
+        self.files[fi].synthetic.get().map_or(&[], Vec::as_slice)
+    }
+
+    /// Why the objects of file `fi` cannot be used: its source does not parse cleanly.
+    /// Only a scanned (dependency) file can have such a problem; the workspace's own files
+    /// report parse errors as diagnostics. Parses the file if that has not happened yet.
+    pub fn file_problem(&self, fi: usize) -> Option<&str> {
+        let f = &self.files[fi];
+        if !f.lazy {
+            return None;
+        }
+        self.green(fi);
+        f.problem.get().and_then(|p| p.as_deref())
+    }
+
+    /// From now on only the dependency objects marked in `compiled` resolve. The checker has
+    /// decided which of them the workspace's code reaches; the others are not compiled, so
+    /// code that needs one anyway is refused as outside the workspace instead of finding it
+    /// half there. Set once; a second call changes nothing.
+    pub fn restrict_to(&self, compiled: Vec<bool>) {
+        let _ = self.compiled.set(compiled);
+    }
+
+    /// Whether object `i` takes part in the compile: not a dependency's, or not left out by `restrict_to`.
+    fn in_compile(&self, i: usize) -> bool {
+        match self.compiled.get() {
+            Some(c) => c[i] || self.kinds[self.objects[i].app] != AppKind::Dependency,
+            None => true,
+        }
+    }
+
+    /// Whether object `i` can be used: its file is a workspace file, or parses cleanly.
+    pub fn usable(&self, i: usize) -> bool {
+        let o = &self.objects[i];
+        if !self.files[o.file].lazy {
+            return true;
+        }
+        *self.usable_cache[i].get_or_init(|| self.file_problem(o.file).is_none() && self.object_node(o).is_some())
+    }
+
+    /// Why object `i` is unusable, for messages.
+    pub fn unusable_reason(&self, i: usize) -> Option<String> {
+        let fi = self.objects[i].file;
+        match self.file_problem(fi) {
+            Some(p) => Some(format!("dependency source does not parse: {p}")),
+            None if self.files[fi].lazy && self.object_node(&self.objects[i]).is_none() => Some(format!(
+                "{}: the object was not found after parsing",
+                self.files[fi].path
+            )),
+            None => None,
+        }
+    }
+
+    /// The files that were parsed after load and did not parse cleanly, as (path, message).
+    pub fn lazy_parse_problems(&self) -> Vec<(String, String)> {
+        self.files
+            .iter()
+            .filter_map(|f| Some((f.path.clone(), f.problem.get()?.clone()?)))
+            .collect()
     }
 
     /// The `DotNet` alias `alias` as seen from `file`: the file's own app first, then the apps
@@ -279,9 +506,11 @@ impl Workspace {
     fn add_object(&mut self, o: ObjectSym) {
         let oi = self.objects.len();
         let file = self.files[o.file].path.clone();
+        // The AL compiler has already vetted a dependency app; its clashes are not ours to report.
+        let report = self.kinds[o.app] != AppKind::Dependency;
         if let Some(id) = o.id {
             let ids = self.by_id.entry((o.kind, id)).or_default();
-            if !ids.is_empty() {
+            if !ids.is_empty() && report {
                 self.diagnostics.push(Diagnostic {
                     file: file.clone(),
                     offset: o.offset,
@@ -297,7 +526,7 @@ impl Workspace {
             let other = &self.objects[j];
             other.app == o.app || eq_ns(&other.namespace, &o.namespace)
         });
-        if clash {
+        if clash && report {
             self.diagnostics.push(Diagnostic {
                 file,
                 offset: o.offset,
@@ -323,7 +552,7 @@ impl Workspace {
     /// unique match in any namespace (corpus evidence: files with neither
     /// namespace nor `using` reference namespaced Base App tables and compile).
     pub fn resolve_ref(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
-        self.resolve_in_scope(file, kind, parts, false)
+        self.resolve_in_scope(file, kind, parts, false, true)
     }
 
     /// What a name means at run time (a `TableRelation` target), where BC resolves it against
@@ -334,12 +563,24 @@ impl Workspace {
     /// TestRelationTargetNamespaceScope.al and TestRelationOwnNamespaceDependency.al: an
     /// imported or global workspace table must not stand in for a Base Application one).
     pub fn resolve_ref_certain(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
-        self.resolve_in_scope(file, kind, parts, true)
+        self.resolve_in_scope(file, kind, parts, true, true)
     }
 
-    fn resolve_in_scope(&self, file: usize, kind: ObjKind, parts: &[String], certain_only: bool) -> Resolution {
+    /// `check_usable`: leave out objects of a dependency file that does not parse. That parses
+    /// the file of every candidate, which the extension index must not trigger.
+    fn resolve_in_scope(
+        &self,
+        file: usize,
+        kind: ObjKind,
+        parts: &[String],
+        certain_only: bool,
+        check_usable: bool,
+    ) -> Resolution {
         let f = &self.files[file];
-        let visible = |i: &usize| self.visible[f.app].contains(&self.objects[*i].app);
+        let visible = |i: &usize| {
+            self.visible[f.app].contains(&self.objects[*i].app)
+                && (!check_usable || (self.in_compile(*i) && self.usable(*i)))
+        };
         let Some(name) = parts.last() else {
             return Resolution::Missing;
         };
@@ -414,12 +655,21 @@ impl Workspace {
 
     /// Resolves a reference as seen from `from_app` (None = from anywhere).
     pub fn lookup(&self, from_app: Option<usize>, kind: ObjKind, name_or_id: &str) -> Option<usize> {
-        let visible = |i: &&usize| from_app.is_none_or(|a| self.visible[a].contains(&self.objects[**i].app));
+        let visible = |i: &&usize| {
+            from_app.is_none_or(|a| self.visible[a].contains(&self.objects[**i].app))
+                && self.in_compile(**i)
+                && self.usable(**i)
+        };
         let hits = match name_or_id.parse::<u32>() {
             Ok(id) => self.by_id.get(&(kind, id)),
             Err(_) => self.by_name.get(&(kind, name_or_id.to_lowercase())),
         };
         hits?.iter().find(visible).copied()
+    }
+
+    /// Whether object `i` belongs to a dependency app.
+    pub fn is_dependency(&self, i: usize) -> bool {
+        self.kinds[self.objects[i].app] == AppKind::Dependency
     }
 
     /// The syntax node of object `i`.
@@ -431,16 +681,18 @@ impl Workspace {
     /// Objects are direct children of the file's root, so look there rather than
     /// walking every node of the file.
     fn object_node(&self, o: &ObjectSym) -> Option<ast::Object> {
-        let root = al_syntax::SyntaxNode::new_root(self.files[o.file].green.clone());
-        root.children()
-            .filter_map(ast::Object::cast)
-            .find(|n| usize::from(n.syntax().text_range().start()) == o.offset)
+        let root = al_syntax::SyntaxNode::new_root(self.green(o.file));
+        root.children().filter_map(ast::Object::cast).nth(o.ordinal)
     }
 
     fn resolve_references(&mut self) {
         let mut diags = Vec::new();
         for o in &self.objects {
             let file = &self.files[o.file];
+            // A dependency app compiled; its references are resolved when its code is used.
+            if file.lazy {
+                continue;
+            }
             let Some(obj) = self.object_node(o) else {
                 continue;
             };
@@ -482,17 +734,28 @@ impl Workspace {
     }
 }
 
-/// What loading needs from one parsed file; plain data, so it can be produced
+/// What loading needs from one file; plain data, so it can be produced
 /// on a worker thread (syntax nodes cannot cross threads, green trees can).
 struct ParsedFile {
-    green: rowan::GreenNode,
+    /// The tree; none for a file that was only scanned.
+    green: Option<rowan::GreenNode>,
     errors: Vec<al_syntax::ParseError>,
     namespace: Option<String>,
     usings: Vec<String>,
-    /// (kind, id, name, offset) of each object, in source order.
-    objects: Vec<(ObjKind, Option<u32>, String, usize)>,
+    /// The objects of the file, in source order.
+    objects: Vec<FileObject>,
     /// The `type(..)` declarations of the file's `dotnet { }` blocks.
     dotnet: Vec<ast::DotNetTypeDecl>,
+}
+
+struct FileObject {
+    kind: ObjKind,
+    id: Option<u32>,
+    name: String,
+    offset: usize,
+    extends: Option<Vec<String>>,
+    implements: Vec<Vec<String>>,
+    subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
@@ -503,18 +766,54 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
         usings: root.usings(),
         objects: root
             .objects()
-            .map(|o| {
-                (
-                    ObjKind::from_keyword(&o.kind()),
-                    o.id(),
-                    o.name(),
-                    o.syntax().text_range().start().into(),
-                )
+            .map(|o| FileObject {
+                kind: ObjKind::from_keyword(&o.kind()),
+                id: o.id(),
+                name: o.name(),
+                offset: o.syntax().text_range().start().into(),
+                extends: o.extends_parts(),
+                implements: o.implements_parts(),
+                subscribers: Vec::new(),
             })
             .collect(),
         dotnet: root.dotnet_types(),
-        green: parse.green,
+        green: Some(parse.green),
         errors: parse.errors,
+    }
+}
+
+/// The index entry of a file that is not parsed at load.
+fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
+    let scan = al_syntax::scan::scan(src, symbols);
+    // A `dotnet { }` block declares type aliases other apps use; it holds no object, so reading
+    // such a file at load costs nothing a lazy parse would have saved.
+    let dotnet = if scan.dotnet_block {
+        let parse = al_syntax::parse(src, symbols);
+        ast::SourceFile::cast(parse.syntax())
+            .map(|r| r.dotnet_types())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    ParsedFile {
+        dotnet,
+        green: None,
+        errors: Vec::new(),
+        namespace: scan.namespace,
+        usings: scan.usings,
+        objects: scan
+            .objects
+            .into_iter()
+            .map(|o| FileObject {
+                kind: ObjKind::from_keyword(&o.kind),
+                id: o.id,
+                name: o.name,
+                offset: o.offset,
+                extends: o.extends,
+                implements: o.implements,
+                subscribers: o.subscribers,
+            })
+            .collect(),
     }
 }
 
@@ -813,6 +1112,119 @@ mod tests {
             ],
         )]);
         assert_eq!(codes(&ws), vec![]);
+    }
+
+    fn lazy_ws() -> Workspace {
+        let dep = app(
+            "dep",
+            &[],
+            &[
+                (
+                    "Dep/cust.al",
+                    "namespace Dep.Sales;\ntable 18 Customer { fields { field(1; \"No.\"; Code[20]) { } } }",
+                ),
+                ("Dep/item.al", "namespace Dep.Inv;\ntable 27 Item { }"),
+                (
+                    "Dep/ext.al",
+                    "namespace Dep.Sales;\ntableextension 50 \"Cust Ext\" extends Customer { }",
+                ),
+                (
+                    "Dep/sub.al",
+                    "codeunit 60 Subs { [EventSubscriber(ObjectType::Table, Database::Customer, 'OnAfterInsertEvent', '', false, false)] local procedure A() begin end; }",
+                ),
+                ("Dep/impl.al", "codeunit 61 Impl implements \"Dep I\" { }"),
+                (
+                    "Dep/broken.al",
+                    "table 70 Broken { fields { field(1; F; Integer) { } } procedure P( begin end; }",
+                ),
+            ],
+        );
+        let main = app(
+            "main",
+            &["dep"],
+            &[("m.al", "codeunit 1 M { var C: Record Customer; }")],
+        );
+        Workspace::load_apps(
+            vec![main, dep],
+            vec![AppKind::Workspace, AppKind::Dependency],
+            &["BC27PLUS".to_string()].into(),
+        )
+    }
+
+    #[test]
+    fn dependency_files_are_scanned_at_load_and_parsed_on_first_use() {
+        let ws = lazy_ws();
+        let file = |p: &str| ws.files.iter().position(|f| f.path == p).unwrap();
+        assert!(
+            ws.files[file("m.al")].green.get().is_some(),
+            "workspace files parse at load"
+        );
+        // The index knows every object, with its namespace.
+        let customer = ws.objects.iter().position(|o| o.name == "Customer").unwrap();
+        assert_eq!(ws.objects[customer].namespace.as_deref(), Some("Dep.Sales"));
+        assert_eq!(ws.objects[customer].id, Some(18));
+        // The workspace's own reference to Customer resolved without a diagnostic. That parsed
+        // the file of Customer and no other.
+        assert_eq!(ws.diagnostics, vec![]);
+        assert!(ws.files[file("Dep/cust.al")].green.get().is_some());
+        for p in [
+            "Dep/item.al",
+            "Dep/ext.al",
+            "Dep/sub.al",
+            "Dep/impl.al",
+            "Dep/broken.al",
+        ] {
+            assert!(ws.files[file(p)].green.get().is_none(), "{p} is only scanned");
+        }
+    }
+
+    #[test]
+    fn extensions_and_subscribers_are_found_from_the_index() {
+        let ws = lazy_ws();
+        let ix = |n: &str| ws.objects.iter().position(|o| o.name == n).unwrap();
+        assert_eq!(ws.extension_target(ix("Cust Ext")), Some(ix("Customer")));
+        assert_eq!(ws.extensions_of(ix("Customer")), [ix("Cust Ext")]);
+        assert_eq!(ws.extension_target(ix("Customer")), None);
+        let subs = ws.subscribers_of(ix("Customer"));
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].0, ix("Subs"));
+        assert_eq!(ws.objects[subs[0].0].subscribers[subs[0].1].event, "OnAfterInsertEvent");
+        assert_eq!(ws.implementers_of("Dep I"), [ix("Impl")]);
+        assert!(ws.subscribers_of(ix("Item")).is_empty());
+    }
+
+    #[test]
+    fn a_dependency_object_whose_file_does_not_parse_is_unusable_and_says_why() {
+        let ws = lazy_ws();
+        let broken = ws.objects.iter().position(|o| o.name == "Broken").unwrap();
+        assert!(!ws.usable(broken));
+        let why = ws.unusable_reason(broken).unwrap();
+        assert!(why.contains("Dep/broken.al") && why.contains("does not parse"), "{why}");
+        // A reference to it resolves to nothing rather than to half a table.
+        let fi = ws.files.iter().position(|f| f.path == "m.al").unwrap();
+        assert_eq!(
+            ws.resolve_ref(fi, ObjKind::Table, &["Broken".to_string()]),
+            Resolution::Missing
+        );
+        assert!(ws.lazy_parse_problems().iter().any(|(p, _)| p == "Dep/broken.al"));
+        // The healthy objects are unaffected.
+        let customer = ws.objects.iter().position(|o| o.name == "Customer").unwrap();
+        assert!(ws.usable(customer));
+        assert_eq!(ws.unusable_reason(customer), None);
+    }
+
+    #[test]
+    fn clashes_between_dependency_objects_are_not_reported() {
+        let ws = Workspace::load_apps(
+            vec![app(
+                "d",
+                &[],
+                &[("a.al", "codeunit 1 A { }\ncodeunit 1 B { }\ncodeunit 2 a { }")],
+            )],
+            vec![AppKind::Dependency],
+            &Default::default(),
+        );
+        assert_eq!(ws.diagnostics, vec![]);
     }
 
     fn resolved(ws: &Workspace, file: &str, kind: ObjKind, parts: &[&str]) -> Option<(Option<String>, u32)> {

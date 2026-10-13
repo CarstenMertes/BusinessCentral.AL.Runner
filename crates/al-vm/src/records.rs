@@ -82,11 +82,29 @@ impl Session {
     }
 
     /// Raises (or, when the result is used, returns false for) a failed write.
+    /// Whether the routine running now belongs to a dependency app.
+    pub(crate) fn in_dependency_code(&self) -> bool {
+        let program = &self.engine.program;
+        self.frames
+            .last()
+            .and_then(|&o| program.apps.get(program.objects[o].app as usize))
+            .is_some_and(|a| a.dependency)
+    }
+
     /// Message texts: docs/probes-needed.md (the corpus pins 'already exists'
     /// and 'does not exist' fragments only).
     fn fail(&mut self, t: &TableDef, fields: &[Value], exists: bool) -> Result<Value, Signal> {
         if self.ret_used {
             return Ok(Value::Boolean(false));
+        }
+        // A dependency app's code reads rows (setup records, mostly) that installing the app and
+        // initialising a company create. This runtime does not run that yet (ADR-013 decision 5),
+        // so a missing row there is not BC's answer: refuse rather than report it as one.
+        if !exists && self.in_dependency_code() {
+            return unsupported(format!(
+                "{} not found in code of a dependency app: the rows its install and Company-Initialize create are not seeded yet (ADR-013 decision 5)",
+                t.name
+            ));
         }
         let identification = self.identification(t, fields)?;
         let (message, code) = if exists {

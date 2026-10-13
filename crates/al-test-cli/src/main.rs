@@ -5,7 +5,7 @@
 
 use al_host::dotnet::DotNetHost;
 use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
-use al_test_cli::{config, corpus, drift, oracle, output, report, runner::Runner, runtime, target};
+use al_test_cli::{config, corpus, deps, drift, oracle, output, report, runner::Runner, runtime, target};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -20,6 +20,13 @@ struct Args {
     markdown: Option<PathBuf>,
     junit: Option<PathBuf>,
     update_baseline: bool,
+    /// `--no-ratchet`: report only; do not compare with the baseline (for running the corpus
+    /// without the dependency apps its baseline needs).
+    no_ratchet: bool,
+    /// Extra directories of `.app` packages, searched after the project's `.alpackages`.
+    deps: Vec<PathBuf>,
+    /// Run without dependency apps (the corpus alone).
+    no_deps: bool,
     /// `--bc-version PREFIX`: which oracle to run (default: the newest).
     bc_version: Option<String>,
     /// `--all-versions`: run every version in `oracle.toml`, one after the other.
@@ -54,6 +61,9 @@ fn parse_args() -> Result<Args, String> {
             "--markdown" => a.markdown = Some(val()?),
             "--junit" => a.junit = Some(val()?),
             "--update-baseline" => a.update_baseline = true,
+            "--no-ratchet" => a.no_ratchet = true,
+            "--deps" => a.deps.push(val()?),
+            "--no-deps" => a.no_deps = true,
             "--all-versions" => a.all_versions = true,
             "--bc-version" => a.bc_version = Some(val()?.to_string_lossy().into_owned()),
             "--dotnet-sidecar" => a.dotnet_sidecar = Some(val()?),
@@ -194,18 +204,29 @@ fn run_version(
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let app_dirs = [
-        corpus_tests.join("al-language-internals-fixture"),
-        root.join(&cfg.corpus_app),
-    ];
-    let apps = app_dirs
+    let fixture_dir = corpus_tests.join("al-language-internals-fixture");
+    let app_dirs = [fixture_dir.clone(), root.join(&cfg.corpus_app)];
+    let mut apps = app_dirs
         .iter()
         .map(|d| runtime::load_app(d))
         .collect::<Result<Vec<_>, _>>()?;
-    let manifests = app_dirs
+    let mut manifests = app_dirs
         .iter()
         .map(|d| runtime::load_manifest(d))
         .collect::<Result<Vec<_>, _>>()?;
+    let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+    let mut dependency_summary = Vec::new();
+    if !args.no_deps {
+        // Dependencies go after the corpus apps, so the corpus objects keep their positions.
+        let deps = deps::load(&root.join(&cfg.corpus_app), &[fixture_dir], &args.deps)?;
+        for line in &deps.log {
+            eprintln!("{line}");
+        }
+        kinds.extend(deps.apps.iter().map(|_| al_sema::AppKind::Dependency));
+        manifests.extend(deps.manifests);
+        dependency_summary = deps.summary;
+        apps.extend(deps.apps);
+    }
     // ADR-014: the sidecar starts lazily, at the first `DotNet` call that reaches it.
     let host = Arc::new(SidecarHost::new(SidecarConfig {
         sidecar: args.dotnet_sidecar.clone(),
@@ -224,7 +245,7 @@ fn run_version(
         host,
         ..Default::default()
     };
-    let rt = runtime::CorpusRuntime::run_for(apps, &manifests, &symbols, Some(&chosen.target), dotnet);
+    let rt = runtime::CorpusRuntime::run_for_apps(apps, kinds, &manifests, &symbols, Some(&chosen.target), dotnet);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",
@@ -233,7 +254,8 @@ fn run_version(
     }
     let outcome = |c: &oracle::CaseId| rt.outcome(c);
     let area_of = |cu: u32| index.area_of(cu).map(str::to_string);
-    let rep = report::build(&cases, &area_of, &outcome);
+    let mut rep = report::build(&cases, &area_of, &outcome);
+    rep.dependencies = dependency_summary;
     if !rep.unmapped.is_empty() {
         return Err(format!(
             "{} oracle case(s) have no test codeunit in the corpus, e.g. {}",
@@ -272,6 +294,16 @@ fn run_version(
         rep.overall.not_run
     );
 
+    if args.no_ratchet {
+        if args.update_baseline {
+            return Err("--no-ratchet cannot be combined with --update-baseline".into());
+        }
+        return Ok(VersionRun {
+            code: 0,
+            oracle: oracle_ok,
+            passing,
+        });
+    }
     let baseline_path = args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline));
     let baseline =
         report::parse_baseline(&read(&baseline_path)?).map_err(|e| format!("{}: {e}", baseline_path.display()))?;

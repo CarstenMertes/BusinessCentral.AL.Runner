@@ -72,6 +72,10 @@ pub struct AppInfo {
     /// The packaged resources (`resourceFolders` of the manifest): name relative to its folder, content.
     #[serde(default)]
     pub resources: Vec<(String, Vec<u8>)>,
+    /// A dependency app, compiled from its package (ADR-013): its pages are precompiled ones as
+    /// far as BC's behaviour goes. The app under test is not.
+    #[serde(default)]
+    pub dependency: bool,
 }
 
 /// A `.NET` type declared by a `dotnet { }` block.

@@ -381,6 +381,17 @@ impl Session {
                     .iter()
                     .position(|o| o.kind == "page" && o.id == Some(id))
                 else {
+                    // A page of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
+                    if engine
+                        .program
+                        .objects
+                        .iter()
+                        .any(|o| o.kind == "uncompiled page" && o.id == Some(id))
+                    {
+                        return unsupported(format!(
+                            "page {n} belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                        ));
+                    }
                     return Err(error(format!("You tried to invoke the Page object with the ID {n}")));
                 };
                 let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
@@ -856,7 +867,10 @@ impl Session {
             }
             let rec = self.page_rec(st);
             let table = self.table(&rec)?;
-            self.set_view_in(&rec, &table, &view, None, sub_view.is_some(), false)?;
+            // The platform applies the view in filter group 2: the page's own AL reads it with
+            // FilterGroup(2) and finds group 0 empty (corpus handlers/TestPageSourceTableView.al:
+            // FiltersAreInFilterGroup2WhenOnOpenPageRuns).
+            self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
         }
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
@@ -2546,6 +2560,18 @@ impl Session {
                 ir::ControlKind::Action | ir::ControlKind::SystemAction => "action",
                 _ => "field",
             };
+            // A page that ships precompiled names the control by an internal number in this
+            // message (corpus pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:92
+            // pins `ID = 301776846` for a Base Application control). How the number derives from the
+            // control is not known, so the text is refused rather than guessed.
+            let object = st.borrow().object as usize;
+            let app = engine.program.objects[object].app as usize;
+            if engine.program.apps.get(app).is_some_and(|a| a.dependency) {
+                return unsupported(format!(
+                    "the error text for the {what} {} of a page from a dependency app (it names the control by an internal ID)",
+                    ctl.name
+                ));
+            }
             return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
         }
         // Only Invoke of an actionref is pinned: it runs the action it stands for. A found actionref

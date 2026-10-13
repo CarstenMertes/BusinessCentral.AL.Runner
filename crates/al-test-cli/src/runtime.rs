@@ -130,9 +130,23 @@ impl CorpusRuntime {
         target: Option<&al_version::Target>,
         dotnet: al_vm::dotnet::DotNetConfig,
     ) -> CorpusRuntime {
+        let kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+        Self::run_for_apps(apps, kinds, manifests, symbols, target, dotnet)
+    }
+
+    /// [`run_for`](Self::run_for) with the kind of each app. Dependency apps are compiled but no
+    /// test is run in them (ADR-013 decision 4).
+    pub fn run_for_apps(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+    ) -> CorpusRuntime {
         let (_ws, mut lowered) = match target {
-            Some(t) => al_sema::lower::compile_for(apps, symbols, t),
-            None => al_sema::lower::compile(apps, symbols),
+            Some(t) => al_sema::lower::compile_apps_for(apps, kinds, symbols, t),
+            None => al_sema::lower::compile_apps(apps, kinds, symbols),
         };
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
@@ -149,6 +163,7 @@ impl CorpusRuntime {
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {
             let is_test = o.kind == "codeunit"
+                && !lowered.dependency[oi]
                 && o.properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
@@ -424,6 +439,7 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
     let mut skipped = Vec::new();
     for (oi, o) in lowered.program.objects.iter().enumerate() {
         let install = o.kind == "codeunit"
+            && !lowered.dependency[oi]
             && o.properties
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"));
@@ -1442,5 +1458,154 @@ codeunit 60703 PhT
             assert_eq!(*r, Outcome::Pass, "{n}");
         }
         assert_eq!(o.len(), 3);
+    }
+
+    #[test]
+    fn a_page_source_table_view_applies_in_filter_group_2() {
+        // corpus handlers/TestPageSourceTableView.al:129-151, reproduced without a dependency app.
+        let o = outcomes(
+            r#"
+enum 50000 "S" { value(0; Open) { } value(1; Active) { } value(2; Closed) { } }
+table 50000 "K" { fields { field(1; "Entry No."; Integer) { } field(2; Status; Enum "S") { } } keys { key(PK; "Entry No.") { Clustered = true; } } }
+table 50001 "Log" { fields { field(1; "Id"; Integer) { AutoIncrement = true; } field(2; "NewValue"; Text[100]) { } field(3; "OldValue"; Text[100]) { } } keys { key(PK; "Id") { Clustered = true; } } }
+page 50000 "P" { PageType = List; SourceTable = "K"; SourceTableView = where(Status = const(Active));
+  layout { area(Content) { repeater(Lines) { field("Entry No."; Rec."Entry No.") { } field(Status; Rec.Status) { } } } }
+  trigger OnOpenPage() var L: Record "Log"; begin
+    L."OldValue" := CopyStr(Rec.GetFilter(Status), 1, 100);
+    Rec.FilterGroup(2);
+    L."NewValue" := CopyStr(Rec.GetFilter(Status), 1, 100);
+    Rec.FilterGroup(0);
+    L.Insert();
+  end; }
+codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Go() var L: Record "Log"; P: TestPage "P"; begin
+    P.OpenView(); P.Close();
+    L.FindLast();
+    if L."NewValue" <> 'Active' then Error('new=[%1] old=[%2]', L."NewValue", L."OldValue");
+  end; }
+"#,
+        );
+        assert_eq!(o, vec![("Go".to_string(), Outcome::Pass)]);
+    }
+
+    /// Outcomes of the test codeunit of a workspace app `main` over a dependency app `dep`.
+    fn outcomes_over_dependency(main: &str, dep: &str) -> Vec<(String, Outcome)> {
+        let app = |id: &str, deps: &[&str], src: &str| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files: vec![(format!("{id}.al"), src.into())],
+        };
+        let (_, l) = al_sema::lower::compile_apps(
+            vec![app("main", &["dep"], main), app("dep", &[], dep)],
+            vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+            &Default::default(),
+        );
+        let blocked = l
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let engine = Engine::new(l.program.clone(), blocked);
+        let oi = l
+            .program
+            .objects
+            .iter()
+            .position(|o| {
+                o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.eq_ignore_ascii_case("Test"))
+            })
+            .unwrap();
+        run_codeunit(&engine, &l, oi)
+    }
+
+    const HIDDEN_FIELD_PAGE: &str = r#"
+table 50000 "K" { fields { field(1; "No."; Integer) { } field(2; Name; Text[20]) { } } keys { key(PK; "No.") { Clustered = true; } } }
+page 50000 "P" { PageType = List; SourceTable = "K";
+  layout { area(Content) { repeater(Lines) { field("No."; Rec."No.") { } field(Name; Rec.Name) { Visible = false; } } } } }
+"#;
+    const SETS_HIDDEN_FIELD: &str = r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Go() var P: TestPage "P"; begin P.OpenView(); P.Name.SetValue('X'); end; }"#;
+
+    #[test]
+    fn a_missing_control_of_a_local_page_is_reported_by_name() {
+        let o = outcomes(&format!("{HIDDEN_FIELD_PAGE}{SETS_HIDDEN_FIELD}"));
+        assert_eq!(
+            o,
+            vec![(
+                "Go".to_string(),
+                Outcome::Fail("The field Name is not found on the page.".to_string())
+            )]
+        );
+    }
+
+    #[test]
+    fn a_missing_control_of_a_dependency_page_is_refused_because_its_text_names_an_internal_id() {
+        // corpus pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:92 pins
+        // `ID = 301776846` for a Base Application control; the number's derivation is not known.
+        let o = outcomes_over_dependency(SETS_HIDDEN_FIELD, HIDDEN_FIELD_PAGE);
+        let [(name, Outcome::NotRun(why))] = o.as_slice() else {
+            panic!("{o:?}")
+        };
+        assert_eq!(name, "Go");
+        assert!(why.contains("dependency app") && why.contains("internal ID"), "{why}");
+    }
+
+    #[test]
+    fn running_a_dependency_codeunit_nothing_compiled_by_its_id_is_refused_not_run_as_empty() {
+        // Nothing names codeunit 50100 but the number: it is not compiled, and running it must not
+        // quietly do nothing.
+        let o = outcomes_over_dependency(
+            "codeunit 50001 \"T\" { Subtype = Test; [Test] procedure Go() begin Codeunit.Run(50100); end; }",
+            "codeunit 50100 \"Lib\" { trigger OnRun() begin Error('ran'); end; }",
+        );
+        let [(name, Outcome::NotRun(why))] = o.as_slice() else {
+            panic!("{o:?}")
+        };
+        assert_eq!(name, "Go");
+        assert!(why.contains("50100"), "{why}");
+    }
+
+    #[test]
+    fn opening_a_dependency_table_nothing_compiled_by_its_id_is_refused() {
+        let o = outcomes_over_dependency(
+            "codeunit 50001 \"T\" { Subtype = Test; [Test] procedure Go() var R: RecordRef; begin R.Open(50100); end; }",
+            "table 50100 \"Lib\" { fields { field(1; K; Code[10]) { } } }",
+        );
+        let [(_, outcome)] = o.as_slice() else { panic!("{o:?}") };
+        assert!(matches!(outcome, Outcome::NotRun(_)), "{o:?}");
+    }
+
+    #[test]
+    fn running_a_dependency_page_nothing_compiled_by_its_id_is_refused() {
+        let o = outcomes_over_dependency(
+            "codeunit 50001 \"T\" { Subtype = Test; [Test] procedure Go() begin Page.Run(50100); end; }",
+            "table 50100 \"K\" { fields { field(1; \"No.\"; Integer) { } } }\n\
+             page 50100 \"Lib\" { PageType = List; SourceTable = \"K\"; layout { area(Content) { repeater(Lines) { field(\"No.\"; Rec.\"No.\") { } } } } }",
+        );
+        let [(_, outcome)] = o.as_slice() else { panic!("{o:?}") };
+        assert!(
+            matches!(outcome, Outcome::NotRun(why) if why.contains("50100")),
+            "{o:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_row_read_by_dependency_code_is_refused_not_reported_as_bcs_answer() {
+        // Base Application reads setup rows that install code and Company-Initialize create.
+        let o = outcomes_over_dependency(
+            "codeunit 50001 \"T\" { Subtype = Test; var L: Codeunit \"Lib\"; \
+             [Test] procedure Own() var S: Record \"K\"; begin asserterror S.Get(); end; \
+             [Test] procedure Dep() begin L.Read(); end; }",
+            "table 50100 \"K\" { fields { field(1; \"No.\"; Code[10]) { } } }\n\
+             codeunit 50101 \"Lib\" { procedure Read() var S: Record \"K\"; begin S.Get(); end; }",
+        );
+        assert_eq!(o[0], ("Own".to_string(), Outcome::Pass), "{o:?}");
+        let (name, Outcome::NotRun(why)) = &o[1] else {
+            panic!("{o:?}")
+        };
+        assert_eq!(name, "Dep");
+        assert!(why.contains("dependency app"), "{why}");
     }
 }

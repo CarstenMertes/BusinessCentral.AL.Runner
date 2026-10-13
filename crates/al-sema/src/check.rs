@@ -2,7 +2,7 @@
 //! expression types. The corpus compiles on BC, so a diagnostic here means
 //! the model is missing something, not that the AL is wrong.
 
-use crate::members::{Members, ProcSig};
+use crate::members::{MemberTable, ProcSig};
 use crate::types::Ty;
 use crate::workspace::{Diagnostic, ObjKind, Resolution, Workspace};
 use al_builtins::catalog::Catalog;
@@ -10,6 +10,8 @@ use al_builtins::signature::Signature;
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
 use std::collections::{HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
+
+pub mod demand;
 
 /// FxHash (as in rustc): the per-expression maps below are keyed by three
 /// small integers and written for every node, where SipHash dominated their
@@ -46,6 +48,9 @@ pub struct CheckResult {
     pub resolutions: PosMap<Res>,
     /// The layout of every query object, by object index.
     pub queries: Vec<Option<crate::queries::QueryLayout>>,
+    /// With dependency apps: which of their objects and routines the workspace reaches.
+    /// `None` when every object is checked.
+    pub demand: Option<demand::Demand>,
 }
 
 /// The target of a resolved name, member or call.
@@ -84,15 +89,10 @@ pub enum Res {
     DotNetMember(String),
 }
 
-pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckResult {
-    let mut extensions: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (i, o) in ws.objects.iter().enumerate() {
-        if let (Some(k), Some(base)) = (o.kind.extended(), ws.object_ast(i).extends_parts()) {
-            if let Resolution::Found(t) = ws.resolve_ref(o.file, k, &base) {
-                extensions.entry(t).or_default().push(i);
-            }
-        }
-    }
+pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
+    // With dependency apps, only what the workspace's code reaches in them is checked.
+    let demand_mode = ws.kinds.contains(&crate::workspace::AppKind::Dependency)
+        && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
     let mut c = Checker {
         ws,
         members,
@@ -101,22 +101,71 @@ pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckRes
         types: Default::default(),
         resolutions: Default::default(),
         system_enums: system_enums(catalog),
-        extensions,
         sections: Default::default(),
-        queries: (0..ws.objects.len())
-            .map(|oi| (ws.objects[oi].kind == ObjKind::Query).then(|| crate::queries::layout(ws, members, oi)))
-            .collect(),
+        queries: (0..ws.objects.len()).map(|_| std::cell::OnceCell::new()).collect(),
+        calls: Vec::new(),
+        demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
+        prefetch: None,
     };
-    for oi in 0..ws.objects.len() {
-        c.check_object(oi);
-    }
+    // The files of the dependency objects the checker reaches are parsed ahead on other
+    // threads; parsing is a third of the cost and the checker only waits for what is not ready.
+    let demand = if demand_mode {
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+        let rx = std::sync::Mutex::new(rx);
+        let workers = std::thread::available_parallelism().map_or(2, |n| n.get().min(8));
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    loop {
+                        let next = rx.lock().expect("prefetch queue").recv();
+                        match next {
+                            Ok(fi) => {
+                                ws.green(fi);
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                });
+            }
+            c.prefetch = Some(tx);
+            for oi in 0..ws.objects.len() {
+                if !ws.is_dependency(oi) {
+                    c.check_object(oi);
+                    c.take_calls();
+                }
+            }
+            let demand = c.run_demand();
+            c.prefetch = None;
+            demand
+        })
+    } else {
+        for oi in 0..ws.objects.len() {
+            c.check_object(oi);
+            c.take_calls();
+        }
+        None
+    };
+    let positions: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
     c.diags
-        .sort_by_key(|d| (ws.files.iter().position(|f| f.path == d.file), d.offset));
+        .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
+    let wanted = |oi: usize| !ws.is_dependency(oi) || demand.as_ref().is_some_and(|d| d.active(oi));
+    for oi in 0..ws.objects.len() {
+        if wanted(oi) {
+            c.query(oi);
+        }
+    }
+    let queries = c
+        .queries
+        .into_iter()
+        .enumerate()
+        .map(|(oi, cell)| cell.into_inner().flatten().filter(|_| wanted(oi)))
+        .collect();
     CheckResult {
         diagnostics: c.diags,
         types: c.types,
         resolutions: c.resolutions,
-        queries: c.queries,
+        queries,
+        demand,
     }
 }
 
@@ -207,18 +256,33 @@ type NamedSection = (Option<String>, ast::Section);
 
 struct Checker<'a> {
     ws: &'a Workspace,
-    members: &'a [Members],
+    members: &'a MemberTable<'a>,
     catalog: &'a Catalog,
     diags: Vec<Diagnostic>,
     types: PosMap<Ty>,
     resolutions: PosMap<Res>,
     system_enums: HashSet<String>,
-    /// Extended object → its extension objects.
-    extensions: HashMap<usize, Vec<usize>>,
     /// `sections_of` memo by object, for `named_section`.
     sections: std::cell::RefCell<HashMap<usize, Vec<NamedSection>>>,
-    /// The layout of each query object.
-    queries: Vec<Option<crate::queries::QueryLayout>>,
+    /// The layout of each query object, computed when first asked for.
+    queries: Vec<std::cell::OnceCell<Option<crate::queries::QueryLayout>>>,
+    /// Procedures the routine being checked calls, as (object, routine offset).
+    calls: Vec<(usize, usize)>,
+    /// Which dependency objects the workspace reaches (`None`: everything is checked).
+    demand: std::cell::RefCell<Option<demand::State>>,
+    /// Files to parse ahead on other threads: those of the dependency objects just reached.
+    prefetch: Option<std::sync::mpsc::Sender<usize>>,
+}
+
+/// What every routine of an object sees.
+struct ObjCtx {
+    oi: usize,
+    file: usize,
+    globals: HashMap<String, Ty>,
+    rec: Option<Ty>,
+    rec_unqualified: bool,
+    self_obj: usize,
+    base_items: HashMap<String, String>,
 }
 
 fn name_of(node: &SyntaxNode) -> String {
@@ -264,6 +328,9 @@ impl<'a> Checker<'a> {
     }
 
     fn record(&mut self, sc: &Scope, node: &SyntaxNode, r: Res) {
+        if let Res::Proc { object, offset } = &r {
+            self.calls.push((*object, *offset));
+        }
         let range = node.text_range();
         self.resolutions
             .insert((sc.file, range.start().into(), range.end().into()), r);
@@ -273,7 +340,7 @@ impl<'a> Checker<'a> {
     fn field_res(&self, sc: &Scope, t: &Ty, name: &str) -> Option<Res> {
         if let Ty::Object(ObjKind::Query, q) = t {
             let qi = self.resolve(sc, ObjKind::Query, q)?;
-            let column = self.queries[qi].as_ref()?.column(name)?;
+            let column = self.query(qi)?.column(name)?;
             return Some(Res::QueryColumn { query: qi, column });
         }
         let Ty::Record { table, .. } = t else { return None };
@@ -282,18 +349,63 @@ impl<'a> Checker<'a> {
     }
 
     fn resolve(&self, sc: &Scope, kind: ObjKind, name: &str) -> Option<usize> {
+        self.resolve_at(sc.file, kind, name)
+    }
+
+    /// Resolves an object reference written in `file`. Whatever it finds is used by the code
+    /// being checked, so a dependency object found this way is reached (see `demand`).
+    fn resolve_at(&self, file: usize, kind: ObjKind, name: &str) -> Option<usize> {
         let parts: Vec<String> = if name.parse::<u32>().is_ok() {
             vec![name.to_string()]
         } else {
             split_qualified(name)
         };
-        match self.ws.resolve_ref(sc.file, kind, &parts) {
+        match self.ws.resolve_ref(file, kind, &parts) {
+            Resolution::Found(i) => {
+                self.touch(i);
+                Some(i)
+            }
+            _ => None,
+        }
+    }
+
+    /// `resolve_at` without marking the object as used.
+    fn resolve_quiet(&self, file: usize, kind: ObjKind, name: &str) -> Option<usize> {
+        let parts: Vec<String> = if name.parse::<u32>().is_ok() {
+            vec![name.to_string()]
+        } else {
+            split_qualified(name)
+        };
+        match self.ws.resolve_ref(file, kind, &parts) {
             Resolution::Found(i) => Some(i),
             _ => None,
         }
     }
 
-    fn check_object(&mut self, oi: usize) {
+    /// Like `resolve_at`, for a reference already split into its parts.
+    fn resolve_parts(&self, file: usize, kind: ObjKind, parts: &[String]) -> Option<usize> {
+        match self.ws.resolve_ref(file, kind, parts) {
+            Resolution::Found(i) => {
+                self.touch(i);
+                Some(i)
+            }
+            _ => None,
+        }
+    }
+
+    /// The layout of query object `qi`.
+    fn query(&self, qi: usize) -> Option<&crate::queries::QueryLayout> {
+        self.queries[qi]
+            .get_or_init(|| {
+                (self.ws.objects[qi].kind == ObjKind::Query && self.ws.usable(qi))
+                    .then(|| crate::queries::layout(self.ws, self.members, qi))
+            })
+            .as_ref()
+    }
+
+    /// What every routine of object `oi` sees: the object's own variables, the implicit
+    /// record, and the data items of a report extension's base.
+    fn object_ctx(&mut self, oi: usize) -> ObjCtx {
         let obj = self.ws.object_ast(oi);
         let o = &self.ws.objects[oi];
         let mut globals = HashMap::new();
@@ -354,7 +466,7 @@ impl<'a> Checker<'a> {
             }
             ObjKind::TableExtension => {
                 if let Some(base) = obj.extends_parts() {
-                    if let Resolution::Found(t) = self.ws.resolve_ref(o.file, ObjKind::Table, &base) {
+                    if let Some(t) = self.resolve_parts(o.file, ObjKind::Table, &base) {
                         rec = Some(Ty::Record {
                             table: self.ws.objects[t].name.clone(),
                             temporary: false,
@@ -376,7 +488,7 @@ impl<'a> Checker<'a> {
             }
             ObjKind::PageExtension => {
                 if let Some(base) = obj.extends_parts() {
-                    if let Resolution::Found(p) = self.ws.resolve_ref(o.file, ObjKind::Page, &base) {
+                    if let Some(p) = self.resolve_parts(o.file, ObjKind::Page, &base) {
                         let pobj = self.ws.object_ast(p);
                         rec = pobj
                             .properties()
@@ -420,7 +532,7 @@ impl<'a> Checker<'a> {
         let mut base_items: HashMap<String, String> = HashMap::new();
         if o.kind == ObjKind::ReportExtension {
             if let Some(base) = obj.extends_parts() {
-                if let Resolution::Found(r) = self.ws.resolve_ref(o.file, ObjKind::Report, &base) {
+                if let Some(r) = self.resolve_parts(o.file, ObjKind::Report, &base) {
                     for sec in ast::sections_in(self.ws.object_ast(r).syntax()) {
                         if sec.name().eq_ignore_ascii_case("dataitem") {
                             let a = sec.args();
@@ -440,7 +552,43 @@ impl<'a> Checker<'a> {
             }
         }
         let file = o.file;
+        // Every type the object's variables name is used by the code that runs in it.
+        let tys: Vec<Ty> = globals.values().cloned().chain(rec.clone()).collect();
+        for t in &tys {
+            self.touch_ty(file, t);
+        }
+        ObjCtx {
+            oi,
+            file,
+            globals,
+            rec,
+            rec_unqualified,
+            self_obj,
+            base_items,
+        }
+    }
+
+    fn check_object(&mut self, oi: usize) {
+        let ctx = self.object_ctx(oi);
+        let obj = self.ws.object_ast(oi);
         for r in ast::routines_in(obj.syntax()) {
+            self.check_routine_in(&ctx, &r);
+        }
+    }
+
+    /// Checks one routine of the object `ctx` describes.
+    fn check_routine_in(&mut self, ctx: &ObjCtx, r: &ast::Routine) {
+        let ObjCtx {
+            oi,
+            file,
+            globals,
+            rec,
+            rec_unqualified,
+            self_obj,
+            base_items,
+        } = ctx;
+        let (oi, file, self_obj) = (*oi, *file, *self_obj);
+        {
             let item_rec = r.syntax().ancestors().filter_map(ast::Section::cast).find_map(|s| {
                 let a = s.args();
                 match s.name().to_ascii_lowercase().as_str() {
@@ -457,7 +605,7 @@ impl<'a> Checker<'a> {
                     }),
                     true,
                 ),
-                None => (rec.clone(), rec_unqualified),
+                None => (rec.clone(), *rec_unqualified),
             };
             let mut sc = Scope {
                 oi,
@@ -482,6 +630,10 @@ impl<'a> Checker<'a> {
                 for n in v.names() {
                     locals.insert(n.to_lowercase(), ty.clone());
                 }
+            }
+            // The types of everything in scope are used by the code that runs here.
+            for t in locals.values().chain(sc.rec.iter()) {
+                self.touch_ty(file, t);
             }
             sc.vars.push(locals);
             let before = self.diags.len();
@@ -731,6 +883,11 @@ impl<'a> Checker<'a> {
                     parts.push(mname);
                     return match self.ws.resolve_ref(sc.file, k, &parts) {
                         Resolution::Found(i) => {
+                            if k == ObjKind::Codeunit {
+                                self.reach_run(i);
+                            } else {
+                                self.touch_schema(i);
+                            }
                             let id = self.ws.objects[i].id.unwrap_or(0) as i32;
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
@@ -814,8 +971,14 @@ impl<'a> Checker<'a> {
                     self.infer(sc, &kids[0])
                 };
                 match base {
-                    E::ObjKeyword(k) => match self.resolve(sc, k, &rhs) {
+                    E::ObjKeyword(k) => match self.resolve_quiet(sc.file, k, &rhs) {
                         Some(i) => {
+                            // `Database::"X"`, `Page::"X"`: the object's id. A codeunit named so can run.
+                            if k == ObjKind::Codeunit {
+                                self.reach_run(i);
+                            } else {
+                                self.touch_schema(i);
+                            }
                             let id = self.ws.objects[i].id.unwrap_or(0) as i32;
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
@@ -1087,6 +1250,8 @@ impl<'a> Checker<'a> {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
                     return Some(E::Val(Ty::Unknown));
                 };
+                // Writing runs the table's triggers and the subscribers to its events.
+                self.touch_ops(ti, demand::record_ops(name));
                 if let Some(f) = self.members[ti].field(name) {
                     return Some(E::Val(f.ty.clone()));
                 }
@@ -1103,6 +1268,9 @@ impl<'a> Checker<'a> {
                 let Some(oi) = self.resolve(sc, *kind, oname) else {
                     return Some(E::Val(Ty::Unknown));
                 };
+                if *kind == ObjKind::Codeunit && name.eq_ignore_ascii_case("Run") {
+                    self.reach_run(oi);
+                }
                 let procs: Vec<Cand> = self.members[oi]
                     .procedures_named(name)
                     .iter()
@@ -1122,7 +1290,7 @@ impl<'a> Checker<'a> {
                     }
                 }
                 if *kind == ObjKind::Query {
-                    if let Some(l) = &self.queries[oi] {
+                    if let Some(l) = self.query(oi) {
                         if let Some(c) = l.column(name) {
                             return Some(E::Val(l.column_tys[c].clone()));
                         }
@@ -1224,7 +1392,7 @@ impl<'a> Checker<'a> {
             }
             Ty::Object(ObjKind::Query, q) => {
                 let qi = self.resolve(sc, ObjKind::Query, q)?;
-                if let Some(c) = self.queries[qi].as_ref().and_then(|l| l.column(name).map(|c| (l, c))) {
+                if let Some(c) = self.query(qi).and_then(|l| l.column(name).map(|c| (l, c))) {
                     return Some(c.0.column_tys[c.1].clone());
                 }
                 self.has_named_section(qi, name).then_some(Ty::Unknown)
@@ -1236,7 +1404,7 @@ impl<'a> Checker<'a> {
     /// A named control/data item/column of object `oi` or of one of its extensions.
     fn named_section(&self, oi: usize, name: &str) -> Option<ast::Section> {
         std::iter::once(oi)
-            .chain(self.extensions.get(&oi).cloned().unwrap_or_default())
+            .chain(self.ws.extensions_of(oi).iter().copied())
             .find_map(|o| {
                 self.sections
                     .borrow_mut()
@@ -1542,7 +1710,7 @@ mod tests {
     fn ty_of(files: &[&str]) -> Ty {
         let (w, r) = run(files);
         let fi = w.files.len() - 1;
-        let root = al_syntax::SyntaxNode::new_root(w.files[fi].green.clone());
+        let root = al_syntax::SyntaxNode::new_root(w.green(fi));
         let exit = root
             .descendants()
             .find(|n| n.kind() == al_syntax::SyntaxKind::ExitStmt)
@@ -1974,9 +2142,7 @@ mod tests {
     fn res_in(files: &[&str], context: &str, sub: &str) -> Res {
         let (w, r) = run(files);
         let fi = w.files.len() - 1;
-        let src = al_syntax::SyntaxNode::new_root(w.files[fi].green.clone())
-            .text()
-            .to_string();
+        let src = al_syntax::SyntaxNode::new_root(w.green(fi)).text().to_string();
         let start = src.find(context).unwrap_or_else(|| panic!("`{context}` not in source"))
             + context.find(sub).expect("sub in context");
         let key = (fi, start, start + sub.len());

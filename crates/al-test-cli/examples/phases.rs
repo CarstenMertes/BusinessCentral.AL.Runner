@@ -1,5 +1,6 @@
 //! Per-phase timings of compiling the corpus, for profiling (issue #1):
-//! `cargo run --release -p al-test-cli --example phases [-- ROOT [RUNS]]`.
+//! `cargo run --release -p al-test-cli --example phases [-- ROOT [RUNS [deps]]]`.
+//! With `deps`, the dependency apps of the corpus's `.alpackages` are loaded too (ADR-013).
 //!
 //! Prints the best of RUNS (default 5) for each phase. "lex only" and "parse
 //! only" repeat work that "workspace load" also does, shown to separate the
@@ -35,6 +36,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let root = std::path::PathBuf::from(args.next().unwrap_or_else(|| ".".into()));
     let runs: usize = args.next().map_or(5, |r| r.parse().expect("RUNS is a number"));
+    let with_deps = args.next().is_some_and(|a| a == "deps");
     let syms = al_version::corpus_symbols(27);
     let mut laps = Laps {
         best: [Duration::MAX; 8],
@@ -46,10 +48,21 @@ fn main() {
     for _ in 0..runs {
         laps.lap = Instant::now();
         let tests = root.join("corpus/tests");
-        let apps = vec![
+        let mut apps = vec![
             runtime::load_app(&tests.join("al-language-internals-fixture")).unwrap(),
             runtime::load_app(&tests.join("al-language")).unwrap(),
         ];
+        let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+        if with_deps {
+            let deps = al_test_cli::deps::load(
+                &tests.join("al-language"),
+                &[tests.join("al-language-internals-fixture")],
+                &[],
+            )
+            .unwrap();
+            kinds.extend(deps.apps.iter().map(|_| al_sema::AppKind::Dependency));
+            apps.extend(deps.apps);
+        }
         laps.mark(0);
         bytes = apps.iter().flat_map(|a| &a.files).map(|f| f.1.len()).sum();
         for f in apps.iter().flat_map(|a| &a.files) {
@@ -64,7 +77,7 @@ fn main() {
         laps.mark(2);
         drop(trees);
         laps.lap = Instant::now();
-        let ws = al_sema::workspace::Workspace::load(apps, &syms);
+        let ws = al_sema::workspace::Workspace::load_apps(apps, kinds, &syms);
         laps.mark(3);
         let members = al_sema::members::build(&ws);
         laps.mark(4);
@@ -89,6 +102,31 @@ fn main() {
             lowered.program.positions.len(),
             checked.diagnostics.len()
         );
+        if let Some(d) = &checked.demand {
+            let mut by_kind = std::collections::BTreeMap::<(&str, u8), usize>::new();
+            for (i, l) in d.level.iter().enumerate() {
+                if *l > 0 {
+                    *by_kind.entry((ws.objects[i].kind.label(), *l)).or_default() += 1;
+                }
+            }
+            let parsed = ws.files.iter().filter(|f| f.lazy).count();
+            let dep_objects = (0..ws.objects.len()).filter(|&i| ws.is_dependency(i)).count();
+            let routines: usize = lowered
+                .program
+                .objects
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| ws.is_dependency(*i))
+                .map(|(_, o)| o.routines.len())
+                .sum();
+            summary += &format!(
+                "\ndemand: {} of {dep_objects} dependency objects active ({} files lazy of {}), {} routines reached of {routines} listed\n{by_kind:?}",
+                d.level.iter().filter(|l| **l > 0).count(),
+                parsed,
+                ws.files.len(),
+                d.reached.len()
+            );
+        }
         drop(engine);
     }
     println!("corpus: {:.2} MB of .al, {summary}, best of {runs}", bytes as f64 / 1e6);

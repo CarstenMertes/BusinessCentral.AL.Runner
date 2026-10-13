@@ -5,7 +5,6 @@
 //! trigger or section it does not understand becomes a reason on the report, so a variable of
 //! that report is refused statically (hard rule 4) instead of running with a guessed behaviour.
 
-use crate::members::Members;
 use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_ir as ir;
 use al_syntax::ast;
@@ -438,7 +437,7 @@ fn split_top(text: &str, sep: char) -> Vec<String> {
 /// Everything `build` needs to know about the report being lowered.
 pub struct Context<'a> {
     pub ws: &'a Workspace,
-    pub members: &'a [Members],
+    pub members: &'a crate::members::MemberTable<'a>,
     pub file: usize,
     pub oi: usize,
     pub layout: &'a Layout,
@@ -463,7 +462,7 @@ fn table_object(ws: &Workspace, file: usize, name: &str) -> Option<usize> {
 /// What lowering needs to know about the object that declares the data items.
 struct Owner<'a> {
     ws: &'a Workspace,
-    members: &'a [Members],
+    members: &'a crate::members::MemberTable<'a>,
     file: usize,
     oi: usize,
     routine_at: &'a HashMap<(usize, usize), usize>,
@@ -594,7 +593,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
 /// Everything `build_ext` needs to know about the reportextension being lowered.
 pub struct ExtContext<'a> {
     pub ws: &'a Workspace,
-    pub members: &'a [Members],
+    pub members: &'a crate::members::MemberTable<'a>,
     pub file: usize,
     pub oi: usize,
     pub base: usize,

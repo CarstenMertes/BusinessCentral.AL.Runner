@@ -16,6 +16,9 @@ pub fn markdown(r: &Report) -> String {
     for (a, c) in &r.areas {
         row(&mut s, a, c);
     }
+    if !r.dependencies.is_empty() {
+        s.push_str(&format!("\nDependency apps: {}.\n", r.dependencies.join(", ")));
+    }
     if r.excluded_bc_failed > 0 {
         s.push_str(&format!(
             "\n{} case(s) real BC did not pass are excluded.\n",

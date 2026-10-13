@@ -1,8 +1,8 @@
 # ADR-013: Dependency apps and platform objects (objects outside the workspace)
 
-- Status: Proposed (the project owner accepts it after reading this revision)
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
-- Revised: 2026-10-13, to record the owner's answers to the five open questions
+- Revised: 2026-10-13, to record the owner's answers to the five open questions and the acceptance
 
 ## Context
 
@@ -330,7 +330,7 @@ Two findings drive the decision:
    `blocked_reason` call-graph check (`al-test-cli/src/runtime.rs`) already does
    for execution; the compile cost needs the same treatment.
 
-## Decision (proposed, revised 2026-10-13 after the owner's answers)
+## Decision (revised 2026-10-13 after the owner's answers; accepted)
 
 1. **Dependency apps are Microsoft's source, downloaded into a cache and
    compiled by our front end.** Licensing is settled by the owner's answer: the
@@ -630,6 +630,62 @@ no `DotNet` shim yet.
    code reads exist. Until then an app whose install code needs a missing
    provider refuses its dependent tests.
 
+## First increment as built (2026-10-13)
+
+Built, in the order of the list above:
+
+- **`al-deps`** (a crate that may touch the OS). `version` and `select` are pure
+  functions: Layer B as decision 2 describes it, with the owner's lookup order
+  added. A candidate carries a *tier*: 0 is the project's `.alpackages`, then each
+  `--deps` directory, then (later) the artifact cache. A package with source beats
+  one without, then the nearest tier wins, then the highest version. An app built
+  from source in this run (the internals fixture) beats every package. The platform
+  and application floors are optional implicit roots. A Microsoft platform app below
+  its minimum is used with a note. `zip` and `package` read the NAVX `.app`
+  container: central directory, CRC-32 and size of every entry checked, nested
+  wrapper `.app` unwrapped, `NavxManifest.xml` parsed. `load` scans the pool,
+  resolves, and reads the chosen packages. There is no `DependencySource` trait in
+  `al-host` yet: `al-test-cli` calls `al-deps` directly. The trait comes with the
+  download.
+- **Not built:** Layer A (`--bc-version`, build selection, `AL_RUNTIME_CACHE`), the
+  download, `Source.zip` reading, loading the platform `System.app` (found and
+  selected, then left out: its tables have no row providers, and a declared table
+  without behaviour answers wrong), the install baseline.
+  The corpus names two test-library apps that no `.alpackages` holds
+  (System Application Test Library, Permissions Mock); they are skipped with a
+  printed line and their objects stay unresolved.
+- **Workspace.** `AppKind` (per app, in `Workspace::kinds`; `AppSource` is
+  unchanged so existing constructors still compile). The files of a dependency
+  app are *scanned* at load (`al_syntax::scan`: lexer plus preprocessor, objects,
+  namespace, `using`s, `extends`, `implements`, event subscribers; a test compares
+  it with the parser on every corpus file and every Microsoft file) and parsed
+  the first time something needs them (`Workspace::green`). An object whose file
+  does not parse cleanly is not resolvable (`usable`). `MemberTable` computes the
+  members of an object, extensions merged, when first asked.
+- **Demand-driven compile** (`al-sema/src/check/demand.rs`, decision 6). The checker
+  checks all of the workspace's own code and follows what it uses in the dependency
+  apps: calls, record variables and their writes, event subscribers, interface
+  implementers, the pages a TestPage drives. A table is *read* (variable, `Get`,
+  fields: lowered with the tables it relates to, nothing runs), or *written*
+  (`Insert`, `Modify`, `Delete`, `Rename`, `Validate`): then the trigger and the
+  subscribers of that operation are reached. An object only named (`Page::"X"`,
+  `Database::"X"`) is lowered with its routines stubbed. After the check,
+  `Workspace::restrict_to` makes everything not reached stop resolving, so what
+  needs it anyway is refused as outside the workspace. A routine nothing reached
+  is a stub whose reason says "not compiled". An object nothing reached is a shell
+  of kind `uncompiled table` and so on, so lookups by id do not find it and run it
+  as empty; the two lookups that would answer BC's "no such object" refuse
+  instead. `AL_EAGER_DEPENDENCIES=1` compiles every dependency routine, for
+  comparison: on the corpus it gives the same outcome for all 4836 tests.
+- **Parser gaps found in Microsoft's source** (540 of 9572 files did not parse):
+  attributes on variable declarations (`[SecurityFiltering(...)] Rec: Record X;`)
+  now parse. 71 files remain: control add-ins, `trigger Name::Event()`, `event`.
+- **Behaviour the new tests exposed**, each pinned by a corpus test and fixed or
+  refused: `Format` of an option field answers its `OptionCaption`; a page's
+  `SourceTableView` applies in filter group 2; the error text for a control of a
+  page from a dependency app names an internal ID that is not understood, so it
+  is refused (`docs/probes-needed.md`).
+
 ## Rejected options
 
 - **(b) Bundled hand-written AL shims for selected platform objects.** Rejected
@@ -732,9 +788,32 @@ through the same path.
    speak for themselves". (Decision 6.)
 5. **Install triggers.** Mirror AL Runner. (Decision 5.)
 
+## Acceptance and further answers (2026-10-13)
+
+The project owner accepted this ADR and gave three further answers.
+
+1. **Status.** The ADR is Accepted. Building on it is allowed.
+2. **Where dependency apps are looked up first.** "The project's own
+   `.alpackages` folder is the first place dependency apps are looked up, the way
+   the AL compiler does it." The corpus ships System Application, Base
+   Application, Business Foundation and Application 27.5.46862.48827, with full
+   source, in `corpus/tests/al-language/.alpackages`. Downloading from the
+   artifact feed (decision 1) comes later, as a fallback behind `.alpackages`
+   and `--deps`. In the pool order of decision 2, Layer B, the project's
+   `.alpackages` stays first.
+3. **`DotNet`.** Still open. The owner asked for a generic approach, not
+   per-class Rust stand-ins, because on-prem apps can declare any .NET class.
+   A separate investigation is researching it. Until it is decided, decision 8
+   applies: every `DotNet` use is refused, with `Signal::Unsupported` or a static
+   reason that names the type.
+4. **Hard rule 7 stands.** Microsoft source is never committed to this
+   repository.
+
 ## Open question for the project owner
 
-1. **`DotNet` types in Microsoft's AL.** May the runtime contain Rust code that
+1. **`DotNet` types in Microsoft's AL.** The owner asked for a generic approach
+   instead of per-class stand-ins (see above). The list below is the earlier
+   framing. May the runtime contain Rust code that
    stands in for a .NET class declared in Microsoft's AL, and for which classes?
    The options, with real cases, are in `docs/dotnet-examples.md`:
    - No. Refuse every `DotNet` use. At most 20 to 28 corpus tests stay not run.
@@ -777,3 +856,12 @@ AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, wh
 7. **Temporary records are not stamped** with `SystemCreatedAt/By` and `SystemModifiedAt/By`.
    Evidence is AL Runner's reading of the platform: the stamps come from the SQL layer, which a
    temporary record never reaches. No corpus test reads one. Probe wanted (docs/probes-needed.md).
+8. **The dependency golden test is `#[ignore]`d in a debug build and CI runs it in the release
+   step.** `al-test-cli/tests/corpus_resolve_deps.rs` loads Base Application and checks it, which
+   takes about 45 s unoptimised. Options: keep it in `cargo test` (slow gate for every agent);
+   ignore it and run it with the perf budgets in release (chosen).
+9. **The test-library apps come from the artifact feed through the download fallback (Layer A).**
+   The corpus names System Application Test Library, Permissions Mock and (through them)
+   Azure AD Plan Test Library; no `.alpackages` holds them. Until Layer A exists a developer can
+   put them in a local `--deps` folder; CI keeps refusing the tests that need them. None of them
+   is committed (hard rule 7).

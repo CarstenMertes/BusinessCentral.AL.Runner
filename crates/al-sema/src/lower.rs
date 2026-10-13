@@ -3,7 +3,7 @@
 //! (`Routine::unsupported` in `Lowered`), never a guess.
 
 use crate::check::{CheckResult, Res};
-use crate::members::Members;
+use crate::members::MemberTable;
 use crate::types::Ty;
 use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_builtins::value::RtType;
@@ -20,20 +20,53 @@ pub struct Lowered {
     pub unsupported: Vec<Vec<Vec<String>>>,
     /// Per object, per routine: the routines it calls directly, as (object, routine).
     pub calls: Vec<Vec<Vec<(usize, usize)>>>,
+    /// Per object: it belongs to a dependency app, so no test or install code of it runs (ADR-013).
+    pub dependency: Vec<bool>,
 }
 
-pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowered {
+pub fn lower(ws: &Workspace, members: &MemberTable<'_>, checked: &CheckResult) -> Lowered {
     lower_with_positions(ws, members, checked, true)
 }
 
 /// `lower`, choosing whether statements carry source positions (`ir::Stmt::Pos`). Unit tests
 /// that check the shape of lowered bodies turn them off.
-pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &CheckResult, positions: bool) -> Lowered {
+pub fn lower_with_positions(
+    ws: &Workspace,
+    members: &MemberTable<'_>,
+    checked: &CheckResult,
+    positions: bool,
+) -> Lowered {
     let catalog = al_builtins::catalog::Catalog::load();
+    // With dependency apps the checker found what the workspace reaches in them (ADR-013);
+    // the rest is not compiled and no longer resolves.
+    let demand = checked.demand.as_ref();
+    if let Some(d) = demand {
+        ws.restrict_to((0..ws.objects.len()).map(|i| d.active(i)).collect());
+    }
+    let active = |oi: usize| demand.is_none_or(|d| !ws.is_dependency(oi) || d.active(oi));
     // Routine numbering: every procedure and trigger node of an object, in source order.
     let routine_nodes: Vec<Vec<ast::Routine>> = (0..ws.objects.len())
-        .map(|oi| ast::routines_in(ws.object_ast(oi).syntax()))
+        .map(|oi| {
+            if active(oi) {
+                ast::routines_in(ws.object_ast(oi).syntax())
+            } else {
+                Vec::new()
+            }
+        })
         .collect();
+    // The routines of object `q` that exist in the compiled program: all of a workspace object's,
+    // the reached ones of a dependency's. What a variable can drive is limited to those.
+    let compiled_routines = |q: usize| -> Vec<(usize, usize)> {
+        (0..routine_nodes[q].len())
+            .filter(|&ri| {
+                demand.is_none_or(|d| {
+                    !ws.is_dependency(q)
+                        || d.reached(q, usize::from(routine_nodes[q][ri].syntax().text_range().start()))
+                })
+            })
+            .map(|ri| (q, ri))
+            .collect()
+    };
     let routine_at: HashMap<(usize, usize), usize> = routine_nodes
         .iter()
         .enumerate()
@@ -49,13 +82,15 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
             apps: ws
                 .apps
                 .iter()
-                .map(|a| ir::AppInfo {
+                .enumerate()
+                .map(|(i, a)| ir::AppInfo {
                     id: a.id.clone(),
                     name: a.name.clone(),
                     publisher: String::new(),
                     version: String::new(),
                     dependencies: a.dependencies.clone(),
                     resources: Vec::new(),
+                    dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
                 })
                 .collect(),
             dotnet_types: ws
@@ -74,6 +109,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
         },
         unsupported: Vec::new(),
         calls: Vec::new(),
+        dependency: (0..ws.objects.len()).map(|oi| ws.is_dependency(oi)).collect(),
     };
     if positions {
         out.program.sources = ws
@@ -94,7 +130,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
     let mut page_temporary: Vec<bool> = vec![false; ws.objects.len()];
     let mut page_extensions: HashMap<usize, Vec<usize>> = HashMap::new();
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind == ObjKind::PageExtension {
+        if o.kind == ObjKind::PageExtension && active(oi) {
             if let Some(base) = ws.object_ast(oi).extends_parts() {
                 if let Resolution::Found(p) = ws.resolve_ref(o.file, ObjKind::Page, &base) {
                     page_extensions.entry(p).or_default().push(oi);
@@ -103,7 +139,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
         }
         // A reportextension that extends the request page merges into it the way a page extension
         // merges into its page (corpus handlers/TestRequestPageControlErrorName.al).
-        if o.kind == ObjKind::ReportExtension {
+        if o.kind == ObjKind::ReportExtension && active(oi) {
             let ext = ws.object_ast(oi);
             if ext.sections().any(|s| s.name().eq_ignore_ascii_case("requestpage")) {
                 if let Some(base) = ext.extends_parts() {
@@ -126,7 +162,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
     // The pages and codeunits each page's RunObject actions run.
     let mut page_runs: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::Page {
+        if o.kind != ObjKind::Page || !active(oi) {
             continue;
         }
         let obj = ws.object_ast(oi);
@@ -269,7 +305,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
         match o.kind {
             ObjKind::Table => table_of[oi] = Some(oi),
             // `Rec` of a codeunit with TableNo (a RunObject action hands it the host's record).
-            ObjKind::Codeunit => {
+            ObjKind::Codeunit if active(oi) => {
                 let table_no = ws
                     .object_ast(oi)
                     .properties()
@@ -283,7 +319,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
                     }
                 }
             }
-            ObjKind::TableExtension => {
+            ObjKind::TableExtension if active(oi) => {
                 if let Some(base) = ws.object_ast(oi).extends_parts() {
                     if let Resolution::Found(t) = ws.resolve_ref(o.file, ObjKind::Table, &base) {
                         table_of[oi] = Some(t);
@@ -300,7 +336,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
     let mut xml_layouts: Vec<Option<crate::xmlports::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
     let mut xml_irs: Vec<Option<ir::XmlPort>> = (0..ws.objects.len()).map(|_| None).collect();
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::XmlPort {
+        if o.kind != ObjKind::XmlPort || !active(oi) {
             continue;
         }
         let l = crate::xmlports::layout(&ws.object_ast(oi));
@@ -342,7 +378,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
     // Per report: the reportextensions that change a run.
     let mut changing: HashMap<usize, Vec<usize>> = HashMap::new();
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::ReportExtension {
+        if o.kind != ObjKind::ReportExtension || !active(oi) {
             continue;
         }
         let ext = ws.object_ast(oi);
@@ -358,7 +394,7 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
         }
     }
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::Report {
+        if o.kind != ObjKind::Report || !active(oi) {
             continue;
         }
         let obj = ws.object_ast(oi);
@@ -490,10 +526,40 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
         }
     }
     for (oi, o) in ws.objects.iter().enumerate() {
+        if !active(oi) {
+            // Not compiled: a shell keeps object numbers stable. Its kind is `uncompiled table` and
+            // so on, so nothing the runtime looks up by kind and id (`Codeunit.Run(80)`) finds it
+            // and runs it as an empty object; the few lookups that would answer "no such object"
+            // (`RecordRef.Open(18)`) look for the shell and refuse instead.
+            out.program.objects.push(ir::Object {
+                kind: format!("uncompiled {}", o.kind.label()),
+                id: o.id,
+                name: o.name.clone(),
+                globals: Vec::new(),
+                routines: Vec::new(),
+                properties: Vec::new(),
+                enum_values: Vec::new(),
+                enum_captions: Vec::new(),
+                table: None,
+                rec_slot: None,
+                xrec_slot: None,
+                page: None,
+                app: o.app as u32,
+                query: None,
+                xmlport: None,
+                report: None,
+                report_ext: None,
+            });
+            out.unsupported.push(Vec::new());
+            out.calls.push(Vec::new());
+            continue;
+        }
         let obj = ws.object_ast(oi);
         let mut lw = new_lowerer(oi);
         lw.positions = std::mem::take(&mut out.program.positions);
-        lw.lines = positions.then(|| {
+        // Positions only feed call stacks and error lines; for a dependency app they cost a third of
+        // lowering and no corpus test reads them, so its routines carry none (measured in ADR-013).
+        lw.lines = (positions && !ws.is_dependency(oi)).then(|| {
             line_cache
                 .entry(o.file)
                 .or_insert_with(|| std::rc::Rc::new(FileLines::new(ws, o.file)))
@@ -679,7 +745,10 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
                     .and_then(|s| s.args().into_iter().next())
                     .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
             }
-            let routine = lw.routine(r);
+            // A dependency routine nothing reached was never checked: a stub that refuses.
+            let reached = demand
+                .is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, usize::from(r.syntax().text_range().start())));
+            let routine = if reached { lw.routine(r) } else { lw.stub(r) };
             // A TestPage drives page routines the call graph cannot see (ADR-012).
             for s in routine.locals.iter().chain(&globals) {
                 if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
@@ -689,10 +758,10 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
                     while at < seen.len() {
                         let q = seen[at];
                         at += 1;
-                        lw.calls.extend((0..routine_nodes[q].len()).map(|ri| (q, ri)));
+                        lw.calls.extend(compiled_routines(q));
                         // The extensions' triggers and procedures run with the page.
                         for &e in page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
-                            lw.calls.extend((0..routine_nodes[e].len()).map(|ri| (e, ri)));
+                            lw.calls.extend(compiled_routines(e));
                         }
                         for &part in page_parts[q].iter().chain(&page_runs[q]) {
                             if !seen.contains(&part) {
@@ -706,10 +775,10 @@ pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &Check
                 if let RtType::Codeunit(p) = s.ty {
                     let p = p as usize;
                     if matches!(ws.objects[p].kind, ObjKind::XmlPort | ObjKind::Report) {
-                        lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
+                        lw.calls.extend(compiled_routines(p));
                     }
                     if let Some(e) = report_irs[p].as_ref().and_then(|r| r.extension) {
-                        lw.calls.extend((0..routine_nodes[e].len()).map(|ri| (e, ri)));
+                        lw.calls.extend(compiled_routines(e));
                     }
                 }
             }
@@ -860,7 +929,7 @@ pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
 /// A `const(..)` value as a constant of the source field's type.
 pub(crate) fn calc_const(
     ws: &Workspace,
-    members: &[Members],
+    members: &MemberTable<'_>,
     file: usize,
     raw: &str,
     ty: &Ty,
@@ -1039,7 +1108,7 @@ struct Lowerer<'a> {
     rec_slot: Option<usize>,
     table_of: &'a [Option<usize>],
     ws: &'a Workspace,
-    members: &'a [Members],
+    members: &'a MemberTable<'a>,
     checked: &'a CheckResult,
     catalog: &'a al_builtins::catalog::Catalog,
     routine_at: &'a HashMap<(usize, usize), usize>,
@@ -1104,7 +1173,7 @@ impl FileLines {
         FileLines {
             file: file as u32,
             starts,
-            synthetic: f.synthetic.clone(),
+            synthetic: ws.synthetic(file).to_vec(),
         }
     }
 
@@ -2303,17 +2372,7 @@ impl Lowerer<'_> {
             name: r.name(),
             field,
             is_trigger: r.is_trigger(),
-            attributes: r
-                .attributes()
-                .map(|a| ir::Attribute {
-                    text: a.syntax().text().to_string(),
-                    name: a.name(),
-                    args: a
-                        .args()
-                        .map(|l| l.children().filter_map(|e| self.constant(&e).ok()).collect())
-                        .unwrap_or_default(),
-                })
-                .collect(),
+            attributes: self.attributes_of(r),
             params,
             by_var,
             locals,
@@ -2321,6 +2380,75 @@ impl Lowerer<'_> {
             ret_local,
             body,
             pos,
+        }
+    }
+
+    /// The first argument of `Format`. An Option field with an `OptionCaption` formats as the
+    /// caption, not the member name (corpus fieldref/TestPrecompiledFieldOptionCaption.al:47-55,
+    /// a Base Application table whose caption differs from its member). The value keeps its
+    /// ordinal and takes the caption list. Other Format forms on such a field are not pinned.
+    fn format_option_field(&mut self, plain: bool, arg: &SyntaxNode) -> L<ir::Expr> {
+        let value = self.expr(arg)?;
+        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+            return Ok(value);
+        };
+        let Some(f) = self.members[table].fields.iter().find(|f| f.id == field) else {
+            return Ok(value);
+        };
+        let (Ty::Option(names), Some((_, text))) = (
+            &f.ty,
+            f.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("OptionCaption")),
+        ) else {
+            return Ok(value);
+        };
+        let captions: Vec<String> = match crate::members::first_string_literal(text) {
+            Some(list) => list.split(',').map(str::to_string).collect(),
+            None => return Err(format!("Format of option field {} with OptionCaption `{text}`", f.name)),
+        };
+        if &captions == names {
+            return Ok(value);
+        }
+        if !plain || captions.len() != names.len() {
+            return Err(format!(
+                "Format of option field {} whose OptionCaption differs from its members, with more than the value, is not pinned",
+                f.name
+            ));
+        }
+        Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
+    }
+
+    fn attributes_of(&self, r: &ast::Routine) -> Vec<ir::Attribute> {
+        r.attributes()
+            .map(|a| ir::Attribute {
+                text: a.syntax().text().to_string(),
+                name: a.name(),
+                args: a
+                    .args()
+                    .map(|l| l.children().filter_map(|e| self.constant(&e).ok()).collect())
+                    .unwrap_or_default(),
+            })
+            .collect()
+    }
+
+    /// A routine of a dependency app that nothing reached: its name and attributes (so event
+    /// subscribers stay registered), no body, and a reason that refuses anything that runs it.
+    fn stub(&mut self, r: &ast::Routine) -> ir::Routine {
+        self.reasons
+            .push("not compiled: no code reached it while compiling the workspace's dependencies (ADR-013)".into());
+        ir::Routine {
+            name: r.name(),
+            field: None,
+            is_trigger: r.is_trigger(),
+            attributes: self.attributes_of(r),
+            params: 0,
+            by_var: Vec::new(),
+            locals: Vec::new(),
+            ret: None,
+            ret_local: None,
+            body: Vec::new(),
+            pos: ir::NO_POS,
         }
     }
 
@@ -3209,6 +3337,8 @@ impl Lowerer<'_> {
                         ir::Arg::Ref(self.place(a)?)
                     } else if let Some(el) = elem {
                         ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))
+                    } else if id.starts_with("System.Format#") && i == 0 {
+                        ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });
@@ -3244,7 +3374,17 @@ pub fn compile(
     apps: Vec<crate::workspace::AppSource>,
     symbols: &std::collections::BTreeSet<String>,
 ) -> (Workspace, Lowered) {
-    compile_with(apps, symbols, &al_builtins::catalog::Catalog::load())
+    let kinds = vec![crate::workspace::AppKind::Workspace; apps.len()];
+    compile_apps(apps, kinds, symbols)
+}
+
+/// Like [`compile`], with the kind of each app (dependency apps, ADR-013).
+pub fn compile_apps(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+) -> (Workspace, Lowered) {
+    compile_with(apps, kinds, symbols, &al_builtins::catalog::Catalog::load())
 }
 
 /// Like [`compile`], for a run target: builtins newer than the target's runtime are
@@ -3254,15 +3394,27 @@ pub fn compile_for(
     symbols: &std::collections::BTreeSet<String>,
     target: &al_version::Target,
 ) -> (Workspace, Lowered) {
-    compile_with(apps, symbols, &al_builtins::catalog::Catalog::for_target(target))
+    let kinds = vec![crate::workspace::AppKind::Workspace; apps.len()];
+    compile_apps_for(apps, kinds, symbols, target)
+}
+
+/// [`compile_for`] with the kind of each app.
+pub fn compile_apps_for(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: &al_version::Target,
+) -> (Workspace, Lowered) {
+    compile_with(apps, kinds, symbols, &al_builtins::catalog::Catalog::for_target(target))
 }
 
 fn compile_with(
     apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
     symbols: &std::collections::BTreeSet<String>,
     catalog: &al_builtins::catalog::Catalog,
 ) -> (Workspace, Lowered) {
-    let ws = Workspace::load(apps, symbols);
+    let ws = Workspace::load_apps(apps, kinds, symbols);
     let members = crate::members::build(&ws);
     let checked = crate::check::check(&ws, &members, catalog);
     let lowered = lower(&ws, &members, &checked);
@@ -3614,6 +3766,48 @@ codeunit 50101 C2
             })]
         );
         assert_eq!(l.calls[0][pi], vec![(0, qi)]);
+    }
+
+    #[test]
+    fn format_of_an_option_field_with_captions_formats_the_caption() {
+        // corpus fieldref/TestPrecompiledFieldOptionCaption.al:47-55
+        let (_, l) = lower_src(
+            "table 1 T { fields { field(1; K; Code[10]) { } field(2; St; Option) { OptionMembers = Draft,\"Validaton in Process\"; OptionCaption = 'Draft,Validation in Process'; } field(3; Plain; Option) { OptionMembers = A,B; } } }\n\
+             codeunit 2 C { procedure P(): Text var R: Record T; begin exit(Format(R.St)); end; procedure Q(): Text var R: Record T; begin exit(Format(R.Plain)); end; procedure W(): Text var R: Record T; begin exit(Format(R.St, 0, 9)); end; }",
+        );
+        let arg0 = |name: &str| -> Option<ir::Expr> {
+            let c = l.program.objects.iter().position(|o| o.name == "C")?;
+            let r = l.program.objects[c].routines.iter().find(|r| r.name == name)?;
+            let ir::Stmt::Exit(Some(ir::Expr::Builtin { args, .. })) = &r.body[0] else {
+                return None;
+            };
+            let ir::Arg::Value(v) = &args[0] else { return None };
+            Some(v.clone())
+        };
+        let want = RtType::Option(vec!["Draft".into(), "Validation in Process".into()]);
+        assert!(
+            matches!(arg0("P"), Some(ir::Expr::Convert(t, _)) if t == want),
+            "{:?}",
+            arg0("P")
+        );
+        // No caption list: untouched.
+        assert!(
+            !matches!(arg0("Q"), Some(ir::Expr::Convert(RtType::Option(_), _))),
+            "{:?}",
+            arg0("Q")
+        );
+        // Another Format form on a captioned option is refused rather than guessed.
+        let c = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+        let w = l.program.objects[c]
+            .routines
+            .iter()
+            .position(|r| r.name == "W")
+            .unwrap();
+        assert!(
+            l.unsupported[c][w].iter().any(|r| r.contains("not pinned")),
+            "{:?}",
+            l.unsupported[c][w]
+        );
     }
 
     #[test]

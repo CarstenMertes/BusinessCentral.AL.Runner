@@ -34,6 +34,12 @@ reviewed it.
 
 ## Decided without owner review
 
+- 2026-10-14, ADR-013, dependency apps: the 45 s golden test of unresolved references
+  (`corpus_resolve_deps.rs`) is `#[ignore]`d in debug builds; CI runs it in the release step.
+- 2026-10-14, ADR-013, dependency apps: the missing test-library apps (System Application Test
+  Library, Permissions Mock, Azure AD Plan Test Library) come from the artifact feed through the
+  download fallback (Layer A). Until then a local `--deps` folder works for developers and CI
+  refuses their tests. Nothing of theirs is committed.
 - 2026-10-13, orchestrator, hard rule 3: when a guarded XmlPort import fails,
   its last error cannot be read. Reading it refuses the test instead of
   returning an invented text.

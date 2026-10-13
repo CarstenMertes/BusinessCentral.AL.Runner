@@ -131,6 +131,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                 crate::json::native_for(sig)
                     .or_else(|| crate::xml::native_for(sig))
                     .or_else(|| crate::stream::native_for(sig))
+                    .or_else(|| crate::textfns::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })
             .collect()
@@ -209,7 +210,12 @@ fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
 }
 
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(ctx.last_error().call_stack))
+    let e = ctx.last_error();
+    if e.call_stack.is_empty() && !(e.message.is_empty() && e.code.is_empty()) {
+        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al); they are not tracked.
+        return unsupported("GetLastErrorCallStack after an error (call stacks are not tracked)");
+    }
+    Ok(Value::Text(e.call_stack))
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -257,8 +263,9 @@ fn strlen(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
 
 fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let (s, sub) = (text_arg(args, 0)?, text_arg(args, 1)?);
+    // text/TestTextProcessingContracts.al StrPos_EmptySubstring_ReturnsZero.
     if sub.is_empty() {
-        return unsupported("StrPos with an empty substring");
+        return Ok(Value::Integer(0));
     }
     let hay: Vec<u16> = s.encode_utf16().collect();
     let needle: Vec<u16> = sub.encode_utf16().collect();
@@ -417,6 +424,21 @@ mod tests {
             call("Text.StrSubstNo#1", vec![t("%1"), Value::Duration(5)]),
             Err(Signal::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn the_call_stack_of_a_recorded_error_is_refused_not_invented() {
+        // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`; call
+        // stacks are not tracked, so only the no-error answer ('') is given.
+        let mut ctx = TestCtx::default();
+        let f = lookup("System.GetLastErrorCallStack#1").unwrap();
+        assert!(matches!(f(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s.is_empty()));
+        ctx.set_last_error(AlError {
+            message: "boom".into(),
+            code: "Dialog".into(),
+            call_stack: String::new(),
+        });
+        assert!(matches!(f(&mut ctx, None, &mut []), Err(Signal::Unsupported(_))));
     }
 
     #[test]

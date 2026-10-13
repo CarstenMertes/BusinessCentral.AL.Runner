@@ -1,5 +1,5 @@
-//! In-memory streams over Blob fields, plus the array and string helpers that
-//! share their corpus folder (`streams/`).
+//! In-memory streams over Blob fields, plus the array helpers that share their
+//! corpus folder (`streams/`).
 //!
 //! A Blob field holds a shared buffer (`BlobRef`); `CreateOutStream` returns a
 //! stream that appends to that same buffer, so a write is visible through the
@@ -317,33 +317,6 @@ fn copy_array(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResul
     Ok(Value::Null)
 }
 
-/// `PadStr(String, Length [, Fill])`: pads on the right (streams/TestInOutStream.al uses
-/// `PadStr('', 200, 'X')`); shortening is not pinned.
-fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let Some(s) = crate::native::text_of(&a[0]) else {
-        return unsupported("PadStr of a value that is not text");
-    };
-    let Value::Integer(len) = a[1] else {
-        return unsupported("PadStr length that is not an Integer");
-    };
-    let fill = match a.get(2) {
-        Some(v) => crate::native::text_of(v).unwrap_or_default(),
-        None => " ".to_string(),
-    };
-    let mut fill_chars = fill.chars();
-    let (Some(f), None) = (fill_chars.next(), fill_chars.next()) else {
-        return unsupported("PadStr with a fill that is not one character (not pinned)");
-    };
-    let have = Value::text_len(&s);
-    let want = usize::try_from(len).map_err(|_| Signal::Unsupported("PadStr with a negative length".into()))?;
-    if want < have {
-        return unsupported("PadStr shorter than the text (not pinned)");
-    }
-    let mut out = s;
-    out.extend(std::iter::repeat_n(f, want - have));
-    Ok(Value::Text(out))
-}
-
 // --------------------------------------------------------------- dispatch
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
@@ -365,7 +338,6 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("System", "ArrayLen", _) => array_len,
         ("System", "CompressArray", _) => compress_array,
         ("System", "CopyArray", _) => copy_array,
-        ("Text", "PadStr", _) => pad_str,
         _ => return None,
     };
     Some(f)

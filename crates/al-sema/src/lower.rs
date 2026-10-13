@@ -922,6 +922,16 @@ impl Lowerer<'_> {
                     try_call,
                 })
             }
+            // MaxStrLen reads the declared length of its argument's type, which values do not
+            // carry (text/TestTextExtended.al MaxStrLen_*: 50 for Text[50], 2147483647 for Text).
+            Some(Res::Builtin(id)) if id.starts_with("Text.MaxStrLen#") => {
+                let arg = args.first().ok_or("MaxStrLen without an argument")?;
+                match self.ty_of(arg) {
+                    Ty::Text(Some(n)) | Ty::Code(Some(n)) => Ok(ir::Expr::Const(ir::Const::Integer(n as i32))),
+                    Ty::Text(None) | Ty::Code(None) => Ok(ir::Expr::Const(ir::Const::Integer(i32::MAX))),
+                    other => Err(format!("MaxStrLen of a value of type {other}")),
+                }
+            }
             Some(Res::Builtin(id)) => {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));

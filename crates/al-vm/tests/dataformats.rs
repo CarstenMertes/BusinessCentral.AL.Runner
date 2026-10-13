@@ -685,3 +685,211 @@ fn variants_report_json_and_xml_handles() {
     );
     assert_eq!(t, "YesNoYesNoYesYesYesNo");
 }
+
+// ---------------------------------------------------------------- Text
+
+#[test]
+fn text_search_methods() {
+    // text/TestStringMethodContracts.al, TestTextExtended.al, TestTextProcessingContracts.al.
+    let t = text_of(
+        "S: Text;",
+        "S := 'Hello World';
+         exit(Format(S.Contains('World')) + Format(S.Contains('world')) + Format(S.StartsWith('Hello')) + Format(S.StartsWith('World'))
+              + Format(S.EndsWith('World')) + Format(S.EndsWith('Hello')));",
+    );
+    assert_eq!(t, "YesNoYesNoYesNo");
+    let t = text_of(
+        "S: Text;",
+        "S := 'hello';
+         exit(Format(S.IndexOf('ll')) + Format(S.IndexOf('xyz')) + Format(S.IndexOf('l', 3)) + Format('hello'.IndexOf('h')) + Format(S.LastIndexOf('l')) + Format(S.LastIndexOf('xyz')));",
+    );
+    assert_eq!(t, "30314".to_string() + "0");
+    let t = text_of(
+        "S: Text; Chars: List of [Char]; Other: List of [Char];",
+        "S := 'hello'; Chars.Add('e'); Chars.Add('o'); Other.Add('x'); Other.Add('y'); exit(Format(S.IndexOfAny(Chars)) + Format(S.IndexOfAny(Other)));",
+    );
+    assert_eq!(t, "20");
+    // text/TestTextProcessingContracts.al StrPos_EmptySubstring_ReturnsZero.
+    let t = text_of(
+        "",
+        "exit(Format(StrPos('hello', 'h')) + Format(StrPos('hello', 'z')) + Format(StrPos('hello', '')));",
+    );
+    assert_eq!(t, "100");
+}
+
+#[test]
+fn text_transforming_methods() {
+    // text/TestStringMethodContracts.al and TestTextExtended.al.
+    let t = text_of(
+        "S: Text;",
+        "S := 'Hello World 123'; exit(S.ToUpper() + '|' + S.ToLower());",
+    );
+    assert_eq!(t, "HELLO WORLD 123|hello world 123");
+    let t = text_of(
+        "S: Text;",
+        "S := '  hello  '; exit('[' + S.Trim() + '][' + S.TrimStart() + '][' + S.TrimEnd() + ']');",
+    );
+    assert_eq!(t, "[hello][hello  ][  hello]");
+    let t = text_of("S: Text;", "S := 'a,b,,'; exit(S.TrimEnd(','));");
+    assert_eq!(t, "a,b");
+    let t = text_of(
+        "S: Text;",
+        "S := 'hello'; exit(S.Replace('e', 'X').Replace('o', 'X') + S.Replace('hello', 'world'));",
+    );
+    assert_eq!(t, "hXllXworld");
+    let t = text_of(
+        "S: Text;",
+        "S := 'Hello World'; exit(S.Substring(7) + '|' + S.Substring(1, 5) + '|' + 'hello'.Substring(2, 3));",
+    );
+    assert_eq!(t, "World|Hello|ell");
+    let t = text_of(
+        "S: Text;",
+        "S := 'hi'; exit(S.PadLeft(5) + '|' + S.PadRight(5) + '|' + S.PadLeft(5, '#') + '|' + S.PadRight(5, '#'));",
+    );
+    assert_eq!(t, "   hi|hi   |###hi|hi###");
+}
+
+#[test]
+fn text_functions() {
+    // text/TestTextExtended.al, TestTextOperations.al, TestTextProcessingContracts.al.
+    let t = text_of(
+        "",
+        "exit(ConvertStr('hello', 'eo', '--') + ConvertStr('hello', 'helo', 'HELO') + ConvertStr('ab', 'ab', 'ba'));",
+    );
+    assert_eq!(t, "h-ll-HELLOba");
+    let t = text_of(
+        "",
+        "exit(DelChr('hello', '=', 'e') + '|' + DelChr('  hello  ', '<>') + '|' + DelChr('h e l l o', '=', ' ') + '|' + DelChr('  hello  ', '<>', ' ') + '|' + DelChr('   ', '<>', ' ') + '|');",
+    );
+    assert_eq!(t, "hllo|hello|hello|hello||");
+    let t = text_of(
+        "",
+        "exit(IncStr('ABC1') + '|' + IncStr('ABC9') + '|' + IncStr('Item 001') + '|' + IncStr('Item 009') + '|' + IncStr('ABC') + '|');",
+    );
+    assert_eq!(t, "ABC2|ABC10|Item 002|Item 010||");
+    let t = text_of(
+        "",
+        "exit(PadStr('hi', 5, ' ') + '|' + PadStr('abcdef', 4, ' ') + '|' + PadStr('hello', 5, ' ') + '|' + PadStr('', 5, 'X'));",
+    );
+    assert_eq!(t, "hi   |abcd|hello|XXXXX");
+    let t = text_of(
+        "",
+        "exit(DelStr('Hello', 2, 1) + '|' + InsStr('Hello', 'x', 2) + '|' + SelectStr(2, 'A,B,C'));",
+    );
+    assert_eq!(t, "Hllo|Hxello|B");
+    // SelectStr with an index outside the list throws, with a text the corpus only partly pins.
+    assert!(unsupported("", "exit(SelectStr(5, 'A,B,C'));"));
+}
+
+#[test]
+fn text_split() {
+    // text/TestTextExtended.al TextSplit_*.
+    let t = text_of(
+        "P: List of [Text];",
+        "P := 'a,b,c'.Split(','); exit(Format(P.Count()) + P.Get(1) + P.Get(3));",
+    );
+    assert_eq!(t, "3ac");
+    let t = text_of(
+        "P: List of [Text]; Seps: List of [Char];",
+        "Seps.Add(','); Seps.Add(';'); P := 'a,b;c'.Split(Seps); exit(Format(P.Count()));",
+    );
+    assert_eq!(t, "3");
+    let t = text_of(
+        "P: List of [Text];",
+        "P := 'a,b;c|d'.Split(',', ';', '|'); exit(Format(P.Count()) + P.Get(4));",
+    );
+    assert_eq!(t, "4d");
+    let t = text_of(
+        "P: List of [Text];",
+        "P := 'a--b::c'.Split('--', '::'); exit(Format(P.Count()) + P.Get(2));",
+    );
+    assert_eq!(t, "3b");
+    let t = text_of(
+        "P: List of [Text];",
+        "P := 'a-b'.Split('--', '::'); exit(Format(P.Count()) + P.Get(1));",
+    );
+    assert_eq!(t, "1a-b");
+    let t = text_of(
+        "P: List of [Text];",
+        "P := 'a,;b;'.Split(',', ';'); exit(Format(P.Count()) + P.Get(1) + '[' + P.Get(2) + ']' + P.Get(3) + '[' + P.Get(4) + ']');",
+    );
+    assert_eq!(t, "4a[]b[]");
+    let t = text_of(
+        "P: List of [Text];",
+        "P := 'a b c'.Split(); exit(Format(P.Count()) + P.Get(2));",
+    );
+    assert_eq!(t, "3b");
+    let t = text_of(
+        "S: Text; P: List of [Text];",
+        "S := ''; P := S.Split(','); exit(Format(P.Count()) + '[' + P.Get(1) + ']');",
+    );
+    assert_eq!(t, "1[]");
+}
+
+#[test]
+fn text_builder() {
+    // text/TestTextBuilder.al and TestTextProcessingContracts.al TextBuilder_Insert_AtOne_Prepends.
+    let t = text_of(
+        "B: TextBuilder;",
+        "B.Append('foo'); B.Append('bar'); exit(B.ToText() + Format(B.Length()));",
+    );
+    assert_eq!(t, "foobar6");
+    let t = text_of(
+        "B: TextBuilder;",
+        "B.Append('hllo'); B.Insert(2, 'e'); B.Append(' '); B.Insert(1, '>'); exit(B.ToText());",
+    );
+    assert_eq!(t, ">hello ");
+    let t = text_of(
+        "B: TextBuilder;",
+        "B.Append('hello'); B.Remove(2, 2); exit(B.ToText());",
+    );
+    assert_eq!(t, "hlo");
+    let t = text_of(
+        "B: TextBuilder;",
+        "B.Append('data'); B.Clear(); exit('[' + B.ToText() + ']' + Format(B.Length()));",
+    );
+    assert_eq!(t, "[]0");
+    let t = text_of(
+        "B: TextBuilder;",
+        "B.EnsureCapacity(100); exit('[' + B.ToText() + ']');",
+    );
+    assert_eq!(t, "[]");
+    let t = text_of(
+        "B: TextBuilder;",
+        "B.AppendLine('line1'); B.Append('line2'); exit(Format(StrPos(B.ToText(), 'line1') > 0) + Format(StrPos(B.ToText(), 'line2') > 0));",
+    );
+    assert_eq!(t, "YesYes");
+    // TextBuilder is a reference type like the other library handles.
+    let t = text_of(
+        "B: TextBuilder; C: TextBuilder;",
+        "C := B; B.Append('shared'); exit(C.ToText());",
+    );
+    assert_eq!(t, "shared");
+}
+
+#[test]
+fn big_text() {
+    // text/TestBigText.al.
+    let t = text_of(
+        "B: BigText; S: Text;",
+        "B.AddText('Hello World'); B.GetSubText(S, 1, 5); exit(S + Format(B.Length()));",
+    );
+    assert_eq!(t, "Hello11");
+    let t = text_of(
+        "B: BigText; S: Text;",
+        "B.AddText('foo'); B.AddText('bar'); B.GetSubText(S, 1, 6); exit(S + Format(B.Length()));",
+    );
+    assert_eq!(t, "foobar6");
+    // Position in AddText is not pinned.
+    assert!(unsupported("B: BigText;", "B.AddText('x', 1); exit('');"));
+}
+
+#[test]
+fn max_str_len_reads_the_declared_length() {
+    // text/TestTextExtended.al MaxStrLen_*; also record fields (handlers/OngCard.Page.al).
+    let t = text_of(
+        "T50: Text[50]; U: Text; C: Code[10];",
+        "exit(Format(MaxStrLen(T50)) + '|' + Format(MaxStrLen(U)) + '|' + Format(MaxStrLen(C)));",
+    );
+    assert_eq!(t, "50|2147483647|10");
+}

@@ -163,6 +163,16 @@ page 50004 "PG FormatList"
     end;
 }
 
+codeunit 50102 "PG Evt Sub"
+{
+    SingleInstance = true;
+    EventSubscriberInstance = Manual;
+    [EventSubscriber(ObjectType::Page, Page::"PG Edit", 'OnOpenPageEvent', '', false, false)]
+    local procedure OnOpen(var Rec: Record "PG Row") var T: Codeunit "PG Trace"; begin T.Add('evt-open;'); end;
+    [EventSubscriber(ObjectType::Page, Page::"PG Edit", 'OnModifyRecordEvent', '', false, false)]
+    local procedure OnMod(var Rec: Record "PG Row"; var xRec: Record "PG Row"; var AllowModify: Boolean) var T: Codeunit "PG Trace"; begin T.Add('evt-mod:' + xRec.Descr + '>' + Rec.Descr + ';'); AllowModify := false; end;
+}
+
 codeunit 50101 "PG Trace"
 {
     SingleInstance = true;
@@ -785,4 +795,26 @@ fn edit_and_view_switch_a_card_in_place() {
         "F",
     );
     assert_eq!(text(r), "NoNoYesYesNo|YesYesNoYes");
+}
+
+// handlers/TestPageTriggerEvents.al:1-20, :230-300: the platform's page events run after the page's own trigger,
+// and AllowModify := false vetoes the write.
+#[test]
+fn page_events_follow_the_triggers_and_can_veto_a_modify() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; T: Codeunit \"PG Trace\"; E: Codeunit \"PG Evt Sub\"; X: Text; begin
+                BindSubscription(E);
+                {}
+                TP.OpenEdit();
+                TP.DescrCtl.SetValue('x');
+                TP.Close();
+                R.Get('A');
+                exit(R.Descr + '|' + T.Take());
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "|evt-open;mod:>x;evt-mod:>x;qcp:Cancel;close;");
 }

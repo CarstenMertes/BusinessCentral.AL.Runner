@@ -281,6 +281,38 @@ fn temporary_records_have_their_own_table() {
     assert_eq!(text(r), "10");
 }
 
+// record/TestTempTableContracts.al:TempVar_PassedByValue_CallerNotAffected -- a temporary record
+// passed by value arrives with an independent, empty table; by var it is the caller's table.
+#[test]
+fn temporary_records_passed_by_value_get_an_independent_empty_table() {
+    let r = run(
+        "procedure F(): Text var Caller: Record \"ALT T\" temporary; begin
+            Caller.\"No.\" := 'A'; Caller.Insert();
+            exit(Format(ByValue(Caller)) + Format(Caller.Count()) + Format(ByRef(Caller)) + Format(Caller.Count()));
+        end;
+        local procedure ByValue(T: Record \"ALT T\" temporary): Integer begin T.\"No.\" := 'B'; T.Insert(); exit(T.Count()); end;
+        local procedure ByRef(var T: Record \"ALT T\" temporary): Integer begin T.\"No.\" := 'C'; T.Insert(); exit(T.Count()); end;",
+        "F",
+    );
+    assert_eq!(text(r), "1122");
+}
+
+// record/TestRefusedWriteRowVersion.al -- a refused write hands the record no rowversion.
+#[test]
+fn refused_writes_leave_the_record_without_a_rowversion() {
+    let r = run(
+        "procedure F(): Text var A: Record \"ALT T\"; B: Record \"ALT T\"; C: Record \"ALT T\"; begin
+            A.\"No.\" := 'a'; A.Insert();
+            B.\"No.\" := 'a';
+            C.\"No.\" := 'zz';
+            exit(Format(B.Insert()) + Format(B.SystemRowVersion) + Format(C.Modify()) + Format(C.SystemRowVersion)
+                + Format(A.SystemRowVersion <> 0));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "No0No0Yes");
+}
+
 #[test]
 fn find_without_argument_is_find_equal_by_primary_key() {
     // Doc (Record.Find): Which defaults to '='.
@@ -432,4 +464,113 @@ fn writes_assign_increasing_row_versions() {
         "F",
     );
     assert_eq!(text(r), "YesYes");
+}
+
+// record/TestRenamePropagationConditional.al: a rename must re-key related rows, and a conditional
+// relation relates to every table of its arms (the else table too). Re-keying is not
+// implemented, so renaming any table some relation points to is refused.
+#[test]
+fn renaming_a_table_any_arm_of_a_relation_points_to_is_refused() {
+    let src = r#"
+table 50901 PA { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }
+table 50902 PB { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }
+table 50903 PC { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }
+table 50904 Child
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; Kind; Option) { OptionMembers = A,B; }
+        field(3; Ref; Code[10]) { TableRelation = if (Kind = const(A)) PA.Code else PB.Code; }
+    }
+    keys { key(PK; Id) { } }
+}
+codeunit 50100 C
+{
+    procedure Rename(Which: Integer)
+    var A: Record PA; B: Record PB; C: Record PC;
+    begin
+        case Which of
+            1: begin A.Code := 'X'; A.Insert(); A.Rename('Y'); end;
+            2: begin B.Code := 'X'; B.Insert(); B.Rename('Y'); end;
+            3: begin C.Code := 'X'; C.Insert(); C.Rename('Y'); end;
+        end;
+    end;
+    procedure R1() begin Rename(1); end;
+    procedure R2() begin Rename(2); end;
+    procedure R3() begin Rename(3); end;
+}"#;
+    let call = |r: &str| {
+        let (ws, l) = al_sema::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let blocked: Vec<Vec<Option<String>>> = l
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+        let ri = l.program.objects[oi].routines.iter().position(|x| x.name == r).unwrap();
+        let mut s = Session::new(Engine::new(l.program, blocked));
+        let inst = s.instance(oi);
+        s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
+    };
+    assert!(matches!(call("R1"), Err(Signal::Unsupported(m)) if m.contains("relate")));
+    assert!(matches!(call("R2"), Err(Signal::Unsupported(m)) if m.contains("relate")));
+    assert!(call("R3").is_ok(), "{:?}", call("R3"));
+}
+
+// record/TestRecordStaleBufferWrite.al: a Modify through a buffer another variable has since
+// changed is accepted (last writer wins) -- unless a Commit sits between that other write and
+// this one, which refuses it with DB:RecordChanged. A buffer that never read the row (no
+// rowversion) is never stale.
+#[test]
+fn modify_through_a_stale_buffer_is_refused_only_after_a_commit() {
+    let flow = |commit: bool| {
+        run(
+            &format!(
+                "procedure F(): Text var Rec: Record \"ALT T\"; Stale: Record \"ALT T\"; begin
+                    Rec.\"No.\" := 'a'; Rec.Insert(); Commit();
+                    Stale.Get('a'); Rec.Get('a'); Rec.Grp := 42; Rec.Modify();
+                    {c}
+                    Stale.Grp := 7;
+                    if {commit} then begin
+                        asserterror Stale.Modify();
+                        exit(GetLastErrorCode() + '|' + GetLastErrorText());
+                    end;
+                    Stale.Modify();
+                    Rec.Get('a');
+                    exit(Format(Rec.Grp));
+                end;",
+                c = if commit { "Commit();" } else { "" },
+                commit = if commit { "true" } else { "false" }
+            ),
+            "F",
+        )
+    };
+    let refused = text(flow(true));
+    assert!(refused.starts_with("DB:RecordChanged|"), "{refused}");
+    assert!(
+        refused.contains("not up-to-date") && refused.contains("No.='A'"),
+        "{refused}"
+    );
+    assert_eq!(text(flow(false)), "7");
+    // A buffer that never read the row has no rowversion to be stale against.
+    let r = run(
+        "procedure F(): Integer var Rec: Record \"ALT T\"; Fresh: Record \"ALT T\"; begin
+            Rec.\"No.\" := 'a'; Rec.Insert(); Commit();
+            Rec.Grp := 1; Rec.Modify(); Commit();
+            Fresh.\"No.\" := 'a'; Fresh.Grp := 9; Fresh.Modify();
+            Rec.Get('a'); exit(Rec.Grp);
+        end;",
+        "F",
+    );
+    assert!(matches!(r, Ok(Value::Integer(9))), "{r:?}");
 }

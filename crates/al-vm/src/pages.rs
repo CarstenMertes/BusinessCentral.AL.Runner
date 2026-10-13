@@ -112,6 +112,94 @@ impl Session {
         self.call(object, r, inst, args).map(|(v, _)| Some(v))
     }
 
+    /// Raises the platform event `event` that BC publishes after the page's own trigger of that name
+    /// (corpus handlers/TestPageTriggerEvents.al:1-20): the page's own trigger runs first, the event is
+    /// the platform's last word. `allow` is the `var Allow...` parameter some of them carry; the
+    /// returned flag is what the subscribers left in it.
+    fn page_event(&mut self, st: &St, event: &str, allow: Option<bool>, below: Option<bool>) -> Result<bool, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        if !engine.events.is_subscribed(object, event) {
+            return Ok(allow.unwrap_or(true));
+        }
+        let rec = Value::Record(self.page_rec(st));
+        let xobj = &engine.program.objects[object];
+        let xrec = {
+            let inst = st.borrow().instance.clone().expect("open page");
+            let v = xobj.xrec_slot.map(|x| inst.borrow().globals[x].clone());
+            v.unwrap_or(Value::Null)
+        };
+        let mut names = vec!["Rec".to_string()];
+        let mut args = vec![rec];
+        match event {
+            "onopenpageevent" | "onclosepageevent" | "onaftergetcurrrecordevent" => {}
+            "onqueryclosepageevent" => {
+                names.push("AllowClose".into());
+                args.push(Value::Boolean(true));
+            }
+            "onnewrecordevent" => {
+                names.extend(["BelowxRec".into(), "xRec".into()]);
+                args.extend([Value::Boolean(below.unwrap_or(false)), xrec]);
+            }
+            "oninsertrecordevent" => {
+                names.extend(["BelowxRec".into(), "xRec".into(), "AllowInsert".into()]);
+                args.extend([Value::Boolean(below.unwrap_or(false)), xrec, Value::Boolean(true)]);
+            }
+            "onmodifyrecordevent" => {
+                names.extend(["xRec".into(), "AllowModify".into()]);
+                args.extend([xrec, Value::Boolean(true)]);
+            }
+            other => return unsupported(format!("page event {other}")),
+        }
+        let call = crate::dispatch::EventCall {
+            object,
+            event,
+            element: None,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)?;
+        Ok(match (allow, args.last()) {
+            (Some(_), Some(Value::Boolean(b))) => *b,
+            _ => true,
+        })
+    }
+
+    /// Refuses a page some subscriber listens to for an event the client does not raise yet.
+    fn check_page_events(&self, st: &St) -> Result<(), Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        const RAISED: [&str; 7] = [
+            "onopenpageevent",
+            "onqueryclosepageevent",
+            "onclosepageevent",
+            "onaftergetcurrrecordevent",
+            "onnewrecordevent",
+            "oninsertrecordevent",
+            "onmodifyrecordevent",
+        ];
+        for ((o, ev), subs) in &engine.events.subscribers {
+            if *o == object
+                && !subs.is_empty()
+                && ev.starts_with("on")
+                && ev.ends_with("event")
+                && !RAISED.contains(&ev.as_str())
+            {
+                // Events a page publishes itself (IntegrationEvent) are ordinary routines.
+                let published = engine
+                    .events
+                    .publishers
+                    .values()
+                    .any(|p| p.object == object && p.event == *ev);
+                if !published {
+                    return unsupported(format!("page event {ev} is not raised by the test client yet"));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Calls routine `r` of the page.
     fn page_routine(&mut self, st: &St, r: usize) -> Result<Value, Signal> {
         let object = st.borrow().object as usize;
@@ -213,6 +301,11 @@ impl Session {
                 if !save {
                     return unsupported("CurrPage.Update(false)");
                 }
+                // Page code changed Rec: SaveRecord writes it whether or not the client typed anything
+                // (corpus handlers/TestPageTriggerEvents.al, ModifyRecordEvent_PageDrivenSave_*).
+                if st.borrow().cursor == Cursor::Row {
+                    st.borrow_mut().dirty = true;
+                }
                 self.save_row(st)?;
                 Ok(Value::Null)
             }
@@ -260,7 +353,9 @@ impl Session {
         }
         let result = (|| {
             self.page_trigger(st, "oninit", vec![])?;
+            self.check_page_events(st)?;
             self.page_trigger(st, "onopenpage", vec![])?;
+            self.page_event(st, "onopenpageevent", None, None)?;
             let new_line = self.offers_new_line(st)?;
             st.borrow_mut().new_line = new_line;
             // Visible is evaluated once, at open.
@@ -335,7 +430,11 @@ impl Session {
         if matches!(veto, Some(Value::Boolean(false))) {
             return Ok(Value::Null);
         }
+        if !self.page_event(st, "onqueryclosepageevent", Some(true), None)? {
+            return Ok(Value::Null);
+        }
         self.page_trigger(st, "onclosepage", vec![])?;
+        self.page_event(st, "onclosepageevent", None, None)?;
         st.borrow_mut().open = false;
         Ok(Value::Null)
     }
@@ -527,6 +626,7 @@ impl Session {
             self.populate_current(st)?;
         }
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         Ok(())
     }
 
@@ -791,9 +891,11 @@ impl Session {
         }
         let existed = self.stored_row(&rec)?.is_some();
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+        self.page_event(st, "onnewrecordevent", None, Some(true))?;
         self.populate_expressions(st)?;
         self.page_trigger(st, "onaftergetrecord", vec![])?;
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         // Page code that inserts the new row itself (a template step) hands the page the stored row.
         if !existed && self.stored_row(&rec)?.is_some() {
             let mut s = st.borrow_mut();
@@ -828,6 +930,9 @@ impl Session {
         if matches!(keep, Some(Value::Boolean(false))) {
             return Ok(());
         }
+        if !self.page_event(st, "onmodifyrecordevent", Some(true), None)? {
+            return Ok(());
+        }
         self.ret_used = false;
         self.record_op("Modify", &rec, &mut [Value::Boolean(true)])?;
         st.borrow_mut().dirty = false;
@@ -841,6 +946,9 @@ impl Session {
         let rec = self.page_rec(st);
         let go = self.page_trigger(st, "oninsertrecord", vec![Value::Boolean(false)])?;
         if matches!(go, Some(Value::Boolean(false))) {
+            return Ok(());
+        }
+        if !self.page_event(st, "oninsertrecordevent", Some(true), Some(false))? {
             return Ok(());
         }
         self.ret_used = false;

@@ -176,8 +176,16 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
         } else {
             session.last_error = Default::default();
             match session.call(object, r, instance.clone(), Vec::new()) {
-                Ok(_) => Outcome::Pass,
-                Err(Signal::Error(e)) => Outcome::Fail(e.message),
+                // The default TransactionModel commits at the test boundary; a failed test's
+                // transaction is rolled back (corpus codeunit/TestWriteTxTestBoundary.al:26).
+                Ok(_) => {
+                    al_builtins::native::Ctx::commit(&mut session).expect("commit");
+                    Outcome::Pass
+                }
+                Err(Signal::Error(e)) => {
+                    al_data::Store::rollback(session.store_mut());
+                    Outcome::Fail(e.message)
+                }
                 Err(Signal::Unsupported(r)) => Outcome::NotRun(r),
                 Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
             }
@@ -453,6 +461,25 @@ mod tests {
                 .all(|(_, x)| matches!(x, Outcome::NotRun(r) if r.contains("TransactionModel"))),
             "{o:?}"
         );
+    }
+
+    // The default TransactionModel commits a test's work at the test boundary (corpus
+    // codeunit/TestWriteTxTestBoundary.al:26; record/TestCalcFormulaFlowFieldValueTests.Codeunit.al:182,
+    // whose asserterror rolls back to "whatever the previous test committed").
+    #[test]
+    fn a_passing_test_commits_so_a_later_asserterror_rolls_back_only_to_that_point() {
+        let o = outcomes(
+            "table 60900 S { fields { field(1; K; Code[10]) { } } }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure A() var R: Record S; begin R.K := 'A'; R.Insert(); end;
+                [Test] procedure B() var R: Record S; begin
+                    R.K := 'B'; R.Insert();
+                    asserterror Error('x');
+                    if not R.Get('A') then Error('the first test was not committed');
+                    if R.Get('B') then Error('the second tests own write was not rolled back');
+                end; }",
+        );
+        assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
     }
 
     #[test]

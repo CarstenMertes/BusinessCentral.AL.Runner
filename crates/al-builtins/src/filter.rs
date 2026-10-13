@@ -68,8 +68,19 @@ fn like(text: &str, pattern: &str, ci: bool) -> bool {
 /// Parses a `SetFilter` expression for a field of type `ty`. `%1`.. take the
 /// typed `args`. Forms the corpus does not exercise yet return an error.
 pub fn parse_filter(text: &str, args: &[crate::value::Value], ty: &crate::value::RtType) -> Result<FilterExpr, String> {
+    parse_filter_with(text, args, ty, &|_| Vec::new())
+}
+
+/// Like [`parse_filter`], with the (ordinal, name) members of an enum object
+/// so that filters on enum fields can name members.
+pub fn parse_filter_with(
+    text: &str,
+    args: &[crate::value::Value],
+    ty: &crate::value::RtType,
+    enums: &dyn Fn(u32) -> Vec<(i32, String)>,
+) -> Result<FilterExpr, String> {
     let toks = tokenize(text, args)?;
-    let mut p = Parser { toks, i: 0, ty };
+    let mut p = Parser { toks, i: 0, ty, enums };
     let e = p.or()?;
     if p.i != p.toks.len() {
         return Err(format!("unexpected `{:?}` in filter `{text}`", p.toks[p.i]));
@@ -165,6 +176,7 @@ struct Parser<'a> {
     toks: Vec<Tok>,
     i: usize,
     ty: &'a crate::value::RtType,
+    enums: &'a dyn Fn(u32) -> Vec<(i32, String)>,
 }
 
 impl Parser<'_> {
@@ -234,6 +246,16 @@ impl Parser<'_> {
                     m.clone().into(),
                 ),
             },
+            T::Enum(id) => {
+                let named = (self.enums)(*id)
+                    .into_iter()
+                    .find(|(_, n)| n.eq_ignore_ascii_case(&text))
+                    .map(|(v, _)| v);
+                match named.or_else(|| text.trim().parse().ok()) {
+                    Some(v) => Value::Enum(*id, v),
+                    None => return Err(format!("`{text}` is not a member of the enum")),
+                }
+            }
             other => {
                 return Err(format!(
                     "text filter value for {other:?} (region-dependent or not pinned yet)"
@@ -428,6 +450,34 @@ mod tests {
         assert!(f.matches(&Value::Text("Smith & Sons".into())));
         let f = pf("'(Travel|Meals)'", &[], RtType::Text(None));
         assert!(f.matches(&Value::Text("(Travel|Meals)".into())));
+    }
+
+    fn enum_members(_: u32) -> Vec<(i32, String)> {
+        vec![
+            (0, " ".into()),
+            (1, "Initial Entry".into()),
+            (2, "Payment Discount (VAT Excl.)".into()),
+            (3, "Application".into()),
+        ]
+    }
+
+    fn enum_hits(text: &str) -> Vec<i32> {
+        let f = parse_filter_with(text, &[], &RtType::Enum(7), &enum_members).unwrap_or_else(|e| panic!("{text}: {e}"));
+        (0..4).filter(|v| f.matches(&Value::Enum(7, *v))).collect()
+    }
+
+    // corpus record/TestCalcFormulaQuotedFilterHeader.Table.al:21-52: member names with
+    // spaces, parentheses and a blank member, once the quotes are single quotes.
+    #[test]
+    fn enum_filters_take_member_names_and_ordinals() {
+        assert_eq!(enum_hits("'Initial Entry'"), [1]);
+        assert_eq!(enum_hits("'Payment Discount (VAT Excl.)'"), [2]);
+        assert_eq!(enum_hits("Application | 'Initial Entry'"), [1, 3]);
+        assert_eq!(enum_hits("<> ' '"), [1, 2, 3]);
+        assert_eq!(enum_hits("' '"), [0]);
+        assert_eq!(enum_hits("application"), [3]);
+        assert_eq!(enum_hits("2"), [2]);
+        assert!(parse_filter_with("Nope", &[], &RtType::Enum(7), &enum_members).is_err());
     }
 
     #[test]

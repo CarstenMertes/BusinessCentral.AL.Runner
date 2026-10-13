@@ -85,6 +85,8 @@ pub struct RecordState {
     pub ascending: bool,
     /// Position of the last row found (key fields then primary key), for `Next`.
     pub position: Option<Vec<Value>>,
+    /// Field positions of `SetAutoCalcFields`: calculated whenever a row is read.
+    pub auto_calc: Vec<usize>,
 }
 
 /// The global variables of one codeunit instance.

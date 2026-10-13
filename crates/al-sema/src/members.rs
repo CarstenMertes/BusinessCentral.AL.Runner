@@ -22,6 +22,8 @@ pub struct FieldInfo {
     /// The `InitValue` property as written.
     pub init_value: Option<String>,
     pub auto_increment: bool,
+    /// The `CalcFormula` property as written.
+    pub calc_formula: Option<String>,
     pub table_relation: bool,
     /// Lower-case name of the table the `TableRelation` points to.
     pub relation_table: Option<String>,
@@ -109,7 +111,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 let (Some(id), Some(fname)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) else {
                     continue;
                 };
-                let ty = args
+                let mut ty = args
                     .get(2)
                     .and_then(|t| al_syntax::parse_type(t))
                     .map(|t| Ty::from_type_ref(&t))
@@ -128,6 +130,10 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                         .find(|p| p.name().eq_ignore_ascii_case(n))
                         .map(|p| p.value_text())
                 };
+                // A table field of type Option lists its members in a property.
+                if let (Ty::Option(_), Some(members)) = (&ty, prop("OptionMembers")) {
+                    ty = Ty::Option(split_option_members(&members));
+                }
                 let init_value = prop("InitValue");
                 let auto_increment = prop("AutoIncrement").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
                 let on_validate = f
@@ -142,6 +148,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     declared_in: Some(i),
                     init_value,
                     auto_increment,
+                    calc_formula: prop("CalcFormula"),
                     table_relation: prop("TableRelation").is_some(),
                     relation_table: prop("TableRelation").map(|v| relation_target(&v)),
                     on_validate,
@@ -164,6 +171,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 declared_in: None,
                 init_value: None,
                 auto_increment: false,
+                calc_formula: None,
                 table_relation: false,
                 relation_table: None,
                 on_validate: None,
@@ -188,6 +196,20 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
         });
     }
     m
+}
+
+/// `Open,"In Progress",,Closed` as member names (quotes removed, blanks kept).
+fn split_option_members(text: &str) -> Vec<String> {
+    let mut out = vec![String::new()];
+    let mut in_quote = false;
+    for c in text.chars() {
+        match c {
+            '"' => in_quote = !in_quote,
+            ',' if !in_quote => out.push(String::new()),
+            c => out.last_mut().expect("non-empty").push(c),
+        }
+    }
+    out.iter().map(|m| m.trim().to_string()).collect()
 }
 
 /// The table a `TableRelation` value names first: `"Cust".No.` → `cust`.
@@ -263,6 +285,34 @@ tableextension 50901 "ALT Ext" extends "ALT Universal"
         );
         assert_eq!(m.field("Total").unwrap().class, FieldClass::FlowField);
         assert_eq!(m.field("Filter").unwrap().class, FieldClass::FlowFilter);
+    }
+
+    #[test]
+    fn option_fields_take_their_members_from_the_option_members_property() {
+        let w = ws(&[(
+            "t.al",
+            "table 50902 T { fields { field(1; K; Code[10]) { } field(2; St; Option) { OptionMembers = Open,\"In Progress\",Closed; } field(3; Bl; Option) { OptionMembers = ,A,B; } } }",
+        )]);
+        let m = members_of(&w, ObjKind::Table, "T");
+        assert_eq!(
+            m.field("St").unwrap().ty,
+            Ty::Option(vec!["Open".into(), "In Progress".into(), "Closed".into()])
+        );
+        assert_eq!(
+            m.field("Bl").unwrap().ty,
+            Ty::Option(vec!["".into(), "A".into(), "B".into()])
+        );
+    }
+
+    #[test]
+    fn calc_formula_text_is_kept_for_flow_fields() {
+        let w = ws(&[("t.al", TABLES)]);
+        let m = members_of(&w, ObjKind::Table, "ALT Universal");
+        assert_eq!(
+            m.field("Total").unwrap().calc_formula.as_deref(),
+            Some("sum(\"ALT Universal\".Amount)")
+        );
+        assert_eq!(m.field("Amount").unwrap().calc_formula, None);
     }
 
     #[test]

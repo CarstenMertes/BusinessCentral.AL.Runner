@@ -33,7 +33,7 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 }
 
 impl Session {
-    fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
+    pub(crate) fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
         let t = rec.borrow().table as usize;
         self.engine.tables[t]
             .clone()
@@ -61,7 +61,7 @@ impl Session {
         }
     }
 
-    fn caption(&self, t: &TableDef) -> String {
+    pub(crate) fn caption(&self, t: &TableDef) -> String {
         self.engine.program.objects[t.object as usize]
             .properties
             .iter()
@@ -221,28 +221,41 @@ impl Session {
         ascending: bool,
         after: Option<Vec<Value>>,
     ) -> Result<Option<Vec<Value>>, Signal> {
-        let (key, filters) = {
-            let r = rec.borrow();
-            (r.key, r.filters.clone())
-        };
+        let key = rec.borrow().key;
+        // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
+        let (filters, flow_field_filters) = self.split_filters(rec);
         let cx = self.cx.clone();
-        let store = self.store_for(rec);
-        store
-            .next(
-                &cx,
-                t,
-                &Scan {
-                    key,
-                    filters: &filters,
-                    ascending,
-                    after: after.as_deref(),
-                },
-            )
-            .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))
+        let mut after = after;
+        loop {
+            let store = self.store_for(rec);
+            let row = store
+                .next(
+                    &cx,
+                    t,
+                    &Scan {
+                        key,
+                        filters: &filters,
+                        ascending,
+                        after: after.as_deref(),
+                    },
+                )
+                .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+            match row {
+                Some(row) if !flow_field_filters.is_empty() => {
+                    if self.passes_flow_field_filters(rec, &row, &flow_field_filters)? {
+                        return Ok(Some(row));
+                    }
+                    after = Some(position(t, key, &row));
+                }
+                other => return Ok(other),
+            }
+        }
     }
 
-    fn load(rec: &Rec, row: Vec<Value>) {
+    /// Reads a row into the record, then calculates its `SetAutoCalcFields` fields.
+    fn load(&mut self, rec: &Rec, row: Vec<Value>) -> Result<(), Signal> {
         rec.borrow_mut().fields = row;
+        self.auto_calculate(rec)
     }
 
     pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
@@ -271,6 +284,9 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
+                if !rec.borrow().auto_calc.is_empty() {
+                    return unsupported("Clear after SetAutoCalcFields (what resets it is not pinned yet)");
+                }
                 if rec.borrow().temporary {
                     return unsupported("Clear of a temporary record (table reset not pinned yet)");
                 }
@@ -358,7 +374,10 @@ impl Session {
                 if arg_bool(args, 0)? && self.table_trigger(&t, "OnDelete").is_some() {
                     return unsupported("DeleteAll(true) with an OnDelete trigger");
                 }
-                let filters = rec.borrow().filters.clone();
+                let (filters, flow_field_filters) = self.split_filters(rec);
+                if !flow_field_filters.is_empty() {
+                    return unsupported("DeleteAll with a filter on a FlowField");
+                }
                 self.store_for(rec)
                     .delete_all(&cx, &t, &filters)
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
@@ -379,7 +398,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     Some(row) => {
-                        Self::load(rec, row);
+                        self.load(rec, row)?;
                         Ok(Value::Boolean(true))
                     }
                     None => {
@@ -417,7 +436,7 @@ impl Session {
                 };
                 match found {
                     Some(row) => {
-                        Self::load(rec, row);
+                        self.load(rec, row)?;
                         Ok(Value::Boolean(true))
                     }
                     None if self.ret_used => Ok(Value::Boolean(false)),
@@ -441,7 +460,7 @@ impl Session {
                     let pos = position(&t, key, &rec.borrow().fields);
                     match self.scan(rec, &t, forward, Some(pos))? {
                         Some(row) => {
-                            Self::load(rec, row);
+                            self.load(rec, row)?;
                             moved += 1;
                         }
                         None => break,
@@ -450,11 +469,24 @@ impl Session {
                 Ok(Value::Integer(if steps < 0 { -moved } else { moved }))
             }
             "Count" | "IsEmpty" => {
-                let filters = rec.borrow().filters.clone();
-                let n = self
-                    .store_for(rec)
-                    .count(&cx, &t, &filters)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                let (filters, flow_field_filters) = self.split_filters(rec);
+                let n = if flow_field_filters.is_empty() {
+                    self.store_for(rec)
+                        .count(&cx, &t, &filters)
+                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                } else {
+                    // Rows are tested one by one against the calculated FlowFields.
+                    let mut n = 0;
+                    let mut after = None;
+                    while let Some(row) = self.scan(rec, &t, true, after)? {
+                        n += 1;
+                        if method == "IsEmpty" {
+                            break;
+                        }
+                        after = Some(position(&t, rec.borrow().key, &row));
+                    }
+                    n
+                };
                 Ok(if method == "Count" {
                     Value::Integer(n as i32)
                 } else {
@@ -491,6 +523,9 @@ impl Session {
                 Ok(Value::Null)
             }
             "Reset" => {
+                if !rec.borrow().auto_calc.is_empty() {
+                    return unsupported("Reset after SetAutoCalcFields (whether it keeps them is not pinned yet)");
+                }
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
                 r.key = 0;
@@ -580,6 +615,7 @@ impl Session {
                     }
                 }
             }
+            "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
             other => unsupported(format!("Record.{other}")),
         }
     }

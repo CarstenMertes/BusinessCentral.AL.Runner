@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod flowfields;
 mod records;
 
 pub struct Engine {
@@ -150,6 +151,7 @@ impl Session {
                     key: 0,
                     ascending: true,
                     position: None,
+                    auto_calc: Vec::new(),
                 })))
             }
             other => Value::default_for(other),

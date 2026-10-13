@@ -56,6 +56,60 @@ pub struct Field {
     pub relation: bool,
     /// (object, routine) of the field's OnValidate trigger, if any.
     pub on_validate: Option<(usize, usize)>,
+    /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
+    pub flow_filter: bool,
+    /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither
+    /// this nor `calc_refusal` declares no formula at all.
+    pub calc: Option<CalcFormula>,
+    /// Why a declared `CalcFormula` cannot be calculated yet.
+    pub calc_refusal: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CalcMethod {
+    Sum,
+    Count,
+    Average,
+    Min,
+    Max,
+    Exist,
+    Lookup,
+}
+
+/// A FlowField's `CalcFormula` with every name resolved to positions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalcFormula {
+    pub method: CalcMethod,
+    /// A leading `-`: negates a sum, count, average, ... and `not`s an exist.
+    pub negate: bool,
+    /// Object index of the source table.
+    pub table: usize,
+    /// Position of the aggregated or looked-up field in the source table.
+    pub field: Option<usize>,
+    pub conds: Vec<CalcCond>,
+}
+
+/// One where-condition: a field of the source table against a value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalcCond {
+    /// Position in the source table.
+    pub field: usize,
+    pub value: CalcValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CalcValue {
+    /// `const(..)`, typed as the source field.
+    Const(Const),
+    /// `filter(..)`: a filter expression over the source field's type, with
+    /// AL double-quoted names rewritten as single-quoted literals.
+    Filter(String),
+    /// `field(X)`: position of X in the table being calculated.
+    Field(usize),
+    /// `field(upperlimit(X))`.
+    UpperLimit(usize),
+    /// `field(filter(X))`: X's value read as a filter expression.
+    FieldFilter(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

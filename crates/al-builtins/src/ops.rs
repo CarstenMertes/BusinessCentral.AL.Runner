@@ -29,6 +29,14 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Enum(..), T::Enum(_)) => v,
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
         (Value::Integer(i), T::Option(m)) => Value::Option(i, m.clone().into()),
+        // A Duration is a count of milliseconds.
+        (v, T::Duration) if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) => {
+            let d = as_decimal(&v).expect("numeric");
+            match i64::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                Ok(ms) if d.fract() == Decimal::ZERO => Value::Duration(ms),
+                _ => return unsupported(format!("{d} as a Duration (rounding not pinned by the corpus yet)")),
+            }
+        }
         // Numbers.
         (v, T::Integer | T::BigInteger | T::Decimal | T::Byte | T::Char)
             if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) =>
@@ -234,6 +242,28 @@ mod tests {
             matches!(convert(d("2.5"), &RtType::Integer), Err(Signal::Unsupported(_))),
             "rounding rule not pinned yet"
         );
+    }
+
+    // corpus record/TestCalcFormulaValidationTests.Codeunit.al:42: `exit(60 * 60 * 1000)` from a
+    // procedure returning Duration; a Duration is a count of milliseconds.
+    #[test]
+    fn whole_numbers_convert_to_a_duration_in_milliseconds() {
+        assert!(matches!(
+            convert(Value::Integer(3_600_000), &RtType::Duration),
+            Ok(Value::Duration(3_600_000))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(5), &RtType::Duration),
+            Ok(Value::Duration(5))
+        ));
+        assert!(matches!(
+            convert(d("1500"), &RtType::Duration),
+            Ok(Value::Duration(1500))
+        ));
+        assert!(matches!(
+            convert(d("1.5"), &RtType::Duration),
+            Err(Signal::Unsupported(_))
+        ));
     }
 
     #[test]

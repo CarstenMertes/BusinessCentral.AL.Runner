@@ -83,6 +83,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
+    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
+    ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetAutoCalcFields#1", |c, r, a| {
+        c.record("SetAutoCalcFields", r, a)
+    }),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),

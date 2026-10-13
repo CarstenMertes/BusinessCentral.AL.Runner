@@ -6,3 +6,5 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+al-builtins.workspace = true
+im = "15"

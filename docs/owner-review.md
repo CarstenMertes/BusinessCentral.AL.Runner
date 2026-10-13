@@ -28,6 +28,9 @@ reviewed it.
   while start-up is not a concern. Revisit after dependency loading is
   measured, or when ALchemist or LethAL support is wanted. Those two use the
   server as their interface.
+- 2026-10-13, ADR-016, standing rule: every v2 feature that only hides
+  start-up or run cost is deferred the same way. Today: `--watch`,
+  `--affected`, warm server state, `--jobs`, persistent dependency caches.
 
 ## Decided without owner review
 

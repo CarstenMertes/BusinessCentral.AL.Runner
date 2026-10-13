@@ -124,6 +124,10 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
+    /// empty text, which enables every area. The test runner empties it before each test method
+    /// (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
+    pub application_areas: String,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -161,6 +165,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            application_areas: String::new(),
         }
     }
 
@@ -623,6 +628,21 @@ impl Session {
                     };
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
+                }
+                if id == "Session.ApplicationArea#1" {
+                    // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
+                    // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
+                    return match args.first() {
+                        None => Ok(Value::Text(self.application_areas.clone())),
+                        Some(ir::Arg::Value(e)) => match self.eval(e, f)? {
+                            Value::Text(t) | Value::Code(t) => {
+                                self.application_areas = t;
+                                Ok(Value::Null)
+                            }
+                            other => Err(Signal::Unsupported(format!("ApplicationArea({other:?})"))),
+                        },
+                        Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
+                    };
                 }
                 if id.starts_with("Codeunit.Run#")
                     || id.starts_with("Xmlport.")

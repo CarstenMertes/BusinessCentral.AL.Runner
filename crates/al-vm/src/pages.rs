@@ -64,6 +64,7 @@ fn is_true(s: &str) -> bool {
 
 type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
+mod areas;
 mod filter;
 mod parts;
 
@@ -703,6 +704,7 @@ impl Session {
             s.editable_off = false;
             s.opening = true;
             s.parts = Vec::new();
+            s.areas = self.application_areas.clone();
         }
         if let Err(e) = self.create_parts(st) {
             self.mark_closed(st);
@@ -2223,12 +2225,25 @@ impl Session {
             }
             _ => return unsupported(format!("{method} on a built-in control")),
         };
+        // The compiler emits no call for a `Value()` whose result is thrown away: nothing is
+        // evaluated, on a control that is on the page or not (corpus
+        // pageapplicationarea/TestPageDiscardedFieldValueCall.al: RemovedControl_DiscardedValueCall_RaisesNothing,
+        // FoundControl_DiscardedValueCall_RaisesNothing).
+        if m == "Value" && args.is_empty() && !self.ret_used {
+            return Ok(Value::Null);
+        }
         // A control whose Visible is the literal false, or that sits in a group whose Visible is,
         // is not on the runtime page at all (corpus handlers/TestPageFieldVisibleGroup_Tests.al:1-30).
-        if self.control_eliminated(st, idx) {
+        // Neither is one that application areas removed.
+        self.check_areas_pinned(st, idx)?;
+        if self.control_eliminated(st, idx) || self.area_removed(st, idx) {
             let engine = self.engine();
             let ctl = &page_of(&engine, st).controls[idx];
-            return Err(error(format!("The field {} is not found on the page.", ctl.name)));
+            let what = match ctl.kind {
+                ir::ControlKind::Action | ir::ControlKind::ActionRef | ir::ControlKind::SystemAction => "action",
+                _ => "field",
+            };
+            return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
         }
         // An actionref is only invoked: what its Visible, Enabled or Caption answer is not pinned.
         if page_of(&self.engine(), st).controls[idx].kind == ir::ControlKind::ActionRef && m != "Invoke" {

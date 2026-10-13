@@ -449,9 +449,10 @@ type L<T> = Result<T, String>;
 
 /// The page triggers an extension can declare that the client runs after the page's own trigger.
 /// The others answer a Boolean or serve rows, and how an extension's answer combines with the
-/// page's is not pinned.
+/// page's is not pinned. OnInit, OnFindRecord and OnNextRecord are page-only in BC: an extension
+/// that declares one is not called for it (AL Runner v2 docs/../RecordPatches.PageTriggerMetadata.cs,
+/// BC 27.5 and 28.4 NCLMetaForm.DefinedTriggers), so they are refused here.
 const EXTENSION_PAGE_TRIGGERS: &[&str] = &[
-    "oninit",
     "onopenpage",
     "onclosepage",
     "onaftergetrecord",

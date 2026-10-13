@@ -200,6 +200,41 @@ page 52030 "PX Curr"
     layout { area(Content) { field(NoCtl; Rec."No.") { } } }
 }
 pageextension 52030 "PX Curr Ext" extends "PX Curr" { trigger OnOpenPage() begin CurrPage.Editable(false); end; }
+table 52040 "PX Area Row" { fields { field(1; "Code"; Code[20]) { } field(2; Basic; Text[30]) { } field(3; Service; Text[30]) { } field(4; Ext; Text[30]) { } } keys { key(PK; "Code") { } } }
+page 52040 "PX Area Card"
+{
+    PageType = Card;
+    SourceTable = "PX Area Row";
+    ApplicationArea = Basic;
+    layout { area(Content) {
+        field(CodeCtl; Rec."Code") { }
+        field(BasicCtl; Rec.Basic) { ApplicationArea = Basic; }
+        field(ServiceCtl; Rec.Service) { ApplicationArea = Service; }
+        field(EveryCtl; Rec.Service) { ApplicationArea = All; }
+        field(ModCtl; Rec.Service) { ApplicationArea = Service; }
+    } }
+    actions { area(Processing) {
+        action(BasicAct) { trigger OnAction() var T: Codeunit "PX Trace"; begin T.Add('basic;'); end; }
+        action(ServiceAct) { ApplicationArea = Service; trigger OnAction() var T: Codeunit "PX Trace"; begin T.Add('service;'); end; }
+    } area(Promoted) {
+        actionref(BasicRef; BasicAct) { }
+        actionref(ServiceRef; ServiceAct) { }
+    } }
+}
+pageextension 52040 "PX Area Ext" extends "PX Area Card"
+{
+    layout
+    {
+        addlast(Content)
+        {
+            field(ExtBasicCtl; Rec.Ext) { ApplicationArea = Basic; }
+            field(ExtNoAreaCtl; Rec.Ext) { }
+            part(ExtServicePart; "PX Part") { ApplicationArea = Service; }
+            part(ExtBasicPart; "PX Part") { ApplicationArea = Basic; }
+        }
+        modify(ModCtl) { ApplicationArea = Suite; }
+    }
+}
 page 52024 "PX Missing"
 {
     PageType = Card;
@@ -628,4 +663,115 @@ fn an_extensions_code_reaches_the_page_through_curr_page() {
         "F",
     );
     assert_eq!(text(r), "No");
+}
+
+fn found(ctl: &str, areas_set: &str) -> bool {
+    let probe = format!(
+        "procedure F(): Text var C: TestPage \"PX Area Card\"; begin
+            ApplicationArea('{areas_set}');
+            C.OpenView();
+            exit(C.{ctl}.Value());
+        end;"
+    );
+    match run(&probe, "F") {
+        Ok(_) => true,
+        Err(Signal::Error(e)) => {
+            assert!(e.message.contains("is not found on the page."), "{}", e.message);
+            false
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+// pageapplicationarea/TestPageApplicationAreaControlRemoval.al: AreaNotEnabled_ControlIsNotFound,
+// AreaNotEnabled_EnabledControlIsStillFoundAndWrites, AreaEnabled_ControlIsFoundAndWrites, EmptyAreaString_EveryControlIsFound
+#[test]
+fn a_control_whose_area_is_not_enabled_is_not_on_the_page() {
+    assert!(!found("ServiceCtl", "#Basic,#Suite"));
+    assert!(found("BasicCtl", "#Basic,#Suite"));
+    assert!(found("ServiceCtl", "#Basic,#Suite,#Service"));
+    assert!(found("ServiceCtl", ""));
+}
+
+// pageapplicationarea/TestPageApplicationAreaExtensionControlRemoval.al: ExtNoArea_DoesNotInheritPageArea_IsNotFound
+// (the page's own control without an area inherits the page's), ExtOwnArea_NotEnabled_IsNotFound,
+// ModifiedArea_ModifyValueEnabled_IsFoundAndWrites, ModifiedArea_BaseValueNoLongerApplies_IsNotFound,
+// ExtNoArea_EmptyAreaString_IsFoundAndWrites
+#[test]
+fn extension_controls_inherit_no_page_area_and_a_modify_replaces_the_area() {
+    assert!(found("CodeCtl", "#Basic"));
+    assert!(!found("ExtNoAreaCtl", "#Basic"));
+    assert!(found("ExtNoAreaCtl", ""));
+    assert!(found("ExtBasicCtl", "#Basic,#Suite"));
+    // The modify moved ModCtl from #Service to #Suite.
+    assert!(found("ModCtl", "#Basic,#Suite"));
+    assert!(!found("ModCtl", "#Basic,#Service"));
+    // `ApplicationArea = All` is on every page.
+    assert!(found("EveryCtl", "#Basic"));
+}
+
+// pageapplicationarea/TestPageApplicationAreaActionRemoval.al, ...ExtensionActionPartRemoval.al:
+// an action is removed like a control; an actionref follows its target unless it states an area of its own.
+#[test]
+fn actions_and_actionrefs_follow_the_areas_and_parts_are_removed() {
+    let r = run(
+        "procedure F(): Text var C: TestPage \"PX Area Card\"; T: Codeunit \"PX Trace\"; X: Text; B: Boolean; begin
+            ApplicationArea('#Basic,#Suite');
+            C.OpenView();
+            C.BasicAct.Invoke();
+            C.BasicRef.Invoke();
+            asserterror C.ServiceAct.Invoke();
+            X := GetLastErrorText() + '|';
+            asserterror C.ServiceRef.Invoke();
+            X += GetLastErrorText() + '|';
+            asserterror B := C.ExtServicePart.Visible();
+            X += GetLastErrorText() + '|' + Format(C.ExtBasicPart.Visible()) + '|' + T.Take();
+            ApplicationArea('');
+            exit(X);
+        end;",
+        "F",
+    );
+    let t = text(r);
+    assert!(
+        t.starts_with(
+            "The action ServiceAct is not found on the page.|The action ServiceRef is not found on the page.|"
+        ),
+        "{t}"
+    );
+    assert!(
+        t.contains("was not found on the page.|Yes|part-open;basic;basic;"),
+        "{t}"
+    );
+}
+
+// pageapplicationarea/TestPageDiscardedFieldValueCall.al: RemovedControl_DiscardedValueCall_RaisesNothing,
+// FoundControl_DiscardedValueCall_RaisesNothing
+#[test]
+fn a_discarded_value_call_is_not_evaluated() {
+    let r = run(
+        "procedure F(): Text var C: TestPage \"PX Area Card\"; begin
+            ApplicationArea('#Basic');
+            C.OpenView();
+            C.ServiceCtl.Value();
+            C.BasicCtl.Value();
+            ApplicationArea('');
+            exit('ok');
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "ok");
+}
+
+// The areas changing under an open page is not pinned: refused.
+#[test]
+fn changing_the_areas_while_a_page_is_open_is_refused() {
+    let r = run(
+        "procedure F(): Text var C: TestPage \"PX Area Card\"; begin
+            C.OpenView();
+            ApplicationArea('#Basic');
+            exit(C.BasicCtl.Value());
+        end;",
+        "F",
+    );
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }

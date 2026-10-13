@@ -114,6 +114,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
     // Event subscriptions are session state; the VM intercepts these ids
     // (al-vm dispatch.rs). Registered so lowering accepts them.
+    ("Session.ApplicationArea#1", vm_only),
     ("Session.BindSubscription#1", vm_only),
     ("Session.UnbindSubscription#1", vm_only),
     // Codeunit.Run runs a codeunit and `IsInWriteTransaction` reads the transaction: both are

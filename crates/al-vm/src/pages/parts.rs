@@ -28,7 +28,7 @@ impl Session {
         let engine = self.engine();
         let page = page_of(&engine, st);
         for (i, c) in page.controls.iter().enumerate() {
-            if c.kind != ir::ControlKind::Part || self.control_eliminated(st, i) {
+            if c.kind != ir::ControlKind::Part || self.control_eliminated(st, i) || self.area_removed(st, i) {
                 continue;
             }
             let Some(part_page) = c.part_page else {

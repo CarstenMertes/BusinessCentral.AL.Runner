@@ -432,8 +432,15 @@ impl<'a> Checker<'a> {
                 }
             }
             sc.vars.push(locals);
+            let before = self.diags.len();
             if let Some(body) = r.body() {
                 self.walk(&mut sc, &body);
+            }
+            // Property expressions of controls were never checked before the test
+            // client needed them (ADR-012); an unresolved name there stays a refusal at
+            // lowering, not a compile diagnostic (check::tests::builtin_test_page_methods_win_over_controls_when_called).
+            if crate::pages::is_synthetic(&r.name()) {
+                self.diags.truncate(before);
             }
         }
     }

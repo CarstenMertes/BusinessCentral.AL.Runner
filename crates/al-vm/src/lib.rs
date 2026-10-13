@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod pages;
 mod records;
 mod ui;
 pub use ui::{UiHandler, UiKind};
@@ -490,6 +491,10 @@ impl Session {
                 }
                 Ok(ret)
             }
+            E::Control { page, control } => {
+                let p = self.eval(page, f)?;
+                self.page_control(p, *control)
+            }
             E::Builtin {
                 id,
                 receiver,
@@ -702,6 +707,9 @@ impl al_builtins::native::Ctx for Session {
             }
             other => Err(Signal::Unsupported(format!("record method {method} on {other:?}"))),
         }
+    }
+    fn page(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        self.page_op(method, recv, args)
     }
     fn commit(&mut self) -> Result<(), Signal> {
         al_data::Store::commit(&mut self.store);

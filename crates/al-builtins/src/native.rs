@@ -29,6 +29,11 @@ pub trait Ctx: FormatCtx {
     /// Record methods (`Record.Insert`, ...) need the store, triggers and
     /// table metadata: the VM implements them. `method` is the catalog name.
     fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal>;
+    /// `TestPage` / `TestField` / `TestAction` methods: the VM's test client
+    /// implements them (ADR-012). `method` is `Receiver.Name`.
+    fn page(&mut self, method: &str, _recv: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("{method} needs a page runtime")))
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -131,7 +136,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
 ];
 
 fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
-    REGISTRY.iter().chain(crate::collections::REGISTRY)
+    REGISTRY
+        .iter()
+        .chain(crate::collections::REGISTRY)
+        .chain(crate::pagebuiltins::REGISTRY)
 }
 
 /// The implementation registered for overload `id`, if any.

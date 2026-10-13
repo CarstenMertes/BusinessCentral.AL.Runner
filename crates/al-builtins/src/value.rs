@@ -31,6 +31,8 @@ pub enum RtType {
     Record(u32, bool),
     /// Codeunit with this object index.
     Codeunit(u32),
+    /// `TestPage` of the page with this object index (ADR-012).
+    TestPage(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
     Library(String),
 }
@@ -67,6 +69,101 @@ pub enum Value {
     Library(String, Rc<RefCell<LibraryValue>>),
     /// A record variable (ADR-010: a handle; `:=` copies fields, see the VM).
     Record(Rc<RefCell<RecordState>>),
+    /// A `TestPage` (or `TestPart`): a handle on a page and the test client
+    /// driving it (ADR-012). Shared like a codeunit instance.
+    TestPage(Rc<RefCell<PageState>>),
+    /// A control of a test page (`TestField`, `TestAction`, `TestFilter`).
+    TestControl(Rc<ControlRef>),
+}
+
+/// How a page was opened by the test client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageMode {
+    View,
+    Edit,
+    New,
+}
+
+/// Where the test client's cursor stands on a page (ADR-012).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cursor {
+    /// No row: an empty view.
+    None,
+    /// On a stored row (or, for a new record, the row being typed).
+    Row,
+    /// On the blank line an editable, insert-allowed repeater carries past its data
+    /// (corpus handlers/TestPageNewRowLine_Tests.al:1-30).
+    NewLine,
+}
+
+/// The test client's state for one page (ADR-012). Fields grow with the
+/// behaviours the corpus pins.
+pub struct PageState {
+    /// Object index of the page.
+    pub object: u32,
+    /// Open pages answer; closed ones, and ones torn down by an error in a row load,
+    /// raise "The TestPage is not open." (corpus testpageteardown/TestPageTeardown.al:3-24).
+    pub open: bool,
+    pub mode: PageMode,
+    /// The running page: its globals hold `Rec`, `xRec` and `CurrPage`.
+    pub instance: Option<Rc<RefCell<Instance>>>,
+    pub cursor: Cursor,
+    /// The page offers the trailing new-row line.
+    pub new_line: bool,
+    /// The cursor stands on a row that is not stored yet (OpenNew, New).
+    pub draft: bool,
+    /// Fields written by the client since the row was loaded.
+    pub dirty: bool,
+    /// `Visible` of each control as it was when the page opened (the property is frozen then,
+    /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
+    pub frozen_visible: Vec<bool>,
+    /// Primary keys of the rows a repeater page has populated (its window).
+    pub window: Vec<Vec<Value>>,
+}
+
+// The page instance holds `CurrPage`, which points back here: print only the facts.
+impl std::fmt::Debug for PageState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PageState(page {}, open {}, mode {:?})",
+            self.object, self.open, self.mode
+        )
+    }
+}
+
+impl PageState {
+    pub fn closed(object: u32) -> PageState {
+        PageState {
+            object,
+            open: false,
+            mode: PageMode::View,
+            instance: None,
+            cursor: Cursor::None,
+            new_line: false,
+            draft: false,
+            dirty: false,
+            frozen_visible: Vec::new(),
+            window: Vec::new(),
+        }
+    }
+}
+
+/// What a `TestControl` stands for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlTarget {
+    /// A control of the page by index into its control list.
+    Control(usize),
+    /// A built-in action: OK, Cancel, Yes, No, Edit, View.
+    BuiltIn(String),
+    /// `TestPage.Filter`.
+    Filter,
+}
+
+#[derive(Debug)]
+pub struct ControlRef {
+    pub page: Rc<RefCell<PageState>>,
+    pub target: ControlTarget,
 }
 
 /// Everything a record variable carries.
@@ -133,6 +230,7 @@ impl Value {
                 object: *id,
                 ..Default::default()
             }))),
+            RtType::TestPage(id) => Value::TestPage(Rc::new(RefCell::new(PageState::closed(*id)))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),
@@ -171,6 +269,7 @@ impl Value {
             Value::Codeunit(_) => k == "codeunit",
             Value::Library(n, _) => n.eq_ignore_ascii_case(&k),
             Value::Record(_) => k == "record",
+            Value::TestPage(_) | Value::TestControl(_) => false,
         }
     }
 }

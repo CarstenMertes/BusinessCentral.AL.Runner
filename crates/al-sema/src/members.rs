@@ -27,6 +27,8 @@ pub struct FieldInfo {
     pub relation_table: Option<String>,
     /// Offset of the field's OnValidate trigger node (in `declared_in`'s file).
     pub on_validate: Option<usize>,
+    /// The field's properties as written, by lower-case name.
+    pub props: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +55,8 @@ pub struct ProcSig {
 pub struct Members {
     pub fields: Vec<FieldInfo>,
     pub enum_values: Vec<(u32, String)>,
+    /// `Caption` of enum values by declared value (extensions included).
+    pub enum_captions: Vec<(u32, String)>,
     pub procedures: Vec<ProcSig>,
 }
 
@@ -82,6 +86,7 @@ pub fn build(ws: &Workspace) -> Vec<Members> {
             let target = &mut out[t];
             target.fields.extend(ext.fields);
             target.enum_values.extend(ext.enum_values);
+            target.enum_captions.extend(ext.enum_captions);
             target.procedures.extend(ext.procedures);
         }
     }
@@ -145,12 +150,20 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     table_relation: prop("TableRelation").is_some(),
                     relation_table: prop("TableRelation").map(|v| relation_target(&v)),
                     on_validate,
+                    props: f
+                        .properties()
+                        .map(|p| (p.name().to_ascii_lowercase(), p.value_text()))
+                        .collect(),
                 });
             }
         } else if name == "value" {
             let args = sec.args();
             if let (Some(id), Some(v)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) {
                 m.enum_values.push((id, v.clone()));
+                if let Some(c) = sec.properties().find(|p| p.name().eq_ignore_ascii_case("Caption")) {
+                    m.enum_captions
+                        .push((id, c.value_text().trim().trim_matches('\'').replace("''", "'")));
+                }
             }
         }
     }
@@ -167,6 +180,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 table_relation: false,
                 relation_table: None,
                 on_validate: None,
+                props: Vec::new(),
             });
         }
     }

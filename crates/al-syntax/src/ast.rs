@@ -226,6 +226,12 @@ impl Object {
     pub fn properties(&self) -> impl Iterator<Item = Property> {
         self.members().filter_map(Property::cast)
     }
+    /// Offset of the `}` that closes the object body.
+    pub fn close_brace_offset(&self) -> Option<usize> {
+        let b = self.body()?;
+        let t = b.last_token()?;
+        (t.kind() == SyntaxKind::RBrace).then(|| usize::from(t.text_range().start()))
+    }
     pub fn var_decls(&self) -> impl Iterator<Item = VarDecl> {
         self.members()
             .filter_map(VarSection::cast)

@@ -3,6 +3,7 @@
 pub mod check;
 pub mod lower;
 pub mod members;
+pub mod pages;
 pub mod types;
 pub mod workspace;
 

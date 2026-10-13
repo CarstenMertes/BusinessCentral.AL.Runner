@@ -163,6 +163,9 @@ impl Workspace {
         ws.visible = (0..apps.len()).map(|i| visible_from(&apps, i)).collect();
         for (ai, app) in apps.iter().enumerate() {
             for (path, src) in &app.files {
+                // Expression-valued page properties become routines (ADR-012).
+                let expanded = crate::pages::expand(src, symbols);
+                let src = expanded.as_ref().unwrap_or(src);
                 let parse = al_syntax::parse(src, symbols);
                 for e in &parse.errors {
                     ws.diagnostics.push(Diagnostic {

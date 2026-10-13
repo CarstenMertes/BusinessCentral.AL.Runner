@@ -1,0 +1,472 @@
+//! The page test client end to end: AL source → compile → run (ADR-012).
+//! Each test names the corpus test it mirrors.
+
+use al_builtins::native::Signal;
+use al_builtins::value::Value;
+use al_sema::workspace::AppSource;
+use al_vm::{Engine, Session};
+
+const OBJECTS: &str = r#"
+table 50000 "PG Row"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(2; Qty; Integer) { }
+        field(3; Descr; Text[50]) { }
+    }
+    keys { key(PK; "No.") { } }
+}
+
+page 50001 "PG Card"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    layout
+    {
+        area(Content)
+        {
+            field(NoCtl; Rec."No.") { }
+            field(QtyCtl; Rec.Qty) { }
+            field(DescrCtl; Rec.Descr) { }
+        }
+    }
+}
+
+page 50003 "PG Format"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    layout
+    {
+        area(Content)
+        {
+            field(NoCtl; Rec."No.") { }
+            field(Fmt; Rec.Qty) { AutoFormatType = 10; AutoFormatExpression = Pattern(); }
+            field(Hide; Rec.Qty) { Visible = Shown; Editable = Shown; Enabled = Shown; }
+            field(Named; Rec.Descr) { Caption = 'Shiny'; }
+            field(Glob; GlobN) { }
+        }
+    }
+    var
+        Shown: Boolean;
+        GlobN: Integer;
+        Trace: Codeunit "PG Trace";
+    trigger OnOpenPage() begin Shown := true; Trace.Add('open;'); end;
+    trigger OnAfterGetRecord() begin Trace.Add('agr:' + Rec."No." + ';'); GlobN := Rec.Qty * 2; end;
+    trigger OnAfterGetCurrRecord() begin Trace.Add('agcr;'); end;
+    local procedure Pattern(): Text
+    begin
+        Trace.Add('fmt;');
+        if Rec."No." = 'BOOM' then Error('boom for %1', Rec."No.");
+        exit('<Precision,3:3><Standard Format,0>');
+    end;
+    actions
+    {
+        area(Processing)
+        {
+            action(Flip) { trigger OnAction() begin Shown := not Shown; end; }
+        }
+    }
+}
+
+page 50005 "PG Maker"
+{
+    PageType = List;
+    SourceTable = "PG Row";
+    layout { area(Content) { repeater(Lines) { field(NoCtl; Rec."No.") { } field(QtyCtl; Rec.Qty) { } } } }
+    actions
+    {
+        area(Processing)
+        {
+            action(InsertFind) { trigger OnAction() begin Rec.Init(); Rec."No." := 'M'; Rec.Qty := 4; Rec.Insert(); Rec.FindFirst(); end; }
+            action(FieldsOnly) { trigger OnAction() begin Rec.Qty := 9; end; }
+        }
+    }
+}
+
+page 50004 "PG FormatList"
+{
+    PageType = List;
+    SourceTable = "PG Row";
+    layout
+    {
+        area(Content)
+        {
+            repeater(Lines)
+            {
+                field(NoCtl; Rec."No.") { }
+                field(Fmt; Rec.Qty) { AutoFormatType = 10; AutoFormatExpression = Pattern(); }
+            }
+        }
+    }
+    local procedure Pattern(): Text
+    begin
+        if Rec.Qty < 0 then Error('boom for %1', Rec."No.");
+        exit('<Precision,3:3><Standard Format,0>');
+    end;
+}
+
+codeunit 50101 "PG Trace"
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(T: Text) begin Log += T; end;
+    procedure Take(): Text var R: Text; begin R := Log; Log := ''; exit(R); end;
+}
+
+page 50002 "PG List"
+{
+    PageType = List;
+    SourceTable = "PG Row";
+    layout
+    {
+        area(Content)
+        {
+            repeater(Lines)
+            {
+                field(NoCtl; Rec."No.") { }
+                field(QtyCtl; Rec.Qty) { }
+            }
+        }
+    }
+}
+"#;
+
+fn run(body: &str, routine: &str) -> Result<Value, Signal> {
+    let src = format!("{OBJECTS}\ncodeunit 50100 C {{ {body} }}");
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == routine)
+        .unwrap();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut stack = vec![(oi, ri)];
+    while let Some((o, r)) = stack.pop() {
+        if !seen.insert((o, r)) {
+            continue;
+        }
+        if let Some(why) = l.unsupported[o][r].first() {
+            panic!(
+                "{}.{} is blocked: {why}",
+                l.program.objects[o].name, l.program.objects[o].routines[r].name
+            );
+        }
+        stack.extend(l.calls[o][r].iter().copied());
+    }
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
+}
+
+fn error_text(r: Result<Value, Signal>) -> String {
+    match r {
+        Err(Signal::Error(e)) => e.message,
+        other => panic!("expected an error, got {other:?}"),
+    }
+}
+
+fn rows(n: &[(&str, i32)]) -> String {
+    n.iter()
+        .map(|(k, q)| format!("R.\"No.\" := '{k}'; R.Qty := {q}; R.Insert();"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn text(r: Result<Value, Signal>) -> String {
+    match r {
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+// handlers/TestPageHandler.al:17 Page_TestPage_Open_FindsFirstRecord: a page opened on a table
+// shows the first row, and a control reads as the text of its field.
+#[test]
+fn open_shows_the_first_row_and_controls_read_as_text() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Card\"; begin
+            R.\"No.\" := 'B'; R.Qty := 7; R.Insert();
+            R.\"No.\" := 'A'; R.Qty := 5; R.Insert();
+            TP.OpenView();
+            exit(TP.NoCtl.Value() + ':' + TP.QtyCtl.Value());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "A:5");
+}
+
+// handlers/TestPageHandler.al:28-70 Page_TestPage_Next_AdvancesToSecond / _Last_ReturnsLastRecord
+#[test]
+fn first_next_last_previous_walk_the_rows_in_key_order() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Card\"; T: Text; begin
+                {}
+                TP.OpenView();
+                T := TP.NoCtl.Value();
+                if TP.Next() then T += TP.NoCtl.Value();
+                if TP.Next() then T += TP.NoCtl.Value();
+                T += Format(TP.Next());
+                if TP.Last() then T += TP.NoCtl.Value();
+                if TP.Previous() then T += TP.NoCtl.Value();
+                if TP.First() then T += TP.NoCtl.Value();
+                exit(T);
+            end;",
+            rows(&[("C", 3), ("A", 1), ("B", 2)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "ABCNoCBA");
+}
+
+// handlers/TestPageExtended.al:17,34 Page_GoToKey_ExistingRecord_ReturnsTrue / _MissingRecord_ReturnsFalse;
+// handlers/TestPageGoToRecordNonKeyRefresh_Tests.al:1-15: a missing key leaves the page where it was.
+#[test]
+fn go_to_key_finds_a_row_and_a_missing_key_leaves_the_cursor() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Card\"; T: Text; begin
+                {}
+                TP.OpenView();
+                T := Format(TP.GoToKey('B')) + TP.NoCtl.Value() + TP.QtyCtl.Value();
+                T += Format(TP.GoToKey('Z')) + TP.NoCtl.Value() + TP.QtyCtl.Value();
+                exit(T);
+            end;",
+            rows(&[("A", 1), ("B", 2)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "YesB2NoB2");
+}
+
+// testpageclose/TestPageClosingActions.al:19-24 and testpageteardown/TestPageTeardown.al:227,339:
+// a variable that is not open answers "The TestPage is not open."; an open one cannot be opened.
+#[test]
+fn closed_and_open_variables_refuse_with_the_corpus_texts() {
+    let body = |stmt: &str| {
+        format!(
+            "procedure F(): Text var TP: TestPage \"PG Card\"; T: Text; begin
+                {stmt}
+            end;"
+        )
+    };
+    let e = error_text(run(&body("T := TP.NoCtl.Value();"), "F"));
+    assert_eq!(e, "The TestPage is not open.");
+    let e = error_text(run(&body("TP.Close();"), "F"));
+    assert_eq!(e, "The TestPage is not open.");
+    let e = error_text(run(&body("TP.OpenView(); TP.OpenView();"), "F"));
+    assert_eq!(e, "The TestPage is already open.");
+    let e = error_text(run(&body("TP.OpenView(); TP.Close(); T := TP.NoCtl.Value();"), "F"));
+    assert_eq!(e, "The TestPage is not open.");
+}
+
+// autoformat/TestAutoFormatExpressionTiming.al:5-12: the control expressions run when a row is
+// populated, after OnOpenPage and before OnAfterGetRecord, even with no row at all; an error
+// fails the open and leaves the variable closed.
+#[test]
+fn control_expressions_run_between_on_open_page_and_on_after_get_record() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Format\"; T: Codeunit \"PG Trace\"; begin
+                {}
+                TP.OpenView();
+                exit(T.Take());
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "open;fmt;agr:A;agcr;");
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG Format\"; T: Codeunit \"PG Trace\"; begin
+            TP.OpenView();
+            exit(T.Take());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "open;fmt;",
+        "an empty view populates the expressions too, but no row"
+    );
+}
+
+// autoformat/TestAutoFormatExpressionTiming.al: a failing expression at open raises its own
+// error and leaves the page not open; on a card, a move onto the failing row reads "not open".
+#[test]
+fn a_failing_expression_fails_the_open_and_tears_a_card_down_on_a_move() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Format\"; begin
+                {}
+                TP.OpenView();
+                TP.GoToKey('BOOM');
+            end;",
+            rows(&[("A", 1), ("BOOM", 2)])
+        ),
+        "F",
+    );
+    assert_eq!(error_text(r), "The TestPage is not open.");
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Format\"; begin
+                {}
+                TP.OpenView();
+            end;",
+            rows(&[("BOOM", 2)])
+        ),
+        "F",
+    );
+    assert_eq!(error_text(r), "boom for BOOM");
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Format\"; T: Text; begin
+                {}
+                TP.OpenView();
+                asserterror TP.GoToKey('BOOM');
+                T := GetLastErrorText();
+                asserterror T += TP.NoCtl.Value();
+                exit(T + '|' + GetLastErrorText());
+            end;",
+            rows(&[("A", 1), ("BOOM", 2)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "The TestPage is not open.|The TestPage is not open.");
+}
+
+// handlers/TestPageControlPropertyLiveness_Tests.al:40-73: Visible is the open-time value,
+// Editable and Enabled follow the page state.
+#[test]
+fn visible_is_frozen_at_open_editable_and_enabled_are_live() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Format\"; T: Text; begin
+                {}
+                TP.OpenView();
+                T := Format(TP.Hide.Visible()) + Format(TP.Hide.Enabled());
+                TP.Flip.Invoke();
+                T += '|' + Format(TP.Hide.Visible()) + Format(TP.Hide.Enabled());
+                exit(T);
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "YesYes|YesNo");
+}
+
+// autoformat/TestAutoFormat.al: an AutoFormatExpression with a precision sets the places;
+// handlers/TestPageFieldFormats.Page.al: page-variable controls read the variable.
+#[test]
+fn controls_read_through_their_format_and_binding() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Format\"; begin
+                {}
+                TP.OpenView();
+                exit(TP.Fmt.Value() + '|' + TP.Glob.Value() + '|' + TP.Named.Caption() + '|' + TP.NoCtl.Caption());
+            end;",
+            rows(&[("A", 1500)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "1500|3000|Shiny|No.");
+}
+
+// handlers/TestPageNewRowLine_Tests.al:1-30 (EditableInsertable_NextPastLastDataRow_LandsOnTheNewRowLine and
+// the OpenView gating arm): an editable list carries a blank line past its data; OpenView has none.
+#[test]
+fn an_editable_list_has_a_blank_new_row_line_past_its_data() {
+    let f = |open: &str| {
+        run(
+            &format!(
+                "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG List\"; T: Text; begin
+                    {}
+                    TP.{open}();
+                    T := Format(TP.First()) + TP.NoCtl.Value();
+                    T += Format(TP.Next()) + '[' + TP.NoCtl.Value() + ']';
+                    T += Format(TP.Next());
+                    exit(T);
+                end;",
+                rows(&[("A", 1)])
+            ),
+            "F",
+        )
+    };
+    assert_eq!(text(f("OpenEdit")), "YesAYes[]No");
+    assert_eq!(text(f("OpenView")), "YesANo[A]No");
+}
+
+// handlers/TestPageNewRowLine_Tests.al: First() on an empty editable list answers false.
+#[test]
+fn first_on_an_empty_editable_list_is_false() {
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG List\"; begin
+            TP.OpenEdit();
+            exit(Format(TP.First()) + Format(TP.Last()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "NoNo");
+}
+
+// autoformat/TestAutoFormatExpressionTiming.al, RowFormat_List_FailingRow20Of120_RaisesAtOpen /
+// _FailingRow30Of120_OpensAndReadsTheFirstRow / _LastOntoAFailingRowBeyondTheWindow_RaisesItsOwnError:
+// a list populates a window of rows (the corpus pins it between 20 and 24) and raises the expression's
+// own error on a move that populates a new window.
+#[test]
+fn a_list_populates_a_window_of_rows() {
+    // PG Format has the BOOM key hard-wired, so the rows are named so that BOOM falls at the wanted position.
+    let body = |boom_at: i32, then: &str| {
+        format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG FormatList\"; i: Integer; begin
+                for i := 1 to 120 do begin
+                    R.\"No.\" := 'R' + Format(1000 + i); R.Qty := i; if i = {boom_at} then R.Qty := -1; R.Insert();
+                end;
+                TP.OpenView();
+                {then}
+            end;"
+        )
+    };
+    assert_eq!(error_text(run(&body(20, "exit('');"), "F")), "boom for R1020");
+    assert_eq!(text(run(&body(30, "exit(TP.Fmt.Value());"), "F")), "1");
+    assert_eq!(error_text(run(&body(120, "TP.Last();"), "F")), "boom for R1120");
+}
+
+// testpart/BnrBlankPart.al:1-30 (NoRow_Action_StoredListInsertAndFind_ShowsTheRow / _TempListFieldsOnly_StaysBlank):
+// controls read blank on a page that shows no row, until page code inserts a row and stands on it.
+#[test]
+fn a_page_with_no_row_reads_blank_until_page_code_inserts_and_positions_a_row() {
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG Maker\"; T: Text; begin
+            TP.OpenView();
+            T := '[' + TP.QtyCtl.Value() + ']' + Format(TP.QtyCtl.AsInteger());
+            TP.FieldsOnly.Invoke();
+            T += '[' + TP.QtyCtl.Value() + ']';
+            TP.InsertFind.Invoke();
+            T += '[' + TP.QtyCtl.Value() + ']' + TP.NoCtl.Value();
+            exit(T);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "[]0[][4]M");
+}

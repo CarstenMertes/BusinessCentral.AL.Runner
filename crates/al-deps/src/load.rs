@@ -63,7 +63,24 @@ pub struct Found {
     pub has_source: bool,
 }
 
-/// Reads the manifest of every `*.app` file directly inside `dir`. A file that
+fn ext_is(p: &Path, ext: &str) -> bool {
+    p.extension().is_some_and(|x| x.eq_ignore_ascii_case(ext))
+}
+
+/// A file a search directory may hold: an `.app`, or a `.zip` (a source archive such as
+/// `System Application Test Library.Source.zip`).
+fn is_package_file(p: &Path) -> bool {
+    ext_is(p, "app") || ext_is(p, "zip")
+}
+
+/// Files that are meant to be packages: every `.app` and every `*.Source.zip`.
+fn is_named_package(p: &Path) -> bool {
+    ext_is(p, "app")
+        || p.file_name()
+            .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".source.zip"))
+}
+
+/// Reads the manifest of every `*.app` and `*.zip` file directly inside `dir`. A file that
 /// cannot be read is returned as an error line, not dropped: the caller prints it.
 pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
     let mut found = Vec::new();
@@ -73,7 +90,7 @@ pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
     };
     let mut paths: Vec<PathBuf> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("app")))
+        .filter(|p| is_package_file(p))
         .collect();
     paths.sort();
     for path in paths {
@@ -86,6 +103,8 @@ pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
                 manifest,
                 has_source,
             }),
+            // A stray `.zip` that is no package is not a problem; a broken `.app` or `.Source.zip` is.
+            Err(_) if !is_named_package(&path) => {}
             Err(e) => problems.push(format!("{}: {e}", path.display())),
         }
     }
@@ -473,5 +492,41 @@ mod tests {
             "{:?}",
             loaded.notes
         );
+    }
+
+    #[test]
+    fn a_source_zip_in_a_search_directory_satisfies_a_dependency() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_json = r#"{"id":"zz","name":"Zed","publisher":"P","version":"2.0.0.0","dependencies":[]}"#;
+        let zip = Builder::new()
+            .add("app.json", app_json.as_bytes(), true)
+            .add("Sub/Z.Codeunit.al", b"codeunit 9 Z { }", true)
+            .finish();
+        std::fs::write(dir.path().join("Zed.Source.zip"), zip).unwrap();
+        std::fs::write(dir.path().join("notes.zip"), b"not an archive").unwrap();
+        let loaded = load_dependencies(&Request {
+            project: &project(&[("zz", "Zed", "2.0.0.0")]),
+            workspace_apps: &[],
+            search_dirs: &[dir.path().to_path_buf()],
+            missing: MissingPolicy::Error,
+        })
+        .unwrap();
+        assert_eq!(loaded.apps.len(), 1);
+        assert_eq!(loaded.apps[0].app.files[0].0, "Zed/Sub/Z.Codeunit.al");
+        // A stray .zip that is no package is ignored; only `*.Source.zip` files are reported when broken.
+        assert!(
+            loaded.notes.iter().all(|n| !n.contains("notes.zip")),
+            "{:?}",
+            loaded.notes
+        );
+    }
+
+    #[test]
+    fn a_broken_source_zip_is_reported_like_a_broken_app() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Broken.Source.zip"), b"not an archive").unwrap();
+        let (found, problems) = scan_dir(dir.path());
+        assert!(found.is_empty());
+        assert!(problems.iter().any(|p| p.contains("Broken.Source.zip")), "{problems:?}");
     }
 }

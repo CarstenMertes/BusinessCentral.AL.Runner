@@ -1,0 +1,1115 @@
+//! Dependency apps from Microsoft's artifact feed, as the fallback behind the project's
+//! `.alpackages` and `--deps` (ADR-013 decisions 1 and 2, and the acceptance answer 2).
+//!
+//! The flow: resolve with what is on disk (plus the cache of the selected build). For every
+//! dependency nobody supplies, pick the BC build (Layer A, [`crate::build`]), read the platform
+//! artifact's central directory by range, fetch only the `<App>.Source.zip` entries of the missing
+//! apps, check their CRC-32, save them in the cache, and resolve again. A second round picks up what
+//! the first round's apps depend on (System Application Test Library needs Any).
+//!
+//! Which entry holds an app: the platform artifact keeps one `Applications/**/<App name>.Source.zip`
+//! per app (and a precompiled `Microsoft_<App name>.app` for the test framework). The file name
+//! is a hint; the `app.json` inside decides, by app id.
+
+use crate::build::{BuildId, BuildQuery, Origin, Selection, parse_index, select_build};
+use crate::cache::{BuildDir, Store};
+use crate::load::{Loaded, Request, load_dependencies};
+use crate::package::read_info;
+use crate::remote::{HttpSource, RangeSource, RemoteError, RemoteZip, fetch_all, http_agent};
+use crate::select::{DepDecl, MissingPolicy, SelectError};
+use crate::zip::Entry;
+use std::collections::HashSet;
+use std::path::PathBuf;
+
+/// Microsoft's public artifact CDN, sandbox channel (AL Runner's `ArtifactDownloader.CdnBase`).
+pub const DEFAULT_CDN: &str = "https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox";
+
+/// Where the artifacts come from.
+pub trait Cdn {
+    type Src: RangeSource;
+    /// Where the feed is, for messages.
+    fn base_url(&self) -> String;
+    /// The list of published builds (`indexes/w1.json`).
+    fn index(&self) -> Result<Vec<u8>, RemoteError>;
+    /// The platform artifact of a build: its URL, for messages, and a range source for it.
+    fn platform(&self, build: &BuildId) -> (String, Self::Src);
+}
+
+pub struct HttpCdn {
+    base: String,
+    agent: ureq::Agent,
+}
+
+impl HttpCdn {
+    pub fn new(base: &str) -> HttpCdn {
+        HttpCdn {
+            base: base.trim_end_matches('/').to_string(),
+            agent: http_agent(),
+        }
+    }
+
+    /// `ALRUNNER_ARTIFACT_URL` if set (a mirror the user runs), else Microsoft's CDN.
+    pub fn from_env() -> HttpCdn {
+        let base = std::env::var("ALRUNNER_ARTIFACT_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_CDN.to_string());
+        HttpCdn::new(&base)
+    }
+}
+
+impl Cdn for HttpCdn {
+    type Src = HttpSource;
+
+    fn base_url(&self) -> String {
+        self.base.clone()
+    }
+
+    fn index(&self) -> Result<Vec<u8>, RemoteError> {
+        fetch_all(&self.agent, &format!("{}/indexes/w1.json", self.base))
+    }
+
+    fn platform(&self, build: &BuildId) -> (String, HttpSource) {
+        let url = format!("{}/{build}/platform", self.base);
+        (url.clone(), HttpSource::new(self.agent.clone(), url))
+    }
+}
+
+/// How a run uses the feed.
+pub struct Fetch {
+    /// The cache root (see [`crate::cache::cache_root`]).
+    pub cache_root: PathBuf,
+    /// False for `--no-download`: only the cache is consulted.
+    pub download: bool,
+    pub query: BuildQuery,
+}
+
+/// The build a run took Microsoft's apps from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactUse {
+    pub build: BuildId,
+    pub origin: Origin,
+    /// Entries fetched from the feed in this run (empty when the cache sufficed).
+    pub fetched: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+pub struct Provisioned {
+    pub loaded: Loaded,
+    /// Set when a build was consulted: some dependency was not in `.alpackages` or `--deps`.
+    pub artifact: Option<ArtifactUse>,
+    /// Lines for the run's log: the build chosen, what was fetched, what stays missing and why.
+    pub log: Vec<String>,
+}
+
+/// The entries of the platform artifact that could hold `dep`, best first. Only Microsoft's apps
+/// are in the artifact, so a dependency by another publisher has none.
+pub fn find_entries<'a>(entries: &'a [Entry], dep: &DepDecl) -> Vec<&'a Entry> {
+    if !dep.publisher.is_empty() && !dep.publisher.eq_ignore_ascii_case("Microsoft") {
+        return Vec::new();
+    }
+    let base = |e: &Entry| e.name.rsplit('/').next().unwrap_or(&e.name).to_ascii_lowercase();
+    let name = dep.name.to_ascii_lowercase();
+    let source = format!("{name}.source.zip");
+    let compiled = format!("microsoft_{name}.app");
+    let mut out: Vec<&Entry> = entries.iter().filter(|e| base(e) == source).collect();
+    out.extend(entries.iter().filter(|e| base(e) == compiled));
+    out
+}
+
+fn dep_key(d: &DepDecl) -> String {
+    if d.id.is_empty() {
+        format!("{}/{}", d.publisher, d.name).to_ascii_lowercase()
+    } else {
+        d.id.to_ascii_lowercase()
+    }
+}
+
+/// The newest published build that satisfies the query, ignoring the cache. CI uses it to key its
+/// artifact cache by build before anything is downloaded.
+pub fn newest_published<C: Cdn>(cdn: &C, query: &BuildQuery) -> Result<Selection, String> {
+    let published = published_builds(cdn)?;
+    select_build(query, &[], Some(&published), "(none consulted)").map_err(|e| e.to_string())
+}
+
+fn published_builds<C: Cdn>(cdn: &C) -> Result<Vec<BuildId>, String> {
+    let bytes = cdn.index().map_err(|e| format!("artifact index: {e}"))?;
+    parse_index(&String::from_utf8_lossy(&bytes))
+}
+
+/// Resolves the dependencies of `req.project`, downloading from the feed what no directory supplies.
+///
+/// `req.missing` is the caller's policy for what is still missing at the end: `Error` fails the
+/// run, `Skip` records it in `Loaded::skipped`.
+pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) -> Result<Provisioned, String> {
+    /// Each round fetches at least one app or ends the loop; the chain of test libraries is short.
+    const ROUNDS: usize = 8;
+    let store = Store::new(&fetch.cache_root);
+    let mut log: Vec<String> = Vec::new();
+    let mut chosen: Option<(BuildDir, Selection)> = None;
+    let mut remote: Option<(String, RemoteZip<C::Src>)> = None;
+    let mut fetched: Vec<String> = Vec::new();
+    let mut tried: HashSet<String> = HashSet::new();
+    let mut loaded = Loaded::default();
+    for _ in 0..ROUNDS {
+        let mut dirs = req.search_dirs.to_vec();
+        if let Some((bd, _)) = &chosen {
+            let (_, notes) = bd.verify();
+            log.extend(notes);
+            dirs.push(bd.apps_dir());
+        }
+        loaded = load_dependencies(&Request {
+            project: req.project,
+            workspace_apps: req.workspace_apps,
+            search_dirs: &dirs,
+            missing: MissingPolicy::Skip,
+        })?;
+        let todo: Vec<DepDecl> = loaded
+            .skipped
+            .iter()
+            .filter_map(|e| match e {
+                SelectError::Missing { dep, .. } => Some(dep.clone()),
+                _ => None,
+            })
+            .filter(|d| !tried.contains(&dep_key(d)))
+            // The feed holds only Microsoft's apps: do not select a build for anything else.
+            .filter(|d| d.publisher.is_empty() || d.publisher.eq_ignore_ascii_case("Microsoft"))
+            .collect();
+        if todo.is_empty() {
+            break;
+        }
+        let cache_dir = store.dir().display().to_string();
+        if chosen.is_none() {
+            // Layer A, first look: the cache. A cached build needs no network to be chosen.
+            let cached = store.list_builds();
+            if let Ok(sel) = select_build(&fetch.query, &cached, None, &cache_dir) {
+                log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
+                chosen = Some((store.build(&sel.build), sel));
+                continue; // resolve again with the cached build's apps in the pool
+            }
+        }
+        if !fetch.download {
+            break;
+        }
+        if chosen.is_none() {
+            let published = published_builds(cdn)?;
+            let sel = select_build(&fetch.query, &store.list_builds(), Some(&published), &cache_dir)
+                .map_err(|e| e.to_string())?;
+            log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
+            chosen = Some((store.build(&sel.build), sel));
+        }
+        let (bd, sel) = chosen.as_ref().expect("a build is chosen");
+        if remote.is_none() {
+            let (url, src) = cdn.platform(&sel.build);
+            let zip = match bd.load_tail() {
+                Some((total, tail)) => RemoteZip::from_tail(src, total, tail).map_err(|e| format!("{url}: {e}"))?,
+                None => {
+                    let zip = RemoteZip::open(src).map_err(|e| format!("{url}: {e}"))?;
+                    let (total, tail) = zip.tail();
+                    bd.save_tail(&url, total, tail)?;
+                    zip
+                }
+            };
+            remote = Some((url, zip));
+        }
+        let (url, zip) = remote.as_ref().expect("the archive is open");
+        let mut progress = false;
+        for dep in &todo {
+            tried.insert(dep_key(dep));
+            let mut stored = false;
+            for entry in find_entries(&zip.entries, dep) {
+                let bytes = zip
+                    .read(entry)
+                    .map_err(|e| format!("{url}: entry `{}`: {e}", entry.name))?;
+                // The file name is a hint; the app inside decides.
+                match read_info(&bytes) {
+                    Ok((m, _)) if dep.id.is_empty() || m.id.eq_ignore_ascii_case(&dep.id) => {}
+                    Ok((m, _)) => {
+                        log.push(format!(
+                            "artifact: `{}` holds {} ({}), not {} ({}); not used",
+                            entry.name, m.name, m.id, dep.name, dep.id
+                        ));
+                        continue;
+                    }
+                    Err(e) => {
+                        log.push(format!(
+                            "artifact: `{}` is not a readable package: {e}; not used",
+                            entry.name
+                        ));
+                        continue;
+                    }
+                }
+                bd.put_entry(&entry.name, url, &bytes)?;
+                log.push(format!(
+                    "artifact: fetched {} ({} bytes) from {url}",
+                    entry.name,
+                    bytes.len()
+                ));
+                fetched.push(entry.name.clone());
+                stored = true;
+                break;
+            }
+            if stored {
+                progress = true;
+            } else {
+                log.push(format!(
+                    "artifact: BC build {} has no entry for `{}` ({})",
+                    sel.build, dep.name, dep.id
+                ));
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    let used = chosen.map(|(_, sel)| {
+        let how = match sel.origin {
+            Origin::Cache => "cache",
+            Origin::Published => "downloaded",
+        };
+        log.insert(0, format!("artifact: BC build {} ({how})", sel.build));
+        ArtifactUse {
+            build: sel.build,
+            origin: sel.origin,
+            fetched,
+        }
+    });
+    if !loaded.skipped.is_empty() {
+        // Name what was missing and where it would have come from (ADR-013 decision 1).
+        let from = match &used {
+            Some(u) => format!("BC build {} at {}/{}/platform", u.build, cdn.base_url(), u.build),
+            None => format!("a BC build matching {} at {}", fetch.query.prefix, cdn.base_url()),
+        };
+        let missing: Vec<String> = loaded
+            .skipped
+            .iter()
+            .map(|e| {
+                if fetch.download {
+                    e.to_string()
+                } else {
+                    format!("{e}; downloading is off (--no-download); Microsoft's apps would come from {from}")
+                }
+            })
+            .collect();
+        if req.missing == MissingPolicy::Error {
+            return Err(missing.join("\n"));
+        }
+        if !fetch.download {
+            log.extend(missing.into_iter().map(|m| format!("artifact: {m}")));
+        }
+    }
+    Ok(Provisioned {
+        loaded,
+        artifact: used,
+        log,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::load::{AppJson, Request};
+    use crate::remote::FileSource;
+    use crate::version::Version;
+    use crate::zip::testutil::{Builder, navx};
+    use std::cell::Cell;
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    const SA: &str = "63ca2fa4-4f03-4f2b-a480-172fef340d3f";
+    const SATL: &str = "9856ae4f-d1a7-46ef-89bb-6ef056398228";
+    const MOCK: &str = "40860557-a18d-42ad-aecb-22b7dd80dc80";
+    const ANY: &str = "e7320ebb-08b3-4406-b1ec-b4927d3e280b";
+
+    fn app_json(id: &str, name: &str, deps: &[(&str, &str)]) -> String {
+        let deps: Vec<String> = deps
+            .iter()
+            .map(|(i, n)| format!(r#"{{"id":"{i}","name":"{n}","publisher":"Microsoft","version":"27.5.0.0"}}"#))
+            .collect();
+        format!(
+            r#"{{"id":"{id}","name":"{name}","publisher":"Microsoft","version":"27.5.46862.56249","platform":"27.0.0.0","dependencies":[{}]}}"#,
+            deps.join(",")
+        )
+    }
+
+    fn source_zip(json: &str, al: &[(&str, &str)]) -> Vec<u8> {
+        let mut b = Builder::new().add("app.json", json.as_bytes(), true);
+        for (p, t) in al {
+            b = b.add(p, t.as_bytes(), true);
+        }
+        b.finish()
+    }
+
+    /// A platform artifact in miniature: the entries the corpus needs, under the paths the real one
+    /// uses, around filler that must never be fetched.
+    fn artifact_bytes(corrupt_mock: bool, wrong_id_for_any: bool) -> Vec<u8> {
+        let satl = source_zip(
+            &app_json(
+                SATL,
+                "System Application Test Library",
+                &[(SA, "System Application"), (ANY, "Any")],
+            ),
+            &[(
+                "Azure AD Plan/Plan.Codeunit.al",
+                "codeunit 132916 \"Azure AD Plan Test Library\" { }",
+            )],
+        );
+        let any_id = if wrong_id_for_any {
+            "ffffffff-0000-0000-0000-000000000000"
+        } else {
+            ANY
+        };
+        let any = source_zip(
+            &app_json(any_id, "Any", &[]),
+            &[("Any.Codeunit.al", "codeunit 130500 Any { }")],
+        );
+        let mock = source_zip(
+            &app_json(MOCK, "Permissions Mock", &[]),
+            &[("M.Codeunit.al", "codeunit 131006 \"Permissions Mock\" { }")],
+        );
+        let sa_src = source_zip(
+            &app_json(SA, "System Application", &[]),
+            &[("S.Codeunit.al", "codeunit 1 S { }")],
+        );
+        let mut b = Builder::new();
+        for i in 0..40 {
+            b = b.add(&format!("filler/{i}.bin"), &vec![i as u8; 4000], false);
+        }
+        b = b
+            .add(
+                "Applications/System Application/Test/System Application Test Library.Source.zip",
+                &satl,
+                false,
+            )
+            .add(
+                "Applications/TestFramework/TestLibraries/Any/Any.Source.zip",
+                &any,
+                false,
+            )
+            .add(
+                "Applications/System Application/Source/System Application.Source.zip",
+                &sa_src,
+                false,
+            );
+        if corrupt_mock {
+            b = b.add_with_crc(
+                "Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip",
+                &mock,
+                7,
+            );
+        } else {
+            b = b.add(
+                "Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip",
+                &mock,
+                true,
+            );
+        }
+        b.finish()
+    }
+
+    struct FixtureCdn {
+        index: String,
+        platform: HashMap<String, PathBuf>,
+        index_calls: Cell<u32>,
+        platform_calls: Cell<u32>,
+    }
+
+    impl FixtureCdn {
+        fn new(dir: &Path, builds: &[&str]) -> FixtureCdn {
+            let index = format!(
+                "[{}]",
+                builds
+                    .iter()
+                    .map(|b| format!(r#"{{"Version":"{b}","CreationTime":"2026-10-01T00:00:00Z"}}"#))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            let mut platform = HashMap::new();
+            for b in builds {
+                let p = dir.join(format!("platform-{b}.zip"));
+                std::fs::write(&p, artifact_bytes(false, false)).unwrap();
+                platform.insert(b.to_string(), p);
+            }
+            FixtureCdn {
+                index,
+                platform,
+                index_calls: Cell::new(0),
+                platform_calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl Cdn for FixtureCdn {
+        type Src = FileSource;
+        fn base_url(&self) -> String {
+            "https://cdn.test".into()
+        }
+        fn index(&self) -> Result<Vec<u8>, RemoteError> {
+            self.index_calls.set(self.index_calls.get() + 1);
+            Ok(self.index.clone().into_bytes())
+        }
+        fn platform(&self, build: &BuildId) -> (String, FileSource) {
+            self.platform_calls.set(self.platform_calls.get() + 1);
+            let p = self
+                .platform
+                .get(build.as_str())
+                .cloned()
+                .unwrap_or_else(|| PathBuf::from("/nonexistent/platform.zip"));
+            (format!("https://cdn.test/{build}/platform"), FileSource(p))
+        }
+    }
+
+    /// A feed nobody may call.
+    struct NoNetwork;
+    impl Cdn for NoNetwork {
+        type Src = FileSource;
+        fn base_url(&self) -> String {
+            "https://cdn.test".into()
+        }
+        fn index(&self) -> Result<Vec<u8>, RemoteError> {
+            panic!("the feed index was requested")
+        }
+        fn platform(&self, _: &BuildId) -> (String, FileSource) {
+            panic!("the platform artifact was requested")
+        }
+    }
+
+    fn dep(id: &str, name: &str) -> DepDecl {
+        DepDecl {
+            id: id.into(),
+            name: name.into(),
+            publisher: "Microsoft".into(),
+            min: Version(27, 0, 0, 0),
+            optional: false,
+        }
+    }
+
+    /// The corpus's shape: System Application is in `.alpackages`; the two test libraries are not.
+    fn project() -> AppJson {
+        AppJson {
+            id: "p".into(),
+            name: "Proj".into(),
+            publisher: "P".into(),
+            version: Version(1, 0, 0, 0),
+            platform: Some(Version(27, 0, 0, 0)),
+            application: None,
+            dependencies: vec![
+                dep(SA, "System Application"),
+                dep(SATL, "System Application Test Library"),
+                dep(MOCK, "Permissions Mock"),
+            ],
+        }
+    }
+
+    fn alpackages(dir: &Path) -> PathBuf {
+        let d = dir.join(".alpackages");
+        std::fs::create_dir_all(&d).unwrap();
+        let manifest = format!(
+            r#"<Package><App Id="{SA}" Name="System Application" Publisher="Microsoft" Version="27.5.46862.48827" /><Dependencies/></Package>"#
+        );
+        let zip = Builder::new()
+            .add("NavxManifest.xml", manifest.as_bytes(), true)
+            .add("src/S.al", b"codeunit 1 S { }", true)
+            .finish();
+        std::fs::write(d.join("System Application.app"), navx(&zip)).unwrap();
+        d
+    }
+
+    fn fetch(cache: &Path, download: bool, requested: Option<&str>) -> Fetch {
+        Fetch {
+            cache_root: cache.to_path_buf(),
+            download,
+            query: BuildQuery::new(requested, 27, Some((27, 0))),
+        }
+    }
+
+    fn run<C: Cdn>(
+        alpkg: &Path,
+        f: &Fetch,
+        cdn: &C,
+        missing: MissingPolicy,
+        project: &AppJson,
+    ) -> Result<Provisioned, String> {
+        load_with_artifacts(
+            &Request {
+                project,
+                workspace_apps: &[],
+                search_dirs: &[alpkg.to_path_buf()],
+                missing,
+            },
+            f,
+            cdn,
+        )
+    }
+
+    fn names(p: &Provisioned) -> Vec<&str> {
+        p.loaded.apps.iter().map(|a| a.app.name.as_str()).collect()
+    }
+
+    #[test]
+    fn missing_test_libraries_are_fetched_by_range_cached_and_resolved_with_their_dependency() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(
+            dir.path(),
+            &["27.4.1.1", "27.5.46862.55978", "27.5.46862.56249", "28.1.1.1"],
+        );
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        let p = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        // Dependencies first. `Any` was not in the project's list: the second round found it.
+        assert_eq!(
+            names(&p),
+            [
+                "System Application",
+                "Any",
+                "System Application Test Library",
+                "Permissions Mock"
+            ]
+        );
+        let used = p.artifact.as_ref().unwrap();
+        assert_eq!(used.build.to_string(), "27.5.46862.56249", "the newest 27.5 build");
+        assert_eq!(used.origin, Origin::Published);
+        assert_eq!(used.fetched.len(), 3);
+        // Source comes from the downloaded archives with the app name as the path prefix.
+        let satl = p
+            .loaded
+            .apps
+            .iter()
+            .find(|a| a.app.name.starts_with("System Application T"))
+            .unwrap();
+        assert_eq!(
+            satl.app.files[0].0,
+            "System Application Test Library/Azure AD Plan/Plan.Codeunit.al"
+        );
+        // The cache holds the tail and the three entries, with records.
+        let b = cache.join("artifacts/27.5.46862.56249");
+        assert!(b.join("platform.tail").is_file());
+        for f in [
+            "Any.Source.zip",
+            "Permissions Mock.Source.zip",
+            "System Application Test Library.Source.zip",
+        ] {
+            assert!(b.join("apps").join(f).is_file(), "{f}");
+            assert!(b.join("apps").join(format!("{f}.json")).is_file(), "{f}.json");
+        }
+        // System Application was in .alpackages and was not downloaded.
+        assert!(!b.join("apps/System Application.Source.zip").exists());
+        assert!(
+            p.log
+                .iter()
+                .any(|l| l.contains("27.5.46862.56249") && l.contains("downloaded")),
+            "{:?}",
+            p.log
+        );
+    }
+
+    #[test]
+    fn a_second_run_uses_the_cache_and_never_touches_the_feed() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        let first = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        let again = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert_eq!(names(&first), names(&again));
+        let used = again.artifact.unwrap();
+        assert_eq!((used.origin, used.fetched.len()), (Origin::Cache, 0));
+    }
+
+    #[test]
+    fn a_cached_build_wins_over_a_newer_published_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = FixtureCdn::new(dir.path(), &["27.5.46862.55978"]);
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &old,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        // A newer 27.5 is published now; the next run stays on the cached build and does not even ask.
+        let p = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert_eq!(p.artifact.unwrap().build.to_string(), "27.5.46862.55978");
+    }
+
+    #[test]
+    fn nothing_missing_means_no_build_is_chosen_and_no_request_is_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let alpkg = alpackages(dir.path());
+        let mut only_sa = project();
+        only_sa.dependencies.truncate(1);
+        let p = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, None),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &only_sa,
+        )
+        .unwrap();
+        assert_eq!(names(&p), ["System Application"]);
+        assert!(p.artifact.is_none());
+        assert!(!dir.path().join("cache").exists(), "nothing was written either");
+    }
+
+    #[test]
+    fn the_default_build_is_the_newest_of_the_floors_major() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249", "28.1.1.1"]);
+        let alpkg = alpackages(dir.path());
+        let f = Fetch {
+            cache_root: dir.path().join("cache"),
+            download: true,
+            query: BuildQuery::new(None, 27, Some((27, 0))),
+        };
+        let p = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(p.artifact.unwrap().build.to_string(), "27.5.46862.56249");
+        // A floor above everything published is an error naming the request, not a quiet downgrade.
+        let f = Fetch {
+            cache_root: dir.path().join("cache2"),
+            download: true,
+            query: BuildQuery::new(None, 27, Some((27, 9))),
+        };
+        let e = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap_err();
+        assert!(e.contains("floor 27.9") && e.contains("27.5.46862.56249"), "{e}");
+    }
+
+    #[test]
+    fn no_download_names_the_missing_apps_and_the_error_policy_fails_on_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let alpkg = alpackages(dir.path());
+        let f = fetch(&dir.path().join("cache"), false, Some("27.5"));
+        let skip = run(&alpkg, &f, &NoNetwork, MissingPolicy::Skip, &project()).unwrap();
+        assert_eq!(names(&skip), ["System Application"]);
+        assert_eq!(skip.loaded.skipped.len(), 2);
+        let e = run(&alpkg, &f, &NoNetwork, MissingPolicy::Error, &project()).unwrap_err();
+        assert!(
+            e.contains("System Application Test Library") && e.contains("--no-download"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn an_app_by_another_publisher_is_never_looked_for_in_the_feed() {
+        let dir = tempfile::tempdir().unwrap();
+        let alpkg = alpackages(dir.path());
+        let mut p = project();
+        p.dependencies = vec![DepDecl {
+            publisher: "Contoso".into(),
+            ..dep("c0", "Contoso Lib")
+        }];
+        // The feed is not even asked for its index: nothing in it could be Contoso's.
+        let out = run(
+            &alpkg,
+            &fetch(&dir.path().join("c"), true, None),
+            &NoNetwork,
+            MissingPolicy::Skip,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(out.loaded.skipped.len(), 1);
+        assert!(out.artifact.is_none());
+    }
+
+    #[test]
+    fn an_app_the_feed_lacks_stays_missing_and_is_reported_with_the_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let mut p = project();
+        p.dependencies.push(dep("aa", "No Such Microsoft App"));
+        let out = run(
+            &alpkg,
+            &fetch(&dir.path().join("c"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Skip,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(out.loaded.skipped.len(), 1);
+        assert!(
+            out.log
+                .iter()
+                .any(|l| l.contains("No Such Microsoft App") && l.contains("27.5.46862.56249")),
+            "{:?}",
+            out.log
+        );
+        let e = run(
+            &alpkg,
+            &fetch(&dir.path().join("c"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &p,
+        )
+        .unwrap_err();
+        assert!(e.contains("No Such Microsoft App"), "{e}");
+    }
+
+    #[test]
+    fn a_crc_mismatch_in_a_downloaded_entry_is_an_error_and_nothing_bad_is_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        std::fs::write(&cdn.platform["27.5.46862.56249"], artifact_bytes(true, false)).unwrap();
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        let e = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap_err();
+        assert!(e.contains("Permissions Mock") && e.contains("CRC-32"), "{e}");
+        assert!(
+            e.contains("https://cdn.test/27.5.46862.56249/platform"),
+            "names the URL: {e}"
+        );
+        assert!(
+            !cache
+                .join("artifacts/27.5.46862.56249/apps/Permissions Mock.Source.zip")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn an_entry_whose_app_id_is_not_the_one_asked_for_is_not_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        std::fs::write(&cdn.platform["27.5.46862.56249"], artifact_bytes(false, true)).unwrap();
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        let out = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Skip,
+            &project(),
+        )
+        .unwrap();
+        // Any is not the app that satisfies the dependency of the test library, so it stays missing.
+        assert!(
+            out.loaded.skipped.iter().any(|e| e.to_string().contains("`Any`")),
+            "{:?}",
+            out.loaded.skipped
+        );
+        assert!(!cache.join("artifacts/27.5.46862.56249/apps/Any.Source.zip").exists());
+    }
+
+    #[test]
+    fn a_damaged_cache_entry_is_dropped_and_fetched_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        let victim = cache.join("artifacts/27.5.46862.56249/apps/Any.Source.zip");
+        std::fs::write(&victim, b"garbage").unwrap();
+        let p = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert!(
+            p.log
+                .iter()
+                .any(|l| l.contains("Any.Source.zip") && l.contains("removed")),
+            "{:?}",
+            p.log
+        );
+        assert_eq!(
+            p.artifact.unwrap().fetched,
+            ["Applications/TestFramework/TestLibraries/Any/Any.Source.zip"]
+        );
+        assert_ne!(std::fs::read(&victim).unwrap(), b"garbage");
+    }
+
+    #[test]
+    fn the_central_directory_is_fetched_once_per_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert_eq!((cdn.index_calls.get(), cdn.platform_calls.get()), (1, 1));
+        // A different project on the same build needs another app: the saved directory is reused
+        // and the index is not asked for again.
+        std::fs::remove_file(cache.join("artifacts/27.5.46862.56249/apps/Any.Source.zip")).unwrap();
+        std::fs::remove_file(cache.join("artifacts/27.5.46862.56249/apps/Any.Source.zip.json")).unwrap();
+        run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert_eq!(cdn.index_calls.get(), 1);
+    }
+
+    #[test]
+    fn newest_published_ignores_the_cache_and_asks_only_for_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.55978", "27.5.46862.56249", "28.1.1.1"]);
+        let s = newest_published(&cdn, &BuildQuery::new(Some("27.5"), 27, None)).unwrap();
+        assert_eq!(s.build.to_string(), "27.5.46862.56249");
+        assert_eq!(cdn.platform_calls.get(), 0);
+    }
+
+    #[test]
+    fn entries_are_found_by_app_name_in_any_folder() {
+        use crate::zip::{find_end_record, parse_central_directory};
+        let bytes = artifact_bytes(false, false);
+        let end = find_end_record(&bytes).unwrap();
+        let entries = parse_central_directory(&bytes[end.cd_offset..end.at], end.count).unwrap();
+        let names = |d: &DepDecl| {
+            find_entries(&entries, d)
+                .iter()
+                .map(|e| e.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(&dep(MOCK, "Permissions Mock")),
+            ["Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip"]
+        );
+        assert_eq!(names(&dep(ANY, "any")).len(), 1, "names compare without case");
+        assert!(names(&dep(ANY, "Any Other")).is_empty());
+        let other = DepDecl {
+            publisher: "Contoso".into(),
+            ..dep(ANY, "Any")
+        };
+        assert!(names(&other).is_empty());
+    }
+
+    /// A loopback HTTP server over the fixture artifact, with `Range` support. It stands in for
+    /// Microsoft's CDN so that the HTTP code is tested without a network.
+    mod loopback {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::{TcpListener, TcpStream};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+        pub struct Server {
+            pub base: String,
+            pub served: Arc<AtomicU64>,
+            pub requests: Arc<AtomicU64>,
+            stop: Arc<AtomicBool>,
+            addr: std::net::SocketAddr,
+        }
+
+        impl Drop for Server {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::SeqCst);
+                let _ = TcpStream::connect(self.addr);
+            }
+        }
+
+        #[derive(Clone, Copy, PartialEq)]
+        pub enum Mode {
+            Normal,
+            /// Answers every request with 200 and the whole file, as a server without ranges would.
+            IgnoreRange,
+            /// The index lists the build but its artifact has been pruned.
+            Gone,
+        }
+
+        pub fn serve(build: &str, artifact: Vec<u8>, mode: Mode) -> Server {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let served = Arc::new(AtomicU64::new(0));
+            let requests = Arc::new(AtomicU64::new(0));
+            let (stop2, served2, requests2) = (stop.clone(), served.clone(), requests.clone());
+            let platform_path = format!("/{build}/platform");
+            let index = format!(r#"[{{"Version":"{build}","CreationTime":"2026-10-01T00:00:00Z"}}]"#).into_bytes();
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    if stop2.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let Ok(mut stream) = stream else { continue };
+                    requests2.fetch_add(1, Ordering::SeqCst);
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let mut range = None;
+                    loop {
+                        let mut h = String::new();
+                        reader.read_line(&mut h).unwrap();
+                        if h.trim().is_empty() {
+                            break;
+                        }
+                        if let Some(v) = h.to_ascii_lowercase().strip_prefix("range: bytes=") {
+                            range = Some(v.trim().to_string());
+                        }
+                    }
+                    let (status, extra, body): (&str, String, Vec<u8>) = if path == "/indexes/w1.json" {
+                        ("200 OK", String::new(), index.clone())
+                    } else if path == platform_path && mode != Mode::Gone {
+                        let n = artifact.len();
+                        match (range, mode) {
+                            (Some(r), Mode::Normal) => {
+                                let (a, b) = r.split_once('-').unwrap();
+                                let (start, end) = if a.is_empty() {
+                                    (n - b.parse::<usize>().unwrap().min(n), n - 1)
+                                } else {
+                                    (a.parse().unwrap(), b.parse::<usize>().unwrap().min(n - 1))
+                                };
+                                (
+                                    "206 Partial Content",
+                                    format!("Content-Range: bytes {start}-{end}/{n}\r\n"),
+                                    artifact[start..=end].to_vec(),
+                                )
+                            }
+                            _ => ("200 OK", String::new(), artifact.clone()),
+                        }
+                    } else {
+                        ("404 Not Found", String::new(), b"<Error>BlobNotFound</Error>".to_vec())
+                    };
+                    served2.fetch_add(body.len() as u64, Ordering::SeqCst);
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\n{extra}Content-Length: {}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(&body);
+                    let _ = stream.flush();
+                    let mut sink = Vec::new();
+                    let _ = reader.get_mut().take(0).read_to_end(&mut sink);
+                }
+            });
+            Server {
+                base: format!("http://{addr}"),
+                served,
+                requests,
+                stop,
+                addr,
+            }
+        }
+    }
+
+    #[test]
+    fn over_http_only_ranges_are_requested_and_the_second_run_needs_no_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        let artifact = artifact_bytes(false, false);
+        let total = artifact.len() as u64;
+        let build = "27.5.46862.56249";
+        {
+            let server = loopback::serve(build, artifact, loopback::Mode::Normal);
+            let cdn = HttpCdn::new(&server.base);
+            let p = run(
+                &alpkg,
+                &fetch(&cache, true, Some("27.5")),
+                &cdn,
+                MissingPolicy::Error,
+                &project(),
+            )
+            .unwrap();
+            assert_eq!(p.artifact.unwrap().fetched.len(), 3);
+            let served = server.served.load(std::sync::atomic::Ordering::SeqCst);
+            // The index, the directory, three entries: not the whole artifact.
+            assert!(served < total, "served {served} of {total}");
+            // index + tail + (directory is inside the tail: tiny fixture) + 3 entries
+            assert_eq!(server.requests.load(std::sync::atomic::Ordering::SeqCst), 1 + 1 + 3);
+        } // the server is gone
+        let cdn = HttpCdn::new("http://127.0.0.1:9");
+        let again = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert_eq!(again.artifact.unwrap().origin, Origin::Cache);
+    }
+
+    #[test]
+    fn a_server_that_ignores_range_is_refused_not_downloaded_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let alpkg = alpackages(dir.path());
+        let mut big = artifact_bytes(false, false);
+        // Bigger than the 64 KiB end search, so a 200 answer cannot pass as a short file.
+        let pad = vec![0u8; 200_000];
+        big.splice(0..0, pad);
+        let server = loopback::serve("27.5.46862.56249", big, loopback::Mode::IgnoreRange);
+        let cdn = HttpCdn::new(&server.base);
+        let e = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap_err();
+        assert!(e.contains("range"), "{e}");
+    }
+
+    #[test]
+    fn a_build_the_feed_no_longer_has_is_a_404_naming_the_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let alpkg = alpackages(dir.path());
+        // The index lists the build but the artifact is gone: the feed prunes old builds.
+        let server = loopback::serve("27.5.46862.56249", Vec::new(), loopback::Mode::Gone);
+        let cdn = HttpCdn::new(&server.base);
+        let e = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap_err();
+        assert!(e.contains("404") && e.contains("/27.5.46862.56249/platform"), "{e}");
+    }
+}

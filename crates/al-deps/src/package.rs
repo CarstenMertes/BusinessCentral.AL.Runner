@@ -122,28 +122,55 @@ fn is_app(name: &str) -> bool {
     name.len() > 4 && name[name.len() - 4..].eq_ignore_ascii_case(".app")
 }
 
+/// A source archive (`<App>.Source.zip` in the platform artifact) has no `NavxManifest.xml`; its
+/// root `app.json` describes the whole app, and every `.al` file under any folder belongs to it.
+/// Module folders inside carry an `app.json` of their own, which does not describe a separate app.
+fn manifest_of_source_zip(app_json: &str) -> Result<Manifest, PackageError> {
+    let text = app_json.strip_prefix('\u{feff}').unwrap_or(app_json);
+    let j = crate::load::parse_app_json(text).map_err(PackageError::Manifest)?;
+    let target = serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v["target"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    Ok(Manifest {
+        id: j.id,
+        name: j.name,
+        publisher: j.publisher,
+        version: j.version,
+        platform: j.platform,
+        application: j.application,
+        target,
+        dependencies: j.dependencies,
+    })
+}
+
 /// The package whose archive holds the source: the one given, or the `.app`
-/// nested in a precompiled wrapper that holds none itself.
+/// nested in a precompiled wrapper that holds none itself. `source_zip` tells the caller whether
+/// the archive was a source archive (its names are not encoded).
 fn with_archive<T>(
     app: &[u8],
     depth: usize,
-    f: &mut dyn FnMut(&Zip<'_>, Manifest) -> Result<T, PackageError>,
+    f: &mut dyn FnMut(&Zip<'_>, Manifest, bool) -> Result<T, PackageError>,
 ) -> Result<T, PackageError> {
     let zip = Zip::parse(navx_payload(app)?)?;
-    let manifest = zip.find("NavxManifest.xml").ok_or(PackageError::NoManifest)?;
-    let manifest = parse_manifest(&String::from_utf8_lossy(&zip.read(manifest)?))?;
-    if depth < MAX_NESTING && !zip.entries.iter().any(|e| is_al(&e.name)) {
-        if let Some(inner) = zip.entries.iter().find(|e| is_app(&e.name)) {
-            let bytes = zip.read(inner)?;
-            return with_archive(&bytes, depth + 1, f);
+    if let Some(m) = zip.find("NavxManifest.xml") {
+        let manifest = parse_manifest(&String::from_utf8_lossy(&zip.read(m)?))?;
+        if depth < MAX_NESTING && !zip.entries.iter().any(|e| is_al(&e.name)) {
+            if let Some(inner) = zip.entries.iter().find(|e| is_app(&e.name)) {
+                let bytes = zip.read(inner)?;
+                return with_archive(&bytes, depth + 1, f);
+            }
         }
+        return f(&zip, manifest, false);
     }
-    f(&zip, manifest)
+    let root = zip.find("app.json").ok_or(PackageError::NoManifest)?;
+    let manifest = manifest_of_source_zip(&String::from_utf8_lossy(&zip.read(root)?))?;
+    f(&zip, manifest, true)
 }
 
 /// Reads only the manifest and whether the package has AL source.
 pub fn read_info(app: &[u8]) -> Result<(Manifest, bool), PackageError> {
-    with_archive(app, 0, &mut |zip, m| {
+    with_archive(app, 0, &mut |zip, m, _| {
         Ok((m, zip.entries.iter().any(|e| is_al(&e.name))))
     })
 }
@@ -151,7 +178,7 @@ pub fn read_info(app: &[u8]) -> Result<(Manifest, bool), PackageError> {
 /// Reads the manifest and every `.al` entry, each checked against its CRC-32.
 pub fn read_package(app: &[u8]) -> Result<(Manifest, Sources), PackageError> {
     use rayon::prelude::*;
-    with_archive(app, 0, &mut |zip, m| {
+    with_archive(app, 0, &mut |zip, m, source_zip| {
         let al: Vec<&crate::zip::Entry> = zip.entries.iter().filter(|e| is_al(&e.name)).collect();
         let read: Vec<Result<(String, String), PackageError>> = al
             .par_iter()
@@ -159,7 +186,12 @@ pub fn read_package(app: &[u8]) -> Result<(Manifest, Sources), PackageError> {
                 let bytes = zip.read(e)?;
                 let text = String::from_utf8_lossy(&bytes);
                 let text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_string();
-                Ok((percent_decode_once(&e.name), text))
+                let name = if source_zip {
+                    e.name.clone()
+                } else {
+                    percent_decode_once(&e.name)
+                };
+                Ok((name, text))
             })
             .collect();
         let mut sources = read.into_iter().collect::<Result<Sources, _>>()?;
@@ -307,5 +339,95 @@ mod tests {
     fn a_package_without_a_manifest_is_an_error() {
         let zip = Builder::new().add("src/A.al", b"codeunit 1 A { }", false).finish();
         assert_eq!(read_package(&navx(&zip)).unwrap_err(), PackageError::NoManifest);
+    }
+
+    const APP_JSON: &str = r#"{
+  "id": "9856AE4F-D1A7-46EF-89BB-6EF056398228",
+  "name": "System Application Test Library",
+  "publisher": "Microsoft",
+  "version": "27.5.46862.56249",
+  "platform": "27.0.0.0",
+  "application": "27.5.0.0",
+  "target": "OnPrem",
+  "dependencies": [
+    { "id": "63ca2fa4-4f03-4f2b-a480-172fef340d3f", "name": "System Application", "publisher": "Microsoft", "version": "27.5.0.0" },
+    { "id": "e7320ebb-08b3-4406-b1ec-b4927d3e280b", "name": "Any", "publisher": "Microsoft", "version": "27.5.0.0" }
+  ]
+}"#;
+
+    /// A repository-layout archive as the platform artifact ships it: an `app.json` at the root, and
+    /// module folders that carry an `app.json` of their own.
+    fn source_zip(files: &[(&str, &str)]) -> Vec<u8> {
+        let mut b = Builder::new().add("app.json", format!("\u{feff}{APP_JSON}").as_bytes(), true);
+        for (n, t) in files {
+            b = b.add(n, t.as_bytes(), true);
+        }
+        b.finish()
+    }
+
+    #[test]
+    fn a_source_zip_is_one_app_described_by_its_root_app_json() {
+        let z = source_zip(&[
+            (
+                "Azure AD Plan/app.json",
+                r#"{"id":"e63749f1","name":"Azure AD Plan Test Library"}"#,
+            ),
+            (
+                "Azure AD Plan/Plan.Codeunit.al",
+                "codeunit 132916 \"Azure AD Plan Test Library\" { }",
+            ),
+            ("src/B.Codeunit.al", "codeunit 2 B { }"),
+            ("Translations/x.g.lcg", "<x/>"),
+            ("Directory.App.Props.json", "{}"),
+        ]);
+        let (m, src) = read_package(&z).unwrap();
+        assert_eq!(m.id, "9856ae4f-d1a7-46ef-89bb-6ef056398228");
+        assert_eq!(m.name, "System Application Test Library");
+        assert_eq!(m.publisher, "Microsoft");
+        assert_eq!(m.version, "27.5.46862.56249".parse().unwrap());
+        assert_eq!(m.platform, Some("27.0".parse().unwrap()));
+        assert_eq!(m.target, "OnPrem");
+        assert_eq!(
+            m.dependencies.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            ["System Application", "Any"]
+        );
+        // Every .al file of every module folder belongs to the one app; the nested app.json do not.
+        assert_eq!(
+            src.iter().map(|(p, _)| p.as_str()).collect::<Vec<_>>(),
+            ["Azure AD Plan/Plan.Codeunit.al", "src/B.Codeunit.al"]
+        );
+        let (info, has) = read_info(&z).unwrap();
+        assert_eq!(info, m);
+        assert!(has);
+    }
+
+    #[test]
+    fn source_zip_names_are_not_percent_decoded() {
+        // A packed .app encodes names twice; a source archive holds them as they are.
+        let z = source_zip(&[("100%25 Mock/M.al", "codeunit 1 M { }")]);
+        let (_, src) = read_package(&z).unwrap();
+        assert_eq!(src[0].0, "100%25 Mock/M.al");
+    }
+
+    #[test]
+    fn a_zip_with_neither_manifest_is_an_error_and_a_nested_app_json_is_not_the_root() {
+        let only_nested = Builder::new()
+            .add("Module/app.json", APP_JSON.as_bytes(), true)
+            .finish();
+        assert_eq!(read_package(&only_nested).unwrap_err(), PackageError::NoManifest);
+        let bad = Builder::new().add("app.json", b"{ nope", true).finish();
+        assert!(matches!(read_package(&bad), Err(PackageError::Manifest(_))));
+    }
+
+    #[test]
+    fn a_source_zip_with_a_bad_crc_is_an_error_not_partial_source() {
+        let z = Builder::new()
+            .add("app.json", APP_JSON.as_bytes(), true)
+            .add_with_crc("src/A.al", b"codeunit 1 A { }", 1)
+            .finish();
+        assert!(matches!(
+            read_package(&z).unwrap_err(),
+            PackageError::Zip(ZipError::Crc { .. })
+        ));
     }
 }

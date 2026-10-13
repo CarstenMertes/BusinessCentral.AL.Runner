@@ -75,6 +75,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
     let mut page_reasons: Vec<Vec<String>> = vec![Vec::new(); ws.objects.len()];
     // The page objects each page shows as parts.
     let mut page_parts: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
+    // The pages and codeunits each page's RunObject actions run.
+    let mut page_runs: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
     for (oi, o) in ws.objects.iter().enumerate() {
         if o.kind != ObjKind::Page {
             continue;
@@ -119,12 +121,29 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 None => page_reasons[oi].push(format!("part {} names no page", c.name)),
             }
         }
-        if l.controls.iter().any(|c| {
-            c.section
+        // The pages and codeunits the actions run: their routines are reached through the host
+        // (a RunObject target runs when the action is invoked, which the call graph cannot see).
+        for c in &l.controls {
+            let Some(text) = c
+                .section
                 .properties()
-                .any(|p| p.name().eq_ignore_ascii_case("RunObject"))
-        }) {
-            page_reasons[oi].push("RunObject actions are not supported by the test client yet".into());
+                .find(|p| p.name().eq_ignore_ascii_case("RunObject"))
+                .map(|p| p.value_text())
+            else {
+                continue;
+            };
+            if let Ok((kind, parts)) = crate::pages::parse_run_object(&text) {
+                let found = match kind {
+                    ir::RunKind::Page => Some(ObjKind::Page),
+                    ir::RunKind::Codeunit => Some(ObjKind::Codeunit),
+                    _ => None,
+                };
+                if let Some(Resolution::Found(t)) = found.map(|k| ws.resolve_ref(o.file, k, &parts)) {
+                    if !page_runs[oi].contains(&t) {
+                        page_runs[oi].push(t);
+                    }
+                }
+            }
         }
         layouts[oi] = Some(l);
         let prop = |n: &str| {
@@ -171,6 +190,21 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
     for (oi, o) in ws.objects.iter().enumerate() {
         match o.kind {
             ObjKind::Table => table_of[oi] = Some(oi),
+            // `Rec` of a codeunit with TableNo (a RunObject action hands it the host's record).
+            ObjKind::Codeunit => {
+                let table_no = ws
+                    .object_ast(oi)
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("TableNo"))
+                    .map(|p| p.value_text());
+                if let Some(t) = table_no {
+                    if let Resolution::Found(t) =
+                        ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()])
+                    {
+                        table_of[oi] = Some(t);
+                    }
+                }
+            }
             ObjKind::TableExtension => {
                 if let Some(base) = ws.object_ast(oi).extends_parts() {
                     if let Resolution::Found(t) = ws.resolve_ref(o.file, ObjKind::Table, &base) {
@@ -501,7 +535,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                         let q = seen[at];
                         at += 1;
                         lw.calls.extend((0..routine_nodes[q].len()).map(|ri| (q, ri)));
-                        for &part in &page_parts[q] {
+                        for &part in page_parts[q].iter().chain(&page_runs[q]) {
                             if !seen.contains(&part) {
                                 seen.push(part);
                             }
@@ -1157,6 +1191,37 @@ impl Lowerer<'_> {
                 },
                 _ => None,
             };
+            let action_ref = if sec.name().eq_ignore_ascii_case("actionref") {
+                Some(match sec.args().get(1) {
+                    None => ir::ActionRef::Unresolved("an actionref names no action".into()),
+                    Some(t) => match layout.controls.iter().position(|c| {
+                        c.kind == ir::ControlKind::Action
+                            && !c.section.name().eq_ignore_ascii_case("actionref")
+                            && c.name.eq_ignore_ascii_case(t.trim().trim_matches('"'))
+                    }) {
+                        Some(i) => ir::ActionRef::Target(i),
+                        None => {
+                            ir::ActionRef::Unresolved(format!("actionref to `{t}`, which is not an action of the page"))
+                        }
+                    },
+                })
+            } else {
+                None
+            };
+            let run_object = match self.run_object(oi, sec) {
+                Some(r) => {
+                    // Which of the two an action runs first is not pinned: no corpus action
+                    // declares both.
+                    if sec.triggers().any(|t| t.name().eq_ignore_ascii_case("OnAction")) {
+                        unsupported.push(format!(
+                            "action {} declares both RunObject and OnAction (their order is not pinned)",
+                            raw.name
+                        ));
+                    }
+                    Some(r)
+                }
+                None => None,
+            };
             controls.push(ir::Control {
                 name: raw.name.clone(),
                 kind: raw.kind.clone(),
@@ -1166,6 +1231,8 @@ impl Lowerer<'_> {
                 triggers,
                 part_page,
                 part_link,
+                run_object,
+                action_ref,
             });
         }
         let triggers = obj
@@ -1180,6 +1247,127 @@ impl Lowerer<'_> {
         }
     }
 
+    /// The `RunObject` of action `sec` of page `oi` with its `RunPageLink`, `RunPageView`,
+    /// `RunPageMode` and `RunPageOnRec`; `None` for an action without one. What the test client
+    /// cannot follow yet becomes `unsupported` (the action is refused when it is invoked).
+    fn run_object(&self, oi: usize, sec: &ast::Section) -> Option<ir::RunObject> {
+        let prop = |n: &str| {
+            sec.properties()
+                .find(|p| p.name().eq_ignore_ascii_case(n))
+                .map(|p| p.value_text())
+        };
+        let text = prop("RunObject")?;
+        let mut out = ir::RunObject {
+            kind: ir::RunKind::Page,
+            object: None,
+            on_rec: false,
+            mode: ir::RunMode::Default,
+            link: None,
+            unsupported: None,
+        };
+        let (kind, parts) = match crate::pages::parse_run_object(&text) {
+            Ok(k) => k,
+            Err(why) => {
+                out.unsupported = Some(why);
+                return Some(out);
+            }
+        };
+        out.kind = kind;
+        match prop("RunPageOnRec").map(|v| v.trim().to_ascii_lowercase()) {
+            None => {}
+            Some(v) if v == "true" => out.on_rec = true,
+            Some(v) if v == "false" => {}
+            Some(v) => out.unsupported = Some(format!("RunPageOnRec = {v}")),
+        }
+        match prop("RunPageMode").map(|v| v.trim().to_ascii_lowercase()) {
+            None => {}
+            Some(v) if v == "view" => out.mode = ir::RunMode::View,
+            Some(v) if v == "edit" => out.mode = ir::RunMode::Edit,
+            Some(v) if v == "create" => out.mode = ir::RunMode::Create,
+            Some(v) => out.unsupported = Some(format!("RunPageMode = {v}")),
+        }
+        // The test surface refuses a report, xmlport or query before it looks at the target
+        // (corpus handlers/TestPageActionRunObjectKinds_Tests.al:RunObjectNamingAReportIsRefused...,
+        // ...KindsPrecompiled_Tests.al: the same for objects outside the workspace), so none of
+        // them needs resolving.
+        let target = match kind {
+            ir::RunKind::Page => ObjKind::Page,
+            ir::RunKind::Codeunit => ObjKind::Codeunit,
+            ir::RunKind::Report | ir::RunKind::XmlPort | ir::RunKind::Query => return Some(out),
+        };
+        match self.ws.resolve_ref(self.file, target, &parts) {
+            Resolution::Found(t) => out.object = Some(t),
+            _ => {
+                out.unsupported = Some(format!("RunObject `{}` is outside the workspace", text.trim()));
+                return Some(out);
+            }
+        }
+        let link = prop("RunPageLink");
+        let view = prop("RunPageView");
+        if kind == ir::RunKind::Codeunit {
+            if link.is_some() || view.is_some() {
+                out.unsupported = Some("RunPageLink or RunPageView on a codeunit target".into());
+            }
+            return Some(out);
+        }
+        if link.is_some() || view.is_some() {
+            let mut pl = ir::PartLink {
+                view: view.map(|v| v.trim().to_string()),
+                ..Default::default()
+            };
+            if let Some(link) = link {
+                let entries = (|| {
+                    let target_table = self.table_of[out.object.expect("resolved")]
+                        .ok_or("RunPageLink on a target page without a source table")?;
+                    self.link_entries("RunPageLink", &link, self.table_of[oi], target_table)
+                })();
+                match entries {
+                    Ok(e) => pl.entries = e,
+                    Err(why) => out.unsupported = Some(why),
+                }
+            }
+            out.link = Some(pl);
+        }
+        Some(out)
+    }
+
+    /// The entries of a `SubPageLink` or `RunPageLink` text: `what` names the property in errors,
+    /// `host_table` is the table `field(...)` entries read, `target_table` the linked page's.
+    fn link_entries(
+        &self,
+        what: &str,
+        text: &str,
+        host_table: Option<usize>,
+        target_table: usize,
+    ) -> L<Vec<ir::LinkEntry>> {
+        use crate::pages::LinkRhs;
+        let field_pos = |t: usize, name: &str| {
+            self.members[t]
+                .fields
+                .iter()
+                .position(|x| x.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("{what} names field `{name}`, which table does not have"))
+        };
+        let mut entries = Vec::new();
+        for (left, rhs) in crate::pages::parse_run_page_link(text).map_err(|e| e.replace("RunPageLink", what))? {
+            let pf = field_pos(target_table, &left)?;
+            entries.push(match rhs {
+                LinkRhs::Field(f) => {
+                    let ht = host_table
+                        .ok_or_else(|| format!("{what} reads a host field, but the host has no source table"))?;
+                    ir::LinkEntry::Field(pf, field_pos(ht, &f)?)
+                }
+                LinkRhs::Filter(t) => ir::LinkEntry::Filter(pf, t),
+                LinkRhs::TableId(name) => {
+                    let t = self.resolve_obj(ObjKind::Table, &name)?;
+                    let id = self.ws.objects[t].id.ok_or("table without an id")?;
+                    ir::LinkEntry::Filter(pf, id.to_string())
+                }
+            });
+        }
+        Ok(entries)
+    }
+
     /// `SubPageLink`, `SubPageView` and `Provider` of the part control `sec` of page `oi`, which
     /// shows page `part_page`. `Err` is why the link cannot be followed yet.
     fn part_link(
@@ -1189,7 +1377,6 @@ impl Lowerer<'_> {
         sec: &ast::Section,
         part_page: usize,
     ) -> L<ir::PartLink> {
-        use crate::pages::LinkRhs;
         let prop = |n: &str| {
             sec.properties()
                 .find(|p| p.name().eq_ignore_ascii_case(n))
@@ -1224,28 +1411,7 @@ impl Lowerer<'_> {
             None => self.table_of[oi],
         };
         let part_table = self.table_of[part_page].ok_or("the part page has no source table to link")?;
-        let field_pos = |t: usize, name: &str| {
-            self.members[t]
-                .fields
-                .iter()
-                .position(|x| x.name.eq_ignore_ascii_case(name))
-                .ok_or_else(|| format!("SubPageLink names field `{name}`, which table does not have"))
-        };
-        for (left, rhs) in crate::pages::parse_sub_page_link(&text)? {
-            let pf = field_pos(part_table, &left)?;
-            link.entries.push(match rhs {
-                LinkRhs::Field(f) => {
-                    let ht = host_table.ok_or("SubPageLink reads a host field, but the host has no source table")?;
-                    ir::LinkEntry::Field(pf, field_pos(ht, &f)?)
-                }
-                LinkRhs::Filter(t) => ir::LinkEntry::Filter(pf, t),
-                LinkRhs::TableId(name) => {
-                    let t = self.resolve_obj(ObjKind::Table, &name)?;
-                    let id = self.ws.objects[t].id.ok_or("table without an id")?;
-                    ir::LinkEntry::Filter(pf, id.to_string())
-                }
-            });
-        }
+        link.entries = self.link_entries("SubPageLink", &text, host_table, part_table)?;
         Ok(link)
     }
 

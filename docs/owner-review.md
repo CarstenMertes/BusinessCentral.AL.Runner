@@ -35,6 +35,13 @@ reviewed it.
 
   Nothing is built on ADR-016 until it is accepted.
 
+- Corpus workflow fix to push in the morning (branch `al-runtime-rs`, repo
+  BusinessCentral.AL.Language.Tests; never master). The workflow's dispatch path builds the
+  preprocessor symbols with `for v in 27 28` and never adds `BC29PLUS`. Four existing
+  `BC29PLUS`-guarded tests failed on the 29.0 dispatch run on cdf315a (run 38478399478), so that run
+  cannot be the BC 29 oracle. After the fix: run 29.0 on the pin, re-record `oracle/29/junit.xml`, drop
+  `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
+
 ## Decided by the owner (recorded)
 
 - 2026-10-13, ADR-016: server mode, watch mode and `--affected` are deferred
@@ -151,3 +158,10 @@ reviewed it.
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
 
+
+
+- 2026-10-14, ADR-007: an oracle may be recorded for an older corpus commit when the corpus diff since then
+  only adds files under `tests/` (checked by the CLI). BC 29 stays on `cf6e546` for that reason; 27 and 28 are
+  on `cdf315a`.
+- 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
+  passing does. The 70 failing and 121 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.

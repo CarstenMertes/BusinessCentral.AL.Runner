@@ -575,6 +575,12 @@ impl Session {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
                         Value::Record(rc) => self.record_instance(*object, rc, None)?,
+                        // The page a part shows (`CurrPage.<Part>.Page`).
+                        // A `Page` variable's procedures (OnInit at first use) are not modelled.
+                        Value::TestPage(st) if st.borrow().host.is_some() => {
+                            let i = self.page_instance(&st)?;
+                            self.shared_instance(i)
+                        }
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };

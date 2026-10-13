@@ -255,12 +255,12 @@ fn start_session_from_a_test_is_refused_under_codeunit_isolation() {
         "{HELPERS}
         [Test]
         procedure Plain() var Id: Integer; begin
-            asserterror StartSession(Id, Codeunit::\\"F2 Noop\\");
+            asserterror StartSession(Id, Codeunit::\"F2 Noop\");
             if StrPos(GetLastErrorText(), 'can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled') = 0 then Error('text <%1>', GetLastErrorText());
             Check('0', Format(Id)); end;
         [Test]
-        procedure WithRecord() var Id: Integer; R: Record \\"F2 Row\\"; begin
-            asserterror StartSession(Id, Codeunit::\\"F2 Noop\\", '', R);
+        procedure WithRecord() var Id: Integer; R: Record \"F2 Row\"; begin
+            asserterror StartSession(Id, Codeunit::\"F2 Noop\", '', R);
             if StrPos(GetLastErrorText(), 'can only be started in tests') = 0 then Error('text <%1>', GetLastErrorText());
             Check('0', Format(Id)); end;"
     ));

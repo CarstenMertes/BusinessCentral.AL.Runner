@@ -10,6 +10,22 @@ pub trait FormatCtx {
     fn enum_name(&self, id: u32, ordinal: i32) -> String;
 }
 
+/// Whether `format` has a pinned format for `v`; callers refuse the rest.
+pub fn is_formattable(v: &Value) -> bool {
+    match v {
+        // The undefined (zero) values format as the empty string.
+        Value::Time(t) | Value::DateTime(t) => *t == 0,
+        Value::Duration(_)
+        | Value::List(_)
+        | Value::Dictionary(_)
+        | Value::Array(_)
+        | Value::Codeunit(_)
+        | Value::Library(..)
+        | Value::Record(_) => false,
+        _ => true,
+    }
+}
+
 /// `Format(v, length, standard_format)`.
 pub fn format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> String {
     let s = match v {

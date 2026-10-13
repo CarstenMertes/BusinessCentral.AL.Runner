@@ -21,6 +21,9 @@ pub struct Object {
     pub properties: Vec<(String, String)>,
     /// For enums: (declared value, name), extensions included.
     pub enum_values: Vec<(i32, String)>,
+    /// For enums: the `Caption` of values that declare one, by ordinal.
+    #[serde(default)]
+    pub enum_captions: Vec<(i32, String)>,
     /// For tables: fields (extensions and system fields included), keys as
     /// field positions (`keys[0]` primary), `DataPerCompany`.
     pub table: Option<Table>,
@@ -51,6 +54,10 @@ pub struct Field {
     pub init_text: Option<String>,
     /// Lower-case name of the table a `TableRelation` points to.
     pub relation_table: Option<String>,
+    /// Lower-case names of every table the relation can point to (a conditional
+    /// relation names one per arm).
+    #[serde(default)]
+    pub relation_tables: Vec<String>,
     pub auto_increment: bool,
     /// The field declares a `TableRelation`.
     pub relation: bool,
@@ -238,6 +245,7 @@ mod tests {
                 }],
                 properties: vec![("Subtype".into(), "Test".into())],
                 enum_values: vec![],
+                enum_captions: vec![],
                 table: None,
                 rec_slot: None,
                 xrec_slot: None,

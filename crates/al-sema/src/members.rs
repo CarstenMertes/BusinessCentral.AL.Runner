@@ -25,6 +25,8 @@ pub struct FieldInfo {
     pub table_relation: bool,
     /// Lower-case name of the table the `TableRelation` points to.
     pub relation_table: Option<String>,
+    /// Every table the relation can point to (conditional relations name several).
+    pub relation_tables: Vec<String>,
     /// Offset of the field's OnValidate trigger node (in `declared_in`'s file).
     pub on_validate: Option<usize>,
 }
@@ -53,6 +55,8 @@ pub struct ProcSig {
 pub struct Members {
     pub fields: Vec<FieldInfo>,
     pub enum_values: Vec<(u32, String)>,
+    /// `Caption` of enum values that declare one, by ordinal.
+    pub enum_captions: Vec<(u32, String)>,
     pub procedures: Vec<ProcSig>,
 }
 
@@ -82,6 +86,7 @@ pub fn build(ws: &Workspace) -> Vec<Members> {
             let target = &mut out[t];
             target.fields.extend(ext.fields);
             target.enum_values.extend(ext.enum_values);
+            target.enum_captions.extend(ext.enum_captions);
             target.procedures.extend(ext.procedures);
         }
     }
@@ -98,6 +103,49 @@ const SYSTEM_FIELDS: &[(u32, &str, Ty)] = &[
     (2000000005, "SystemRowVersion", Ty::BigInteger),
 ];
 
+/// The text of the first `'…'` literal in a property value (`'It''s', Locked = true` → `It's`).
+fn first_string_literal(value: &str) -> Option<String> {
+    let rest = value.trim().strip_prefix('\'')?;
+    let mut out = String::new();
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            if chars.peek() == Some(&'\'') {
+                chars.next();
+                out.push('\'');
+            } else {
+                return Some(out);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    None
+}
+
+/// `OptionMembers = " ",Draft,"In Work"` → `[" ", "Draft", "In Work"]`; an empty
+/// entry (`,Alpha`) is the blank member.
+fn option_members_property(value: &str) -> Vec<String> {
+    // (text, whether any part was quoted): a quoted member keeps its spaces.
+    let mut members: Vec<(String, bool)> = vec![(String::new(), false)];
+    let mut quoted = false;
+    for c in value.chars() {
+        let cur = members.last_mut().expect("non-empty");
+        match c {
+            '"' => {
+                quoted = !quoted;
+                cur.1 = true;
+            }
+            ',' if !quoted => members.push((String::new(), false)),
+            c => cur.0.push(c),
+        }
+    }
+    members
+        .into_iter()
+        .map(|(m, was_quoted)| if was_quoted { m } else { m.trim().to_string() })
+        .collect()
+}
+
 fn own_members(ws: &Workspace, i: usize) -> Members {
     let obj = ws.object_ast(i);
     let mut m = Members::default();
@@ -109,7 +157,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 let (Some(id), Some(fname)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) else {
                     continue;
                 };
-                let ty = args
+                let mut ty = args
                     .get(2)
                     .and_then(|t| al_syntax::parse_type(t))
                     .map(|t| Ty::from_type_ref(&t))
@@ -128,6 +176,10 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                         .find(|p| p.name().eq_ignore_ascii_case(n))
                         .map(|p| p.value_text())
                 };
+                // An Option field names its members in the OptionMembers property.
+                if let (Ty::Option(_), Some(members)) = (&ty, prop("OptionMembers")) {
+                    ty = Ty::Option(option_members_property(&members));
+                }
                 let init_value = prop("InitValue");
                 let auto_increment = prop("AutoIncrement").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
                 let on_validate = f
@@ -144,6 +196,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     auto_increment,
                     table_relation: prop("TableRelation").is_some(),
                     relation_table: prop("TableRelation").map(|v| relation_target(&v)),
+                    relation_tables: prop("TableRelation").map(|v| relation_targets(&v)).unwrap_or_default(),
                     on_validate,
                 });
             }
@@ -151,6 +204,13 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
             let args = sec.args();
             if let (Some(id), Some(v)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) {
                 m.enum_values.push((id, v.clone()));
+                let caption = sec
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("Caption"))
+                    .and_then(|p| first_string_literal(&p.value_text()));
+                if let Some(c) = caption {
+                    m.enum_captions.push((id, c));
+                }
             }
         }
     }
@@ -166,6 +226,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 auto_increment: false,
                 table_relation: false,
                 relation_table: None,
+                relation_tables: Vec::new(),
                 on_validate: None,
             });
         }
@@ -190,6 +251,85 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
     m
 }
 
+/// Every table a `TableRelation` value names: each arm of `if (…) T1.F else if (…) T2.F else T3.F`.
+fn relation_targets(v: &str) -> Vec<String> {
+    // Split at top-level `else` keywords, outside quotes and parentheses.
+    let chars: Vec<char> = v.chars().collect();
+    let (mut segments, mut cur) = (Vec::new(), String::new());
+    let (mut depth, mut quote) = (0usize, None::<char>);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match quote {
+            Some(q) => {
+                cur.push(c);
+                if c == q {
+                    quote = None;
+                }
+            }
+            None => match c {
+                '"' | '\'' => {
+                    quote = Some(c);
+                    cur.push(c);
+                }
+                '(' => {
+                    depth += 1;
+                    cur.push(c);
+                }
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    cur.push(c);
+                }
+                _ if depth == 0
+                    && chars[i..]
+                        .iter()
+                        .take(4)
+                        .collect::<String>()
+                        .eq_ignore_ascii_case("else")
+                    && (i == 0 || !chars[i - 1].is_alphanumeric())
+                    && chars.get(i + 4).is_none_or(|n| !n.is_alphanumeric()) =>
+                {
+                    segments.push(std::mem::take(&mut cur));
+                    i += 3;
+                }
+                _ => cur.push(c),
+            },
+        }
+        i += 1;
+    }
+    segments.push(cur);
+    segments
+        .iter()
+        .map(|seg| {
+            // Drop a leading `if (…)` condition.
+            let seg = seg.trim();
+            let seg = match seg.get(..2).filter(|p| p.eq_ignore_ascii_case("if")) {
+                Some(_) => {
+                    let mut depth = 0usize;
+                    let mut end = None;
+                    for (n, c) in seg.char_indices() {
+                        match c {
+                            '(' => depth += 1,
+                            ')' => {
+                                depth = depth.saturating_sub(1);
+                                if depth == 0 {
+                                    end = Some(n + 1);
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    seg[end.unwrap_or(seg.len())..].trim()
+                }
+                None => seg,
+            };
+            relation_target(seg)
+        })
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
 /// The table a `TableRelation` value names first: `"Cust".No.` → `cust`.
 fn relation_target(v: &str) -> String {
     let v = v.trim();
@@ -204,6 +344,23 @@ fn relation_target(v: &str) -> String {
 mod tests {
     use super::*;
     use crate::workspace::AppSource;
+
+    #[test]
+    fn relation_targets_cover_every_arm_of_a_conditional_relation() {
+        // record/TestRenamePropagationConditional.al: the else table's rename also reaches the row.
+        assert_eq!(relation_targets("\"ALT Parent\".Code"), vec!["alt parent"]);
+        assert_eq!(relation_targets("Customer"), vec!["customer"]);
+        assert_eq!(
+            relation_targets(
+                "if (Kind = const(A)) \"ALT Parent\".Code else if (Kind = const(B)) \"Parent B\".Code where (Active = const(true)) else Third"
+            ),
+            vec!["alt parent", "parent b", "third"]
+        );
+        assert_eq!(
+            relation_targets("if (Kind = const(\" else \")) Only.Code"),
+            vec!["only"]
+        );
+    }
 
     fn ws(files: &[(&str, &str)]) -> Workspace {
         Workspace::load(

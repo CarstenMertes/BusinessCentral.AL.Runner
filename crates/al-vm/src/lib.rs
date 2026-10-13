@@ -10,6 +10,8 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod dispatch;
+pub mod events;
 mod records;
 
 pub struct Engine {
@@ -18,8 +20,8 @@ pub struct Engine {
     pub blocked: Vec<Vec<Option<String>>>,
     /// Store schema per table object.
     pub tables: Vec<Option<al_data::TableDef>>,
-    /// Lower-case names of tables some event subscriber listens to.
-    pub tables_with_subscribers: std::collections::HashSet<String>,
+    /// Event publishers and their subscribers, resolved by name.
+    pub events: events::Registry,
 }
 
 impl Engine {
@@ -47,42 +49,12 @@ impl Engine {
                 })
             })
             .collect();
-        let mut tables_with_subscribers = std::collections::HashSet::new();
-        // A Manual subscriber only fires while an instance is bound (corpus
-        // TestTableEventManualBinding.al); BindSubscription is not implemented,
-        // so tests that bind are not run and Manual subscribers never fire.
-        let manual = |o: &&ir::Object| {
-            o.properties.iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual")
-            })
-        };
-        for a in program
-            .objects
-            .iter()
-            .filter(|o| !manual(o))
-            .flat_map(|o| &o.routines)
-            .flat_map(|r| &r.attributes)
-        {
-            if a.name.eq_ignore_ascii_case("EventSubscriber")
-                && a.text.to_ascii_lowercase().contains("objecttype::table")
-            {
-                if let Some(rest) = a.text.split("::").nth(2) {
-                    let name = rest
-                        .split(',')
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .trim_matches('"')
-                        .to_lowercase();
-                    tables_with_subscribers.insert(name);
-                }
-            }
-        }
+        let events = events::Registry::build(&program);
         Arc::new(Engine {
             program,
             blocked,
             tables,
-            tables_with_subscribers,
+            events,
         })
     }
 }
@@ -102,6 +74,17 @@ pub struct Session {
     pub(crate) cx: al_data::AccessContext,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
+    /// Manual event subscriptions made by `BindSubscription`.
+    pub(crate) bindings: Vec<dispatch::Binding>,
+    /// The parameters of the routine that just failed with an error, as it left them:
+    /// the caller writes its `var` arguments back before it handles the error.
+    pub(crate) error_finals: Option<Vec<Value>>,
+    /// Inside a test run: whether the test has called `Commit()` yet. `None` outside one.
+    pub(crate) test_commit: Option<bool>,
+    /// The database as the running test found it (an O(1) clone), to tell what the test wrote.
+    pub(crate) test_mark: Option<al_data::memory::MemStore>,
+    /// The highest rowversion handed out when the last `Commit` ran: rows at or below it are durable.
+    pub(crate) committed_row_version: i64,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -125,7 +108,18 @@ impl Session {
                 user: "USER".into(),
             },
             ret_used: true,
+            bindings: Vec::new(),
+            error_finals: None,
+            test_commit: None,
+            test_mark: None,
+            committed_row_version: 0,
         }
+    }
+
+    /// Marks the start of a `[Test]` procedure: the runner calls it before each test.
+    pub fn begin_test(&mut self) {
+        self.test_commit = Some(false);
+        self.test_mark = Some(self.store.clone());
     }
 
     /// The session's database, for runners that manage transactions around tests.
@@ -171,7 +165,19 @@ impl Session {
         }))
     }
 
-    fn ensure_initialized(&mut self, inst: &Rc<RefCell<Instance>>) {
+    /// A record passed by value is a copy (ADR-010). A temporary record's copy
+    /// gets an independent, empty table of its own (corpus
+    /// record/TestTempTableContracts.al:TempVar_PassedByValue_CallerNotAffected).
+    pub(crate) fn record_by_value(&mut self, rc: &Rc<RefCell<RecordState>>) -> Value {
+        let mut st = rc.borrow().clone();
+        if st.temporary {
+            self.next_temp += 1;
+            st.temp_id = Some(self.next_temp);
+        }
+        Value::Record(Rc::new(RefCell::new(st)))
+    }
+
+    pub(crate) fn ensure_initialized(&mut self, inst: &Rc<RefCell<Instance>>) {
         if inst.borrow().initialized {
             return;
         }
@@ -201,7 +207,11 @@ impl Session {
             )));
         }
         self.depth += 1;
-        let r = self.call_inner(object, routine, instance, args);
+        let r = if self.engine.events.publishers.contains_key(&(object, routine)) {
+            self.publish(object, routine, instance, args)
+        } else {
+            self.call_inner(object, routine, instance, args)
+        };
         self.depth -= 1;
         r
     }
@@ -222,8 +232,7 @@ impl Session {
         }
         for (i, a) in args.into_iter().enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
-                // A record passed by value is a copy (ADR-010).
-                (Value::Record(rc), false) => Value::Record(Rc::new(RefCell::new(rc.borrow().clone()))),
+                (Value::Record(rc), false) => self.record_by_value(&rc),
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }
@@ -237,7 +246,14 @@ impl Session {
             Ok(()) => None,
             Err(Signal::Exit(v)) => v,
             Err(Signal::Break) => None,
-            Err(e) => return Err(e),
+            Err(e) => {
+                // Variables set before the error stay set for the caller that catches it
+                // (error-handling/TestTryFunctionContracts.al, codeunit/TestScopeIsolationContracts.al).
+                if matches!(e, Signal::Error(_)) {
+                    self.error_finals = Some(frame.locals[..r.params].to_vec());
+                }
+                return Err(e);
+            }
         };
         let value = match (&r.ret, ret, r.ret_local) {
             (Some(t), Some(v), _) => ops::convert(v, t)?,
@@ -349,22 +365,34 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
-            S::AssertError(body) => match self.exec_block(body, f) {
-                Err(Signal::Error(e)) => {
-                    // The caught error rolls the transaction back to the last commit
-                    // (record/TestRecordRenameRollback.al).
-                    al_data::Store::rollback(&mut self.store);
-                    self.last_error = e;
-                    Ok(())
+            S::AssertError(body) => {
+                let unpinned = self.test_commit == Some(false)
+                    && self.test_mark.as_ref().is_some_and(|m| self.store.written_since(m));
+                match self.exec_block(body, f) {
+                    Err(Signal::Error(e)) if unpinned && e.code == "Dialog" => Err(Signal::Unsupported(
+                        // BC rolls such writes back when a Commit() precedes them in the test
+                        // (error-handling/TestAssertErrorRollback.al) and keeps them in the same
+                        // shape without one (codeunit/TestScopeIsolationContracts.al:Test04...,
+                        // session/TestTransactionContracts.al:Error_After_Insert_Before_Commit_RecordPersists);
+                        // what separates them is not pinned.
+                        "asserterror after uncommitted writes and no Commit() in the test: how far its rollback reaches is not pinned".into(),
+                    )),
+                    Err(Signal::Error(e)) => {
+                        // The caught error rolls the transaction back to the last commit
+                        // (record/TestRecordRenameRollback.al).
+                        al_data::Store::rollback(&mut self.store);
+                        self.last_error = e;
+                        Ok(())
+                    }
+                    // The message is not pinned by the corpus yet (docs/probes-needed.md).
+                    Ok(()) => Err(Signal::Error(AlError {
+                        message: "An error was expected inside an ASSERTERROR statement.".into(),
+                        code: "Dialog".into(),
+                        call_stack: String::new(),
+                    })),
+                    Err(other) => Err(other),
                 }
-                // The message is not pinned by the corpus yet (docs/probes-needed.md).
-                Ok(()) => Err(Signal::Error(AlError {
-                    message: "An error was expected inside an ASSERTERROR statement.".into(),
-                    code: "Dialog".into(),
-                    call_stack: String::new(),
-                })),
-                Err(other) => Err(other),
-            },
+            }
         }
     }
 
@@ -458,7 +486,7 @@ impl Session {
                     Some(e) => match self.eval(e, f)? {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
-                        Value::Record(rc) => self.record_instance(*object, rc)?,
+                        Value::Record(rc) => self.record_instance(*object, rc, None)?,
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };
@@ -470,6 +498,15 @@ impl Session {
                     });
                 }
                 let result = self.call(*object, *routine, inst, values);
+                if let Err(Signal::Error(_)) = &result {
+                    if let Some(finals) = self.error_finals.take() {
+                        for (a, v) in args.iter().zip(finals) {
+                            if let ir::Arg::Ref(p) = a {
+                                self.write(p, v, f)?;
+                            }
+                        }
+                    }
+                }
                 let (ret, finals) = match (result, try_call) {
                     (Err(Signal::Error(e)), true) => {
                         self.last_error = e;
@@ -491,6 +528,17 @@ impl Session {
                 args,
                 ret_used,
             } => {
+                // Event subscriptions are session state: the VM runs them (dispatch.rs).
+                if let "Session.BindSubscription#1" | "Session.UnbindSubscription#1" = id.as_str() {
+                    let Some(ir::Arg::Value(e)) = args.first() else {
+                        return Err(Signal::Unsupported(format!("{id} with this argument")));
+                    };
+                    let cu = self.eval(e, f)?;
+                    return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
+                }
+                if id == "Database.Commit#1" && self.test_commit.is_some() {
+                    self.test_commit = Some(true);
+                }
                 let native =
                     al_builtins::native::lookup(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
                 let mut recv = match receiver.as_deref() {
@@ -522,7 +570,7 @@ impl Session {
 
     /// The instance a call on codeunit value `i` runs on: the session's
     /// singleton for `SingleInstance = true` codeunits, `i` itself otherwise.
-    fn shared_instance(&mut self, i: Rc<RefCell<Instance>>) -> Rc<RefCell<Instance>> {
+    pub(crate) fn shared_instance(&mut self, i: Rc<RefCell<Instance>>) -> Rc<RefCell<Instance>> {
         let object = i.borrow().object as usize;
         let single = self.engine.program.objects[object]
             .properties
@@ -672,9 +720,13 @@ fn constant(c: &ir::Const) -> Value {
 }
 
 impl al_builtins::format::FormatCtx for Session {
+    /// The caption a value declares, else its name (types/TestEnumCaption.al).
     fn enum_name(&self, id: u32, value: i32) -> String {
-        self.engine.program.objects[id as usize]
-            .enum_values
+        let o = &self.engine.program.objects[id as usize];
+        if let Some((_, c)) = o.enum_captions.iter().find(|(v, _)| *v == value) {
+            return c.clone();
+        }
+        o.enum_values
             .iter()
             .find(|(v, _)| *v == value)
             .map(|(_, n)| n.clone())
@@ -700,6 +752,7 @@ impl al_builtins::native::Ctx for Session {
     }
     fn commit(&mut self) -> Result<(), Signal> {
         al_data::Store::commit(&mut self.store);
+        self.committed_row_version = self.next_row_version;
         Ok(())
     }
     fn ret_used(&self) -> bool {

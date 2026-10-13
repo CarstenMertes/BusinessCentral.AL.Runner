@@ -227,7 +227,12 @@ impl Parser<'_> {
             // Format(false) = 'No' is used as a filter value in the corpus.
             T::Boolean if ["yes", "true"].contains(&text.to_lowercase().as_str()) => Value::Boolean(true),
             T::Boolean if ["no", "false"].contains(&text.to_lowercase().as_str()) => Value::Boolean(false),
-            T::Option(m) => match m.iter().position(|x| x.eq_ignore_ascii_case(&text)) {
+            // Members match with both sides trimmed and case ignored, skipping zero-length
+            // names; only then is the text an ordinal (types/TestEnumBlankOptionFilterTests.Codeunit.al).
+            T::Option(m) => match m
+                .iter()
+                .position(|x| !x.is_empty() && x.trim().eq_ignore_ascii_case(text.trim()))
+            {
                 Some(i) => Value::Option(i as i32, m.clone().into()),
                 None => Value::Option(
                     text.parse().map_err(|_| format!("`{text}` is not an option member"))?,
@@ -367,6 +372,31 @@ mod tests {
     }
     fn texts(f: &FilterExpr, vals: &[&str]) -> Vec<bool> {
         vals.iter().map(|v| f.matches(&Value::Code(v.to_string()))).collect()
+    }
+
+    fn opt(text: &str, members: &[&str]) -> Result<FilterExpr, String> {
+        let m: Vec<String> = members.iter().map(|x| x.to_string()).collect();
+        parse_filter(text, &[], &RtType::Option(m))
+    }
+
+    // types/TestEnumBlankOptionFilterTests.Codeunit.al: option member names match with both
+    // sides trimmed and case ignored, zero-length member names are skipped, and only then
+    // is the text read as an ordinal.
+    #[test]
+    fn option_filters_match_member_names_trimmed_and_skip_zero_length_names() {
+        let m = ["", "Draft", "Active"];
+        let ord = |f: &FilterExpr, o: i32| f.matches(&Value::Option(o, Vec::<String>::new().into()));
+        let f = opt(" draft ", &m).unwrap();
+        assert!(ord(&f, 1) && !ord(&f, 2));
+        // A space-named member (`OptionMembers = " ",Draft`) is not zero length: '' trims to it.
+        let f = opt("''", &[" ", "Draft"]).unwrap();
+        assert!(ord(&f, 0) && !ord(&f, 1));
+        // A zero-length member name is skipped, so '' names no member and is no ordinal.
+        assert!(opt("''", &m).is_err());
+        // The ordinal fallback.
+        let f = opt("2", &m).unwrap();
+        assert!(ord(&f, 2) && !ord(&f, 1));
+        assert!(opt("Nope", &m).is_err());
     }
 
     #[test]

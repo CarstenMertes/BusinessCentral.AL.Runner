@@ -51,6 +51,12 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 }
 
 impl MemStore {
+    /// Whether a write has changed the data since `mark`, a clone of this store taken earlier.
+    /// O(1): persistent maps that were not written to share their root.
+    pub fn written_since(&self, mark: &MemStore) -> bool {
+        !(self.tables.ptr_eq(&mark.tables) || (self.tables.is_empty() && mark.tables.is_empty()))
+    }
+
     fn table(&self, cx: &AccessContext, t: &TableDef) -> Option<&Table> {
         self.tables.get(&slot(cx, t))
     }
@@ -190,6 +196,37 @@ mod tests {
     #[test]
     fn passes_the_store_contract() {
         crate::contract::run_all(MemStore::default);
+    }
+
+    #[test]
+    fn reports_writes_since_a_mark() {
+        let cx = AccessContext {
+            company: "C".into(),
+            user: "U".into(),
+        };
+        let t = TableDef {
+            object: 0,
+            name: "T".into(),
+            fields: vec![FieldDef {
+                id: 1,
+                name: "K".into(),
+                ty: al_builtins::value::RtType::Integer,
+                stored: true,
+            }],
+            keys: vec![vec![0]],
+            per_company: true,
+        };
+        let mut s = MemStore::default();
+        let mark = s.clone();
+        assert!(!s.written_since(&mark));
+        s.insert(&cx, &t, vec![Value::Integer(1)]).unwrap();
+        assert!(s.written_since(&mark));
+        let mark = s.clone();
+        s.commit();
+        assert!(!s.written_since(&mark), "a commit changes no data");
+        s.insert(&cx, &t, vec![Value::Integer(2)]).unwrap();
+        s.rollback();
+        assert!(!s.written_since(&mark), "the rollback restored the state at the mark");
     }
 
     #[test]

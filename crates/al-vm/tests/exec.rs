@@ -262,9 +262,11 @@ fn single_instance_codeunits_share_state_across_variables() {
 }
 
 #[test]
-fn calling_an_event_publisher_is_unsupported_until_events_exist() {
-    // Running the empty publisher body would silently skip every subscriber.
-    let src = cu("[IntegrationEvent(false, false)] procedure OnX() begin end; procedure F() begin OnX(); end;");
+fn calling_an_isolated_event_publisher_is_unsupported() {
+    // Event dispatch exists (tests/events.rs); Isolated events (a subscriber's own
+    // transaction, its error swallowed) do not, and running the empty publisher body
+    // would silently skip every subscriber.
+    let src = cu("[IntegrationEvent(false, false, true)] procedure OnX() begin end; procedure F() begin OnX(); end;");
     assert!(
         matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("event")),
         "{:?}",
@@ -335,4 +337,39 @@ fn labels_hold_their_text() {
          var L: Label 'it''s local', Comment = 'x';
          begin exit(StrSubstNo(G, 1) + '|' + L); end;");
     assert_eq!(text(run(&src, "P", vec![])), "glob 1|it's local");
+}
+
+// types/TestVariantExtended.al:Variant_IsRecordId_ReturnsTrue_WhenAssignedRecordId
+#[test]
+fn a_variant_holding_a_record_id_reports_it() {
+    let src = cu(
+        "procedure F(): Text var V: Variant; RId: RecordId; begin V := RId; exit(Format(V.IsRecordId()) + Format(V.IsInteger())); end;",
+    );
+    assert_eq!(text(run(&src, "F", vec![])), "YesNo");
+}
+
+// types/TestEnumCaption.al -- Format(enum) is the value's declared Caption; without one, its name.
+#[test]
+fn enum_values_format_by_caption_when_declared() {
+    let src = "enum 50900 E { value(0; Alpha) { Caption = 'The Alpha'; } value(1; Beta) { } value(2; Gamma) { Caption = 'It''s G', Locked = true; } }\n".to_string()
+        + &cu("procedure F(): Text var X: Enum E; begin X := E::Alpha; exit(Format(X) + '|' + Format(E::Beta) + '|' + Format(E::Gamma)); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "The Alpha|Beta|It's G");
+}
+
+// error-handling/TestTryFunctionContracts.al:TryFunction_VarParam_SetBeforeError_VisibleToCaller and
+// codeunit/TestScopeIsolationContracts.al:Test03AssertErrorVarParamChangesVisibleToCaller -- a var
+// parameter set before the error is visible to the caller that catches it, through any depth.
+#[test]
+fn var_parameters_set_before_an_error_are_visible_to_the_catching_caller() {
+    let src = cu(
+        "[TryFunction] procedure T(var X: Integer) begin X := 42; Error('boom'); end;
+        procedure Outer(var X: Integer) begin Inner(X); end;
+        procedure Inner(var X: Integer) begin X := 7; Error('deep'); end;
+        procedure F(): Text var A: Integer; B: Integer; Ok: Boolean; begin
+            Ok := T(A);
+            asserterror Outer(B);
+            exit(Format(Ok) + Format(A) + '|' + Format(B));
+        end;",
+    );
+    assert_eq!(text(run(&src, "F", vec![])), "No42|7");
 }

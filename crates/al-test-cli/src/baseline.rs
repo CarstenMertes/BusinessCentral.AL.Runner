@@ -22,7 +22,7 @@ use std::sync::Arc;
 pub struct BaselineRun {
     pub baseline: Baseline,
     /// Tables the roots that did not run (or stopped early) would have written rows to (a record
-    /// variable's Insert, Modify, Rename or ModifyAll), and that hold no row in the baseline: object
+    /// variable's Insert, Modify, Rename or ModifyAll in the root's own call closure), and that hold no row in the baseline: object
     /// indexes.
     pub unseeded: BTreeSet<u32>,
     /// How many tables hold a row in the baseline.
@@ -127,7 +127,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
                         ""
                     }
                 ));
-                touched.extend(tables_written(engine, lowered, oi, ri));
+                touched.extend(tables_written(lowered, oi, ri));
             }
         }
     }
@@ -147,9 +147,9 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
 
 /// The tables that code reachable from `routine` of `object` writes rows to: a record variable's
 /// `Insert`, `Modify`, `Rename`, `ModifyAll` or `Validate`-free equivalents, found in the lowered
-/// bodies of everything it calls and of the subscribers its table writes can set off. Temporary
+/// bodies of everything it calls (not of event subscribers). Temporary
 /// records are left out. Writes through a `RecordRef` have no static table and are not counted.
-pub(crate) fn tables_written(engine: &Engine, lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
+pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
     use al_builtins::value::RtType;
     use al_ir::{Arg, Expr, Place, Stmt};
 
@@ -328,18 +328,9 @@ pub(crate) fn tables_written(engine: &Engine, lowered: &Lowered, object: usize, 
         .stmts(&rt.body);
         stack.extend(lowered.calls[o][r].iter().copied());
     }
-    // The subscribers of events the writes raise.
-    for (so, sr) in crate::runtime::subscribers_reached(engine, lowered, object, routine) {
-        if seen.insert((so, sr)) {
-            let obj = &lowered.program.objects[so];
-            let rt = &obj.routines[sr];
-            W {
-                locals: &rt.locals,
-                globals: &obj.globals,
-                out: &mut out,
-            }
-            .stmts(&rt.body);
-        }
-    }
+    // Rows that event subscribers of those writes add are not counted: which of them run depends on
+    // data (a subscriber that writes a table when something else is configured), and counting every
+    // subscriber the tables could reach marks tables BC does not fill (measured: Dimension
+    // Correction). A table only a subscriber fills stays unmarked (docs/probes-needed.md).
     out
 }

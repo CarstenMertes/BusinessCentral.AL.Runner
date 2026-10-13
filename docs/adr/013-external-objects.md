@@ -961,7 +961,7 @@ sequences). Every test codeunit's session starts with `restore_baseline` (the pe
 the project's own install codeunits still run per test codeunit, as before. A root that stops (Unsupported or an AL
 error) is reported on stderr: `Company-Initialize` keeps the rows it wrote before, an install trigger is rolled back.
 The tables such a root writes rows to (a record variable's `Insert`, `Modify`, `Rename` or `ModifyAll` in its static
-closure and the subscribers its writes reach; `RecordRef` writes are not found), minus the tables that hold a row in the
+closure; rows that event subscribers add and `RecordRef` writes are not found), minus the tables that hold a row in the
 baseline, are `Engine::unseeded`. For them every read whose answer depends on the rows is refused, from dependency code
 and from the corpus's own: `Find*`, `Next`, `Count`, `IsEmpty`, `CalcSums`, a FlowField over them, the miss of a
 `TableRelation` check, a `Get` that finds nothing. A `Get` that finds the row is answered, and so is a temporary record.
@@ -988,8 +988,8 @@ synthetic dependency apps (`al-test-cli/src/runtime.rs` tests).
    roll back both. Chosen as stated; the rows before a stop are exactly a prefix of BC's own.
 3. **Which reads of install-seeded tables are refused.** Options: only a missing `Get` in dependency code (the old
    rule); none; every read whose answer depends on the rows, anywhere, for tables a failed root writes and that hold
-   no row. Chosen: the last (reviewer's instruction). The 4 baseline cases it turned into "not run" read an empty
-   Cost Accounting Setup or Dimension Correction and passed by accident; they were removed from the baselines in a
+   no row. Chosen: the last (reviewer's instruction). The 3 baseline cases it turned into "not run" read an empty
+   Cost Accounting Setup and passed by accident; they were removed from the baselines in a
    dedicated commit (hard rule 2).
 4. **Base Application's `Global Triggers` subscribers that cannot run.** Options: refuse every write in a run with
    Base Application (loses about 2300 passes); skip them silently (main's behaviour; hard rule 4); refuse the tests

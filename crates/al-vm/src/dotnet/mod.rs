@@ -147,7 +147,10 @@ impl Session {
             }
         });
         let (kind, member) = match op {
-            ir::DotNetOp::Construct => (MemberKind::Construct, decl.as_ref().map_or(String::new(), |d| d.name.clone())),
+            ir::DotNetOp::Construct => (
+                MemberKind::Construct,
+                decl.as_ref().map_or(String::new(), |d| d.name.clone()),
+            ),
             ir::DotNetOp::Call(n) => (MemberKind::Call, n.clone()),
             ir::DotNetOp::Get(n) => (MemberKind::Get, n.clone()),
             ir::DotNetOp::Set(n) => (MemberKind::Set, n.clone()),
@@ -206,12 +209,18 @@ impl Session {
             Target::Static(d) => Some(d.assembly.as_str()),
             _ => None,
         };
-        let access = if kind == MemberKind::Construct { Access::Construct(values.len()) } else { Access::Member(&member) };
+        let access = if kind == MemberKind::Construct {
+            Access::Construct(values.len())
+        } else {
+            Access::Member(&member)
+        };
         if let Err(why) = engine.dotnet.policy.check(assembly, &clr_type, access) {
             return unsupported(format!("DotNet {shown}: {why}"));
         }
         if matches!(target, Target::Internal(..)) {
-            return unsupported(format!("DotNet {shown}: a runtime object whose type is no longer registered"));
+            return unsupported(format!(
+                "DotNet {shown}: a runtime object whose type is no longer registered"
+            ));
         }
 
         // Marshal before the session is borrowed.
@@ -219,7 +228,7 @@ impl Session {
         let mut wire = Vec::with_capacity(values.len());
         for (i, v) in values.iter().enumerate() {
             wire.push(DotNetArg {
-                value: self.to_wire(v, i, &mut book).map_err(|e| prefix(e, &shown))?,
+                value: self.value_to_wire(v, i, &mut book).map_err(|e| prefix(e, &shown))?,
                 by_ref: places[i].is_some(),
             });
         }
@@ -293,10 +302,10 @@ impl Session {
                 None => return unsupported(format!("DotNet {shown}: bytes for an unknown stream bridge {id}")),
             }
         }
-        let value = self.from_wire(reply.value).map_err(|e| prefix(e, shown))?;
+        let value = self.wire_to_value(reply.value).map_err(|e| prefix(e, shown))?;
         for (idx, v) in reply.by_ref {
             let Some(Some(place)) = places.get(idx) else { continue };
-            let v = self.from_wire(v).map_err(|e| prefix(e, shown))?;
+            let v = self.wire_to_value(v).map_err(|e| prefix(e, shown))?;
             let ty = self.place_type(place, f);
             let v = fit(v, &ty).map_err(|e| prefix(e, shown))?;
             self.write(place, v, f)?;
@@ -305,7 +314,7 @@ impl Session {
     }
 
     /// An AL value as a wire value (ADR-014 section 4).
-    fn to_wire(&self, v: &Value, arg: usize, book: &mut StreamBook) -> Result<DotNetValue, Signal> {
+    fn value_to_wire(&self, v: &Value, arg: usize, book: &mut StreamBook) -> Result<DotNetValue, Signal> {
         Ok(match v {
             Value::Null => DotNetValue::Null,
             Value::Boolean(b) => DotNetValue::Bool(*b),
@@ -358,12 +367,16 @@ impl Session {
                 }
                 other => return unsupported(format!("an AL library value ({other:?}) passed to .NET")),
             },
-            other => return unsupported(format!("{other:?} passed to .NET: the type has no marshalling row (ADR-014 section 4)")),
+            other => {
+                return unsupported(format!(
+                    "{other:?} passed to .NET: the type has no marshalling row (ADR-014 section 4)"
+                ));
+            }
         })
     }
 
     /// A wire value as an AL value.
-    fn from_wire(&self, v: DotNetValue) -> Result<Value, Signal> {
+    fn wire_to_value(&self, v: DotNetValue) -> Result<Value, Signal> {
         Ok(match v {
             DotNetValue::Null => Value::Null,
             DotNetValue::Bool(b) => Value::Boolean(b),
@@ -441,20 +454,26 @@ fn kind_of(v: &Value) -> &'static str {
 /// pinned, so anything else is Unsupported (ADR-014 section 4).
 pub(crate) fn fit(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
-    let ok = match (&v, t) {
-        (_, T::Variant) => true,
-        (Value::DotNet(_) | Value::Null, T::DotNet(_)) => true,
-        (Value::Text(_) | Value::Code(_), T::Text(_) | T::Code(_)) => true,
-        (Value::Boolean(_), T::Boolean) => true,
-        (Value::Integer(_) | Value::Byte(_), T::Integer) => true,
-        (Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_), T::BigInteger) => true,
-        (Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Decimal(_), T::Decimal) => true,
-        (Value::Byte(_), T::Byte) => true,
-        (Value::Char(_), T::Char) => true,
-        (Value::Date(..), T::Date) | (Value::DateTime(_), T::DateTime) | (Value::Time(_), T::Time) => true,
-        (Value::Duration(_), T::Duration) | (Value::Guid(_), T::Guid) => true,
-        _ => false,
-    };
+    let ok = matches!(
+        (&v, t),
+        (_, T::Variant)
+            | (Value::DotNet(_) | Value::Null, T::DotNet(_))
+            | (Value::Text(_) | Value::Code(_), T::Text(_) | T::Code(_))
+            | (Value::Boolean(_), T::Boolean)
+            | (Value::Integer(_) | Value::Byte(_), T::Integer)
+            | (Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_), T::BigInteger)
+            | (
+                Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Decimal(_),
+                T::Decimal
+            )
+            | (Value::Byte(_), T::Byte)
+            | (Value::Char(_), T::Char)
+            | (Value::Date(..), T::Date)
+            | (Value::DateTime(_), T::DateTime)
+            | (Value::Time(_), T::Time)
+            | (Value::Duration(_), T::Duration)
+            | (Value::Guid(_), T::Guid)
+    );
     if !ok {
         return unsupported(format!(
             "a .NET result of kind {} stored into {t:?}: BC's conversion is not pinned (ADR-014 section 4)",

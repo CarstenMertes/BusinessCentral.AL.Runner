@@ -1657,14 +1657,14 @@ impl Lowerer<'_> {
             CaseStmt => self.case(&kids),
             ExitStmt => match kids.first() {
                 None => Ok(ir::Stmt::Exit(None)),
-                Some(e) => self.expr(e).and_then(|v| {
+                Some(e) => self.expr(e).map(|v| {
                     // A DotNet result must fit the return type exactly (ADR-014).
-                    Ok(ir::Stmt::Exit(Some(match (&self.ty_of(e), &self.ret_ty) {
+                    ir::Stmt::Exit(Some(match (&self.ty_of(e), &self.ret_ty) {
                         (Ty::DotNet(a), Some(rt)) if a.is_empty() && !matches!(rt, RtType::DotNet(_)) => {
                             ir::Expr::DotNetCoerce(rt.clone(), Box::new(v))
                         }
                         _ => v,
-                    })))
+                    }))
                 }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
@@ -2146,11 +2146,14 @@ impl Lowerer<'_> {
             Some(Res::Global(n)) => self.global_labels.contains_key(n),
             _ => false,
         };
-        let variable = matches!(
-            self.res(a),
-            Some(Res::Local(_) | Res::Global(_) | Res::Field { .. })
-        );
-        if !is_label && variable && matches!(a.kind(), SyntaxKind::NameRef | SyntaxKind::MemberExpr | SyntaxKind::IndexExpr) {
+        let variable = matches!(self.res(a), Some(Res::Local(_) | Res::Global(_) | Res::Field { .. }));
+        if !is_label
+            && variable
+            && matches!(
+                a.kind(),
+                SyntaxKind::NameRef | SyntaxKind::MemberExpr | SyntaxKind::IndexExpr
+            )
+        {
             if let Ok(p) = self.place(a) {
                 return Ok(ir::Arg::Ref(p));
             }
@@ -2179,11 +2182,9 @@ impl Lowerer<'_> {
         let ty = if alias.is_empty() {
             None
         } else {
-            Some(
-                self.ws
-                    .resolve_dotnet(self.file, &alias)
-                    .ok_or_else(|| format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies"))?,
-            )
+            Some(self.ws.resolve_dotnet(self.file, &alias).ok_or_else(|| {
+                format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies")
+            })?)
         };
         if let (Some(i), ir::DotNetOp::Call(_)) = (ty, &op) {
             if self.ws.dotnet[i].decl.alias.eq_ignore_ascii_case(name) {
@@ -2420,7 +2421,10 @@ mod tests {
         assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
         assert_eq!(l.program.dotnet_types.len(), 2);
         let d = &l.program.dotnet_types[0];
-        assert_eq!((d.alias.as_str(), d.type_name.as_str(), d.assembly.as_str()), ("Convert", "System.Convert", "netstandard"));
+        assert_eq!(
+            (d.alias.as_str(), d.type_name.as_str(), d.assembly.as_str()),
+            ("Convert", "System.Convert", "netstandard")
+        );
         assert_eq!(d.public_key_token.as_deref(), Some("cc7b13ffcd2ddd51"));
         let (oi, r) = routine(&l, "P");
         assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
@@ -2453,7 +2457,14 @@ mod tests {
         let ir::Stmt::Assign(_, ir::Expr::Convert(RtType::DotNet(1), ctor)) = &r.body[0] else {
             panic!("{:?}", r.body[0])
         };
-        assert!(matches!(**ctor, ir::Expr::DotNet { ty: Some(1), op: ir::DotNetOp::Construct, .. }));
+        assert!(matches!(
+            **ctor,
+            ir::Expr::DotNet {
+                ty: Some(1),
+                op: ir::DotNetOp::Construct,
+                ..
+            }
+        ));
         assert!(matches!(
             &r.body[1],
             ir::Stmt::Expr(ir::Expr::DotNet { op: ir::DotNetOp::Set(n), args, .. }) if n == "Position" && args.len() == 1
@@ -2473,12 +2484,12 @@ mod tests {
 
     #[test]
     fn a_dotnet_alias_without_a_declaration_is_a_lowering_reason() {
-        let (_, l) = lower_src(
-            "codeunit 50100 C { procedure P() var X: DotNet Missing; begin end; }",
-        );
+        let (_, l) = lower_src("codeunit 50100 C { procedure P() var X: DotNet Missing; begin end; }");
         let (oi, _) = routine(&l, "P");
         assert!(
-            l.unsupported[oi][0].iter().any(|r| r.contains("DotNet 'Missing'") && r.contains("no dotnet")),
+            l.unsupported[oi][0]
+                .iter()
+                .any(|r| r.contains("DotNet 'Missing'") && r.contains("no dotnet")),
             "{:?}",
             l.unsupported[oi][0]
         );
@@ -2491,7 +2502,9 @@ mod tests {
         ));
         let (oi, _) = routine(&l, "P");
         assert!(
-            l.unsupported[oi][0].iter().any(|r| r.contains("DotNet") && r.contains("only known at run time")),
+            l.unsupported[oi][0]
+                .iter()
+                .any(|r| r.contains("DotNet") && r.contains("only known at run time")),
             "{:?}",
             l.unsupported[oi][0]
         );

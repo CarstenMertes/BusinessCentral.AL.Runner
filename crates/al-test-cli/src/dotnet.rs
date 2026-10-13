@@ -75,6 +75,11 @@ impl SidecarHost {
         }
     }
 
+    /// The sidecar this host runs, once it has been found (or built).
+    pub fn sidecar_path(&self) -> Option<PathBuf> {
+        self.resolve().as_ref().ok().map(|r| r.sidecar.clone())
+    }
+
     fn resolve(&self) -> &Result<Resolved, String> {
         self.resolved.get_or_init(|| resolve(&self.cfg))
     }
@@ -135,7 +140,10 @@ fn locate_dotnet() -> Option<PathBuf> {
             }
         }
     }
-    usual_dotnet_dirs().into_iter().map(|d| d.join(exe)).find(|p| p.is_file())
+    usual_dotnet_dirs()
+        .into_iter()
+        .map(|d| d.join(exe))
+        .find(|p| p.is_file())
 }
 
 /// `Microsoft.NETCore.App` versions `dotnet --list-runtimes` reports.
@@ -199,7 +207,10 @@ fn source_hash(dir: &Path) -> Option<u64> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().is_some_and(|x| x == "cs" || x == "csproj") || p.file_name().is_some_and(|n| n == "global.json"))
+        .filter(|p| {
+            p.extension().is_some_and(|x| x == "cs" || x == "csproj")
+                || p.file_name().is_some_and(|n| n == "global.json")
+        })
         .collect();
     files.sort();
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -284,7 +295,12 @@ fn find_sidecar(cfg: &SidecarConfig, dotnet: &Path) -> Result<PathBuf, String> {
         .map_err(|e| format!("{NOT_BUILT} (dotnet publish failed to start: {e})"))?;
     if !out.status.success() || !tmp.join("AlDotNetSidecar.dll").is_file() {
         let _ = std::fs::remove_dir_all(&tmp);
-        let tail: String = String::from_utf8_lossy(&out.stdout).lines().rev().take(3).collect::<Vec<_>>().join(" | ");
+        let tail: String = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .rev()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(" | ");
         return Err(format!("{NOT_BUILT} (dotnet publish failed: {tail})"));
     }
     // Another process may have finished first; its copy is as good.
@@ -305,6 +321,8 @@ struct Proc {
     stdin: ChildStdin,
     replies: Receiver<Option<Vec<u8>>>,
     last_stderr: Arc<Mutex<String>>,
+    /// Drains stderr into `last_stderr`; ends when the process does.
+    stderr_thread: Option<std::thread::JoinHandle<()>>,
     /// Holds `cwd` (the working directory, empty), `home` and `tmp`; removed with the session.
     workdir: PathBuf,
 }
@@ -357,13 +375,15 @@ impl SidecarSession {
         if self.cfg.allow_roll_forward {
             cmd.env("DOTNET_ROLL_FORWARD", "Major");
         }
-        let mut child = cmd.spawn().map_err(|e| format!("cannot start {}: {e}", r.dotnet.display()))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("cannot start {}: {e}", r.dotnet.display()))?;
         let stdin = child.stdin.take().expect("piped");
         let mut stdout = child.stdout.take().expect("piped");
         let stderr = child.stderr.take().expect("piped");
         let last_stderr = Arc::new(Mutex::new(String::new()));
         let sink = last_stderr.clone();
-        std::thread::spawn(move || {
+        let stderr_thread = std::thread::spawn(move || {
             for line in BufReader::new(stderr).lines().map_while(Result::ok) {
                 if !line.trim().is_empty() {
                     *sink.lock().unwrap() = line;
@@ -384,11 +404,14 @@ impl SidecarSession {
             stdin,
             replies: rx,
             last_stderr,
+            stderr_thread: Some(stderr_thread),
             workdir,
         });
         // The first message checks the protocol version and the runtime.
+        // Starting a process is not a call: it gets at least 30 s however short the call deadline.
+        let start_deadline = self.cfg.timeout.max(Duration::from_secs(30));
         let hello = self
-            .raw_request(json!({"op":"hello","protocol":PROTOCOL}))
+            .raw_request_within(json!({"op":"hello","protocol":PROTOCOL}), start_deadline)
             .map_err(|f| match f {
                 DotNetFailure::Refused(s) => s,
                 DotNetFailure::Exception(e) => e.to_string(),
@@ -421,8 +444,12 @@ impl SidecarSession {
     }
 
     /// Sends one request and returns the whole reply object, or the refusal or exception.
-    fn raw_request(&mut self, mut req: Value) -> Result<Value, DotNetFailure> {
+    fn raw_request(&mut self, req: Value) -> Result<Value, DotNetFailure> {
         let timeout = self.cfg.timeout;
+        self.raw_request_within(req, timeout)
+    }
+
+    fn raw_request_within(&mut self, mut req: Value, timeout: Duration) -> Result<Value, DotNetFailure> {
         let id = self.next_id;
         self.next_id += 1;
         req["id"] = json!(id);
@@ -439,7 +466,10 @@ impl SidecarSession {
                 let v: Value = serde_json::from_slice(&bytes)
                     .map_err(|e| DotNetFailure::Refused(format!("the sidecar wrote invalid JSON: {e}")))?;
                 if v["id"] != json!(id) {
-                    return Err(DotNetFailure::Refused(format!("the sidecar answered out of order (expected {id}, got {})", v["id"])));
+                    return Err(DotNetFailure::Refused(format!(
+                        "the sidecar answered out of order (expected {id}, got {})",
+                        v["id"]
+                    )));
                 }
                 if v["ok"] == json!(true) {
                     return Ok(v);
@@ -463,11 +493,16 @@ impl SidecarSession {
                             .unwrap_or_default(),
                     }));
                 }
-                Err(DotNetFailure::Refused(v["reason"].as_str().unwrap_or("refused by the sidecar").to_string()))
+                Err(DotNetFailure::Refused(
+                    v["reason"].as_str().unwrap_or("refused by the sidecar").to_string(),
+                ))
             }
             Ok(None) | Err(RecvTimeoutError::Disconnected) => Err(self.died("the sidecar process ended")),
             Err(RecvTimeoutError::Timeout) => {
-                let why = format!("the call timed out after {} s; the sidecar was killed", timeout.as_secs());
+                let why = format!(
+                    "the call timed out after {} s; the sidecar was killed",
+                    timeout.as_secs()
+                );
                 self.kill();
                 self.dead = Some(why.clone());
                 Err(DotNetFailure::Refused(why))
@@ -488,6 +523,10 @@ impl SidecarSession {
         let mut detail = String::new();
         if let Some(mut p) = self.proc.take() {
             let status = p.child.wait().ok().map(|s| s.to_string()).unwrap_or_default();
+            // The process is gone, so its stderr is at its end: let the reader take the last line.
+            if let Some(t) = p.stderr_thread.take() {
+                let _ = t.join();
+            }
             let last = p.last_stderr.lock().unwrap().clone();
             detail = format!(" ({status}; last stderr: {last})");
             let _ = std::fs::remove_dir_all(&p.workdir);
@@ -530,7 +569,11 @@ fn target_json(t: &DotNetTarget) -> Value {
 }
 
 fn args_json(args: &[DotNetArg]) -> Value {
-    Value::Array(args.iter().map(|a| json!({"v": encode(&a.value), "ref": a.by_ref})).collect())
+    Value::Array(
+        args.iter()
+            .map(|a| json!({"v": encode(&a.value), "ref": a.by_ref}))
+            .collect(),
+    )
 }
 
 fn reply_of(v: Value) -> Result<DotNetReply, DotNetFailure> {
@@ -545,29 +588,48 @@ fn reply_of(v: Value) -> Result<DotNetReply, DotNetFailure> {
     let s = &v["streams"];
     let mut fx = StreamEffects::default();
     for e in s["consumed"].as_array().into_iter().flatten() {
-        fx.consumed.push((e[0].as_u64().unwrap_or(0) as usize, e[1].as_u64().unwrap_or(0) as usize));
+        fx.consumed
+            .push((e[0].as_u64().unwrap_or(0) as usize, e[1].as_u64().unwrap_or(0) as usize));
     }
     for e in s["bridges"].as_array().into_iter().flatten() {
-        fx.bridges.push((e[0].as_u64().unwrap_or(0) as usize, e[1].as_u64().unwrap_or(0)));
+        fx.bridges
+            .push((e[0].as_u64().unwrap_or(0) as usize, e[1].as_u64().unwrap_or(0)));
     }
     for e in s["written"].as_array().into_iter().flatten() {
-        fx.written.push((e[0].as_u64().unwrap_or(0), unbase64(e[1].as_str().unwrap_or(""))));
+        fx.written
+            .push((e[0].as_u64().unwrap_or(0), unbase64(e[1].as_str().unwrap_or(""))));
     }
-    Ok(DotNetReply { value, by_ref, streams: fx })
+    Ok(DotNetReply {
+        value,
+        by_ref,
+        streams: fx,
+    })
 }
 
 impl DotNetSession for SidecarSession {
     fn construct(&mut self, ty: &DotNetType, args: Vec<DotNetArg>) -> Result<DotNetReply, DotNetFailure> {
-        self.request(json!({"op":"construct","type":type_json(ty),"args":args_json(&args)})).and_then(reply_of)
+        self.request(json!({"op":"construct","type":type_json(ty),"args":args_json(&args)}))
+            .and_then(reply_of)
     }
-    fn invoke(&mut self, target: DotNetTarget, member: &str, args: Vec<DotNetArg>) -> Result<DotNetReply, DotNetFailure> {
+    fn invoke(
+        &mut self,
+        target: DotNetTarget,
+        member: &str,
+        args: Vec<DotNetArg>,
+    ) -> Result<DotNetReply, DotNetFailure> {
         self.request(json!({"op":"invoke","target":target_json(&target),"member":member,"args":args_json(&args)}))
             .and_then(reply_of)
     }
     fn get_property(&mut self, target: DotNetTarget, name: &str) -> Result<DotNetReply, DotNetFailure> {
-        self.request(json!({"op":"get","target":target_json(&target),"member":name})).and_then(reply_of)
+        self.request(json!({"op":"get","target":target_json(&target),"member":name}))
+            .and_then(reply_of)
     }
-    fn set_property(&mut self, target: DotNetTarget, name: &str, value: DotNetValue) -> Result<DotNetReply, DotNetFailure> {
+    fn set_property(
+        &mut self,
+        target: DotNetTarget,
+        name: &str,
+        value: DotNetValue,
+    ) -> Result<DotNetReply, DotNetFailure> {
         self.request(json!({"op":"set","target":target_json(&target),"member":name,"value":encode(&value)}))
             .and_then(reply_of)
     }
@@ -588,7 +650,14 @@ impl DotNetSession for SidecarSession {
 
 fn guid_text(g: &[u8; 16]) -> String {
     let h: String = g.iter().map(|b| format!("{b:02x}")).collect();
-    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+    format!(
+        "{}-{}-{}-{}-{}",
+        &h[0..8],
+        &h[8..12],
+        &h[12..16],
+        &h[16..20],
+        &h[20..32]
+    )
 }
 
 fn parse_guid(s: &str) -> Option<[u8; 16]> {
@@ -658,7 +727,8 @@ const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 pub fn base64(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
-        let n = (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
+        let n =
+            (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
         for i in 0..4 {
             if i <= chunk.len() {
                 out.push(B64[(n >> (18 - 6 * i) & 63) as usize] as char);
@@ -674,7 +744,9 @@ pub fn unbase64(text: &str) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() / 4 * 3);
     let (mut acc, mut bits) = (0u32, 0);
     for c in text.bytes().filter(|c| *c != b'=') {
-        let Some(p) = B64.iter().position(|b| *b == c) else { continue };
+        let Some(p) = B64.iter().position(|b| *b == c) else {
+            continue;
+        };
         acc = acc << 6 | p as u32;
         bits += 6;
         if bits >= 8 {
@@ -703,8 +775,15 @@ mod tests {
             DotNetValue::DateTime(638_396_640_000_000_000),
             DotNetValue::TimeSpan(15_000_000),
             DotNetValue::Guid([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 1, 2, 3, 4, 5, 6, 7, 8]),
-            DotNetValue::Enum { ty: "System.X".into(), name: "A".into(), ordinal: 3 },
-            DotNetValue::Handle { handle: 12, ty: "System.IO.MemoryStream".into() },
+            DotNetValue::Enum {
+                ty: "System.X".into(),
+                name: "A".into(),
+                ordinal: 3,
+            },
+            DotNetValue::Handle {
+                handle: 12,
+                ty: "System.IO.MemoryStream".into(),
+            },
         ] {
             assert_eq!(decode(&encode(&v)), Ok(v.clone()), "{v:?}");
         }

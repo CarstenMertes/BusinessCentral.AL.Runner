@@ -221,7 +221,11 @@ impl Workspace {
                 usings: file.usings,
             });
             for decl in file.dotnet {
-                ws.dotnet.push(DotNetSym { app: ai, file: fi, decl });
+                ws.dotnet.push(DotNetSym {
+                    app: ai,
+                    file: fi,
+                    decl,
+                });
             }
             for (kind, id, name, offset) in file.objects {
                 ws.add_object(ObjectSym {

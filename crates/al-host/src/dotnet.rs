@@ -44,9 +44,16 @@ pub enum DotNetValue {
     TimeSpan(i64),
     Guid([u8; 16]),
     /// A .NET enum value: CLR type name, member name, underlying ordinal.
-    Enum { ty: String, name: String, ordinal: i64 },
+    Enum {
+        ty: String,
+        name: String,
+        ordinal: i64,
+    },
     /// An object held by the host; `ty` is its CLR type name.
-    Handle { handle: DotNetHandle, ty: String },
+    Handle {
+        handle: DotNetHandle,
+        ty: String,
+    },
     /// An AL `InStream` handed to .NET: the unread bytes (section 4, streams).
     InStream(Vec<u8>),
     /// An AL `OutStream` handed to .NET: the host creates a writable bridge stream.
@@ -218,7 +225,10 @@ mod tests {
             ..Default::default()
         };
         let want = Err(DotNetFailure::Refused("needs a .NET host; none is configured".into()));
-        assert_eq!(s.invoke(DotNetTarget::Static(ty.clone()), "ToBase64String", vec![]), want);
+        assert_eq!(
+            s.invoke(DotNetTarget::Static(ty.clone()), "ToBase64String", vec![]),
+            want
+        );
         assert_eq!(s.construct(&ty, vec![]), want);
         assert_eq!(s.get_property(DotNetTarget::Instance(1), "Length"), want);
         s.release(&[1, 2]);

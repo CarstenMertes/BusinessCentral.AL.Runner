@@ -101,7 +101,11 @@ fn markdown_summary_is_written() {
 fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
     require_corpus();
     // ADR-014 section 11: CI passes --require-dotnet so that "no .NET" is never mistaken for a pass.
-    let (code, _, err) = cli(&["--require-dotnet", "--dotnet-sidecar", "/nonexistent/AlDotNetSidecar.dll"]);
+    let (code, _, err) = cli(&[
+        "--require-dotnet",
+        "--dotnet-sidecar",
+        "/nonexistent/AlDotNetSidecar.dll",
+    ]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("--require-dotnet") && err.contains("DotNet"), "{err}");
     // Without the flag the same machine still runs the corpus.

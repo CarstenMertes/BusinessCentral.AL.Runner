@@ -143,7 +143,10 @@ codeunit 50100 C
 "#;
 
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 fn host() -> Option<Arc<SidecarHost>> {
@@ -251,8 +254,14 @@ fn base64_encoding_runs_on_the_real_framework() {
     let Some(h) = host() else { return };
     let f = fixture();
     let mut s = f.session(Some(h));
-    assert_eq!(text(f.call(&mut s, "ToBase64", vec![Value::Text("hello".into())])), "aGVsbG8=");
-    assert_eq!(text(f.call(&mut s, "ToBase64", vec![Value::Text("héllo wörld".into())])), "aMOpbGxvIHfDtnJsZA==");
+    assert_eq!(
+        text(f.call(&mut s, "ToBase64", vec![Value::Text("hello".into())])),
+        "aGVsbG8="
+    );
+    assert_eq!(
+        text(f.call(&mut s, "ToBase64", vec![Value::Text("héllo wörld".into())])),
+        "aMOpbGxvIHfDtnJsZA=="
+    );
 }
 
 #[test]
@@ -262,7 +271,11 @@ fn base64_decoding_writes_the_bytes_into_an_al_blob_through_an_outstream_bridge(
     let f = fixture();
     let mut s = f.session(Some(h));
     assert_eq!(
-        text(f.call(&mut s, "RoundTripThroughBlob", vec![Value::Text("aGVsbG8gd29ybGQ=".into())])),
+        text(f.call(
+            &mut s,
+            "RoundTripThroughBlob",
+            vec![Value::Text("aGVsbG8gd29ybGQ=".into())]
+        )),
         "hello world"
     );
 }
@@ -293,7 +306,10 @@ fn a_dotnet_exception_is_not_run_and_carries_the_clr_type_and_message() {
     assert!(w.contains("System.FormatException"), "{w}");
     assert!(w.contains("not pinned"), "{w}");
     // The sidecar is still there for the next call.
-    assert!(matches!(f.call(&mut s, "ToInt", vec![Value::Text("21".into())]), Ok(Value::Integer(21))));
+    assert!(matches!(
+        f.call(&mut s, "ToInt", vec![Value::Text("21".into())]),
+        Ok(Value::Integer(21))
+    ));
 }
 
 #[test]
@@ -302,7 +318,10 @@ fn policy_refuses_the_file_system_before_any_process_starts() {
     let f = fixture();
     let mut s = f.session(Some(h));
     let w = why(f.call(&mut s, "TouchesTheFileSystem", vec![]));
-    assert!(w.contains("System.IO.File") && w.contains("refused by policy") && w.contains("file system"), "{w}");
+    assert!(
+        w.contains("System.IO.File") && w.contains("refused by policy") && w.contains("file system"),
+        "{w}"
+    );
 }
 
 #[test]
@@ -324,8 +343,14 @@ fn each_session_gets_its_own_process_so_dotnet_statics_do_not_leak() {
     let h: Arc<dyn DotNetHost> = h;
     let mut a = f.session(Some(h.clone()));
     let mut b = f.session(Some(h));
-    assert!(matches!(f.call(&mut a, "ToInt", vec![Value::Text("1".into())]), Ok(Value::Integer(1))));
-    assert!(matches!(f.call(&mut b, "ToInt", vec![Value::Text("2".into())]), Ok(Value::Integer(2))));
+    assert!(matches!(
+        f.call(&mut a, "ToInt", vec![Value::Text("1".into())]),
+        Ok(Value::Integer(1))
+    ));
+    assert!(matches!(
+        f.call(&mut b, "ToInt", vec![Value::Text("2".into())]),
+        Ok(Value::Integer(2))
+    ));
 }
 
 /// Timing of a DotNet call through the full runtime path. Run in release:
@@ -358,6 +383,9 @@ fn timing_of_dotnet_calls_through_the_full_runtime_path() {
     eprintln!("first call incl. process start (cold session): {first:?}");
     eprintln!("second call (warm): {second:?}");
     eprintln!("ToBase64 (5 .NET calls: UTF8, GetBytes, ToBase64String + conversions): {chain:?}");
-    eprintln!("{N} x Convert.ToInt32 in an AL loop: {loop_time:?} = {:?} per call", loop_time / N as u32);
+    eprintln!(
+        "{N} x Convert.ToInt32 in an AL loop: {loop_time:?} = {:?} per call",
+        loop_time / N as u32
+    );
     eprintln!("session close: {close:?}");
 }

@@ -162,15 +162,14 @@ impl SourceFile {
                 };
                 for ty in asm.sections().filter(|t| t.name().eq_ignore_ascii_case("type")) {
                     let args = ty.args();
-                    let Some(type_name) = args.first().cloned() else { continue };
+                    let Some(type_name) = args.first().cloned() else {
+                        continue;
+                    };
                     // `type("System.Convert")` with no alias is the type's own simple name.
-                    let alias = args.get(1).cloned().unwrap_or_else(|| {
-                        type_name
-                            .rsplit('.')
-                            .next()
-                            .unwrap_or(&type_name)
-                            .to_string()
-                    });
+                    let alias = args
+                        .get(1)
+                        .cloned()
+                        .unwrap_or_else(|| type_name.rsplit('.').next().unwrap_or(&type_name).to_string());
                     out.push(DotNetTypeDecl {
                         assembly: assembly.clone(),
                         version: prop("Version"),

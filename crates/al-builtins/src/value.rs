@@ -113,7 +113,11 @@ pub enum DotNetKind {
     /// An object held by the host (the sidecar), by handle, with its CLR type name.
     Host { handle: u64, clr_type: String },
     /// A .NET enum value, kept by value with its CLR type so it can go back as an argument.
-    Enum { clr_type: String, name: String, ordinal: i64 },
+    Enum {
+        clr_type: String,
+        name: String,
+        ordinal: i64,
+    },
     /// An object the runtime provides itself (the registry, ADR-014 section 1).
     Internal {
         type_name: String,
@@ -565,7 +569,11 @@ mod tests {
     #[test]
     fn a_dropped_host_object_queues_its_handle_and_clones_share_it() {
         let queue = Rc::new(RefCell::new(Vec::new()));
-        let a = Value::DotNet(Rc::new(DotNetObject::host(7, "System.IO.MemoryStream".into(), queue.clone())));
+        let a = Value::DotNet(Rc::new(DotNetObject::host(
+            7,
+            "System.IO.MemoryStream".into(),
+            queue.clone(),
+        )));
         let b = a.clone();
         drop(a);
         assert!(queue.borrow().is_empty(), "a second reference is alive");

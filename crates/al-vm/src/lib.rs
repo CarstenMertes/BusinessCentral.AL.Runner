@@ -626,12 +626,7 @@ impl Session {
                 let q = self.eval(query, f)?;
                 self.query_column(q, *column)
             }
-            E::DotNet {
-                ty,
-                receiver,
-                op,
-                args,
-            } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
+            E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
             E::DotNetCoerce(t, e) => {
                 let v = self.eval(e, f)?;
                 self.dotnet_coerce(v, t)

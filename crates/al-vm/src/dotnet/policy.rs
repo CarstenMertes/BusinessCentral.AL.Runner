@@ -85,7 +85,11 @@ impl Policy {
                 }
             }
             Access::Construct(0) => {
-                if let Some((_, rule)) = self.deny_new_no_args.iter().find(|(t, _)| t.eq_ignore_ascii_case(clr_type)) {
+                if let Some((_, rule)) = self
+                    .deny_new_no_args
+                    .iter()
+                    .find(|(t, _)| t.eq_ignore_ascii_case(clr_type))
+                {
                     return Err(format!(
                         "refused by policy: constructing '{clr_type}' without arguments ({rule})"
                     ));
@@ -122,10 +126,23 @@ mod tests {
     #[test]
     fn standard_library_types_pass() {
         let p = p();
-        assert!(p.check(Some("netstandard"), "System.Convert", Access::Member("ToBase64String")).is_ok());
-        assert!(p.check(Some("netstandard"), "System.Text.Encoding", Access::Member("UTF8")).is_ok());
+        assert!(
+            p.check(Some("netstandard"), "System.Convert", Access::Member("ToBase64String"))
+                .is_ok()
+        );
+        assert!(
+            p.check(Some("netstandard"), "System.Text.Encoding", Access::Member("UTF8"))
+                .is_ok()
+        );
         assert!(p.check(None, "System.IO.MemoryStream", Access::Construct(0)).is_ok());
-        assert!(p.check(Some("Newtonsoft.Json"), "Newtonsoft.Json.Linq.JObject", Access::Construct(0)).is_ok());
+        assert!(
+            p.check(
+                Some("Newtonsoft.Json"),
+                "Newtonsoft.Json.Linq.JObject",
+                Access::Construct(0)
+            )
+            .is_ok()
+        );
         assert!(p.check(None, "System.IO.Path", Access::Member("Combine")).is_ok());
     }
 
@@ -145,23 +162,30 @@ mod tests {
             p.check(None, "Microsoft.Dynamics.Nav.Runtime.Foo", Access::Member("Bar")),
             &["server class"],
         );
-        assert!(p
-            .check(
+        assert!(
+            p.check(
                 Some("Microsoft.Dynamics.Nav.Types"),
                 "Microsoft.Dynamics.Nav.Types.Base64UrlHelper",
                 Access::Member("EncodeBase64UrlString")
             )
-            .is_ok());
+            .is_ok()
+        );
     }
 
     #[test]
     fn add_in_assemblies_that_reach_outside_are_refused() {
         let p = p();
         for (asm, ty) in [
-            ("Microsoft.Exchange.WebServices.NETStandard", "Microsoft.Exchange.WebServices.Data.ExchangeService"),
+            (
+                "Microsoft.Exchange.WebServices.NETStandard",
+                "Microsoft.Exchange.WebServices.Data.ExchangeService",
+            ),
             ("Microsoft.Dynamics.Nav.CrmCustomizationHelper", "X.Y"),
             ("Microsoft.Dynamics.Nav.PowerBIEmbedded", "X.Y"),
-            ("Azure.Security.KeyVault.Secrets", "Azure.Security.KeyVault.Secrets.SecretClient"),
+            (
+                "Azure.Security.KeyVault.Secrets",
+                "Azure.Security.KeyVault.Secrets.SecretClient",
+            ),
             ("MailKit", "MailKit.Net.Smtp.SmtpClient"),
         ] {
             refused(p.check(Some(asm), ty, Access::Member("M")), &["refused by policy", asm]);
@@ -202,7 +226,10 @@ mod tests {
             refused(p.check(Some("netstandard"), ty, Access::Member(m)), &[ty, m]);
         }
         // Other members of the same types are fine.
-        assert!(p.check(None, "System.Reflection.Assembly", Access::Member("GetName")).is_ok());
+        assert!(
+            p.check(None, "System.Reflection.Assembly", Access::Member("GetName"))
+                .is_ok()
+        );
     }
 
     #[test]
@@ -220,8 +247,14 @@ mod tests {
         ] {
             refused(p.check(None, ty, Access::Member(m)), &[ty, m]);
         }
-        refused(p.check(None, "System.Random", Access::Construct(0)), &["System.Random", "without arguments"]);
-        assert!(p.check(None, "System.Random", Access::Construct(1)).is_ok(), "a seeded Random is deterministic");
+        refused(
+            p.check(None, "System.Random", Access::Construct(0)),
+            &["System.Random", "without arguments"],
+        );
+        assert!(
+            p.check(None, "System.Random", Access::Construct(1)).is_ok(),
+            "a seeded Random is deterministic"
+        );
         assert!(p.check(None, "System.DateTime", Access::Member("Parse")).is_ok());
     }
 

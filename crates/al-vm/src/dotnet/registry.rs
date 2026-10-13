@@ -101,6 +101,12 @@ impl RegistryType {
                 .iter()
                 .find(|m| m.kind == k && m.name.eq_ignore_ascii_case(name))
         };
-        by(kind).or_else(|| if kind == MemberKind::Get { by(MemberKind::Call) } else { None })
+        by(kind).or_else(|| {
+            if kind == MemberKind::Get {
+                by(MemberKind::Call)
+            } else {
+                None
+            }
+        })
     }
 }

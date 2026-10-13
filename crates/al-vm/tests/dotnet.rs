@@ -98,7 +98,10 @@ fn reply(v: DotNetValue) -> Result<DotNetReply, DotNetFailure> {
 }
 
 fn handle(h: u64, ty: &str) -> DotNetValue {
-    DotNetValue::Handle { handle: h, ty: ty.into() }
+    DotNetValue::Handle {
+        handle: h,
+        ty: ty.into(),
+    }
 }
 
 const DOTNET: &str = "dotnet { assembly(\"netstandard\") {
@@ -109,6 +112,7 @@ const DOTNET: &str = "dotnet { assembly(\"netstandard\") {
     type(\"System.IO.File\"; \"File\") { }
     type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper\"; \"NavTenantSettingsHelper\") { }
     type(\"System.Base64FormattingOptions\"; \"Base64FormattingOptions\") { }
+    type(\"Microsoft.Dynamics.Nav.Types.Base64UrlHelper\"; \"Base64UrlHelper\") { }
   }
   assembly(\"Microsoft.Exchange.WebServices\") { type(\"Microsoft.Exchange.WebServices.Data.ExchangeService\"; \"ExchangeService\") { } }
 }\n";
@@ -127,13 +131,13 @@ table 60008 "ALT Blob"
 
 struct Ran {
     result: Result<Value, Signal>,
+    /// Kept so the session (and its host session) lives until the `Ran` is dropped.
+    #[allow(dead_code)]
     session: Option<Session>,
 }
 
 fn compile(vars: &str, body: &str, ret: &str) -> (al_ir::Program, Vec<Vec<Option<String>>>, usize, usize) {
-    let src = format!(
-        "{DOTNET}{TABLE}\ncodeunit 50100 C {{ procedure F(){ret} var {vars} begin {body} end; }}"
-    );
+    let src = format!("{DOTNET}{TABLE}\ncodeunit 50100 C {{ procedure F(){ret} var {vars} begin {body} end; }}");
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),
@@ -150,7 +154,11 @@ fn compile(vars: &str, body: &str, ret: &str) -> (al_ir::Program, Vec<Vec<Option
         .map(|o| o.iter().map(|r| r.first().cloned()).collect())
         .collect();
     let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
-    let ri = l.program.objects[oi].routines.iter().position(|r| r.name == "F").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
     (l.program, blocked, oi, ri)
 }
 
@@ -203,7 +211,9 @@ fn text(r: Ran) -> String {
 fn convert_script() -> Fake {
     Fake::new(|r| match r {
         Req::Invoke(DotNetTarget::Static(t), m, a) if t.name == "System.Convert" && m == "ToBase64String" => {
-            let DotNetValue::Str(s) = &a[0].value else { panic!("{a:?}") };
+            let DotNetValue::Str(s) = &a[0].value else {
+                panic!("{a:?}")
+            };
             reply(DotNetValue::Str(format!("b64({s})")))
         }
         other => panic!("unexpected request {other:?}"),
@@ -217,24 +227,43 @@ fn a_call_on_the_declared_type_reaches_the_host_with_the_clr_type_and_member() {
     assert_eq!(text(r), "b64(hi)");
     let log = host.log();
     assert_eq!(log[0], Req::Open, "the session starts at the first call");
-    assert!(matches!(&log[1], Req::Invoke(DotNetTarget::Static(t), m, _) if t.name == "System.Convert" && t.assembly == "netstandard" && m == "ToBase64String"));
-    assert_eq!(log.last(), Some(&Req::Close), "the host session closes with the VM session");
+    assert!(
+        matches!(&log[1], Req::Invoke(DotNetTarget::Static(t), m, _) if t.name == "System.Convert" && t.assembly == "netstandard" && m == "ToBase64String")
+    );
+    assert_eq!(
+        log.last(),
+        Some(&Req::Close),
+        "the host session closes with the VM session"
+    );
 }
 
 #[test]
 fn a_run_that_never_calls_dotnet_starts_nothing() {
     let host = convert_script();
-    let r = run(&host, "C: DotNet Convert; I: Integer;", "I := 1; exit(Format(I));", ": Text");
+    let r = run(
+        &host,
+        "C: DotNet Convert; I: Integer;",
+        "I := 1; exit(Format(I));",
+        ": Text",
+    );
     assert_eq!(text(r), "1");
     assert_eq!(host.log(), vec![], "no Open, no Close");
 }
 
 #[test]
 fn without_a_host_the_call_is_refused_naming_the_type() {
-    let r = run_with(DotNetConfig::default(), "C: DotNet Convert;", "exit(C.ToBase64String('hi'));", ": Text");
+    let r = run_with(
+        DotNetConfig::default(),
+        "C: DotNet Convert;",
+        "exit(C.ToBase64String('hi'));",
+        ": Text",
+    );
     let why = unsupported(&r);
     assert!(why.starts_with(UNAVAILABLE), "{why}");
-    assert!(why.contains("DotNet 'System.Convert' needs a .NET host; none is configured"), "{why}");
+    assert!(
+        why.contains("DotNet 'System.Convert' needs a .NET host; none is configured"),
+        "{why}"
+    );
 }
 
 #[test]
@@ -272,7 +301,12 @@ fn a_registered_type_is_served_by_the_registry_and_never_reaches_the_host() {
     let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
     let mut c = cfg(&host);
     c.registry = Arc::new(tenant_registry(&HITS));
-    let r = run_with(c, "H: DotNet NavTenantSettingsHelper; B: Boolean;", "B := H.IsSandbox(); exit(Format(B));", ": Text");
+    let r = run_with(
+        c,
+        "H: DotNet NavTenantSettingsHelper; B: Boolean;",
+        "B := H.IsSandbox(); exit(Format(B));",
+        ": Text",
+    );
     assert_eq!(text(r), "No");
     assert_eq!(host.log(), vec![], "not even a session was opened");
 }
@@ -283,7 +317,12 @@ fn an_unregistered_member_of_a_registered_type_is_refused_by_name_not_forwarded(
     let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
     let mut c = cfg(&host);
     c.registry = Arc::new(tenant_registry(&HITS));
-    let r = run_with(c, "H: DotNet NavTenantSettingsHelper; B: Boolean;", "B := H.IsProduction(); exit(Format(B));", ": Text");
+    let r = run_with(
+        c,
+        "H: DotNet NavTenantSettingsHelper; B: Boolean;",
+        "B := H.IsProduction(); exit(Format(B));",
+        ": Text",
+    );
     let why = unsupported(&r);
     assert!(why.contains("NavTenantSettingsHelper.IsProduction"), "{why}");
     assert!(why.contains("never forwarded"), "{why}");
@@ -306,7 +345,10 @@ fn a_registry_member_without_a_pin_does_not_build() {
     }])
     .err()
     .expect("refused");
-    assert!(err.contains("X.M") && err.contains("neither a corpus pin nor a probe"), "{err}");
+    assert!(
+        err.contains("X.M") && err.contains("neither a corpus pin nor a probe"),
+        "{err}"
+    );
     assert!(Registry::builtin().is_empty(), "no member is pinned yet");
 }
 
@@ -317,22 +359,55 @@ fn policy_refusals_name_the_rule_and_never_reach_the_host() {
     let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
     let r = run(&host, "F: DotNet File;", "F.Delete('x');", "");
     let why = unsupported(&r);
-    assert!(why.contains("System.IO.File") && why.contains("refused by policy"), "{why}");
+    assert!(
+        why.contains("System.IO.File") && why.contains("refused by policy"),
+        "{why}"
+    );
     let r = run(&host, "D: DotNet ClrDateTime; V: DateTime;", "V := D.Now;", "");
     assert!(unsupported(&r).contains("System.DateTime.Now"));
     let r = run(&host, "E: DotNet ExchangeService;", "E.Foo();", "");
     let why = unsupported(&r);
-    assert!(why.contains("Microsoft.Exchange.WebServices") && why.contains("network"), "{why}");
+    assert!(
+        why.contains("Microsoft.Exchange.WebServices") && why.contains("network"),
+        "{why}"
+    );
     assert_eq!(host.log(), vec![]);
 }
 
 #[test]
 fn an_unregistered_server_class_is_refused_before_the_host() {
     let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
-    let r = run(&host, "H: DotNet NavTenantSettingsHelper; B: Boolean;", "B := H.IsSandbox();", "");
+    let r = run(
+        &host,
+        "H: DotNet NavTenantSettingsHelper; B: Boolean;",
+        "B := H.IsSandbox();",
+        "",
+    );
     let why = unsupported(&r);
-    assert!(why.contains("server class") && why.contains("neither registered nor classified pure"), "{why}");
+    assert!(
+        why.contains("server class") && why.contains("neither registered nor classified pure"),
+        "{why}"
+    );
     assert_eq!(host.log(), vec![]);
+}
+
+#[test]
+fn a_server_class_on_the_pure_list_reaches_the_host() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(DotNetTarget::Static(t), m, _)
+            if t.name == "Microsoft.Dynamics.Nav.Types.Base64UrlHelper" && m == "EncodeBase64UrlString" =>
+        {
+            reply(DotNetValue::Str("aGk".into()))
+        }
+        other => panic!("unexpected {other:?}"),
+    });
+    let r = run(
+        &host,
+        "H: DotNet Base64UrlHelper;",
+        "exit(H.EncodeBase64UrlString('hi'));",
+        ": Text",
+    );
+    assert_eq!(text(r), "aGk");
 }
 
 // ---- lifetime ----------------------------------------------------------------------------
@@ -389,7 +464,11 @@ fn assignment_shares_the_reference_and_a_handle_is_released_once_after_the_last_
             Req::Get(DotNetTarget::Instance(1), "Length".into()),
         ]
     );
-    assert!(!host.log().iter().any(|q| matches!(q, Req::Release(_))), "{:?}", host.log());
+    assert!(
+        !host.log().iter().any(|q| matches!(q, Req::Release(_))),
+        "{:?}",
+        host.log()
+    );
     drop(r);
     let mut released: Vec<u64> = host
         .log()
@@ -445,10 +524,17 @@ fn constructing_property_get_and_a_returned_handle_round_trip() {
 
 fn arg_of(vars: &str, setup: &str) -> Result<DotNetValue, String> {
     let host = Fake::new(|_| reply(DotNetValue::Null));
-    let r = run(&host, &format!("C: DotNet Convert; {vars}"), &format!("{setup} C.Take(V);"), "");
+    let r = run(
+        &host,
+        &format!("C: DotNet Convert; {vars}"),
+        &format!("{setup} C.Take(V);"),
+        "",
+    );
     match r.result {
         Ok(_) => match host.calls().first() {
-            Some(Req::Invoke(DotNetTarget::Static(t), m, a)) if t.name == "System.Convert" && m == "Take" && a.len() == 1 => {
+            Some(Req::Invoke(DotNetTarget::Static(t), m, a))
+                if t.name == "System.Convert" && m == "Take" && a.len() == 1 =>
+            {
                 Ok(a[0].value.clone())
             }
             other => Err(format!("{other:?}")),
@@ -472,12 +558,18 @@ fn al_values_go_to_dotnet_as_the_marshalling_table_says() {
         ("V: Boolean;", "V := true;", DotNetValue::Bool(true)),
         ("V: Decimal;", "V := 1.5;", DotNetValue::Decimal("1.5".into())),
         ("V: Date;", "V := 20240101D;", DotNetValue::DateTime(day)),
-        ("V: DateTime;", "Evaluate(V, '2024-01-01T12:00:00Z', 9);", DotNetValue::DateTime(day + 432_000_000_000)),
+        (
+            "V: DateTime;",
+            "Evaluate(V, '2024-01-01T12:00:00Z', 9);",
+            DotNetValue::DateTime(day + 432_000_000_000),
+        ),
         ("V: Duration;", "V := 1500;", DotNetValue::TimeSpan(15_000_000)),
         (
             "V: Guid;",
             "Evaluate(V, '{01234567-89AB-CDEF-0123-456789ABCDEF}');",
-            DotNetValue::Guid([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]),
+            DotNetValue::Guid([
+                0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
+            ]),
         ),
         ("V: Option A,B,C;", "V := V::C;", DotNetValue::Int32(2)),
         ("V: DotNet MemoryStream;", "", DotNetValue::Null),
@@ -503,24 +595,51 @@ fn values_with_no_pinned_marshalling_are_refused_with_a_reason() {
 
 fn result_of(reply_value: DotNetValue, var: &str, ret: &str) -> Result<Value, Signal> {
     let host = Fake::new(move |_| reply(reply_value.clone()));
-    run(&host, &format!("C: DotNet Convert; V: {var};"), "V := C.Make(); exit(V);", ret).result
+    run(
+        &host,
+        &format!("C: DotNet Convert; V: {var};"),
+        "V := C.Make(); exit(V);",
+        ret,
+    )
+    .result
 }
 
 #[test]
 fn dotnet_results_come_back_as_the_marshalling_table_says() {
     let day = 638_396_640_000_000_000_i64;
     assert!(matches!(result_of(DotNetValue::Str("x".into()), "Text", ": Text"), Ok(Value::Text(s)) if s == "x"));
-    assert!(matches!(result_of(DotNetValue::Int32(7), "Integer", ": Integer"), Ok(Value::Integer(7))));
-    assert!(matches!(result_of(DotNetValue::Int64(7), "BigInteger", ": BigInteger"), Ok(Value::BigInteger(7))));
-    assert!(matches!(result_of(DotNetValue::Bool(true), "Boolean", ": Boolean"), Ok(Value::Boolean(true))));
-    assert!(matches!(result_of(DotNetValue::Decimal("2.50".into()), "Decimal", ": Decimal"), Ok(Value::Decimal(d)) if d.to_string() == "2.50"));
-    assert!(matches!(result_of(DotNetValue::Int32(3), "Decimal", ": Decimal"), Ok(Value::Decimal(d)) if d.to_string() == "3"));
+    assert!(matches!(
+        result_of(DotNetValue::Int32(7), "Integer", ": Integer"),
+        Ok(Value::Integer(7))
+    ));
+    assert!(matches!(
+        result_of(DotNetValue::Int64(7), "BigInteger", ": BigInteger"),
+        Ok(Value::BigInteger(7))
+    ));
+    assert!(matches!(
+        result_of(DotNetValue::Bool(true), "Boolean", ": Boolean"),
+        Ok(Value::Boolean(true))
+    ));
+    assert!(
+        matches!(result_of(DotNetValue::Decimal("2.50".into()), "Decimal", ": Decimal"), Ok(Value::Decimal(d)) if d.to_string() == "2.50")
+    );
+    assert!(
+        matches!(result_of(DotNetValue::Int32(3), "Decimal", ": Decimal"), Ok(Value::Decimal(d)) if d.to_string() == "3")
+    );
     // 2024-01-01 12:00 is 45_000 s after midnight; AL stores ms since 0001-01-01 plus one.
     let want_ms = (day + 432_000_000_000) / 10_000 + 1;
-    assert!(matches!(result_of(DotNetValue::DateTime(day + 432_000_000_000), "DateTime", ": DateTime"), Ok(Value::DateTime(ms)) if ms == want_ms));
-    assert!(matches!(result_of(DotNetValue::TimeSpan(15_000_000), "Duration", ": Duration"), Ok(Value::Duration(1500))));
+    assert!(
+        matches!(result_of(DotNetValue::DateTime(day + 432_000_000_000), "DateTime", ": DateTime"), Ok(Value::DateTime(ms)) if ms == want_ms)
+    );
+    assert!(matches!(
+        result_of(DotNetValue::TimeSpan(15_000_000), "Duration", ": Duration"),
+        Ok(Value::Duration(1500))
+    ));
     assert!(matches!(result_of(DotNetValue::Guid([7; 16]), "Guid", ": Guid"), Ok(Value::Guid(g)) if g == [7; 16]));
-    assert!(matches!(result_of(DotNetValue::Null, "DotNet MemoryStream", ": Integer"), Err(Signal::Unsupported(_)) | Ok(_)));
+    assert!(matches!(
+        result_of(DotNetValue::Null, "DotNet MemoryStream", ": Integer"),
+        Err(Signal::Unsupported(_)) | Ok(_)
+    ));
 }
 
 #[test]
@@ -536,7 +655,9 @@ fn a_result_of_another_kind_is_not_stored_into_a_typed_variable() {
 #[test]
 fn an_enum_result_keeps_its_clr_type_and_goes_back_as_an_enum_argument() {
     let host = Fake::new(|r| match r {
-        Req::Get(DotNetTarget::Static(t), n) if t.name == "System.Base64FormattingOptions" && n == "InsertLineBreaks" => {
+        Req::Get(DotNetTarget::Static(t), n)
+            if t.name == "System.Base64FormattingOptions" && n == "InsertLineBreaks" =>
+        {
             reply(DotNetValue::Enum {
                 ty: "System.Base64FormattingOptions".into(),
                 name: "InsertLineBreaks".into(),
@@ -576,10 +697,18 @@ fn a_dotnet_exception_is_unsupported_with_the_clr_type_message_and_inner_excepti
             inner: vec![("System.ArgumentException".into(), "inner text".into())],
         }))
     });
-    let r = run(&host, "C: DotNet Convert; T: Text;", "T := C.FromBase64String('not base64!');", "");
+    let r = run(
+        &host,
+        "C: DotNet Convert; T: Text;",
+        "T := C.FromBase64String('not base64!');",
+        "",
+    );
     let why = unsupported(&r);
     assert!(why.contains("System.Convert.FromBase64String"), "{why}");
-    assert!(why.contains("System.FormatException: The input is not a valid Base-64 string"), "{why}");
+    assert!(
+        why.contains("System.FormatException: The input is not a valid Base-64 string"),
+        "{why}"
+    );
     assert!(why.contains("System.ArgumentException: inner text"), "{why}");
     assert!(why.contains("not pinned"), "{why}");
 }
@@ -599,7 +728,10 @@ fn asserterror_around_a_dotnet_exception_is_not_run_until_the_text_is_pinned() {
         "asserterror T := C.FromBase64String('x'); exit(GetLastErrorText());",
         ": Text",
     );
-    assert!(unsupported(&r).contains("System.FormatException"), "Unsupported passes through asserterror");
+    assert!(
+        unsupported(&r).contains("System.FormatException"),
+        "Unsupported passes through asserterror"
+    );
 }
 
 #[test]

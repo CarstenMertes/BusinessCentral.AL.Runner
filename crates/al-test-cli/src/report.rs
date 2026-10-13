@@ -353,7 +353,11 @@ mod tests {
     fn a_baseline_case_refused_because_dotnet_is_unavailable_is_skipped_not_a_regression() {
         let base: BTreeSet<_> = [id(1, "a"), id(2, "needs_dotnet"), id(2, "dotnet_crashed"), id(3, "d")].into();
         let r = ratchet(&base, &dotnet_outcome);
-        assert_eq!(r.regressions, vec![id(2, "dotnet_crashed"), id(3, "d")], "a crashed sidecar is a regression");
+        assert_eq!(
+            r.regressions,
+            vec![id(2, "dotnet_crashed"), id(3, "d")],
+            "a crashed sidecar is a regression"
+        );
         assert_eq!(r.skipped.len(), 1);
         assert_eq!(r.skipped[0].0, id(2, "needs_dotnet"));
         assert!(r.skipped[0].1.contains("'dotnet' not found"));
@@ -366,14 +370,21 @@ mod tests {
         // Local run without .NET: reported, not a failure.
         assert_eq!(decide(&r, false, false), Decision::Ok);
         // The baseline cannot be rewritten while cases were skipped.
-        let Decision::Setup(why) = decide(&r, true, false) else { panic!() };
+        let Decision::Setup(why) = decide(&r, true, false) else {
+            panic!()
+        };
         assert!(why.contains("--update-baseline") && why.contains("skipped"), "{why}");
         // CI: unavailability is a hard error, so the ratchet means what it says.
-        let Decision::Setup(why) = decide(&r, false, true) else { panic!() };
+        let Decision::Setup(why) = decide(&r, false, true) else {
+            panic!()
+        };
         assert!(why.contains("--require-dotnet"), "{why}");
         // A real regression still wins over a skip.
         let base: BTreeSet<_> = [id(3, "d"), id(2, "needs_dotnet")].into();
-        assert_eq!(decide(&ratchet(&base, &dotnet_outcome), false, false), Decision::Regression);
+        assert_eq!(
+            decide(&ratchet(&base, &dotnet_outcome), false, false),
+            Decision::Regression
+        );
         // Nothing skipped, nothing regressed.
         let base: BTreeSet<_> = [id(1, "a")].into();
         assert_eq!(decide(&ratchet(&base, &dotnet_outcome), true, true), Decision::Ok);

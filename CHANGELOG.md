@@ -30,6 +30,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **tests:** DapSourceBreakpointsTests race test guarantees its reader ran
 - **cecil:** one whole-body owner per Ncl target, enforced by an ownership audit
 - **dap:** install a source's setBreakpoints set atomically, with per-source ownership pinned
 - **ci:** stop the nightly header stating the backup reader tag the pin has moved past

@@ -11,6 +11,15 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 | Corpus commit | `cf6e546793a92c482499ce86eadf0a0b13d2a742` (must equal the `corpus` submodule pin) |
 | Workflow run | 38306086475 (`ci.yml`, push to master) |
 
+| Major | Oracle leg | Artifact | Artifact id |
+|---|---|---|---|
+| 27 | 27.5 | `junit-test-results-27.5` | 11772863083 |
+| 28 | 28.5 | `junit-test-results-28.5` | 11773069390 |
+| 29 | 29.0 | `junit-test-results-29.0` | 11773034371 |
+
+Each file has 4836 cases and 0 failures. The other legs of the same run (27.0, 27.3,
+28.0 to 28.4) have the same case set; they are the drift check.
+
 Layout:
 
 ```text

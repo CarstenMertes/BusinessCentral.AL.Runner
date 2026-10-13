@@ -11,3 +11,19 @@ workflow_run = 38306086475
 artifact_id = 11772863083
 junit = "27/junit.xml"
 baseline = "metrics/27/passing.txt"
+
+[[version]]
+major = 28
+bc_version = "28.5"
+workflow_run = 38306086475
+artifact_id = 11773069390
+junit = "28/junit.xml"
+baseline = "metrics/28/passing.txt"
+
+[[version]]
+major = 29
+bc_version = "29.0"
+workflow_run = 38306086475
+artifact_id = 11773034371
+junit = "29/junit.xml"
+baseline = "metrics/29/passing.txt"

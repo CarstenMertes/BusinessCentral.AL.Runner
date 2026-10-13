@@ -104,6 +104,9 @@ fn the_first_line_names_the_target() {
     let (code, out, err) = cli(&["--bc-version", "27"]);
     assert_eq!(code, 0, "{err}");
     assert_eq!(out.lines().next(), Some("target: BC 27.5, runtime 16.0"), "{out}");
+    let (code, out, err) = cli(&["--bc-version", "28"]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().next(), Some("target: BC 28.5, runtime 16.0"), "{out}");
 }
 
 #[test]
@@ -120,4 +123,25 @@ fn bc_26_is_not_supported() {
     let (code, _, err) = cli(&["--bc-version", "26"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("27 and later only"), "{err}");
+}
+
+#[test]
+fn every_bc_major_has_an_oracle_with_the_same_cases() {
+    require_corpus();
+    // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
+    // run stops with exit 2 (ADR-015 1.6).
+    for v in ["27", "28", "29"] {
+        let (code, r) = json(&["--bc-version", v]);
+        assert_eq!(code, 0, "BC {v}");
+        assert_eq!(r["overall"]["total"], 4836, "BC {v}");
+        assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "BC {v}");
+    }
+}
+
+#[test]
+fn the_default_is_the_newest_version_with_an_oracle() {
+    require_corpus();
+    let (code, out, err) = cli(&[]);
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(out.lines().next(), Some("target: BC 29.0, runtime 16.0"), "{out}");
 }

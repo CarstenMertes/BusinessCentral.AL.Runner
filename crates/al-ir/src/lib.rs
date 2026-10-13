@@ -227,6 +227,29 @@ pub struct Control {
     pub triggers: Vec<(String, usize)>,
     /// For parts: the page object index.
     pub part_page: Option<usize>,
+    /// For parts: how the part's rows follow the host's current row.
+    #[serde(default)]
+    pub part_link: Option<PartLink>,
+}
+
+/// `SubPageLink`, `SubPageView` and `Provider` of a part control (ADR-012 follow-up).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PartLink {
+    /// `SubPageLink` entries, in source order.
+    pub entries: Vec<LinkEntry>,
+    /// `SubPageView` as written.
+    pub view: Option<String>,
+    /// `Provider = <part>`: the control index (on the same page) whose current row the link reads.
+    pub provider: Option<usize>,
+}
+
+/// One `PartField = field(HostField)` / `const(..)` / `filter(..)` entry of a `SubPageLink`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LinkEntry {
+    /// Position of the part's field, position of the host (or provider) field.
+    Field(usize, usize),
+    /// Position of the part's field, the filter text (`const(x)` and `filter(x)` alike).
+    Filter(usize, String),
 }
 
 impl Control {

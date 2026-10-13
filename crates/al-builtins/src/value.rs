@@ -212,6 +212,16 @@ pub struct PageState {
     /// OnInit/OnOpenPage are running, and `CurrPage.Editable(false)` has been called in them.
     pub opening: bool,
     pub editable_off: bool,
+    /// The pages shown by the part controls of this page: (control index, child page). Only parts
+    /// that are in the control tree at open have one.
+    pub parts: Vec<(usize, Rc<RefCell<PageState>>)>,
+    /// Primary key of the stored row the cursor stood on when the current new row was started:
+    /// the lower neighbour AutoSplitKey numbers it from (`None`: no such row).
+    pub lower_key: Option<Vec<Value>>,
+    /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
+    pub set_record: Option<Rc<RefCell<RecordState>>>,
+    /// For a part: the page that hosts it and the index of the part control on that page.
+    pub host: Option<(std::rc::Weak<RefCell<PageState>>, usize)>,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -251,6 +261,10 @@ impl PageState {
             draft_stored: false,
             opening: false,
             editable_off: false,
+            parts: Vec::new(),
+            lower_key: None,
+            set_record: None,
+            host: None,
         }
     }
 }

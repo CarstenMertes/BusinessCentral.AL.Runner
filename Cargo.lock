@@ -72,6 +72,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "al-version"
+version = "0.1.0"
+
+[[package]]
 name = "al-vm"
 version = "0.1.0"
 dependencies = [

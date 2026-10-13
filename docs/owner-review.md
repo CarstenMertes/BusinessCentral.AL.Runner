@@ -6,6 +6,19 @@ reviewed it.
 
 ## Open questions (not decided)
 
+- Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
+  - It is about 60 tests in 8 files, at local head b06fdc0 in corpus-probes.
+  - All of them pass on the local BC 27.5 container, and the corpus gate
+    scripts pass.
+  - A push means 3 more corpus CI runs (27.5, 28.5 and 29.0) and then an
+    oracle bump.
+  - The findings: report filters, transactions, Skip/Break/Quit, RunObject
+    page types, xmlport nesting and VariableText, Text filter case
+    sensitivity, Copy and SetView, the order of Global Triggers, the SystemId
+    of temp records, the RunModal result values, and the order of part close
+    triggers.
+  - Held because tonight's CI budget is used up.
+
 - ADR-016 (Proposed), Release: AL Runner v3. Eleven open questions, each with
   options and a recommendation in the ADR:
   - binary name;
@@ -33,6 +46,17 @@ reviewed it.
   `--affected`, warm server state, `--jobs`, persistent dependency caches.
 
 ## Decided without owner review
+
+- 2026-10-14, orchestrator: there were 7 corpus CI runs overnight, not about 3.
+  - 3 were the probe batches.
+  - 1 was the final run on the probe head. Its corpus lint failed: two
+    probe codeunits shared a SingleInstance fixture.
+  - 1 re-ran after the fix (cdf315a).
+  - 2 were single-version runs for 28.5 and 29.0 on cdf315a.
+
+  The 28.5 and 29.0 runs were needed because the CLI requires every
+  per-version oracle to come from the same corpus commit. Without them, the
+  corpus bump for the new probe tests would have stalled.
 
 - 2026-10-14, ADR-013, dependency apps: the 45 s golden test of unresolved references
   (`corpus_resolve_deps.rs`) is `#[ignore]`d in debug builds; CI runs it in the release step.

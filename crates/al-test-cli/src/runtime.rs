@@ -49,6 +49,8 @@ pub fn load_app(dir: &std::path::Path) -> Result<al_sema::workspace::AppSource, 
 pub struct Manifest {
     pub publisher: String,
     pub version: String,
+    /// The files under the manifest's `resourceFolders`, named relative to their folder.
+    pub resources: Vec<(String, Vec<u8>)>,
 }
 
 /// The manifest fields `NavApp.GetCurrentModuleInfo` reports, from `dir/app.json`.
@@ -58,9 +60,33 @@ pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
     )
     .map_err(|e| format!("{}/app.json: {e}", dir.display()))?;
     let s = |k: &str| manifest[k].as_str().unwrap_or_default().to_string();
+    let mut resources = Vec::new();
+    for folder in manifest["resourceFolders"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f.as_str())
+    {
+        let root = dir.join(folder);
+        let mut stack = vec![root.clone()];
+        while let Some(d) = stack.pop() {
+            let Ok(entries) = std::fs::read_dir(&d) else { continue };
+            for e in entries {
+                let p = e.map_err(|e| e.to_string())?.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    let rel = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                    resources.push((rel, std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?));
+                }
+            }
+        }
+    }
+    resources.sort();
     Ok(Manifest {
         publisher: s("publisher"),
         version: s("version"),
+        resources,
     })
 }
 
@@ -85,6 +111,7 @@ impl CorpusRuntime {
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
+            app.resources = m.resources.clone();
         }
         let blocked = lowered
             .unsupported

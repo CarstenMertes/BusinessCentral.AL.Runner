@@ -18,6 +18,10 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("NavApp.GetModuleInfo#1", get_module),
     ("NavApp.GetCallstackModuleInfos#1", |c, _, _| callstack(c, 0)),
     ("NavApp.GetCallerCallstackModuleInfos#1", |c, _, _| callstack(c, 1)),
+    ("NavApp.GetResource#1", get_resource),
+    ("NavApp.GetResourceAsText#1", get_resource_as_text),
+    ("NavApp.GetResourceAsJson#1", get_resource_as_json),
+    ("NavApp.ListResources#1", list_resources),
     // True while an install codeunit runs (session/TestNavAppExtended.al, TestBCPlatformContracts.al: false in a test).
     ("NavApp.IsInstalling#1", |c, _, _| Ok(Value::Boolean(c.install_scope()))),
 ];
@@ -177,4 +181,106 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         _ => return None,
     };
     Some(f)
+}
+
+// ---- packaged resources ----------------------------------------------------------------------
+
+/// The resource `name` of the app that owns the running code, else the error BC raises
+/// (session/TestNavAppGetResource.al:62-85: "A resource matching '{0}' could not be found in app
+/// '{1}'."; the corpus asserts the part up to the app name).
+fn resource(c: &dyn Ctx, name: &str) -> Result<Vec<u8>, Signal> {
+    let Some((app, resources)) = c.app_resources() else {
+        return unsupported("resources of an app the runtime does not know");
+    };
+    match resources.into_iter().find(|(n, _)| n == name) {
+        Some((_, bytes)) => Ok(bytes),
+        None => Err(Signal::Error(AlError {
+            message: format!("A resource matching '{name}' could not be found in app '{app}'."),
+            code: String::new(),
+            call_stack: String::new(),
+        })),
+    }
+}
+
+fn name_arg(a: &[Value]) -> Result<String, Signal> {
+    match a.first().and_then(crate::native::text_of) {
+        Some(n) => Ok(n),
+        None => unsupported(format!("a resource name that is not text: {:?}", a.first())),
+    }
+}
+
+/// The `TextEncoding` argument at `at`: UTF-8 when omitted (ordinals as documented: MSDos 0, UTF8 1,
+/// UTF16 2, Windows 3); only UTF-8 is pinned for resources.
+fn encoding_arg(a: &[Value], at: usize) -> Result<crate::stream::Encoding, Signal> {
+    match a.get(at) {
+        None | Some(Value::Option(1, _)) => Ok(crate::stream::Encoding::Utf8),
+        Some(other) => unsupported(format!(
+            "a resource read with text encoding {other:?} (only UTF8 is pinned)"
+        )),
+    }
+}
+
+fn get_resource(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let name = name_arg(a)?;
+    let enc = encoding_arg(a, 2)?;
+    let data = resource(c, &name)?;
+    match a.get(1) {
+        Some(Value::Library(_, cell)) => {
+            *cell.borrow_mut() = LibraryValue::InStream(crate::stream::InState { data, pos: 0, enc });
+            Ok(Value::Null)
+        }
+        other => unsupported(format!("GetResource into {other:?}")),
+    }
+}
+
+fn get_resource_as_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let name = name_arg(a)?;
+    let enc = encoding_arg(a, 1)?;
+    Ok(Value::Text(enc.decode(&resource(c, &name)?)))
+}
+
+fn get_resource_as_json(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let name = name_arg(a)?;
+    let enc = encoding_arg(a, 1)?;
+    let text = enc.decode(&resource(c, &name)?);
+    match crate::json::object_from_text(&text)? {
+        Some(v) => Ok(v),
+        None => unsupported(format!(
+            "resource `{name}` is not a JSON object (error text not pinned)"
+        )),
+    }
+}
+
+/// `*` and `?` wildcards; the filter language is the documented one, the corpus only calls it
+/// (session/TestMiscComplete.al:139-165).
+fn glob(pattern: &str, text: &str) -> bool {
+    fn go(p: &[char], t: &[char]) -> bool {
+        match p.split_first() {
+            None => t.is_empty(),
+            Some(('*', rest)) => (0..=t.len()).any(|i| go(rest, &t[i..])),
+            Some(('?', rest)) => !t.is_empty() && go(rest, &t[1..]),
+            Some((c, rest)) => t.first().is_some_and(|x| x.eq_ignore_ascii_case(c)) && go(rest, &t[1..]),
+        }
+    }
+    go(&pattern.chars().collect::<Vec<_>>(), &text.chars().collect::<Vec<_>>())
+}
+
+fn list_resources(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let Some((_, resources)) = c.app_resources() else {
+        return unsupported("resources of an app the runtime does not know");
+    };
+    let filter = match a.first() {
+        None => None,
+        Some(v) => Some(
+            crate::native::text_of(v)
+                .ok_or_else(|| Signal::Unsupported("a resource filter that is not text".into()))?,
+        ),
+    };
+    let items = resources
+        .into_iter()
+        .map(|(n, _)| n)
+        .filter(|n| filter.as_deref().is_none_or(|f| glob(f, n)))
+        .map(Value::Text)
+        .collect();
+    Ok(Value::List(Rc::new(RefCell::new(items))))
 }

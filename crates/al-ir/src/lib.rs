@@ -23,6 +23,9 @@ pub struct AppInfo {
     pub version: String,
     /// Ids of the apps it depends on.
     pub dependencies: Vec<String>,
+    /// The packaged resources (`resourceFolders` of the manifest): name relative to its folder, content.
+    #[serde(default)]
+    pub resources: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

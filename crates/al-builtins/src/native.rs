@@ -73,6 +73,10 @@ pub trait Ctx: FormatCtx {
     fn module_callstack(&self, _skip: usize) -> Vec<crate::value::ModuleInfoState> {
         Vec::new()
     }
+    /// The name and packaged resources of the app that owns the running code.
+    fn app_resources(&self) -> Option<(String, Vec<(String, Vec<u8>)>)> {
+        None
+    }
     /// The installed app with this id.
     fn module_by_id(&self, _id: &[u8; 16]) -> ModuleLookup {
         ModuleLookup::NotInstalled

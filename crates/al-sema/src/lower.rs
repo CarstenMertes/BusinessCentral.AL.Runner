@@ -49,6 +49,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                     publisher: String::new(),
                     version: String::new(),
                     dependencies: a.dependencies.clone(),
+                    resources: Vec::new(),
                 })
                 .collect(),
         },

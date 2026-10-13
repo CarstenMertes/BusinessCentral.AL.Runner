@@ -795,6 +795,11 @@ fn run_two_apps(dep_src: &str, main_src: &str, routine: &str) -> Result<Value, S
     l.program.apps[0].version = "2.3.4.5".into();
     l.program.apps[1].publisher = "Main Publisher".into();
     l.program.apps[1].version = "1.0.0.0".into();
+    l.program.apps[1].resources = vec![
+        ("greeting.txt".into(), b"Hello from packaged resource".to_vec()),
+        ("sub/nested.txt".into(), b"nested-resource-content".to_vec()),
+        ("data.json".into(), b"{\"a\": 1}".to_vec()),
+    ];
     let blocked = l
         .unsupported
         .iter()
@@ -828,7 +833,7 @@ const CALLEE: &str = "codeunit 60384 Callee {
 
 fn module_text(body: &str) -> Result<String, Signal> {
     let main = format!(
-        "codeunit 50100 T {{ procedure F(): Text var c: Codeunit Callee; i: ModuleInfo; j: ModuleInfo; v: Version; a: Text; ids: List of [ModuleInfo]; g: Guid; begin {body} end; }}"
+        "codeunit 50100 T {{ procedure F(): Text var c: Codeunit Callee; i: ModuleInfo; j: ModuleInfo; v: Version; a: Text; t2: Text; ids: List of [ModuleInfo]; g: Guid; ins: InStream; o: JsonObject; names: List of [Text]; begin {body} end; }}"
     );
     match run_two_apps(CALLEE, &main, "F")? {
         Value::Text(s) => Ok(s),
@@ -895,4 +900,46 @@ fn is_installing_is_false_in_test_code() {
     // session/TestNavAppExtended.al, session/TestBCPlatformContracts.al:IsInstalling.
     let r = module_text("exit(Format(NavApp.IsInstalling()));");
     assert_eq!(r.unwrap(), "No");
+}
+
+#[test]
+fn packaged_resources_read_back_exactly() {
+    // session/TestNavAppGetResource.al:25-60.
+    let r = module_text(
+        "NavApp.GetResource('greeting.txt', ins, TextEncoding::UTF8); ins.ReadText(a);
+         NavApp.GetResource('sub/nested.txt', ins, TextEncoding::UTF8); ins.ReadText(t2);
+         exit(a + '|' + t2 + '|' + NavApp.GetResourceAsText('greeting.txt', TextEncoding::UTF8) + '|' + NavApp.GetResourceAsText('greeting.txt'));",
+    );
+    assert_eq!(
+        r.unwrap(),
+        "Hello from packaged resource|nested-resource-content|Hello from packaged resource|Hello from packaged resource"
+    );
+}
+
+#[test]
+fn a_missing_resource_is_named_in_the_error() {
+    // session/TestNavAppGetResource.al:62-85: "A resource matching 'missing.txt' could not be found in app".
+    let r = module_text(
+        "asserterror NavApp.GetResource('missing.txt', ins); a := GetLastErrorText();
+         asserterror t2 := NavApp.GetResourceAsText('missing.txt'); a += '|' + GetLastErrorText();
+         asserterror o := NavApp.GetResourceAsJson('nonexistent.json'); a += '|' + GetLastErrorText();
+         exit(a);",
+    );
+    let r = r.unwrap();
+    for part in r.split('|') {
+        assert!(part.starts_with("A resource matching '"), "{r}");
+        assert!(part.contains("' could not be found in app"), "{r}");
+    }
+}
+
+#[test]
+fn resources_are_listed_with_an_optional_wildcard_filter() {
+    // session/TestMiscComplete.al:139-165 (they must succeed); the filter is the documented wildcard.
+    let r = module_text(
+        "names := NavApp.ListResources(); a := Format(names.Count());
+         names := NavApp.ListResources('*.json'); a += Format(names.Count()) + names.Get(1);
+         names := NavApp.ListResources('*.xml');
+         exit(a + Format(names.Count()));",
+    );
+    assert_eq!(r.unwrap(), "31data.json0");
 }

@@ -1,6 +1,6 @@
 # ADR-011: Typed IR and execution
 
-- Status: Proposed
+- Status: Accepted (project owner, 2026-10-13)
 - Date: 2026-10-13
 
 ## Context

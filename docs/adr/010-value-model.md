@@ -1,6 +1,6 @@
 # ADR-010: Value model
 
-- Status: Proposed
+- Status: Accepted (project owner, 2026-10-13)
 - Date: 2026-10-13
 
 ## Context

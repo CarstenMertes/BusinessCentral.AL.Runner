@@ -5,7 +5,7 @@
 use crate::report::Outcome;
 use al_builtins::native::Signal;
 use al_sema::lower::Lowered;
-use al_vm::{Engine, Session};
+use al_vm::{Engine, Session, UiKind};
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -159,12 +159,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
     let mut out = Vec::new();
     for r in tests {
         let routine = &obj.routines[r];
-        let outcome = if routine
-            .attributes
-            .iter()
-            .any(|a| a.name.eq_ignore_ascii_case("HandlerFunctions"))
-        {
-            Outcome::NotRun("handler functions are not supported yet".into())
+        let handlers = resolve_handlers(lowered, object, r);
+        let outcome = if let Err(reason) = &handlers {
+            Outcome::NotRun(reason.clone())
         } else if let Some(reason) = blocked_reason(lowered, object, r) {
             Outcome::NotRun(reason)
         } else if let Some(reason) = skipped_installs
@@ -174,17 +171,113 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
         {
             Outcome::NotRun(reason.clone())
         } else {
-            session.last_error = Default::default();
-            match session.call(object, r, instance.clone(), Vec::new()) {
-                Ok(_) => Outcome::Pass,
-                Err(Signal::Error(e)) => Outcome::Fail(e.message),
-                Err(Signal::Unsupported(r)) => Outcome::NotRun(r),
-                Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
+            let bound = handlers.unwrap_or_default();
+            match bind_handlers(&mut session, &instance, &bound) {
+                Err(reason) => Outcome::NotRun(reason),
+                Ok(()) => {
+                    session.last_error = Default::default();
+                    let result = session.call(object, r, instance.clone(), Vec::new());
+                    let unexecuted = session.end_ui_scope();
+                    match result {
+                        Ok(_) if unexecuted.is_empty() => Outcome::Pass,
+                        // corpus handlers/TestPageQueryCloseMessageHandler_Tests.al:51: a declared
+                        // handler that never fires is a test failure. The text after the prefix
+                        // is not pinned (docs/probes-needed.md).
+                        Ok(_) => Outcome::Fail(format!(
+                            "The following UI handlers were not executed: {}",
+                            unexecuted.join(", ")
+                        )),
+                        Err(Signal::Error(e)) => Outcome::Fail(e.message),
+                        Err(Signal::Unsupported(r)) => Outcome::NotRun(r),
+                        Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
+                    }
+                }
             }
         };
         out.push((routine.name.clone(), outcome));
     }
     out
+}
+
+/// The handler functions test routine `test` of `object` declares with
+/// `[HandlerFunctions('A,B')]`, as (kind, routine index), or why the test
+/// cannot run with them. Handlers whose kind is not implemented are refused
+/// here, by name and kind (hard rule 4).
+fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec<(UiKind, usize)>, String> {
+    let obj = &lowered.program.objects[object];
+    let mut out: Vec<(UiKind, usize)> = Vec::new();
+    for attr in obj.routines[test]
+        .attributes
+        .iter()
+        .filter(|a| a.name.eq_ignore_ascii_case("HandlerFunctions"))
+    {
+        let names: Vec<String> = match attr.args.as_slice() {
+            [al_ir::Const::Text(list)] => list.split(',').map(|n| n.trim().to_string()).collect(),
+            _ => return Err(format!("{} is not a list of handler names", attr.text)),
+        };
+        for name in names {
+            let Some(hr) = obj.routines.iter().position(|r| r.name.eq_ignore_ascii_case(&name)) else {
+                return Err(format!("handler function {name} not found in {}", obj.name));
+            };
+            if out.iter().any(|(_, r)| *r == hr) {
+                continue;
+            }
+            let routine = &obj.routines[hr];
+            let kind_attr =
+                routine.attributes.iter().map(|a| a.name.as_str()).find(|n| {
+                    n.to_ascii_lowercase().ends_with("handler") && !n.eq_ignore_ascii_case("HandlerFunctions")
+                });
+            let Some(kind_attr) = kind_attr else {
+                return Err(format!(
+                    "{} is named in [HandlerFunctions] but is no handler function",
+                    routine.name
+                ));
+            };
+            let Some(kind) = UiKind::from_attribute(kind_attr) else {
+                let why = match kind_attr.to_ascii_lowercase().as_str() {
+                    "pagehandler" | "modalpagehandler" | "requestpagehandler" | "filterpagehandler" => {
+                        "page handlers need TestPage support"
+                    }
+                    "sendnotificationhandler" | "recallnotificationhandler" => "it needs the Notification type",
+                    "sessionsettingshandler" => "it needs the SessionSettings type",
+                    _ => "this handler kind",
+                };
+                return Err(format!(
+                    "handler {} is a [{kind_attr}]: {why}, which is not implemented yet",
+                    routine.name
+                ));
+            };
+            if let Some((_, other)) = out.iter().find(|(k, _)| *k == kind) {
+                return Err(format!(
+                    "{} and {} are both {kind:?} handlers; which one BC would bind is not pinned",
+                    obj.routines[*other].name, routine.name
+                ));
+            }
+            out.push((kind, hr));
+        }
+    }
+    // Code reachable from a handler must be runnable too (decided before running).
+    for (_, hr) in &out {
+        if let Some(reason) = blocked_reason(lowered, object, *hr) {
+            return Err(format!("handler {}: {reason}", obj.routines[*hr].name));
+        }
+    }
+    Ok(out)
+}
+
+/// Binds the resolved handlers to the test codeunit's instance for one test method.
+fn bind_handlers(
+    session: &mut Session,
+    instance: &std::rc::Rc<std::cell::RefCell<al_builtins::value::Instance>>,
+    handlers: &[(UiKind, usize)],
+) -> Result<(), String> {
+    let object = instance.borrow().object as usize;
+    let mut bound = Vec::new();
+    for (kind, routine) in handlers {
+        bound.push(session.ui_handler(*kind, object, *routine, instance.clone())?);
+    }
+    session.begin_ui_scope(bound);
+    Ok(())
 }
 
 /// Runs every `Subtype = Install` codeunit's OnInstallAppPerDatabase, then
@@ -500,13 +593,232 @@ mod tests {
         assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
     }
 
+    // ---- test handler functions (docs/probes-needed.md lists what is unpinned) ----
+
+    fn outcome_of(o: &[(String, Outcome)], name: &str) -> Outcome {
+        o.iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("{name}: {o:?}"))
+            .1
+            .clone()
+    }
+
+    const UI: &str = "codeunit 60110 UiT { Subtype = Test;
+        var Seen: Text; Fired: Integer; Asked: Text;
+
+        // handlers/TestMessageHandler.al:15 Message_Show_HandlerCaptures
+        [Test] [HandlerFunctions('Msg')]
+        procedure MessageReachesHandler() begin Message('Hello'); if Seen <> 'Hello' then Error('got %1', Seen); end;
+
+        // handlers/TestMessageHandler.al:23 Message_FormattedString_HandlerGetsFormatted
+        [Test] [HandlerFunctions('Msg')]
+        procedure MessageArgsAreSubstitutedBeforeTheHandler() begin Message('Value: %1', 42); if Seen <> 'Value: 42' then Error('got %1', Seen); end;
+
+        // handlers/TestMessageHandler.al:31,41 Confirm_Question_HandlerRepliesTrue / False
+        [Test] [HandlerFunctions('Yes')]
+        procedure ConfirmHandlerRepliesTrue() begin if not Confirm('Sure?') then Error('false'); end;
+        [Test] [HandlerFunctions('No')]
+        procedure ConfirmHandlerRepliesFalse() begin if Confirm('Sure?', true) then Error('true'); end;
+
+        // handlers/TestConfirmFormatArgs.al:Confirm_SingleFormatArg_HandlerReceivesRawUnsubstitutedQuestion
+        [Test] [HandlerFunctions('No')]
+        procedure ConfirmHandlerGetsTheRawQuestion() begin if Confirm('%1 items. Go?', true, 2) then; if Asked <> '%1 items. Go?' then Error('got %1', Asked); end;
+
+        // handlers/TestConfirmFormatArgs.al:Confirm_DefaultChoiceHonored_WhenHandlerDoesNotOverrideReply
+        [Test] [HandlerFunctions('Silent')]
+        procedure ConfirmDefaultSurvivesAHandlerThatLeavesReply()
+        begin
+            if not Confirm('q', true) then Error('default true lost');
+            if Confirm('q', false) then Error('default false lost');
+        end;
+
+        // handlers/TestConfirmFormatArgs.al: one handler answers two Confirms
+        [Test] [HandlerFunctions('No')]
+        procedure OneHandlerServesManyCalls() begin Fired := 0; if Confirm('a', true) then; if Confirm('b', true) then; if Fired <> 2 then Error('fired %1', Fired); end;
+
+        // handlers/TestConfirmNoHandler.al:Confirm_NoHandler_TestBody_IsRefused
+        [Test]
+        procedure ConfirmWithoutHandlerIsRefused()
+        var Reply: Boolean;
+        begin
+            Reply := false;
+            asserterror Reply := Confirm('CNH question', true);
+            if StrPos(GetLastErrorText(), 'Unhandled UI') = 0 then Error('no Unhandled UI: %1', GetLastErrorText());
+            if StrPos(GetLastErrorText(), 'Confirm') = 0 then Error('no Confirm: %1', GetLastErrorText());
+            if StrPos(GetLastErrorText(), 'CNH question') = 0 then Error('no question: %1', GetLastErrorText());
+            if Reply then Error('default was assigned');
+        end;
+
+        // handlers/TestPageQueryCloseError_Tests.al:75 (Unhandled UI ... Message)
+        [Test]
+        procedure MessageWithoutHandlerIsRefused()
+        begin
+            asserterror Message('lost text');
+            if StrPos(GetLastErrorText(), 'Unhandled UI: Message') = 0 then Error('got %1', GetLastErrorText());
+            if StrPos(GetLastErrorText(), 'lost text') = 0 then Error('text missing: %1', GetLastErrorText());
+        end;
+
+        // a Message handler does not answer a Confirm
+        [Test] [HandlerFunctions('Msg')]
+        procedure HandlerOfAnotherKindDoesNotAnswer()
+        begin
+            asserterror if Confirm('q') then;
+            if StrPos(GetLastErrorText(), 'Unhandled UI: Confirm') = 0 then Error('got %1', GetLastErrorText());
+            Message('now used');
+        end;
+
+        // handlers/TestPageQueryCloseMessageHandler_Tests.al:51 (UI handlers were not executed)
+        [Test] [HandlerFunctions('Msg')]
+        procedure DeclaredHandlerThatNeverFiresFailsTheTest() begin end;
+
+        // an error in the test wins over the unexecuted handler
+        [Test] [HandlerFunctions('Msg')]
+        procedure TestErrorIsReportedBeforeUnexecutedHandlers() begin Error('own error'); end;
+
+        // an error raised in a handler comes out of the UI call
+        [Test] [HandlerFunctions('Boom')]
+        procedure HandlerErrorPropagates() begin Message('x'); end;
+
+        // handlers of the previous test are not bound any more
+        [Test]
+        procedure HandlersDoNotLeakIntoTheNextTest()
+        begin
+            asserterror Message('leak?');
+            if StrPos(GetLastErrorText(), 'Unhandled UI') = 0 then Error('got %1', GetLastErrorText());
+        end;
+
+        // network/TestHttpClient.al:36 [StrMenuHandler] AllowOnceHandler
+        [Test] [HandlerFunctions('Menu')]
+        procedure StrMenuHandlerChoosesAnOption()
+        var C: Integer;
+        begin
+            C := StrMenu('One,Two,Three', 1, 'Pick');
+            if C <> 2 then Error('choice %1', C);
+            if Asked <> 'One,Two,Three|Pick' then Error('asked %1', Asked);
+        end;
+
+        [Test]
+        procedure StrMenuWithoutHandlerIsRefused()
+        begin
+            asserterror if StrMenu('A,B') = 0 then;
+            if StrPos(GetLastErrorText(), 'Unhandled UI: StrMenu') = 0 then Error('got %1', GetLastErrorText());
+        end;
+
+        [Test] [HandlerFunctions('Nope')]
+        procedure UnknownHandlerNameIsRefused() begin end;
+
+        [Test] [HandlerFunctions('Helper')]
+        procedure NamingARoutineThatIsNoHandlerIsRefused() begin end;
+
+        [Test] [HandlerFunctions('Blocked')]
+        procedure HandlerWithUnsupportedCodeIsRefused() begin Message('x'); end;
+
+        [Test] [HandlerFunctions('Msg,Msg2')]
+        procedure TwoHandlersOfOneKindAreRefused() begin end;
+
+        [MessageHandler] procedure Msg(M: Text[1024]) begin Seen := M; end;
+        [MessageHandler] procedure Msg2(M: Text[1024]) begin end;
+        [MessageHandler] procedure Boom(M: Text[1024]) begin Error('boom in handler'); end;
+        [MessageHandler] procedure Blocked(M: Text[1024]) begin Sleep(1); end;
+        [ConfirmHandler] procedure Yes(Q: Text[1024]; var Reply: Boolean) begin Reply := true; end;
+        [ConfirmHandler] procedure No(Q: Text[1024]; var Reply: Boolean) begin Fired += 1; Asked := Q; Reply := false; end;
+        [ConfirmHandler] procedure Silent(Q: Text[1024]; var Reply: Boolean) begin end;
+        [StrMenuHandler] procedure Menu(Options: Text; var Choice: Integer; Instruction: Text) begin Asked := Options + '|' + Instruction; Choice := 2; end;
+        procedure Helper() begin end;
+    }";
+
+    fn ui(name: &str) -> Outcome {
+        outcome_of(&outcomes(UI), name)
+    }
+
     #[test]
-    fn handler_functions_are_not_supported_yet() {
-        let o = outcomes(SRC);
+    fn message_handler_receives_the_text_and_substituted_arguments() {
+        assert_eq!(ui("MessageReachesHandler"), Outcome::Pass);
+        assert_eq!(ui("MessageArgsAreSubstitutedBeforeTheHandler"), Outcome::Pass);
+    }
+
+    #[test]
+    fn confirm_handler_replies_and_receives_the_raw_question() {
+        assert_eq!(ui("ConfirmHandlerRepliesTrue"), Outcome::Pass);
+        assert_eq!(ui("ConfirmHandlerRepliesFalse"), Outcome::Pass);
+        assert_eq!(ui("ConfirmHandlerGetsTheRawQuestion"), Outcome::Pass);
+        assert_eq!(ui("ConfirmDefaultSurvivesAHandlerThatLeavesReply"), Outcome::Pass);
+        assert_eq!(ui("OneHandlerServesManyCalls"), Outcome::Pass);
+    }
+
+    #[test]
+    fn ui_without_a_bound_handler_of_its_kind_is_refused_with_unhandled_ui() {
+        assert_eq!(ui("ConfirmWithoutHandlerIsRefused"), Outcome::Pass);
+        assert_eq!(ui("MessageWithoutHandlerIsRefused"), Outcome::Pass);
+        assert_eq!(ui("HandlerOfAnotherKindDoesNotAnswer"), Outcome::Pass);
+        assert_eq!(ui("StrMenuWithoutHandlerIsRefused"), Outcome::Pass);
+        assert_eq!(ui("HandlersDoNotLeakIntoTheNextTest"), Outcome::Pass);
+    }
+
+    #[test]
+    fn a_declared_handler_that_never_fires_fails_the_test() {
+        assert!(matches!(ui("DeclaredHandlerThatNeverFiresFailsTheTest"),
+                Outcome::Fail(m) if m.starts_with("The following UI handlers were not executed") && m.contains("Msg")),);
+        assert_eq!(
+            ui("TestErrorIsReportedBeforeUnexecutedHandlers"),
+            Outcome::Fail("own error".into())
+        );
+    }
+
+    #[test]
+    fn an_error_in_a_handler_comes_out_of_the_ui_call() {
+        assert_eq!(ui("HandlerErrorPropagates"), Outcome::Fail("boom in handler".into()));
+    }
+
+    #[test]
+    fn str_menu_handler_chooses() {
+        assert_eq!(ui("StrMenuHandlerChoosesAnOption"), Outcome::Pass);
+    }
+
+    #[test]
+    fn handlers_the_runtime_cannot_run_are_refused_explicitly() {
+        let nr = |n: &str| match ui(n) {
+            Outcome::NotRun(r) => r,
+            other => panic!("{n}: {other:?}"),
+        };
+        assert!(nr("UnknownHandlerNameIsRefused").contains("Nope"));
+        assert!(nr("NamingARoutineThatIsNoHandlerIsRefused").contains("Helper"));
+        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("Sleep"));
+        assert!(nr("TwoHandlersOfOneKindAreRefused").contains("Msg2"));
+    }
+
+    #[test]
+    fn page_report_and_other_handlers_are_refused_with_their_kind() {
+        let o = outcomes(
+            "page 60120 Pg { PageType = Card; }
+            report 60123 Rp { }
+            codeunit 60121 T { Subtype = Test;
+                [Test] [HandlerFunctions('Modal')] procedure A() begin end;
+                [Test] [HandlerFunctions('Req')] procedure B() begin end;
+                [ModalPageHandler] procedure Modal(var P: TestPage Pg) begin end;
+                [RequestPageHandler] procedure Req(var P: TestRequestPage Rp) begin end; }",
+        );
         assert!(
-            matches!(&o[3].1, Outcome::NotRun(r) if r.contains("handler")),
-            "{:?}",
-            o[3].1
+            matches!(&o[0].1, Outcome::NotRun(r) if r.contains("ModalPageHandler")),
+            "{o:?}"
+        );
+        assert!(
+            matches!(&o[1].1, Outcome::NotRun(r) if r.contains("RequestPageHandler")),
+            "{o:?}"
+        );
+    }
+
+    #[test]
+    fn ui_outside_a_test_method_is_not_run() {
+        // OnRun is not a test method: what a UI call does there is not pinned.
+        let o = outcomes(
+            "codeunit 60122 T { Subtype = Test;
+                trigger OnRun() begin Message('x'); end;
+                [Test] procedure A() begin end; }",
+        );
+        assert!(
+            matches!(&o[0].1, Outcome::NotRun(r) if r.contains("OnRun") && r.contains("outside a test method")),
+            "{o:?}"
         );
     }
 }

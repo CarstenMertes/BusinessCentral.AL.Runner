@@ -11,6 +11,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod records;
+mod ui;
+pub use ui::{UiHandler, UiKind};
 
 pub struct Engine {
     pub program: ir::Program,
@@ -102,6 +104,8 @@ pub struct Session {
     pub(crate) cx: al_data::AccessContext,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
+    /// Handler functions bound to the running test method (None outside one).
+    pub(crate) ui: Option<ui::UiScope>,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -125,6 +129,7 @@ impl Session {
                 user: "USER".into(),
             },
             ret_used: true,
+            ui: None,
         }
     }
 
@@ -704,6 +709,15 @@ impl al_builtins::native::Ctx for Session {
     }
     fn ret_used(&self) -> bool {
         self.ret_used
+    }
+    fn ui_message(&mut self, text: String) -> Result<(), Signal> {
+        Session::ui_message(self, text)
+    }
+    fn ui_confirm(&mut self, question: String, default: bool) -> Result<bool, Signal> {
+        Session::ui_confirm(self, question, default)
+    }
+    fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
+        Session::ui_str_menu(self, options, default, instruction)
     }
     fn new_guid(&mut self) -> [u8; 16] {
         // Deterministic ids (ADR-006: no OS randomness in the core).

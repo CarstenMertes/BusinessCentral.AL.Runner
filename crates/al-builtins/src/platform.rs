@@ -31,6 +31,8 @@ pub enum Virtual {
     TableMetadata,
     Field,
     Key,
+    PageMetadata,
+    PageControlField,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -45,6 +47,8 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_136, "Table Metadata", Provider::Virtual(Virtual::TableMetadata)),
     (2_000_000_041, "Field", Provider::Virtual(Virtual::Field)),
     (2_000_000_063, "Key", Provider::Virtual(Virtual::Key)),
+    (2_000_000_138, "Page Metadata", Provider::Virtual(Virtual::PageMetadata)),
+    (2_000_000_192, "Page Control Field", Provider::Virtual(Virtual::PageControlField)),
     // Stored tables whose rows AL reads as facts about the session; the platform seeds them
     // (al-vm `platform/seed.rs`).
     (2_000_000_006, "Company", Provider::Stored),
@@ -82,6 +86,13 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_041, &[1, 2, 4, 5, 21, 22, 24, 25, 26, 27]),
     // Key: record/TestKeyVirtualTable.al.
     (2_000_000_063, &[1, 2, 4, 7, 10, 13]),
+    // Page Metadata: record/TestPageMetadata*.al.
+    (
+        2_000_000_138,
+        &[1, 2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32],
+    ),
+    // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
+    (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.
     (2_000_000_009, &[1, 2, 3, 5, 6, 16, 17, 19]),
     // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. The server and client computer names are not read.

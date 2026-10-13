@@ -16,6 +16,7 @@ mod ids;
 mod integer;
 mod mat;
 mod objects;
+mod pages;
 pub(crate) mod ranges;
 mod seed;
 
@@ -109,6 +110,8 @@ impl Providers {
             Virtual::AllObjWithCaption => objects::all_obj_with_caption_rows(self, t),
             Virtual::CodeunitMetadata => objects::codeunit_metadata_rows(self, t),
             Virtual::TableMetadata => objects::table_metadata_rows(self, t),
+            Virtual::PageMetadata => pages::page_metadata_rows(self, t),
+            Virtual::PageControlField => pages::page_control_field_rows(self, t),
             Virtual::Field => fields::field_rows(self, t),
             Virtual::Key => fields::key_rows(self, t),
             Virtual::Integer | Virtual::Date => unreachable!("generated, never listed"),

@@ -99,11 +99,19 @@ fn run() -> Result<ExitCode, String> {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let apps = vec![
-        runtime::load_app(&corpus_tests.join("al-language-internals-fixture"))?,
-        runtime::load_app(&root.join(&cfg.corpus_app))?,
+    let app_dirs = [
+        corpus_tests.join("al-language-internals-fixture"),
+        root.join(&cfg.corpus_app),
     ];
-    let rt = runtime::CorpusRuntime::run(apps, &symbols);
+    let apps = app_dirs
+        .iter()
+        .map(|d| runtime::load_app(d))
+        .collect::<Result<Vec<_>, _>>()?;
+    let manifests = app_dirs
+        .iter()
+        .map(|d| runtime::load_manifest(d))
+        .collect::<Result<Vec<_>, _>>()?;
+    let rt = runtime::CorpusRuntime::run_with_manifests(apps, &manifests, &symbols);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",

@@ -124,7 +124,23 @@ impl Session {
             return Ok(None);
         };
         let inst = st.borrow().instance.clone().expect("open page");
-        self.call(object, r, inst, args).map(|(v, _)| Some(v))
+        let result = self.call(object, r, inst, args).map(|(v, _)| Some(v));
+        self.end_page_call(st);
+        result
+    }
+
+    /// A page-driven call ends: the client takes the page's view back, which carries the key and
+    /// `Ascending` but not a per-field `SetAscending` (corpus handlers/TestPageViewRoundTripRoutes.al,
+    /// Action_SetAscending_ReadInTheSameTrigger_IsDescending against ..._ReadByALaterAction).
+    fn end_page_call(&mut self, st: &St) {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        if engine.program.objects[object].rec_slot.is_none() {
+            return;
+        }
+        if st.borrow().instance.is_some() {
+            self.page_rec(st).borrow_mut().field_descending = false;
+        }
     }
 
     /// A page trigger that answers Boolean: `Some(answer)` when the trigger exists and can state one,
@@ -240,7 +256,9 @@ impl Session {
     fn page_routine(&mut self, st: &St, r: usize) -> Result<Value, Signal> {
         let object = st.borrow().object as usize;
         let inst = st.borrow().instance.clone().expect("open page");
-        self.call(object, r, inst, vec![]).map(|(v, _)| v)
+        let result = self.call(object, r, inst, vec![]).map(|(v, _)| v);
+        self.end_page_call(st);
+        result
     }
 
     /// The `TestPage.*` / `TestField.*` methods (ADR-012).
@@ -1639,7 +1657,10 @@ impl Session {
         let Some((hobject, hroutine, hinst)) = handler else {
             return Ok(Value::Null);
         };
-        if let Err(e) = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]) {
+        self.page_handler_depth += 1;
+        let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
+        self.page_handler_depth -= 1;
+        if let Err(e) = handled {
             self.mark_closed(&st);
             return Err(e);
         }
@@ -1982,10 +2003,15 @@ impl Session {
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
-            o.enum_captions
+            // An enum control resolves by caption only; a value without a caption shows its name.
+            // The bare member name of a captioned value is rejected, as on a real service tier
+            // (handlers/TestPageEnumVariableControl_Tests.al:50-56,86-90,137-140).
+            o.enum_values
                 .iter()
-                .chain(o.enum_values.iter())
-                .find(|(_, c)| c.eq_ignore_ascii_case(t))
+                .find(|(v, name)| {
+                    let shown = o.enum_captions.iter().find(|(c, _)| c == v).map_or(name, |(_, c)| c);
+                    shown.eq_ignore_ascii_case(t)
+                })
                 .map(|(v, _)| *v)
         };
         let suffix = if rec_bound {
@@ -2401,6 +2427,12 @@ impl Session {
         self.ret_used = true;
         if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
             let fields = probe.borrow().fields.clone();
+            // The probe replaced the view's filters on key fields with the key; the row must still
+            // pass the filters the page has (a Get of a row the view hides shows nothing:
+            // testpart/BnrBlankPart.al NoRow_Action_GetOfARowTheFilterHides_StaysBlank).
+            if !rec.borrow().filters.iter().all(|f| f.expr.matches(&fields[f.field])) {
+                return Ok(());
+            }
             rec.borrow_mut().fields = fields;
             st.borrow_mut().cursor = Cursor::Row;
             let r = self.arrive(st);

@@ -42,7 +42,7 @@ proposed v3 form.
     `al-test-cli` is the corpus harness and stays a dev tool.
   - `ADR-013`: dependencies, artifacts, install baseline, platform tables.
   - `ADR-014`: the .NET helper.
-  - `ADR-015`: many BC versions in one binary (in progress, branch `adr-versions`).
+  - `ADR-015`: many BC versions in one binary (Proposed).
   - `LANG`: language or runtime surface, tracked by the corpus pass rate.
   - `IR-POS`: the IR has no source positions yet (an additive IR field; also the
     reason `GetLastErrorCallStack` is refused today, `docs/status.md`).
@@ -67,7 +67,7 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 | IN-5 | `app.json` read for identity, dependencies, `platform`/`application` floor, `propagateDependencies`, `internalsVisibleTo`, `preprocessorSymbols` | `ProgramSupport/Dependencies.cs:261`, `Infrastructure/InProcessAppPackager.cs:178` | Partial | ADR-013 | `al-test-cli` `load_app` reads identity and dependencies. The floor and the rest arrive with `al-deps` | - |
 | IN-6 | The project's own `.alpackages` is a dependency source | `DependencyResolver.cs` | No | ADR-013 | ADR-013 pool order: `.alpackages`, then `--deps`, then cache | - |
 | IN-7 | An app sees only its declared dependencies (plus `propagateDependencies`); otherwise `AL0185` | `--guide` (#4096) | Done | - | `AppSource` has `visible_from` by dependency id | - |
-| IN-8 | AL preprocessor symbols: `--define`, `--preprocessor-symbols`, `app.json`, built-in `CLEANSCHEMA1..25` | `Program.cs:625,640` | Partial | ADR-015 | Preprocessor exists. Today the harness passes `BC27PLUS`. v3 derives the BC-version symbols from the selected BC version | - |
+| IN-8 | AL preprocessor symbols: `--define`, `--preprocessor-symbols`, `app.json`, built-in `CLEANSCHEMA1..25` | `Program.cs:625,640` | Partial | ADR-015 | Preprocessor exists. Today only the corpus harness passes `BC27PLUS`. ADR-015 3.9: other projects get symbols from `app.json` and `--define` only, never invented `BC<n>PLUS`. Carry over v2's built-in `CLEANSCHEMA1..25` set | - |
 | IN-9 | Run inline AL, or a codeunit's `OnRun`, without tests (`execute`) | `ServerProtocol.cs`, `docs/server-mode.md` | No | CLI | `alrunner run [PATH] [--code TEXT]` and the server `execute` command | - |
 | IN-10 | Package a folder as `.app` without compiling (`--emit-app`) | `ProgramSupport/SiblingCompile.cs`, `Program.cs:256` | No | CLI | `alrunner package PATH OUT.app` (zip plus `NavxManifest.xml`); low priority | - |
 | IN-11 | Compile one `.app` to a DLL (`--precompile`) | `Program.cs:249` | N/A | - | v3 has no DLLs. Nothing to precompile | - |
@@ -193,7 +193,7 @@ These rows are the long tail. The corpus pass rate tracks them
 | RT-11 | System Application and Base Application code runs as real code | `docs/scope.md` section 1 | No | ADR-013 | Compile Microsoft's source on demand | Hard: Base Application is 113 MB of AL; compile 16.5 s measured (ADR-013) |
 | RT-12 | Microsoft's own test buckets (Tests-Misc about 3,200 tests, and others) run with `--jobs` | `.claude` skill `running-ms-test-buckets`, `.github/workflows/ms-bucket.yml` | No | ADR-013 | Real-project gate (section "Readiness gates" in ADR-016) | Hard: needs most of the above |
 | RT-13 | Refused by design: SMTP, outbound HTTP, external files, OData/SOAP, printers, scheduler, rendering | `docs/scope.md` section 3 | Partial | LANG | Refusal framework exists. Keep the list and anchors. Host-visible HTTP is better in v3 (ADR-009) | - |
-| RT-14 | BC versions 27.0 to 28.5 (nine minors) | `.github/bc-versions.txt` | Partial | ADR-015 | v3 emulates BC 27.5 only today | Hard: version differences are behaviour, each needs oracle data |
+| RT-14 | BC versions 27.0 to 28.5 (nine minors) | `.github/bc-versions.txt` | Partial | ADR-015 | v3 emulates BC 27.5 only today. ADR-015 (Proposed): one `Target` per run, BC 27 and later, oracles per major | Hard: version differences are behaviour, each needs oracle data |
 | RT-15 | Fixed culture en-US; Production environment; on-premises topology | `docs/limitations.md` | Partial | HOST | ADR-013 decision 9 | - |
 
 ## 8. Distribution and CI use

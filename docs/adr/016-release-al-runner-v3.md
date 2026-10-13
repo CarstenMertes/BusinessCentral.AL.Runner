@@ -241,7 +241,7 @@ replace stages 3, 6 and 9 and the rest stays.
 | `dotnet tool` package | open question 5 | Lets `dotnet tool update -g MSDyn365BC.AL.Runner` move v2 users to v3. Depends on .NET's support for tools that carry a native executable. Not verified here |
 | `cargo install`, `cargo binstall`, mise (`ubi:`), Scoop | free | Work from the release assets. Not promoted |
 
-#### The .NET helper (ADR-014)
+#### The .NET helper (ADR-014 calls it the sidecar)
 
 - Separate release asset: `alrunner-dotnet-helper-<version>.zip`, a
   framework-dependent .NET 8 build. The managed part is one file set for all
@@ -251,10 +251,13 @@ replace stages 3, 6 and 9 and the rest stays.
   same reason. So the Linux helper asset is per architecture.
 - The helper holds no Microsoft code. It loads Microsoft's DLLs from the cached
   artifact at run time (ADR-013, ADR-014).
-- The core binary finds it next to itself (`../libexec/alrunner/dotnet/`), then in
-  the cache. `alrunner helper install` downloads the matching version, checks the
-  SHA-256 and writes it to the cache. Without it, a `DotNet` use is refused with
-  the message ADR-014 section 11 defines, plus the command to fix it.
+- Lookup follows ADR-014 section 10: the flag or `ALRUNNER_DOTNET_SIDECAR`, then
+  `dotnet-sidecar/AlDotNetSidecar.dll` next to the binary, then the cache
+  folder. The release adds one step to the cache case: `alrunner helper install`
+  downloads the prebuilt helper that matches the binary's version, checks the
+  SHA-256 and writes it to the cache. Users then need no .NET SDK. Without the
+  helper, a `DotNet` use is refused with the message ADR-014 section 11 defines,
+  plus the command that fixes it.
 - Helper and core share a protocol version. The `hello` message (ADR-014) rejects
   a mismatch. The helper is released in lockstep with the core: same version
   number, same tag.
@@ -272,13 +275,16 @@ replace stages 3, 6 and 9 and the rest stays.
   and JUnit field names, server protocol number, helper protocol number. Passing
   or not passing a given AL test is not part of it: a "not run" test can become a
   pass in any release.
-- **BC versions are data, not version numbers.** ADR-015 (in progress) gives one
-  binary for all BC versions. The binary reports the range it supports and the
-  version its oracle came from: `alrunner 3.1.0 (supports BC 27.0-28.5; oracle BC 27.5)`.
-  Release notes list the range. Adding a BC minor needs no new version number
-  unless behaviour changes. Dropping one needs a minor release with one release of
-  warning. If ADR-015 ends up compiling version tables into the binary, this ADR
-  needs no change.
+- **BC versions are data, not version numbers.** ADR-015 (Proposed) gives one
+  codebase and one binary for BC 27 and every later major. A run builds one
+  `Target` (BC version plus app runtime) from `--bc-version` or the `app.json`
+  floor. Oracles and baselines are kept per major. The binary reports what it
+  knows: `alrunner 3.1.0 (BC 27 and later; verified against 27.5, 28.5, 29.0)`.
+  Release notes list the verified versions. A BC version with no oracle runs
+  with a warning (ADR-015 section 3.8). Adding a verified BC major needs a new
+  version number only if behaviour or the command line changes. v3 does not run
+  for BC 26 and older, so the oldest supported floor is a fixed rule, not a
+  moving range as in v2's `bc-versions.txt`.
 - **Cache format** has its own integer in a `format` file. A mismatch rebuilds
   the cache. It never fails.
 - Every JSON and JUnit report records the selected BC build (ADR-013), so a result
@@ -450,7 +456,7 @@ All of gate P, plus:
 - A new crate set (`alrunner-cli`, `al-testrun`, `al-host-std`, `al-deps`) appears.
   `al-test-cli` keeps the corpus job and loses only code that moves.
 - ADR-013 and ADR-014 should adopt the `ALRUNNER_*` variable names.
-- ADR-015 must state how the supported BC range is reported (section 4).
+- ADR-015 and this ADR agree on how the verified versions are reported (section 4). ADR-015 3.9 says non-corpus projects get preprocessor symbols from `app.json` only, which this ADR follows.
 - The parity page becomes a living document. Each merged feature updates its row.
 - Several parity rows need their own ADR before code: server protocol, debugger,
   platform table providers, test data, `--tdd`, `--affected`.

@@ -7,6 +7,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Program {
     pub objects: Vec<Object>,
+    /// The apps the objects belong to, in the order the compiler was given them (`Object::app`
+    /// indexes this). Publisher and version come from the runner, which reads the manifests.
+    #[serde(default)]
+    pub apps: Vec<AppInfo>,
+}
+
+/// What `NavApp.GetCurrentModuleInfo` reports about an app.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AppInfo {
+    pub id: String,
+    pub name: String,
+    pub publisher: String,
+    /// `1.0.0.0`.
+    pub version: String,
+    /// Ids of the apps it depends on.
+    pub dependencies: Vec<String>,
+    /// The packaged resources (`resourceFolders` of the manifest): name relative to its folder, content.
+    #[serde(default)]
+    pub resources: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,6 +51,10 @@ pub struct Object {
     pub xrec_slot: Option<usize>,
     /// For pages: the control tree and page triggers (ADR-012).
     pub page: Option<Page>,
+    /// Index of the app that owns the object, in the order the apps were given to the compiler.
+    /// Builtins scoped to a module (`IsolatedStorage`) key on it.
+    #[serde(default)]
+    pub app: u32,
     /// For queries: dataitems, columns and the query-level properties.
     #[serde(default)]
     pub query: Option<Query>,
@@ -582,6 +605,7 @@ mod tests {
     #[test]
     fn program_round_trips_through_serde() {
         let p = Program {
+            apps: vec![],
             objects: vec![Object {
                 kind: "codeunit".into(),
                 id: Some(50100),
@@ -597,6 +621,7 @@ mod tests {
                 rec_slot: None,
                 xrec_slot: None,
                 page: None,
+                app: 0,
                 query: None,
                 xmlport: None,
                 routines: vec![Routine {

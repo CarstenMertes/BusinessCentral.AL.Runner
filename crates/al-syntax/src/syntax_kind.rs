@@ -14,6 +14,8 @@ pub enum SyntaxKind {
     Directive,
     /// UTF-8 byte order mark at the start of a file.
     Bom,
+    /// Source inside an inactive `#if` branch, one token per contiguous run.
+    DisabledText,
 
     // Atoms
     Ident,
@@ -78,6 +80,7 @@ impl SyntaxKind {
                 | SyntaxKind::BlockComment
                 | SyntaxKind::Directive
                 | SyntaxKind::Bom
+                | SyntaxKind::DisabledText
         )
     }
 }

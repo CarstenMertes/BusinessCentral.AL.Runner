@@ -56,3 +56,27 @@ fn every_corpus_file_round_trips_and_lexes_without_errors() {
         failures.join("\n")
     );
 }
+
+#[test]
+fn every_corpus_file_preprocesses_cleanly_for_bc27_5() {
+    // ADR-007: BC 27.5 defines BC27PLUS only.
+    let syms = ["BC27PLUS".to_string()].into();
+    let mut failures = Vec::new();
+    let mut disabled_files = 0;
+    for f in corpus_files() {
+        let src = std::fs::read_to_string(&f).unwrap();
+        let p = al_syntax::preprocessor::preprocess(&src, &lex(&src), &syms);
+        let covered: usize = p.tokens.iter().map(|t| t.len as usize).sum();
+        if covered != src.len() {
+            failures.push(format!("{}: covered {covered} of {} bytes", f.display(), src.len()));
+        }
+        for d in p.diagnostics {
+            failures.push(format!("{}: {}", f.display(), d.message));
+        }
+        disabled_files += p.tokens.iter().any(|t| t.kind == SyntaxKind::DisabledText) as usize;
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    // The corpus guards a handful of files with `#if BC29PLUS`; if none is
+    // disabled the symbol handling is not doing anything.
+    assert!(disabled_files > 0, "no #if branch was disabled anywhere in the corpus");
+}

@@ -46,7 +46,9 @@ fn the_cdn_serves_the_test_libraries_by_range() {
         ("Applications/TestFramework/TestLibraries/Any/Any.Source.zip", "Any"),
     ] {
         let t = Instant::now();
-        let e = zip.find(entry).unwrap_or_else(|| panic!("{entry} is not in the artifact"));
+        let e = zip
+            .find(entry)
+            .unwrap_or_else(|| panic!("{entry} is not in the artifact"));
         let bytes = zip.read(e).unwrap(); // CRC-32 and size are checked inside
         let (m, sources) = read_package(&bytes).unwrap();
         println!(

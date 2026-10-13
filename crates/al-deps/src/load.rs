@@ -4,7 +4,7 @@
 //! directories (`--deps`). Downloading from the artifact feed is a later
 //! fallback and is not here yet.
 
-use crate::package::{Manifest, PackageError, Sources, read_info, read_package};
+use crate::package::{Manifest, PackageError, Sources, Vars, read_info_with, read_package_with};
 use crate::select::{Candidate, DepDecl, MissingPolicy, Options, Project, SYSTEM_APP_ID, SelectError, resolve};
 use crate::version::Version;
 use al_sema::workspace::AppSource;
@@ -80,6 +80,24 @@ fn is_named_package(p: &Path) -> bool {
             .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".source.zip"))
 }
 
+/// The build variables for a package file: the build named by the cache's record beside it
+/// (`<file>.json`), else none.
+fn vars_for(path: &Path) -> Vars {
+    let mut record = path.as_os_str().to_owned();
+    record.push(".json");
+    std::fs::read(PathBuf::from(record))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v["build"].as_str().and_then(Vars::for_build))
+        .unwrap_or_default()
+}
+
+/// Reads a package file, filling build variables from the cache's record when it has one.
+pub fn read_package_at(path: &Path) -> Result<(Manifest, Sources), String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    read_package_with(&bytes, &vars_for(path)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Reads the manifest of every `*.app` and `*.zip` file directly inside `dir`. A file that
 /// cannot be read is returned as an error line, not dropped: the caller prints it.
 pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
@@ -96,7 +114,7 @@ pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
     for path in paths {
         let read = std::fs::read(&path)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| read_info(&bytes).map_err(|e: PackageError| e.to_string()));
+            .and_then(|bytes| read_info_with(&bytes, &vars_for(&path)).map_err(|e: PackageError| e.to_string()));
         match read {
             Ok((manifest, has_source)) => found.push(Found {
                 path,
@@ -222,9 +240,7 @@ pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
             ));
             continue;
         }
-        let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let (manifest, sources): (Manifest, Sources) =
-            read_package(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        let (manifest, sources): (Manifest, Sources) = read_package_at(&path)?;
         let role = if manifest.id.eq_ignore_ascii_case(SYSTEM_APP_ID) {
             Role::Platform
         } else {
@@ -528,5 +544,33 @@ mod tests {
         let (found, problems) = scan_dir(dir.path());
         assert!(found.is_empty());
         assert!(problems.iter().any(|p| p.contains("Broken.Source.zip")), "{problems:?}");
+    }
+
+    #[test]
+    fn a_templated_source_zip_in_the_cache_is_read_with_the_build_its_record_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_json = r#"{"id":"zz","name":"Zed","publisher":"P","version":"$(app_currentVersion)",
+            "dependencies":[{"id":"yy","name":"Why","publisher":"P","version":"$(app_minimumVersion)"}]}"#;
+        let zip = Builder::new()
+            .add("app.json", app_json.as_bytes(), true)
+            .add("Z.al", b"codeunit 9 Z { }", true)
+            .finish();
+        std::fs::write(dir.path().join("Zed.Source.zip"), &zip).unwrap();
+        // Without a record of the build the variables cannot be filled: reported, not guessed.
+        let (found, problems) = scan_dir(dir.path());
+        assert!(found.is_empty());
+        assert!(problems.iter().any(|p| p.contains("$(app_")), "{problems:?}");
+        // The cache writes such a record next to every entry.
+        std::fs::write(
+            dir.path().join("Zed.Source.zip.json"),
+            r#"{"build":"27.5.46862.56249","entry":"x","size":1,"crc":1}"#,
+        )
+        .unwrap();
+        let (found, problems) = scan_dir(dir.path());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(found[0].manifest.version, "27.5.46862.56249".parse().unwrap());
+        assert_eq!(found[0].manifest.dependencies[0].min, "27.5.0.0".parse().unwrap());
+        let (m, _) = read_package_at(&found[0].path).unwrap();
+        assert_eq!(m.version, found[0].manifest.version);
     }
 }

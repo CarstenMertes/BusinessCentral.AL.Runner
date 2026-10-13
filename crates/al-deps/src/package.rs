@@ -122,11 +122,63 @@ fn is_app(name: &str) -> bool {
     name.len() > 4 && name[name.len() - 4..].eq_ignore_ascii_case(".app")
 }
 
+/// Microsoft's build variables, which the source archives of Base Application and Application hold
+/// in `app.json` where the compiled package holds numbers (`"version": "$(app_currentVersion)"`).
+///
+/// The values are derived from the build the archive came from. Evidence: the compiled Base
+/// Application 27.5.46862.48827 in the corpus's `.alpackages` has `Version="27.5.46862.48827"`,
+/// `Platform="27.0.0.0"` and `MinVersion="27.5.0.0"` on its Microsoft dependencies.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Vars {
+    current: Option<String>,
+    minimum: Option<String>,
+    platform: Option<String>,
+}
+
+impl Vars {
+    /// The variables of a build `major.minor.build.revision`; `None` when it is not one.
+    pub fn for_build(build: &str) -> Option<Vars> {
+        let parts: Vec<&str> = build.trim().split('.').collect();
+        let numbers = parts.len() == 4
+            && parts
+                .iter()
+                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+        numbers.then(|| Vars {
+            current: Some(build.trim().to_string()),
+            minimum: Some(format!("{}.{}.0.0", parts[0], parts[1])),
+            platform: Some(format!("{}.0.0.0", parts[0])),
+        })
+    }
+
+    fn apply(&self, text: &str) -> String {
+        let mut out = text.to_string();
+        for (name, value) in [
+            ("$(app_currentVersion)", &self.current),
+            ("$(app_minimumVersion)", &self.minimum),
+            ("$(app_platformVersion)", &self.platform),
+        ] {
+            if let Some(v) = value {
+                out = out.replace(name, v);
+            }
+        }
+        out
+    }
+}
+
 /// A source archive (`<App>.Source.zip` in the platform artifact) has no `NavxManifest.xml`; its
 /// root `app.json` describes the whole app, and every `.al` file under any folder belongs to it.
 /// Module folders inside carry an `app.json` of their own, which does not describe a separate app.
-fn manifest_of_source_zip(app_json: &str) -> Result<Manifest, PackageError> {
+fn manifest_of_source_zip(app_json: &str, vars: &Vars) -> Result<Manifest, PackageError> {
     let text = app_json.strip_prefix('\u{feff}').unwrap_or(app_json);
+    let text = vars.apply(text);
+    let text = text.as_str();
+    if let Some(at) = text.find("$(app_") {
+        let var: String = text[at..].chars().take_while(|c| *c != ')').chain([')']).collect();
+        return Err(PackageError::Manifest(format!(
+            "app.json holds Microsoft's build variable `{var}`, which only the build it came from can fill; \
+             keep the archive in the artifact cache (its record names the build)"
+        )));
+    }
     let j = crate::load::parse_app_json(text).map_err(PackageError::Manifest)?;
     let target = serde_json::from_str::<serde_json::Value>(text)
         .ok()
@@ -150,6 +202,7 @@ fn manifest_of_source_zip(app_json: &str) -> Result<Manifest, PackageError> {
 fn with_archive<T>(
     app: &[u8],
     depth: usize,
+    vars: &Vars,
     f: &mut dyn FnMut(&Zip<'_>, Manifest, bool) -> Result<T, PackageError>,
 ) -> Result<T, PackageError> {
     let zip = Zip::parse(navx_payload(app)?)?;
@@ -158,27 +211,37 @@ fn with_archive<T>(
         if depth < MAX_NESTING && !zip.entries.iter().any(|e| is_al(&e.name)) {
             if let Some(inner) = zip.entries.iter().find(|e| is_app(&e.name)) {
                 let bytes = zip.read(inner)?;
-                return with_archive(&bytes, depth + 1, f);
+                return with_archive(&bytes, depth + 1, vars, f);
             }
         }
         return f(&zip, manifest, false);
     }
     let root = zip.find("app.json").ok_or(PackageError::NoManifest)?;
-    let manifest = manifest_of_source_zip(&String::from_utf8_lossy(&zip.read(root)?))?;
+    let manifest = manifest_of_source_zip(&String::from_utf8_lossy(&zip.read(root)?), vars)?;
     f(&zip, manifest, true)
 }
 
 /// Reads only the manifest and whether the package has AL source.
 pub fn read_info(app: &[u8]) -> Result<(Manifest, bool), PackageError> {
-    with_archive(app, 0, &mut |zip, m, _| {
+    read_info_with(app, &Vars::default())
+}
+
+/// [`read_info`] for a source archive that may hold build variables.
+pub fn read_info_with(app: &[u8], vars: &Vars) -> Result<(Manifest, bool), PackageError> {
+    with_archive(app, 0, vars, &mut |zip, m, _| {
         Ok((m, zip.entries.iter().any(|e| is_al(&e.name))))
     })
 }
 
 /// Reads the manifest and every `.al` entry, each checked against its CRC-32.
 pub fn read_package(app: &[u8]) -> Result<(Manifest, Sources), PackageError> {
+    read_package_with(app, &Vars::default())
+}
+
+/// [`read_package`] for a source archive that may hold build variables.
+pub fn read_package_with(app: &[u8], vars: &Vars) -> Result<(Manifest, Sources), PackageError> {
     use rayon::prelude::*;
-    with_archive(app, 0, &mut |zip, m, source_zip| {
+    with_archive(app, 0, vars, &mut |zip, m, source_zip| {
         let al: Vec<&crate::zip::Entry> = zip.entries.iter().filter(|e| is_al(&e.name)).collect();
         let read: Vec<Result<(String, String), PackageError>> = al
             .par_iter()
@@ -429,5 +492,39 @@ mod tests {
             read_package(&z).unwrap_err(),
             PackageError::Zip(ZipError::Crc { .. })
         ));
+    }
+
+    /// Base Application's and Application's source archives hold Microsoft's build variables where
+    /// the compiled package holds numbers.
+    const TEMPLATED: &str = r#"{
+  "id": "437dbf0e-84ff-417a-965d-ed2bb9650972", "name": "Base Application", "publisher": "Microsoft",
+  "version": "$(app_currentVersion)", "platform": "$(app_platformVersion)", "application": "$(app_minimumVersion)",
+  "dependencies": [ { "id": "63ca2fa4-4f03-4f2b-a480-172fef340d3f", "name": "System Application", "publisher": "Microsoft", "version": "$(app_minimumVersion)" } ]
+}"#;
+
+    #[test]
+    fn build_variables_in_a_source_zip_are_filled_from_the_build_it_came_from() {
+        // Evidence: the compiled Base Application 27.5.46862.48827 in the corpus's .alpackages has
+        // Version 27.5.46862.48827, Platform 27.0.0.0 and dependency MinVersion 27.5.0.0.
+        let z = Builder::new()
+            .add("app.json", TEMPLATED.as_bytes(), true)
+            .add("src/A.al", b"codeunit 1 A { }", true)
+            .finish();
+        let vars = Vars::for_build("27.5.46862.56249").unwrap();
+        let (m, src) = read_package_with(&z, &vars).unwrap();
+        assert_eq!(m.version, "27.5.46862.56249".parse().unwrap());
+        assert_eq!(m.platform, Some("27.0.0.0".parse().unwrap()));
+        assert_eq!(m.application, Some("27.5.0.0".parse().unwrap()));
+        assert_eq!(m.dependencies[0].min, "27.5.0.0".parse().unwrap());
+        assert_eq!(src.len(), 1);
+        assert_eq!(read_info_with(&z, &vars).unwrap().0, m);
+    }
+
+    #[test]
+    fn a_build_variable_without_a_build_is_an_error_naming_it() {
+        let z = Builder::new().add("app.json", TEMPLATED.as_bytes(), true).finish();
+        let e = read_info(&z).unwrap_err().to_string();
+        assert!(e.contains("$(app_currentVersion)"), "{e}");
+        assert!(Vars::for_build("27.5").is_none(), "a build has four parts");
     }
 }

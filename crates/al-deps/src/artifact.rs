@@ -14,7 +14,7 @@
 use crate::build::{BuildId, BuildQuery, Origin, Selection, parse_index, select_build};
 use crate::cache::{BuildDir, Store};
 use crate::load::{Loaded, Request, load_dependencies};
-use crate::package::read_info;
+use crate::package::{Vars, read_info_with};
 use crate::remote::{HttpSource, RangeSource, RemoteError, RemoteZip, fetch_all, http_agent};
 use crate::select::{DepDecl, MissingPolicy, SelectError};
 use crate::zip::Entry;
@@ -222,7 +222,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                     .read(entry)
                     .map_err(|e| format!("{url}: entry `{}`: {e}", entry.name))?;
                 // The file name is a hint; the app inside decides.
-                match read_info(&bytes) {
+                match read_info_with(&bytes, &Vars::for_build(sel.build.as_str()).unwrap_or_default()) {
                     Ok((m, _)) if dep.id.is_empty() || m.id.eq_ignore_ascii_case(&dep.id) => {}
                     Ok((m, _)) => {
                         log.push(format!(
@@ -371,7 +371,14 @@ mod tests {
             &app_json(SA, "System Application", &[]),
             &[("S.Codeunit.al", "codeunit 1 S { }")],
         );
+        let base_json = format!(
+            r#"{{"id":"437dbf0e-84ff-417a-965d-ed2bb9650972","name":"Base Application","publisher":"Microsoft",
+            "version":"$(app_currentVersion)","platform":"$(app_platformVersion)",
+            "dependencies":[{{"id":"{SA}","name":"System Application","publisher":"Microsoft","version":"$(app_minimumVersion)"}}]}}"#
+        );
+        let base = source_zip(&base_json, &[("T.Table.al", "table 18 Customer { }")]);
         let mut b = Builder::new();
+        b = b.add("Applications/BaseApp/Source/Base Application.Source.zip", &base, false);
         for i in 0..40 {
             b = b.add(&format!("filler/{i}.bin"), &vec![i as u8; 4000], false);
         }
@@ -608,6 +615,36 @@ mod tests {
             "{:?}",
             p.log
         );
+    }
+
+    #[test]
+    fn a_source_archive_with_build_variables_is_fetched_and_filled_from_the_selected_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let mut p = project();
+        p.dependencies = vec![dep("437dbf0e-84ff-417a-965d-ed2bb9650972", "Base Application")];
+        let cache = dir.path().join("cache");
+        let out = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(names(&out), ["System Application", "Base Application"]);
+        assert_eq!(out.loaded.apps[1].version.to_string(), "27.5.46862.56249");
+        // Warm: the record beside the cached file names the build, so the variables fill again.
+        let again = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(names(&again), names(&out));
     }
 
     #[test]

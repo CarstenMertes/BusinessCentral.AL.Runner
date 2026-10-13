@@ -37,9 +37,20 @@ reviewed it.
 - 2026-10-14, ADR-013, dependency apps: the 45 s golden test of unresolved references
   (`corpus_resolve_deps.rs`) is `#[ignore]`d in debug builds; CI runs it in the release step.
 - 2026-10-14, ADR-013, dependency apps: the missing test-library apps (System Application Test
-  Library, Permissions Mock, Azure AD Plan Test Library) come from the artifact feed through the
-  download fallback (Layer A). Until then a local `--deps` folder works for developers and CI
-  refuses their tests. Nothing of theirs is committed.
+  Library, Permissions Mock, and Any, which the first needs) come from the artifact feed through the
+  download fallback (Layer A, built). Nothing of theirs is committed. Azure AD Plan Test Library
+  is a module inside System Application Test Library, not a separate app.
+- 2026-10-14, ADR-013, Layer A: `--no-download` skips a missing app with a printed line instead of
+  failing; a feed that does not answer fails the run (exit 2). The library keeps the error policy.
+- 2026-10-14, ADR-013, Layer A: a cached build wins over a newer published one, and the project's
+  `.alpackages` wins over both; an exact build the feed has dropped is an error.
+- 2026-10-14, ADR-013, Layer A: the cache keeps each entry as Microsoft ships it with a record of
+  build, entry, size and CRC-32; the build variables in Base Application's `app.json` are filled
+  from the build (evidence: the compiled manifest of 27.5.46862.48827).
+- 2026-10-14, ADR-013, Layer A: no build is chosen and nothing is requested when every dependency is
+  on disk; `--project DIR --fetch-deps` is the only project mode so far.
+- 2026-10-14, ADR-013 and ADR-016, Layer A: names `ALRUNNER_CACHE`, `ALRUNNER_ARTIFACT_URL`,
+  `--cache-dir`, with `AL_RUNTIME_CACHE` and `AL_RUNNER_CACHE_ROOT/v3` read as fallbacks.
 - 2026-10-13, orchestrator, hard rule 3: when a guarded XmlPort import fails,
   its last error cannot be read. Reading it refuses the test instead of
   returning an invented text.

@@ -22,6 +22,11 @@ pub enum OracleError {
     BadCodeunit(String),
 }
 
+/// The BC 28 and 29 corpus legs run through a hybrid test runner that reports one
+/// pseudo-case with this name per test codeunit. It is not a test procedure: no
+/// corpus codeunit declares one, so it is skipped by rule (ADR-015 1.6).
+pub const RUNNER_PSEUDO_CASE: &str = "OnRun";
+
 pub fn parse_junit(xml: &str) -> Result<Vec<OracleCase>, OracleError> {
     use quick_xml::events::Event;
 
@@ -46,6 +51,7 @@ pub fn parse_junit(xml: &str) -> Result<Vec<OracleCase>, OracleError> {
                 if open.is_some() {
                     return Err(OracleError::Xml("unterminated <testcase>".into()));
                 }
+                cases.retain(|c| c.id.name != RUNNER_PSEUDO_CASE);
                 return Ok(cases);
             }
             _ => {}
@@ -121,6 +127,25 @@ mod tests {
             .map(|c| c.id.name.as_str())
             .collect();
         assert_eq!(failed, vec!["B_Fails"]);
+    }
+
+    #[test]
+    fn skips_the_runner_onrun_pseudo_case() {
+        // The BC 28 and 29 legs run through the hybrid test runner, which reports one `OnRun`
+        // case per test codeunit. It is not a test procedure (ADR-015 1.6).
+        let xml = r#"<testsuites name="hybrid"><testsuite name="Codeunit 60002">
+            <testcase classname="Codeunit 60002" name="OnRun" time="0.010" />
+            <testcase classname="Codeunit 60002" name="A_Works" time="0.004" />
+        </testsuite></testsuites>"#;
+        let ids: Vec<_> = parse_junit(xml).unwrap().into_iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![id(60002, "A_Works")]);
+        // A failed OnRun is still not a case; only the exact name is skipped.
+        let xml = r#"<testsuites><testsuite name="x">
+            <testcase classname="Codeunit 1" name="OnRun"><failure message="x"/></testcase>
+            <testcase classname="Codeunit 1" name="OnRunSomething"/>
+        </testsuite></testsuites>"#;
+        let ids: Vec<_> = parse_junit(xml).unwrap().into_iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![id(1, "OnRunSomething")]);
     }
 
     #[test]

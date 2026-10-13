@@ -1,6 +1,6 @@
 # ADR-007: Oracle source, emulated version, and the passing-set ratchet
 
-- Status: Accepted
+- Status: Accepted. Amended by ADR-015: one oracle and one ratchet per BC major, under `oracle/<major>/` and `metrics/<major>/`.
 - Date: 2026-10-13
 
 ## Context
@@ -19,7 +19,7 @@ in this project's sessions.
 - **Probes**: when behaviour is unclear, write the probe as a corpus test on a
   branch of the corpus repo and read its result from that branch's CI run.
   Once merged there, bump the submodule and the oracle together.
-- **Ratchet**: `metrics/passing.txt` lists every corpus case the runtime passes.
+- **Ratchet**: `metrics/<major>/passing.txt` lists every corpus case the runtime passes (one file per BC major since ADR-015).
   CI fails if any listed case stops passing. The file only grows, via
   `al-test-cli --update-baseline`; removing a line needs a recorded reason in
   the commit message.

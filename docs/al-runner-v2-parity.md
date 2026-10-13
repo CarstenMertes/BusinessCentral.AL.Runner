@@ -231,7 +231,7 @@ need them. v3 already has the same job done by the oracle and the ratchet
 
 | ID | Feature | v2 reference | v3 equivalent |
 |---|---|---|---|
-| DEV-1 | `--expectations DIR`, `--expectations-require-match` (declare out-of-scope and known-gap tests) | `ExpectationManifest.cs`, `docs/expectations.md` | `oracle/` plus `metrics/passing.txt`. A user-facing "known gap" file is optional later (open question) |
+| DEV-1 | `--expectations DIR`, `--expectations-require-match` (declare out-of-scope and known-gap tests) | `ExpectationManifest.cs`, `docs/expectations.md` | `oracle/` plus `metrics/<major>/passing.txt`. A user-facing "known gap" file is optional later (open question) |
 | DEV-2 | `--count-baseline`, `--count-baseline-require-all`, `--count-out` | `Infrastructure/CountBaseline.cs` | The ratchet |
 | DEV-3 | `--out`, `--classify`: failure classification JSON | `Reporter.cs` | `al-test-cli --json`, `--markdown` |
 | DEV-4 | Corpus checkout, MS bucket and mutation tooling | `tools/*.py`, `.github/workflows/ms-bucket*.yml` | `al-test-cli`, `check.sh` |

@@ -1,8 +1,8 @@
 # ADR-015: Version-independent runtime
 
-- Status: Proposed (the project owner accepts it after reading it)
+- Status: Accepted (2026-10-13). The owner's answers to the open questions are in section 8.
 - Date: 2026-10-13
-- Amends when accepted: ADR-007 (one oracle, one baseline, BC 27.5 only), ADR-008
+- Amends: ADR-007 (one oracle, one baseline, BC 27.5 only), ADR-008
   (catalog has no version data), ADR-013 (Layer A, floor below BC 27)
 
 ## Context
@@ -273,7 +273,7 @@ Consistent with ADR-013 Layer A:
    build.
 2. Otherwise the BC major is the major of the app.json floor (the higher of
    `application` and `platform`), as in ADR-013 Layer A step 2.
-3. **New, amends Layer A step 2.** If that major is below 27, the target is
+3. **New, amends Layer A step 2 (owner decision Q7).** If that major is below 27, the target is
    BC 27 and the run prints a note. Reason: an app that declares a floor of 24
    still runs on a BC 27 or newer server. We do not emulate older servers.
 4. The app's `runtime` comes from app.json. If it is missing, use
@@ -627,8 +627,8 @@ by hand to turn CI green.
 
 ## 8. Open questions for the owner
 
-Each question has one decision and a recommendation. The answers go into this
-ADR before it is accepted.
+Each question has one decision and a recommendation. The owner answered all
+seven on 2026-10-13; the answer follows each question.
 
 **Q1. What is the key of an oracle and a baseline?**
 - *Per major, taken from the newest minor of that major (27.5, 28.5, 29.0).*
@@ -641,6 +641,8 @@ ADR before it is accepted.
   most precise, about ten times the files, and ten ratchets to keep green.
 
 Recommendation: per major plus the drift check. Evidence: 27.0, 27.3 and 27.5
+
+**Owner's answer (Q1):** Per major, taken from the newest minor of that major, plus an automatic drift check over the other minors (the second option). Accepted 2026-10-13.
 have identical case sets, 28.0 through 28.5 and 29.0 likewise, and the corpus
 records no behaviour difference inside a major.
 
@@ -652,12 +654,16 @@ records no behaviour difference inside a major.
 
 Recommendation: run the newest; CI uses `--all-versions`.
 
+**Owner's answer (Q2):** Run the newest version that has an oracle. CI uses `--all-versions`. Accepted 2026-10-13.
+
 **Q3. A normal project targets a BC version we have no oracle for. What happens?**
 - *Run with a warning* ("using the behaviour of BC 29, the newest verified").
   A project on BC 31 works the day BC 31 ships.
 - *Refuse (exit 2).* Safe, but defeats "every later version automatically".
 
 Recommendation: run with a warning. Corpus mode still refuses (3.8).
+
+**Owner's answer (Q3):** Run with a warning. The project runs on the newest verified behaviour. Corpus mode still refuses. Accepted 2026-10-13.
 
 **Q4. Where does the builtin surface per version come from?**
 - *Docs only*, with the docs git history for new versus changed. Cheap, works
@@ -669,6 +675,8 @@ Recommendation: run with a warning. Corpus mode still refuses (3.8).
   needs a generated, typed call for about 1740 overloads.
 
 Recommendation: docs now (step 5), the compiler dump as a follow-up when a
+
+**Owner's answer (Q4):** Docs now (step 5). A compiler member-table dump comes later, as phase 2. Accepted 2026-10-13.
 BC 29 or BC 30 builtin is missing.
 
 **Q5. How do we get the full build into the oracle?**
@@ -680,11 +688,15 @@ BC 29 or BC 30 builtin is missing.
 
 Recommendation: pin in the matrix now; ask upstream later.
 
+**Owner's answer (Q5):** Pin the full build in the corpus CI matrix now. Asking the BC Linux repo upstream to publish the build comes later. Accepted 2026-10-13.
+
 **Q6. An app declares `runtime` below 16.0 (older than the catalog can show).**
 - *Treat as 16.0 and warn.* Never rejects code BC accepts (ADR-009).
 - *Refuse.* Strict. Rejects some code BC accepts.
 
 Recommendation: treat as 16.0 and warn.
+
+**Owner's answer (Q6):** Treat as 16.0 and warn: the app runs as BC 27 / runtime 16.0 with a note. Accepted 2026-10-13.
 
 **Q7. May this ADR amend ADR-013 Layer A so that a floor below BC 27 runs as BC 27?**
 - *Yes: target BC 27 with a printed note.* An app with `application: 24.0`
@@ -692,4 +704,6 @@ Recommendation: treat as 16.0 and warn.
 - *No: exit 2 for any floor below 27.* Follows "nothing older" literally.
 
 Recommendation: yes, with the note. The app is not asking us to emulate BC 24,
+
+**Owner's answer (Q7):** Yes. A floor below BC 27 runs as BC 27 / runtime 16.0 with a printed note. This amends ADR-013 Layer A step 2 (the same wording is added to ADR-013). Accepted 2026-10-13.
 it only declares the lowest server it can run on.

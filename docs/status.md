@@ -5,6 +5,20 @@ Regenerate the numbers with
 `./target/release/al-test-cli --root . --markdown pass-rate.md`; CI uploads
 the same report as a `pass-rate-<date>` artifact.
 
+## BC versions (ADR-015)
+
+One oracle and one ratchet per BC major. `al-test-cli --root .` runs the newest;
+`--bc-version N` picks one; `--all-versions` runs all three and compares them.
+
+| BC major | Oracle leg | Baseline | Passing | Version gates active |
+|---|---|---|---:|---|
+| 27 | 27.5 | `metrics/27/passing.txt` | 3600 | none |
+| 28 | 28.5 | `metrics/28/passing.txt` | 3600 | none |
+| 29 | 29.0 | `metrics/29/passing.txt` | 3600 | Integer sum into BigInteger FlowField; min and max over SystemRowVersion |
+
+The numbers in the rest of this file are from before the version work and are
+refreshed after merging.
+
 ## Overall
 
 **2412 / 4836 pass (49.9%), 0 fail, 2424 not run.** Compiling the corpus

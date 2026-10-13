@@ -60,6 +60,8 @@ const OBJECT_TYPES: &[&str] = &[
     "enum",
     "interface",
     "testfield",
+    // `DotNet Alias`: the alias a `dotnet { }` block declares.
+    "dotnet",
 ];
 
 pub(crate) fn type_ref(p: &mut Parser) {
@@ -267,6 +269,12 @@ mod tests {
             "(TypeRef Codeunit System . Utilities . \"Temp Blob\")"
         );
         assert_eq!(t("TestPage \"ALT Card\""), "(TypeRef TestPage \"ALT Card\")");
+    }
+
+    #[test]
+    fn dotnet_alias_type() {
+        assert_eq!(t("DotNet Convert"), "(TypeRef DotNet Convert)");
+        assert_eq!(t("DotNet \"Array\""), "(TypeRef DotNet \"Array\")");
     }
 
     #[test]

@@ -1,0 +1,78 @@
+# What is refused before a DotNet request reaches .NET (ADR-014 section 8).
+#
+# One rule per line: `<kind> <subject> | <rule shown in the refusal>`. Lines starting with `#`
+# and blank lines are ignored. Names are compared ignoring ASCII case.
+#
+#   deny-assembly <prefix>          assembly whose simple name starts with <prefix>
+#   deny-type <name>                this CLR type; a name ending in `.` is a namespace prefix
+#   deny-member <Type.Member>       this member of this CLR type
+#   deny-new-without-args <Type>    construction with no arguments
+#   server-prefix <prefix>          assemblies and types that are server classes
+#   pure <Type>                     a server class shown to work with no session
+#
+# A server class (a `server-prefix` match) is sent to .NET only if it is `pure`. Everything
+# else is the runtime's own business, through the registry (item 1).
+
+# Item 1: server classes. A type goes on the pure list only when a corpus test or a probe
+# shows it works with no session. Base64UrlHelper is the one the spike ran (ADR-014 section 12).
+server-prefix Microsoft.Dynamics.Nav. | server class
+pure Microsoft.Dynamics.Nav.Types.Base64UrlHelper | spike: runs with no session (ADR-014 section 12)
+
+# Item 3: add-in assemblies that reach outside the process. They need the network, which
+# belongs to the host network capability (ADR-006).
+deny-assembly Microsoft.Exchange.WebServices | Exchange needs the network
+deny-assembly Microsoft.Dynamics.Nav.EwsWrapper | Exchange needs the network
+deny-assembly Microsoft.Dynamics.Nav.CrmCustomizationHelper | CRM needs the network
+deny-assembly Microsoft.Dynamics.Nav.PowerBIEmbedded | Power BI needs the network
+deny-assembly Microsoft.Dynamics.Nav.GraphClient | Azure AD Graph needs the network
+deny-assembly Microsoft.Graph | Graph needs the network
+deny-assembly Microsoft.Azure. | the Azure SDK needs the network
+deny-assembly Azure. | the Azure SDK needs the network
+deny-assembly Microsoft.IdentityModel.Clients | OAuth clients need the network
+deny-assembly Microsoft.Identity.Client | OAuth clients need the network
+deny-assembly Microsoft.Dynamics.Nav.OAuth | OAuth clients need the network
+deny-assembly Microsoft.Dynamics.Nav.Smtp | SMTP needs the network
+deny-assembly MailKit | mail needs the network
+deny-assembly MimeKit | mail needs the network
+
+# Item 4: environment-touching namespaces and types.
+deny-type System.IO.File | touches the file system
+deny-type System.IO.FileInfo | touches the file system
+deny-type System.IO.Directory | touches the file system
+deny-type System.IO.DirectoryInfo | touches the file system
+deny-type System.IO.FileStream | touches the file system
+deny-member System.IO.Path.GetTempPath | reads the temp folder
+deny-member System.IO.Path.GetTempFileName | creates a temp file
+deny-member System.IO.Path.GetFullPath | reads the current directory
+deny-member System.IO.Path.GetRandomFileName | randomness that bypasses the host
+deny-type System.Net. | touches the network
+deny-type System.Diagnostics.Process | starts processes
+deny-type System.Environment | reads the environment
+deny-type System.AppDomain | reads the process
+deny-member System.Reflection.Assembly.Load | loads assemblies
+deny-member System.Reflection.Assembly.LoadFrom | loads assemblies
+deny-member System.Reflection.Assembly.LoadFile | loads assemblies
+deny-member System.Reflection.Assembly.LoadWithPartialName | loads assemblies
+deny-member System.Reflection.Assembly.UnsafeLoadFrom | loads assemblies
+deny-type System.Runtime.InteropServices. | native interop
+deny-type Microsoft.Win32. | Windows registry and OS
+deny-type System.DirectoryServices. | directory services
+deny-type System.Security.Principal. | OS identity
+deny-type System.Drawing. | needs the Windows drawing stack (AL Runner refuses it for the same reason)
+deny-member System.Threading.Thread.Sleep | wall-clock wait
+
+# Item 5: clock and randomness that bypass the host.
+deny-member System.DateTime.Now | clock that bypasses the host
+deny-member System.DateTime.UtcNow | clock that bypasses the host
+deny-member System.DateTime.Today | clock that bypasses the host
+deny-member System.DateTimeOffset.Now | clock that bypasses the host
+deny-member System.DateTimeOffset.UtcNow | clock that bypasses the host
+deny-member System.Guid.NewGuid | randomness that bypasses the host
+deny-new-without-args System.Random | an unseeded Random bypasses the host
+deny-member System.Diagnostics.Stopwatch.GetTimestamp | clock that bypasses the host
+deny-member System.Diagnostics.Stopwatch.StartNew | clock that bypasses the host
+deny-member System.Diagnostics.Stopwatch.Start | clock that bypasses the host
+deny-member System.Diagnostics.Stopwatch.Elapsed | clock that bypasses the host
+deny-member System.Diagnostics.Stopwatch.ElapsedMilliseconds | clock that bypasses the host
+deny-member System.Diagnostics.Stopwatch.ElapsedTicks | clock that bypasses the host
+deny-member System.TimeZoneInfo.Local | time zone that bypasses the host

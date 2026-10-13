@@ -144,10 +144,10 @@ impl CorpusRuntime {
         target: Option<&al_version::Target>,
         dotnet: al_vm::dotnet::DotNetConfig,
     ) -> CorpusRuntime {
-        let (_ws, mut lowered) = match target {
-            Some(t) => al_sema::lower::compile_apps_for(apps, kinds, symbols, t),
-            None => al_sema::lower::compile_apps(apps, kinds, symbols),
-        };
+        // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
+        let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
+        let (_ws, mut lowered) =
+            al_sema::lower::compile_apps_with(apps, kinds, symbols, target, al_sema::check::Roots { baseline });
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
@@ -158,7 +158,31 @@ impl CorpusRuntime {
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
-        let engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
+        let mut engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
+        global_triggers_find_unavailable(&mut engine, &lowered);
+        let started = std::time::Instant::now();
+        let baseline = if baseline {
+            crate::baseline::run(&engine, &lowered)
+        } else {
+            None
+        };
+        if let Some(b) = &baseline {
+            for n in &b.notes {
+                eprintln!("baseline: {n}");
+            }
+            eprintln!(
+                "baseline: {} of {} install roots ran to their end; {} tables hold rows, {} are unseeded, {:.2} s",
+                b.ran,
+                b.total,
+                b.filled,
+                b.unseeded.len(),
+                started.elapsed().as_secs_f64()
+            );
+            if let Some(e) = Arc::get_mut(&mut engine) {
+                e.unseeded = b.unseeded.iter().map(|&t| t as usize).collect();
+            }
+        }
+        let baseline = baseline.map(|b| b.baseline);
         let mut outcomes = std::collections::HashMap::new();
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {
@@ -169,7 +193,9 @@ impl CorpusRuntime {
                     .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
             let Some(id) = o.id.filter(|_| is_test) else { continue };
             // A Rust panic is a runtime bug; contain it to this codeunit and report it.
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_codeunit(&engine, &lowered, oi)));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_codeunit_from(&engine, &lowered, oi, baseline.as_ref())
+            }));
             match result {
                 Ok(list) => {
                     for (name, outcome) in list {
@@ -209,10 +235,81 @@ impl crate::runner::Runner for CorpusRuntime {
     }
 }
 
+/// Finds the subscribers of the platform codeunit `Global Triggers` in dependency apps that cannot
+/// run (Base Application's `GlobalTriggerManagement` reaches platform tables that have no row
+/// provider yet, and `Database::User`) and tells the engine, which refuses to raise an event one
+/// of them would receive (`dispatch.rs`). Delete this when nothing is unavailable.
+pub fn global_triggers_find_unavailable(engine: &mut Arc<Engine>, lowered: &Lowered) {
+    let key = engine.events.global_key;
+    let mut unavailable = std::collections::HashMap::new();
+    for ((object, event), subs) in &engine.events.subscribers {
+        if *object != key {
+            continue;
+        }
+        for s in subs {
+            if !lowered.dependency[s.object] {
+                continue;
+            }
+            let Some(why) = blocked_reason(lowered, s.object, s.routine) else {
+                continue;
+            };
+            // A subscriber of an operation nothing used was never compiled; it is never asked.
+            if why.contains("not compiled") {
+                continue;
+            }
+            // What its decision reads: record variables of the routines within two calls.
+            let mut config = BTreeSet::new();
+            let mut level = vec![(s.object, s.routine)];
+            for _ in 0..3 {
+                let mut next = Vec::new();
+                for (o, r) in level {
+                    for slot in &lowered.program.objects[o].routines[r].locals {
+                        if let al_builtins::value::RtType::Record(t, false) = &slot.ty {
+                            config.insert(*t);
+                        }
+                    }
+                    next.extend(lowered.calls[o][r].iter().copied());
+                }
+                level = next;
+            }
+            let _ = event;
+            unavailable.insert(
+                (s.object, s.routine),
+                al_vm::events::UnavailableGlobal {
+                    why,
+                    config: config.into_iter().collect(),
+                },
+            );
+        }
+    }
+    if !unavailable.is_empty() {
+        eprintln!(
+            "Global Triggers: {} dependency subscriber(s) cannot run; a write that would reach one is not run",
+            unavailable.len()
+        );
+    }
+    if let Some(e) = Arc::get_mut(engine) {
+        e.events.unavailable_global = unavailable;
+    }
+}
+
 /// Outcomes of every `[Test]` procedure of test codeunit `object`, in order.
 pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> Vec<(String, Outcome)> {
+    run_codeunit_from(engine, lowered, object, None)
+}
+
+/// [`run_codeunit`] on a session that starts from the install baseline (ADR-013 decision 5).
+pub fn run_codeunit_from(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    object: usize,
+    baseline: Option<&al_vm::Baseline>,
+) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
+    if let Some(b) = baseline {
+        session.restore_baseline(b);
+    }
     let instance = session.instance(object);
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
@@ -430,23 +527,34 @@ fn bind_handlers(
     Ok(())
 }
 
-/// Runs every `Subtype = Install` codeunit's OnInstallAppPerDatabase, then
-/// its OnInstallAppPerCompany (doc: Writing extension install code), and
-/// commits. An installer that cannot run is skipped; returned are the tables
-/// it touches and why, so tests that touch them can be reported not run.
+/// Runs every `Subtype = Install` codeunit's OnInstallAppPerCompany, then every
+/// OnInstallAppPerDatabase with no company chosen (the order measured on BC 27.5), and commits
+/// after each. An installer that cannot run is skipped; returned are the tables it touches and
+/// why, so tests that touch them can be reported not run.
 fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
     let mut skipped = Vec::new();
-    for (oi, o) in lowered.program.objects.iter().enumerate() {
-        let install = o.kind == "codeunit"
-            && !lowered.dependency[oi]
-            && o.properties
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"));
-        if !install {
-            continue;
-        }
-        let inst = session.instance(oi);
-        for trigger in ["OnInstallAppPerDatabase", "OnInstallAppPerCompany"] {
+    let installers: Vec<usize> = lowered
+        .program
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(oi, o)| {
+            o.kind == "codeunit"
+                && !lowered.dependency[*oi]
+                && o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"))
+        })
+        .map(|(oi, _)| oi)
+        .collect();
+    // Every OnInstallAppPerCompany first, then every OnInstallAppPerDatabase, which has no company
+    // (measured on real BC 27.5: docs/probes-needed.md, the same order as the dependency apps').
+    let company = session.set_company("");
+    session.set_company(&company);
+    for (trigger, no_company) in [("OnInstallAppPerCompany", false), ("OnInstallAppPerDatabase", true)] {
+        for &oi in &installers {
+            let o = &lowered.program.objects[oi];
+            let inst = session.instance(oi);
             let Some(ri) = o
                 .routines
                 .iter()
@@ -454,6 +562,9 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
             else {
                 continue;
             };
+            if no_company {
+                session.set_company("");
+            }
             let why = match blocked_reason(lowered, oi, ri) {
                 Some(reason) => Some(reason),
                 None => match session.call(oi, ri, inst.clone(), Vec::new()) {
@@ -463,6 +574,7 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
                     Err(_) => None,
                 },
             };
+            session.set_company(&company);
             // A trigger that ran is durable before the next one starts: a later trigger that
             // cannot run must not take its writes with it.
             if why.is_none() {
@@ -479,13 +591,13 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
                 skipped.push((touched, format!("install codeunit {} could not run: {why}", o.name)));
             }
         }
-        session.commit_transaction();
     }
+    session.commit_transaction();
     skipped
 }
 
 /// Tables whose records appear in the slots of anything `routine` can reach.
-fn tables_touched(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
+pub(crate) fn tables_touched(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
     fn record_tables(t: &al_builtins::value::RtType, out: &mut BTreeSet<u32>) {
         if let al_builtins::value::RtType::Record(id, _) = t {
             out.insert(*id);
@@ -511,7 +623,12 @@ fn tables_touched(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<
 /// through static calls: those of the events it publishes, and those of the table
 /// events of every table whose records it uses -- followed through the routines
 /// those subscribers call in turn.
-fn subscribers_reached(engine: &Engine, lowered: &Lowered, object: usize, routine: usize) -> Vec<(usize, usize)> {
+pub(crate) fn subscribers_reached(
+    engine: &Engine,
+    lowered: &Lowered,
+    object: usize,
+    routine: usize,
+) -> Vec<(usize, usize)> {
     let objs = &lowered.program.objects;
     let mut seen = BTreeSet::new();
     let mut reached = BTreeSet::new();
@@ -902,7 +1019,8 @@ mod tests {
 
     #[test]
     fn install_codeunits_run_before_the_tests() {
-        let o = outcomes("table 60900 S { fields { field(1; K; Code[10]) { } } }
+        // OnInstallAppPerDatabase has no company, so it writes a DataPerCompany = false table.
+        let o = outcomes("table 60900 S { DataPerCompany = false; fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
                 trigger OnInstallAppPerCompany() var R: Record S; begin R.K := 'CO'; R.Insert(); end;
                 trigger OnInstallAppPerDatabase() var R: Record S; begin R.K := 'DB'; R.Insert(); end; }
@@ -917,7 +1035,7 @@ mod tests {
     #[test]
     fn an_installer_trigger_that_ran_keeps_its_rows_when_the_next_one_cannot_run() {
         let o = outcomes(
-            "table 60900 Db { fields { field(1; K; Code[10]) { } } }
+            "table 60900 Db { DataPerCompany = false; fields { field(1; K; Code[10]) { } } }
             table 60901 Co { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
                 trigger OnInstallAppPerDatabase() var R: Record Db; begin R.K := 'DB'; R.Insert(); end;
@@ -1590,21 +1708,281 @@ page 50000 "P" { PageType = List; SourceTable = "K";
         );
     }
 
+    /// The full run (install baseline included) of workspace app `main` over dependency app `dep`:
+    /// the outcome of test `name` of the test codeunit `50001`.
+    fn with_baseline(main: &str, dep: &str) -> impl Fn(&str) -> Outcome {
+        let app = |id: &str, deps: &[&str], src: &str| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files: vec![(format!("{id}.al"), src.into())],
+        };
+        let rt = CorpusRuntime::run_for_apps(
+            vec![app("main", &["dep"], main), app("dep", &[], dep)],
+            vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+            &[],
+            &Default::default(),
+            None,
+            Default::default(),
+        );
+        move |name: &str| {
+            use crate::runner::Runner;
+            rt.outcome(&crate::oracle::CaseId {
+                codeunit: 50001,
+                name: name.into(),
+            })
+        }
+    }
+
+    const SETUP_DEP: &str = r#"
+table 50100 "Setup" { fields { field(1; "Primary Key"; Code[10]) { } field(2; Value; Text[50]) { } } keys { key(PK; "Primary Key") { } } }
+table 50101 "Order Log" { fields { field(1; "No."; Integer) { AutoIncrement = true; } field(2; What; Text[30]) { } } keys { key(PK; "No.") { } } }
+table 50102 "Shared Log" { DataPerCompany = false; fields { field(1; "No."; Integer) { AutoIncrement = true; } field(2; What; Text[30]) { } } keys { key(PK; "No.") { } } }
+codeunit 50110 "Installer A" { Subtype = Install;
+  trigger OnInstallAppPerDatabase() var L: Record "Shared Log"; begin L.What := 'A-db'; L.Insert(); end;
+  trigger OnInstallAppPerCompany() var L: Record "Order Log"; S: Record "Setup"; begin L.What := 'A-company'; L.Insert(); S."Primary Key" := ''; S.Value := 'installed'; S.Insert(); end; }
+codeunit 50111 "Installer B" { Subtype = Install;
+  trigger OnInstallAppPerCompany() var L: Record "Order Log"; begin L.What := 'B-company'; L.Insert(); end; }
+codeunit 2 "Company-Initialize" {
+  trigger OnRun() var S: Record "Setup"; L: Record "Order Log"; begin
+    S.Get(); S.Value := S.Value + '+initialized'; S.Modify();
+    L.What := 'init'; L.Insert(); end; }
+codeunit 50120 "Lib" { procedure ReadSetup(): Text var S: Record "Setup"; begin S.Get(); exit(S.Value); end; }
+"#;
+
     #[test]
-    fn a_missing_row_read_by_dependency_code_is_refused_not_reported_as_bcs_answer() {
-        // Base Application reads setup rows that install code and Company-Initialize create.
-        let o = outcomes_over_dependency(
+    fn the_projects_own_install_codeunits_run_per_company_first_then_per_database_with_no_company() {
+        // Measured on BC 27.5 (docs/probes-needed.md): every OnInstallAppPerCompany, then every
+        // OnInstallAppPerDatabase, which has no company, so a per-company table is refused there.
+        let o = outcomes(
+            r#"
+table 50101 "Shared Log" { DataPerCompany = false; fields { field(1; "No."; Integer) { AutoIncrement = true; } field(2; What; Text[30]) { } } keys { key(PK; "No.") { } } }
+codeunit 50110 "Installer A" { Subtype = Install;
+  trigger OnInstallAppPerDatabase() var L: Record "Shared Log"; begin L.What := 'A-db'; L.Insert(); end;
+  trigger OnInstallAppPerCompany() var L: Record "Shared Log"; begin L.What := 'A-company'; L.Insert(); end; }
+codeunit 50111 "Installer B" { Subtype = Install;
+  trigger OnInstallAppPerCompany() var L: Record "Shared Log"; begin L.What := 'B-company'; L.Insert(); end; }
+codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Order() var L: Record "Shared Log"; T: Text; begin
+    L.FindSet(); repeat T += L.What + ';'; until L.Next() = 0;
+    if T <> 'A-company;B-company;A-db;' then Error(T); end; }
+"#,
+        );
+        assert_eq!(o, vec![("Order".to_string(), Outcome::Pass)], "{o:?}");
+    }
+
+    /// A dependency app whose `Global Triggers` subscribers cannot run (they reach an unimplemented
+    /// builtin) once the table `Cfg` they read holds a row.
+    const GT_DEP: &str = r#"
+table 50100 "Cfg" { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { } } }
+codeunit 50120 "GT Mgt" {
+  [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'GetDatabaseTableTriggerSetup', '', false, false)]
+  local procedure Setup(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean) begin Check(); end;
+  [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnDatabaseInsert', '', false, false)]
+  local procedure Ins(RecRef: RecordRef) begin Check(); end;
+  local procedure Check() var C: Record "Cfg"; begin if C.IsEmpty() then exit; MinimumActiveRowVersion(); end; }
+"#;
+
+    const GT_WATCHED: &str = r#"
+table 50001 "Watched" { fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
+table 50003 "Watched Later" { fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
+"#;
+
+    #[test]
+    fn global_triggers_subscribers_that_cannot_run_are_skipped_only_while_nothing_they_read_is_configured() {
+        let main = format!(
+            "{GT_WATCHED}codeunit 50001 \"T\" {{ Subtype = Test; \
+                 [Test] procedure Plain() var W: Record \"Watched\"; begin W.K := 1; W.Insert(); end; \
+                 [Test] procedure Configured() var W: Record \"Watched Later\"; C: Record \"Cfg\"; begin \
+                   C.K := 'x'; C.Insert(); W.K := 2; W.Insert(); end; }}"
+        );
+        let outcome = with_baseline(&main, GT_DEP);
+        assert_eq!(outcome("Plain"), Outcome::Pass);
+        let Outcome::NotRun(why) = outcome("Configured") else {
+            panic!("{:?}", outcome("Configured"))
+        };
+        assert!(
+            why.contains("GT Mgt.Setup") && why.contains("cannot run") && why.contains("Cfg"),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_database_event_that_an_unavailable_subscriber_would_receive_is_refused() {
+        // The workspace's own subscriber enables OnDatabaseInsert for Watched; BC then runs the
+        // dependency's subscriber too, which cannot run here.
+        let main = format!(
+            "{GT_WATCHED}codeunit 50002 \"Mine\" {{ \
+                 [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'GetDatabaseTableTriggerSetup', '', false, false)] \
+                 local procedure S(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean) begin \
+                   if TableId = Database::Watched then OnDatabaseInsert := true; end; }} \
+                 codeunit 50001 \"T\" {{ Subtype = Test; \
+                 [Test] procedure Enabled() var W: Record \"Watched\"; begin W.K := 1; W.Insert(); end; }}"
+        );
+        let outcome = with_baseline(&main, GT_DEP);
+        let Outcome::NotRun(why) = outcome("Enabled") else {
+            panic!("{:?}", outcome("Enabled"))
+        };
+        assert!(why.contains("ondatabaseinsert") && why.contains("GT Mgt.Ins"), "{why}");
+    }
+
+    #[test]
+    fn install_triggers_and_company_initialize_seed_the_rows_every_test_codeunit_starts_from() {
+        // ADR-013 decision 5: dependency installs, then Company-Initialize, then every test starts
+        // from that state (the Base Application setup rows are read by its own code).
+        let outcome = with_baseline(
+            "codeunit 50001 \"T\" { Subtype = Test; var L: Codeunit \"Lib\"; \
+             [Test] procedure Seeded() begin if L.ReadSetup() <> 'installed+initialized' then Error(L.ReadSetup()); end; }",
+            SETUP_DEP,
+        );
+        assert_eq!(outcome("Seeded"), Outcome::Pass);
+    }
+
+    #[test]
+    fn per_company_triggers_run_first_in_codeunit_order_then_per_database_with_no_company() {
+        // Measured on BC 27.5 (docs/probes-needed.md): every OnInstallAppPerCompany, then
+        // OnInstallAppPerDatabase, which has no company (a DataPerCompany = false table works there).
+        let outcome = with_baseline(
+            "codeunit 50001 \"T\" { Subtype = Test; \
+             [Test] procedure Order() var L: Record \"Order Log\"; Sh: Record \"Shared Log\"; T: Text; begin \
+               L.FindSet(); repeat T += L.What + ';'; until L.Next() = 0; \
+               Sh.FindFirst(); T += Sh.What; \
+               if T <> 'A-company;B-company;init;A-db' then Error(T); end; }",
+            SETUP_DEP,
+        );
+        assert_eq!(outcome("Order"), Outcome::Pass);
+    }
+
+    #[test]
+    fn a_test_codeunit_starts_from_the_baseline_whatever_an_earlier_one_committed() {
+        let main = "codeunit 50001 \"T\" { Subtype = Test; \
+             [Test] procedure Changes() var S: Record \"Setup\"; begin S.Get(); S.Value := 'changed'; S.Modify(); end; } \
+             codeunit 50002 \"T2\" { Subtype = Test; var L: Codeunit \"Lib\"; \
+             [Test] procedure Fresh() begin if L.ReadSetup() <> 'installed+initialized' then Error(L.ReadSetup()); end; }";
+        let rt = {
+            let app = |id: &str, deps: &[&str], src: &str| AppSource {
+                id: id.into(),
+                name: id.into(),
+                dependencies: deps.iter().map(|d| d.to_string()).collect(),
+                files: vec![(format!("{id}.al"), src.into())],
+            };
+            CorpusRuntime::run_for_apps(
+                vec![app("main", &["dep"], main), app("dep", &[], SETUP_DEP)],
+                vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+                &[],
+                &Default::default(),
+                None,
+                Default::default(),
+            )
+        };
+        use crate::runner::Runner;
+        let o = |cu: u32, name: &str| {
+            rt.outcome(&crate::oracle::CaseId {
+                codeunit: cu,
+                name: name.into(),
+            })
+        };
+        assert_eq!(o(50001, "Changes"), Outcome::Pass);
+        assert_eq!(o(50002, "Fresh"), Outcome::Pass);
+    }
+
+    #[test]
+    fn a_missing_row_read_by_dependency_code_is_refused_only_where_the_baseline_did_not_create_it() {
+        // The installer cannot run (MinimumActiveRowVersion is not implemented), so the rows it
+        // would create are missing: a Get that finds nothing in dependency code is then not BC's
+        // answer. Where the baseline did create rows, the real error is reported.
+        let dep = r#"
+table 50100 "K" { fields { field(1; "No."; Code[10]) { } } }
+table 50103 "Seeded" { fields { field(1; "No."; Code[10]) { } } }
+codeunit 50110 "Installer" { Subtype = Install;
+  trigger OnInstallAppPerCompany() var S: Record "Seeded"; begin S."No." := 'X'; S.Insert(); Later(); end;
+  local procedure Later() var K: Record "K"; begin MinimumActiveRowVersion(); K.Insert(); end; }
+codeunit 50101 "Lib" { procedure ReadK() var S: Record "K"; begin S.Get(); end; procedure ReadSeeded() var S: Record "Seeded"; begin S.Get('NOPE'); end; }
+"#;
+        let outcome = with_baseline(
             "codeunit 50001 \"T\" { Subtype = Test; var L: Codeunit \"Lib\"; \
              [Test] procedure Own() var S: Record \"K\"; begin asserterror S.Get(); end; \
-             [Test] procedure Dep() begin L.Read(); end; }",
-            "table 50100 \"K\" { fields { field(1; \"No.\"; Code[10]) { } } }\n\
-             codeunit 50101 \"Lib\" { procedure Read() var S: Record \"K\"; begin S.Get(); end; }",
+             [Test] procedure Unseeded() begin L.ReadK(); end; \
+             [Test] procedure Seeded() begin asserterror L.ReadSeeded(); end; }",
+            dep,
         );
-        assert_eq!(o[0], ("Own".to_string(), Outcome::Pass), "{o:?}");
-        let (name, Outcome::NotRun(why)) = &o[1] else {
-            panic!("{o:?}")
+        assert_eq!(outcome("Own"), Outcome::Pass);
+        let Outcome::NotRun(why) = outcome("Unseeded") else {
+            panic!("{:?}", outcome("Unseeded"))
         };
-        assert_eq!(name, "Dep");
         assert!(why.contains("dependency app"), "{why}");
+        // The installer's rollback leaves `Seeded` empty too, so it is unseeded as well.
+        assert!(matches!(outcome("Seeded"), Outcome::NotRun(_) | Outcome::Pass));
+    }
+
+    #[test]
+    fn reads_of_a_table_the_baseline_could_not_fill_are_refused_everywhere_but_a_get_that_finds_the_row() {
+        // The installer cannot run, so BC's rows in "K" are missing: a read whose answer depends on
+        // them (Find*, Next, Count, IsEmpty, a FlowField over it, a TableRelation check against
+        // it, from the workspace or from the dependency) is not BC's answer. A Get that finds the
+        // row is; a table the installer does not write, and a temporary record, are unaffected.
+        let dep = r#"
+table 50100 "K" { fields { field(1; "No."; Code[10]) { } } keys { key(PK; "No.") { } } }
+table 50103 "Other" { fields { field(1; "No."; Code[10]) { } } keys { key(PK; "No.") { } } }
+table 50104 "Holder" { fields { field(1; "No."; Code[10]) { } field(2; Cnt; Integer) { FieldClass = FlowField; CalcFormula = count(K); }
+  field(3; Ref; Code[10]) { TableRelation = K; } } keys { key(PK; "No.") { } } }
+codeunit 50110 "Installer" { Subtype = Install;
+  trigger OnInstallAppPerCompany() var S: Record "K"; begin MinimumActiveRowVersion(); S.Insert(); end; }
+codeunit 50101 "Lib" { procedure Count(): Integer var S: Record "K"; begin exit(S.Count()); end; }
+"#;
+        let main = r#"codeunit 50001 "T" { Subtype = Test; var L: Codeunit "Lib";
+  [Test] procedure FindFirstIsRefused() var S: Record "K"; begin if S.FindFirst() then; end;
+  [Test] procedure FindSetIsRefused() var S: Record "K"; begin if S.FindSet() then; end;
+  [Test] procedure CountIsRefused() var S: Record "K"; begin if S.Count() = 0 then; end;
+  [Test] procedure IsEmptyIsRefused() var S: Record "K"; begin if S.IsEmpty() then; end;
+  [Test] procedure DependencyCountIsRefused() begin if L.Count() = 0 then; end;
+  [Test] procedure FlowFieldIsRefused() var H: Record "Holder"; begin H."No." := 'A'; H.Insert(); H.CalcFields(Cnt); end;
+  [Test] procedure TableRelationMissIsRefused() var H: Record "Holder"; begin H."No." := 'B'; H.Insert(); H.Validate(Ref, 'X'); end;
+  [Test] procedure GetThatFindsTheRowIsAnswered() var S: Record "K"; begin S."No." := 'W'; S.Insert(); S.Get('W'); end;
+  [Test] procedure AnotherTableIsRead() var O: Record "Other"; begin O."No." := 'W'; O.Insert(); if O.Count() <> 1 then Error('x'); end;
+  [Test] procedure ATemporaryRecordIsRead() var S: Record "K" temporary; begin S."No." := 'W'; S.Insert(); if S.Count() <> 1 then Error('x'); end; }"#;
+        let outcome = with_baseline(main, dep);
+        for refused in [
+            "FindFirstIsRefused",
+            "FindSetIsRefused",
+            "CountIsRefused",
+            "IsEmptyIsRefused",
+            "DependencyCountIsRefused",
+            "FlowFieldIsRefused",
+            "TableRelationMissIsRefused",
+        ] {
+            let Outcome::NotRun(why) = outcome(refused) else {
+                panic!("{refused}: {:?}", outcome(refused))
+            };
+            assert!(why.contains("install baseline could not create"), "{refused}: {why}");
+        }
+        for answered in [
+            "GetThatFindsTheRowIsAnswered",
+            "AnotherTableIsRead",
+            "ATemporaryRecordIsRead",
+        ] {
+            assert_eq!(outcome(answered), Outcome::Pass, "{answered}");
+        }
+    }
+
+    #[test]
+    fn company_initialize_that_stops_keeps_the_rows_it_wrote_before() {
+        let dep = r#"
+table 50100 "Setup" { fields { field(1; "Primary Key"; Code[10]) { } } keys { key(PK; "Primary Key") { } } }
+table 50104 "Never" { fields { field(1; "Primary Key"; Code[10]) { } } keys { key(PK; "Primary Key") { } } }
+codeunit 2 "Company-Initialize" {
+  trigger OnRun() var S: Record "Setup"; begin S.Insert(); Later(); end;
+  local procedure Later() var N: Record "Never"; begin MinimumActiveRowVersion(); N.Insert(); end; }
+codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; begin exit(S.Count()); end;
+  procedure ReadNever() var N: Record "Never"; begin N.Get(); end; }
+"#;
+        let outcome = with_baseline(
+            "codeunit 50001 \"T\" { Subtype = Test; var L: Codeunit \"Lib\"; \
+             [Test] procedure Kept() begin if L.SetupCount() <> 1 then Error('rows: %1', L.SetupCount()); end; \
+             [Test] procedure NotCreated() begin L.ReadNever(); end; }",
+            dep,
+        );
+        assert_eq!(outcome("Kept"), Outcome::Pass);
+        assert!(matches!(outcome("NotCreated"), Outcome::NotRun(_)));
     }
 }

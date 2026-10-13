@@ -97,7 +97,7 @@ Each test is counted under the first thing that stops it.
 | 121 | Query objects | Not started |
 | 80 | Request pages and filter pages, done except what waits on others: Base App reports and pages, enums and the Temp Blob codeunit (53, ADR-013); the Integer system table (27, `deps`) | ADR-012 follow-up, built on branch `requestpages` |
 | 94 | Page extensions | ADR-012 follow-up |
-| 73 | Global Triggers codeunit events (Base App) | Arrives with ADR-013 |
+| 73 | Global Triggers events are raised by the runtime, but Base Application's own subscribers to them cannot run yet (`API Webhook Subscription` and `Database::User` need providers), so a write on a table whose database events are enabled is refused | `platform-tables`, then the skip in `global_triggers_find_unavailable` goes |
 | 73 | RunObject actions | ADR-012 follow-up |
 | 58 | `[TransactionModel]` | Not started; corpus pins it (record/TestTransactionModelAutoRollback.al) |
 | 43 | Guarded `Codeunit.Run` (`if Codeunit.Run(...)`) | Not started |

@@ -157,6 +157,17 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
+- 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
+  `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
+- 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that
+  stops is rolled back; the tables they would have written and that hold no row are `unseeded`, and a `Get` that finds
+  nothing in dependency code is refused only for those.
+- 2026-10-14, ADR-013 (Global Triggers): an event that a dependency subscriber which cannot run (Base Application's
+  `GlobalTriggerManagement`, platform tables with no provider) would receive is refused; the setup events skip it while
+  the configuration tables it reads are empty. The 73 tests behind `ALT Triggered` stay not run until `API Webhook
+  Subscription` and `Database::User` exist.
+- 2026-10-14, ADR-013 (baseline): every read of a table the baseline could not fill is refused, not only a missing `Get`.
+- 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).
 - 2026-10-14, ADR-007: an oracle may be recorded for an older corpus commit when the corpus diff since then
   only adds files under `tests/` (checked by the CLI). BC 29 stays on `cf6e546` for that reason; 27 and 28 are
   on `cdf315a`.

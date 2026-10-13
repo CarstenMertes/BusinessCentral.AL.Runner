@@ -89,7 +89,19 @@ pub enum Res {
     DotNetMember(String),
 }
 
+/// Extra roots of the demand-driven check, besides the workspace's own code (ADR-013 decision 5).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Roots {
+    /// The install baseline: the install codeunits of the dependency apps and Base Application's
+    /// `Company-Initialize` (codeunit 2).
+    pub baseline: bool,
+}
+
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
+    check_with(ws, members, catalog, Roots::default())
+}
+
+pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, roots: Roots) -> CheckResult {
     // With dependency apps, only what the workspace's code reaches in them is checked.
     let demand_mode = ws.kinds.contains(&crate::workspace::AppKind::Dependency)
         && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
@@ -133,6 +145,9 @@ pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> Ch
                     c.check_object(oi);
                     c.take_calls();
                 }
+            }
+            if roots.baseline {
+                c.reach_baseline();
             }
             let demand = c.run_demand();
             c.prefetch = None;

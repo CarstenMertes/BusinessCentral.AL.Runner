@@ -578,3 +578,45 @@ fn modify_through_a_stale_buffer_is_refused_only_after_a_commit() {
     );
     assert!(matches!(r, Ok(Value::Integer(9))), "{r:?}");
 }
+
+// OnInstallAppPerDatabase runs with CompanyName() empty (measured on real BC 27.5, not yet a corpus
+// test; docs/probes-needed.md): a per-company table cannot be accessed there, a table with
+// DataPerCompany = false can.
+#[test]
+fn with_no_company_chosen_only_a_shared_table_can_be_accessed() {
+    use al_builtins::native::Signal;
+    use al_sema::workspace::AppSource;
+    let src = r#"
+table 50301 PerCompany { fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
+table 50302 Shared { DataPerCompany = false; fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
+codeunit 50100 C
+{
+    procedure Shared(): Integer var R: Record Shared; begin R.K := 1; R.Insert(); exit(R.Count()); end;
+    procedure Own() var R: Record PerCompany; begin R.K := 1; R.Insert(); end;
+}"#;
+    let (_, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    let engine = al_vm::Engine::new(l.program.clone(), vec![]);
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let ri = |n: &str| l.program.objects[oi].routines.iter().position(|r| r.name == n).unwrap();
+    let mut s = al_vm::Session::new(engine);
+    assert_eq!(s.set_company(""), "My Company");
+    let inst = s.instance(oi);
+    assert!(matches!(
+        s.call(oi, ri("Shared"), inst.clone(), vec![]),
+        Ok((al_builtins::value::Value::Integer(1), _))
+    ));
+    assert!(matches!(
+        s.call(oi, ri("Own"), inst.clone(), vec![]),
+        Err(Signal::Unsupported(r)) if r.contains("no company chosen")
+    ));
+    s.set_company("My Company");
+    assert!(s.call(oi, ri("Own"), inst, vec![]).is_ok());
+}

@@ -1,0 +1,336 @@
+//! The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`,
+//! `CompanyInitializer`, `TestExecutor`): once per run, before the first test,
+//!
+//! 1. every dependency app's install codeunits, dependency apps first; within a codeunit
+//!    `OnInstallAppPerCompany`, then `OnInstallAppPerDatabase`;
+//! 2. Base Application's `Company-Initialize` (codeunit 2), once, after the dependency installs;
+//! 3. a capture of the data ([`Baseline`], ADR-004), put back at the start of every test codeunit.
+//!
+//! Only install triggers run, never upgrade triggers. A trigger that cannot run stops where it
+//! stops: `Company-Initialize` keeps the rows it wrote before (as AL Runner's partial company
+//! initialization does), an install trigger is rolled back. What did not run is recorded in the
+//! engine's `unseeded` set, so that a `Get` that finds nothing in dependency code is refused for
+//! exactly those tables instead of answered.
+
+use al_builtins::native::Signal;
+use al_sema::lower::Lowered;
+use al_vm::{Baseline, Engine, Session};
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+/// What the baseline run leaves.
+pub struct BaselineRun {
+    pub baseline: Baseline,
+    /// Tables the roots that did not run (or stopped early) would have written rows to (a record
+    /// variable's Insert, Modify, Rename or ModifyAll in the root's own call closure), and that hold no row in the baseline: object
+    /// indexes.
+    pub unseeded: BTreeSet<u32>,
+    /// How many tables hold a row in the baseline.
+    pub filled: usize,
+    /// One line per root that could not run to its end.
+    pub notes: Vec<String>,
+    /// Roots that ran to their end, and all roots.
+    pub ran: usize,
+    pub total: usize,
+}
+
+fn is_install(o: &al_ir::Object) -> bool {
+    o.kind == "codeunit"
+        && o.properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"))
+}
+
+fn trigger(o: &al_ir::Object, name: &str) -> Option<usize> {
+    o.routines
+        .iter()
+        .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case(name))
+}
+
+/// Runs the baseline on a fresh session of `engine`. `None`: no dependency app has anything to run.
+pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
+    let objs = &lowered.program.objects;
+    // Install codeunits, dependencies first (the apps of the program are in dependency order).
+    let mut installs: Vec<usize> = (0..objs.len())
+        .filter(|&oi| lowered.dependency[oi] && is_install(&objs[oi]))
+        .collect();
+    installs.sort_by_key(|&oi| (objs[oi].app, oi));
+    // (object, trigger, keep what it wrote when it stops early, no company chosen)
+    //
+    // Per app: every codeunit's OnInstallAppPerCompany, then every OnInstallAppPerDatabase, which
+    // runs last and with CompanyName() empty. Measured on real BC 27.5 (a fresh install with two
+    // companies, a scratch app; docs/probes-needed.md). AL Runner and ADR-013 as first written ran
+    // per codeunit, per-company then per-database, with the company set.
+    let mut roots: Vec<(usize, usize, bool, bool)> = Vec::new();
+    let mut apps: Vec<usize> = installs.iter().map(|&oi| objs[oi].app as usize).collect();
+    apps.dedup();
+    for app in apps {
+        for (name, no_company) in [("OnInstallAppPerCompany", false), ("OnInstallAppPerDatabase", true)] {
+            for &oi in installs.iter().filter(|&&oi| objs[oi].app as usize == app) {
+                if let Some(ri) = trigger(&objs[oi], name) {
+                    roots.push((oi, ri, false, no_company));
+                }
+            }
+        }
+    }
+    let company_initialize = (0..objs.len()).find(|&oi| {
+        lowered.dependency[oi]
+            && objs[oi].kind == "codeunit"
+            && objs[oi].id == Some(2)
+            && objs[oi].name.eq_ignore_ascii_case("Company-Initialize")
+    });
+    if let Some(oi) = company_initialize {
+        if let Some(ri) = trigger(&objs[oi], "OnRun") {
+            roots.push((oi, ri, true, false));
+        }
+    }
+    if roots.is_empty() {
+        return None;
+    }
+
+    let mut session = Session::with_host(engine.clone(), crate::host::system_host());
+    session.set_install_scope(true);
+    let mut notes = Vec::new();
+    let mut touched = BTreeSet::new();
+    let mut ran = 0;
+    let company = session.set_company("");
+    session.set_company(&company);
+    for &(oi, ri, keep_prefix, no_company) in &roots {
+        let label = format!("{}.{}", objs[oi].name, objs[oi].routines[ri].name);
+        let inst = session.instance(oi);
+        if no_company {
+            session.set_company("");
+        }
+        let why = match session.call(oi, ri, inst, Vec::new()) {
+            Ok(_) => None,
+            Err(Signal::Unsupported(r)) => Some(r),
+            Err(Signal::Error(e)) => Some(format!("failed with an error: {}", e.message)),
+            Err(_) => None,
+        };
+        session.set_company(&company);
+        match why {
+            None => {
+                ran += 1;
+                session.commit_transaction();
+            }
+            Some(why) => {
+                if keep_prefix {
+                    session.commit_transaction();
+                } else {
+                    session.rollback_transaction();
+                }
+                notes.push(format!(
+                    "{label} did not run to its end{}: {why}",
+                    if keep_prefix {
+                        " (the rows before it are kept)"
+                    } else {
+                        ""
+                    }
+                ));
+                touched.extend(tables_written(lowered, oi, ri));
+            }
+        }
+    }
+    session.set_install_scope(false);
+    let baseline = session.capture_baseline();
+    let filled = baseline.nonempty_tables();
+    let unseeded = touched.difference(&filled).copied().collect();
+    Some(BaselineRun {
+        baseline,
+        unseeded,
+        filled: filled.len(),
+        notes,
+        ran,
+        total: roots.len(),
+    })
+}
+
+/// The tables that code reachable from `routine` of `object` writes rows to: a record variable's
+/// `Insert`, `Modify`, `Rename`, `ModifyAll` or `Validate`-free equivalents, found in the lowered
+/// bodies of everything it calls (not of event subscribers). Temporary
+/// records are left out. Writes through a `RecordRef` have no static table and are not counted.
+pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
+    use al_builtins::value::RtType;
+    use al_ir::{Arg, Expr, Place, Stmt};
+
+    struct W<'a> {
+        locals: &'a [al_ir::Slot],
+        globals: &'a [al_ir::Slot],
+        out: &'a mut BTreeSet<u32>,
+    }
+    impl W<'_> {
+        fn root(p: &Place) -> Option<&Place> {
+            match p {
+                Place::Local(_) | Place::Global(_) => Some(p),
+                Place::Index(inner, _) => Self::root(inner),
+                Place::Field(..) => None,
+            }
+        }
+        fn record_of(&self, p: &Place) -> Option<u32> {
+            let ty = match Self::root(p)? {
+                Place::Local(i) => &self.locals.get(*i)?.ty,
+                Place::Global(i) => &self.globals.get(*i)?.ty,
+                _ => return None,
+            };
+            match ty {
+                RtType::Record(t, false) => Some(*t),
+                _ => None,
+            }
+        }
+        fn arg(&mut self, a: &Arg) {
+            match a {
+                Arg::Value(e) => self.expr(e),
+                Arg::Ref(p) => self.place(p),
+            }
+        }
+        fn place(&mut self, p: &Place) {
+            match p {
+                Place::Index(inner, idx) => {
+                    self.place(inner);
+                    idx.iter().for_each(|e| self.expr(e));
+                }
+                Place::Field(inner, _) => self.place(inner),
+                _ => {}
+            }
+        }
+        fn expr(&mut self, e: &Expr) {
+            match e {
+                Expr::Const(_) => {}
+                Expr::Load(p) => self.place(p),
+                Expr::Unary(_, a) | Expr::Convert(_, a) | Expr::DotNetCoerce(_, a) => self.expr(a),
+                Expr::Binary(_, a, b) => {
+                    self.expr(a);
+                    self.expr(b);
+                }
+                Expr::In(a, set) => {
+                    self.expr(a);
+                    for s in set {
+                        match s {
+                            al_ir::SetElem::One(e) => self.expr(e),
+                            al_ir::SetElem::Range(a, b) => {
+                                a.iter().chain(b).for_each(|e| self.expr(e));
+                            }
+                        }
+                    }
+                }
+                Expr::Ternary(a, b, c) => {
+                    self.expr(a);
+                    self.expr(b);
+                    self.expr(c);
+                }
+                Expr::Call { instance, args, .. } => {
+                    instance.iter().for_each(|e| self.expr(e));
+                    args.iter().for_each(|a| self.arg(a));
+                }
+                Expr::InterfaceCall { receiver, args, .. } => {
+                    self.expr(receiver);
+                    args.iter().for_each(|a| self.arg(a));
+                }
+                Expr::EnumImpl { value, .. } => self.expr(value),
+                Expr::Control { page, .. } => self.expr(page),
+                Expr::QueryColumn { query, .. } => self.expr(query),
+                Expr::DotNet { receiver, args, .. } => {
+                    receiver.iter().for_each(|e| self.expr(e));
+                    args.iter().for_each(|a| self.arg(a));
+                }
+                Expr::Builtin { id, receiver, args, .. } => {
+                    if let Some(r) = receiver {
+                        if let Some(rest) = id.strip_prefix("Record.") {
+                            let method = rest.split('#').next().unwrap_or("");
+                            if matches!(method, "Insert" | "Modify" | "Rename" | "ModifyAll") {
+                                let place = match &**r {
+                                    Arg::Ref(p) => Some(p),
+                                    Arg::Value(Expr::Load(p)) => Some(p),
+                                    Arg::Value(_) => None,
+                                };
+                                if let Some(t) = place.and_then(|p| self.record_of(p)) {
+                                    self.out.insert(t);
+                                }
+                            }
+                        }
+                        self.arg(r);
+                    }
+                    args.iter().for_each(|a| self.arg(a));
+                }
+            }
+        }
+        fn stmts(&mut self, body: &[Stmt]) {
+            for s in body {
+                match s {
+                    Stmt::Assign(p, e) => {
+                        self.place(p);
+                        self.expr(e);
+                    }
+                    Stmt::Expr(e) => self.expr(e),
+                    Stmt::If(c, a, b) => {
+                        self.expr(c);
+                        self.stmts(a);
+                        self.stmts(b);
+                    }
+                    Stmt::While(c, b) | Stmt::Repeat(b, c) => {
+                        self.expr(c);
+                        self.stmts(b);
+                    }
+                    Stmt::For {
+                        var, from, to, body, ..
+                    } => {
+                        self.place(var);
+                        self.expr(from);
+                        self.expr(to);
+                        self.stmts(body);
+                    }
+                    Stmt::Foreach { var, collection, body } => {
+                        self.place(var);
+                        self.expr(collection);
+                        self.stmts(body);
+                    }
+                    Stmt::Case {
+                        scrutinee,
+                        branches,
+                        otherwise,
+                    } => {
+                        self.expr(scrutinee);
+                        for (labels, b) in branches {
+                            for l in labels {
+                                match l {
+                                    al_ir::SetElem::One(e) => self.expr(e),
+                                    al_ir::SetElem::Range(a, b) => {
+                                        a.iter().chain(b).for_each(|e| self.expr(e));
+                                    }
+                                }
+                            }
+                            self.stmts(b);
+                        }
+                        self.stmts(otherwise);
+                    }
+                    Stmt::Exit(e) => e.iter().for_each(|e| self.expr(e)),
+                    Stmt::AssertError(b) => self.stmts(b),
+                    Stmt::Break | Stmt::Pos(_) => {}
+                }
+            }
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(object, routine)];
+    while let Some((o, r)) = stack.pop() {
+        if !seen.insert((o, r)) {
+            continue;
+        }
+        let obj = &lowered.program.objects[o];
+        let rt = &obj.routines[r];
+        W {
+            locals: &rt.locals,
+            globals: &obj.globals,
+            out: &mut out,
+        }
+        .stmts(&rt.body);
+        stack.extend(lowered.calls[o][r].iter().copied());
+    }
+    // Rows that event subscribers of those writes add are not counted: which of them run depends on
+    // data (a subscriber that writes a table when something else is configured), and counting every
+    // subscriber the tables could reach marks tables BC does not fill (measured: Dimension
+    // Correction). A table only a subscriber fills stays unmarked (docs/probes-needed.md).
+    out
+}

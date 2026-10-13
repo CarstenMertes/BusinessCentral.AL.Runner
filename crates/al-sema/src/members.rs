@@ -31,6 +31,8 @@ pub struct FieldInfo {
     pub relation_tables: Vec<String>,
     /// Offset of the field's OnValidate trigger node (in `declared_in`'s file).
     pub on_validate: Option<usize>,
+    /// Offset of the field's OnLookup trigger node (in `declared_in`'s file).
+    pub on_lookup: Option<usize>,
     /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
     pub properties: Vec<(String, String)>,
 }
@@ -217,6 +219,10 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     .triggers()
                     .find(|t| t.name().eq_ignore_ascii_case("OnValidate"))
                     .map(|t| t.syntax().text_range().start().into());
+                let on_lookup = f
+                    .triggers()
+                    .find(|t| t.name().eq_ignore_ascii_case("OnLookup"))
+                    .map(|t| t.syntax().text_range().start().into());
                 m.fields.push(FieldInfo {
                     id,
                     name: fname.clone(),
@@ -230,6 +236,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     relation_table: prop("TableRelation").map(|v| relation_target(&v)),
                     relation_tables: prop("TableRelation").map(|v| relation_targets(&v)).unwrap_or_default(),
                     on_validate,
+                    on_lookup,
                     properties: f.properties().map(|p| (p.name(), p.value_text())).collect(),
                 });
             }
@@ -276,6 +283,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 relation_table: None,
                 relation_tables: Vec::new(),
                 on_validate: None,
+                on_lookup: None,
                 // Only SystemId's caption is pinned (corpus record/TestRecordSystemId.al:178).
                 properties: if *id == 2000000000 {
                     vec![("Caption".into(), "'System ID'".into())]

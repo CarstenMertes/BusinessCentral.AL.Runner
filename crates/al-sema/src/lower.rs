@@ -1157,6 +1157,10 @@ impl Lowerer<'_> {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,
                     },
+                    on_lookup: match (f.declared_in, f.on_lookup) {
+                        (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
+                        _ => None,
+                    },
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
                     calc,
                     calc_refusal: refusal,

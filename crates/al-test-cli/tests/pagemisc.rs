@@ -49,6 +49,38 @@ page 62012 "PM Card"
     layout { area(Content) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } }
 }
 
+table 62001 "PM Look"
+{
+    fields {
+        field(1; "No."; Code[20]) { }
+        field(2; "Table Only"; Code[20]) { trigger OnLookup() begin "Table Only" := 'FROM-TABLE'; end; }
+        field(3; Both; Code[20]) { trigger OnLookup() begin Both := 'FROM-TABLE'; end; }
+        field(4; Related; Code[20]) { TableRelation = "PM Related"; }
+        field(5; Plain; Code[20]) { }
+        field(6; Pageless; Code[20]) { TableRelation = "PM Pageless"; }
+    }
+    keys { key(PK; "No.") { } }
+}
+table 62003 "PM Related" { LookupPageId = "PM Related List"; fields { field(1; "Code"; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "Code") { } } }
+table 62004 "PM Pageless" { fields { field(1; "Code"; Code[20]) { } } keys { key(PK; "Code") { } } }
+page 62014 "PM Related List"
+{
+    PageType = List; SourceTable = "PM Related";
+    layout { area(Content) { repeater(Rows) { field("Code"; Rec."Code") { } field(Descr; Rec.Descr) { } } } }
+}
+page 62015 "PM Look Card"
+{
+    PageType = Card; SourceTable = "PM Look";
+    layout { area(Content) {
+        field("No."; Rec."No.") { }
+        field("Table Only"; Rec."Table Only") { }
+        field(Both; Rec.Both) { trigger OnLookup(var Text: Text): Boolean begin Text := 'FROM-CONTROL'; exit(true); end; }
+        field(Related; Rec.Related) { }
+        field(Plain; Rec.Plain) { }
+        field(Pageless; Rec.Pageless) { }
+    } }
+}
+
 page 62013 "PM Rowset"
 {
     PageType = List; SourceTable = "PM Row"; SourceTableView = sorting("No.") order(descending); Editable = false;
@@ -266,4 +298,72 @@ fn reading_a_rec_bound_control_after_a_refresh_of_a_rowset_page_is_refused() {
             Check('L0008', L.\"No.\".Value); end;"
     ));
     assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("after CurrPage.Update")), "{o:?}");
+}
+
+const LOOK: &str = "procedure OpenOn(var C: TestPage \"PM Look Card\") var L: Record \"PM Look\"; R: Record \"PM Related\"; X: Record \"PM Pageless\"; begin
+    L.DeleteAll(); L.\"No.\" := 'R1'; L.Insert();
+    R.DeleteAll(); R.Code := 'REL-A'; R.Descr := 'Alpha'; R.Insert(); R.Code := 'REL-B'; R.Descr := 'Beta'; R.Insert();
+    X.DeleteAll(); X.Code := 'PL-A'; X.Insert();
+    C.OpenEdit(); C.GoToRecord(L); end;";
+
+// handlers/TestPageFieldTableLookup.al:55 Lookup_ControlWithoutTrigger_RunsTheTableFieldsOnLookup,
+// :72 Lookup_ControlWithTrigger_WinsOverTheTableFieldsOnLookup
+#[test]
+fn lookup_runs_the_controls_trigger_else_the_table_fields() {
+    passes(&format!(
+        "{HELPERS} {LOOK}
+        [Test]
+        procedure TableOnly() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.\"Table Only\".Lookup(); Check('FROM-TABLE', C.\"Table Only\".Value); C.Close(); end;
+        [Test]
+        procedure ControlWins() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Both.Lookup(); Check('FROM-CONTROL', C.Both.Value); C.Close(); end;"
+    ));
+}
+
+// handlers/TestPageFieldRelationLookup_Tests.al:104 ...OpensTheRelatedTablesLookupPage, :122 ...WritesTheSelectedRowBack,
+// :142 ...CancelLeavesTheFieldUnchanged, :168 Lookup_NoTriggerAndNoTableRelation_DoesNothing
+#[test]
+fn lookup_over_a_table_relation_opens_the_related_lookup_page_and_writes_the_pick_back() {
+    passes(&format!(
+        "{HELPERS} {LOOK}
+        [Test] [HandlerFunctions('PicksB')]
+        procedure Picks() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Related.Lookup(); Check('REL-B', C.Related.Value); C.Close(); end;
+        [Test] [HandlerFunctions('Cancels')]
+        procedure Cancel() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Related.Lookup(); Check('', C.Related.Value); C.Close(); end;
+        [Test]
+        procedure NothingToResolve() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Plain.SetValue('KEEP'); C.Plain.Lookup(); Check('KEEP', C.Plain.Value); C.Close(); end;
+        [ModalPageHandler] procedure PicksB(var M: TestPage \"PM Related List\") begin M.GoToKey('REL-B'); M.OK().Invoke(); end;
+        [ModalPageHandler] procedure Cancels(var M: TestPage \"PM Related List\") begin M.GoToKey('REL-B'); M.Cancel().Invoke(); end;"
+    ));
+}
+
+// handlers/TestPageFieldRelationLookup_Tests.al:253 Lookup_RelationToTableWithNoLookupPage_RaisesTheUnhandledUiSignal,
+// :273 ..._LeavesTheFieldUnchanged
+#[test]
+fn lookup_over_a_relation_to_a_table_without_a_lookup_page_raises_unhandled_ui() {
+    passes(&format!(
+        "{HELPERS} {LOOK}
+        [Test]
+        procedure Pageless() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); Commit(); C.Pageless.SetValue('PL-A');
+            asserterror C.Pageless.Lookup();
+            if StrPos(GetLastErrorText(), 'Unhandled UI: ModalPage') = 0 then Error('got %1', GetLastErrorText());
+            Check('PL-A', C.Pageless.Value); C.Close(); end;"
+    ));
+}
+
+// With the host row still uncommitted, how far the asserterror rolls back is not pinned: refused.
+#[test]
+fn an_unhandled_lookup_with_writes_pending_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS} {LOOK}
+        [Test]
+        procedure Pending() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Pageless.SetValue('PL-A'); asserterror C.Pageless.Lookup(); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("writes pending")), "{o:?}");
 }

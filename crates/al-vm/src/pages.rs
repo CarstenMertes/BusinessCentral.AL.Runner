@@ -2578,6 +2578,7 @@ impl Session {
             [] if method == "DrillDown" => {
                 return Err(error("The NavDrilldownAction method is not supported."));
             }
+            [] if method == "Lookup" => return self.field_lookup(st, idx),
             [] => return unsupported(format!("TestField.{method} on a control with no {name} trigger")),
             _ => {
                 return unsupported(format!(
@@ -2587,13 +2588,22 @@ impl Session {
         };
         st.borrow_mut().refresh = false;
         let result = if method == "Lookup" {
-            // OnLookup(var Text): Boolean. A trigger that returns true hands the text back to the
-            // control; what that writes is not pinned.
+            // OnLookup(var Text): Boolean. The text it writes back replaces the field's value, and
+            // the Boolean says whether the user picked anything (corpus
+            // handlers/TestPageFieldTableLookup.al:72 Lookup_ControlWithTrigger_WinsOverTheTableFieldsOnLookup,
+            // handlers/TestPageModalHandler_Tests.al:132). The text the trigger starts with is the
+            // control's current text (assumed, docs/probes-needed.md).
             let object = owner.unwrap_or(st.borrow().object as usize);
             let inst = self.owner_instance(st, owner);
-            self.call(object, routine, inst, vec![Value::Text(String::new())])
-                .and_then(|(v, _)| match v {
-                    Value::Boolean(true) => unsupported("an OnLookup trigger that returns true"),
+            let current = self.control_value(st, idx)?;
+            let shown = self.control_text(st, idx, &current)?;
+            self.call(object, routine, inst, vec![Value::Text(shown)])
+                .and_then(|(v, finals)| match (v, finals.first()) {
+                    (Value::Boolean(true), Some(Value::Text(t))) => {
+                        // Written back as the client would type it.
+                        self.control_set_value(st, idx, &mut [Value::Text(t.clone())])
+                    }
+                    (Value::Boolean(true), other) => unsupported(format!("an OnLookup trigger whose Text is {other:?}")),
                     _ => Ok(Value::Null),
                 })
         } else {
@@ -2605,6 +2615,92 @@ impl Session {
         let v = result?;
         self.run_refresh(st)?;
         Ok(v)
+    }
+
+    /// `Lookup()` on a control with no OnLookup trigger of its own: the source table field's
+    /// OnLookup runs on the page's row (corpus handlers/TestPageFieldTableLookup.al:55
+    /// Lookup_ControlWithoutTrigger_RunsTheTableFieldsOnLookup); else a field with a TableRelation
+    /// opens the related table's lookup page modally, and a confirmed pick is written back
+    /// (handlers/TestPageFieldRelationLookup_Tests.al:104, :122, :142); a field with neither does
+    /// nothing (:168).
+    fn field_lookup(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
+        let Some(field) = self.control_field(st, idx) else {
+            return unsupported("TestField.Lookup on a control that is not bound to a table field");
+        };
+        if let Some((object, routine)) = field.on_lookup {
+            let rec = self.page_rec(st);
+            let inst = self.record_instance(object, rec, None)?;
+            st.borrow_mut().refresh = false;
+            self.call(object, routine, inst, Vec::new())?;
+            // The control now shows what the trigger wrote, as an edit of the row (assumed,
+            // docs/probes-needed.md).
+            st.borrow_mut().dirty = true;
+            self.run_refresh(st)?;
+            return Ok(Value::Null);
+        }
+        if !field.relation {
+            return Ok(Value::Null);
+        }
+        let engine = self.engine();
+        let [arm] = field.relation_arms.as_slice() else {
+            return unsupported("Lookup over a TableRelation with several arms or an unreadable one (not pinned)");
+        };
+        let (Some(table), true, Some(wheres)) = (arm.table, arm.conditions.is_empty(), &arm.wheres) else {
+            return unsupported("Lookup over a conditional TableRelation or one into a table outside the workspace");
+        };
+        // The page is the related table's LookupPageId, else its DrillDownPageId; a table with
+        // neither still shows a form, which nobody can answer (handlers/TestPageFieldRelationLookup_Tests.al:253).
+        let table_obj = &engine.program.objects[table];
+        let page_of_table = ["LookupPageId", "DrillDownPageId"].iter().find_map(|prop| {
+            let name = table_obj
+                .properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(prop))
+                .map(|(_, v)| v.trim().trim_matches('"').to_string())?;
+            engine.program.objects.iter().position(|o| {
+                o.kind == "page"
+                    && (o.name.eq_ignore_ascii_case(&name) || o.id.is_some_and(|i| i.to_string() == name))
+            })
+        });
+        let Some(page_object) = page_of_table else {
+            // An `asserterror` around this call is the only way a test sees the error. How far it
+            // rolls back when the page's operation, not the test, raised it is not pinned: with
+            // writes pending from before the call the run is refused (the corpus test seeds its
+            // host row without a Commit, handlers/TestPageFieldRelationLookup_Tests.al:253).
+            if self.store.has_uncommitted() {
+                return unsupported(
+                    "Lookup over a relation to a table with no lookup page, with writes pending (the extent of an asserterror rollback around a TestPage call is not pinned)",
+                );
+            }
+            return Err(error("Unhandled UI: ModalPage"));
+        };
+        if !wheres.is_empty() {
+            return unsupported("Lookup over a TableRelation with a where() clause (the lookup page's filter is not pinned)");
+        }
+        let current = self.control_value(st, idx)?;
+        if !Self::same_values(
+            std::slice::from_ref(&current),
+            std::slice::from_ref(&Value::default_for(&field.ty)),
+        ) {
+            return unsupported("Lookup over a TableRelation from a field that already holds a value (the page's position is not pinned)");
+        }
+        let related = Rc::new(RefCell::new(PageState::closed(page_object as u32)));
+        related.borrow_mut().lookup = true;
+        self.page_instance(&related)?;
+        let blank = Rc::new(RefCell::new(self.page_rec(&related).borrow().clone()));
+        let outcome = self.run_page_ui(&related, Some(blank), true)?;
+        let confirmed = matches!(&outcome, Value::Option(n, members)
+            if members.get(*n as usize).is_some_and(|m| m == "LookupOK"));
+        if !confirmed {
+            return Ok(Value::Null);
+        }
+        let picked = self.page_rec(&related);
+        let table_def = self.table(&picked)?;
+        let pos = arm.field.unwrap_or(table_def.keys[0][0]);
+        let value = picked.borrow().fields[pos].clone();
+        st.borrow_mut().refresh = false;
+        self.control_set_value(st, idx, &mut [value])?;
+        Ok(Value::Null)
     }
 
     /// `TestAction.Invoke`: runs the action's OnAction when it is enabled; a disabled action

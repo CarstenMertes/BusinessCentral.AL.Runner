@@ -13,3 +13,4 @@ rowan = "0.16"
 al-builtins.workspace = true
 al-ir.workspace = true
 rust_decimal = "1"
+rayon = "1"

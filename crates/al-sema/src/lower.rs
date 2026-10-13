@@ -23,13 +23,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
     let catalog = al_builtins::catalog::Catalog::load();
     // Routine numbering: every procedure and trigger node of an object, in source order.
     let routine_nodes: Vec<Vec<ast::Routine>> = (0..ws.objects.len())
-        .map(|oi| {
-            ws.object_ast(oi)
-                .syntax()
-                .descendants()
-                .filter_map(ast::Routine::cast)
-                .collect()
-        })
+        .map(|oi| ast::routines_in(ws.object_ast(oi).syntax()))
         .collect();
     let routine_at: HashMap<(usize, usize), usize> = routine_nodes
         .iter()
@@ -80,6 +74,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             local_labels: HashMap::new(),
             reasons: Vec::new(),
             calls: Vec::new(),
+            attrs: Default::default(),
         };
         let mut globals = Vec::new();
         let mut global_reasons = Vec::new();
@@ -238,6 +233,8 @@ struct Lowerer<'a> {
     local_labels: HashMap<String, String>,
     reasons: Vec<String>,
     calls: Vec<(usize, usize)>,
+    /// `routine_attributes` memo, by (object, routine offset).
+    attrs: std::cell::RefCell<HashMap<(usize, usize), Vec<String>>>,
 }
 
 fn key(file: usize, n: &SyntaxNode) -> (usize, usize, usize) {
@@ -857,10 +854,22 @@ impl Lowerer<'_> {
 
     /// Lower-case attribute names of the routine at `offset` in `object`.
     fn routine_attributes(&self, object: usize, offset: usize) -> Vec<String> {
-        self.ws
-            .object_ast(object)
-            .syntax()
-            .descendants()
+        if let Some(hit) = self.attrs.borrow().get(&(object, offset)) {
+            return hit.clone();
+        }
+        let attrs = self.routine_attributes_uncached(object, offset);
+        self.attrs.borrow_mut().insert((object, offset), attrs.clone());
+        attrs
+    }
+
+    fn routine_attributes_uncached(&self, object: usize, offset: usize) -> Vec<String> {
+        // The routine starts at `offset`, so it encloses the token there: walk up
+        // from it instead of scanning every node of the object.
+        let obj = self.ws.object_ast(object);
+        let Some(tok) = obj.syntax().token_at_offset((offset as u32).into()).right_biased() else {
+            return Vec::new();
+        };
+        tok.parent_ancestors()
             .filter_map(ast::Routine::cast)
             .find(|r| usize::from(r.syntax().text_range().start()) == offset)
             .map(|r| r.attributes().map(|a| a.name().to_ascii_lowercase()).collect())

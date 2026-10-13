@@ -1052,7 +1052,7 @@ impl<'a> Checker<'a> {
                                 None => Ty::Unknown,
                             },
                             "systempart" => Ty::Builtin("TestPart".into()),
-                            "action" | "customaction" | "systemaction" | "fileuploadaction" => {
+                            "action" | "customaction" | "systemaction" | "fileuploadaction" | "actionref" => {
                                 Ty::Builtin("TestAction".into())
                             }
                             _ => Ty::Builtin("TestField".into()),

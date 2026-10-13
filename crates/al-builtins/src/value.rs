@@ -222,6 +222,9 @@ pub struct PageState {
     pub set_record: Option<Rc<RefCell<RecordState>>>,
     /// For a part: the page that hosts it and the index of the part control on that page.
     pub host: Option<(std::rc::Weak<RefCell<PageState>>, usize)>,
+    /// The instances of the page's extensions (extension object, instance): they share the page's
+    /// `Rec`, `xRec` and `CurrPage`, and hold the extension's own variables.
+    pub ext_instances: Vec<(usize, Rc<RefCell<Instance>>)>,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -265,6 +268,7 @@ impl PageState {
             lower_key: None,
             set_record: None,
             host: None,
+            ext_instances: Vec::new(),
         }
     }
 }

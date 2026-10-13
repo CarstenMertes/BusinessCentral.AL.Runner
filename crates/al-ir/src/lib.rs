@@ -181,6 +181,14 @@ pub struct Page {
     pub curr_page_slot: usize,
     /// Why the test client cannot drive this page yet; empty = it can.
     pub unsupported: Vec<String>,
+    /// The page extensions merged into `controls`, in the order they apply: each runs on an
+    /// instance of its own that shares the page's `Rec`, `xRec` and `CurrPage`.
+    #[serde(default)]
+    pub extensions: Vec<usize>,
+    /// Page triggers the extensions declare, by lower-case name: (name, extension object, routine).
+    /// They run after the page's own trigger of that name.
+    #[serde(default)]
+    pub ext_triggers: Vec<(String, usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +201,8 @@ pub enum ControlKind {
     SystemAction,
     ActionGroup,
     Part,
+    /// `actionref(Name; Target)`: invoking it invokes the control named `Target`.
+    ActionRef,
 }
 
 /// Where a field control reads and writes its value.
@@ -212,7 +222,10 @@ pub enum Binding {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PropVal {
     Lit(String),
+    /// A routine of the control's owner (the page, or the extension that declares the control).
     Routine(usize),
+    /// A routine of an extension that modified the control: (extension object, routine).
+    Ext(usize, usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -230,6 +243,18 @@ pub struct Control {
     /// For parts: how the part's rows follow the host's current row.
     #[serde(default)]
     pub part_link: Option<PartLink>,
+    /// The page extension that declares the control; `None` for the page's own controls. The
+    /// routines and global slots in `binding`, `triggers` and `PropVal::Routine` belong to it.
+    #[serde(default)]
+    pub owner: Option<usize>,
+    /// Triggers that `modify` blocks of page extensions add to the control, by lower-case name
+    /// (`onbeforevalidate`, `onaftervalidate`, `ondrilldown`, ...): (name, extension object,
+    /// routine), in the order the extensions apply.
+    #[serde(default)]
+    pub ext_triggers: Vec<(String, usize, usize)>,
+    /// For an `ActionRef`: the control index it invokes.
+    #[serde(default)]
+    pub target: Option<usize>,
 }
 
 /// `SubPageLink`, `SubPageView` and `Provider` of a part control (ADR-012 follow-up).

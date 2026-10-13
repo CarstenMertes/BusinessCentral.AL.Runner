@@ -19,6 +19,9 @@ pub fn markdown(r: &Report) -> String {
     if !r.dependencies.is_empty() {
         s.push_str(&format!("\nDependency apps: {}.\n", r.dependencies.join(", ")));
     }
+    if let Some(b) = &r.bc_build {
+        s.push_str(&format!("\nMicrosoft apps downloaded from BC build {b}.\n"));
+    }
     if r.excluded_bc_failed > 0 {
         s.push_str(&format!(
             "\n{} case(s) real BC did not pass are excluded.\n",
@@ -39,7 +42,9 @@ fn row(s: &mut String, name: &str, c: &Counts) {
     ));
 }
 
-pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome) -> String {
+/// `bc_build` is the Microsoft build the dependency apps came from; it is recorded as a JUnit
+/// property so that a build change that flips a case shows its cause next to the result.
+pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome, bc_build: Option<&str>) -> String {
     let mut by_cu: std::collections::BTreeMap<u32, Vec<(&CaseId, Outcome)>> = Default::default();
     for c in oracle.iter().filter(|c| !c.bc_failed) {
         by_cu.entry(c.id.codeunit).or_default().push((&c.id, outcome(&c.id)));
@@ -51,6 +56,12 @@ pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome) -> Str
     let mut s = format!(
         "<?xml version='1.0' encoding='utf-8'?>\n<testsuites tests=\"{total}\" failures=\"{failures}\" skipped=\"{skipped}\">\n"
     );
+    if let Some(b) = bc_build {
+        s.push_str(&format!(
+            "  <properties><property name=\"bc_build\" value=\"{}\" /></properties>\n",
+            esc(b)
+        ));
+    }
     for (cu, cases) in &by_cu {
         s.push_str(&format!(
             "  <testsuite name=\"Codeunit {cu}\" tests=\"{}\">\n",
@@ -136,12 +147,36 @@ mod tests {
 
     #[test]
     fn junit_round_trips_through_the_oracle_parser() {
-        let xml = junit(&oracle(), &outcome);
+        let xml = junit(&oracle(), &outcome, None);
         let back = crate::oracle::parse_junit(&xml).unwrap();
         let ids: Vec<_> = back.iter().map(|c| (c.id.clone(), c.bc_failed)).collect();
         assert_eq!(
             ids,
             vec![(id(1, "a"), false), (id(1, "b<&>"), true), (id(2, "c"), true)]
+        );
+    }
+
+    #[test]
+    fn the_microsoft_build_is_a_junit_property_and_the_oracle_parser_still_reads_the_file() {
+        let xml = junit(&oracle(), &outcome, Some("27.5.46862.56249"));
+        assert!(
+            xml.contains(r#"<property name="bc_build" value="27.5.46862.56249" />"#),
+            "{xml}"
+        );
+        assert_eq!(crate::oracle::parse_junit(&xml).unwrap().len(), 3);
+        assert!(!junit(&oracle(), &outcome, None).contains("bc_build"));
+    }
+
+    #[test]
+    fn the_report_names_the_build_the_dependency_apps_came_from() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        assert!(!markdown(&r).contains("BC build"));
+        r.bc_build = Some("27.5.46862.56249".into());
+        assert!(markdown(&r).contains("BC build 27.5.46862.56249"), "{}", markdown(&r));
+        assert!(
+            serde_json::to_string(&r)
+                .unwrap()
+                .contains(r#""bc_build":"27.5.46862.56249""#)
         );
     }
 
@@ -163,7 +198,7 @@ mod tests {
 
     #[test]
     fn junit_marks_not_run_as_skipped_and_fail_as_failure() {
-        let xml = junit(&oracle(), &outcome);
+        let xml = junit(&oracle(), &outcome, None);
         assert!(
             xml.contains("<skipped message=\"unsupported builtin `Format`\""),
             "{xml}"

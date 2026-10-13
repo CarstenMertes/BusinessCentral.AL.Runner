@@ -80,79 +80,108 @@ const EOCD: u32 = 0x0605_4b50;
 const CENTRAL: u32 = 0x0201_4b50;
 const LOCAL: u32 = 0x0403_4b50;
 
-impl<'a> Zip<'a> {
-    pub fn parse(data: &'a [u8]) -> Result<Zip<'a>, ZipError> {
-        // The end record is within the last 64 KiB + 22 bytes (the comment is at most 64 KiB).
-        let tail_from = data.len().saturating_sub(22 + 65535);
-        let eocd = (tail_from..data.len().saturating_sub(21))
-            .rev()
-            .find(|&i| u32_at(data, i) == Some(EOCD))
-            .ok_or_else(|| ZipError::NotAZip("no end-of-central-directory record".into()))?;
-        let short = || ZipError::Truncated("end-of-central-directory record".into());
-        let count = u16_at(data, eocd + 10).ok_or_else(short)? as usize;
-        let cd_size = u32_at(data, eocd + 12).ok_or_else(short)? as usize;
-        let cd_offset = u32_at(data, eocd + 16).ok_or_else(short)? as usize;
-        if count == 0xFFFF || cd_size == 0xFFFF_FFFF || cd_offset == 0xFFFF_FFFF {
-            return Err(ZipError::Unsupported("ZIP64".into()));
+/// How many bytes at the end of a ZIP file can hold its end record: the record is 22 bytes
+/// and its comment is at most 64 KiB.
+pub const END_SEARCH: usize = 22 + 65535;
+
+/// The end-of-central-directory record, located in the tail of an archive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EndRecord {
+    /// Where the record starts in the slice searched.
+    pub at: usize,
+    pub count: usize,
+    pub cd_size: usize,
+    /// Offset of the central directory from the start of the archive.
+    pub cd_offset: usize,
+}
+
+/// Finds the end record in `tail`, the last bytes of an archive (or all of it).
+pub fn find_end_record(tail: &[u8]) -> Result<EndRecord, ZipError> {
+    let from = tail.len().saturating_sub(END_SEARCH);
+    let at = (from..tail.len().saturating_sub(21))
+        .rev()
+        .find(|&i| u32_at(tail, i) == Some(EOCD))
+        .ok_or_else(|| ZipError::NotAZip("no end-of-central-directory record".into()))?;
+    let short = || ZipError::Truncated("end-of-central-directory record".into());
+    let count = u16_at(tail, at + 10).ok_or_else(short)? as usize;
+    let cd_size = u32_at(tail, at + 12).ok_or_else(short)? as usize;
+    let cd_offset = u32_at(tail, at + 16).ok_or_else(short)? as usize;
+    if count == 0xFFFF || cd_size == 0xFFFF_FFFF || cd_offset == 0xFFFF_FFFF {
+        return Err(ZipError::Unsupported("ZIP64".into()));
+    }
+    Ok(EndRecord {
+        at,
+        count,
+        cd_size,
+        cd_offset,
+    })
+}
+
+/// Parses `count` central directory entries from `cd`. Offsets in the entries are relative to
+/// the start of the archive.
+pub fn parse_central_directory(cd: &[u8], count: usize) -> Result<Vec<Entry>, ZipError> {
+    let mut entries = Vec::with_capacity(count);
+    let mut at = 0;
+    for _ in 0..count {
+        let bad = || ZipError::Truncated("central directory entry".into());
+        if u32_at(cd, at) != Some(CENTRAL) {
+            return Err(ZipError::NotAZip("bad central directory entry".into()));
         }
-        // Offsets are relative to the start of the archive; bytes may precede it.
-        let cd_start = eocd
-            .checked_sub(cd_size)
-            .ok_or_else(|| ZipError::Truncated("central directory".into()))?;
-        let base = cd_start
-            .checked_sub(cd_offset)
-            .ok_or_else(|| ZipError::NotAZip("central directory offset is past its position".into()))?;
-        let mut entries = Vec::with_capacity(count);
-        let mut at = cd_start;
-        for _ in 0..count {
-            let bad = || ZipError::Truncated("central directory entry".into());
-            if u32_at(data, at) != Some(CENTRAL) {
-                return Err(ZipError::NotAZip("bad central directory entry".into()));
-            }
-            let flags = u16_at(data, at + 8).ok_or_else(bad)?;
-            let method = u16_at(data, at + 10).ok_or_else(bad)?;
-            let crc = u32_at(data, at + 16).ok_or_else(bad)?;
-            let compressed = u32_at(data, at + 20).ok_or_else(bad)?;
-            let size = u32_at(data, at + 24).ok_or_else(bad)?;
-            let nlen = u16_at(data, at + 28).ok_or_else(bad)? as usize;
-            let xlen = u16_at(data, at + 30).ok_or_else(bad)? as usize;
-            let clen = u16_at(data, at + 32).ok_or_else(bad)? as usize;
-            let local_offset = u32_at(data, at + 42).ok_or_else(bad)?;
-            let name = data.get(at + 46..at + 46 + nlen).ok_or_else(bad)?;
-            if flags & 1 != 0 {
-                return Err(ZipError::Unsupported("encrypted entries".into()));
-            }
-            if compressed == 0xFFFF_FFFF || size == 0xFFFF_FFFF || local_offset == 0xFFFF_FFFF {
-                return Err(ZipError::Unsupported("ZIP64 entry".into()));
-            }
-            entries.push(Entry {
-                name: String::from_utf8_lossy(name).into_owned(),
-                size: size as usize,
-                crc,
-                method,
-                compressed: compressed as usize,
-                local_offset: local_offset as usize,
-            });
-            at += 46 + nlen + xlen + clen;
+        let flags = u16_at(cd, at + 8).ok_or_else(bad)?;
+        let method = u16_at(cd, at + 10).ok_or_else(bad)?;
+        let crc = u32_at(cd, at + 16).ok_or_else(bad)?;
+        let compressed = u32_at(cd, at + 20).ok_or_else(bad)?;
+        let size = u32_at(cd, at + 24).ok_or_else(bad)?;
+        let nlen = u16_at(cd, at + 28).ok_or_else(bad)? as usize;
+        let xlen = u16_at(cd, at + 30).ok_or_else(bad)? as usize;
+        let clen = u16_at(cd, at + 32).ok_or_else(bad)? as usize;
+        let local_offset = u32_at(cd, at + 42).ok_or_else(bad)?;
+        let name = cd.get(at + 46..at + 46 + nlen).ok_or_else(bad)?;
+        if flags & 1 != 0 {
+            return Err(ZipError::Unsupported("encrypted entries".into()));
         }
-        Ok(Zip { data, base, entries })
+        if compressed == 0xFFFF_FFFF || size == 0xFFFF_FFFF || local_offset == 0xFFFF_FFFF {
+            return Err(ZipError::Unsupported("ZIP64 entry".into()));
+        }
+        entries.push(Entry {
+            name: String::from_utf8_lossy(name).into_owned(),
+            size: size as usize,
+            crc,
+            method,
+            compressed: compressed as usize,
+            local_offset: local_offset as usize,
+        });
+        at += 46 + nlen + xlen + clen;
+    }
+    Ok(entries)
+}
+
+/// Size of the local header at the start of `head` (at least 30 bytes of it): the fixed part,
+/// the name and the extra field. The entry's data follows.
+pub fn local_header_len(head: &[u8], name: &str) -> Result<usize, ZipError> {
+    if u32_at(head, 0) != Some(LOCAL) {
+        return Err(ZipError::NotAZip(format!("entry `{name}` has no local header")));
+    }
+    let short = || ZipError::Truncated(format!("entry `{name}`"));
+    let nlen = u16_at(head, 26).ok_or_else(short)? as usize;
+    let xlen = u16_at(head, 28).ok_or_else(short)? as usize;
+    Ok(30 + nlen + xlen)
+}
+
+impl Entry {
+    /// Offset of the local header from the start of the archive.
+    pub fn local_offset(&self) -> usize {
+        self.local_offset
     }
 
-    pub fn find(&self, name: &str) -> Option<&Entry> {
-        self.entries.iter().find(|e| e.name == name)
+    /// Size of the entry's data as stored (compressed).
+    pub fn compressed_size(&self) -> usize {
+        self.compressed
     }
 
-    /// The entry's bytes, inflated and checked against the recorded size and CRC-32.
-    pub fn read(&self, e: &Entry) -> Result<Vec<u8>, ZipError> {
-        let lh = self.base + e.local_offset;
-        let short = || ZipError::Truncated(format!("entry `{}`", e.name));
-        if u32_at(self.data, lh) != Some(LOCAL) {
-            return Err(ZipError::NotAZip(format!("entry `{}` has no local header", e.name)));
-        }
-        let nlen = u16_at(self.data, lh + 26).ok_or_else(short)? as usize;
-        let xlen = u16_at(self.data, lh + 28).ok_or_else(short)? as usize;
-        let start = lh + 30 + nlen + xlen;
-        let raw = self.data.get(start..start + e.compressed).ok_or_else(short)?;
+    /// Inflates `raw`, the entry's stored bytes, and checks the recorded size and CRC-32.
+    pub fn decode(&self, raw: &[u8]) -> Result<Vec<u8>, ZipError> {
+        let e = self;
         let out = match e.method {
             0 => raw.to_vec(),
             8 => {
@@ -189,6 +218,39 @@ impl<'a> Zip<'a> {
             });
         }
         Ok(out)
+    }
+}
+
+impl<'a> Zip<'a> {
+    pub fn parse(data: &'a [u8]) -> Result<Zip<'a>, ZipError> {
+        let end = find_end_record(data)?;
+        // Offsets are relative to the start of the archive; bytes may precede it.
+        let cd_start = end
+            .at
+            .checked_sub(end.cd_size)
+            .ok_or_else(|| ZipError::Truncated("central directory".into()))?;
+        let base = cd_start
+            .checked_sub(end.cd_offset)
+            .ok_or_else(|| ZipError::NotAZip("central directory offset is past its position".into()))?;
+        let entries = parse_central_directory(&data[cd_start..end.at], end.count)?;
+        Ok(Zip { data, base, entries })
+    }
+
+    pub fn find(&self, name: &str) -> Option<&Entry> {
+        self.entries.iter().find(|e| e.name == name)
+    }
+
+    /// The entry's bytes, inflated and checked against the recorded size and CRC-32.
+    pub fn read(&self, e: &Entry) -> Result<Vec<u8>, ZipError> {
+        let lh = self.base + e.local_offset;
+        let head = self.data.get(lh..).unwrap_or_default();
+        let len = local_header_len(head, &e.name)?;
+        let start = lh + len;
+        let raw = self
+            .data
+            .get(start..start + e.compressed)
+            .ok_or_else(|| ZipError::Truncated(format!("entry `{}`", e.name)))?;
+        e.decode(raw)
     }
 }
 

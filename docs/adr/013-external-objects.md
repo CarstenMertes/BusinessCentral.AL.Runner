@@ -450,7 +450,7 @@ Two findings drive the decision:
 
 3. **Never in the repository.** Microsoft source and the downloaded zips live in
    a cache directory outside the repo (default
-   `~/.cache/al-runtime/artifacts/<build>/`, `AL_RUNTIME_CACHE` to move it) and in
+   `~/.cache/al-runtime/artifacts/<build>/`; `ALRUNNER_CACHE` or `--cache-dir` moves it, see "Layer A as built") and in
    a CI cache keyed by build. A test (`no_microsoft_source_in_repo`) fails if any
    tracked file carries the Microsoft copyright header. The corpus submodule's
    own `.alpackages` is the corpus repository's content, not ours; the test
@@ -647,13 +647,10 @@ Built, in the order of the list above:
   resolves, and reads the chosen packages. There is no `DependencySource` trait in
   `al-host` yet: `al-test-cli` calls `al-deps` directly. The trait comes with the
   download.
-- **Not built:** Layer A (`--bc-version`, build selection, `AL_RUNTIME_CACHE`), the
-  download, `Source.zip` reading, loading the platform `System.app` (found and
-  selected, then left out: its tables have no row providers, and a declared table
-  without behaviour answers wrong), the install baseline.
-  The corpus names two test-library apps that no `.alpackages` holds
-  (System Application Test Library, Permissions Mock); they are skipped with a
-  printed line and their objects stay unresolved.
+- **Not built in the first increment** (Layer A and the download came after, see "Layer A as
+  built"): loading the platform `System.app` (found and selected, then left out: its tables
+  have no row providers, and a declared table without behaviour answers wrong), the install
+  baseline.
 - **Workspace.** `AppKind` (per app, in `Workspace::kinds`; `AppSource` is
   unchanged so existing constructors still compile). The files of a dependency
   app are *scanned* at load (`al_syntax::scan`: lexer plus preprocessor, objects,
@@ -685,6 +682,73 @@ Built, in the order of the list above:
   `SourceTableView` applies in filter group 2; the error text for a control of a
   page from a dependency app names an internal ID that is not understood, so it
   is refused (`docs/probes-needed.md`).
+
+## Layer A as built (2026-10-14)
+
+Built in `al-deps` (a crate that may touch the OS) and the `al-test-cli` flags. Core crates are
+unchanged (ADR-006).
+
+- **Build selection** (`build.rs`, pure). `BuildQuery` carries the prefix (`--bc-version`, else the
+  major of the target that `al_version::choose_target` chose), whether it was explicit, and the
+  app.json floor. `select_build` follows decision 2, Layer A: the newest cached match, else the newest
+  published match; the default never selects below the floor; an explicit request below it
+  warns; no match is an error naming the request, the builds available and the cache
+  directory. `target::build_query` in `al-test-cli` is the one place that joins `choose_target`
+  and the query, so the target and the build always agree on the major.
+- **Ranged ZIP** (`remote.rs`). `RemoteZip` reads the last 64 KiB of the artifact (the end record),
+  then the rest of the central directory if it is larger (1.1 MB for the platform artifact), then
+  one request per wanted entry. Every entry is checked against the CRC-32 and size in the
+  directory. The source is a `RangeSource`: `HttpSource` (ureq, retries on network errors and
+  5xx; a server that answers 200 to a range request is refused, never downloaded whole) or
+  `FileSource` (the unit tests' fixture file).
+- **Cache** (`cache.rs`). `<root>/artifacts/<build>/platform.tail` (the saved central directory, so
+  a warm run asks for nothing), `apps/<entry file name>` and `apps/<entry file name>.json` (build,
+  entry path, URL, size, CRC-32). A file whose record is missing or no longer matches is removed and
+  fetched again. Writes are rename-atomic, so parallel runs share the cache. Root, first match:
+  `--cache-dir`, `ALRUNNER_CACHE` (ADR-016), `AL_RUNTIME_CACHE` (this ADR's first draft),
+  `AL_RUNNER_CACHE_ROOT` plus `/v3`, `~/.cache/al-runtime`. This is the download cache that
+  decision 1 and 3 require. It is not one of the persistent compile caches that ADR-016 defers.
+- **Fallback** (`artifact.rs`, `load_with_artifacts`). Resolve with `.alpackages` and `--deps`
+  (Layer B, unchanged). For each dependency nobody supplies and that Microsoft could supply:
+  pick the build (cache first), read the central directory, find `<App name>.Source.zip` (or
+  `Microsoft_<App name>.app`) under any folder, fetch it, accept it only if the `app.json` inside
+  has the dependency's app id, save it, and resolve again. A second round picks up what the
+  fetched apps need (System Application Test Library needs Any). With nothing missing no build
+  is chosen and nothing is requested. A third-party dependency never reaches the feed.
+- **Source archives are packages** (`package.rs`). A `*.Source.zip` has no `NavxManifest.xml`; its
+  root `app.json` describes the whole app and every `.al` under any folder belongs to it. The
+  module folders inside System Application Test Library carry their own `app.json`
+  (`Azure AD Plan` and 55 others); they are not separate apps. So "Azure AD Plan Test Library"
+  is a module of System Application Test Library, not a fourth app. `scan_dir` reads `*.zip`
+  next to `*.app`.
+- **Build variables.** Base Application's and Application's `app.json` hold
+  `$(app_currentVersion)`, `$(app_minimumVersion)` and `$(app_platformVersion)`. They are filled from
+  the build the archive came from: the build, `major.minor.0.0`, `major.0.0.0`. Evidence: the
+  compiled Base Application 27.5.46862.48827 in the corpus `.alpackages` has exactly those
+  values in `NavxManifest.xml`. The build comes from the record beside the cached file. A
+  variable with no build is an error naming it, never a guess.
+- **Where the test libraries are.** All three are in the **platform** artifact, not the country
+  one: `Applications/System Application/Test/System Application Test Library.Source.zip`
+  (278 KB, 169 `.al` files), `Applications/TestFramework/TestLibraries/permissions mock/Permissions
+  Mock.Source.zip` (10 KB, 3 files) and, as a dependency of the first,
+  `.../TestLibraries/Any/Any.Source.zip` (10 KB). About 300 KB of a 1.3 GB artifact.
+- **CLI.** `--no-download`, `--cache-dir DIR`, `--bc-version` (existing: in corpus mode it picks
+  the oracle leg, and now also the Microsoft build), `--fetch-deps` (resolve, download, stop),
+  `--print-builds` (newest published build per version, from the index alone) and `--project DIR`
+  (with `--fetch-deps`: any AL project; the target comes from `choose_target`). The feed is
+  `ALRUNNER_ARTIFACT_URL` or the CDN of this ADR. Every run prints `bc build: ...`; the build is
+  in `pass-rate.json` (`bc_build`), the Markdown summary and as a JUnit `<property>`.
+- **CI.** The release job keys an `actions/cache` entry by the output of `--print-builds`,
+  then runs `--fetch-deps` to warm it, and ends with the two `#[ignore]`d network tests.
+- **Measured** (this machine, 2026-10-14, build 27.5.46862.56249): cold fetch of the three test
+  libraries for the corpus 0.5 s (index 0.16 s, central directory 0.1 s, three entries 20 to
+  30 ms each), warm 0.14 s with no request. A cold fetch of System Application, Business
+  Foundation and Base Application for a project that has no `.alpackages` (40 MB) is 1.0 s,
+  warm 0.08 s.
+- **Effect on the corpus.** Eight tests move past "outside the workspace" (six on Permissions Mock,
+  two on the Azure AD Plan test library). None passes yet: they stop at the platform table
+  `Permission Set`, at `DotNet` `PermissionTestHelper` (refused by policy) and at a query over
+  Plans. Pass counts are unchanged: 3903 for each of BC 27, 28 and 29.
 
 ## Rejected options
 
@@ -861,7 +925,47 @@ AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, wh
    takes about 45 s unoptimised. Options: keep it in `cargo test` (slow gate for every agent);
    ignore it and run it with the perf budgets in release (chosen).
 9. **The test-library apps come from the artifact feed through the download fallback (Layer A).**
-   The corpus names System Application Test Library, Permissions Mock and (through them)
-   Azure AD Plan Test Library; no `.alpackages` holds them. Until Layer A exists a developer can
-   put them in a local `--deps` folder; CI keeps refusing the tests that need them. None of them
-   is committed (hard rule 7).
+   The corpus names System Application Test Library and Permissions Mock; no `.alpackages` holds
+   them. Layer A is built (see "Layer A as built"); a developer can still put them in a local
+   `--deps` folder. None of them is committed (hard rule 7).
+
+### Layer A (2026-10-14)
+
+10. **`--no-download` skips and prints; a feed that does not answer is an error.** Decision 1 says
+    `--no-download` makes a missing app an error. In corpus mode that would fail every offline
+    run of the harness, while the corpus can still be measured without the test libraries (their
+    tests are then reported not run, hard rule 4). Options: error as written; skip with a
+    printed line (chosen for the corpus harness; the message names the app, the build or prefix and the
+    feed URL, and the library keeps `MissingPolicy::Error` for a project mode); skip
+    silently (rejected). When downloading is on and the feed does not answer, the run exits 2
+    with the URL, so a CI run that expected the libraries can never lose them quietly. The
+    ratchet would also catch it.
+11. **A cached build wins over a newer published one; the project's `.alpackages` still wins over
+    both.** The first is AL Runner's rule and decision 2, Layer A. The second is the owner's
+    answer 2 of 2026-10-13. A consequence: the corpus's `.alpackages` has System Application
+    27.5.46862.48827 but the test libraries come from the newest 27.5 build (56249), because
+    48827 is no longer published (HTTP 404; the index still lists it). Same-minor skew, as the ADR
+    already accepts. The build is printed and recorded.
+12. **An exact build the feed has dropped is an error, not a walk down to an older build.** The
+    index lists builds whose artifacts were removed. `--bc-version 27.5.46862.48827` therefore
+    fails with the URL. A prefix always picks the newest, which exists. Options: walk down to the
+    newest build that answers (hides the skew); error (chosen).
+13. **The cache keeps each entry as Microsoft ships it (inflated out of the artifact's ZIP), with a
+    record beside it, not the deflate stream.** Decision 1 says "bytes as downloaded". The
+    downloaded bytes are a deflate stream of a ZIP that is itself a ZIP; keeping the inner ZIP
+    lets the cached file be read like any `--deps` file. Its CRC-32 and size are in the record
+    and are checked again on every run.
+14. **The artifact is chosen only when something is missing.** With every dependency on disk no
+    build is chosen, no request is made and the run prints `bc build: none needed`. AL Runner always
+    selects a build because it needs the DLLs. We need only the apps. Option: always resolve a
+    build (a network call per run, for nothing).
+15. **Names: `ALRUNNER_CACHE`, `ALRUNNER_ARTIFACT_URL`, `--cache-dir`.** ADR-016 (Proposed) renames the
+    environment variables. `AL_RUNTIME_CACHE` and AL Runner v2's `AL_RUNNER_CACHE_ROOT` (plus a `v3`
+    subfolder) are read as fallbacks. If ADR-016 is rejected the names are two lines in `cache.rs`.
+16. **`--project DIR --fetch-deps` is the only project mode so far.** The harness is corpus-only; running a
+    project's tests belongs to ADR-016. The flag exercises `choose_target`, Layer A and the
+    download for any app.json, and it is how the floor-derived default is checked end to end.
+17. **Two network tests, not one.** `al-deps/tests/network.rs` checks the CDN protocol and the real
+    archives; `al-test-cli/tests/network_deps.rs` checks the corpus flow, cold and warm. Both
+    are `#[ignore]`d and take under a second; CI runs them.
+

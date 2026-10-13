@@ -6,6 +6,19 @@ reviewed it.
 
 ## Open questions (not decided)
 
+- Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
+  - It is about 60 tests in 8 files, at local head b06fdc0 in corpus-probes.
+  - All of them pass on the local BC 27.5 container, and the corpus gate
+    scripts pass.
+  - A push means 3 more corpus CI runs (27.5, 28.5 and 29.0) and then an
+    oracle bump.
+  - The findings: report filters, transactions, Skip/Break/Quit, RunObject
+    page types, xmlport nesting and VariableText, Text filter case
+    sensitivity, Copy and SetView, the order of Global Triggers, the SystemId
+    of temp records, the RunModal result values, and the order of part close
+    triggers.
+  - Held because tonight's CI budget is used up.
+
 - ADR-016 (Proposed), Release: AL Runner v3. Eleven open questions, each with
   options and a recommendation in the ADR:
   - binary name;

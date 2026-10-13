@@ -1,0 +1,384 @@
+//! Expressions. Precedence, from the AL operators reference
+//! (learn.microsoft.com/.../developer/devenv-al-operators, "Operator hierarchy"):
+//!
+//! 1. `.` `[ ]` `( )` `::`          — postfix, handled in `postfix`
+//! 2. `not` unary `-` unary `+`
+//! 3. `*` `/` `div` `mod` `and` `xor`
+//! 4. `+` `-` `or`
+//! 5. `>` `>=` `<` `<=` `=` `<>` `in`
+//! 6. `..`                          — only inside set literals and case labels
+//!
+//! The conditional `c ? a : b` is not in that table; it is parsed below level 5
+//! (lowest), which is what `exit(N > 3 ? 'big' : 'small')` in the corpus needs.
+
+use crate::SyntaxKind::{self, *};
+use crate::parser::Parser;
+
+/// Words that can never be a name in expression position.
+const RESERVED: &[&str] = &[
+    "begin",
+    "end",
+    "if",
+    "then",
+    "else",
+    "case",
+    "of",
+    "while",
+    "do",
+    "repeat",
+    "until",
+    "for",
+    "to",
+    "downto",
+    "foreach",
+    "in",
+    "exit",
+    "var",
+    "procedure",
+    "trigger",
+    "local",
+    "and",
+    "or",
+    "xor",
+    "not",
+    "div",
+    "mod",
+    "with",
+    "asserterror",
+];
+
+pub(crate) fn is_reserved(word: &str) -> bool {
+    RESERVED.iter().any(|r| r.eq_ignore_ascii_case(word))
+}
+
+pub(crate) fn at_expr_start(p: &Parser) -> bool {
+    match p.current() {
+        Ident => !is_reserved(p.nth_text(0)) || p.at_kw("not"),
+        QuotedIdent | Integer | Decimal | StringLit | DateLit | TimeLit | DateTimeLit | BigIntLit | LParen | LBrack
+        | Minus | Plus => true,
+        _ => false,
+    }
+}
+
+pub(crate) fn expr(p: &mut Parser) {
+    let cp = p.checkpoint();
+    relational(p);
+    if p.at(Question) {
+        p.start_at(cp, TernaryExpr);
+        p.bump_any();
+        expr(p);
+        p.expect(Colon);
+        expr(p);
+        p.finish();
+    }
+}
+
+fn relational(p: &mut Parser) {
+    let cp = p.checkpoint();
+    additive(p);
+    while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_kw("in") {
+        p.start_at(cp, BinExpr);
+        p.bump_any();
+        additive(p);
+        p.finish();
+    }
+}
+
+fn additive(p: &mut Parser) {
+    let cp = p.checkpoint();
+    multiplicative(p);
+    while matches!(p.current(), Plus | Minus) || p.at_kw("or") {
+        p.start_at(cp, BinExpr);
+        p.bump_any();
+        multiplicative(p);
+        p.finish();
+    }
+}
+
+fn multiplicative(p: &mut Parser) {
+    let cp = p.checkpoint();
+    unary(p);
+    while matches!(p.current(), Star | Slash) || ["and", "xor", "div", "mod"].iter().any(|k| p.at_kw(k)) {
+        p.start_at(cp, BinExpr);
+        p.bump_any();
+        unary(p);
+        p.finish();
+    }
+}
+
+fn unary(p: &mut Parser) {
+    if matches!(p.current(), Minus | Plus) || p.at_kw("not") {
+        p.start(PrefixExpr);
+        p.bump_any();
+        unary(p);
+        p.finish();
+    } else {
+        postfix(p);
+    }
+}
+
+fn postfix(p: &mut Parser) {
+    let cp = p.checkpoint();
+    if !primary(p) {
+        return;
+    }
+    loop {
+        match p.current() {
+            Dot | ColonColon => {
+                let kind = if p.at(Dot) { MemberExpr } else { ScopeExpr };
+                p.start_at(cp, kind);
+                p.bump_any();
+                member_name(p);
+                p.finish();
+            }
+            LParen => {
+                p.start_at(cp, CallExpr);
+                arg_list(p);
+                p.finish();
+            }
+            LBrack => {
+                p.start_at(cp, IndexExpr);
+                p.bump_any();
+                expr_list(p, RBrack);
+                p.expect(RBrack);
+                p.finish();
+            }
+            _ => break,
+        }
+    }
+}
+
+fn member_name(p: &mut Parser) {
+    if matches!(p.current(), Ident | QuotedIdent | Integer) {
+        p.start(NameRef);
+        p.bump_any();
+        p.finish();
+    } else {
+        p.error("expected a member name");
+    }
+}
+
+pub(crate) fn arg_list(p: &mut Parser) {
+    p.start(ArgList);
+    p.expect(LParen);
+    expr_list(p, RParen);
+    p.expect(RParen);
+    p.finish();
+}
+
+/// Comma-separated expressions up to (not including) `close`.
+fn expr_list(p: &mut Parser, close: SyntaxKind) {
+    if p.at(close) {
+        return;
+    }
+    loop {
+        expr(p);
+        if !p.eat(Comma) {
+            break;
+        }
+    }
+}
+
+/// Returns false (after recording an error) if no primary expression starts here.
+fn primary(p: &mut Parser) -> bool {
+    match p.current() {
+        Integer | Decimal | StringLit | DateLit | TimeLit | DateTimeLit | BigIntLit => {
+            p.start(Literal);
+            p.bump_any();
+            p.finish();
+        }
+        Ident if p.at_kw("true") || p.at_kw("false") => {
+            p.start(Literal);
+            p.bump_any();
+            p.finish();
+        }
+        Ident if !is_reserved(p.nth_text(0)) => {
+            p.start(NameRef);
+            p.bump_any();
+            p.finish();
+        }
+        QuotedIdent => {
+            p.start(NameRef);
+            p.bump_any();
+            p.finish();
+        }
+        LParen => {
+            p.start(ParenExpr);
+            p.bump_any();
+            expr(p);
+            p.expect(RParen);
+            p.finish();
+        }
+        LBrack => set_expr(p),
+        _ => {
+            p.error("expected an expression");
+            return false;
+        }
+    }
+    true
+}
+
+fn set_expr(p: &mut Parser) {
+    p.start(SetExpr);
+    p.bump_any();
+    if !p.at(RBrack) {
+        loop {
+            range_or_expr(p);
+            if !p.eat(Comma) {
+                break;
+            }
+        }
+    }
+    p.expect(RBrack);
+    p.finish();
+}
+
+/// `a`, `a..b`, `..b`, `a..` — set elements and case labels.
+pub(crate) fn range_or_expr(p: &mut Parser) {
+    if p.at(DotDot) {
+        p.start(RangeExpr);
+        p.bump_any();
+        expr(p);
+        p.finish();
+        return;
+    }
+    let cp = p.checkpoint();
+    expr(p);
+    if p.at(DotDot) {
+        p.start_at(cp, RangeExpr);
+        p.bump_any();
+        if at_expr_start(p) {
+            expr(p);
+        }
+        p.finish();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grammar::test_util::{dump, errors};
+
+    fn e(src: &str) -> String {
+        dump(src, expr)
+    }
+
+    #[test]
+    fn multiplicative_binds_tighter_than_additive() {
+        assert_eq!(
+            e("a + b * 2"),
+            "(BinExpr (NameRef a) + (BinExpr (NameRef b) * (Literal 2)))"
+        );
+    }
+
+    #[test]
+    fn binary_operators_are_left_associative() {
+        assert_eq!(
+            e("a - b - c"),
+            "(BinExpr (BinExpr (NameRef a) - (NameRef b)) - (NameRef c))"
+        );
+    }
+
+    #[test]
+    fn and_is_multiplicative_or_is_additive_comparison_is_lowest() {
+        assert_eq!(
+            e("a = b or c and d"),
+            "(BinExpr (NameRef a) = (BinExpr (NameRef b) or (BinExpr (NameRef c) and (NameRef d))))"
+        );
+    }
+
+    #[test]
+    fn xor_is_multiplicative() {
+        assert_eq!(
+            e("a or b xor c"),
+            "(BinExpr (NameRef a) or (BinExpr (NameRef b) xor (NameRef c)))"
+        );
+    }
+
+    #[test]
+    fn keyword_operators_are_case_insensitive() {
+        assert_eq!(
+            e("a DIV b MOD c"),
+            "(BinExpr (BinExpr (NameRef a) DIV (NameRef b)) MOD (NameRef c))"
+        );
+    }
+
+    #[test]
+    fn unary_binds_tighter_than_binary() {
+        assert_eq!(e("-a * b"), "(BinExpr (PrefixExpr - (NameRef a)) * (NameRef b))");
+        assert_eq!(
+            e("not a and b"),
+            "(BinExpr (PrefixExpr not (NameRef a)) and (NameRef b))"
+        );
+    }
+
+    #[test]
+    fn literals() {
+        assert_eq!(
+            e("f(true, 'x', 1.5, 0D, 120000T, 0DT, 5L)"),
+            "(CallExpr (NameRef f) (ArgList ( (Literal true) , (Literal 'x') , (Literal 1.5) , (Literal 0D) , (Literal 120000T) , (Literal 0DT) , (Literal 5L) )))"
+        );
+    }
+
+    #[test]
+    fn member_call_and_index_chain() {
+        assert_eq!(
+            e("Rec.\"No.\".Value(1)[2]"),
+            "(IndexExpr (CallExpr (MemberExpr (MemberExpr (NameRef Rec) . (NameRef \"No.\")) . (NameRef Value)) (ArgList ( (Literal 1) ))) [ (Literal 2) ])"
+        );
+    }
+
+    #[test]
+    fn empty_call_and_multi_dimensional_index() {
+        assert_eq!(e("f()"), "(CallExpr (NameRef f) (ArgList ( )))");
+        assert_eq!(e("a[1, 2]"), "(IndexExpr (NameRef a) [ (Literal 1) , (Literal 2) ])");
+    }
+
+    #[test]
+    fn scope_operator() {
+        assert_eq!(
+            e("Enum::\"ALT Status\"::Open"),
+            "(ScopeExpr (ScopeExpr (NameRef Enum) :: (NameRef \"ALT Status\")) :: (NameRef Open))"
+        );
+        assert_eq!(
+            e("Database::Customer"),
+            "(ScopeExpr (NameRef Database) :: (NameRef Customer))"
+        );
+    }
+
+    #[test]
+    fn in_with_set_and_ranges() {
+        assert_eq!(
+            e("x in [1, 3..5, ..9]"),
+            "(BinExpr (NameRef x) in (SetExpr [ (Literal 1) , (RangeExpr (Literal 3) .. (Literal 5)) , (RangeExpr .. (Literal 9)) ]))"
+        );
+    }
+
+    #[test]
+    fn empty_set() {
+        assert_eq!(e("x in []"), "(BinExpr (NameRef x) in (SetExpr [ ]))");
+    }
+
+    #[test]
+    fn ternary_is_lowest_and_right_associative() {
+        assert_eq!(
+            e("n > 3 ? 'a' : b ? 'c' : 'd'"),
+            "(TernaryExpr (BinExpr (NameRef n) > (Literal 3)) ? (Literal 'a') : (TernaryExpr (NameRef b) ? (Literal 'c') : (Literal 'd')))"
+        );
+    }
+
+    #[test]
+    fn parenthesised() {
+        assert_eq!(
+            e("(a + b) * c"),
+            "(BinExpr (ParenExpr ( (BinExpr (NameRef a) + (NameRef b)) )) * (NameRef c))"
+        );
+    }
+
+    #[test]
+    fn missing_operand_is_an_error_but_lossless() {
+        assert!(errors("a +", expr) > 0);
+        assert!(errors("(a", expr) > 0);
+        assert!(errors(")", expr) > 0);
+    }
+}

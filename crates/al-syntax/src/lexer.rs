@@ -155,7 +155,7 @@ impl Lexer<'_> {
                 b'\'' if self.peek(1) == b'\'' => self.pos += 2,
                 b'\'' => {
                     self.pos += 1;
-                    self.push(SyntaxKind::String, start);
+                    self.push(SyntaxKind::StringLit, start);
                     return;
                 }
                 0 if self.pos >= self.src.len() => break,
@@ -273,12 +273,15 @@ mod tests {
 
     #[test]
     fn strings_with_doubled_quote_escape() {
-        assert_eq!(significant("'it''s' ''"), vec![(String, "'it''s'"), (String, "''")]);
+        assert_eq!(
+            significant("'it''s' ''"),
+            vec![(StringLit, "'it''s'"), (StringLit, "''")]
+        );
     }
 
     #[test]
     fn string_does_not_end_a_comment_marker_inside_it() {
-        assert_eq!(significant("'a // b' x"), vec![(String, "'a // b'"), (Ident, "x")]);
+        assert_eq!(significant("'a // b' x"), vec![(StringLit, "'a // b'"), (Ident, "x")]);
     }
 
     #[test]
@@ -406,7 +409,10 @@ mod tests {
 
     #[test]
     fn non_ascii_in_comments_and_strings_keeps_char_boundaries() {
-        assert_eq!(significant("'ä — ü' x // ✓"), vec![(String, "'ä — ü'"), (Ident, "x")]);
+        assert_eq!(
+            significant("'ä — ü' x // ✓"),
+            vec![(StringLit, "'ä — ü'"), (Ident, "x")]
+        );
     }
 
     #[test]

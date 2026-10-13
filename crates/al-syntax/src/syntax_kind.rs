@@ -20,7 +20,7 @@ pub enum SyntaxKind {
     // Atoms
     Ident,
     QuotedIdent,
-    String,
+    StringLit,
     Integer,
     Decimal,
     /// `20240101D`, `0D`
@@ -68,6 +68,70 @@ pub enum SyntaxKind {
     /// Anything the lexer cannot classify, including unterminated strings and
     /// comments. The lexer never fails; errors are tokens.
     Error,
+
+    // ---- Nodes ----
+    SourceFile,
+    /// Tokens the parser could not fit into the grammar.
+    ErrorNode,
+
+    // Expressions
+    Literal,
+    NameRef,
+    BinExpr,
+    PrefixExpr,
+    MemberExpr,
+    ScopeExpr,
+    CallExpr,
+    ArgList,
+    IndexExpr,
+    ParenExpr,
+    SetExpr,
+    RangeExpr,
+    TernaryExpr,
+
+    // Statements
+    Block,
+    EmptyStmt,
+    AssignStmt,
+    ExprStmt,
+    IfStmt,
+    CaseStmt,
+    CaseBranch,
+    CaseElse,
+    WhileStmt,
+    RepeatStmt,
+    ForStmt,
+    ForeachStmt,
+    WithStmt,
+    ExitStmt,
+    BreakStmt,
+    ContinueStmt,
+    AssertErrorStmt,
+
+    // Declarations
+    VarSection,
+    VarDecl,
+    TypeRef,
+    TypeArgs,
+    Procedure,
+    Trigger,
+    ParamList,
+    Param,
+    ReturnSpec,
+    Attribute,
+
+    // Objects
+    NamespaceDecl,
+    UsingDecl,
+    Object,
+    ObjectBody,
+    Property,
+    PropertyValue,
+    Section,
+    SectionArgs,
+
+    #[doc(hidden)]
+    __Last,
 }
 
 impl SyntaxKind {
@@ -82,5 +146,29 @@ impl SyntaxKind {
                 | SyntaxKind::Bom
                 | SyntaxKind::DisabledText
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum AlLanguage {}
+
+impl rowan::Language for AlLanguage {
+    type Kind = SyntaxKind;
+    fn kind_from_raw(raw: rowan::SyntaxKind) -> SyntaxKind {
+        assert!(raw.0 < SyntaxKind::__Last as u16);
+        // SAFETY: SyntaxKind is repr(u16) with contiguous discriminants below __Last.
+        unsafe { std::mem::transmute::<u16, SyntaxKind>(raw.0) }
+    }
+    fn kind_to_raw(kind: SyntaxKind) -> rowan::SyntaxKind {
+        rowan::SyntaxKind(kind as u16)
+    }
+}
+
+pub type SyntaxNode = rowan::SyntaxNode<AlLanguage>;
+pub type SyntaxToken = rowan::SyntaxToken<AlLanguage>;
+
+impl From<SyntaxKind> for rowan::SyntaxKind {
+    fn from(k: SyntaxKind) -> Self {
+        rowan::SyntaxKind(k as u16)
     }
 }

@@ -119,7 +119,71 @@ fn is_name(t: &SyntaxToken) -> bool {
     matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent | SyntaxKind::Dot)
 }
 
+/// One `type("Full.Name"; "Alias")` of a `dotnet { assembly(..) { } }` block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DotNetTypeDecl {
+    pub assembly: String,
+    pub version: Option<String>,
+    pub culture: Option<String>,
+    pub public_key_token: Option<String>,
+    /// The CLR type name as written (generic names keep the CLR spelling).
+    pub type_name: String,
+    pub alias: String,
+    /// Offset of the `type` section in the file.
+    pub offset: usize,
+}
+
+fn unquote_literal(v: &str) -> String {
+    let v = v.trim();
+    match v.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
+        Some(inner) => inner.replace("''", "'"),
+        None => v.to_string(),
+    }
+}
+
 impl SourceFile {
+    /// Every `type(..)` declared by the file's `dotnet { }` blocks, in source order.
+    pub fn dotnet_types(&self) -> Vec<DotNetTypeDecl> {
+        let mut out = Vec::new();
+        for block in self.0.children().filter(|n| n.kind() == SyntaxKind::DotNetBlock) {
+            let members = block
+                .children()
+                .filter(|n| n.kind() == SyntaxKind::ObjectBody)
+                .flat_map(|b| b.children());
+            for asm in members.filter_map(Section::cast) {
+                if !asm.name().eq_ignore_ascii_case("assembly") {
+                    continue;
+                }
+                let assembly = asm.args().into_iter().next().unwrap_or_default();
+                let prop = |n: &str| {
+                    asm.properties()
+                        .find(|p| p.name().eq_ignore_ascii_case(n))
+                        .map(|p| unquote_literal(&p.value_text()))
+                };
+                for ty in asm.sections().filter(|t| t.name().eq_ignore_ascii_case("type")) {
+                    let args = ty.args();
+                    let Some(type_name) = args.first().cloned() else {
+                        continue;
+                    };
+                    // `type("System.Convert")` with no alias is the type's own simple name.
+                    let alias = args
+                        .get(1)
+                        .cloned()
+                        .unwrap_or_else(|| type_name.rsplit('.').next().unwrap_or(&type_name).to_string());
+                    out.push(DotNetTypeDecl {
+                        assembly: assembly.clone(),
+                        version: prop("Version"),
+                        culture: prop("Culture"),
+                        public_key_token: prop("PublicKeyToken"),
+                        type_name,
+                        alias,
+                        offset: ty.syntax().text_range().start().into(),
+                    });
+                }
+            }
+        }
+        out
+    }
     pub fn objects(&self) -> impl Iterator<Item = Object> {
         children(&self.0, Object::cast)
     }
@@ -492,6 +556,13 @@ impl Routine {
             .position(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"));
         kw.and_then(|i| toks.get(i + 1)).map(ident_text).unwrap_or_default()
     }
+    /// Offset of the `procedure` or `trigger` keyword (after any attributes and modifiers).
+    pub fn keyword_offset(&self) -> Option<usize> {
+        self.keyword_pos()
+            .iter()
+            .find(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"))
+            .map(|t| usize::from(t.text_range().start()))
+    }
     fn has_modifier(&self, m: &str) -> bool {
         self.keyword_pos()
             .iter()
@@ -599,6 +670,29 @@ codeunit 60100 "Test X" implements IOne, "I Two"
 }
 tableextension 50100 Ext extends "Sales Header" { fields { field(50100; F; Integer) { } } }
 "#;
+
+    #[test]
+    fn dotnet_blocks_list_their_types() {
+        let f = file(
+            "dotnet\n{\n assembly(\"mscorlib\")\n {\n  Version = '4.0.0.0';\n  Culture = 'neutral';\n  PublicKeyToken = 'b77a5c561934e089';\n  type(\"System.Convert\"; \"Convert\") { }\n  type(\"System.Text.Encoding\"; Encoding) { }\n }\n assembly(Other) { type(\"A.B`1[[System.String, mscorlib]]\"; \"Gen\") { } }\n}\ncodeunit 1 C { }",
+        );
+        let d = f.dotnet_types();
+        assert_eq!(d.len(), 3);
+        assert_eq!(
+            (d[0].assembly.as_str(), d[0].type_name.as_str(), d[0].alias.as_str()),
+            ("mscorlib", "System.Convert", "Convert")
+        );
+        assert_eq!(d[0].version.as_deref(), Some("4.0.0.0"));
+        assert_eq!(d[0].culture.as_deref(), Some("neutral"));
+        assert_eq!(d[0].public_key_token.as_deref(), Some("b77a5c561934e089"));
+        assert_eq!(d[1].alias, "Encoding");
+        assert_eq!(
+            (d[2].assembly.as_str(), d[2].type_name.as_str(), d[2].alias.as_str()),
+            ("Other", "A.B`1[[System.String, mscorlib]]", "Gen")
+        );
+        assert_eq!(d[2].version, None);
+        assert_eq!(f.objects().count(), 1);
+    }
 
     #[test]
     fn source_file_lists_objects_and_namespace() {

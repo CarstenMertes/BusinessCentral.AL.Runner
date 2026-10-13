@@ -193,7 +193,7 @@ fn parse_duration(t: &str) -> Option<i64> {
     Some(if neg { -total } else { total })
 }
 
-fn guid_text(g: &[u8; 16]) -> String {
+pub fn guid_text(g: &[u8; 16]) -> String {
     let h: String = g.iter().map(|b| format!("{b:02x}")).collect();
     format!(
         "{{{}-{}-{}-{}-{}}}",

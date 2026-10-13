@@ -35,8 +35,8 @@ needs more.
 | `al-ir` | Typed IR: program, objects, routines, places, expressions, table and page schemas |
 | `al-vm` | Engine (immutable, `Arc`) and Session (all mutable state). Records, triggers, events and subscribers, FlowFields, AutoIncrement, RecordRef/FieldRef, relations and rename propagation, UI dialogs and handlers, the headless page client |
 | `al-data` | The `Store` trait (ADR-003), `MemStore` on `im` persistent maps, and its contract suite |
-| `al-host` | Capability traits for the host (ADR-006): `Clock` and `Identity` with AL Runner's defaults (ADR-013); the session reads them for `Today`, `UserId`, the system field stamps and the like. The command line injects the system clock (`al-test-cli/src/host.rs`) |
-| `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet |
+| `al-host` | Capability traits for the host (ADR-006): `Clock` and `Identity` with AL Runner's defaults (ADR-013); the session reads them for `Today`, `UserId`, the system field stamps and the like. The command line injects the system clock (`al-test-cli/src/host.rs`). Also `DotNetHost` / `DotNetSession` and the default `NoDotNet` (ADR-014) |
+| `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet; `SidecarHost` (`dotnet.rs`), the one place that starts a process (the .NET sidecar) |
 
 ## Runtime model
 
@@ -66,10 +66,81 @@ needs more.
 - **Reports.** A report lowers to an object whose first globals are its data item
   records (source order), then a hidden request-page flag, then its declared
   variables; the dataset is `Object::report`. A variable is a codeunit-like
-  instance and its first use runs `OnInitReport`. `Run`, `RunModal`, `Execute`
-  and `SetTableView` run in `al-vm/src/reports.rs`: processing only, with no
-  request page, layout or output (those are refused).
+  instance and its first use runs `OnInitReport`. `Run`, `RunModal`, `Execute`,
+  `RunRequestPage` and `SetTableView` run in `al-vm/src/reports.rs`: processing
+  only, with no layout or output (a run that gets as far as output is refused).
+- **Request pages (ADR-012).** The request page of a report is `Object.page` of the
+  report: the same test client, over the report's own instance. Its controls bind to
+  the report's variables, each data item is a `DataItem` control over the item's
+  record, and a reportextension's request page merges in like a page extension. A run
+  that shows the page opens it in `al-vm/src/pages/request.rs`, hands it to the
+  `[RequestPageHandler]` (`UiKind::RequestPage`, bound by the report) and goes on if the
+  handler confirmed with OK. `RunRequestPage` returns the parameters text.
+- **FilterPageBuilder.** `LibraryValue::FilterPageBuilder` holds named controls, each
+  a record buffer; `al-vm/src/filterpage.rs` runs it. `:=` copies the control list and
+  shares the records. `RunModal` is refused.
 - **Culture.** Fixed en-US, which matches the oracle.
+- **DotNet (ADR-014).** A `dotnet { assembly(..) { type(..; Alias) } }` block declares
+  aliases; `X: DotNet Alias` lowers to `RtType::DotNet` and member uses to `Expr::DotNet`
+  (constructor, call, property get and set), whose results have no static type and are coerced
+  exactly where they are stored. In `al-vm/src/dotnet/` a call goes to the registry of
+  runtime-provided classes (`registry.rs`, empty until probes pin members), then through the
+  policy (`policy.txt`, section 8 of the ADR), then to the host (`al-host::dotnet`), else it is
+  refused. `al-test-cli/src/dotnet.rs` implements the host with a .NET 8 helper process
+  (`tools/dotnet-sidecar`), one per Session, started at the first call that reaches it. A
+  .NET exception is `Signal::Unsupported` with its CLR type and message until a probe pins
+  BC's text. A machine without .NET refuses with the `dotnet-unavailable` marker; the ratchet
+  skips such baseline cases locally and `--require-dotnet` (CI) makes them an error.
+
+## Source positions
+
+Lowering records where statements and routines sit in the source. Coverage, call
+stacks, value capture, loop tracking and a debugger all start from this table.
+
+**The data** (`al-ir`):
+
+- `Program::positions` is a table of `SrcPos { file, line, col, end_line, object, routine }`.
+  A position is named by its index, a `u32`. Lines and columns count from 1; the
+  column is a byte column. Lines are the author's lines: the compiler's added page
+  expression routines do not move them.
+- `Program::sources[pos.file]` gives `{ app, path }`. The path is relative to the app.
+  `pos.object` and `pos.routine` index `Program::objects` and `Object::routines`, so a
+  position names the routine or trigger it is in without anything else. The app is
+  `Object::app`.
+- `Routine::pos` is the position of the `procedure` or `trigger` keyword (after
+  attributes and modifiers). It is `NO_POS` for a routine the compiler made up.
+- `Stmt::Pos(id)` is a marker statement. It sits directly before every statement it
+  describes, in the same list, nested statements included. Blocks (`begin ... end`) have
+  none, because lowering flattens them. A statement that fails to lower leaves no marker.
+- Call expressions have no position of their own. A call is found through the statement
+  that contains it, so a call on a later line of a multi-line statement reports the
+  statement's first line. Giving `Expr::Call` and `Expr::Builtin` an optional position
+  later is additive; nothing needs it yet.
+
+**From an executing statement to its position:**
+
+1. `Session::call_stack` (`al-vm/src/lib.rs`) holds one `CallFrame { routine, pos }` per
+   routine on the call stack, parallel to `Session::frames` (which holds the object).
+2. Running `Stmt::Pos(id)` sets `pos` of the top frame. After a call returns, the caller's
+   frame still holds its own statement. `while` and `repeat` set it back to the loop's own
+   position after each pass, so the loop condition is attributed to the loop line.
+3. `program.pos(frame.pos)` gives the `SrcPos`; `program.sources[pos.file]` gives the file.
+   `program.pos(routine.pos)` gives the routine header.
+4. The code that wants to see every statement as it starts (coverage, value capture,
+   a debugger) hooks the `S::Pos` arm of `Session::exec`. The hit is "position `id` ran".
+   Nothing else has to change.
+
+**Where the positions go wrong, so nobody trusts them too far:** the table has no entry
+for page expression routines (`pos` is `NO_POS`, the call stack marks such a frame
+unreadable), and the table is only built when lowering is asked for positions
+(`lower` does; `lower_with_positions(.., false)` does not, which keeps unit tests of
+lowered bodies free of markers).
+
+**Error call stacks** (`al-vm/src/callstack.rs`). An error does not carry its stack from
+the point where it is raised. Each routine it leaves adds one line (innermost first),
+and the routine that catches it (`asserterror`, a TryFunction call, a guarded
+`Codeunit.Run`) adds the last. The line format, and which parts the corpus pins, are in
+that file's header and in `docs/probes-needed.md`.
 
 ## Budgets (tests, run in CI in release)
 

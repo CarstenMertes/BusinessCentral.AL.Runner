@@ -121,6 +121,19 @@ impl Session {
 
     /// `GetView(UseNames)`: `SORTING(keyfields) [ORDER(Descending)] [WHERE(f=FILTER(x),...)]`.
     pub(crate) fn get_view(&self, rec: &Rec, t: &TableDef, use_names: bool) -> Result<String, Signal> {
+        self.get_view_with(rec, t, use_names, false)
+    }
+
+    /// `get_view`; with `option_ordinals` an Option or Enum filter value is written as its
+    /// ordinal (a FilterPageBuilder's `GetView(Name, false)`, corpus
+    /// filterpage/TestFilterPageBuilder.al:FilterPageBuilder_GetView_CaptionsFlag_RendersAnOptionFilterDifferently).
+    pub(crate) fn get_view_with(
+        &self,
+        rec: &Rec,
+        t: &TableDef,
+        use_names: bool,
+        option_ordinals: bool,
+    ) -> Result<String, Signal> {
         let name = |pos: usize| {
             if use_names {
                 t.fields[pos].name.clone()
@@ -148,7 +161,12 @@ impl Session {
         if !filters.is_empty() {
             let mut items = Vec::new();
             for f in &filters {
-                items.push(format!("{}=FILTER({})", name(f.field), self.filter_text(&f.expr)?));
+                let text = if option_ordinals {
+                    self.filter_text(&ordinals(&f.expr))?
+                } else {
+                    self.filter_text(&f.expr)?
+                };
+                items.push(format!("{}=FILTER({text})", name(f.field)));
             }
             out.push_str(&format!(" WHERE({})", items.join(",")));
         }
@@ -252,6 +270,26 @@ impl Session {
             r.ascending = ascending.unwrap_or(true);
         }
         Ok(())
+    }
+}
+
+/// `e` with every Option and Enum value replaced by its ordinal.
+fn ordinals(e: &FilterExpr) -> FilterExpr {
+    let v = |x: &Value| match x {
+        Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(*o),
+        other => other.clone(),
+    };
+    match e {
+        FilterExpr::Range(a, b) => FilterExpr::Range(a.as_ref().map(v), b.as_ref().map(v)),
+        FilterExpr::Eq(x) => FilterExpr::Eq(v(x)),
+        FilterExpr::Ne(x) => FilterExpr::Ne(v(x)),
+        FilterExpr::Lt(x) => FilterExpr::Lt(v(x)),
+        FilterExpr::Le(x) => FilterExpr::Le(v(x)),
+        FilterExpr::Gt(x) => FilterExpr::Gt(v(x)),
+        FilterExpr::Ge(x) => FilterExpr::Ge(v(x)),
+        FilterExpr::Or(xs) => FilterExpr::Or(xs.iter().map(ordinals).collect()),
+        FilterExpr::And(xs) => FilterExpr::And(xs.iter().map(ordinals).collect()),
+        FilterExpr::Like(p, ci) => FilterExpr::Like(p.clone(), *ci),
     }
 }
 

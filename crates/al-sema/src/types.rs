@@ -40,6 +40,9 @@ pub enum Ty {
     Variant,
     /// A library type from the builtins catalog: `RecordRef`, `JsonObject`, `InStream`, ...
     Builtin(String),
+    /// A `DotNet` value (ADR-014): the alias (as written; compare case-insensitively) a `dotnet { }` block declares, or the
+    /// empty string for the result of a `DotNet` member, whose type is only known at run time.
+    DotNet(String),
     /// The type could not be determined; errors on it are not reported again.
     Unknown,
 }
@@ -108,6 +111,7 @@ impl Ty {
             "list" => Ty::List(arg(0)),
             "dictionary" => Ty::Dictionary(arg(0), arg(1)),
             "array" => Ty::Array(t.size_args(), arg(0)),
+            "dotnet" => Ty::DotNet(display_name(&obj())),
             _ => match ObjKind::from_type_name(&name) {
                 Some(kind) => Ty::Object(kind, obj()),
                 None => Ty::Builtin(canonical_builtin(&name)),
@@ -134,6 +138,8 @@ impl std::fmt::Display for Ty {
             Ty::Dictionary(k, v) => write!(f, "Dictionary of [{k}, {v}]"),
             Ty::Array(d, t) => write!(f, "array{d:?} of {t}"),
             Ty::Builtin(n) => write!(f, "{n}"),
+            Ty::DotNet(a) if a.is_empty() => write!(f, "DotNet"),
+            Ty::DotNet(a) => write!(f, "DotNet {a}"),
             other => write!(f, "{other:?}"),
         }
     }

@@ -11,6 +11,52 @@ pub struct Program {
     /// indexes this). Publisher and version come from the runner, which reads the manifests.
     #[serde(default)]
     pub apps: Vec<AppInfo>,
+    /// Every `type(..; Alias)` of every `dotnet { }` block in the workspace (ADR-014). A
+    /// `DotNet` variable's `RtType::DotNet(i)` and `Expr::DotNet::ty` index this list.
+    #[serde(default)]
+    pub dotnet_types: Vec<DotNetDecl>,
+    /// The source files the positions refer to (`SrcPos::file` indexes this).
+    #[serde(default)]
+    pub sources: Vec<SourceFile>,
+    /// Source positions of statements and routine declarations. A [`Stmt::Pos`] marker and
+    /// [`Routine::pos`] hold an index into this table (`docs/architecture.md`, "Source positions").
+    #[serde(default)]
+    pub positions: Vec<SrcPos>,
+}
+
+/// A source file of the program: the app it belongs to and its path inside the app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceFile {
+    /// Index into `Program::apps`.
+    pub app: u32,
+    pub path: String,
+}
+
+/// "No position": a routine the compiler made up (a page expression), which has no source.
+pub const NO_POS: u32 = u32::MAX;
+
+/// Where a statement or a routine declaration sits in the source. Lines and columns count from 1.
+/// The column is a byte column. Page files that declare computed properties are numbered as
+/// the author wrote them, not as the compiler's expanded text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SrcPos {
+    /// Index into `Program::sources`.
+    pub file: u32,
+    pub line: u32,
+    pub col: u32,
+    /// The line the statement ends on (equal to `line` for a one-line statement).
+    pub end_line: u32,
+    /// The object (index into `Program::objects`) and routine (index into `Object::routines`)
+    /// the position is in, so a position alone names the code it belongs to.
+    pub object: u32,
+    pub routine: u32,
+}
+
+impl Program {
+    /// The position `id` names; `None` for [`NO_POS`] or an id outside the table.
+    pub fn pos(&self, id: u32) -> Option<&SrcPos> {
+        self.positions.get(id as usize)
+    }
 }
 
 /// What `NavApp.GetCurrentModuleInfo` reports about an app.
@@ -26,6 +72,31 @@ pub struct AppInfo {
     /// The packaged resources (`resourceFolders` of the manifest): name relative to its folder, content.
     #[serde(default)]
     pub resources: Vec<(String, Vec<u8>)>,
+}
+
+/// A `.NET` type declared by a `dotnet { }` block.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DotNetDecl {
+    pub alias: String,
+    pub assembly: String,
+    pub version: Option<String>,
+    pub culture: Option<String>,
+    pub public_key_token: Option<String>,
+    /// The CLR type name as declared.
+    pub type_name: String,
+}
+
+/// What an `Expr::DotNet` does to its receiver (ADR-014).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DotNetOp {
+    /// `Alias.Alias(args)`: construct an instance of the declared type.
+    Construct,
+    /// `X.Member(args)`.
+    Call(String),
+    /// `X.Member` without parentheses: a property or field read.
+    Get(String),
+    /// `X.Member := value`; the value is the only argument.
+    Set(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -92,6 +163,11 @@ pub struct Report {
     pub extension: Option<usize>,
     /// Global slot of the hidden flag `Report.UseRequestPage(x)` sets: 0 = not set, 1 = true, 2 = false.
     pub request_flag_slot: usize,
+    /// Why running the report would render output (it is not `ProcessingOnly`, or it declares a
+    /// layout): the runtime renders nothing, so a run that gets that far is refused. Its request
+    /// page still opens first.
+    #[serde(default)]
+    pub output: Vec<String>,
     /// Why the runtime cannot run this report yet; empty = it can.
     pub unsupported: Vec<String>,
 }
@@ -310,6 +386,9 @@ pub enum ControlKind {
     SystemAction,
     ActionGroup,
     Part,
+    /// A data item of a report's request page: its `binding` is the global slot of the item's
+    /// record, and the test client reads and writes that record's filters.
+    DataItem,
 }
 
 /// Where a field control reads and writes its value.
@@ -588,6 +667,14 @@ pub struct Routine {
     /// Local index of a named return value.
     pub ret_local: Option<usize>,
     pub body: Vec<Stmt>,
+    /// Position of the `procedure` or `trigger` keyword ([`NO_POS`] for a routine without source).
+    /// BC counts the line of a call stack frame from this line.
+    #[serde(default = "no_pos")]
+    pub pos: u32,
+}
+
+fn no_pos() -> u32 {
+    NO_POS
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -712,6 +799,21 @@ pub enum Expr {
         query: Box<Expr>,
         column: usize,
     },
+    /// A member of a `DotNet` value (ADR-014). `ty` is the declared alias of the receiver
+    /// variable (`None` when the receiver is the result of another DotNet call); a receiver
+    /// that holds no object is the static member access of the declared type. Plain variable
+    /// arguments are `Arg::Ref` so a by-reference .NET parameter can write them back. The result
+    /// has no static type: an assignment wraps it in `DotNetCoerce`.
+    DotNet {
+        ty: Option<usize>,
+        receiver: Option<Box<Expr>>,
+        op: DotNetOp,
+        args: Vec<Arg>,
+    },
+    /// A DotNet result stored into a slot of this type. The kinds must match exactly (Text and
+    /// Code, Integer and BigInteger and Decimal widen); anything else is Unsupported, because
+    /// BC's conversion of a .NET result to a differently typed AL variable is not pinned.
+    DotNetCoerce(RtType, Box<Expr>),
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
     /// result report failure as `false` instead of raising an error.
@@ -756,6 +858,9 @@ pub enum Stmt {
     Exit(Option<Expr>),
     Break,
     AssertError(Vec<Stmt>),
+    /// Marks the statement that follows it in the same list: the VM records the position as the
+    /// routine's current one (`Program::positions[id]`). It does nothing else.
+    Pos(u32),
 }
 
 #[cfg(test)]
@@ -765,7 +870,17 @@ mod tests {
     #[test]
     fn program_round_trips_through_serde() {
         let p = Program {
+            dotnet_types: vec![DotNetDecl {
+                alias: "Convert".into(),
+                assembly: "netstandard".into(),
+                version: None,
+                culture: Some("neutral".into()),
+                public_key_token: None,
+                type_name: "System.Convert".into(),
+            }],
             apps: vec![],
+            sources: vec![],
+            positions: vec![],
             objects: vec![Object {
                 kind: "codeunit".into(),
                 id: Some(50100),
@@ -803,7 +918,9 @@ mod tests {
                     }],
                     ret: None,
                     ret_local: None,
+                    pos: NO_POS,
                     body: vec![
+                        Stmt::Pos(0),
                         Stmt::Assign(
                             Place::Global(0),
                             Expr::Binary(
@@ -812,6 +929,15 @@ mod tests {
                                 Box::new(Expr::Load(Place::Global(0))),
                             ),
                         ),
+                        Stmt::Expr(Expr::DotNetCoerce(
+                            RtType::Text(None),
+                            Box::new(Expr::DotNet {
+                                ty: Some(0),
+                                receiver: Some(Box::new(Expr::Load(Place::Global(0)))),
+                                op: DotNetOp::Call("ToBase64String".into()),
+                                args: vec![Arg::Ref(Place::Local(0))],
+                            }),
+                        )),
                         Stmt::AssertError(vec![Stmt::Expr(Expr::Builtin {
                             id: "Dialog.Error#2".into(),
                             receiver: None,

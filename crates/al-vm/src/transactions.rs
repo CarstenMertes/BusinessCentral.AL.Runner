@@ -238,7 +238,8 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            Err(Signal::Error(e)) if guarded => {
+            Err(Signal::Error(mut e)) if guarded => {
+                self.add_top_frame(&mut e);
                 // The run's writes since its last Commit are undone, the error becomes the last
                 // error and the call returns false (TestCodeunitRunGuard.al:GuardedRun_TrapsInnerError_ReturnsFalse,
                 // :GuardedRun_InstanceForm_CommitThenError_KeepsCommittedRowOnly).

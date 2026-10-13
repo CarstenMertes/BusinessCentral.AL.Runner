@@ -44,8 +44,9 @@ proposed v3 form.
   - `ADR-014`: the .NET helper.
   - `ADR-015`: many BC versions in one binary (Proposed).
   - `LANG`: language or runtime surface, tracked by the corpus pass rate.
-  - `IR-POS`: the IR has no source positions yet (an additive IR field; also the
-    reason `GetLastErrorCallStack` is refused today, `docs/status.md`).
+  - `IR-POS`: needs source positions in the IR. The IR carries them now
+    (`docs/architecture.md`, "Source positions"); the row stays until the feature
+    that reads them exists.
   - `HOST`: needs an `al-host` capability (clock, randomness, identity).
   - `NEW-ADR`: needs a new ADR before code (a seam or a visible design choice).
   - `PROBE`: behaviour must first be pinned by a corpus test or probe.
@@ -127,7 +128,7 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 |---|---|---|---|---|---|---|
 | OUT-1 | Run header: tool version, BC build, country, app count | `CliText.cs` `RunHeader` | No | CLI | Same line | - |
 | OUT-2 | One `FAIL`/`ERROR` line per failing test with BC's message; PASS lines only with `--show-pass` | `Reporter.cs` | No | CLI | Same | - |
-| OUT-3 | AL call stack under a failure: object, procedure, line, app, publisher, version | `StackFrameMapper.cs`, `AlCallStackCapture.cs` | No | IR-POS | Needs lines in the IR | Hard: IR carries no source positions today |
+| OUT-3 | AL call stack under a failure: object, procedure, line, app, publisher, version | `StackFrameMapper.cs`, `AlCallStackCapture.cs` | Partial | CLI | `GetLastErrorCallStack` returns v2's frame format for codeunits and tables (`al-vm/src/callstack.rs`). The runner does not yet print the stack under a failing test | - |
 | OUT-4 | Summary: `Tests:` line, `Seed:` line with replay command, `Result:` line, "Action needed" block | `Reporter.cs` | No | CLI | Same shape | - |
 | OUT-5 | `--show-pass`, `--failures-only`/`--quiet`, `--verbose` | `Program.cs` | No | CLI | Same flags | - |
 | OUT-6 | `--output-junit PATH`, grouped by codeunit, seed property, skipped | `JUnitReport.cs` | Partial | CLI | Writer exists in `al-test-cli/src/output.rs` in the oracle shape (suite name `Codeunit N`; v2 uses `Codeunit50000`). Needs the user-run shape. Not-run tests become `<skipped>` with the reason | - |
@@ -230,7 +231,7 @@ need them. v3 already has the same job done by the oracle and the ratchet
 
 | ID | Feature | v2 reference | v3 equivalent |
 |---|---|---|---|
-| DEV-1 | `--expectations DIR`, `--expectations-require-match` (declare out-of-scope and known-gap tests) | `ExpectationManifest.cs`, `docs/expectations.md` | `oracle/` plus `metrics/passing.txt`. A user-facing "known gap" file is optional later (open question) |
+| DEV-1 | `--expectations DIR`, `--expectations-require-match` (declare out-of-scope and known-gap tests) | `ExpectationManifest.cs`, `docs/expectations.md` | `oracle/` plus `metrics/<major>/passing.txt`. A user-facing "known gap" file is optional later (open question) |
 | DEV-2 | `--count-baseline`, `--count-baseline-require-all`, `--count-out` | `Infrastructure/CountBaseline.cs` | The ratchet |
 | DEV-3 | `--out`, `--classify`: failure classification JSON | `Reporter.cs` | `al-test-cli --json`, `--markdown` |
 | DEV-4 | Corpus checkout, MS bucket and mutation tooling | `tools/*.py`, `.github/workflows/ms-bucket*.yml` | `al-test-cli`, `check.sh` |

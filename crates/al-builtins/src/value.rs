@@ -61,6 +61,9 @@ pub enum RtType {
     Interface(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
     Library(String),
+    /// A `DotNet` variable declared through the alias at this index of `Program::dotnet_types`
+    /// (ADR-014). Unassigned, it holds `Value::Null`.
+    DotNet(u32),
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +107,64 @@ pub enum Value {
     TestControl(Rc<ControlRef>),
     /// A query variable: its runtime filters and, once opened, its result set.
     Query(Rc<RefCell<QueryState>>),
+    /// A `DotNet` object (ADR-014). `:=` shares the reference (assumed BC rule, probe pending).
+    DotNet(Rc<DotNetObject>),
+}
+
+/// What a `Value::DotNet` refers to.
+pub enum DotNetKind {
+    /// An object held by the host (the sidecar), by handle, with its CLR type name.
+    Host { handle: u64, clr_type: String },
+    /// A .NET enum value, kept by value with its CLR type so it can go back as an argument.
+    Enum {
+        clr_type: String,
+        name: String,
+        ordinal: i64,
+    },
+    /// An object the runtime provides itself (the registry, ADR-014 section 1).
+    Internal {
+        type_name: String,
+        state: RefCell<Vec<Value>>,
+    },
+}
+
+/// A `DotNet` object. When the last `Rc` drops, a host handle goes onto the session's release
+/// queue; `Drop` never calls the host (ADR-014 section 2).
+pub struct DotNetObject {
+    pub kind: DotNetKind,
+    release: Option<Rc<RefCell<Vec<u64>>>>,
+}
+
+impl DotNetObject {
+    /// A host object; its handle is queued on `release` when the object drops.
+    pub fn host(handle: u64, clr_type: String, release: Rc<RefCell<Vec<u64>>>) -> DotNetObject {
+        DotNetObject {
+            kind: DotNetKind::Host { handle, clr_type },
+            release: Some(release),
+        }
+    }
+
+    pub fn new(kind: DotNetKind) -> DotNetObject {
+        DotNetObject { kind, release: None }
+    }
+}
+
+impl Drop for DotNetObject {
+    fn drop(&mut self) {
+        if let (DotNetKind::Host { handle, .. }, Some(queue)) = (&self.kind, &self.release) {
+            queue.borrow_mut().push(*handle);
+        }
+    }
+}
+
+impl std::fmt::Debug for DotNetObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            DotNetKind::Host { handle, clr_type } => write!(f, "DotNet({clr_type} #{handle})"),
+            DotNetKind::Enum { clr_type, name, .. } => write!(f, "DotNet({clr_type}.{name})"),
+            DotNetKind::Internal { type_name, .. } => write!(f, "DotNet(internal {type_name})"),
+        }
+    }
 }
 
 /// What a query variable carries (corpus query/). The definition is in the IR; the VM
@@ -356,6 +417,84 @@ pub struct RecordState {
     pub position: Option<Vec<Value>>,
     /// Field positions of `SetAutoCalcFields`: calculated whenever a row is read.
     pub auto_calc: Vec<usize>,
+    /// Partial records: `SetLoadFields` and which fields the buffer holds.
+    pub load: LoadState,
+}
+
+/// A set of field positions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldSet {
+    All,
+    Of(Vec<usize>),
+}
+
+impl FieldSet {
+    pub fn contains(&self, pos: usize) -> bool {
+        match self {
+            FieldSet::All => true,
+            FieldSet::Of(v) => v.contains(&pos),
+        }
+    }
+
+    pub fn add(&mut self, pos: usize) {
+        if let FieldSet::Of(v) = self {
+            if !v.contains(&pos) {
+                v.push(pos);
+            }
+        }
+    }
+
+    pub fn remove(&mut self, pos: usize) {
+        if let FieldSet::Of(v) = self {
+            v.retain(|&p| p != pos);
+        }
+    }
+}
+
+/// What a record's buffer holds after a fetch (partial records, `Record.AreFieldsLoaded`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Buffer {
+    /// The fields known to be loaded.
+    pub have: FieldSet,
+    /// Fields outside `have` whose state the corpus does not pin: asking about one is refused.
+    pub unsure: FieldSet,
+    /// The primary key of the row fetched, when the buffer is partial (`None` for a full one).
+    pub row: Option<String>,
+}
+
+/// Partial-record state of a record variable. A default one is a full load that fetched nothing.
+#[derive(Debug, Clone, Default)]
+pub struct LoadState {
+    /// `SetLoadFields`: the field positions requested; `None` is the table's default (all).
+    pub request: Option<Vec<usize>>,
+    /// What the buffer holds; `None` until a row was fetched into it (and after `Clear`).
+    pub buffer: Option<Buffer>,
+    /// The buffer is partial: a read of an omitted field loads it, so reads and writes of
+    /// fields tell `touch` and `written`. Kept as its own flag so the full-load path pays one
+    /// branch.
+    pub partial: bool,
+}
+
+impl LoadState {
+    /// A field of the buffer was read: an omitted one is loaded on demand
+    /// (record/TestRecordPartialLoad.al:144-190).
+    pub fn touch(&mut self, pos: usize) {
+        if let Some(b) = &mut self.buffer {
+            if !b.have.contains(pos) {
+                b.have.add(pos);
+                b.unsure.remove(pos);
+            }
+        }
+    }
+
+    /// A field of the buffer was assigned. Whether that counts as loading it is not pinned.
+    pub fn written(&mut self, pos: usize) {
+        if let Some(b) = &mut self.buffer {
+            if !b.have.contains(pos) {
+                b.unsure.add(pos);
+            }
+        }
+    }
 }
 
 /// What a `WebServiceActionContext` holds: the object an API action points the OData layer at.
@@ -368,6 +507,25 @@ pub struct WebServiceActionState {
     pub result_code: i32,
     /// Field ids that have an entity key.
     pub keys: Vec<i32>,
+}
+
+/// One control of a `FilterPageBuilder`: a name and the record buffer whose filters it holds.
+#[derive(Debug, Clone)]
+pub struct FilterControl {
+    pub name: String,
+    /// Object index of the table.
+    pub table: u32,
+    /// Shared between copies of the builder (corpus filterpage/TestFilterPageBuilder.al:
+    /// FilterPageBuilder_Assignment_ViewOnCopyDoesReachOriginal).
+    pub record: Rc<RefCell<RecordState>>,
+}
+
+/// What a `FilterPageBuilder` holds. An untouched one is `LibraryValue::Empty`.
+#[derive(Debug, Clone, Default)]
+pub struct FilterPageState {
+    pub controls: Vec<FilterControl>,
+    /// `None` until assigned: the getter then answers a default.
+    pub caption: Option<String>,
 }
 
 /// What a `SessionSettings` holds. A property nobody wrote is `None`: the corpus does not say what
@@ -461,6 +619,8 @@ pub enum LibraryValue {
     WebServiceAction(WebServiceActionState),
     /// A `SessionSettings` that has been written to (an untouched one is `Empty`).
     SessionSettings(SessionSettingsState),
+    /// A `FilterPageBuilder` that has been written to (an untouched one is `Empty`).
+    FilterPageBuilder(FilterPageState),
     /// A `Notification` that has been written to (an untouched one is `Empty`).
     Notification(NotificationState),
     /// A `ModuleInfo`: what one app reports about itself.
@@ -530,7 +690,13 @@ impl Value {
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
             RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
+            // A Media or MediaSet holds the id of its media (or set): a Guid, null while empty.
+            RtType::Library(name) if name.eq_ignore_ascii_case("Media") || name.eq_ignore_ascii_case("MediaSet") => {
+                Value::Guid([0; 16])
+            }
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),
+            // An unassigned DotNet variable is null (ADR-014 section 4).
+            RtType::DotNet(_) => Value::Null,
         }
     }
 
@@ -568,6 +734,7 @@ impl Value {
             Value::Record(_) => k == "record",
             Value::TestPage(_) | Value::TestControl(_) | Value::Query(_) => false,
             Value::Blob(_) => false,
+            Value::DotNet(_) => k == "dotnet",
         }
     }
 }
@@ -626,6 +793,29 @@ mod tests {
             panic!()
         };
         assert!(!Rc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn a_dropped_host_object_queues_its_handle_and_clones_share_it() {
+        let queue = Rc::new(RefCell::new(Vec::new()));
+        let a = Value::DotNet(Rc::new(DotNetObject::host(
+            7,
+            "System.IO.MemoryStream".into(),
+            queue.clone(),
+        )));
+        let b = a.clone();
+        drop(a);
+        assert!(queue.borrow().is_empty(), "a second reference is alive");
+        drop(b);
+        assert_eq!(*queue.borrow(), vec![7]);
+        // Enum and internal objects have nothing to release.
+        drop(Value::DotNet(Rc::new(DotNetObject::new(DotNetKind::Enum {
+            clr_type: "E".into(),
+            name: "A".into(),
+            ordinal: 0,
+        }))));
+        assert_eq!(queue.borrow().len(), 1);
+        assert!(matches!(Value::default_for(&RtType::DotNet(0)), Value::Null));
     }
 
     #[test]

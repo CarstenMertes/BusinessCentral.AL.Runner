@@ -5,6 +5,20 @@ Regenerate the numbers with
 `./target/release/al-test-cli --root . --markdown pass-rate.md`; CI uploads
 the same report as a `pass-rate-<date>` artifact.
 
+## BC versions (ADR-015)
+
+One oracle and one ratchet per BC major. `al-test-cli --root .` runs the newest;
+`--bc-version N` picks one; `--all-versions` runs all three and compares them.
+
+| BC major | Oracle leg | Baseline | Passing | Version gates active |
+|---|---|---|---:|---|
+| 27 | 27.5 | `metrics/27/passing.txt` | 3600 | none |
+| 28 | 28.5 | `metrics/28/passing.txt` | 3600 | none |
+| 29 | 29.0 | `metrics/29/passing.txt` | 3600 | Integer sum into BigInteger FlowField; min and max over SystemRowVersion |
+
+The numbers in the rest of this file are from before the version work and are
+refreshed after merging.
+
 ## Overall
 
 **2412 / 4836 pass (49.9%), 0 fail, 2424 not run.** Compiling the corpus
@@ -81,7 +95,7 @@ Each test is counted under the first thing that stops it.
 | ~550 | Objects outside the workspace: tables (452), codeunits (51), pages (46) | ADR-013 (Proposed): compile Microsoft's real apps from the artifact feed; native providers for system tables |
 | 23 | Tests that use parts but stop on something else: `DMY2Date` (7), `Session.ApplicationArea` (5), RunObject action (4), the Integer system table (4), page extensions (3) | Each is counted under its own blocker |
 | 121 | Query objects | Not started |
-| 96 | Request and filter pages | ADR-012 follow-up |
+| 80 | Request pages and filter pages, done except what waits on others: Base App reports and pages, enums and the Temp Blob codeunit (53, ADR-013); the Integer system table (27, `deps`) | ADR-012 follow-up, built on branch `requestpages` |
 | 94 | Page extensions | ADR-012 follow-up |
 | 73 | Global Triggers codeunit events (Base App) | Arrives with ADR-013 |
 | 73 | RunObject actions | ADR-012 follow-up |
@@ -95,13 +109,11 @@ Each test is counted under the first thing that stops it.
 ADR-013 (Proposed, revised 2026-10-13) now waits on one question and on the
 owner accepting the revision.
 
-1. **`DotNet` types in Microsoft's AL.** May the runtime contain Rust code that
-   stands in for a .NET class declared in Microsoft's AL? Options: no (refuse
-   every `DotNet` use); yes for standard-library classes only (`Convert`,
-   `Encoding`, `MemoryStream`, ...); yes for those and for Microsoft server
-   classes (`NavTenantSettingsHelper`, `NavUserAccountHelper`, ...). At most 20
-   to 28 corpus tests are affected. Real cases are in `docs/dotnet-examples.md`.
-   Until decided, a `DotNet` call is refused.
+1. **`DotNet` types in Microsoft's AL.** Decided (ADR-014, accepted
+   2026-10-13) and implemented on the branch `dotnet-impl`: a .NET 8 sidecar
+   process serves the calls; the runtime provides the server classes itself
+   through a registry that waits for probes (`docs/probes-needed.md`). No corpus
+   test reaches `DotNet` until the dependency apps (ADR-013) load.
 
 Answered on 2026-10-13 and recorded in ADR-013:
 
@@ -117,8 +129,10 @@ Answered on 2026-10-13 and recorded in ADR-013:
 
 ## Known issues and debt
 
-- `GetLastErrorCallStack` returns a marker that refuses to be read; real call
-  stacks need source lines in the IR.
+- `GetLastErrorCallStack` lists real AL frames now, in the format AL Runner v2
+  measured on BC. The frame text beyond what the corpus pins is an assumption
+  (`docs/probes-needed.md`). Frames of pages, reports, queries, xmlports, extensions and field
+  triggers are still refused. `ErrorInfo.Callstack()` is not implemented.
 - Red/green discipline slipped in places during the parallel build-out (the
   first cut of event dispatch, later FlowField formula tests, some TestPage
   fixes). Those tests were checked by mutation, but were never seen red.
@@ -126,7 +140,7 @@ Answered on 2026-10-13 and recorded in ADR-013:
 - About 135 assumptions in `docs/probes-needed.md` wait for probes on real BC.
   They include the exact "Unhandled UI" text, JSON and XML `WriteTo`
   formatting, and the `Format` of Time and DateTime.
-- `al-host` is still a placeholder. Clock, identity and network go through it
+- `al-host` holds only the `DotNet` capability so far. Clock, identity and network go through it
   once ADR-013 lands.
 
 ## Next targets after the corpus (owner, 2026-10-13)

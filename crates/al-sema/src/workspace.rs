@@ -118,6 +118,9 @@ pub struct SourceFileData {
     pub green: rowan::GreenNode,
     pub namespace: Option<String>,
     pub usings: Vec<String>,
+    /// Byte ranges of the text the compiler added to the file (page expression routines). The
+    /// green tree holds that text; source positions leave it out.
+    pub synthetic: Vec<ByteRange>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,10 +142,27 @@ pub struct ObjectSym {
     pub offset: usize,
 }
 
+/// A byte range of a parsed text.
+type ByteRange = (usize, usize);
+
+/// A file's text with the page expression routines added, and where they are.
+type Expanded = (String, Vec<ByteRange>);
+
+/// A `DotNet` alias declared by a `dotnet { }` block (ADR-014).
+#[derive(Debug, Clone)]
+pub struct DotNetSym {
+    pub app: usize,
+    pub file: usize,
+    pub decl: ast::DotNetTypeDecl,
+}
+
 pub struct Workspace {
     pub apps: Vec<AppSource>,
     pub files: Vec<SourceFileData>,
     pub objects: Vec<ObjectSym>,
+    /// Every declared `DotNet` alias, in file and source order. The index is the one
+    /// `RtType::DotNet` and `ir::Program::dotnet_types` use.
+    pub dotnet: Vec<DotNetSym>,
     pub diagnostics: Vec<Diagnostic>,
     /// For each app, the set of apps it can see (itself + transitive dependencies).
     visible: Vec<BTreeSet<usize>>,
@@ -156,6 +176,7 @@ impl Workspace {
             visible: Vec::new(),
             files: Vec::new(),
             objects: Vec::new(),
+            dotnet: Vec::new(),
             diagnostics: Vec::new(),
             by_name: HashMap::new(),
             by_id: HashMap::new(),
@@ -166,32 +187,36 @@ impl Workspace {
         // all cores. `collect` keeps the input order, so the sequential merge
         // below sees files, diagnostics and objects exactly as a serial load would.
         // Expression-valued page properties become routines first (ADR-012).
-        let expanded: Vec<Vec<Option<String>>> = apps
+        let expanded: Vec<Vec<Option<Expanded>>> = apps
             .iter()
             .map(|app| {
                 app.files
                     .iter()
-                    .map(|(_, src)| crate::pages::expand(src, symbols))
+                    .map(|(_, src)| crate::pages::expand_ranges(src, symbols))
                     .collect()
             })
             .collect();
-        let inputs: Vec<(usize, &str, &str)> =
-            apps.iter()
-                .enumerate()
-                .flat_map(|(ai, app)| {
-                    let expanded = &expanded[ai];
-                    app.files.iter().enumerate().map(move |(fi, (path, src))| {
-                        (ai, path.as_str(), expanded[fi].as_deref().unwrap_or(src.as_str()))
+        let inputs: Vec<(usize, &str, &str, &[ByteRange])> = apps
+            .iter()
+            .enumerate()
+            .flat_map(|(ai, app)| {
+                let expanded = &expanded[ai];
+                app.files
+                    .iter()
+                    .enumerate()
+                    .map(move |(fi, (path, src))| match &expanded[fi] {
+                        Some((text, added)) => (ai, path.as_str(), text.as_str(), added.as_slice()),
+                        None => (ai, path.as_str(), src.as_str(), &[][..]),
                     })
-                })
-                .collect();
+            })
+            .collect();
         let parsed: Vec<ParsedFile> = inputs
             .par_iter()
-            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, src)| {
+            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, src, _)| {
                 parse_file(src, symbols, cache)
             })
             .collect();
-        for ((ai, path, _), file) in inputs.into_iter().zip(parsed) {
+        for ((ai, path, _, added), file) in inputs.into_iter().zip(parsed) {
             for e in &file.errors {
                 ws.diagnostics.push(Diagnostic {
                     file: path.to_string(),
@@ -207,7 +232,15 @@ impl Workspace {
                 green: file.green,
                 namespace: file.namespace.clone(),
                 usings: file.usings,
+                synthetic: added.to_vec(),
             });
+            for decl in file.dotnet {
+                ws.dotnet.push(DotNetSym {
+                    app: ai,
+                    file: fi,
+                    decl,
+                });
+            }
             for (kind, id, name, offset) in file.objects {
                 ws.add_object(ObjectSym {
                     app: ai,
@@ -229,6 +262,18 @@ impl Workspace {
             )
         });
         ws
+    }
+
+    /// The `DotNet` alias `alias` as seen from `file`: the file's own app first, then the apps
+    /// it depends on. Aliases are case-insensitive.
+    pub fn resolve_dotnet(&self, file: usize, alias: &str) -> Option<usize> {
+        let app = self.files[file].app;
+        let find = |a: usize| {
+            self.dotnet
+                .iter()
+                .position(|d| d.app == a && d.decl.alias.eq_ignore_ascii_case(alias))
+        };
+        find(app).or_else(|| self.visible[app].iter().find_map(|&a| find(a)))
     }
 
     fn add_object(&mut self, o: ObjectSym) {
@@ -446,6 +491,8 @@ struct ParsedFile {
     usings: Vec<String>,
     /// (kind, id, name, offset) of each object, in source order.
     objects: Vec<(ObjKind, Option<u32>, String, usize)>,
+    /// The `type(..)` declarations of the file's `dotnet { }` blocks.
+    dotnet: Vec<ast::DotNetTypeDecl>,
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
@@ -465,6 +512,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 )
             })
             .collect(),
+        dotnet: root.dotnet_types(),
         green: parse.green,
         errors: parse.errors,
     }
@@ -515,7 +563,7 @@ mod tests {
     }
 
     fn load(apps: Vec<AppSource>) -> Workspace {
-        Workspace::load(apps, &["BC27PLUS".to_string()].into())
+        Workspace::load(apps, &al_version::corpus_symbols(27))
     }
 
     fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {

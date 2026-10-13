@@ -23,6 +23,12 @@ pub struct Lowered {
 }
 
 pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowered {
+    lower_with_positions(ws, members, checked, true)
+}
+
+/// `lower`, choosing whether statements carry source positions (`ir::Stmt::Pos`). Unit tests
+/// that check the shape of lowered bodies turn them off.
+pub fn lower_with_positions(ws: &Workspace, members: &[Members], checked: &CheckResult, positions: bool) -> Lowered {
     let catalog = al_builtins::catalog::Catalog::load();
     // Routine numbering: every procedure and trigger node of an object, in source order.
     let routine_nodes: Vec<Vec<ast::Routine>> = (0..ws.objects.len())
@@ -52,10 +58,34 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                     resources: Vec::new(),
                 })
                 .collect(),
+            dotnet_types: ws
+                .dotnet
+                .iter()
+                .map(|d| ir::DotNetDecl {
+                    alias: d.decl.alias.clone(),
+                    assembly: d.decl.assembly.clone(),
+                    version: d.decl.version.clone(),
+                    culture: d.decl.culture.clone(),
+                    public_key_token: d.decl.public_key_token.clone(),
+                    type_name: d.decl.type_name.clone(),
+                })
+                .collect(),
+            ..Default::default()
         },
         unsupported: Vec::new(),
         calls: Vec::new(),
     };
+    if positions {
+        out.program.sources = ws
+            .files
+            .iter()
+            .map(|f| ir::SourceFile {
+                app: f.app as u32,
+                path: f.path.clone(),
+            })
+            .collect();
+    }
+    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
     // The table whose record is the implicit `Rec` of each object, and each table's extensions.
     let mut table_of: Vec<Option<usize>> = vec![None; ws.objects.len()];
     let mut extensions: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -68,6 +98,18 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             if let Some(base) = ws.object_ast(oi).extends_parts() {
                 if let Resolution::Found(p) = ws.resolve_ref(o.file, ObjKind::Page, &base) {
                     page_extensions.entry(p).or_default().push(oi);
+                }
+            }
+        }
+        // A reportextension that extends the request page merges into it the way a page extension
+        // merges into its page (corpus handlers/TestRequestPageControlErrorName.al).
+        if o.kind == ObjKind::ReportExtension {
+            let ext = ws.object_ast(oi);
+            if ext.sections().any(|s| s.name().eq_ignore_ascii_case("requestpage")) {
+                if let Some(base) = ext.extends_parts() {
+                    if let Resolution::Found(r) = ws.resolve_ref(o.file, ObjKind::Report, &base) {
+                        page_extensions.entry(r).or_default().push(oi);
+                    }
                 }
             }
         }
@@ -326,6 +368,26 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             let next = slots.len();
             slots.entry(i.name.to_lowercase()).or_insert(next);
         }
+        // The request page: its controls and the data items a handler can filter. Why the test
+        // client cannot drive it yet becomes a reason on the page, not on the report: a run
+        // that never opens the page (UseRequestPage = false) does not need it.
+        let exts: Vec<(usize, ast::Object)> = page_extensions
+            .get(&oi)
+            .map(|v| v.iter().map(|&e| (e, ws.object_ast(e))).collect())
+            .unwrap_or_default();
+        let (request, _) = crate::reports::request_layout(&obj, &l.items, &exts);
+        page_reasons[oi].extend(request.reasons.iter().cloned());
+        // Its variables would follow the base items' records in the extension's globals, which the
+        // slots the request page binds to do not account for.
+        for (e, _) in &exts {
+            if changing.get(&oi).is_some_and(|c| c.contains(e)) {
+                page_reasons[oi].push(format!(
+                    "reportextension `{}` changes the run and extends the request page (not supported yet)",
+                    ws.objects[*e].name
+                ));
+            }
+        }
+        layouts[oi] = Some(request);
         let exts = changing.get(&oi).cloned().unwrap_or_default();
         let extension_reasons = if exts.len() > 1 {
             vec!["more than one reportextension changes the run (their order is not pinned)".to_string()]
@@ -402,9 +464,14 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         xmlports: &xml_irs,
         reports: &report_irs,
         attrs: Default::default(),
+        ret_ty: None,
         routine_nodes: &routine_nodes,
         ext_slots: &ext_slots,
         page_extensions: &page_extensions,
+        positions: Vec::new(),
+        lines: None,
+        emit_pos: false,
+        routine_idx: 0,
     };
     for exts in page_extensions.values() {
         for &e in exts {
@@ -425,6 +492,13 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
     for (oi, o) in ws.objects.iter().enumerate() {
         let obj = ws.object_ast(oi);
         let mut lw = new_lowerer(oi);
+        lw.positions = std::mem::take(&mut out.program.positions);
+        lw.lines = positions.then(|| {
+            line_cache
+                .entry(o.file)
+                .or_insert_with(|| std::rc::Rc::new(FileLines::new(ws, o.file)))
+                .clone()
+        });
         let mut globals = Vec::new();
         let mut global_reasons = Vec::new();
         if let Some(l) = &xml_layouts[oi] {
@@ -561,6 +635,14 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
         lw.rec_slot = rec_slot;
+        if o.kind == ObjKind::Report {
+            // `CurrPage` of the request page. Typed Variant: the test client puts the page there
+            // when it opens, and AL code cannot name it.
+            globals.push(ir::Slot {
+                name: "CurrPage".into(),
+                ty: RtType::Variant,
+            });
+        }
         // The page an extension extends, when it is in the workspace.
         let extended_page = (o.kind == ObjKind::PageExtension)
             .then(|| page_extensions.iter().find(|(_, v)| v.contains(&oi)).map(|(&p, _)| p))
@@ -583,7 +665,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         let mut routines = Vec::new();
         let mut unsupported = Vec::new();
         let mut calls = Vec::new();
-        for r in &routine_nodes[oi] {
+        for (ri, r) in routine_nodes[oi].iter().enumerate() {
+            lw.routine_idx = ri;
             lw.reasons = global_reasons.clone();
             lw.calls.clear();
             // A trigger of a data item runs with the item's record as its `Rec`.
@@ -634,16 +717,34 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             calls.push(std::mem::take(&mut lw.calls));
             routines.push(routine);
         }
+        let request_section = (o.kind == ObjKind::Report)
+            .then(|| obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage")))
+            .flatten();
         let page = layouts[oi]
             .as_ref()
-            .map(|l| lw.page(oi, &obj, l, &globals, &page_reasons[oi]));
+            .map(|l| lw.page(oi, (&obj, request_section.as_ref()), l, &globals, &page_reasons[oi]));
+        // A report's request page properties (`SaveValues`, `Caption`) read like a page's: the
+        // report's own `Caption` wins over the request page's
+        // (corpus handlers/TestReportRequestPageCaption.al).
+        let mut properties: Vec<(String, String)> = obj.properties().map(|p| (p.name(), p.value_text())).collect();
+        if let Some(sec) = &request_section {
+            for p in sec.properties() {
+                let name = p.name();
+                if name.eq_ignore_ascii_case("Caption")
+                    && properties.iter().any(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                {
+                    continue;
+                }
+                properties.push((name, p.value_text()));
+            }
+        }
         out.program.objects.push(ir::Object {
             kind: o.kind.label().to_string(),
             id: o.id,
             name: o.name.clone(),
             globals,
             routines,
-            properties: obj.properties().map(|p| (p.name(), p.value_text())).collect(),
+            properties,
             enum_values: members[oi]
                 .enum_values
                 .iter()
@@ -665,6 +766,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             report_ext: ext_irs[oi].clone(),
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
+        out.program.positions = std::mem::take(&mut lw.positions);
         out.unsupported.push(unsupported);
         out.calls.push(calls);
     }
@@ -959,12 +1061,81 @@ struct Lowerer<'a> {
     reports: &'a [Option<ir::Report>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+    /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
+    ret_ty: Option<RtType>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.
     routine_nodes: &'a [Vec<ast::Routine>],
     /// The global slot of each variable of a page extension (see `lower`).
     ext_slots: &'a std::cell::RefCell<Vec<HashMap<String, usize>>>,
     /// The page extensions of each page, in the order they apply.
     page_extensions: &'a HashMap<usize, Vec<usize>>,
+    /// `Program::positions` while the object is lowered (taken from and given back to the program).
+    positions: Vec<ir::SrcPos>,
+    /// The line table of the object's file; `None` when positions are off.
+    lines: Option<std::rc::Rc<FileLines>>,
+    /// Statements of the routine being lowered get position markers (off for made-up routines).
+    emit_pos: bool,
+    /// Index of the routine being lowered in its object.
+    routine_idx: usize,
+}
+
+/// Line starts of a source file, for turning offsets into the author's line and column.
+struct FileLines {
+    file: u32,
+    /// Offset of the first byte of every line of the file as the author wrote it.
+    starts: Vec<u32>,
+    /// Byte ranges the compiler added to the parsed text (page expression routines).
+    synthetic: Vec<(usize, usize)>,
+}
+
+impl FileLines {
+    fn new(ws: &Workspace, file: usize) -> FileLines {
+        let f = &ws.files[file];
+        // Files of an app are loaded in order, so the n-th file of the app is `apps[app].files[n]`.
+        let first = ws.files.iter().position(|g| g.app == f.app).unwrap_or(file);
+        let text = ws.apps[f.app].files[file - first].1.as_bytes();
+        let mut starts = vec![0u32];
+        starts.extend(
+            text.iter()
+                .enumerate()
+                .filter(|(_, b)| **b == b'\n')
+                .map(|(i, _)| i as u32 + 1),
+        );
+        FileLines {
+            file: file as u32,
+            starts,
+            synthetic: f.synthetic.clone(),
+        }
+    }
+
+    /// The 1-based (line, column) the author sees at `offset` of the parsed text.
+    fn locate(&self, offset: usize) -> (u32, u32) {
+        let added: usize = self
+            .synthetic
+            .iter()
+            .take_while(|(_, b)| *b <= offset)
+            .map(|(a, b)| b - a)
+            .sum();
+        let offset = offset - added;
+        let line = self.starts.partition_point(|&s| s as usize <= offset) - 1;
+        (line as u32 + 1, (offset - self.starts[line] as usize) as u32 + 1)
+    }
+}
+
+/// The first and last token of `n` that are not whitespace or comments.
+fn significant_span(n: &SyntaxNode) -> Option<(usize, usize)> {
+    let mut first = n.first_token()?;
+    while first.kind().is_trivia() {
+        first = first.next_token()?;
+    }
+    let mut last = n.last_token()?;
+    while last.kind().is_trivia() {
+        last = last.prev_token()?;
+    }
+    Some((
+        usize::from(first.text_range().start()),
+        usize::from(last.text_range().end()).max(usize::from(first.text_range().start())),
+    ))
 }
 
 /// An interface type anywhere inside a collection type.
@@ -1145,7 +1316,17 @@ impl Lowerer<'_> {
                     name: f.name.clone(),
                     ty: self.rt(&f.ty).unwrap_or(RtType::Variant),
                     stored: f.class == crate::members::FieldClass::Normal,
-                    init: f.init_value.as_ref().and_then(|v| init_const(v, &f.ty)),
+                    init: f.init_value.as_ref().and_then(|v| {
+                        init_const(v, &f.ty).or_else(|| match f.ty {
+                            // A member of the field's enum, by name; a blank-named member too
+                            // (types/TestBlankEnumInitTests.Codeunit.al).
+                            Ty::Enum(_) => {
+                                let file = self.ws.objects[f.declared_in.unwrap_or(oi)].file;
+                                self.calc_const(file, v, &f.ty).ok()
+                            }
+                            _ => None,
+                        })
+                    }),
                     auto_increment: f.auto_increment,
                     relation: f.table_relation,
                     init_text: f.init_value.clone(),
@@ -1227,7 +1408,7 @@ impl Lowerer<'_> {
     fn page(
         &self,
         oi: usize,
-        obj: &ast::Object,
+        (obj, request_section): (&ast::Object, Option<&ast::Section>),
         layout: &crate::pages::Layout,
         globals: &[ir::Slot],
         reasons: &[String],
@@ -1284,6 +1465,32 @@ impl Lowerer<'_> {
         let mut controls = Vec::new();
         for raw in &layout.controls {
             let sec = &raw.section;
+            // A data item of a request page: the test client reads and writes the filters of its
+            // record. The item's own properties and triggers belong to the report run.
+            if raw.kind == ir::ControlKind::DataItem {
+                let binding = match self.globals.get(&raw.name.to_lowercase()) {
+                    Some(slot) => ir::Binding::Var(*slot),
+                    None => {
+                        unsupported.push(format!("data item {} has no record", raw.name));
+                        ir::Binding::None
+                    }
+                };
+                controls.push(ir::Control {
+                    name: raw.name.clone(),
+                    kind: ir::ControlKind::DataItem,
+                    parent: None,
+                    binding,
+                    props: Vec::new(),
+                    triggers: Vec::new(),
+                    part_page: None,
+                    part_link: None,
+                    owner: None,
+                    ext_triggers: Vec::new(),
+                    run_object: None,
+                    action_ref: None,
+                });
+                continue;
+            }
             let ow = owner_of(raw.owner);
             let mut props: Vec<(String, ir::PropVal)> = Vec::new();
             for p in sec.properties() {
@@ -1432,14 +1639,32 @@ impl Lowerer<'_> {
             });
         }
         let base = owner_of(None);
-        let triggers = obj
-            .triggers()
-            .filter_map(|t| routine_of(&base, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
-            .collect();
+        let triggers = match request_section {
+            Some(sec) => sec
+                .triggers()
+                .filter_map(|t| routine_of(&base, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
+                .collect(),
+            None if obj.kind().eq_ignore_ascii_case("report") => Vec::new(),
+            None => obj
+                .triggers()
+                .filter_map(|t| routine_of(&base, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
+                .collect(),
+        };
         let mut ext_triggers = Vec::new();
         for &e in &extensions {
             let ow = owner_of(Some(e));
-            for t in ow.obj.triggers() {
+            // The triggers of a reportextension's request page are in its `requestpage` section.
+            let triggers: Vec<ast::Routine> = if request_section.is_some() || obj.kind().eq_ignore_ascii_case("report")
+            {
+                ow.obj
+                    .sections()
+                    .filter(|s| s.name().eq_ignore_ascii_case("requestpage"))
+                    .flat_map(|s| s.triggers().collect::<Vec<_>>())
+                    .collect()
+            } else {
+                ow.obj.triggers().collect()
+            };
+            for t in triggers {
                 if let Some(r) = routine_of(&ow, &t) {
                     ext_triggers.push((t.name().to_ascii_lowercase(), e, r));
                 }
@@ -1779,6 +2004,16 @@ impl Lowerer<'_> {
                     Some(why) => return Err(format!("TestPage \"{}\": {why}", crate::types::display_name(n))),
                 }
             }
+            // A request page is the page of a report; the handler's variable is typed by the report.
+            Ty::TestRequestPage(n) => {
+                let r = self.resolve_obj(ObjKind::Report, n)?;
+                match self.page_reasons[r].first() {
+                    None => RtType::TestPage(r as u32),
+                    Some(why) => {
+                        return Err(format!("TestRequestPage \"{}\": {why}", crate::types::display_name(n)));
+                    }
+                }
+            }
             Ty::Object(ObjKind::Interface, n) => {
                 let i = self.resolve_obj(ObjKind::Interface, n)?;
                 // Which procedures an extending interface inherits is not pinned by the corpus.
@@ -1800,6 +2035,17 @@ impl Lowerer<'_> {
                 RtType::Option(al_builtins::sysenum::option_members(n).expect("checked"))
             }
             Ty::Builtin(n) => RtType::Library(n.clone()),
+            Ty::DotNet(alias) if alias.is_empty() => {
+                return Err("a DotNet value whose type is only known at run time cannot be stored as such".into());
+            }
+            Ty::DotNet(alias) => match self.ws.resolve_dotnet(self.file, alias) {
+                Some(i) => RtType::DotNet(i as u32),
+                None => {
+                    return Err(format!(
+                        "DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies"
+                    ));
+                }
+            },
             Ty::Record { table, temporary } => {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
                 // `TableType = Temporary` makes every record of the table temporary (corpus
@@ -1826,6 +2072,10 @@ impl Lowerer<'_> {
     /// is refused.
     fn convert_to(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
         let slot = self.rt(target)?;
+        // A DotNet result has no static type: it must fit the target exactly (ADR-014).
+        if matches!(src, Ty::DotNet(a) if a.is_empty()) && !matches!(slot, RtType::DotNet(_)) {
+            return Ok(ir::Expr::DotNetCoerce(slot, Box::new(value)));
+        }
         let RtType::Interface(iface) = slot else {
             return Ok(ir::Expr::Convert(slot, Box::new(value)));
         };
@@ -1968,6 +2218,12 @@ impl Lowerer<'_> {
     }
 
     fn routine(&mut self, r: &ast::Routine) -> ir::Routine {
+        // A routine the compiler made up (a page expression) has no source.
+        self.emit_pos = self.lines.is_some() && !crate::pages::is_synthetic(&r.name());
+        let pos = match r.keyword_offset().filter(|_| self.emit_pos) {
+            Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
+            None => ir::NO_POS,
+        };
         self.locals.clear();
         self.local_labels.clear();
         let mut locals = Vec::new();
@@ -2014,6 +2270,7 @@ impl Lowerer<'_> {
             },
             None => None,
         };
+        self.ret_ty = ret.clone();
         let mut ret_local = None;
         if let (Some(n), Some(t)) = (r.return_name(), &ret_ty) {
             ret_local = Some(locals.len());
@@ -2027,12 +2284,6 @@ impl Lowerer<'_> {
                     self.local_labels.insert(n.to_lowercase(), l.clone());
                 }
                 add(self, n, ty.clone(), &mut locals);
-            }
-        }
-        for a in r.attributes() {
-            let n = a.name();
-            if n.eq_ignore_ascii_case("ErrorBehavior") {
-                self.reasons.push(format!("[{n}] is not implemented yet"));
             }
         }
         let body = match r.body() {
@@ -2069,7 +2320,34 @@ impl Lowerer<'_> {
             ret,
             ret_local,
             body,
+            pos,
         }
+    }
+
+    /// Records the position of the code at `start..end` of the file being lowered and returns its id.
+    fn add_pos(&mut self, start: usize, end: usize) -> Option<u32> {
+        let lines = self.lines.as_ref()?;
+        let (line, col) = lines.locate(start);
+        let (end_line, _) = lines.locate(end.saturating_sub(1).max(start));
+        let p = ir::SrcPos {
+            file: lines.file,
+            line,
+            col,
+            end_line,
+            object: self.oi as u32,
+            routine: self.routine_idx as u32,
+        };
+        self.positions.push(p);
+        Some(self.positions.len() as u32 - 1)
+    }
+
+    /// The marker for statement `n`, when the routine being lowered has positions.
+    fn mark(&mut self, n: &SyntaxNode) -> Option<ir::Stmt> {
+        if !self.emit_pos {
+            return None;
+        }
+        let (start, end) = significant_span(n)?;
+        self.add_pos(start, end).map(ir::Stmt::Pos)
     }
 
     /// Statement children of a block-like node, flattened.
@@ -2120,7 +2398,7 @@ impl Lowerer<'_> {
                     .iter()
                     .find(|t| t.text().eq_ignore_ascii_case("else"))
                     .map(|t| t.text_range().start());
-                let cond = self.expr(&kids[0]);
+                let cond = self.condition(&kids[0]);
                 let (mut then_s, mut else_s) = (Vec::new(), Vec::new());
                 for k in kids.iter().skip(1) {
                     let lowered = self.stmt(k);
@@ -2133,7 +2411,7 @@ impl Lowerer<'_> {
                 cond.map(|c| ir::Stmt::If(c, then_s, else_s))
             }
             WhileStmt => {
-                let cond = self.expr(&kids[0]);
+                let cond = self.condition(&kids[0]);
                 let body = self.stmt_or_empty(kids.get(1));
                 cond.map(|c| ir::Stmt::While(c, body))
             }
@@ -2143,7 +2421,7 @@ impl Lowerer<'_> {
                 for b in body_nodes {
                     body.extend(self.stmt(b));
                 }
-                self.expr(until).map(|u| ir::Stmt::Repeat(body, u))
+                self.condition(until).map(|u| ir::Stmt::Repeat(body, u))
             }
             ForStmt => {
                 let down = sig_tokens(n).iter().any(|t| t.text().eq_ignore_ascii_case("downto"));
@@ -2161,6 +2439,9 @@ impl Lowerer<'_> {
                     })
                 })()
             }
+            ForeachStmt if matches!(self.ty_of(&kids[1]), Ty::DotNet(_)) => {
+                Err("foreach over a DotNet value is refused until a corpus test pins it (ADR-014)".into())
+            }
             ForeachStmt => {
                 let var = self.place(&kids[0]);
                 let coll = self.expr(&kids[1]);
@@ -2176,14 +2457,25 @@ impl Lowerer<'_> {
             CaseStmt => self.case(&kids),
             ExitStmt => match kids.first() {
                 None => Ok(ir::Stmt::Exit(None)),
-                Some(e) => self.expr(e).map(|v| ir::Stmt::Exit(Some(v))),
+                Some(e) => self.expr(e).map(|v| {
+                    // A DotNet result must fit the return type exactly (ADR-014).
+                    ir::Stmt::Exit(Some(match (&self.ty_of(e), &self.ret_ty) {
+                        (Ty::DotNet(a), Some(rt)) if a.is_empty() && !matches!(rt, RtType::DotNet(_)) => {
+                            ir::Expr::DotNetCoerce(rt.clone(), Box::new(v))
+                        }
+                        _ => v,
+                    }))
+                }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
             AssertErrorStmt => Ok(ir::Stmt::AssertError(self.stmt_or_empty(kids.first()))),
             other => Err(format!("statement {other:?} is not lowered yet")),
         };
         match r {
-            Ok(s) => vec![s],
+            Ok(s) => match self.mark(n) {
+                Some(m) => vec![m, s],
+                None => vec![s],
+            },
             Err(e) => {
                 self.reasons.push(e);
                 Vec::new()
@@ -2192,6 +2484,26 @@ impl Lowerer<'_> {
     }
 
     fn assign(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Stmt> {
+        // `X.Property := value` on a DotNet value (ADR-014).
+        if let Some(Res::DotNetMember(name)) = self.res(&kids[0]).cloned() {
+            if kids[0].kind() == SyntaxKind::MemberExpr {
+                if sig_tokens(n).iter().any(|t| {
+                    matches!(
+                        t.kind(),
+                        SyntaxKind::PlusAssign
+                            | SyntaxKind::MinusAssign
+                            | SyntaxKind::StarAssign
+                            | SyntaxKind::SlashAssign
+                    )
+                }) {
+                    return Err("compound assignment to a DotNet property is not lowered yet".into());
+                }
+                let value = self.dotnet_arg(&kids[1])?;
+                return self
+                    .dotnet_member(&kids[0], &kids[0], &name, ir::DotNetOp::Set(name.clone()), vec![value])
+                    .map(ir::Stmt::Expr);
+            }
+        }
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
@@ -2414,6 +2726,7 @@ impl Lowerer<'_> {
             Literal => Ok(ir::Expr::Const(self.constant(n)?)),
             ParenExpr => self.expr(&kids[0]),
             PrefixExpr => {
+                self.no_dotnet_operand(&kids[0])?;
                 let op = match sig_tokens(n)[0].text().to_ascii_lowercase().as_str() {
                     "not" => ir::UnOp::Not,
                     "-" => ir::UnOp::Neg,
@@ -2423,6 +2736,10 @@ impl Lowerer<'_> {
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
+                self.no_dotnet_operand(&kids[0])?;
+                if op != "in" {
+                    self.no_dotnet_operand(&kids[1])?;
+                }
                 let l = self.expr(&kids[0])?;
                 if op == "in" {
                     let set = &kids[1];
@@ -2453,6 +2770,12 @@ impl Lowerer<'_> {
                 };
                 Ok(ir::Expr::Binary(op, Box::new(l), Box::new(r)))
             }
+            TernaryExpr if kids.iter().any(|k| matches!(self.ty_of(k), Ty::DotNet(_))) => {
+                Err("a DotNet value in a conditional expression: its type is only known at run time".into())
+            }
+            IndexExpr if matches!(kids.first().map(|k| self.ty_of(k)), Some(Ty::DotNet(_))) => {
+                Err("indexing a DotNet value is not lowered yet (call get_Item / GetValue instead)".into())
+            }
             TernaryExpr => Ok(ir::Expr::Ternary(
                 Box::new(self.expr(&kids[0])?),
                 Box::new(self.expr(&kids[1])?),
@@ -2481,7 +2804,7 @@ impl Lowerer<'_> {
                 self.control(&part)
             }
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
-                Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
+                Some(Res::Proc { .. }) | Some(Res::Builtin(_)) | Some(Res::DotNetMember(_)) => self.call(n, n, &[]),
                 // `Q.Amount`: the current row's value of a query column.
                 Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
                     let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
@@ -2501,6 +2824,18 @@ impl Lowerer<'_> {
                 Some(Res::Global(name)) if self.global_labels.contains_key(&name) => {
                     Ok(ir::Expr::Const(ir::Const::Text(self.global_labels[&name].clone())))
                 }
+                // `CurrFieldNo` in table code: a property of the implicit `Rec` the VM reads.
+                Some(Res::Global(name)) if name == "currfieldno" && !self.globals.contains_key(&name) => {
+                    let rec = self
+                        .rec_slot
+                        .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
+                    Ok(ir::Expr::Builtin {
+                        id: "Record.CurrFieldNo#1".into(),
+                        receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
+                        args: Vec::new(),
+                        ret_used: true,
+                    })
+                }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },
             other => Err(format!("expression {other:?} `{}` is not lowered yet", n.text())),
@@ -2510,9 +2845,12 @@ impl Lowerer<'_> {
     /// `TP.Ctl`: a member access on a test page or part that names a control.
     fn is_control_access(&self, n: &SyntaxNode) -> bool {
         let Some(recv) = n.children().next() else { return false };
-        matches!(self.ty_of(&recv), Ty::TestPage(_) | Ty::TestPart(_))
+        let request = matches!(self.ty_of(&recv), Ty::TestRequestPage(_));
+        (matches!(self.ty_of(&recv), Ty::TestPage(_) | Ty::TestPart(_)) || request)
             && (matches!(self.ty_of(n), Ty::TestPart(_))
-                || matches!(self.ty_of(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction"))
+                || matches!(self.ty_of(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction")
+                // A data item of a request page.
+                || (request && matches!(self.ty_of(n), Ty::TestFilter(_))))
     }
 
     /// `CurrPage.<Part>.Page`
@@ -2541,10 +2879,17 @@ impl Lowerer<'_> {
 
     fn control(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         let recv = n.children().next().ok_or("control access without a receiver")?;
-        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page)) = self.ty_of(&recv) else {
+        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page) | Ty::TestRequestPage(page)) =
+            self.ty_of(&recv)
+        else {
             return Err("control of a non-page".into());
         };
-        let page = self.resolve_obj(ObjKind::Page, &page)?;
+        let kind = if matches!(self.ty_of(&recv), Ty::TestRequestPage(_)) {
+            ObjKind::Report
+        } else {
+            ObjKind::Page
+        };
+        let page = self.resolve_obj(kind, &page)?;
         let name = n
             .children()
             .last()
@@ -2602,8 +2947,104 @@ impl Lowerer<'_> {
             .unwrap_or_default()
     }
 
+    /// An operand whose type is only known at run time is refused (ADR-014): BC types it from the
+    /// assembly, which lowering never opens.
+    fn no_dotnet_operand(&self, n: &SyntaxNode) -> L<()> {
+        match self.ty_of(n) {
+            Ty::DotNet(_) => Err(format!(
+                "`{}` is a DotNet value used as an operand: its type is only known at run time; assign it to a typed variable first",
+                n.text().to_string().trim()
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// A condition: a DotNet result must be a Boolean.
+    fn condition(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
+        let e = self.expr(n)?;
+        Ok(match self.ty_of(n) {
+            Ty::DotNet(a) if a.is_empty() => ir::Expr::DotNetCoerce(RtType::Boolean, Box::new(e)),
+            _ => e,
+        })
+    }
+
+    /// An argument of a DotNet member: a plain variable goes by place, so a by-reference .NET
+    /// parameter can write it back (ADR-014 section 4); anything else by value.
+    fn dotnet_arg(&mut self, a: &SyntaxNode) -> L<ir::Arg> {
+        let is_label = match self.res(a) {
+            Some(Res::Local(n)) => self.local_labels.contains_key(n),
+            Some(Res::Global(n)) => self.global_labels.contains_key(n),
+            _ => false,
+        };
+        let variable = matches!(self.res(a), Some(Res::Local(_) | Res::Global(_) | Res::Field { .. }));
+        if !is_label
+            && variable
+            && matches!(
+                a.kind(),
+                SyntaxKind::NameRef | SyntaxKind::MemberExpr | SyntaxKind::IndexExpr
+            )
+        {
+            if let Ok(p) = self.place(a) {
+                return Ok(ir::Arg::Ref(p));
+            }
+        }
+        Ok(ir::Arg::Value(self.expr(a)?))
+    }
+
+    /// A member of a DotNet value (ADR-014): `callee` is the member expression, `op` says what to
+    /// do to it. A call named like the receiver's alias is the constructor.
+    fn dotnet_member(
+        &mut self,
+        _node: &SyntaxNode,
+        callee: &SyntaxNode,
+        name: &str,
+        op: ir::DotNetOp,
+        args: Vec<ir::Arg>,
+    ) -> L<ir::Expr> {
+        let recv = callee
+            .children()
+            .next()
+            .filter(|_| callee.kind() == SyntaxKind::MemberExpr)
+            .ok_or("a DotNet member without a receiver is not lowered")?;
+        let Ty::DotNet(alias) = self.ty_of(&recv) else {
+            return Err(format!("`{name}` is not a member of a DotNet value"));
+        };
+        let ty = if alias.is_empty() {
+            None
+        } else {
+            Some(self.ws.resolve_dotnet(self.file, &alias).ok_or_else(|| {
+                format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies")
+            })?)
+        };
+        if let (Some(i), ir::DotNetOp::Call(_)) = (ty, &op) {
+            if self.ws.dotnet[i].decl.alias.eq_ignore_ascii_case(name) {
+                return Ok(ir::Expr::DotNet {
+                    ty,
+                    receiver: None,
+                    op: ir::DotNetOp::Construct,
+                    args,
+                });
+            }
+        }
+        Ok(ir::Expr::DotNet {
+            ty,
+            receiver: Some(Box::new(self.expr(&recv)?)),
+            op,
+            args,
+        })
+    }
+
     /// A call resolved on `node` (the CallExpr, or the callee for a call without parentheses).
     fn call(&mut self, node: &SyntaxNode, callee: &SyntaxNode, args: &[SyntaxNode]) -> L<ir::Expr> {
+        if let Some(Res::DotNetMember(name)) = self.res(node).cloned() {
+            let args = args.iter().map(|a| self.dotnet_arg(a)).collect::<L<Vec<_>>>()?;
+            let op = if node.kind() == SyntaxKind::CallExpr {
+                ir::DotNetOp::Call(name.clone())
+            } else {
+                ir::DotNetOp::Get(name.clone())
+            };
+            return self.dotnet_member(node, callee, &name, op, args);
+        }
         let receiver_node = (callee.kind() == SyntaxKind::MemberExpr)
             .then(|| callee.children().next())
             .flatten();
@@ -2734,6 +3175,11 @@ impl Lowerer<'_> {
                 };
                 let mut out = Vec::new();
                 for (i, a) in args.iter().enumerate() {
+                    if matches!(self.ty_of(a), Ty::DotNet(_)) {
+                        return Err(format!(
+                            "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
+                        ));
+                    }
                     let p = sig
                         .params
                         .get(i)
@@ -2777,19 +3223,51 @@ impl Lowerer<'_> {
                     ret_used: true,
                 })
             }
+            // The checker refused a builtin of a newer runtime (ADR-015 3.3): say why.
+            None if self.runtime_refusal(node).is_some() => Err(self.runtime_refusal(node).unwrap_or_default()),
             other => Err(format!("call `{}` ({other:?}) is not lowered yet", node.text())),
         }
     }
+
+    /// The checker's AR1005 on this call, if any.
+    fn runtime_refusal(&self, node: &SyntaxNode) -> Option<String> {
+        let path = &self.ws.files[self.file].path;
+        let at: usize = node.text_range().start().into();
+        self.checked
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "AR1005" && d.offset == at && &d.file == path)
+            .map(|d| format!("AR1005 {}", d.message))
+    }
 }
 
-/// Load, check and lower in one go.
+/// Load, check and lower in one go, against the newest catalog (nothing hidden), with source
+/// positions.
 pub fn compile(
     apps: Vec<crate::workspace::AppSource>,
     symbols: &std::collections::BTreeSet<String>,
 ) -> (Workspace, Lowered) {
+    compile_with(apps, symbols, &al_builtins::catalog::Catalog::load())
+}
+
+/// Like [`compile`], for a run target: builtins newer than the target's runtime are
+/// refused (ADR-015 3.3).
+pub fn compile_for(
+    apps: Vec<crate::workspace::AppSource>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: &al_version::Target,
+) -> (Workspace, Lowered) {
+    compile_with(apps, symbols, &al_builtins::catalog::Catalog::for_target(target))
+}
+
+fn compile_with(
+    apps: Vec<crate::workspace::AppSource>,
+    symbols: &std::collections::BTreeSet<String>,
+    catalog: &al_builtins::catalog::Catalog,
+) -> (Workspace, Lowered) {
     let ws = Workspace::load(apps, symbols);
     let members = crate::members::build(&ws);
-    let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let checked = crate::check::check(&ws, &members, catalog);
     let lowered = lower(&ws, &members, &checked);
     (ws, lowered)
 }
@@ -2800,15 +3278,37 @@ mod tests {
     use crate::workspace::AppSource;
 
     fn lower_src(src: &str) -> (Workspace, Lowered) {
-        compile(
+        lower_files(&[("f.al", src)], false)
+    }
+
+    /// Like `lower_src`, with source positions (the way the runner compiles).
+    fn lower_pos(src: &str) -> (Workspace, Lowered) {
+        lower_files(&[("f.al", src)], true)
+    }
+
+    fn lower_files(files: &[(&str, &str)], positions: bool) -> (Workspace, Lowered) {
+        let ws = Workspace::load(
             vec![AppSource {
                 id: "a".into(),
                 name: "a".into(),
                 dependencies: vec![],
-                files: vec![("f.al".into(), src.into())],
+                files: files.iter().map(|(p, s)| (p.to_string(), s.to_string())).collect(),
             }],
             &Default::default(),
-        )
+        );
+        let members = crate::members::build(&ws);
+        let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+        let lowered = lower_with_positions(&ws, &members, &checked, positions);
+        (ws, lowered)
+    }
+
+    /// (line, column) of the position a `Stmt::Pos` marker names.
+    fn at(l: &Lowered, s: &ir::Stmt) -> (u32, u32) {
+        let ir::Stmt::Pos(id) = s else {
+            panic!("not a position marker: {s:?}")
+        };
+        let p = l.program.pos(*id).expect("a position in the table");
+        (p.line, p.col)
     }
 
     fn routine<'a>(l: &'a Lowered, name: &str) -> (usize, &'a ir::Routine) {
@@ -2818,6 +3318,213 @@ mod tests {
             .enumerate()
             .find(|(_, r)| r.name == name)
             .expect("routine")
+    }
+
+    const POS_SRC: &str = "codeunit 50100 C
+{
+    [Scope('OnPrem')]
+    procedure P()
+    var
+        x: Integer;
+    begin
+        // a comment before the statement
+        x := 1;
+        if x = 1 then
+            x := 2;
+        x :=
+            3;
+    end;
+
+    trigger OnRun()
+    begin
+        P();
+    end;
+}
+";
+
+    #[test]
+    fn statements_carry_their_line_and_column() {
+        let (_, l) = lower_pos(POS_SRC);
+        let (_, p) = routine(&l, "P");
+        let b = &p.body;
+        assert_eq!(b.len(), 6, "{b:?}");
+        assert_eq!(at(&l, &b[0]), (9, 9));
+        assert!(matches!(b[1], ir::Stmt::Assign(..)));
+        assert_eq!(at(&l, &b[2]), (10, 9));
+        let ir::Stmt::If(_, then_s, _) = &b[3] else {
+            panic!("{:?}", b[3])
+        };
+        assert_eq!(at(&l, &then_s[0]), (11, 13));
+        // A statement that wraps starts on its first line and ends on its last.
+        assert_eq!(at(&l, &b[4]), (12, 9));
+        let ir::Stmt::Pos(id) = b[4] else { panic!() };
+        assert_eq!(l.program.pos(id).unwrap().end_line, 13);
+    }
+
+    #[test]
+    fn a_routine_position_is_its_keyword_not_its_attribute() {
+        let (_, l) = lower_pos(POS_SRC);
+        let (oi, p) = routine(&l, "P");
+        let pos = l.program.pos(p.pos).expect("routine position");
+        assert_eq!(
+            (pos.line, pos.col),
+            (4, 5),
+            "the `procedure` line, not the [Scope] line"
+        );
+        let (_, t) = routine(&l, "OnRun");
+        assert_eq!(l.program.pos(t.pos).map(|p| p.line), Some(16));
+        // A statement's position names its object and routine.
+        let ir::Stmt::Pos(id) = p.body[0] else { panic!() };
+        let sp = l.program.pos(id).unwrap();
+        assert_eq!((sp.object as usize, sp.routine), (oi, 0));
+        assert_eq!(l.program.sources[sp.file as usize].path, "f.al");
+        assert_eq!(l.program.sources[sp.file as usize].app, 0);
+    }
+
+    #[test]
+    fn without_positions_the_bodies_have_no_markers() {
+        let (_, l) = lower_src(POS_SRC);
+        let (_, p) = routine(&l, "P");
+        assert!(p.body.iter().all(|s| !matches!(s, ir::Stmt::Pos(_))));
+        assert!(l.program.positions.is_empty());
+        assert_eq!(p.pos, ir::NO_POS);
+    }
+
+    // The page expansion appends routines at the end of the page, which moves the lines of
+    // every object that follows it in the file. Positions use the author's lines.
+    #[test]
+    fn expanding_a_page_does_not_move_the_lines_of_the_next_object() {
+        let src = "page 50100 P
+{
+    layout { area(Content) { field(A; Rec.X) { Visible = not Hide; } } }
+    var Hide: Boolean;
+}
+
+codeunit 50101 C2
+{
+    procedure Q()
+    begin
+        Hide();
+    end;
+    local procedure Hide() begin end;
+}
+";
+        let (_, l) = lower_pos(src);
+        let c2 = l.program.objects.iter().find(|o| o.name == "C2").unwrap();
+        let q = c2.routines.iter().find(|r| r.name == "Q").unwrap();
+        assert_eq!(l.program.pos(q.pos).map(|p| p.line), Some(9));
+        let ir::Stmt::Pos(id) = q.body[0] else {
+            panic!("{:?}", q.body)
+        };
+        assert_eq!(l.program.pos(id).map(|p| p.line), Some(11));
+        // The made-up routine has no source position.
+        let page = l.program.objects.iter().find(|o| o.name == "P").unwrap();
+        let synthetic = page
+            .routines
+            .iter()
+            .find(|r| crate::pages::is_synthetic(&r.name))
+            .unwrap();
+        assert_eq!(synthetic.pos, ir::NO_POS);
+        assert!(synthetic.body.iter().all(|s| !matches!(s, ir::Stmt::Pos(_))));
+    }
+
+    const DOTNET: &str = "dotnet { assembly(\"netstandard\") { Culture = 'neutral'; PublicKeyToken = 'cc7b13ffcd2ddd51'; type(\"System.Convert\"; \"Convert\") { } type(\"System.IO.MemoryStream\"; \"MemoryStream\") { } } }\n";
+
+    #[test]
+    fn dotnet_calls_lower_to_dynamic_member_calls_on_the_declared_type() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Integer var Convert: DotNet Convert; I: Integer; begin I := Convert.ToInt32('12'); exit(I); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        assert_eq!(l.program.dotnet_types.len(), 2);
+        let d = &l.program.dotnet_types[0];
+        assert_eq!(
+            (d.alias.as_str(), d.type_name.as_str(), d.assembly.as_str()),
+            ("Convert", "System.Convert", "netstandard")
+        );
+        assert_eq!(d.public_key_token.as_deref(), Some("cc7b13ffcd2ddd51"));
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        assert_eq!(r.locals[0].ty, RtType::DotNet(0));
+        assert_eq!(
+            r.body[0],
+            ir::Stmt::Assign(
+                ir::Place::Local(1),
+                ir::Expr::DotNetCoerce(
+                    RtType::Integer,
+                    Box::new(ir::Expr::DotNet {
+                        ty: Some(0),
+                        receiver: Some(Box::new(ir::Expr::Load(ir::Place::Local(0)))),
+                        op: ir::DotNetOp::Call("ToInt32".into()),
+                        args: vec![ir::Arg::Value(ir::Expr::Const(ir::Const::Text("12".into())))],
+                    })
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn dotnet_constructors_properties_and_by_reference_arguments_lower() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P() var M: DotNet MemoryStream; N: Integer; begin M := M.MemoryStream(16); M.Position := 3; N := M.Length; M.Read(N); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        let ir::Stmt::Assign(_, ir::Expr::Convert(RtType::DotNet(1), ctor)) = &r.body[0] else {
+            panic!("{:?}", r.body[0])
+        };
+        assert!(matches!(
+            **ctor,
+            ir::Expr::DotNet {
+                ty: Some(1),
+                op: ir::DotNetOp::Construct,
+                ..
+            }
+        ));
+        assert!(matches!(
+            &r.body[1],
+            ir::Stmt::Expr(ir::Expr::DotNet { op: ir::DotNetOp::Set(n), args, .. }) if n == "Position" && args.len() == 1
+        ));
+        assert!(matches!(
+            &r.body[2],
+            ir::Stmt::Assign(_, ir::Expr::DotNetCoerce(RtType::Integer, e))
+                if matches!(**e, ir::Expr::DotNet { op: ir::DotNetOp::Get(ref n), .. } if n == "Length")
+        ));
+        // A plain variable argument is passed by place, so a by-reference parameter can write it back.
+        assert!(matches!(
+            &r.body[3],
+            ir::Stmt::Expr(ir::Expr::DotNet { op: ir::DotNetOp::Call(n), args, .. })
+                if n == "Read" && matches!(args[0], ir::Arg::Ref(ir::Place::Local(1)))
+        ));
+    }
+
+    #[test]
+    fn a_dotnet_alias_without_a_declaration_is_a_lowering_reason() {
+        let (_, l) = lower_src("codeunit 50100 C { procedure P() var X: DotNet Missing; begin end; }");
+        let (oi, _) = routine(&l, "P");
+        assert!(
+            l.unsupported[oi][0]
+                .iter()
+                .any(|r| r.contains("DotNet 'Missing'") && r.contains("no dotnet")),
+            "{:?}",
+            l.unsupported[oi][0]
+        );
+    }
+
+    #[test]
+    fn dotnet_results_used_as_operands_or_in_foreach_are_refused_statically() {
+        let (_, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Boolean var Convert: DotNet Convert; begin exit(Convert.ToInt32('1') > 0); end; }}"
+        ));
+        let (oi, _) = routine(&l, "P");
+        assert!(
+            l.unsupported[oi][0]
+                .iter()
+                .any(|r| r.contains("DotNet") && r.contains("only known at run time")),
+            "{:?}",
+            l.unsupported[oi][0]
+        );
     }
 
     #[test]
@@ -2913,14 +3620,46 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_builtin_makes_the_routine_unsupported() {
-        let (_, l) =
-            lower_src("codeunit 50100 C { procedure P() begin LastUsedRowVersion(); end; procedure Ok() begin end; }");
+    fn a_builtin_newer_than_the_target_runtime_makes_the_routine_unsupported() {
+        let src =
+            "codeunit 50100 C { procedure P() begin Codeunit.Run('Some Codeunit'); end; procedure Ok() begin end; }";
+        let apps = || {
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }]
+        };
+        let target = |bc: &str| al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+        let (_, l) = compile_for(apps(), &Default::default(), &target("27.5"));
         let (pi, _) = routine(&l, "P");
         let (oi, _) = routine(&l, "Ok");
         assert_eq!(
             l.unsupported[0][pi],
-            vec!["builtin Database.LastUsedRowVersion#1 is not implemented".to_string()]
+            vec!["AR1005 `Run` is not available in runtime 16.0 (introduced in 17.0)".to_string()],
+            "refused at runtime 16.0"
+        );
+        assert!(l.unsupported[0][oi].is_empty());
+        // At runtime 17.0 the by-name overload exists; the call lowers (the VM refuses it later).
+        let (_, l) = compile_for(apps(), &Default::default(), &target("28"));
+        assert!(
+            !l.unsupported[0][pi].iter().any(|r| r.contains("AR1005")),
+            "{:?}",
+            l.unsupported[0][pi]
+        );
+    }
+
+    #[test]
+    fn unimplemented_builtin_makes_the_routine_unsupported() {
+        let (_, l) = lower_src(
+            "codeunit 50100 C { procedure P() begin MinimumActiveRowVersion(); end; procedure Ok() begin end; }",
+        );
+        let (pi, _) = routine(&l, "P");
+        let (oi, _) = routine(&l, "Ok");
+        assert_eq!(
+            l.unsupported[0][pi],
+            vec!["builtin Database.MinimumActiveRowVersion#1 is not implemented".to_string()]
         );
         assert!(l.unsupported[0][oi].is_empty());
     }

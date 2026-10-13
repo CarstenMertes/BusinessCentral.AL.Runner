@@ -3,18 +3,13 @@
 //! Exit codes: 0 ok, 1 regression against the baseline, 2 setup error
 //! (oracle and corpus disagree, unreadable input, bad arguments).
 
-use al_test_cli::{corpus, oracle, output, report, runner::Runner, runtime};
+use al_host::dotnet::DotNetHost;
+use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
+use al_test_cli::{config, corpus, drift, oracle, output, report, runner::Runner, runtime, target};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-
-#[derive(serde::Deserialize)]
-struct OracleConfig {
-    bc_version: String,
-    corpus_commit: String,
-    junit: String,
-    corpus_repo: String,
-    corpus_app: String,
-}
+use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Default)]
 struct Args {
@@ -25,6 +20,21 @@ struct Args {
     markdown: Option<PathBuf>,
     junit: Option<PathBuf>,
     update_baseline: bool,
+    /// `--bc-version PREFIX`: which oracle to run (default: the newest).
+    bc_version: Option<String>,
+    /// `--all-versions`: run every version in `oracle.toml`, one after the other.
+    all_versions: bool,
+    /// `--dotnet-sidecar PATH`: the built sidecar (default: next to this binary, else built once
+    /// into a cache from `tools/dotnet-sidecar`).
+    dotnet_sidecar: Option<PathBuf>,
+    /// `--dotnet-assembly-dir DIR` (repeatable): where community assemblies are searched.
+    dotnet_assembly_dirs: Vec<PathBuf>,
+    /// `--dotnet-allow-roll-forward`: run the sidecar on a newer .NET major than 8, with a warning.
+    dotnet_allow_roll_forward: bool,
+    /// `--dotnet-timeout-secs N`: the deadline of one `DotNet` call (default 60).
+    dotnet_timeout_secs: Option<u64>,
+    /// `--require-dotnet`: a machine without a usable .NET is an error, not a skip (CI).
+    require_dotnet: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -44,6 +54,20 @@ fn parse_args() -> Result<Args, String> {
             "--markdown" => a.markdown = Some(val()?),
             "--junit" => a.junit = Some(val()?),
             "--update-baseline" => a.update_baseline = true,
+            "--all-versions" => a.all_versions = true,
+            "--bc-version" => a.bc_version = Some(val()?.to_string_lossy().into_owned()),
+            "--dotnet-sidecar" => a.dotnet_sidecar = Some(val()?),
+            "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(val()?),
+            "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
+            "--require-dotnet" => a.require_dotnet = true,
+            "--dotnet-timeout-secs" => {
+                let v = val()?;
+                a.dotnet_timeout_secs = Some(
+                    v.to_string_lossy()
+                        .parse()
+                        .map_err(|_| format!("{flag} needs a number of seconds"))?,
+                );
+            }
             _ => return Err(format!("unknown argument `{flag}`")),
         }
     }
@@ -77,8 +101,17 @@ fn run() -> Result<ExitCode, String> {
     let args = parse_args()?;
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
     let oracle_path = args.oracle.clone().unwrap_or_else(|| root.join("oracle/oracle.toml"));
-    let cfg: OracleConfig =
-        toml::from_str(&read(&oracle_path)?).map_err(|e| format!("{}: {e}", oracle_path.display()))?;
+    let cfg = config::OracleFile::parse(&read(&oracle_path)?).map_err(|e| format!("{}: {e}", oracle_path.display()))?;
+    if args.all_versions && (args.bc_version.is_some() || args.baseline.is_some()) {
+        return Err("--all-versions cannot be combined with --bc-version or --baseline".into());
+    }
+    let versions: Vec<&config::VersionEntry> = if args.all_versions {
+        let mut v: Vec<_> = cfg.versions.iter().collect();
+        v.sort_by_key(|v| v.major);
+        v
+    } else {
+        vec![cfg.select(args.bc_version.as_deref())?]
+    };
 
     let pinned = git_head(&root.join(&cfg.corpus_repo))?;
     if pinned != cfg.corpus_commit {
@@ -88,12 +121,74 @@ fn run() -> Result<ExitCode, String> {
         ));
     }
 
-    let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&cfg.junit);
+    let mut code = 0u8;
+    let mut runs = Vec::new();
+    for v in versions {
+        let r = run_version(&args, &root, &oracle_path, &cfg, v)?;
+        code = code.max(r.code);
+        runs.push((v.major, r));
+    }
+    if runs.len() > 1 {
+        print!("{}", drift_summary(&runs));
+    }
+    Ok(ExitCode::from(code))
+}
+
+/// What one version's run leaves for the comparison across versions.
+struct VersionRun {
+    code: u8,
+    /// Cases real BC passed in this version's oracle.
+    oracle: std::collections::BTreeSet<oracle::CaseId>,
+    /// Cases the runtime passed.
+    passing: std::collections::BTreeSet<oracle::CaseId>,
+}
+
+/// `pass-rate.json` becomes `pass-rate-29.json` when several versions run.
+fn per_version(p: &Path, major: u16, all: bool) -> PathBuf {
+    if !all {
+        return p.to_path_buf();
+    }
+    let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match p.extension() {
+        Some(e) => format!("{stem}-{major}.{}", e.to_string_lossy()),
+        None => format!("{stem}-{major}"),
+    };
+    p.with_file_name(name)
+}
+
+fn drift_summary(runs: &[(u16, VersionRun)]) -> String {
+    let oracle_sets: Vec<_> = runs.iter().map(|(m, r)| (m.to_string(), r.oracle.clone())).collect();
+    let passing_sets: Vec<_> = runs.iter().map(|(m, r)| (m.to_string(), r.passing.clone())).collect();
+    let mut out = String::from("\nVersion comparison\n");
+    out.push_str(&drift::table("oracle", &oracle_sets));
+    out.push_str(&drift::table("runtime", &passing_sets));
+    out
+}
+
+fn run_version(
+    args: &Args,
+    root: &Path,
+    oracle_path: &Path,
+    cfg: &config::OracleFile,
+    version: &config::VersionEntry,
+) -> Result<VersionRun, String> {
+    let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
     let cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
 
-    // ADR-007: BC 27.5 defines BC27PLUS.
-    let symbols = ["BC27PLUS".to_string()].into();
+    // ADR-015 3.2: the corpus runs as the oracle's BC version with the corpus app's runtime.
+    let leg = version.bc();
+    let chosen = al_version::choose_target(
+        Some(&leg),
+        &target::read_app_versions(&root.join(&cfg.corpus_app))?,
+        &leg,
+    )
+    .map_err(|e| e.to_string())?;
+    println!("target: BC {}, runtime {}", chosen.target.bc, chosen.target.runtime);
+    for note in &chosen.notes {
+        eprintln!("note: {note}");
+    }
+    let symbols = al_version::corpus_symbols(chosen.target.bc.major);
     let corpus_tests = root
         .join(&cfg.corpus_app)
         .parent()
@@ -111,7 +206,25 @@ fn run() -> Result<ExitCode, String> {
         .iter()
         .map(|d| runtime::load_manifest(d))
         .collect::<Result<Vec<_>, _>>()?;
-    let rt = runtime::CorpusRuntime::run_with_manifests(apps, &manifests, &symbols);
+    // ADR-014: the sidecar starts lazily, at the first `DotNet` call that reaches it.
+    let host = Arc::new(SidecarHost::new(SidecarConfig {
+        sidecar: args.dotnet_sidecar.clone(),
+        source_root: Some(root.to_path_buf()),
+        assembly_dirs: args.dotnet_assembly_dirs.clone(),
+        allow_roll_forward: args.dotnet_allow_roll_forward,
+        timeout: Duration::from_secs(args.dotnet_timeout_secs.unwrap_or(60)),
+        ..Default::default()
+    }));
+    if args.require_dotnet {
+        if let Err(why) = host.availability() {
+            return Err(format!("--require-dotnet: DotNet {why}"));
+        }
+    }
+    let dotnet = al_vm::dotnet::DotNetConfig {
+        host,
+        ..Default::default()
+    };
+    let rt = runtime::CorpusRuntime::run_for(apps, &manifests, &symbols, Some(&chosen.target), dotnet);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",
@@ -129,18 +242,29 @@ fn run() -> Result<ExitCode, String> {
         ));
     }
 
+    let all = args.all_versions;
     if let Some(p) = &args.json {
-        write(p, &serde_json::to_string_pretty(&rep).expect("report serializes"))?;
+        write(
+            &per_version(p, version.major, all),
+            &serde_json::to_string_pretty(&rep).expect("report serializes"),
+        )?;
     }
     if let Some(p) = &args.markdown {
-        write(p, &output::markdown(&rep))?;
+        write(&per_version(p, version.major, all), &output::markdown(&rep))?;
     }
     if let Some(p) = &args.junit {
-        write(p, &output::junit(&cases, &outcome))?;
+        write(&per_version(p, version.major, all), &output::junit(&cases, &outcome))?;
     }
+    let oracle_ok: std::collections::BTreeSet<_> =
+        cases.iter().filter(|c| !c.bc_failed).map(|c| c.id.clone()).collect();
+    let passing: std::collections::BTreeSet<_> = oracle_ok
+        .iter()
+        .filter(|c| outcome(c) == report::Outcome::Pass)
+        .cloned()
+        .collect();
     println!(
         "BC {}: {}/{} pass ({:.1}%), {} fail, {} not run",
-        cfg.bc_version,
+        version.bc_version,
         rep.overall.pass,
         rep.overall.total,
         rep.overall.rate() * 100.0,
@@ -148,33 +272,47 @@ fn run() -> Result<ExitCode, String> {
         rep.overall.not_run
     );
 
-    let baseline_path = args
-        .baseline
-        .clone()
-        .unwrap_or_else(|| root.join("metrics/passing.txt"));
+    let baseline_path = args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline));
     let baseline =
         report::parse_baseline(&read(&baseline_path)?).map_err(|e| format!("{}: {e}", baseline_path.display()))?;
-    let regressed = report::regressions(&baseline, &outcome);
-    if !regressed.is_empty() {
+    let ratchet = report::ratchet(&baseline, &outcome);
+    if !ratchet.skipped.is_empty() {
+        // ADR-014 section 11: not a regression, but never silent.
         eprintln!(
-            "{} regression(s): cases in {} no longer pass:",
-            regressed.len(),
-            baseline_path.display()
+            "{} baseline case(s) skipped, .NET is unavailable on this machine (CI uses --require-dotnet):",
+            ratchet.skipped.len()
         );
-        for c in &regressed {
-            eprintln!("  {} {}", c.codeunit, c.name);
+        for (c, why) in &ratchet.skipped {
+            eprintln!("  {} {}: {why}", c.codeunit, c.name);
         }
-        return Ok(ExitCode::from(1));
+    }
+    match report::decide(&ratchet, args.update_baseline, args.require_dotnet) {
+        report::Decision::Ok => {}
+        report::Decision::Setup(why) => return Err(why),
+        report::Decision::Regression => {
+            eprintln!(
+                "{} regression(s): cases in {} no longer pass:",
+                ratchet.regressions.len(),
+                baseline_path.display()
+            );
+            for c in &ratchet.regressions {
+                eprintln!("  {} {}", c.codeunit, c.name);
+            }
+            return Ok(VersionRun {
+                code: 1,
+                oracle: oracle_ok,
+                passing,
+            });
+        }
     }
     if args.update_baseline {
-        let passing = cases
-            .iter()
-            .filter(|c| !c.bc_failed && outcome(&c.id) == report::Outcome::Pass)
-            .map(|c| c.id.clone())
-            .collect();
         write(&baseline_path, &report::format_baseline(&passing))?;
     }
-    Ok(ExitCode::SUCCESS)
+    Ok(VersionRun {
+        code: 0,
+        oracle: oracle_ok,
+        passing,
+    })
 }
 
 fn git_head(repo: &Path) -> Result<String, String> {

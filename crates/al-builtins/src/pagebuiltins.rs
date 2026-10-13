@@ -109,6 +109,12 @@ page_methods! {
     "TestFilter.SetCurrentKey#1" => "TestFilter.SetCurrentKey",
     "TestFilter.CurrentKey#1" => "TestFilter.CurrentKey",
     "TestFilter.Ascending#1" => "TestFilter.Ascending",
+    // A request page is the test client's page of a report; only what the corpus uses is routed.
+    "TestRequestPage.OK#1" => "TestPage.OK",
+    "TestRequestPage.Cancel#1" => "TestPage.Cancel",
+    "TestRequestPage.Caption#1" => "TestPage.Caption",
+    "TestRequestPage.ValidationErrorCount#1" => "TestPage.ValidationErrorCount",
+    "TestRequestPage.GetValidationError#1" => "TestPage.GetValidationError",
     "TestAction.Invoke#1" => "TestAction.Invoke",
     "TestAction.Enabled#1" => "TestAction.Enabled",
     "TestAction.Visible#1" => "TestAction.Visible",

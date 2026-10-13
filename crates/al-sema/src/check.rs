@@ -80,6 +80,8 @@ pub enum Res {
         query: usize,
         column: usize,
     },
+    /// A member of a `DotNet` value: only its name is known at compile time (ADR-014).
+    DotNetMember(String),
 }
 
 pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckResult {
@@ -177,6 +179,9 @@ struct Cand {
     fields: Vec<bool>,
     /// The variadic tail is a field list.
     rest_field: bool,
+    /// Set when this overload exists only in a newer runtime than the target's
+    /// (ADR-015 3.3). Such a candidate is never called; it only explains a refusal.
+    hidden: Option<al_version::Runtime>,
 }
 
 impl Cand {
@@ -525,16 +530,52 @@ impl<'a> Checker<'a> {
         t
     }
 
+    /// The AR1002 text. On a builtin type it says the name is in no version of the
+    /// catalog, and how far the docs behind the catalog reach (ADR-015 3.3 point 5).
+    fn no_member(&self, name: &str, t: &Ty) -> String {
+        let mut m = format!("no member `{name}` on {t}");
+        if receiver_of(t).is_some() {
+            m.push_str(&format!(
+                "; not known to the catalog (docs for runtime up to {})",
+                self.catalog.newest_documented_runtime()
+            ));
+        }
+        m
+    }
+
     /// Chooses an overload: by arity, then by how many argument types fit the
     /// declared parameter types (first in catalog order on a tie). Records the
     /// choice on `node`.
     fn pick(&mut self, sc: &Scope, node: &SyntaxNode, cands: &[Cand], args: &[Ty], name: &str) -> Ty {
         let argc = args.len();
-        let mut best: Option<(&Cand, usize)> = None;
-        for c in cands.iter().filter(|c| c.min <= argc && argc <= c.max) {
-            let score = args.iter().zip(&c.param_tys).filter(|(a, p)| fits(a, p)).count();
-            if best.is_none_or(|(_, s)| score > s) {
-                best = Some((c, score));
+        // The best arity match by how many arguments fit; the first wins a tie.
+        let best_of = |hidden: bool| {
+            let mut best: Option<(&Cand, usize)> = None;
+            for c in cands
+                .iter()
+                .filter(|c| c.hidden.is_some() == hidden && c.min <= argc && argc <= c.max)
+            {
+                let score = args.iter().zip(&c.param_tys).filter(|(a, p)| fits(a, p)).count();
+                if best.is_none_or(|(_, s)| score > s) {
+                    best = Some((c, score));
+                }
+            }
+            best
+        };
+        let (best, newer) = (best_of(false), best_of(true));
+        // An overload of a newer runtime that fits strictly better than every visible one
+        // is what the author meant: BC's compiler refuses the call (ADR-015 3.3 point 4).
+        if let Some((h, hs)) = newer {
+            if best.is_none_or(|(_, s)| hs > s) {
+                let since = h.hidden.expect("a hidden candidate has its runtime");
+                let at = self.catalog.runtime().unwrap_or(since);
+                self.diag(
+                    sc,
+                    node,
+                    "AR1005",
+                    format!("`{name}` is not available in runtime {at} (introduced in {since})"),
+                );
+                return Ty::Unknown;
             }
         }
         match best {
@@ -617,8 +658,8 @@ impl<'a> Checker<'a> {
                         let r = b.text_range();
                         self.types.get(&(sc.file, r.start().into(), r.end().into())).cloned()
                     });
-                let cands = match &target {
-                    E::Callable(c) => c.clone(),
+                let cands: Vec<Cand> = match &target {
+                    E::Callable(c) => c.iter().filter(|c| c.hidden.is_none()).cloned().collect(),
                     _ => Vec::new(),
                 };
                 let unknown_callee = matches!(target, E::Val(Ty::Unknown));
@@ -719,7 +760,12 @@ impl<'a> Checker<'a> {
                         };
                         let c = self.catalog_cands(recv, &mname, false, &Ty::Unknown);
                         return if c.is_empty() {
-                            self.diag(sc, node, "AR1002", format!("no member `{mname}` on {recv}"));
+                            self.diag(
+                                sc,
+                                node,
+                                "AR1002",
+                                self.no_member(&mname, &Ty::Builtin(recv.to_string())),
+                            );
                             E::Val(Ty::Unknown)
                         } else {
                             E::Callable(c)
@@ -748,7 +794,7 @@ impl<'a> Checker<'a> {
                 match self.member(sc, &base_ty, &mname) {
                     Some(e) => e,
                     None => {
-                        self.diag(sc, node, "AR1002", format!("no member `{mname}` on {base_ty}"));
+                        self.diag(sc, node, "AR1002", self.no_member(&mname, &base_ty));
                         E::Val(Ty::Unknown)
                     }
                 }
@@ -852,12 +898,7 @@ impl<'a> Checker<'a> {
             }
         }
         if c.is_empty() {
-            c = self
-                .catalog
-                .global(n)
-                .iter()
-                .map(|s| sig_cand(s, &Ty::Unknown, self.catalog.id(s)))
-                .collect();
+            c = self.global_cands(n);
         }
         (!c.is_empty()).then_some(c)
     }
@@ -903,12 +944,7 @@ impl<'a> Checker<'a> {
         if !own.is_empty() || !own_obj.is_empty() {
             return Some(E::Callable(own.into_iter().chain(own_obj).collect()));
         }
-        let globals: Vec<Cand> = self
-            .catalog
-            .global(&n)
-            .iter()
-            .map(|s| sig_cand(s, &Ty::Unknown, self.catalog.id(s)))
-            .collect();
+        let globals: Vec<Cand> = self.global_cands(&n);
         if !globals.is_empty() {
             return Some(E::Callable(globals));
         }
@@ -966,12 +1002,29 @@ impl<'a> Checker<'a> {
         (!c.is_empty()).then_some(c)
     }
 
+    /// Visible overloads first, then the ones only a newer runtime has (marked `hidden`).
     fn catalog_cands(&self, receiver: &str, name: &str, instance_only: bool, recv_ty: &Ty) -> Vec<Cand> {
-        self.catalog
-            .overloads(receiver, name)
-            .into_iter()
-            .filter(|s| !instance_only || s.instance)
+        let keep = |s: &&Signature| !instance_only || s.instance;
+        let visible = self.catalog.overloads(receiver, name).into_iter().filter(keep);
+        let hidden = self.catalog.hidden(receiver, name).into_iter().filter(keep);
+        visible
             .map(|s| sig_cand(s, recv_ty, self.catalog.id(s)))
+            .chain(hidden.map(|s| hidden_cand(s, recv_ty, self.catalog.id(s))))
+            .collect()
+    }
+
+    /// Unqualified builtins (`Message`, `Commit`): visible, then hidden.
+    fn global_cands(&self, name: &str) -> Vec<Cand> {
+        self.catalog
+            .global(name)
+            .iter()
+            .map(|s| sig_cand(s, &Ty::Unknown, self.catalog.id(s)))
+            .chain(
+                self.catalog
+                    .hidden_global(name)
+                    .iter()
+                    .map(|s| hidden_cand(s, &Ty::Unknown, self.catalog.id(s))),
+            )
             .collect()
     }
 
@@ -1012,6 +1065,20 @@ impl<'a> Checker<'a> {
     /// Members of a value of type `t`: fields, procedures, library methods.
     fn member(&mut self, sc: &Scope, t: &Ty, name: &str) -> Option<E> {
         match t {
+            // Members of a .NET type come from reflection at run time: any name, any arity,
+            // a result whose type is known only then (ADR-014).
+            Ty::DotNet(_) => {
+                return Some(E::Callable(vec![Cand {
+                    min: 0,
+                    max: usize::MAX,
+                    ret: Ty::DotNet(String::new()),
+                    target: Res::DotNetMember(name.to_string()),
+                    param_tys: Vec::new(),
+                    fields: Vec::new(),
+                    rest_field: false,
+                    hidden: None,
+                }]));
+            }
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),
             Ty::Record { table, .. } => {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
@@ -1334,6 +1401,7 @@ fn proc_cand(p: &ProcSig) -> Cand {
         param_tys: p.params.iter().map(|x| x.ty.to_string()).collect(),
         fields: Vec::new(),
         rest_field: false,
+        hidden: None,
     }
 }
 
@@ -1381,6 +1449,15 @@ fn sig_cand(s: &Signature, recv: &Ty, id: String) -> Cand {
         ret: catalog_ty(&s.ret, recv),
         fields,
         rest_field,
+        hidden: None,
+    }
+}
+
+/// A candidate that only a newer runtime has.
+fn hidden_cand(s: &Signature, recv: &Ty, id: String) -> Cand {
+    Cand {
+        hidden: s.since,
+        ..sig_cand(s, recv, id)
     }
 }
 
@@ -1692,11 +1769,61 @@ mod tests {
                 TABLE,
                 &cu("procedure P() var R: Record \"ALT Universal\"; begin R.Nope := 1; end;")
             ]),
-            vec!["AR1002 no member `Nope` on Record \"ALT Universal\""]
+            vec![
+                "AR1002 no member `Nope` on Record \"ALT Universal\"; not known to the catalog (docs for runtime up to 17.0)"
+            ]
         );
         assert_eq!(
             diags(&[&cu("procedure P() begin Format(); end;")]),
             vec!["AR1003 no overload of `Format` takes 0 argument(s)"]
+        );
+    }
+
+    fn diags_for(bc: &str, files: &[&str]) -> Vec<String> {
+        let w = ws(files);
+        let m = crate::members::build(&w);
+        let target = al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+        check(&w, &m, &Catalog::for_target(&target))
+            .diagnostics
+            .iter()
+            .map(|d| format!("{} {}", d.code, d.message))
+            .collect()
+    }
+
+    #[test]
+    fn a_member_from_a_newer_runtime_is_refused_with_ar1005() {
+        // Record.FullyQualifiedName is available from runtime 17.0 (BC 28).
+        let src = cu("procedure P() var R: Record \"ALT Universal\"; T: Text; begin T := R.FullyQualifiedName(); end;");
+        let on27 = diags_for("27.5", &[TABLE, &src]);
+        assert_eq!(on27.len(), 1, "{on27:?}");
+        assert!(on27[0].starts_with("AR1005 "), "{on27:?}");
+        assert!(on27[0].contains("FullyQualifiedName") && on27[0].contains("runtime 16.0") && on27[0].contains("17.0"));
+        assert_eq!(diags_for("28", &[TABLE, &src]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_overload_from_a_newer_runtime_is_refused_when_it_fits_better() {
+        // Codeunit.Run(FullyQualifiedName: Text) is 17.0; Codeunit.Run(Number: Integer) is older.
+        let by_name = cu("procedure P() begin Codeunit.Run('Some Codeunit'); end;");
+        let on27 = diags_for("27", &[&by_name]);
+        assert_eq!(on27.len(), 1, "{on27:?}");
+        assert!(on27[0].starts_with("AR1005 ") && on27[0].contains("Run"), "{on27:?}");
+        assert_eq!(diags_for("28", &[&by_name]), Vec::<String>::new());
+        // An integer id fits the older overload on every target.
+        let by_id = cu("procedure P() begin Codeunit.Run(50100); end;");
+        assert_eq!(diags_for("27", &[&by_id]), Vec::<String>::new());
+        assert_eq!(diags_for("28", &[&by_id]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_unknown_builtin_member_says_it_is_not_in_the_catalog() {
+        let src = cu("procedure P() var J: JsonObject; begin J.Nope(); end;");
+        let d = diags_for("27", &[&src]);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].starts_with("AR1002 no member `Nope` on JsonObject"), "{d:?}");
+        assert!(
+            d[0].contains("not known to the catalog") && d[0].contains("up to 17.0"),
+            "{d:?}"
         );
     }
 

@@ -368,6 +368,11 @@ Two findings drive the decision:
       A stray build of another major never becomes the default.
    3. The default never selects a build below the floor. An explicit
       `--bc-version` below the floor runs, with a printed warning.
+   3a. **Amended by ADR-015 (accepted 2026-10-13).** If the major of the floor is
+      below 27, the target is BC 27 and the run prints a note. The runtime
+      supports BC 27 and later only, and an app that declares an older floor
+      still runs on a BC 27 or newer server. An app `runtime` below 16.0 is
+      treated as 16.0, with a note. `--bc-version` below 27 exits 2.
    4. No match is an error. It names the request, the builds available and the
       cache directory. It never falls back silently.
 

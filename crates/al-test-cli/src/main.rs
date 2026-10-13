@@ -111,6 +111,7 @@ fn run() -> Result<ExitCode, String> {
         runtime::load_app(&root.join(&cfg.corpus_app))?,
     ];
     let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+    let mut dependency_summary = Vec::new();
     if !args.no_deps {
         // Dependencies go after the corpus apps, so the corpus objects keep their positions.
         let deps = deps::load(&root.join(&cfg.corpus_app), &[fixture_dir], &args.deps)?;
@@ -118,6 +119,7 @@ fn run() -> Result<ExitCode, String> {
             eprintln!("{line}");
         }
         kinds.extend(deps.apps.iter().map(|_| al_sema::AppKind::Dependency));
+        dependency_summary = deps.summary;
         apps.extend(deps.apps);
     }
     let rt = runtime::CorpusRuntime::run_apps(apps, kinds, &symbols);
@@ -129,7 +131,8 @@ fn run() -> Result<ExitCode, String> {
     }
     let outcome = |c: &oracle::CaseId| rt.outcome(c);
     let area_of = |cu: u32| index.area_of(cu).map(str::to_string);
-    let rep = report::build(&cases, &area_of, &outcome);
+    let mut rep = report::build(&cases, &area_of, &outcome);
+    rep.dependencies = dependency_summary;
     if !rep.unmapped.is_empty() {
         return Err(format!(
             "{} oracle case(s) have no test codeunit in the corpus, e.g. {}",

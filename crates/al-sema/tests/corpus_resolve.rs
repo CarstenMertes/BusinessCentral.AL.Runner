@@ -1,4 +1,6 @@
-//! The corpus as a workspace: the test app plus the internals fixture it depends on.
+//! The corpus as a workspace: the test app plus the internals fixture it depends on, without
+//! the Microsoft apps. The references that resolve only with them are checked in
+//! `al-test-cli/tests/corpus_resolve_deps.rs`.
 
 use al_sema::{AppSource, Workspace};
 use std::collections::BTreeMap;
@@ -51,38 +53,6 @@ pub fn corpus() -> Workspace {
         ],
         &["BC27PLUS".to_string()].into(),
     )
-}
-
-#[test]
-fn unresolved_references_are_exactly_the_known_external_set() {
-    let ws = corpus();
-    let members = al_sema::members::build(&ws);
-    let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
-    let mut unresolved: BTreeMap<String, usize> = BTreeMap::new();
-    let mut other = Vec::new();
-    for d in ws
-        .diagnostics
-        .iter()
-        .chain(&checked.diagnostics)
-        .filter(|d| !d.code.starts_with("AR1"))
-    {
-        if d.code == "AR0002" {
-            *unresolved.entry(d.message.clone()).or_default() += 1;
-        } else {
-            other.push(format!("{} {}: {}", d.code, d.file, d.message));
-        }
-    }
-    assert!(other.is_empty(), "{}", other.join("\n"));
-    let actual: String = unresolved.iter().map(|(m, n)| format!("{n:4} {m}\n")).collect();
-    let golden_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected-unresolved.txt");
-    if std::env::var_os("UPDATE_GOLDEN").is_some() {
-        std::fs::write(&golden_path, &actual).unwrap();
-    }
-    let golden = std::fs::read_to_string(&golden_path).unwrap_or_default();
-    assert_eq!(
-        actual, golden,
-        "unresolved references changed; review and rerun with UPDATE_GOLDEN=1"
-    );
 }
 
 #[test]

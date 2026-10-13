@@ -49,6 +49,14 @@ cargo build --release
 `al-test-cli` also takes `--markdown FILE`, `--json FILE`, `--oracle`,
 `--baseline` and `--update-baseline`.
 
+The corpus depends on Microsoft's apps. They are read from the project's
+`.alpackages` folder first (the corpus ships System Application, Base
+Application and Business Foundation there, with source) and compiled by this
+runtime's own front end (ADR-013). Only what the tests reach is compiled. Nothing
+of Microsoft's is committed to this repository. `--deps DIR` adds another folder
+of `.app` packages, searched after `.alpackages`. `--no-deps` runs the corpus on
+its own.
+
 ## Documentation
 
 - `docs/architecture.md`: pipeline, crates, runtime model, budgets.

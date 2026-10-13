@@ -135,6 +135,8 @@ pub struct SourceFileData {
     problem: OnceLock<Option<String>>,
     /// Whether the file was only scanned at load (a dependency app's file).
     pub lazy: bool,
+    /// Whether the file declares a page, the only objects `pages::expand` changes.
+    has_page: bool,
     pub namespace: Option<String>,
     pub usings: Vec<String>,
 }
@@ -265,6 +267,7 @@ impl Workspace {
                 green: file.green.map(OnceLock::from).unwrap_or_default(),
                 problem: OnceLock::new(),
                 lazy,
+                has_page: file.objects.iter().any(|o| o.kind == ObjKind::Page),
                 namespace: file.namespace.clone(),
                 usings: file.usings,
             });
@@ -367,7 +370,8 @@ impl Workspace {
                     static CACHE: std::cell::RefCell<al_syntax::TreeCache> = Default::default();
                 }
                 let src = &self.apps[f.app].files[f.file_in_app].1;
-                let expanded = crate::pages::expand(src, &self.symbols);
+                // Only a page can have properties to turn into routines; skip the extra parse otherwise.
+                let expanded = f.has_page.then(|| crate::pages::expand(src, &self.symbols)).flatten();
                 let src = expanded.as_deref().unwrap_or(src);
                 let parsed = CACHE.with(|c| match c.try_borrow_mut() {
                     Ok(mut cache) => parse_file(src, &self.symbols, &mut cache),

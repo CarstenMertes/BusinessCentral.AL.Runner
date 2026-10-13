@@ -103,14 +103,46 @@ pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> Ch
         queries: (0..ws.objects.len()).map(|_| std::cell::OnceCell::new()).collect(),
         calls: Vec::new(),
         demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
+        prefetch: None,
     };
-    for oi in 0..ws.objects.len() {
-        if !demand_mode || !ws.is_dependency(oi) {
+    // The files of the dependency objects the checker reaches are parsed ahead on other
+    // threads; parsing is a third of the cost and the checker only waits for what is not ready.
+    let demand = if demand_mode {
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+        let rx = std::sync::Mutex::new(rx);
+        let workers = std::thread::available_parallelism().map_or(2, |n| n.get().min(8));
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| {
+                    loop {
+                        let next = rx.lock().expect("prefetch queue").recv();
+                        match next {
+                            Ok(fi) => {
+                                ws.green(fi);
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                });
+            }
+            c.prefetch = Some(tx);
+            for oi in 0..ws.objects.len() {
+                if !ws.is_dependency(oi) {
+                    c.check_object(oi);
+                    c.take_calls();
+                }
+            }
+            let demand = c.run_demand();
+            c.prefetch = None;
+            demand
+        })
+    } else {
+        for oi in 0..ws.objects.len() {
             c.check_object(oi);
             c.take_calls();
         }
-    }
-    let demand = c.run_demand();
+        None
+    };
     let positions: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
     c.diags
         .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
@@ -233,6 +265,8 @@ struct Checker<'a> {
     calls: Vec<(usize, usize)>,
     /// Which dependency objects the workspace reaches (`None`: everything is checked).
     demand: std::cell::RefCell<Option<demand::State>>,
+    /// Files to parse ahead on other threads: those of the dependency objects just reached.
+    prefetch: Option<std::sync::mpsc::Sender<usize>>,
 }
 
 /// What every routine of an object sees.

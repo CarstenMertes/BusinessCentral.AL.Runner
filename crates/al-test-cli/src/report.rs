@@ -52,6 +52,9 @@ pub struct Report {
     /// Oracle cases whose codeunit is not in the corpus: the oracle and the
     /// corpus pin disagree, which makes the whole report untrustworthy.
     pub unmapped: Vec<String>,
+    /// The dependency apps the run compiled against, as `name version` (ADR-013). A different
+    /// build of one of them can change results, so the report says which it was.
+    pub dependencies: Vec<String>,
 }
 
 pub fn build(
@@ -68,6 +71,7 @@ pub fn build(
             .collect(),
         excluded_bc_failed: 0,
         unmapped: Vec::new(),
+        dependencies: Vec::new(),
     };
     for case in oracle {
         if case.bc_failed {

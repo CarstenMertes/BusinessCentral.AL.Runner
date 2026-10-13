@@ -91,13 +91,20 @@ fn differences(name: &str, src: &str) -> Vec<String> {
     diffs
 }
 
-fn assert_equivalent(files: &[(String, String)], at_least: usize) {
+/// Every file in a release build; every `step`-th in a debug build, where parsing 9500 files
+/// takes most of a minute.
+fn assert_equivalent(files: &[(String, String)], at_least: usize, step: usize) {
     assert!(
         files.len() >= at_least,
         "expected at least {at_least} files, found {}",
         files.len()
     );
-    let diffs: Vec<String> = files.iter().flat_map(|(n, s)| differences(n, s)).collect();
+    let step = if cfg!(debug_assertions) { step } else { 1 };
+    let diffs: Vec<String> = files
+        .iter()
+        .step_by(step)
+        .flat_map(|(n, s)| differences(n, s))
+        .collect();
     assert!(
         diffs.is_empty(),
         "{} difference(s) over {} files:\n{}",
@@ -109,7 +116,7 @@ fn assert_equivalent(files: &[(String, String)], at_least: usize) {
 
 #[test]
 fn the_scan_matches_the_parse_on_every_corpus_file() {
-    assert_equivalent(&al_files(&corpus_tests().join("al-language")), 1300);
+    assert_equivalent(&al_files(&corpus_tests().join("al-language")), 1300, 1);
 }
 
 #[test]
@@ -126,5 +133,5 @@ fn the_scan_matches_the_parse_on_every_file_of_the_dependency_apps() {
         let (_, sources) = al_deps::package::read_package(&bytes).unwrap();
         files.extend(sources);
     }
-    assert_equivalent(&files, 9000);
+    assert_equivalent(&files, 9000, 12);
 }

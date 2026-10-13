@@ -126,6 +126,11 @@ impl Checker<'_> {
             return;
         }
         if let Some(st) = self.demand.borrow_mut().as_mut() {
+            if st.level[i] == NONE {
+                if let Some(tx) = &self.prefetch {
+                    let _ = tx.send(self.ws.objects[i].file);
+                }
+            }
             if st.level[i] < level {
                 st.level[i] = level;
                 st.fresh.push((i, level));
@@ -311,11 +316,7 @@ impl Checker<'_> {
                     self.activate_enum(i);
                 }
             }
-            ObjKind::Interface => {
-                if level == FULL {
-                    self.activate_interface(i);
-                }
-            }
+            ObjKind::Interface if level == FULL => self.activate_interface(i),
             _ => {}
         }
     }
@@ -363,13 +364,11 @@ impl Checker<'_> {
                 }
             }
         }
-        if level < FULL {
-            // The table's events can still fire (a rename reaches related tables). Its
-            // subscribers are lowered as stubs, so that if one does fire it refuses.
-            for (o, _) in self.ws.subscribers_of(t) {
-                self.touch_schema(o);
-            }
-            return;
+        // The table's events can fire whatever reached code does (a rename reaches related
+        // tables, a RecordRef writes without a typed variable). Subscribers not reached
+        // by an operation are lowered as stubs, so that if one does fire it refuses.
+        for (o, _) in self.ws.subscribers_of(t) {
+            self.touch_schema(o);
         }
     }
 
@@ -547,5 +546,279 @@ impl Checker<'_> {
             level: st.level,
             reached: st.reached,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lower::{Lowered, compile_apps};
+    use crate::workspace::{AppKind, AppSource, Workspace};
+
+    /// A workspace app `main` over a dependency app `dep`, compiled with demand-driven dependencies.
+    fn compile(main: &str, dep: &[(&str, &str)]) -> (Workspace, Lowered) {
+        let app = |id: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files,
+        };
+        compile_apps(
+            vec![
+                app("main", &["dep"], vec![("main.al".into(), main.into())]),
+                app(
+                    "dep",
+                    &[],
+                    dep.iter().map(|(p, s)| (p.to_string(), s.to_string())).collect(),
+                ),
+            ],
+            vec![AppKind::Workspace, AppKind::Dependency],
+            &Default::default(),
+        )
+    }
+
+    fn object(l: &Lowered, name: &str) -> usize {
+        l.program
+            .objects
+            .iter()
+            .position(|o| o.name == name)
+            .unwrap_or_else(|| panic!("no object {name}"))
+    }
+
+    /// The reasons routine `name` of object `obj` cannot run (empty: it runs).
+    fn reasons(l: &Lowered, obj: &str, name: &str) -> Vec<String> {
+        let o = object(l, obj);
+        let r = l.program.objects[o]
+            .routines
+            .iter()
+            .position(|r| r.name == name)
+            .unwrap_or_else(|| panic!("no routine {name}"));
+        l.unsupported[o][r].clone()
+    }
+
+    fn compiled(l: &Lowered, obj: &str, name: &str) -> bool {
+        reasons(l, obj, name).iter().all(|r| !r.contains("not compiled"))
+    }
+
+    #[test]
+    fn only_the_dependency_routines_the_workspace_calls_are_compiled() {
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var D: Codeunit Lib; begin D.Used(); end; }",
+            &[(
+                "lib.al",
+                "codeunit 10 Lib { procedure Used() begin Inner(); end; local procedure Inner() begin end; procedure Unused() begin Other(); end; local procedure Other() begin end; }",
+            )],
+        );
+        assert!(compiled(&l, "Lib", "Used"));
+        assert!(compiled(&l, "Lib", "Inner"), "what a reached routine calls is reached");
+        assert!(!compiled(&l, "Lib", "Unused"));
+        assert!(!compiled(&l, "Lib", "Other"));
+        // The stub says why it cannot run.
+        assert!(reasons(&l, "Lib", "Unused")[0].contains("not compiled"));
+    }
+
+    #[test]
+    fn an_unsupported_dependency_routine_nothing_reaches_does_not_block_anything() {
+        // `Rare` uses a builtin that does not exist; nothing reaches it, so nothing is refused.
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var D: Codeunit Lib; begin D.Fine(); end; }",
+            &[(
+                "lib.al",
+                "codeunit 10 Lib { procedure Fine() begin end; procedure Rare() var T: Text; begin T := NoSuchBuiltin(1); end; }",
+            )],
+        );
+        assert!(reasons(&l, "Lib", "Fine").is_empty());
+        assert!(!compiled(&l, "Lib", "Rare"));
+        assert!(reasons(&l, "Main", "Go").is_empty(), "{:?}", reasons(&l, "Main", "Go"));
+    }
+
+    #[test]
+    fn a_reached_routine_that_cannot_run_blocks_what_reaches_it() {
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var D: Codeunit Lib; begin D.Rare(); end; }",
+            &[(
+                "lib.al",
+                "codeunit 10 Lib { procedure Rare() var T: Text; begin T := NoSuchBuiltin(1); end; }",
+            )],
+        );
+        assert!(compiled(&l, "Lib", "Rare"));
+        assert!(!reasons(&l, "Lib", "Rare").is_empty());
+        let go = l.program.objects[object(&l, "Main")]
+            .routines
+            .iter()
+            .position(|r| r.name == "Go")
+            .unwrap();
+        let lib = object(&l, "Lib");
+        let rare = l.program.objects[lib]
+            .routines
+            .iter()
+            .position(|r| r.name == "Rare")
+            .unwrap();
+        assert!(l.calls[object(&l, "Main")][go].contains(&(lib, rare)));
+    }
+
+    #[test]
+    fn objects_nothing_refers_to_are_not_compiled_and_stay_out_of_reach() {
+        let (ws, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record Used; begin R.FindFirst(); end; }",
+            &[
+                ("used.al", "table 10 Used { fields { field(1; K; Code[10]) { } } }"),
+                (
+                    "other.al",
+                    "table 11 Other { fields { field(1; K; Code[10]) { } } trigger OnInsert() begin end; }",
+                ),
+            ],
+        );
+        let used = &l.program.objects[object(&l, "Used")];
+        let other = &l.program.objects[object(&l, "Other")];
+        assert!(used.table.is_some());
+        assert!(
+            other.table.is_none() && other.routines.is_empty(),
+            "an object nothing refers to is a shell"
+        );
+        // The workspace no longer resolves it either: code that needs it after all is refused.
+        let fi = ws.files.iter().position(|f| f.path == "main.al").unwrap();
+        assert_eq!(
+            ws.resolve_ref(fi, crate::workspace::ObjKind::Table, &["Other".to_string()]),
+            crate::workspace::Resolution::Missing
+        );
+    }
+
+    #[test]
+    fn reading_a_table_runs_no_trigger_and_writing_runs_the_trigger_of_that_operation() {
+        let dep = [(
+            "t.al",
+            "table 10 T { fields { field(1; K; Code[10]) { } } \
+             trigger OnInsert() begin end; trigger OnModify() begin end; trigger OnDelete() begin end; }",
+        )];
+        let (_, read) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record T; begin R.FindFirst(); end; }",
+            &dep,
+        );
+        for t in ["OnInsert", "OnModify", "OnDelete"] {
+            assert!(!compiled(&read, "T", t), "{t} must not run when the table is only read");
+        }
+        let (_, write) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record T; begin R.Insert(true); end; }",
+            &dep,
+        );
+        assert!(compiled(&write, "T", "OnInsert"));
+        assert!(
+            !compiled(&write, "T", "OnModify"),
+            "only the operation used runs its trigger"
+        );
+        assert!(!compiled(&write, "T", "OnDelete"));
+    }
+
+    #[test]
+    fn writing_a_table_reaches_its_event_subscribers_for_that_operation_only() {
+        let dep = [
+            ("t.al", "table 10 T { fields { field(1; K; Code[10]) { } } }"),
+            (
+                "s.al",
+                "codeunit 20 Subs {\n\
+                 [EventSubscriber(ObjectType::Table, Database::T, 'OnAfterInsertEvent', '', false, false)]\n\
+                 local procedure OnIns() begin end;\n\
+                 [EventSubscriber(ObjectType::Table, Database::T, 'OnAfterModifyEvent', '', false, false)]\n\
+                 local procedure OnMod() begin end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record T; begin R.Insert(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "Subs", "OnIns"));
+        assert!(!compiled(&l, "Subs", "OnMod"));
+        // Reading only: neither subscriber is reached.
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record T; begin R.FindFirst(); end; }",
+            &dep,
+        );
+        assert!(!compiled(&l, "Subs", "OnIns"));
+    }
+
+    #[test]
+    fn a_reached_event_publisher_reaches_the_subscribers_of_that_event() {
+        let dep = [
+            (
+                "p.al",
+                "codeunit 10 Pub { procedure Do() begin OnThing(); OnOther(); end;\n\
+                 [IntegrationEvent(false, false)] local procedure OnThing() begin end;\n\
+                 [IntegrationEvent(false, false)] local procedure OnOther() begin end; }",
+            ),
+            (
+                "s.al",
+                "codeunit 20 Subs {\n\
+                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnThing', '', false, false)]\n\
+                 local procedure A() begin end;\n\
+                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnNever', '', false, false)]\n\
+                 local procedure B() begin end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var P: Codeunit Pub; begin P.Do(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "Subs", "A"));
+        assert!(!compiled(&l, "Subs", "B"), "the publisher never raises OnNever");
+    }
+
+    #[test]
+    fn an_interface_used_reaches_the_codeunits_that_implement_it() {
+        let dep = [
+            ("i.al", "interface IThing { procedure Run(); }"),
+            (
+                "c.al",
+                "codeunit 10 Impl implements IThing { procedure Run() begin Helper(); end; local procedure Helper() begin end; procedure Extra() begin end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var I: Interface IThing; begin I.Run(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "Impl", "Run"));
+        assert!(compiled(&l, "Impl", "Helper"));
+        assert!(
+            !compiled(&l, "Impl", "Extra"),
+            "only the interface's procedures are called through it"
+        );
+    }
+
+    #[test]
+    fn a_table_related_to_a_used_one_is_lowered_with_it_but_runs_nothing() {
+        let dep = [
+            (
+                "a.al",
+                "table 10 A { fields { field(1; K; Code[10]) { } field(2; Ref; Code[10]) { TableRelation = B.K; } } }",
+            ),
+            (
+                "b.al",
+                "table 11 B { fields { field(1; K; Code[10]) { } } trigger OnInsert() begin end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record A; begin R.FindFirst(); end; }",
+            &dep,
+        );
+        let b = &l.program.objects[object(&l, "B")];
+        assert!(
+            b.table.is_some(),
+            "the related table is lowered so the relation resolves"
+        );
+        assert!(!compiled(&l, "B", "OnInsert"));
+        let a = l.program.objects[object(&l, "A")].table.as_ref().unwrap();
+        assert!(a.fields[1].relation_arms.iter().all(|arm| arm.table.is_some()));
+    }
+
+    #[test]
+    fn a_dependency_app_without_a_reference_from_the_workspace_compiles_nothing() {
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() begin end; }",
+            &[
+                ("lib.al", "codeunit 10 Lib { procedure P() begin end; }"),
+                ("t.al", "table 11 T { }"),
+            ],
+        );
+        assert!(l.program.objects[object(&l, "Lib")].routines.is_empty());
+        assert!(l.dependency[object(&l, "Lib")] && !l.dependency[object(&l, "Main")]);
     }
 }

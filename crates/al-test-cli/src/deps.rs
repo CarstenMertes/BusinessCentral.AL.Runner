@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 pub struct Dependencies {
     /// Dependency apps in dependency order.
     pub apps: Vec<AppSource>,
+    /// `name version` of each, for the report.
+    pub summary: Vec<String>,
     /// One line per app loaded, and one per problem, for the run's log.
     pub log: Vec<String>,
 }
@@ -48,6 +50,7 @@ pub fn load(app_dir: &Path, source_dirs: &[PathBuf], extra_dirs: &[PathBuf]) -> 
         log.push(format!("dependency skipped: {s}"));
     }
     let mut apps = Vec::new();
+    let mut summary = Vec::new();
     for d in loaded.apps {
         let files = d.app.files.len();
         if d.role == Role::Platform {
@@ -65,7 +68,8 @@ pub fn load(app_dir: &Path, source_dirs: &[PathBuf], extra_dirs: &[PathBuf]) -> 
             d.version,
             d.path.display()
         ));
+        summary.push(format!("{} {}", d.app.name, d.version));
         apps.push(d.app);
     }
-    Ok(Dependencies { apps, log })
+    Ok(Dependencies { apps, summary, log })
 }

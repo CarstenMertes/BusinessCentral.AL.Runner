@@ -20,6 +20,9 @@ struct Args {
     markdown: Option<PathBuf>,
     junit: Option<PathBuf>,
     update_baseline: bool,
+    /// `--no-ratchet`: report only; do not compare with the baseline (for running the corpus
+    /// without the dependency apps its baseline needs).
+    no_ratchet: bool,
     /// Extra directories of `.app` packages, searched after the project's `.alpackages`.
     deps: Vec<PathBuf>,
     /// Run without dependency apps (the corpus alone).
@@ -58,6 +61,7 @@ fn parse_args() -> Result<Args, String> {
             "--markdown" => a.markdown = Some(val()?),
             "--junit" => a.junit = Some(val()?),
             "--update-baseline" => a.update_baseline = true,
+            "--no-ratchet" => a.no_ratchet = true,
             "--deps" => a.deps.push(val()?),
             "--no-deps" => a.no_deps = true,
             "--all-versions" => a.all_versions = true,
@@ -290,6 +294,16 @@ fn run_version(
         rep.overall.not_run
     );
 
+    if args.no_ratchet {
+        if args.update_baseline {
+            return Err("--no-ratchet cannot be combined with --update-baseline".into());
+        }
+        return Ok(VersionRun {
+            code: 0,
+            oracle: oracle_ok,
+            passing,
+        });
+    }
     let baseline_path = args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline));
     let baseline =
         report::parse_baseline(&read(&baseline_path)?).map_err(|e| format!("{}: {e}", baseline_path.display()))?;

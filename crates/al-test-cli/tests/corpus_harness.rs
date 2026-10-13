@@ -21,15 +21,13 @@ fn require_corpus() {
 
 /// Runs the CLI over the corpus on its own: without the Microsoft apps, which would make
 /// each run in this unoptimised test build take minutes (the release CI step runs with
-/// them). A baseline of its own, because the real one lists cases that need those apps.
+/// them). No ratchet unless the test brings a baseline: the real one lists cases that need
+/// those apps.
 fn cli(args: &[&str]) -> (i32, String, String) {
-    let dir = tempfile::tempdir().unwrap();
-    let empty = dir.path().join("empty-baseline.txt");
-    std::fs::write(&empty, "").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_al-test-cli"));
     cmd.arg("--root").arg(root()).arg("--no-deps");
     if !args.contains(&"--baseline") {
-        cmd.arg("--baseline").arg(&empty);
+        cmd.arg("--no-ratchet");
     }
     let out = cmd.args(args).output().unwrap();
     (

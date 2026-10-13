@@ -900,10 +900,22 @@ impl Lowerer<'_> {
                 (Some(ws), Some(t)) => ws
                     .iter()
                     .map(|w| match w {
-                        crate::relation::ParsedWhere::Value { related, text } => Some(ir::RelationWhere::Value {
-                            related: field_pos(&self.members[t], related)?,
-                            text: text.clone(),
-                        }),
+                        crate::relation::ParsedWhere::Value { related, text } => {
+                            let p = field_pos(&self.members[t], related)?;
+                            // `Database::"X"` / `Report::"X"` etc.: the object's id, as for a
+                            // CalcFormula const (corpus record/CdcOwner.Table.al:67,79).
+                            let text = if !text.starts_with('\'') && text.contains("::") {
+                                match calc_const(self.ws, self.members, file, text, &self.members[t].fields[p].ty) {
+                                    Ok(ir::Const::Integer(id)) => id.to_string(),
+                                    Ok(ir::Const::BigInteger(id)) => id.to_string(),
+                                    Ok(ir::Const::Decimal(id)) => id,
+                                    _ => return None,
+                                }
+                            } else {
+                                text.clone()
+                            };
+                            Some(ir::RelationWhere::Value { related: p, text })
+                        }
                         crate::relation::ParsedWhere::Field { related, own: o } => Some(ir::RelationWhere::Field {
                             related: field_pos(&self.members[t], related)?,
                             own: field_pos(own, o)?,
@@ -2708,6 +2720,29 @@ table 50912 \"ALT Head\"
         );
         let k = flow(&l, "ALT Head", "Limit").calc.expect("lowered");
         assert_eq!(k.conds[1].value, ir::CalcValue::Const(ir::Const::Enum(0, 1)));
+    }
+
+    #[test]
+    fn table_relation_where_object_constants_resolve_to_the_object_id() {
+        // corpus record/CdcOwner.Table.al:67,79 (`Database::"CDC Owner"`, `Report::"ALT Simple Report"`).
+        let (_, l) = lower_src(
+            "table 50911 \"ALT Line\" { fields { field(1; Code; Code[20]) { } field(7; \"Table ID\"; Integer) { } field(8; \"Report ID\"; Integer) { } } }
+             report 50950 \"ALT Rep\" { }
+             table 50912 \"ALT Head\" { fields {
+                field(1; \"No.\"; Code[20]) { }
+                field(2; D; Code[20]) { TableRelation = \"ALT Line\".Code where(\"Table ID\" = const(Database::\"ALT Line\")); }
+                field(3; R; Code[20]) { TableRelation = \"ALT Line\".Code where(\"Report ID\" = const(Report::\"ALT Rep\")); }
+             } }",
+        );
+        let text = |name: &str| {
+            let f = flow(&l, "ALT Head", name);
+            match &f.relation_arms[0].wheres.as_ref().expect("wheres understood")[0] {
+                ir::RelationWhere::Value { text, .. } => text.clone(),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(text("D"), "50911");
+        assert_eq!(text("R"), "50950");
     }
 
     #[test]

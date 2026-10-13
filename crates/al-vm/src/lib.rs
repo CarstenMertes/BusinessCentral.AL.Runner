@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod records;
+mod refs;
 
 pub struct Engine {
     pub program: ir::Program,
@@ -697,6 +698,9 @@ impl al_builtins::native::Ctx for Session {
             }
             other => Err(Signal::Unsupported(format!("record method {method} on {other:?}"))),
         }
+    }
+    fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        Session::ref_op(self, id, receiver, args)
     }
     fn commit(&mut self) -> Result<(), Signal> {
         al_data::Store::commit(&mut self.store);

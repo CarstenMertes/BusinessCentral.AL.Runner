@@ -314,6 +314,14 @@ impl Lowerer<'_> {
                 .filter(|s| s.name().eq_ignore_ascii_case("keys"))
             {
                 for k in sec.sections().filter(|k| k.name().eq_ignore_ascii_case("key")) {
+                    // A Removed key is gone: it takes no index position
+                    // (corpus recordref/TestKeyMetadataRowVersionRemoved.al:10-20, :150-170).
+                    if k.properties().any(|p| {
+                        p.name().eq_ignore_ascii_case("ObsoleteState")
+                            && p.value_text().trim().eq_ignore_ascii_case("Removed")
+                    }) {
+                        continue;
+                    }
                     let names: Vec<String> = k
                         .args()
                         .get(1)
@@ -609,6 +617,43 @@ impl Lowerer<'_> {
     }
 
     fn assign(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Stmt> {
+        // `FieldRef.Value := x` is the setter form of the `Value` method
+        // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
+        if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
+            let setter = self
+                .catalog
+                .by_id(&id)
+                .is_some_and(|s| s.receiver == "FieldRef" && s.name == "Value");
+            if setter && kids[0].kind() == SyntaxKind::MemberExpr {
+                if al_builtins::native::lookup(&id).is_none() {
+                    return Err(format!("builtin {id} is not implemented"));
+                }
+                let compound = sig_tokens(n).iter().any(|t| {
+                    matches!(
+                        t.kind(),
+                        SyntaxKind::PlusAssign
+                            | SyntaxKind::MinusAssign
+                            | SyntaxKind::StarAssign
+                            | SyntaxKind::SlashAssign
+                    )
+                });
+                if compound {
+                    return Err("compound assignment to FieldRef.Value is not lowered yet".into());
+                }
+                let recv = kids[0].children().next().ok_or("member base")?;
+                let receiver = match self.place(&recv) {
+                    Ok(p) => ir::Arg::Ref(p),
+                    Err(_) => ir::Arg::Value(self.expr(&recv)?),
+                };
+                let rhs = self.expr(&kids[1])?;
+                return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
+                    id,
+                    receiver: Some(Box::new(receiver)),
+                    args: vec![ir::Arg::Value(rhs)],
+                    ret_used: false,
+                }));
+            }
+        }
         let place = self.place(&kids[0])?;
         let slot = self.rt(&self.ty_of(&kids[0]))?;
         let rhs = self.expr(&kids[1])?;
@@ -1167,6 +1212,18 @@ mod tests {
         assert!(!t.fields[3].stored, "FlowFields are not stored");
         assert!(t.fields[1].on_validate.is_some());
         assert!(t.per_company);
+    }
+
+    #[test]
+    fn a_removed_key_takes_no_index_position() {
+        // corpus recordref/TestKeyMetadataRowVersionRemoved.al:10-20: KeyIndex() skips the
+        // Removed key's position while a Pending key stays.
+        let (_, l) = lower_src(
+            "table 50901 R { fields { field(1; A; Integer) { } field(2; B; Integer) { } field(3; C; Integer) { } }
+             keys { key(PK; A) { } key(P; B) { ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; }
+                    key(Gone; B) { ObsoleteState = Removed; ObsoleteReason = 'x'; ObsoleteTag = '1'; } key(Live; C) { } } }",
+        );
+        assert_eq!(table_ir(&l).keys, vec![vec![0], vec![1], vec![2]]);
     }
 
     #[test]

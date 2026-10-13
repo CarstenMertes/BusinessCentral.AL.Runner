@@ -101,6 +101,16 @@ pub enum LibraryValue {
     #[default]
     Empty,
     Text(String),
+    /// An open `RecordRef`: it owns a record buffer exactly as a `Record`
+    /// variable does (fields, filters, key), so record operations are shared.
+    RecordRef(Rc<RefCell<RecordState>>),
+    /// A `FieldRef`: the record buffer it points into and the field's position.
+    FieldRef(Rc<RefCell<RecordState>>, usize),
+    /// A `KeyRef`: the record buffer and the key's index in the table's keys.
+    KeyRef(Rc<RefCell<RecordState>>, usize),
+    /// A `RecordRef` opened on a system table the workspace has no schema for:
+    /// only its number is known (corpus recordref/TestRecordRefOpenCompilationTarget.al).
+    SystemTable(i64),
 }
 
 impl Value {

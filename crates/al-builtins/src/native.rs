@@ -29,6 +29,12 @@ pub trait Ctx: FormatCtx {
     /// Record methods (`Record.Insert`, ...) need the store, triggers and
     /// table metadata: the VM implements them. `method` is the catalog name.
     fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal>;
+    /// `RecordRef`, `FieldRef` and `KeyRef` methods need the table schema and
+    /// the store, like record methods. `id` is the catalog overload id
+    /// (`RecordRef.Open#2`); the VM resolves it to the method.
+    fn ref_op(&mut self, id: &str, _receiver: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("builtin {id}")))
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -105,15 +111,18 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsRecordId#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
-    ("Variant.IsRecordRef#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsFieldRef#1", |_, _, _| Ok(Value::Boolean(false))),
+    ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
+    ("Variant.IsFieldRef#1", |_, r, _| is(r, "FieldRef")),
     ("Variant.IsDotNet#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsAutomation#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
 ];
 
 fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
-    REGISTRY.iter().chain(crate::collections::REGISTRY)
+    REGISTRY
+        .iter()
+        .chain(crate::collections::REGISTRY)
+        .chain(crate::refs::REGISTRY)
 }
 
 /// The implementation registered for overload `id`, if any.
@@ -273,6 +282,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     let v = &mut args[0];
     *v = match v {
         Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
+        // Clearing a RecordRef/FieldRef/KeyRef closes it: a fresh, unopened handle.
+        Value::Library(name, _) if matches!(name.as_str(), "RecordRef" | "FieldRef" | "KeyRef") => {
+            Value::Library(name.clone(), Default::default())
+        }
         Value::Boolean(_) => Value::Boolean(false),
         Value::Integer(_) => Value::Integer(0),
         Value::BigInteger(_) => Value::BigInteger(0),

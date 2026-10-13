@@ -33,7 +33,7 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 }
 
 impl Session {
-    fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
+    pub(crate) fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
         let t = rec.borrow().table as usize;
         self.engine.tables[t]
             .clone()
@@ -61,7 +61,7 @@ impl Session {
         }
     }
 
-    fn caption(&self, t: &TableDef) -> String {
+    pub(crate) fn caption(&self, t: &TableDef) -> String {
         self.engine.program.objects[t.object as usize]
             .properties
             .iter()

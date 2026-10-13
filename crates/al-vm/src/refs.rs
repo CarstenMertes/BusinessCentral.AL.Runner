@@ -1,0 +1,311 @@
+//! `RecordRef`, `FieldRef` and `KeyRef` on the VM.
+//!
+//! An open `RecordRef` owns a [`RecordState`] exactly as a `Record` variable
+//! does, so every data operation is the same code path as the record
+//! methods in `records.rs` (triggers included). `FieldRef` and `KeyRef` point
+//! into that buffer by field position and key index. Behaviour the corpus
+//! does not pin raises `Signal::Unsupported` instead of guessing.
+
+use crate::Session;
+use al_builtins::catalog::Catalog;
+use al_builtins::native::{AlError, Signal};
+use al_builtins::ops;
+use al_builtins::value::{LibraryValue, RecordState, RtType, Value};
+use al_data::TableDef;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::OnceLock;
+
+type Rec = Rc<RefCell<RecordState>>;
+type Lib = Rc<RefCell<LibraryValue>>;
+
+/// First number of the platform's system fields (`SystemId`, ...); they are
+/// not counted by `FieldCount` (docs/probes-needed.md).
+const SYSTEM_FIELD_BASE: u32 = 2_000_000_000;
+
+fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
+    Err(Signal::Unsupported(what.into()))
+}
+
+fn catalog() -> &'static Catalog {
+    static C: OnceLock<Catalog> = OnceLock::new();
+    C.get_or_init(Catalog::load)
+}
+
+fn handle(name: &str, v: LibraryValue) -> Value {
+    Value::Library(name.into(), Rc::new(RefCell::new(v)))
+}
+
+fn al_error(message: String) -> Signal {
+    Signal::Error(AlError {
+        message,
+        code: "Dialog".into(),
+        call_stack: String::new(),
+    })
+}
+
+fn int_arg(args: &[Value], i: usize) -> Result<i64, Signal> {
+    match args.get(i) {
+        Some(Value::Integer(n)) => Ok(i64::from(*n)),
+        Some(Value::BigInteger(n)) => Ok(*n),
+        other => unsupported(format!("integer argument {i}: {other:?}")),
+    }
+}
+
+/// A table's fields a caller can enumerate (`FieldCount`, `FieldIndex`): in
+/// field-number order, system fields left out.
+fn enumerable_fields(t: &TableDef) -> Vec<usize> {
+    let mut v: Vec<usize> = (0..t.fields.len())
+        .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE)
+        .collect();
+    v.sort_by_key(|&i| t.fields[i].id);
+    v
+}
+
+impl Session {
+    pub(crate) fn ref_op(&mut self, id: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        let Some(sig) = catalog().by_id(id) else {
+            return unsupported(format!("builtin {id}"));
+        };
+        let lib: Lib = match recv {
+            Some(Value::Library(_, l)) => l.clone(),
+            other => return unsupported(format!("{id} on {other:?}")),
+        };
+        match sig.receiver.as_str() {
+            "RecordRef" => self.recordref_op(&sig.name, &lib, args),
+            "FieldRef" => self.fieldref_op(&sig.name, &lib, args),
+            "KeyRef" => self.keyref_op(&sig.name, &lib, args),
+            other => unsupported(format!("{other} methods")),
+        }
+    }
+
+    fn open_ref(lib: &Lib, what: &str) -> Result<Rec, Signal> {
+        match &*lib.borrow() {
+            LibraryValue::RecordRef(r) | LibraryValue::FieldRef(r, _) | LibraryValue::KeyRef(r, _) => Ok(r.clone()),
+            LibraryValue::SystemTable(n) => unsupported(format!(
+                "{what} on a RecordRef opened on system table {n} (the platform's system tables are not modelled)"
+            )),
+            // BC's error text for this is not pinned by the corpus.
+            _ => unsupported(format!(
+                "{what} on a RecordRef that is not open (error text not pinned yet)"
+            )),
+        }
+    }
+
+    fn table_object(&self, no: i64) -> Option<usize> {
+        let no = u32::try_from(no).ok()?;
+        self.engine
+            .program
+            .objects
+            .iter()
+            .position(|o| o.table.is_some() && o.id == Some(no))
+    }
+
+    /// `RecordRef.Open(No, Temp, CompanyName)`.
+    fn rr_open(&mut self, lib: &Lib, args: &[Value]) -> Result<Value, Signal> {
+        let no = int_arg(args, 0)?;
+        let temp = match args.get(1) {
+            Some(v) => ops::truthy(v)?,
+            None => false,
+        };
+        if let Some(c) = args.get(2) {
+            if !al_builtins::native::text_of(c).unwrap_or_default().is_empty() {
+                return unsupported("RecordRef.Open with a company name (ChangeCompany is not implemented yet)");
+            }
+        }
+        let Some(table) = self.table_object(no) else {
+            return match no {
+                // corpus recordref/TestRecordRefOpenCompilationTarget.al:27-35: an internal
+                // system table is refused for a Cloud-target app (this app is Cloud).
+                2_000_000_071 => Err(al_error(format!(
+                    "You cannot open record {no} from a RecordRef data type when you are using target Cloud."
+                ))),
+                // :37-62: these system tables open for a Cloud-target app and report their number.
+                2_000_000_026 | 2_000_000_187 | 2_000_000_188 => {
+                    *lib.borrow_mut() = LibraryValue::SystemTable(no);
+                    Ok(Value::Null)
+                }
+                n if n >= i64::from(SYSTEM_FIELD_BASE) => unsupported(format!(
+                    "RecordRef.Open on system table {n} (whether a Cloud target may open it is not pinned)"
+                )),
+                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; how
+                // BC names the calling object is not pinned (docs/probes-needed.md).
+                n => Err(al_error(format!(
+                    "You tried to invoke the Table object with the ID {n} from the object (caller not recorded). \
+                     An object with that ID does not exist in the current application."
+                ))),
+            };
+        };
+        let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, temp)) else {
+            return unsupported("record buffer for RecordRef.Open");
+        };
+        *lib.borrow_mut() = LibraryValue::RecordRef(rec);
+        Ok(Value::Null)
+    }
+
+    fn recordref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
+        match method {
+            "Open" => return self.rr_open(lib, args),
+            // Close and Clear leave the ref unusable; closing an unopened ref is harmless.
+            "Close" => {
+                *lib.borrow_mut() = LibraryValue::Empty;
+                return Ok(Value::Null);
+            }
+            "Number" => {
+                if let LibraryValue::SystemTable(n) = &*lib.borrow() {
+                    return Ok(Value::Integer(*n as i32));
+                }
+            }
+            _ => {}
+        }
+        let rec = Self::open_ref(lib, &format!("RecordRef.{method}"))?;
+        let t = self.table(&rec)?;
+        match method {
+            "Number" => Ok(Value::Integer(
+                self.engine.program.objects[t.object as usize].id.unwrap_or(0) as i32,
+            )),
+            "Name" => Ok(Value::Text(t.name.clone())),
+            "IsEmpty" | "Count" | "Init" | "Insert" | "Modify" | "Delete" | "DeleteAll" | "Find" | "FindFirst"
+            | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => {
+                if method == "Insert" && args.len() > 1 {
+                    return unsupported("RecordRef.Insert with InsertWithSystemId");
+                }
+                self.record_op(method, &rec, args)
+            }
+            "Field" => {
+                let no = int_arg(args, 0)?;
+                match t.fields.iter().position(|f| i64::from(f.id) == no) {
+                    Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
+                    None => unsupported(format!(
+                        "RecordRef.Field({no}) on a field {} does not have (error text not pinned yet)",
+                        t.name
+                    )),
+                }
+            }
+            "FieldExist" => {
+                let no = int_arg(args, 0)?;
+                Ok(Value::Boolean(t.fields.iter().any(|f| i64::from(f.id) == no)))
+            }
+            "FieldCount" => Ok(Value::Integer(enumerable_fields(&t).len() as i32)),
+            "FieldIndex" => {
+                let i = int_arg(args, 0)?;
+                match usize::try_from(i - 1)
+                    .ok()
+                    .and_then(|i| enumerable_fields(&t).get(i).copied())
+                {
+                    Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
+                    None => unsupported(format!(
+                        "RecordRef.FieldIndex({i}) out of range (error text not pinned yet)"
+                    )),
+                }
+            }
+            "KeyCount" => Ok(Value::Integer(t.keys.len() as i32)),
+            "KeyIndex" => {
+                let i = int_arg(args, 0)?;
+                match usize::try_from(i - 1).ok().filter(|k| *k < t.keys.len()) {
+                    Some(k) => Ok(handle("KeyRef", LibraryValue::KeyRef(rec, k))),
+                    None => unsupported(format!(
+                        "RecordRef.KeyIndex({i}) out of range (error text not pinned yet)"
+                    )),
+                }
+            }
+            // Doc (RecordRef.GetTable): the ref takes the record variable's table, buffer and
+            // filters. The corpus pins the other half: the Record is left alone
+            // (recordref/TestRecordRefGetSetTableContracts.al:30-60).
+            "GetTable" => {
+                let Some(Value::Record(src)) = args.first() else {
+                    return unsupported(format!("RecordRef.GetTable of {:?}", args.first()));
+                };
+                let copy = src.borrow().clone();
+                *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));
+                Ok(Value::Null)
+            }
+            // Doc (RecordRef.SetTable): the record variable takes the ref's buffer and
+            // filters. The corpus pins that the Record's old buffer does not flow into the
+            // ref (recordref/TestRecordRefGetSetTableContracts.al:78-104).
+            "SetTable" => {
+                let Some(Value::Record(dst)) = args.first() else {
+                    return unsupported(format!("RecordRef.SetTable of {:?}", args.first()));
+                };
+                let (same_table, same_kind) = {
+                    let (s, d) = (rec.borrow(), dst.borrow());
+                    (s.table == d.table, s.temporary == d.temporary)
+                };
+                if !same_table || !same_kind {
+                    return unsupported("RecordRef.SetTable into a record of another table or temporary-ness");
+                }
+                if !Rc::ptr_eq(&rec, dst) {
+                    let s = rec.borrow();
+                    let mut d = dst.borrow_mut();
+                    d.fields = s.fields.clone();
+                    d.filters = s.filters.clone();
+                    d.key = s.key;
+                    d.ascending = s.ascending;
+                    d.position = s.position.clone();
+                }
+                Ok(Value::Null)
+            }
+            other => unsupported(format!("RecordRef.{other}")),
+        }
+    }
+
+    fn keyref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
+        let (rec, k) = match &*lib.borrow() {
+            LibraryValue::KeyRef(r, k) => (r.clone(), *k),
+            _ => return unsupported(format!("KeyRef.{method} on a KeyRef that was never assigned")),
+        };
+        let t = self.table(&rec)?;
+        match method {
+            // Every key a table declares is enabled: the lowerer does not read key
+            // properties, and no corpus key sets Enabled = false.
+            "Active" => Ok(Value::Boolean(true)),
+            "FieldCount" => Ok(Value::Integer(t.keys[k].len() as i32)),
+            "FieldIndex" => {
+                let i = int_arg(args, 0)?;
+                match usize::try_from(i - 1).ok().and_then(|i| t.keys[k].get(i).copied()) {
+                    Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
+                    // corpus recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws;
+                    // the text ("Index out of bounds" per tableextension/TestTableExtKeysAndInitValue.al:326)
+                    // is only described in a comment.
+                    None => unsupported(format!(
+                        "KeyRef.FieldIndex({i}) out of range (error text not pinned yet)"
+                    )),
+                }
+            }
+            other => unsupported(format!("KeyRef.{other}")),
+        }
+    }
+
+    fn fieldref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
+        let (rec, pos) = match &*lib.borrow() {
+            LibraryValue::FieldRef(r, p) => (r.clone(), *p),
+            _ => return unsupported(format!("FieldRef.{method} on a FieldRef that was never assigned")),
+        };
+        let t = self.table(&rec)?;
+        let field = &t.fields[pos];
+        match method {
+            "Value" => match args.first() {
+                None => Ok(rec.borrow().fields[pos].clone()),
+                Some(v) => {
+                    // Assigning Value does not run OnValidate (that is `Validate`).
+                    let v = ops::convert(v.clone(), &field.ty)?;
+                    rec.borrow_mut().fields[pos] = v;
+                    Ok(Value::Null)
+                }
+            },
+            "Number" => Ok(Value::Integer(field.id as i32)),
+            "Name" => Ok(Value::Text(field.name.clone())),
+            "Active" => Ok(Value::Boolean(true)),
+            "Length" => match &field.ty {
+                RtType::Text(Some(n)) | RtType::Code(Some(n)) => Ok(Value::Integer(*n as i32)),
+                other => unsupported(format!("FieldRef.Length of a {other:?} field")),
+            },
+            "SetRange" | "SetFilter" => {
+                let mut a = vec![Value::Integer(pos as i32)];
+                a.extend(args.iter().cloned());
+                self.record_op(method, &rec, &mut a)
+            }
+            other => unsupported(format!("FieldRef.{other}")),
+        }
+    }
+}

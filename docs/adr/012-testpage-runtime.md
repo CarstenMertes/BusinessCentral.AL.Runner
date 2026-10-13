@@ -391,6 +391,27 @@ entry in `docs/probes-needed.md` ("Page extensions") and a line in
 7. **An actionref is a control.** Invoking it invokes its target. Its
    `Visible`, `Enabled` and `Caption` are refused.
 
+Remaining TestPage-client gaps (branch `pages-misc`). Each has rows in `docs/probes-needed.md` and a line in
+`docs/owner-review.md`.
+
+8. **A `Page` variable is constructed at its first use, which runs OnInit once.** Options: leave procedure
+   calls on a `Page` variable refused, or construct the page then. Chosen: construct, because
+   `handlers/TestPageOnInit_Tests.al:188` pins "I, then the setter, then OnOpenPage". The open does not run OnInit again.
+9. **A list that serves its rows from OnFindRecord/OnNextRecord is walked through the triggers.**
+   First, Last, Next, Previous and GoToKey ask the triggers (`-`, `+`, +1, -1); a `CurrPage.Update` leaves the row
+   unread until the next move. Options: keep refusing such pages (10 tests), or model the walk. Chosen: model it
+   for the shapes the corpus asserts, and refuse reads the corpus does not pin.
+10. **The row an action deleted on such a list** is replaced by the four-call sequence the corpus measured.
+    The rule "the client knows other rows when its populated window holds more than the gone row" is an
+    inference from four tests; a shape outside them is refused.
+11. **`TestField.Lookup`** runs the control trigger, else the table field's OnLookup, else the TableRelation's lookup
+    page. A value written back by a `true` OnLookup goes through the same path as `SetValue`.
+12. **Page background tasks run synchronously, all of them, before the TestPage call returns**, in a read-only
+    worker session. Options: refuse, or model. Chosen: model; the transaction behaviour pinned by
+    `TestPageBgTaskTx_Tests.al` is not modelled and ends the run as unsupported.
+13. **`asserterror` around a failing TestPage call** keeps its rollback-to-last-commit rule; a case where BC
+    obviously keeps earlier uncommitted rows (a failed lookup) is refused when writes are pending, not
+    changed (the transaction area is not this branch's).
 ### Request pages and FilterPageBuilder (branch `requestpages`)
 
 Decided without owner review (2026-10-13/14). Each decision has an entry in

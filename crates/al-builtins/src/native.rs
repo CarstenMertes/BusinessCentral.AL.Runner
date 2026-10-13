@@ -642,11 +642,26 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Dictionary(_) => Value::Dictionary(Default::default()),
         // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
         Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
+        // A cleared TestPage or Page variable is a fresh, closed one (corpus
+        // handlers/TestPageEditable_Tests.al:93 EditableBoundToPageVariable_FollowsTheRow). A page
+        // that is open, waits for Trap(), or is a part is not cleared: nothing pins what follows.
+        Value::TestPage(st) => {
+            let object = {
+                let s = st.borrow();
+                if s.open || s.trapping || s.host.is_some() {
+                    return unsupported("Clear of a TestPage that is open, trapping or a part (not pinned)");
+                }
+                s.object
+            };
+            Value::TestPage(std::rc::Rc::new(std::cell::RefCell::new(
+                crate::value::PageState::closed(object),
+            )))
+        }
         // A codeunit or report variable nothing has used yet has no instance to release, so
         // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`
         // before `Probe.Run()`). Clearing one in use is not pinned.
         Value::Codeunit(rc) if !rc.borrow().initialized => return Ok(Value::Null),
-        other => return unsupported(&format!("Clear of {other:?}")),
+        other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)
 }
@@ -731,6 +746,12 @@ fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value
 
 fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
     Ok(Value::Boolean(receiver.is_some_and(|v| v.is(kind))))
+}
+
+/// The kind of a value for a refusal reason: the variant name, never its contents.
+fn value_kind(v: &Value) -> String {
+    let d = format!("{v:?}");
+    d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
 #[cfg(test)]

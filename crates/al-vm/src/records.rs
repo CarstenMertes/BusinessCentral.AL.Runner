@@ -693,6 +693,7 @@ impl Session {
             "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate"
         ) && !rec.borrow().temporary
         {
+            self.bg_refuse_write(t.object as usize, method)?;
             self.gate_write(method)?;
         }
         match method {
@@ -1037,6 +1038,45 @@ impl Session {
                         self.store_for(rec)
                             .get(&cx, &t, &pk)
                             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                    }
+                    // `=>`, `=<` and `=><`: the row itself, else its neighbour. Pinned for a row that is gone
+                    // from a table nothing filters, by the page client asking an OnFindRecord trigger
+                    // (corpus pageupdate/TestPageUpdateGoneRow.al:423 List_DeletedByAction_PassThroughFind_*);
+                    // with filters, or another current key, how they combine is not pinned.
+                    w @ ("=>" | "=<" | "=><") => {
+                        if !rec.borrow().filters.is_empty() || rec.borrow().key != 0 {
+                            return unsupported(format!("Find('{w}') with active filters or another current key"));
+                        }
+                        let pk = t.primary_key(&rec.borrow().fields);
+                        let exact = self
+                            .store_for(rec)
+                            .get(&cx, &t, &pk)
+                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                        match exact {
+                            Some(row) => Some(row),
+                            None => {
+                                let pos = position(&t, 0, &rec.borrow().fields);
+                                let next = if w == "=<" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, asc, Some(pos.clone()))?
+                                };
+                                let prev = if w == "=>" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, !asc, Some(pos))?
+                                };
+                                match (next, prev) {
+                                    (Some(n), Some(_)) if w == "=><" => {
+                                        let _ = n;
+                                        return unsupported(
+                                            "Find('=><') with a row on either side (which one BC picks is not pinned)",
+                                        );
+                                    }
+                                    (n, p) => n.or(p),
+                                }
+                            }
+                        }
                     }
                     other => return unsupported(format!("Find('{other}')")),
                 };

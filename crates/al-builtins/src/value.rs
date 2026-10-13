@@ -18,6 +18,9 @@ pub const ACTION_MEMBERS: [&str; 9] = [
     "RunSystem",
 ];
 
+/// The members of the system option `PromptMode` of a PromptDialog page, in docs order.
+pub const PROMPT_MODE_MEMBERS: [&str; 3] = ["Prompt", "Content", "Generate"];
+
 /// Runtime type of a slot: what a variable, field or parameter holds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RtType {
@@ -300,6 +303,20 @@ pub struct PageState {
     /// The session's application areas when the page opened: controls whose area they do not
     /// enable are not on the page.
     pub areas: String,
+    /// OnInit has run on the current instance. BC constructs a page, and so runs OnInit, when a
+    /// `Page` variable is first used, which may be a procedure call before it runs (corpus
+    /// handlers/TestPageOnInit_Tests.al:188 POI_SetterBeforeRunModal_RunsAfterOnInitAndSurvives);
+    /// the open that follows must not run it again. The open consumes the flag.
+    pub inited: bool,
+    /// A page whose rowset OnFindRecord/OnNextRecord serve was refreshed: which row the client
+    /// settles on is not modelled, so Rec-bound controls are not read until the cursor moves.
+    pub stale: bool,
+    /// `LookupMode(true)` was called on this variable (`Page.RunModal(id, Rec)` is a lookup too but is not).
+    pub lookup_set: bool,
+    /// Page background tasks the page enqueued and the client has not run yet: (task id, codeunit id,
+    /// parameters), and the next task id.
+    pub bg_tasks: std::collections::VecDeque<(i32, i32, Value)>,
+    pub bg_next_id: i32,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -345,6 +362,11 @@ impl PageState {
             host: None,
             ext_instances: Vec::new(),
             areas: String::new(),
+            inited: false,
+            stale: false,
+            lookup_set: false,
+            bg_tasks: Default::default(),
+            bg_next_id: 1,
         }
     }
 }

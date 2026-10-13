@@ -112,6 +112,7 @@ impl Session {
     /// the `AutoRollback` refusal (record/TestTransactionModelAutoRollback.al:Test07); the
     /// `AutoRollback` refusal outranks `[CommitBehavior(Error)]` (:Test08).
     pub(crate) fn commit_builtin(&mut self) -> Result<(), Signal> {
+        self.bg_refuse_transaction_call("Commit")?;
         if self.commit_behavior == CommitBehavior::Ignore {
             return Ok(());
         }
@@ -134,6 +135,7 @@ impl Session {
         args: &[Value],
         guarded: bool,
     ) -> Result<Value, Signal> {
+        self.bg_refuse_transaction_call("Codeunit.Run")?;
         let (inst, record_arg) = match (id, receiver) {
             ("Codeunit.Run#1", Some(Value::Codeunit(rc))) => (self.shared_instance(rc), args.first()),
             ("Codeunit.Run#3", None) => {

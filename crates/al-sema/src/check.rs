@@ -972,6 +972,14 @@ impl<'a> Checker<'a> {
                     .collect(),
             )));
         }
+        if key == "promptmode" {
+            return Some(E::TypeName(Ty::Option(
+                al_builtins::value::PROMPT_MODE_MEMBERS
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect(),
+            )));
+        }
         if key == "textencoding" {
             return Some(E::TypeName(Ty::Option(crate::types::text_encoding_members())));
         }

@@ -154,6 +154,45 @@ fn duration_text(ms: i64) -> String {
     if ms < 0 { format!("-{text}") } else { text }
 }
 
+/// The inverse of [`duration_text`]: exactly its own spelling, in milliseconds. Blank is zero
+/// (corpus handlers/TestPageFieldFormats_Tests.al:1703 SetValue_Duration, :1724 _Text, :1745 _BlankText).
+/// Any other spelling of a duration is not pinned.
+fn parse_duration(t: &str) -> Option<i64> {
+    if t.is_empty() {
+        return Some(0);
+    }
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t),
+    };
+    let units: [(&str, i64); 5] = [
+        ("day", 86_400_000),
+        ("hour", 3_600_000),
+        ("minute", 60_000),
+        ("second", 1000),
+        ("millisecond", 1),
+    ];
+    let words: Vec<&str> = body.split(' ').collect();
+    if words.len() % 2 != 0 {
+        return None;
+    }
+    let mut total = 0i64;
+    let mut at = 0;
+    for pair in words.chunks(2) {
+        let n: i64 = pair[0].parse().ok().filter(|n| *n > 0)?;
+        let (i, size) = units.iter().enumerate().find_map(|(i, (name, size))| {
+            let spelled = format!("{name}{}", if n == 1 { "" } else { "s" });
+            (pair[1] == spelled).then_some((i, *size))
+        })?;
+        if i < at {
+            return None;
+        }
+        at = i + 1;
+        total = total.checked_add(n.checked_mul(size)?)?;
+    }
+    Some(if neg { -total } else { total })
+}
+
 pub fn guid_text(g: &[u8; 16]) -> String {
     let h: String = g.iter().map(|b| format!("{b:02x}")).collect();
     format!(
@@ -323,6 +362,24 @@ fn parse_typed(
                     return None;
                 }
                 Value::Date(crate::format::day_from_civil(yy, m, d), false)
+            }
+        }
+        T::Duration => Value::Duration(parse_duration(t)?),
+        // A formula reads with or without its angle brackets and is kept in the bracketed form
+        // (dateformulacontrol/TestDateFormulaControl.al:63-100). BC reads a leading token and
+        // stops, so it accepts texts the runtime's formula parser refuses; those are not pinned and
+        // end as `Unsupported`, never as an invalid entry.
+        T::DateFormula => {
+            if t.is_empty() {
+                Value::DateFormula(String::new())
+            } else {
+                let bracketed = if t.starts_with('<') {
+                    t.to_string()
+                } else {
+                    format!("<{t}>")
+                };
+                crate::datefns::check_formula(&bracketed).ok()?;
+                Value::DateFormula(bracketed)
             }
         }
         T::Time => {
@@ -558,7 +615,27 @@ mod tests {
         assert!(matches!(p("", &T::Integer), Ok(Value::Integer(0))));
         assert!(matches!(p("12", &T::Integer), Ok(Value::Integer(12))));
         assert_eq!(p("abc", &T::Integer).unwrap_err(), ParseError::Invalid);
-        assert_eq!(p("5 seconds", &T::Duration).unwrap_err(), ParseError::Unsupported);
+        // handlers/TestPageFieldFormats_Tests.al:1724 SetValue_Duration_Text, :1745 _BlankText, :1703 SetValue_Duration
+        // (the control's own spelling reads back); other spellings are not pinned.
+        assert!(matches!(p("5 seconds", &T::Duration), Ok(Value::Duration(5000))));
+        assert!(matches!(p("", &T::Duration), Ok(Value::Duration(0))));
+        assert!(matches!(
+            p("1 hour 2 minutes 3 seconds", &T::Duration),
+            Ok(Value::Duration(3_723_000))
+        ));
+        assert!(matches!(
+            p("-1 day 1 millisecond", &T::Duration),
+            Ok(Value::Duration(-86_400_001))
+        ));
+        assert_eq!(p("5s", &T::Duration).unwrap_err(), ParseError::Unsupported);
+        assert_eq!(
+            p("1 second 2 hours", &T::Duration).unwrap_err(),
+            ParseError::Unsupported
+        );
+        // dateformulacontrol/TestDateFormulaControl.al: '<1D>' and the unbracketed '3D' name the same formula.
+        assert!(matches!(p("<1D>", &T::DateFormula), Ok(Value::DateFormula(s)) if s == "<1D>"));
+        assert!(matches!(p("3D", &T::DateFormula), Ok(Value::DateFormula(s)) if s == "<3D>"));
+        assert!(matches!(p("", &T::DateFormula), Ok(Value::DateFormula(s)) if s.is_empty()));
         assert!(
             matches!(p("1,234.50", &T::Decimal), Ok(Value::Decimal(d)) if d == Decimal::from_str("1234.50").unwrap())
         );

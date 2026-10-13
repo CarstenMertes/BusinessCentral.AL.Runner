@@ -1338,6 +1338,10 @@ impl Lowerer<'_> {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,
                     },
+                    on_lookup: match (f.declared_in, f.on_lookup) {
+                        (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
+                        _ => None,
+                    },
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
                     calc,
                     calc_refusal: refusal,
@@ -2503,10 +2507,12 @@ impl Lowerer<'_> {
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
-            let setter = self
-                .catalog
-                .by_id(&id)
-                .is_some_and(|s| s.receiver == "FieldRef" && s.name == "Value");
+            let setter = self.catalog.by_id(&id).is_some_and(|s| {
+                (s.receiver == "FieldRef" && s.name == "Value")
+                        // `CurrPage.Editable := true` is the setter form of `CurrPage.Editable(true)`
+                        // (corpus handlers/TestPageModalNewRowLine_Objects.al:69).
+                        || (s.receiver == "Page" && matches!(s.name.as_str(), "Editable" | "PromptMode"))
+            });
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));

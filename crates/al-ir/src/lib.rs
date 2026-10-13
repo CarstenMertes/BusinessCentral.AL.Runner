@@ -552,6 +552,8 @@ pub struct Field {
     pub relation: bool,
     /// (object, routine) of the field's OnValidate trigger, if any.
     pub on_validate: Option<(usize, usize)>,
+    /// (object, routine) of the field's table-side OnLookup trigger, if any.
+    pub on_lookup: Option<(usize, usize)>,
     /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
     pub properties: Vec<(String, String)>,
     /// The `TableRelation` arms in written order; empty when the field has none or its shape is

@@ -2,7 +2,7 @@
 
 Corpus commit `cf6e546` (the `corpus` submodule pin). Oracle: CI run
 38306086475, BC 27.5 — **4836 cases, 0 failures**. Regenerate the per-area
-numbers with `python3 tools/inventory.py corpus/tests/al-language oracle/junit-27.5.xml`.
+numbers with `python3 tools/inventory.py corpus/tests/al-language oracle/27/junit.xml`.
 
 ## Apps in the corpus
 
@@ -43,8 +43,9 @@ In the M2–M4 areas handlers are rare (`codeunit` 4, `record` 14, `session` 5,
 `types` 1); `MessageHandler` / `ConfirmHandler` are the ones needed early.
 
 **Preprocessor symbols.** Only `BC29PLUS` (6× `#if`, 1× `#if not`) and one
-`BC143PLUS`. No `BC28PLUS` guard is currently used. Emulating 27.5 means
-`BC27PLUS` defined, everything else undefined (ADR-007).
+`BC143PLUS`. No `BC28PLUS` guard is currently used. Emulating BC 27 means
+`BC27PLUS` defined, everything else undefined; BC 28 and 29 add `BC28PLUS` and
+`BC29PLUS` (ADR-015, `al_version::corpus_symbols`).
 
 **Fixtures per area** (top references): every area uses `ALTFixtureCleanup`.
 `record` is dominated by `ALT Universal` (433), then `ALT Trigger Log`,

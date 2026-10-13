@@ -3064,19 +3064,50 @@ impl Lowerer<'_> {
                     ret_used: true,
                 })
             }
+            // The checker refused a builtin of a newer runtime (ADR-015 3.3): say why.
+            None if self.runtime_refusal(node).is_some() => Err(self.runtime_refusal(node).unwrap_or_default()),
             other => Err(format!("call `{}` ({other:?}) is not lowered yet", node.text())),
         }
     }
+
+    /// The checker's AR1005 on this call, if any.
+    fn runtime_refusal(&self, node: &SyntaxNode) -> Option<String> {
+        let path = &self.ws.files[self.file].path;
+        let at: usize = node.text_range().start().into();
+        self.checked
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "AR1005" && d.offset == at && &d.file == path)
+            .map(|d| format!("AR1005 {}", d.message))
+    }
 }
 
-/// Load, check and lower in one go.
+/// Load, check and lower in one go, against the newest catalog (nothing hidden).
 pub fn compile(
     apps: Vec<crate::workspace::AppSource>,
     symbols: &std::collections::BTreeSet<String>,
 ) -> (Workspace, Lowered) {
+    compile_with(apps, symbols, &al_builtins::catalog::Catalog::load())
+}
+
+/// Like [`compile`], for a run target: builtins newer than the target's runtime are
+/// refused (ADR-015 3.3).
+pub fn compile_for(
+    apps: Vec<crate::workspace::AppSource>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: &al_version::Target,
+) -> (Workspace, Lowered) {
+    compile_with(apps, symbols, &al_builtins::catalog::Catalog::for_target(target))
+}
+
+fn compile_with(
+    apps: Vec<crate::workspace::AppSource>,
+    symbols: &std::collections::BTreeSet<String>,
+    catalog: &al_builtins::catalog::Catalog,
+) -> (Workspace, Lowered) {
     let ws = Workspace::load(apps, symbols);
     let members = crate::members::build(&ws);
-    let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let checked = crate::check::check(&ws, &members, catalog);
     let lowered = lower(&ws, &members, &checked);
     (ws, lowered)
 }
@@ -3296,6 +3327,37 @@ mod tests {
             })]
         );
         assert_eq!(l.calls[0][pi], vec![(0, qi)]);
+    }
+
+    #[test]
+    fn a_builtin_newer_than_the_target_runtime_makes_the_routine_unsupported() {
+        let src =
+            "codeunit 50100 C { procedure P() begin Codeunit.Run('Some Codeunit'); end; procedure Ok() begin end; }";
+        let apps = || {
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }]
+        };
+        let target = |bc: &str| al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+        let (_, l) = compile_for(apps(), &Default::default(), &target("27.5"));
+        let (pi, _) = routine(&l, "P");
+        let (oi, _) = routine(&l, "Ok");
+        assert_eq!(
+            l.unsupported[0][pi],
+            vec!["AR1005 `Run` is not available in runtime 16.0 (introduced in 17.0)".to_string()],
+            "refused at runtime 16.0"
+        );
+        assert!(l.unsupported[0][oi].is_empty());
+        // At runtime 17.0 the by-name overload exists; the call lowers (the VM refuses it later).
+        let (_, l) = compile_for(apps(), &Default::default(), &target("28"));
+        assert!(
+            !l.unsupported[0][pi].iter().any(|r| r.contains("AR1005")),
+            "{:?}",
+            l.unsupported[0][pi]
+        );
     }
 
     #[test]

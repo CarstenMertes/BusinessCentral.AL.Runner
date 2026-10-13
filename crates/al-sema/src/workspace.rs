@@ -549,7 +549,7 @@ mod tests {
     }
 
     fn load(apps: Vec<AppSource>) -> Workspace {
-        Workspace::load(apps, &["BC27PLUS".to_string()].into())
+        Workspace::load(apps, &al_version::corpus_symbols(27))
     }
 
     fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {

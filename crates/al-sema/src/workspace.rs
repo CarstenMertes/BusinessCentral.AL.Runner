@@ -135,10 +135,13 @@ pub struct SourceFileData {
     problem: OnceLock<Option<String>>,
     /// Whether the file was only scanned at load (a dependency app's file).
     pub lazy: bool,
-    /// Whether the file declares a page, the only objects `pages::expand` changes.
+    /// Whether the file declares a page or report, the only objects `pages::expand_ranges` changes.
     has_page: bool,
     pub namespace: Option<String>,
     pub usings: Vec<String>,
+    /// Byte ranges of the text the compiler added to the file (page expression routines). The
+    /// green tree holds that text; source positions leave it out. Known once the file is parsed.
+    synthetic: OnceLock<Vec<ByteRange>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +169,9 @@ pub struct ObjectSym {
     /// Event subscriptions it declares, for objects of scanned files.
     pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
 }
+
+/// A byte range of a parsed text.
+type ByteRange = (usize, usize);
 
 /// A `DotNet` alias declared by a `dotnet { }` block (ADR-014).
 #[derive(Debug, Clone)]
@@ -251,18 +257,20 @@ impl Workspace {
                     .map(move |(fi, (path, src))| (ai, fi, lazy, path.as_str(), src.as_str()))
             })
             .collect();
-        let parsed: Vec<ParsedFile> = inputs
+        let parsed: Vec<(ParsedFile, Vec<ByteRange>)> = inputs
             .par_iter()
             .map_init(al_syntax::TreeCache::default, |cache, &(_, _, lazy, _, src)| {
                 if lazy {
-                    scanned_file(src, symbols)
+                    (scanned_file(src, symbols), Vec::new())
                 } else {
-                    let expanded = crate::pages::expand(src, symbols);
-                    parse_file(expanded.as_deref().unwrap_or(src), symbols, cache)
+                    match crate::pages::expand_ranges(src, symbols) {
+                        Some((text, added)) => (parse_file(&text, symbols, cache), added),
+                        None => (parse_file(src, symbols, cache), Vec::new()),
+                    }
                 }
             })
             .collect();
-        for ((ai, file_in_app, lazy, path, _), file) in inputs.into_iter().zip(parsed) {
+        for ((ai, file_in_app, lazy, path, _), (file, added)) in inputs.into_iter().zip(parsed) {
             for e in &file.errors {
                 ws.diagnostics.push(Diagnostic {
                     file: path.to_string(),
@@ -279,9 +287,15 @@ impl Workspace {
                 green: file.green.map(OnceLock::from).unwrap_or_default(),
                 problem: OnceLock::new(),
                 lazy,
-                has_page: file.objects.iter().any(|o| o.kind == ObjKind::Page),
+                has_page: file.objects.iter().any(|o| {
+                    matches!(
+                        o.kind,
+                        ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension
+                    )
+                }),
                 namespace: file.namespace.clone(),
                 usings: file.usings,
+                synthetic: if lazy { OnceLock::new() } else { OnceLock::from(added) },
             });
             for decl in file.dotnet {
                 ws.dotnet.push(DotNetSym {
@@ -390,8 +404,14 @@ impl Workspace {
                 }
                 let src = &self.apps[f.app].files[f.file_in_app].1;
                 // Only a page can have properties to turn into routines; skip the extra parse otherwise.
-                let expanded = f.has_page.then(|| crate::pages::expand(src, &self.symbols)).flatten();
-                let src = expanded.as_deref().unwrap_or(src);
+                let expanded = f
+                    .has_page
+                    .then(|| crate::pages::expand_ranges(src, &self.symbols))
+                    .flatten();
+                let src = expanded.as_ref().map(|(t, _)| t.as_str()).unwrap_or(src);
+                let _ = f
+                    .synthetic
+                    .set(expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default());
                 let parsed = CACHE.with(|c| match c.try_borrow_mut() {
                     Ok(mut cache) => parse_file(src, &self.symbols, &mut cache),
                     Err(_) => parse_file(src, &self.symbols, &mut al_syntax::TreeCache::default()),
@@ -405,6 +425,12 @@ impl Workspace {
                 parsed.green.expect("a parsed file has a tree")
             })
             .clone()
+    }
+
+    /// The byte ranges of file `fi`'s parsed text that the compiler added (page expression routines).
+    pub fn synthetic(&self, fi: usize) -> &[ByteRange] {
+        self.green(fi);
+        self.files[fi].synthetic.get().map_or(&[], Vec::as_slice)
     }
 
     /// Why the objects of file `fi` cannot be used: its source does not parse cleanly.

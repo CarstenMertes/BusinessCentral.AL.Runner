@@ -67,6 +67,8 @@ type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 mod areas;
 mod filter;
 mod parts;
+mod request;
+pub(crate) use request::RequestClosed;
 mod runobject;
 
 impl Session {
@@ -204,6 +206,9 @@ impl Session {
         let object = st.borrow().object as usize;
         if !engine.events.is_subscribed(object, event) {
             return Ok(allow.unwrap_or(true));
+        }
+        if engine.program.objects[object].rec_slot.is_none() {
+            return unsupported(format!("page event {event} on a page without a source table"));
         }
         let rec = Value::Record(self.page_rec(st));
         let xobj = &engine.program.objects[object];
@@ -1020,6 +1025,9 @@ impl Session {
     /// StandardDialog both; a NavigatePage only OK; a PromptDialog Cancel, and OK unless it declares
     /// systemaction(OK); a ConfirmationDialog neither).
     fn builtin_offered(&self, st: &St, which: &str) -> bool {
+        if self.is_request_page(st) {
+            return self.request_builtin_offered(st, which);
+        }
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let page_type = engine.program.objects[object]
@@ -2245,7 +2253,18 @@ impl Session {
                 ir::Binding::Field(pos) => {
                     self.ret_used = false;
                     let rec = rec.clone().expect("rec-bound");
-                    self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()])?;
+                    // The field's OnValidate sees its own number as CurrFieldNo
+                    // (handlers/TestPageCurrFieldNo_Tests.al:36-60); the page's save later sees 0 (:105-123).
+                    let number = {
+                        let table = rec.borrow().table as usize;
+                        self.engine.tables[table]
+                            .as_ref()
+                            .map_or(0, |t| t.fields[pos].id as i32)
+                    };
+                    self.curr_field_no.push((Rc::as_ptr(&rec) as usize, number));
+                    let validated = self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()]);
+                    self.curr_field_no.pop();
+                    validated?;
                 }
                 ir::Binding::Var(slot) => {
                     let inst = self.owner_instance(st, ctl.owner);
@@ -2331,6 +2350,15 @@ impl Session {
             }
             _ => return unsupported(format!("{method} on a built-in control")),
         };
+        // The data items and actions of a report's request page.
+        if self.is_request_page(st) {
+            let kind = page_of(&self.engine(), st).controls[idx].kind.clone();
+            match kind {
+                ir::ControlKind::DataItem => return self.request_item_op(method, st, idx, args),
+                ir::ControlKind::Action if m == "Invoke" => return self.request_action_invoke(st, idx),
+                _ => {}
+            }
+        }
         // The compiler emits no call for a `Value()` whose result is thrown away: nothing is
         // evaluated, on a control that is on the page or not (corpus
         // pageapplicationarea/TestPageDiscardedFieldValueCall.al: RemovedControl_DiscardedValueCall_RaisesNothing,
@@ -2832,6 +2860,26 @@ impl Session {
     }
 
     fn control_text(&mut self, st: &St, idx: usize, v: &Value) -> Result<String, Signal> {
+        // A Media control shows the id of its media, a MediaSet control the id of the first media
+        // of its set; lowercase, no braces, empty when there is none
+        // (handlers/TestPageFieldFormats_Tests.al:28, :628-640, TestPageFieldFormatsMediaFilled_Tests.al).
+        if let (Some(RtType::Library(n)), Value::Guid(id)) = (self.control_type(st, idx, v), v) {
+            let shown = if n.eq_ignore_ascii_case("Media") {
+                Some(*id)
+            } else if n.eq_ignore_ascii_case("MediaSet") {
+                self.media.sets.get(id).and_then(|m| m.first().copied())
+            } else {
+                None
+            };
+            if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet") {
+                return Ok(match shown {
+                    Some(g) if g != [0; 16] => al_builtins::pagefmt::guid_text(&g)
+                        .trim_matches(['{', '}'])
+                        .to_lowercase(),
+                    _ => String::new(),
+                });
+            }
+        }
         if let Value::Library(name, _) = v {
             return unsupported(format!("control text of a {name} value"));
         }

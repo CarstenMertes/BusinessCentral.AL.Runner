@@ -1,5 +1,6 @@
-//! List and Dictionary methods. Error texts for out-of-range indexes and
-//! missing keys are not pinned by the corpus yet: those raise Unsupported.
+//! List and Dictionary methods. The corpus pins the error of `List.Get` outside the list and of
+//! `Dictionary.Get` of a missing key; the other out-of-range indexes and `Dictionary.Add` of an
+//! existing key raise Unsupported.
 
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::ops::compare;
@@ -36,7 +37,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     }),
     ("List.Get#1", |_, r, a| {
         let i = index(&a[0])?;
-        with_list(r, |l| l.get(i).cloned().map_or_else(out_of_range, Ok))
+        with_list(r, |l| l.get(i).cloned().map_or_else(list_get_error, Ok))
     }),
     ("List.Get#2", |c, r, a| {
         let i = index(&a[0])?;
@@ -47,7 +48,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
                 Ok(Value::Boolean(true))
             }
             None if c.ret_used() => Ok(Value::Boolean(false)),
-            None => out_of_range(),
+            None => list_get_error(),
         }
     }),
     ("List.IndexOf#1", |_, r, a| {
@@ -157,14 +158,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
             d.iter()
                 .find(|(k, _)| eq(k, &a[0]))
                 .map(|(_, v)| v.clone())
-                .map_or_else(
-                    || {
-                        Err(Signal::Unsupported(
-                            "Dictionary.Get of a missing key (error text not pinned yet)".into(),
-                        ))
-                    },
-                    Ok,
-                )
+                .map_or_else(key_not_found, Ok)
         })
     }),
     ("Dictionary.Get#2", |c, r, a| {
@@ -175,9 +169,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
                 Ok(Value::Boolean(true))
             }
             None if c.ret_used() => Ok(Value::Boolean(false)),
-            None => Err(Signal::Unsupported(
-                "Dictionary.Get of a missing key (error text not pinned yet)".into(),
-            )),
+            None => key_not_found(),
         }
     }),
     ("Dictionary.Keys#1", |_, r, _| {
@@ -222,6 +214,26 @@ fn eq(a: &Value, b: &Value) -> bool {
 
 fn position(l: &[Value], v: &Value) -> Option<usize> {
     l.iter().position(|x| eq(x, v))
+}
+
+fn error<T>(message: &str) -> Result<T, Signal> {
+    Err(Signal::Error(crate::native::AlError {
+        message: message.into(),
+        code: String::new(),
+        call_stack: String::new(),
+    }))
+}
+
+/// `List.Get` with an index past the end, in both forms (collections/TestListTrappableError.al:21-45).
+fn list_get_error<T>() -> Result<T, Signal> {
+    error("An invalid argument was passed to a 'List' data type method.")
+}
+
+/// `Dictionary.Get` of a missing key: pinned for the `Get(Key, var Value)` form
+/// (collections/TestCollectionsDictionary.al:42-55); the value form is only pinned to raise
+/// (collections/TestCollectionContracts.al:188), and is assumed to say the same (probes-needed).
+fn key_not_found<T>() -> Result<T, Signal> {
+    error("The given key was not present in the dictionary.")
 }
 
 fn out_of_range<T>() -> Result<T, Signal> {

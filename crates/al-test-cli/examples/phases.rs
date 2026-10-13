@@ -43,6 +43,8 @@ fn main() {
         lap: Instant::now(),
     };
     let (mut bytes, mut summary) = (0, String::new());
+    // Lowering again without source positions, to show what the positions cost.
+    let mut lower_no_pos = Duration::MAX;
     for _ in 0..runs {
         laps.lap = Instant::now();
         let tests = root.join("corpus/tests");
@@ -83,6 +85,10 @@ fn main() {
         laps.mark(5);
         let lowered = al_sema::lower::lower(&ws, &members, &checked);
         laps.mark(6);
+        let t = Instant::now();
+        std::hint::black_box(al_sema::lower::lower_with_positions(&ws, &members, &checked, false));
+        lower_no_pos = lower_no_pos.min(t.elapsed());
+        laps.lap = Instant::now();
         let blocked = lowered
             .unsupported
             .iter()
@@ -91,8 +97,9 @@ fn main() {
         let engine = al_vm::Engine::new(lowered.program.clone(), blocked);
         laps.mark(7);
         summary = format!(
-            "{} objects, {} diagnostics",
+            "{} objects, {} source positions, {} diagnostics",
             lowered.program.objects.len(),
+            lowered.program.positions.len(),
             checked.diagnostics.len()
         );
         if let Some(d) = &checked.demand {
@@ -126,6 +133,11 @@ fn main() {
     for (name, d) in NAMES.iter().zip(laps.best) {
         println!("{name:>15}  {:>8.1} ms", d.as_secs_f64() * 1e3);
     }
+    println!(
+        "{:>15}  {:>8.1} ms  (the same, without source positions)",
+        "lower no pos",
+        lower_no_pos.as_secs_f64() * 1e3
+    );
     let b = &laps.best;
     let compile = b[0] + b[3] + b[4] + b[5] + b[6];
     println!(

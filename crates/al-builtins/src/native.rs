@@ -103,6 +103,16 @@ pub trait Ctx: FormatCtx {
     fn install_scope(&self) -> bool {
         false
     }
+    /// `Error(ErrorInfo)` of a collectible error: inside a `[ErrorBehavior(Collect)]` scope the
+    /// session keeps a copy and the call returns normally (`true`); outside one it is raised like
+    /// any other error (`false`).
+    fn collect_error(&mut self, _info: &Value) -> bool {
+        false
+    }
+    /// The session's media objects and media sets (`Media` and `MediaSet` fields).
+    fn media_store(&mut self) -> Option<&mut crate::media::MediaStore> {
+        None
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -212,6 +222,19 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
     // ids not listed (SaveAs, SaveAsPdf, Preview, the layout accessors, Skip, Break, ...) need
     // output or behaviour the corpus does not pin and are refused in lowering.
+    // A FilterPageBuilder keeps record buffers and renders views: the VM runs it (al-vm filterpage.rs).
+    ("FilterPageBuilder.AddTable#1", vm_only),
+    ("FilterPageBuilder.AddRecord#1", vm_only),
+    ("FilterPageBuilder.AddRecordRef#1", vm_only),
+    ("FilterPageBuilder.AddField#1", vm_only),
+    ("FilterPageBuilder.AddField#2", vm_only),
+    ("FilterPageBuilder.AddFieldNo#1", vm_only),
+    ("FilterPageBuilder.Count#1", vm_only),
+    ("FilterPageBuilder.GetView#1", vm_only),
+    ("FilterPageBuilder.SetView#1", vm_only),
+    ("FilterPageBuilder.Name#1", vm_only),
+    ("FilterPageBuilder.PageCaption#1", vm_only),
+    ("FilterPageBuilder.RunModal#1", vm_only),
     ("Report.Run#1", vm_only),
     ("Report.Run#3", vm_only),
     ("Report.RunModal#1", vm_only),
@@ -236,6 +259,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
     ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
     ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetLoadFields#1", |c, r, a| c.record("SetLoadFields", r, a)),
+    ("Record.AddLoadFields#1", |c, r, a| c.record("AddLoadFields", r, a)),
+    ("Record.SetBaseLoadFields#1", |c, r, a| {
+        c.record("SetBaseLoadFields", r, a)
+    }),
+    ("Record.AreFieldsLoaded#1", |c, r, a| c.record("AreFieldsLoaded", r, a)),
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record("SetAutoCalcFields", r, a)
     }),
@@ -282,6 +311,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .chain(crate::datefns::REGISTRY)
         .chain(crate::mathfns::REGISTRY)
         .chain(crate::sessionfns::REGISTRY)
+        .chain(crate::media::REGISTRY)
         .chain(crate::moduleinfo::REGISTRY)
 }
 
@@ -425,10 +455,12 @@ fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let e = ctx.last_error();
     if e.call_stack.is_empty() && !(e.message.is_empty() && e.code.is_empty()) {
-        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al); they are not
-        // tracked. The answer is non-empty, as in BC, but its content is a marker that every text
-        // function refuses to read ([`text_of`]), so a test that inspects the frames is not run
-        // while one that only calls the function (error-handling/TestGetLastError.al) still passes.
+        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al). The VM adds
+        // them as the error unwinds (al-vm/src/callstack.rs), so an error with no frame at all
+        // (raised outside any AL routine) is the only one that gets here. The answer is non-empty,
+        // as in BC, but its content is a marker that every text function refuses to read
+        // ([`text_of`]), so a test that inspects the frames is not run while one that only calls
+        // the function (error-handling/TestGetLastError.al) still passes.
         return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string()));
     }
     Ok(Value::Text(e.call_stack))
@@ -577,6 +609,19 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         {
             Value::Library(name.clone(), Default::default())
         }
+        // Clear empties the controls and leaves an assigned page caption alone
+        // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Clear_KeepsTheAssignedCaption).
+        Value::Library(name, cell) if name == "FilterPageBuilder" => {
+            let caption = match &*cell.borrow() {
+                crate::value::LibraryValue::FilterPageBuilder(s) => s.caption.clone(),
+                _ => None,
+            };
+            let state = crate::value::LibraryValue::FilterPageBuilder(crate::value::FilterPageState {
+                controls: Vec::new(),
+                caption,
+            });
+            Value::Library(name.clone(), std::rc::Rc::new(std::cell::RefCell::new(state)))
+        }
         Value::Boolean(_) => Value::Boolean(false),
         Value::Integer(_) => Value::Integer(0),
         Value::BigInteger(_) => Value::BigInteger(0),
@@ -597,6 +642,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Dictionary(_) => Value::Dictionary(Default::default()),
         // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
         Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
+        // A codeunit or report variable nothing has used yet has no instance to release, so
+        // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`
+        // before `Probe.Run()`). Clearing one in use is not pinned.
+        Value::Codeunit(rc) if !rc.borrow().initialized => return Ok(Value::Null),
         other => return unsupported(&format!("Clear of {other:?}")),
     };
     Ok(Value::Null)
@@ -790,8 +839,9 @@ pub(crate) mod tests {
 
     #[test]
     fn the_call_stack_of_a_recorded_error_is_refused_not_invented() {
-        // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`; call
-        // stacks are not tracked: after an error the answer is a marker no text function reads.
+        // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`. The VM
+        // fills them in (al-vm/tests/call_stack.rs); an error that has no frame gets a marker no
+        // text function reads.
         let mut ctx = TestCtx::default();
         let f = lookup("System.GetLastErrorCallStack#1").unwrap();
         assert!(matches!(f(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s.is_empty()));

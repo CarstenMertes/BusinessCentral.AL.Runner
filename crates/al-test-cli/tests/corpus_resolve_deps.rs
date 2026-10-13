@@ -3,7 +3,9 @@
 //! of the ADR. The list shrinks as dependencies, platform tables and the rest arrive; it
 //! never grows without a decision.
 //!
-//! Needs the `corpus` submodule, including its `.alpackages`.
+//! Needs the `corpus` submodule, including its `.alpackages`. Ignored in a debug build (about 45 s
+//! there); CI runs it in the release step:
+//! `cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored`.
 
 use al_test_cli::{deps, runtime};
 use std::collections::BTreeMap;
@@ -17,6 +19,7 @@ fn root() -> PathBuf {
 }
 
 #[test]
+#[ignore = "slow unoptimised: cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored"]
 fn unresolved_references_are_exactly_what_no_dependency_supplies() {
     let tests = root().join("corpus/tests");
     assert!(

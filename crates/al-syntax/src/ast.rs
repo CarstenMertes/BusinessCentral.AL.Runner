@@ -556,6 +556,13 @@ impl Routine {
             .position(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"));
         kw.and_then(|i| toks.get(i + 1)).map(ident_text).unwrap_or_default()
     }
+    /// Offset of the `procedure` or `trigger` keyword (after any attributes and modifiers).
+    pub fn keyword_offset(&self) -> Option<usize> {
+        self.keyword_pos()
+            .iter()
+            .find(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"))
+            .map(|t| usize::from(t.text_range().start()))
+    }
     fn has_modifier(&self, m: &str) -> bool {
         self.keyword_pos()
             .iter()

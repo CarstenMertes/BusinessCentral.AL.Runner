@@ -154,7 +154,7 @@ fn duration_text(ms: i64) -> String {
     if ms < 0 { format!("-{text}") } else { text }
 }
 
-fn guid_text(g: &[u8; 16]) -> String {
+pub fn guid_text(g: &[u8; 16]) -> String {
     let h: String = g.iter().map(|b| format!("{b:02x}")).collect();
     format!(
         "{{{}-{}-{}-{}-{}}}",

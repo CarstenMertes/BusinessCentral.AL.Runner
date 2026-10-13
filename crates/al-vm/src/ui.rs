@@ -23,6 +23,9 @@ pub enum UiKind {
     Page,
     /// `[ModalPageHandler]`: answers `Page.RunModal`.
     ModalPage,
+    /// `[RequestPageHandler]`: answers the request page of a report run. Bound by the report of
+    /// its `TestRequestPage` parameter.
+    RequestPage,
 }
 
 impl UiKind {
@@ -34,6 +37,7 @@ impl UiKind {
             "strmenuhandler" => Some(UiKind::StrMenu),
             "pagehandler" => Some(UiKind::Page),
             "modalpagehandler" => Some(UiKind::ModalPage),
+            "requestpagehandler" => Some(UiKind::RequestPage),
             _ => None,
         }
     }
@@ -45,6 +49,7 @@ impl UiKind {
             UiKind::StrMenu => "StrMenu",
             UiKind::Page => "Page",
             UiKind::ModalPage => "ModalPage",
+            UiKind::RequestPage => "RequestPage",
         }
     }
 }
@@ -90,12 +95,14 @@ impl Session {
             UiKind::StrMenu => {
                 r.params == 3 && r.by_var == [false, true, false] && matches!(ty(1), Some(RtType::Integer))
             }
-            UiKind::Page | UiKind::ModalPage => {
+            UiKind::Page | UiKind::ModalPage | UiKind::RequestPage => {
                 r.params == 1 && r.by_var == [true] && matches!(ty(0), Some(RtType::TestPage(_)))
             }
         };
         let page = match ty(0) {
-            Some(RtType::TestPage(p)) if matches!(kind, UiKind::Page | UiKind::ModalPage) => Some(*p),
+            Some(RtType::TestPage(p)) if matches!(kind, UiKind::Page | UiKind::ModalPage | UiKind::RequestPage) => {
+                Some(*p)
+            }
             _ => None,
         };
         if !ok {
@@ -204,6 +211,13 @@ impl Session {
         };
         h.fired = true;
         Ok((h.object, h.routine, h.instance.clone()))
+    }
+
+    /// Whether the test bound a handler of `kind` for `page`.
+    pub(crate) fn has_page_handler(&self, kind: UiKind, page: u32) -> bool {
+        self.ui
+            .as_ref()
+            .is_some_and(|s| s.handlers.iter().any(|h| h.kind == kind && h.page == Some(page)))
     }
 
     /// The bound handler of `kind` for `page`, marked as used, or `None` when the test bound

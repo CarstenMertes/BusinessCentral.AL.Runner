@@ -856,3 +856,12 @@ AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, wh
 7. **Temporary records are not stamped** with `SystemCreatedAt/By` and `SystemModifiedAt/By`.
    Evidence is AL Runner's reading of the platform: the stamps come from the SQL layer, which a
    temporary record never reaches. No corpus test reads one. Probe wanted (docs/probes-needed.md).
+8. **The dependency golden test is `#[ignore]`d in a debug build and CI runs it in the release
+   step.** `al-test-cli/tests/corpus_resolve_deps.rs` loads Base Application and checks it, which
+   takes about 45 s unoptimised. Options: keep it in `cargo test` (slow gate for every agent);
+   ignore it and run it with the perf budgets in release (chosen).
+9. **The test-library apps come from the artifact feed through the download fallback (Layer A).**
+   The corpus names System Application Test Library, Permissions Mock and (through them)
+   Azure AD Plan Test Library; no `.alpackages` holds them. Until Layer A exists a developer can
+   put them in a local `--deps` folder; CI keeps refusing the tests that need them. None of them
+   is committed (hard rule 7).

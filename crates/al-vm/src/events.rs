@@ -217,7 +217,7 @@ fn int_consts(stmts: &[ir::Stmt], out: &mut Vec<i64>) {
                 int_consts(otherwise, out);
             }
             S::Exit(e) => e.iter().for_each(|e| int_consts_expr(e, out)),
-            S::Break => {}
+            S::Break | S::Pos(_) => {}
             S::AssertError(b) => int_consts(b, out),
         }
     }

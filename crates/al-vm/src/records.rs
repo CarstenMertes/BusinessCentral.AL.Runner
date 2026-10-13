@@ -246,6 +246,34 @@ impl Session {
         self.raise(t.object as usize, event, element, &names, &mut args, None)
     }
 
+    /// The Before event, the field's OnValidate and the After event of a `Validate`.
+    fn validate_hooks(
+        &mut self,
+        t: &TableDef,
+        rec: &Rec,
+        xrec: &Rec,
+        field: &al_ir::Field,
+        pos: usize,
+        old_value: Value,
+    ) -> Result<(), Signal> {
+        // Before event (Rec holds the new value, xRec the old row), the field's OnValidate,
+        // After event: record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable.
+        // That the Before event sees the new value is docs/probes-needed.md.
+        self.table_event(t, "onbeforevalidateevent", rec, Some(xrec), false, Some(&field.name))?;
+        if let Some((object, routine)) = field.on_validate {
+            if let Err(e) = self.run_trigger(object, routine, rec, Some(xrec)) {
+                // The field is back at its old value when its OnValidate raises
+                // (record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
+                // Only the validated field is pinned; other changes stay.
+                if matches!(e, Signal::Error(_)) {
+                    rec.borrow_mut().fields[pos] = old_value;
+                }
+                return Err(e);
+            }
+        }
+        self.table_event(t, "onaftervalidateevent", rec, Some(xrec), false, Some(&field.name))
+    }
+
     /// `Record.Delete(run)` of the row `rec` holds: Before event, OnDelete, the
     /// delete, After event.
     fn delete_row(&mut self, t: &TableDef, rec: &Rec, run: bool) -> Result<Value, Signal> {
@@ -777,24 +805,18 @@ impl Session {
                     let v = ops::convert(v.clone(), &field.ty)?;
                     rec.borrow_mut().fields[pos] = v;
                 }
-                // Before event (Rec holds the new value, xRec the old row), the field's
-                // OnValidate, After event: record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable.
-                // That the Before event sees the new value is docs/probes-needed.md.
                 let old_value = before[pos].clone();
-                let xrec = Self::xrec_handle(rec, before);
-                self.table_event(&t, "onbeforevalidateevent", rec, Some(&xrec), false, Some(&field.name))?;
-                if let Some((object, routine)) = field.on_validate {
-                    if let Err(e) = self.run_trigger(object, routine, rec, Some(&xrec)) {
-                        // The field is back at its old value when its OnValidate raises
-                        // (record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
-                        // Only the validated field is pinned; other changes stay.
-                        if matches!(e, Signal::Error(_)) {
-                            rec.borrow_mut().fields[pos] = old_value;
-                        }
-                        return Err(e);
-                    }
-                }
-                self.table_event(&t, "onaftervalidateevent", rec, Some(&xrec), false, Some(&field.name))?;
+                // A Validate nested in another one's trigger on the same record keeps the outer
+                // call's xRec (record/TestXRecContracts.al:OnValidate_Nested_InnerTrigger_...).
+                let id = Rc::as_ptr(rec) as usize;
+                let xrec = match self.active_xrecs.iter().rev().find(|(p, _)| *p == id) {
+                    Some((_, x)) => x.clone(),
+                    None => Self::xrec_handle(rec, before),
+                };
+                self.active_xrecs.push((id, xrec.clone()));
+                let r = self.validate_hooks(&t, rec, &xrec, &field, pos, old_value);
+                self.active_xrecs.pop();
+                r?;
                 Ok(Value::Null)
             }
             "Rename" => {

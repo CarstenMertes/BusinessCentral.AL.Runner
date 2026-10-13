@@ -1088,3 +1088,42 @@ tableextension 50302 ETExt extends ET
 codeunit 50100 C { procedure F() var R: Record ET; begin R.Validate(Name, 'x'); end; }"#;
     assert!(matches!(run(src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
 }
+
+// record/TestXRecContracts.al:OnValidate_Nested_InnerTrigger_SeesPreOuterValidateBeforeImage -- a
+// Validate nested in another Validate's trigger on the same record keeps the outer call's
+// xRec (the record as it was before the outer call), and a Validate afterwards starts afresh.
+#[test]
+fn a_nested_validate_keeps_the_outer_calls_xrec() {
+    let src = r#"
+codeunit 50300 Trace
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(S: Text) begin Log += S + ';'; end;
+    procedure Get(): Text begin exit(Log); end;
+}
+table 50301 ET
+{
+    fields
+    {
+        field(1; "No."; Integer) { }
+        field(2; Kind; Integer) { trigger OnValidate() begin Validate(Ref, 0); end; }
+        field(3; Ref; Integer) { trigger OnValidate() var T: Codeunit Trace; begin T.Add('xKind=' + Format(xRec.Kind) + ',xRef=' + Format(xRec.Ref) + ',Ref=' + Format(Rec.Ref)); end; }
+    }
+    keys { key(PK; "No.") { } }
+}
+codeunit 50100 C
+{
+    procedure F(): Text
+    var R: Record ET; T: Codeunit Trace;
+    begin
+        R.Kind := 1; R.Ref := 5;
+        R.Validate(Kind, 2);
+        R.Validate(Ref, 9);
+        exit(T.Get());
+    end;
+}"#;
+    // Nested: xRec.Kind is the value before the outer call (1), not its new value (2);
+    // the later plain Validate(Ref) sees the record as it was then (Kind 2, Ref 0).
+    assert_eq!(text(run(src, "F")), "xKind=1,xRef=5,Ref=0;xKind=2,xRef=0,Ref=9;");
+}

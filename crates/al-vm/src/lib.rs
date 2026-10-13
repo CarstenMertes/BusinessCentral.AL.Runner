@@ -85,6 +85,9 @@ pub struct Session {
     pub(crate) test_mark: Option<al_data::memory::MemStore>,
     /// The highest rowversion handed out when the last `Commit` ran: rows at or below it are durable.
     pub(crate) committed_row_version: i64,
+    /// (record handle address, its xRec) for each Validate in progress: a Validate nested in
+    /// another one's trigger on the same record keeps the outer call's xRec.
+    pub(crate) active_xrecs: Vec<(usize, Rc<RefCell<RecordState>>)>,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -113,6 +116,7 @@ impl Session {
             test_commit: None,
             test_mark: None,
             committed_row_version: 0,
+            active_xrecs: Vec::new(),
         }
     }
 

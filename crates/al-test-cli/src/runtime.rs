@@ -393,6 +393,11 @@ fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTree
                     Err(_) => None,
                 },
             };
+            // A trigger that ran is durable before the next one starts: a later trigger that
+            // cannot run must not take its writes with it.
+            if why.is_none() {
+                al_builtins::native::Ctx::commit(session).expect("commit");
+            }
             if let Some(why) = why {
                 session.rollback_transaction();
                 // Subscribers to events the installer raises are not in its static calls,
@@ -643,6 +648,25 @@ mod tests {
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure A() var R: Record S; begin if R.Count() <> 2 then Error('install did not run'); end; }");
         assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    }
+
+    // install/TestInstallSeeder.al: OnInstallAppPerDatabase seeds one table, OnInstallAppPerCompany
+    // is one the runtime cannot run. The per-database seed ran and stays; only the trigger that
+    // could not run is skipped, with its tables.
+    #[test]
+    fn an_installer_trigger_that_ran_keeps_its_rows_when_the_next_one_cannot_run() {
+        let o = outcomes(
+            "table 60900 Db { fields { field(1; K; Code[10]) { } } }
+            table 60901 Co { fields { field(1; K; Code[10]) { } } }
+            codeunit 60901 Inst { Subtype = Install;
+                trigger OnInstallAppPerDatabase() var R: Record Db; begin R.K := 'DB'; R.Insert(); end;
+                trigger OnInstallAppPerCompany() var R: Record Co; begin Sleep(1); R.K := 'CO'; R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure SeededByTheTriggerThatRan() var R: Record Db; begin if not R.Get('DB') then Error('the per-database seed was rolled back'); end;
+                [Test] procedure SeededByTheTriggerThatDidNot() var R: Record Co; begin if R.Count() = 0 then Error('unseeded'); end; }",
+        );
+        assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+        assert!(matches!(&o[1].1, Outcome::NotRun(r) if r.contains("install")), "{o:?}");
     }
 
     #[test]

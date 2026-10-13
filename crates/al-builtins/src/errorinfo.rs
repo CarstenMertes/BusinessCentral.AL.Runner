@@ -233,6 +233,26 @@ fn add_navigation_action(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]
     with_state(r, |_| ()).map(|()| Value::Null)
 }
 
+/// `Error(ErrorInfo)`: raises the message as it is for a client error
+/// (errorinfo/TestErrorInfoErrorType.al:50-65). An internal error hides its message behind a text
+/// the corpus does not pin, and a collectible one may be collected instead: both are refused.
+pub fn raise(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let Some(Value::Library(_, cell)) = a.first() else {
+        return unsupported(format!("Error with {:?} as an ErrorInfo", a.first()));
+    };
+    let LibraryValue::ErrorInfo(s) = &*cell.borrow() else {
+        return unsupported("Error with an ErrorInfo nobody created");
+    };
+    if s.error_type == Some(1) {
+        return unsupported("Error with ErrorType::Internal (the masking text is not pinned)");
+    }
+    Err(Signal::Error(crate::native::AlError {
+        message: s.message.clone(),
+        code: String::new(),
+        call_stack: String::new(),
+    }))
+}
+
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     if sig.receiver != "ErrorInfo" {
         return None;

@@ -130,6 +130,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
     ("Dialog.Error#2", error_text),
+    ("Dialog.Error#1", crate::errorinfo::raise),
+    ("Session.GetExecutionContext#1", execution_context),
+    ("Session.GetCurrentModuleExecutionContext#1", execution_context),
+    ("Session.GetModuleExecutionContext#1", module_execution_context),
     ("Dialog.Message#1", message),
     ("Dialog.Confirm#1", confirm),
     ("Dialog.StrMenu#1", str_menu),
@@ -530,6 +534,35 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         other => return unsupported(&format!("Clear of {other:?}")),
     };
     Ok(Value::Null)
+}
+
+fn context_value(c: &dyn Ctx) -> Value {
+    let members: Rc<[String]> = crate::sysenum::option_members("ExecutionContext")
+        .expect("a system option")
+        .into();
+    // Install inside an install codeunit, Normal anywhere else (install/TestInstallEnvVisible_Tests.al:90-127).
+    Value::Option(i32::from(c.install_scope()), members)
+}
+
+fn execution_context(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    Ok(context_value(c))
+}
+
+/// Of this app (no argument) or of an app of the workspace; another app's context while an
+/// installer runs is not pinned.
+fn module_execution_context(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    if let Some(id) = a.first() {
+        if c.install_scope() {
+            return unsupported("GetModuleExecutionContext(AppId) inside install code (not pinned)");
+        }
+        let Value::Guid(g) = id else {
+            return unsupported(&format!("GetModuleExecutionContext with {id:?}"));
+        };
+        if !matches!(c.module_by_id(g), ModuleLookup::Found(_)) {
+            return unsupported("GetModuleExecutionContext of an app the workspace does not hold (not pinned)");
+        }
+    }
+    Ok(context_value(c))
 }
 
 /// `Enum.AsInteger()`: the ordinal (types/TestEnum.al:27-40).

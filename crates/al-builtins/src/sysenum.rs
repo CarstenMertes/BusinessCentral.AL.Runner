@@ -53,6 +53,8 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         ]),
         "errortype" => Some(&["Client", "Internal"]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
+        // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).
+        "executioncontext" => Some(&["Normal", "Install", "Upgrade"]),
         // Only `LocalScope` is named by the corpus; the ordinals are not pinned.
         "notificationscope" => Some(&["LocalScope", "GlobalScope"]),
         "webserviceactionresultcode" => Some(&["None", "Get", "Created", "Updated", "Deleted"]),

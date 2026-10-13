@@ -943,3 +943,37 @@ fn resources_are_listed_with_an_optional_wildcard_filter() {
     );
     assert_eq!(r.unwrap(), "31data.json0");
 }
+
+// ---------------------------------------------------------------- Error(ErrorInfo), ExecutionContext
+
+#[test]
+fn error_with_an_error_info_raises_its_message() {
+    // errorinfo/TestErrorInfoErrorType.al:50-65 (a client error reports the message verbatim).
+    let r = text_of(
+        "e: ErrorInfo; a: Text;",
+        "e := ErrorInfo.Create('the client visible text'); e.ErrorType(ErrorType::Client);
+         asserterror Error(e); a := GetLastErrorText();
+         e.ErrorType(ErrorType::Internal); asserterror Error(e);
+         exit(a);",
+    );
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    let r = text_of(
+        "e: ErrorInfo;",
+        "e := ErrorInfo.Create('the client visible text'); e.ErrorType(ErrorType::Client);
+         asserterror Error(e); exit(GetLastErrorText());",
+    );
+    assert_eq!(r.unwrap(), "the client visible text");
+}
+
+#[test]
+fn the_execution_context_is_normal_in_a_test() {
+    // install/TestInstallEnvVisible_Tests.al:120-127, session/TestBCPlatformContracts.al:46-60.
+    let r = text_of(
+        "ec: ExecutionContext;",
+        "ec := Session.GetExecutionContext();
+         exit(Format(ec) + Format(Session.GetExecutionContext() = ExecutionContext::Normal)
+              + Format(Session.GetCurrentModuleExecutionContext() = ExecutionContext::Normal)
+              + Format(Session.GetModuleExecutionContext() = ExecutionContext::Normal));",
+    );
+    assert_eq!(r.unwrap(), "NormalYesYesYes");
+}

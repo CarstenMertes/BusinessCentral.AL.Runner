@@ -19,7 +19,7 @@ Boolean.ToText inst (?Invariant: Boolean) -> Text
 Byte.ToText inst () -> Text
 Byte.ToText inst (?Invariant: Boolean) -> Text
 Codeunit.Run inst (var Record: Record) -> Boolean?
-Codeunit.Run static (FullyQualifiedName: Text, ?var Record: Record) -> Boolean?
+Codeunit.Run static (FullyQualifiedName: Text, ?var Record: Record) -> Boolean? @17.0
 Codeunit.Run static (Number: Integer, ?var Record: Record) -> Boolean?
 CompanyProperty.DisplayName static () -> Text
 CompanyProperty.ID static () -> Guid
@@ -32,7 +32,7 @@ Cookie.Path inst () -> Text
 Cookie.Secure inst () -> Boolean
 Cookie.Value inst (?Value: Text) -> Text
 DataTransfer.AddConstantValue inst (Value: Any, DestinationField: Integer)
-DataTransfer.AddDestinationFilter inst (DestinationField: Integer, String: Text, ?Value: Any*)
+DataTransfer.AddDestinationFilter inst (DestinationField: Integer, String: Text, ?Value: Any*) @17.0
 DataTransfer.AddFieldValue inst (SourceField: Integer, DestinationField: Integer)
 DataTransfer.AddJoin inst (SourceField: Integer, DestinationField: Integer)
 DataTransfer.AddSourceFilter inst (SourceField: Integer, String: Text, ?Value: Any*)
@@ -441,7 +441,7 @@ JsonArray.ReadFrom inst (Data: InStream) -> Boolean?
 JsonArray.ReadFrom inst (String: Text) -> Boolean?
 JsonArray.RemoveAt inst (Index: Integer) -> Boolean?
 JsonArray.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
-JsonArray.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean?
+JsonArray.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
 JsonArray.Set inst (Index: Integer, Result: BigInteger) -> Boolean?
 JsonArray.Set inst (Index: Integer, Result: Boolean) -> Boolean?
 JsonArray.Set inst (Index: Integer, Result: Byte) -> Boolean?
@@ -518,7 +518,7 @@ JsonObject.Replace inst (Key: Text, Value: Option) -> Boolean?
 JsonObject.Replace inst (Key: Text, Value: Text) -> Boolean?
 JsonObject.Replace inst (Key: Text, Value: Time) -> Boolean?
 JsonObject.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
-JsonObject.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean?
+JsonObject.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
 JsonObject.Values inst () -> List of [JsonToken]
 JsonObject.WriteTo inst (OutStream: OutStream) -> Boolean?
 JsonObject.WriteTo inst (var String: Text) -> Boolean?
@@ -537,7 +537,7 @@ JsonToken.Path inst () -> Text
 JsonToken.ReadFrom inst (InStream: InStream) -> Boolean?
 JsonToken.ReadFrom inst (String: Text) -> Boolean?
 JsonToken.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?
-JsonToken.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean?
+JsonToken.SelectTokens inst (Path: Text, var Result: List of [JsonToken]) -> Boolean? @17.0
 JsonToken.WriteTo inst (Data: OutStream) -> Boolean?
 JsonToken.WriteTo inst (var String: Text) -> Boolean?
 JsonValue.AsBigInteger inst () -> BigInteger
@@ -716,14 +716,14 @@ Page.LookupMode inst (?NewLookupMode: Boolean) -> Boolean?
 Page.ObjectId inst (?UseNames: Boolean) -> Text
 Page.PromptMode inst (?NewPromptMode: PromptMode) -> PromptMode?
 Page.Run inst ()
-Page.Run static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any)
-Page.Run static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer)
+Page.Run static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) @17.0
+Page.Run static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) @17.0
 Page.Run static (Number: Integer, ?Record: Record, ?Field: Any)
 Page.Run static (Number: Integer, Record: Record, FieldNo: Integer)
 Page.RunModal inst () -> Action?
-Page.RunModal static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) -> Action?
-Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) -> Action?
-Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldRef: FieldRef) -> Action?
+Page.RunModal static (FullyQualifiedName: Text, ?Record: Record, ?Field: Any) -> Action? @17.0
+Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldNo: Integer) -> Action? @17.0
+Page.RunModal static (FullyQualifiedName: Text, Record: Record, FieldRef: FieldRef) -> Action? @17.0
 Page.RunModal static (Number: Integer, ?Record: Record, ?Field: Any) -> Action?
 Page.RunModal static (Number: Integer, Record: Record, FieldNo: Integer) -> Action?
 Page.RunModal static (Number: Integer, Record: Record, FieldRef: FieldRef) -> Action?
@@ -793,7 +793,7 @@ Record.FindFirst inst () -> Boolean?
 Record.FindLast inst () -> Boolean?
 Record.FindSet inst (?ForUpdate: Boolean) -> Boolean?
 Record.FindSet inst (ForUpdate: Boolean, UpdateKey: Boolean) -> Boolean?
-Record.FullyQualifiedName inst () -> Text
+Record.FullyQualifiedName inst () -> Text @17.0
 Record.Get inst (?Value: Any*) -> Boolean?
 Record.GetAscending inst (Field: Any) -> Boolean
 Record.GetBySystemId inst (SystemId: Guid) -> Boolean?
@@ -906,7 +906,7 @@ RecordRef.FindFirst inst () -> Boolean?
 RecordRef.FindLast inst () -> Boolean?
 RecordRef.FindSet inst (?ForUpdate: Boolean) -> Boolean?
 RecordRef.FindSet inst (ForUpdate: Boolean, UpdateKey: Boolean) -> Boolean?
-RecordRef.FullyQualifiedName inst () -> Text
+RecordRef.FullyQualifiedName inst () -> Text @17.0
 RecordRef.Get inst (RecordID: RecordId) -> Boolean?
 RecordRef.GetBySystemId inst (SystemId: Guid) -> Boolean?
 RecordRef.GetFilters inst () -> Text
@@ -932,7 +932,7 @@ RecordRef.Modify inst (?RunTrigger: Boolean) -> Boolean?
 RecordRef.Name inst () -> Text
 RecordRef.Next inst (?Steps: Integer) -> Integer?
 RecordRef.Number inst () -> Integer
-RecordRef.Open inst (FullyQualifiedName: Text, ?Temp: Boolean, ?CompanyName: Text)
+RecordRef.Open inst (FullyQualifiedName: Text, ?Temp: Boolean, ?CompanyName: Text) @17.0
 RecordRef.Open inst (No: Integer, ?Temp: Boolean, ?CompanyName: Text)
 RecordRef.ReadConsistency inst () -> Boolean
 RecordRef.ReadIsolation inst (?ReadIsolation: IsolationLevel) -> IsolationLevel?
@@ -965,7 +965,7 @@ Report.DefaultLayout static (Number: Integer) -> DefaultLayout
 Report.ExcelLayout inst (var InStream: InStream) -> Boolean?
 Report.ExcelLayout static (Number: Integer, InStream: InStream) -> Boolean?
 Report.Execute inst (Parameters: Text, ?RecordRef: RecordRef)
-Report.Execute static (FullyQualifiedName: Text, Parameters: Text, ?RecordRef: RecordRef)
+Report.Execute static (FullyQualifiedName: Text, Parameters: Text, ?RecordRef: RecordRef) @17.0
 Report.Execute static (Number: Integer, Parameters: Text, ?RecordRef: RecordRef)
 Report.FormatRegion inst (?FormatRegion: Text) -> Text?
 Report.GetSubstituteReportId static (ReportId: Integer) -> Integer
@@ -984,10 +984,10 @@ Report.Quit inst ()
 Report.RDLCLayout inst (var InStream: InStream) -> Boolean?
 Report.RdlcLayout static (Number: Integer, InStream: InStream) -> Boolean?
 Report.Run inst ()
-Report.Run static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
+Report.Run static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0
 Report.Run static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
 Report.RunModal inst ()
-Report.RunModal static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
+Report.RunModal static (FullyQualifiedName: Text, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record) @17.0
 Report.RunModal static (Number: Integer, ?RequestWindow: Boolean, ?SystemPrinter: Boolean, ?var Record: Record)
 Report.RunRequestPage inst (?PageParameters: Text) -> Text
 Report.RunRequestPage static (Number: Integer, ?Parameters: Text) -> Text

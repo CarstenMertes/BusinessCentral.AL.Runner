@@ -12,6 +12,11 @@ on:
     - cron: "17 5 * * *"
   workflow_dispatch:
 
+env:
+  # The built sidecar, for the sidecar tests and the corpus run. A missing .NET fails, not skips.
+  ALRT_DOTNET_SIDECAR: ${{ github.workspace }}/target/dotnet-sidecar/AlDotNetSidecar.dll
+  ALRT_REQUIRE_DOTNET: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -27,6 +32,14 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+
+      # ADR-014: DotNet calls run in a .NET 8 sidecar process. The SDK builds it and the runtime
+      # runs it. ICU is on the ubuntu image. CI must never skip a .NET test silently.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Build the .NET sidecar
+        run: dotnet publish tools/dotnet-sidecar -c Release -o target/dotnet-sidecar
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --workspace
@@ -38,13 +51,13 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p al-test-cli
 
-      # Fails the job on any regression against metrics/passing.txt (exit 1),
+      # Fails the job on any regression against metrics/<major>/passing.txt of every version in oracle/oracle.toml (exit 1),
       # or when the oracle and the corpus pin disagree (exit 2).
       - name: Corpus pass rate
         run: |
-          ./target/release/al-test-cli \
+          ./target/release/al-test-cli --all-versions --require-dotnet \
             --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml
-          cat pass-rate.md >> "$GITHUB_STEP_SUMMARY"
+          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
 
       # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s,
       # parser throughput at least 50 MB/s. #[ignore]d in plain `cargo test`
@@ -66,7 +79,7 @@ jobs:
         with:
           name: pass-rate-${{ steps.date.outputs.d }}-${{ github.run_id }}
           path: |
-            pass-rate.json
-            pass-rate.md
-            runtime-junit.xml
+            pass-rate-*.json
+            pass-rate-*.md
+            runtime-junit-*.xml
           retention-days: 90

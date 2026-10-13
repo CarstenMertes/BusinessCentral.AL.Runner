@@ -15,6 +15,8 @@
 //! `CreateDateTime` and `Format` read a `DateTime` in UTC too. There is no zone offset to
 //! configure, so the date part of `CurrentDateTime` always equals `Today`.
 
+pub mod dotnet;
+
 /// The wall clock.
 pub trait Clock {
     /// The current instant: milliseconds since 1970-01-01T00:00:00Z.

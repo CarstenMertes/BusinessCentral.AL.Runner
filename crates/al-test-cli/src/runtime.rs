@@ -107,7 +107,33 @@ impl CorpusRuntime {
         manifests: &[Manifest],
         symbols: &BTreeSet<String>,
     ) -> CorpusRuntime {
-        let (_ws, mut lowered) = al_sema::lower::compile(apps, symbols);
+        Self::run_with_dotnet(apps, manifests, symbols, al_vm::dotnet::DotNetConfig::default())
+    }
+
+    /// [`run_with_manifests`](Self::run_with_manifests) with a `DotNet` host (ADR-014); the
+    /// default has none.
+    pub fn run_with_dotnet(
+        apps: Vec<al_sema::workspace::AppSource>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+    ) -> CorpusRuntime {
+        Self::run_for(apps, manifests, symbols, None, dotnet)
+    }
+
+    /// Runs for a target: builtins newer than the target's runtime are refused and version gates
+    /// follow it (ADR-015). Without a target, the newest catalog and behaviour are used.
+    pub fn run_for(
+        apps: Vec<al_sema::workspace::AppSource>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+    ) -> CorpusRuntime {
+        let (_ws, mut lowered) = match target {
+            Some(t) => al_sema::lower::compile_for(apps, symbols, t),
+            None => al_sema::lower::compile(apps, symbols),
+        };
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
@@ -118,7 +144,7 @@ impl CorpusRuntime {
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
-        let engine = Engine::new(lowered.program.clone(), blocked);
+        let engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
         let mut outcomes = std::collections::HashMap::new();
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {
@@ -257,6 +283,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
+                    // The AL test runner enables every application area before each test method
+                    // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
+                    session.application_areas.clear();
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -1380,5 +1409,40 @@ codeunit 60703 PhT
         ] {
             assert_eq!(ph(n), Outcome::Pass, "{n}");
         }
+    }
+
+    // session/TestSessionApplicationAreaTestBoundary.al:67552 (A_FirstTest_StartsWithEveryAreaEnabled_EvenAfterOnRunSetOne,
+    // C_NextTest_StartsWithEveryAreaEnabled): every test method starts with every application area enabled.
+    #[test]
+    fn every_test_starts_with_every_application_area_enabled() {
+        let src = "codeunit 60110 T
+{
+    Subtype = Test;
+    trigger OnRun() begin ApplicationArea('#Basic,#FromOnRun'); end;
+
+    [Test]
+    procedure A_StartsEmptyEvenAfterOnRunSetOne()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure B_SetsAreasForTheRestOfTheTest()
+    begin
+        ApplicationArea('#Basic,#Probe');
+        if ApplicationArea() <> '#Basic,#Probe' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure C_StartsEmptyAgain()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+}";
+        let o = outcomes_of(src, "T");
+        for (n, r) in &o {
+            assert_eq!(*r, Outcome::Pass, "{n}");
+        }
+        assert_eq!(o.len(), 3);
     }
 }

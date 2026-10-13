@@ -191,6 +191,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
     // Event subscriptions are session state; the VM intercepts these ids
     // (al-vm dispatch.rs). Registered so lowering accepts them.
+    ("Session.ApplicationArea#1", vm_only),
     ("Session.BindSubscription#1", vm_only),
     ("Session.UnbindSubscription#1", vm_only),
     // Codeunit.Run runs a codeunit and `IsInWriteTransaction` reads the transaction: both are
@@ -238,6 +239,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record("SetAutoCalcFields", r, a)
     }),
+    ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -265,7 +267,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsFieldRef#1", |_, r, _| is(r, "FieldRef")),
     // Kinds the value model has no variant for yet are never true.
     ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsDotNet#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsAutomation#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
 ];

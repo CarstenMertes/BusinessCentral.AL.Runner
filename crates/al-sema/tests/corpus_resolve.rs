@@ -49,7 +49,7 @@ pub fn corpus() -> Workspace {
             app(&root.join("al-language-internals-fixture")),
             app(&root.join("al-language")),
         ],
-        &["BC27PLUS".to_string()].into(),
+        &al_version::corpus_symbols(27),
     )
 }
 

@@ -9,6 +9,7 @@ rust-version.workspace = true
 al-data.workspace = true
 al-builtins.workspace = true
 al-ir.workspace = true
+al-version.workspace = true
 al-host.workspace = true
 rust_decimal = "1"
 

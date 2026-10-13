@@ -151,6 +151,17 @@ pub enum PageMode {
     New,
 }
 
+/// A row a repeater has populated: its primary key, the fields as stored when it was read and as
+/// the page showed them after OnAfterGetRecord (the page keeps that buffer for the row while it
+/// stays in the window, corpus handlers/TestPageActionRunObjectPageStoredRow_Tests.al:
+/// OpenHostOnB reads `CALC`, which only the host's OnAfterGetRecord puts into Rec.Grp).
+#[derive(Debug, Clone)]
+pub struct WindowRow {
+    pub key: Vec<Value>,
+    pub stored: Vec<Value>,
+    pub shown: Vec<Value>,
+}
+
 /// Where the test client's cursor stands on a page (ADR-012).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cursor {
@@ -185,7 +196,7 @@ pub struct PageState {
     /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
     pub frozen_visible: Vec<bool>,
     /// Primary keys of the rows a repeater page has populated (its window).
-    pub window: Vec<Vec<Value>>,
+    pub window: Vec<WindowRow>,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).

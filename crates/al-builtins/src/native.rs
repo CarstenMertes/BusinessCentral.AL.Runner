@@ -208,6 +208,22 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.SetSource#1", vm_only),
     ("Xmlport.SetDestination#1", vm_only),
     ("Xmlport.SetTableView#1", vm_only),
+    // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
+    // ids not listed (SaveAs, SaveAsPdf, Preview, the layout accessors, Skip, Break, ...) need
+    // output or behaviour the corpus does not pin and are refused in lowering.
+    ("Report.Run#1", vm_only),
+    ("Report.Run#3", vm_only),
+    ("Report.RunModal#1", vm_only),
+    ("Report.RunModal#3", vm_only),
+    ("Report.Execute#1", vm_only),
+    ("Report.Execute#3", vm_only),
+    ("Report.Print#1", vm_only),
+    ("Report.Print#2", vm_only),
+    ("Report.RunRequestPage#1", vm_only),
+    ("Report.RunRequestPage#2", vm_only),
+    ("Report.SetTableView#1", vm_only),
+    ("Report.UseRequestPage#1", vm_only),
+    ("Report.Quit#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))

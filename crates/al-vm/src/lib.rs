@@ -23,6 +23,7 @@ mod records;
 mod refs;
 mod relations;
 mod rename;
+mod reports;
 mod sessionops;
 mod transactions;
 mod ui;
@@ -130,6 +131,10 @@ pub struct Session {
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
     pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
+    /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a
+    /// page saving a row passes its own xRec (corpus
+    /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
+    pub(crate) page_xrec: Option<Vec<Value>>,
     /// The transaction model of the running test method (set by the test runner).
     pub tx_model: TxModel,
     /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
@@ -149,6 +154,10 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
+    /// The call depth of the `OnInitReport` trigger being run, and whether it called
+    /// `CurrReport.Quit` (al-vm reports.rs).
+    pub(crate) report_init_depth: Option<usize>,
+    pub(crate) report_quit: bool,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -197,10 +206,13 @@ impl Session {
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
+            page_xrec: None,
             tx_model: TxModel::default(),
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            report_init_depth: None,
+            report_quit: false,
         }
     }
 
@@ -364,7 +376,7 @@ impl Session {
         instance: Rc<RefCell<Instance>>,
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
-        self.ensure_initialized(&instance);
+        self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
@@ -707,6 +719,7 @@ impl Session {
                 }
                 if id.starts_with("Codeunit.Run#")
                     || id.starts_with("Xmlport.")
+                    || id.starts_with("Report.")
                     || id == "Database.IsInWriteTransaction#1"
                 {
                     let recv = match receiver.as_deref() {
@@ -726,6 +739,9 @@ impl Session {
                     }
                     if id.starts_with("Xmlport.") {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
+                    }
+                    if id.starts_with("Report.") {
+                        return self.report_builtin(id, recv, &values, f.instance.clone());
                     }
                     return self.codeunit_run(id, recv, &values, *ret_used);
                 }

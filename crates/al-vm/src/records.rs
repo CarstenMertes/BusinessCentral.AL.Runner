@@ -877,9 +877,10 @@ impl Session {
                         .collect(),
                     None => Vec::new(),
                 };
-                // xRec is the stored row, one handle for the events and the trigger.
+                // xRec is the stored row (the page's own xRec for a row a page saves), one handle
+                // for the events and the trigger.
                 let stored_row = stored.clone();
-                let xrec = stored.map(|f| Self::xrec_handle(rec, f));
+                let xrec = self.page_xrec.take().or(stored).map(|f| Self::xrec_handle(rec, f));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {
                     self.run_ext_trigger(&t, "OnBeforeModify", rec, xrec.as_ref())?;

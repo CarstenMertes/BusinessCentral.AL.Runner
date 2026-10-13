@@ -159,6 +159,10 @@ pub struct Session {
     pub in_test_codeunit: bool,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
+    /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
+    /// empty text, which enables every area. The test runner empties it before each test method
+    /// (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
+    pub application_areas: String,
     /// The clock and the identity (ADR-006).
     pub(crate) host: al_host::Host,
     /// The time `Sleep` has waited, added to every clock reading.
@@ -227,6 +231,7 @@ impl Session {
             commit_behavior: Default::default(),
             in_test_codeunit: false,
             dotnet: Default::default(),
+            application_areas: String::new(),
             report_init_depth: None,
             report_quit: false,
         }
@@ -688,7 +693,14 @@ impl Session {
                         // A `Page` variable's procedures (OnInit at first use) are not modelled.
                         Value::TestPage(st) if st.borrow().host.is_some() => {
                             let i = self.page_instance(&st)?;
-                            self.shared_instance(i)
+                            // A procedure a page extension declares runs on the extension's instance.
+                            let ext = st
+                                .borrow()
+                                .ext_instances
+                                .iter()
+                                .find(|(e, _)| e == object)
+                                .map(|(_, i)| i.clone());
+                            self.shared_instance(ext.unwrap_or(i))
                         }
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
@@ -737,6 +749,21 @@ impl Session {
                     };
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
+                }
+                if id == "Session.ApplicationArea#1" {
+                    // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
+                    // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
+                    return match args.first() {
+                        None => Ok(Value::Text(self.application_areas.clone())),
+                        Some(ir::Arg::Value(e)) => match self.eval(e, f)? {
+                            Value::Text(t) | Value::Code(t) => {
+                                self.application_areas = t;
+                                Ok(Value::Null)
+                            }
+                            other => Err(Signal::Unsupported(format!("ApplicationArea({other:?})"))),
+                        },
+                        Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
+                    };
                 }
                 if id.starts_with("Codeunit.Run#")
                     || id.starts_with("Xmlport.")

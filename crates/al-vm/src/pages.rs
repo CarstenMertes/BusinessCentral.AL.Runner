@@ -64,6 +64,7 @@ fn is_true(s: &str) -> bool {
 
 type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
+mod areas;
 mod filter;
 mod parts;
 mod runobject;
@@ -112,22 +113,51 @@ impl Session {
         if st.borrow().open { Ok(()) } else { Err(error(NOT_OPEN)) }
     }
 
-    /// Runs page trigger `name` (lower case) if the page declares it.
+    /// Runs page trigger `name` (lower case) if the page declares it, then the same trigger of
+    /// each page extension that declares it. The page's own trigger runs first (assumed, see
+    /// docs/probes-needed.md "Page extensions"); the lowering refuses two extensions that
+    /// declare one trigger and extension triggers that answer a Boolean. The answer returned
+    /// is the page's own.
     fn page_trigger(&mut self, st: &St, name: &str, args: Vec<Value>) -> Result<Option<Value>, Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let Some(r) = page_of(&engine, st)
-            .triggers
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, r)| *r)
-        else {
-            return Ok(None);
-        };
-        let inst = st.borrow().instance.clone().expect("open page");
-        let result = self.call(object, r, inst, args).map(|(v, _)| Some(v));
+        let page = page_of(&engine, st);
+        let mut answer = None;
+        let mut result = Ok(());
+        if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {
+            let inst = st.borrow().instance.clone().expect("open page");
+            match self.call(object, r, inst, args.clone()) {
+                Ok((v, _)) => answer = Some(v),
+                Err(e) => result = Err(e),
+            }
+        }
+        if result.is_ok() {
+            for (n, e, r) in &page.ext_triggers {
+                if n == name {
+                    let inst = self.owner_instance(st, Some(*e));
+                    if let Err(err) = self.call(*e, *r, inst, args.clone()) {
+                        result = Err(err);
+                        break;
+                    }
+                }
+            }
+        }
         self.end_page_call(st);
-        result
+        result.map(|()| answer)
+    }
+
+    /// The instance that runs the code of `owner`: the page itself, or one of its extensions.
+    fn owner_instance(&self, st: &St, owner: Option<usize>) -> Rc<RefCell<al_builtins::value::Instance>> {
+        let s = st.borrow();
+        match owner {
+            None => s.instance.clone().expect("open page"),
+            Some(e) => s
+                .ext_instances
+                .iter()
+                .find(|(o, _)| *o == e)
+                .map(|(_, i)| i.clone())
+                .expect("an extension of the page has an instance"),
+        }
     }
 
     /// A page-driven call ends: the client takes the page's view back, which carries the key and
@@ -253,13 +283,29 @@ impl Session {
         Ok(())
     }
 
-    /// Calls routine `r` of the page.
-    fn page_routine(&mut self, st: &St, r: usize) -> Result<Value, Signal> {
-        let object = st.borrow().object as usize;
-        let inst = st.borrow().instance.clone().expect("open page");
+    /// Calls routine `r` of `owner` (the page, or one of its extensions) on its instance.
+    fn owner_routine(&mut self, st: &St, owner: Option<usize>, r: usize) -> Result<Value, Signal> {
+        let object = owner.unwrap_or(st.borrow().object as usize);
+        let inst = self.owner_instance(st, owner);
         let result = self.call(object, r, inst, vec![]).map(|(v, _)| v);
         self.end_page_call(st);
         result
+    }
+
+    /// Calls routine `r` written in control `idx`: in the extension that declares the control, else the page.
+    fn control_routine(&mut self, st: &St, idx: usize, r: usize) -> Result<Value, Signal> {
+        let engine = self.engine();
+        let owner = page_of(&engine, st).controls[idx].owner;
+        self.owner_routine(st, owner, r)
+    }
+
+    /// The value of the routine behind property value `v` of control `idx`; `None` for a literal.
+    fn prop_routine_value(&mut self, st: &St, idx: usize, v: &ir::PropVal) -> Result<Option<Value>, Signal> {
+        match v {
+            ir::PropVal::Lit(_) => Ok(None),
+            ir::PropVal::Routine(r) => self.control_routine(st, idx, *r).map(Some),
+            ir::PropVal::Ext(e, r) => self.owner_routine(st, Some(*e), *r).map(Some),
+        }
     }
 
     /// The `TestPage.*` / `TestField.*` methods (ADR-012).
@@ -612,6 +658,26 @@ impl Session {
         }
         let inst = self.instance(object);
         inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(st.clone());
+        // Each extension runs on an instance of its own that shares the page's Rec, xRec and CurrPage.
+        let mut exts = Vec::new();
+        for &e in &page.extensions {
+            let ext = self.instance(e);
+            let (page_object, ext_object) = (&engine.program.objects[object], &engine.program.objects[e]);
+            for (from, to) in [
+                (page_object.rec_slot, ext_object.rec_slot),
+                (page_object.xrec_slot, ext_object.xrec_slot),
+            ] {
+                if let (Some(from), Some(to)) = (from, to) {
+                    let shared = inst.borrow().globals[from].clone();
+                    ext.borrow_mut().globals[to] = shared;
+                }
+            }
+            if let Some(slot) = ext_object.globals.iter().position(|g| g.name == "CurrPage") {
+                ext.borrow_mut().globals[slot] = Value::TestPage(st.clone());
+            }
+            exts.push((e, ext));
+        }
+        st.borrow_mut().ext_instances = exts;
         st.borrow_mut().instance = Some(inst.clone());
         Ok(inst)
     }
@@ -665,6 +731,7 @@ impl Session {
             s.editable_off = false;
             s.opening = true;
             s.parts = Vec::new();
+            s.areas = self.application_areas.clone();
         }
         if let Err(e) = self.create_parts(st) {
             self.mark_closed(st);
@@ -805,8 +872,8 @@ impl Session {
             .controls
             .iter()
             .filter_map(|c| {
-                if let ir::Binding::Var(slot) = c.binding {
-                    Some(slot)
+                if let (ir::Binding::Var(slot), None) = (&c.binding, c.owner) {
+                    Some(*slot)
                 } else {
                     None
                 }
@@ -1207,11 +1274,13 @@ impl Session {
     fn populate_expressions(&mut self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
-        for c in &page.controls {
+        for (idx, c) in page.controls.iter().enumerate() {
             for name in ["autoformatexpression", "captionclass"] {
                 match c.prop(name) {
-                    Some(ir::PropVal::Routine(r)) => {
-                        let v = self.page_routine(st, *r)?;
+                    Some(routine @ (ir::PropVal::Routine(_) | ir::PropVal::Ext(..))) => {
+                        let v = self
+                            .prop_routine_value(st, idx, routine)?
+                            .expect("a routine-valued property");
                         if name == "captionclass" {
                             if let Value::Text(t) | Value::Code(t) = &v {
                                 if !t.starts_with("3,") {
@@ -2041,6 +2110,28 @@ impl Session {
             return unsupported("SetValue on a control whose type is not known");
         };
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
+        // OnBeforeValidate and OnAfterValidate of `modify` blocks wrap the control's own OnValidate
+        // (corpus pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al:
+        // ModifiedControlBeforeAndAfterValidateWrapTheBaseControlsOwnOnValidate). Only that
+        // measured shape runs: a control bound to a record field whose table has no OnValidate of its own.
+        let ext_validate = |name: &str| -> Vec<(usize, usize)> {
+            ctl.ext_triggers
+                .iter()
+                .filter(|(n, _, _)| n == name)
+                .map(|(_, e, r)| (*e, *r))
+                .collect()
+        };
+        let (ext_before, ext_after) = (ext_validate("onbeforevalidate"), ext_validate("onaftervalidate"));
+        if !ext_before.is_empty() || !ext_after.is_empty() {
+            if !rec_bound {
+                return unsupported("OnBeforeValidate/OnAfterValidate on a control bound to a variable (not pinned)");
+            }
+            if self.control_field(st, idx).is_some_and(|f| f.on_validate.is_some()) {
+                return unsupported(
+                    "OnBeforeValidate/OnAfterValidate on a control whose field has a table OnValidate (their order is not pinned)",
+                );
+            }
+        }
         let caption = self.control_caption(st, idx)?;
         let fmt = al_builtins::pagefmt::ControlFormat {
             work_date: self.work_date_day(),
@@ -2143,13 +2234,19 @@ impl Session {
                     self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()])?;
                 }
                 ir::Binding::Var(slot) => {
-                    let inst = st.borrow().instance.clone().expect("open page");
+                    let inst = self.owner_instance(st, ctl.owner);
                     inst.borrow_mut().globals[slot] = parsed.clone();
                 }
                 _ => return unsupported("SetValue on a read-only control"),
             }
+            for (e, r) in &ext_before {
+                self.owner_routine(st, Some(*e), *r)?;
+            }
             if let Some(r) = ctl.trigger("onvalidate") {
-                self.page_routine(st, r)?;
+                self.control_routine(st, idx, r)?;
+            }
+            for (e, r) in &ext_after {
+                self.owner_routine(st, Some(*e), *r)?;
             }
             Ok(())
         })();
@@ -2166,7 +2263,7 @@ impl Session {
                 if let (Some(rec), Some(before)) = (&rec, before) {
                     rec.borrow_mut().fields = before;
                 } else if let ir::Binding::Var(slot) = ctl.binding {
-                    let inst = st.borrow().instance.clone().expect("open page");
+                    let inst = self.owner_instance(st, ctl.owner);
                     inst.borrow_mut().globals[slot] = current.clone();
                 }
                 Err(refuse(self, e.message))
@@ -2220,16 +2317,44 @@ impl Session {
             }
             _ => return unsupported(format!("{method} on a built-in control")),
         };
+        // The compiler emits no call for a `Value()` whose result is thrown away: nothing is
+        // evaluated, on a control that is on the page or not (corpus
+        // pageapplicationarea/TestPageDiscardedFieldValueCall.al: RemovedControl_DiscardedValueCall_RaisesNothing,
+        // FoundControl_DiscardedValueCall_RaisesNothing).
+        if m == "Value" && args.is_empty() && !self.ret_used {
+            return Ok(Value::Null);
+        }
         // A control whose Visible is the literal false, or that sits in a group whose Visible is,
         // is not on the runtime page at all (corpus handlers/TestPageFieldVisibleGroup_Tests.al:1-30).
-        if self.control_eliminated(st, idx) {
+        // Neither is one that application areas removed.
+        self.check_areas_pinned(st, idx)?;
+        if self.control_eliminated(st, idx) || self.area_removed(st, idx) {
             let engine = self.engine();
             let ctl = &page_of(&engine, st).controls[idx];
-            return Err(error(format!("The field {} is not found on the page.", ctl.name)));
+            let what = match ctl.kind {
+                ir::ControlKind::Action | ir::ControlKind::SystemAction => "action",
+                _ => "field",
+            };
+            return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
         }
-        // Only Invoke of an actionref is pinned: it runs the action it stands for.
-        if m != "Invoke" && page_of(&self.engine(), st).controls[idx].action_ref.is_some() {
-            return unsupported(format!("TestAction.{m} of an actionref"));
+        // Only Invoke of an actionref is pinned: it runs the action it stands for. A found actionref
+        // reads Visible true when neither it nor its target states a Visible (corpus
+        // pageapplicationarea/TestPageApplicationAreaExtensionActionPartRemoval.al:
+        // ExtActionRef_TargetEnabled_IsFound, ExtActionRef_TargetNotEnabled_IsNotFound).
+        if m != "Invoke" {
+            let engine = self.engine();
+            let page = page_of(&engine, st);
+            let ctl = &page.controls[idx];
+            if let Some(action_ref) = &ctl.action_ref {
+                let target_plain = match action_ref {
+                    ir::ActionRef::Target(t) => page.controls[*t].prop("visible").is_none(),
+                    ir::ActionRef::Unresolved(_) => false,
+                };
+                if m == "Visible" && target_plain && ctl.prop("visible").is_none() {
+                    return Ok(Value::Boolean(true));
+                }
+                return unsupported(format!("TestAction.{m} of an actionref"));
+            }
         }
         match m {
             "Value" => {
@@ -2295,6 +2420,7 @@ impl Session {
             "Enabled" => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
             "Visible" => Ok(Value::Boolean(self.control_visible(st, idx)?)),
             "Invoke" => self.action_invoke(st, idx),
+            "DrillDown" | "AssistEdit" | "Lookup" => self.control_navigate(st, idx, m),
             "SetValue" => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
@@ -2349,6 +2475,68 @@ impl Session {
         false
     }
 
+    /// `TestField.DrillDown`, `AssistEdit` and `Lookup`: run the control's trigger of that name, the
+    /// one it states itself or the one a page extension's `modify` block adds (corpus
+    /// pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al: AModifyBlocksOnDrillDownRunsForTheModifiedControl,
+    /// AModifyBlocksOnLookupRunsForTheModifiedControl, ABaseControlsOwnOnAssistEditRuns,
+    /// AModifyBlocksOnAssistEditRunsForTheModifiedControl, OnAssistEditIsRaisedOnlyForTheControlItWasCalledOn).
+    /// A DrillDown on a control with no trigger raises a fixed platform error (handlers/TestPageFieldDrillDown_Tests.al:
+    /// FieldDrillDownWithNoTriggerIsRefused). What AssistEdit and Lookup do without a trigger (a table
+    /// relation's lookup page) is not modelled.
+    fn control_navigate(&mut self, st: &St, idx: usize, method: &str) -> Result<Value, Signal> {
+        let engine = self.engine();
+        let ctl = &page_of(&engine, st).controls[idx];
+        let name = method.to_ascii_lowercase();
+        let name = match name.as_str() {
+            "drilldown" => "ondrilldown",
+            "assistedit" => "onassistedit",
+            _ => "onlookup",
+        };
+        let own = ctl.trigger(name).map(|r| (ctl.owner, r));
+        let added: Vec<(usize, usize)> = ctl
+            .ext_triggers
+            .iter()
+            .filter(|(n, _, _)| n == name)
+            .map(|(_, e, r)| (*e, *r))
+            .collect();
+        let found: Vec<(Option<usize>, usize)> = own
+            .into_iter()
+            .chain(added.into_iter().map(|(e, r)| (Some(e), r)))
+            .collect();
+        let (owner, routine) = match found.as_slice() {
+            [one] => *one,
+            [] if method == "DrillDown" => {
+                return Err(error("The NavDrilldownAction method is not supported."));
+            }
+            [] => return unsupported(format!("TestField.{method} on a control with no {name} trigger")),
+            _ => {
+                return unsupported(format!(
+                    "TestField.{method} on a control with more than one {name} trigger"
+                ));
+            }
+        };
+        st.borrow_mut().refresh = false;
+        let result = if method == "Lookup" {
+            // OnLookup(var Text): Boolean. A trigger that returns true hands the text back to the
+            // control; what that writes is not pinned.
+            let object = owner.unwrap_or(st.borrow().object as usize);
+            let inst = self.owner_instance(st, owner);
+            self.call(object, routine, inst, vec![Value::Text(String::new())])
+                .and_then(|(v, _)| match v {
+                    Value::Boolean(true) => unsupported("an OnLookup trigger that returns true"),
+                    _ => Ok(Value::Null),
+                })
+        } else {
+            self.owner_routine(st, owner, routine).map(|_| Value::Null)
+        };
+        if result.is_err() {
+            st.borrow_mut().refresh = false;
+        }
+        let v = result?;
+        self.run_refresh(st)?;
+        Ok(v)
+    }
+
     /// `TestAction.Invoke`: runs the action's OnAction when it is enabled; a disabled action
     /// does nothing and raises nothing (corpus handlers/TestPageActionEnabledSourceField_Tests.al,
     /// TPAE_ActionEnabledBoolField_FalseRow_IsDisabledAndItsTriggerIsSkipped).
@@ -2370,7 +2558,7 @@ impl Session {
         }
         st.borrow_mut().refresh = false;
         if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
-            let r = self.page_routine(st, r);
+            let r = self.control_routine(st, idx, r);
             if r.is_err() {
                 st.borrow_mut().refresh = false;
             }
@@ -2517,11 +2705,11 @@ impl Session {
         match page_of(&engine, st).controls[idx].binding.clone() {
             ir::Binding::Field(pos) => Ok(self.page_rec(st).borrow().fields[pos].clone()),
             ir::Binding::Var(slot) => {
-                let inst = st.borrow().instance.clone().expect("open page");
+                let inst = self.owner_instance(st, page_of(&engine, st).controls[idx].owner);
                 let v = inst.borrow().globals[slot].clone();
                 Ok(v)
             }
-            ir::Binding::Expr(r) => self.page_routine(st, r),
+            ir::Binding::Expr(r) => self.control_routine(st, idx, r),
             ir::Binding::None => unsupported("a control without a source"),
         }
     }
@@ -2588,8 +2776,8 @@ impl Session {
         if f.decimal_places.is_none() {
             let expr = match ctl.prop("autoformatexpression") {
                 Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
-                Some(ir::PropVal::Routine(r)) => match self.page_routine(st, *r)? {
-                    Value::Text(t) | Value::Code(t) => Some(t),
+                Some(routine) => match self.prop_routine_value(st, idx, routine)? {
+                    Some(Value::Text(t) | Value::Code(t)) => Some(t),
                     _ => None,
                 },
                 None => None,
@@ -2641,8 +2829,9 @@ impl Session {
             return Some(f.ty);
         }
         let engine = self.engine();
-        if let ir::Binding::Var(slot) = page_of(&engine, st).controls[idx].binding {
-            let object = st.borrow().object as usize;
+        let ctl = &page_of(&engine, st).controls[idx];
+        if let ir::Binding::Var(slot) = ctl.binding {
+            let object = ctl.owner.unwrap_or(st.borrow().object as usize);
             return Some(engine.program.objects[object].globals[slot].ty.clone());
         }
         let _ = v;
@@ -2689,8 +2878,8 @@ impl Session {
         // (corpus autoformat/TestAutoFormatExpressionTiming.al, WorkingCaptionClass_OpensAndReadsItsCaption).
         let class = match ctl.prop("captionclass") {
             Some(ir::PropVal::Lit(c)) => Some(unquote(c)),
-            Some(ir::PropVal::Routine(r)) => match self.page_routine(st, *r)? {
-                Value::Text(t) | Value::Code(t) => Some(t),
+            Some(routine) => match self.prop_routine_value(st, idx, routine)? {
+                Some(Value::Text(t) | Value::Code(t)) => Some(t),
                 _ => None,
             },
             None => None,
@@ -2719,7 +2908,10 @@ impl Session {
         match page_of(&engine, st).controls[idx].prop(name) {
             None => Ok(default),
             Some(ir::PropVal::Lit(v)) => Ok(is_true(v)),
-            Some(ir::PropVal::Routine(r)) => ops::truthy(&self.page_routine(st, *r)?),
+            Some(routine) => match self.prop_routine_value(st, idx, routine)? {
+                Some(v) => ops::truthy(&v),
+                None => Ok(default),
+            },
         }
     }
 

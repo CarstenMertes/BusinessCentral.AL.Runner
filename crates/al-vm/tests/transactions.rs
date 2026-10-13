@@ -79,7 +79,13 @@ codeunit 50918 Outer
 "#;
 
 fn run(body: &str) -> Result<Value, Signal> {
-    let src = format!("{FIXTURES}\ncodeunit 50100 C {{ {body} }}");
+    run_in("", body, |_| {})
+}
+
+/// Like `run`, with extra objects and a hook that sets the session up the way the test runner
+/// does (`tx_model`, `in_test_codeunit`) before F is called.
+fn run_in(extra: &str, body: &str, setup: impl FnOnce(&mut Session)) -> Result<Value, Signal> {
+    let src = format!("{FIXTURES}\n{extra}\ncodeunit 50100 C {{ {body} }}");
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),
@@ -106,6 +112,7 @@ fn run(body: &str) -> Result<Value, Signal> {
     }
     let engine = Engine::new(l.program, blocked);
     let mut s = Session::new(engine);
+    setup(&mut s);
     let inst = s.instance(oi);
     s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
 }
@@ -408,5 +415,64 @@ fn the_scope_ends_when_the_attributed_procedure_fails() {
             "var R: Record \"TX T\"; begin asserterror InsertCommitThenErrorIgnoring('5'); R.K := 'Z'; R.Insert(); Commit(); asserterror Error('later'); exit(Format(R.Get('Z'))); end;"
         ),
         "Yes"
+    );
+}
+
+// ---- mutation-testing additions (docs/status.md debt) ----
+
+// An unguarded Codeunit.Run in the default model does not commit the caller's pending write
+// (codeunit/TestCodeunitRunWriteTransaction.al:UnguardedRun_WithUncommittedWrite_IsAllowed_AndCodeunitRuns
+// shows the write is still there afterwards; only a guarded run commits, see
+// a_successful_guarded_run_commits_its_own_transaction).
+#[test]
+fn an_unguarded_run_under_autocommit_leaves_the_callers_write_uncommitted() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; begin
+            R.K := 'P'; R.Insert();
+            Codeunit.Run(Codeunit::Probe);
+            exit(Format(Database.IsInWriteTransaction()));
+        end;"),
+        "Yes"
+    );
+}
+
+// codeunit/TestWriteTxTestBoundary.al:Test09 (a direct Insert under None is refused) and
+// :Test10_ARunCodeunitMayWriteUnderNone (the run opens a transaction of its own, which ends
+// with the run -- and the refusal applies again afterwards).
+#[test]
+fn under_transaction_model_none_a_run_may_write_and_the_refusal_returns_after_it() {
+    let r = run_in(
+        "",
+        "procedure F(): Text
+        var R: Record \"TX T\"; Seen: Text;
+        begin
+            asserterror begin R.K := 'A'; R.Insert(); end;
+            Seen := GetLastErrorText();
+            Codeunit.Run(Codeunit::DirtyInserter);
+            Seen += '|' + Format(Database.IsInWriteTransaction());
+            asserterror begin R.K := 'B'; R.Insert(); end;
+            exit(Seen + '|' + GetLastErrorText());
+        end;",
+        |s| s.tx_model = al_vm::TxModel::None,
+    );
+    let none = "A transaction must be started before changes can be made to the database.";
+    assert_eq!(text(r), format!("{none}|No|{none}"));
+}
+
+// codeunit/TestCodeunitRunNestedTestCodeunit.al:CodeunitRun_TestCodeunitFromTest_Guarded_StillThrows:
+// only a codeunit with Subtype = Test counts as a test codeunit.
+#[test]
+fn only_a_test_codeunit_is_refused_when_run_from_a_test() {
+    let extra = "codeunit 50930 NormalCu { Subtype = Normal; trigger OnRun() begin end; }
+                 codeunit 50931 TestCu { Subtype = Test; trigger OnRun() begin end; }";
+    let body = "procedure F(): Text
+        begin
+            Codeunit.Run(Codeunit::NormalCu);
+            asserterror Codeunit.Run(Codeunit::TestCu);
+            exit(GetLastErrorText());
+        end;";
+    let r = run_in(extra, body, |s| s.in_test_codeunit = true);
+    assert!(
+        text(r).starts_with("You cannot nest the execution of test codeunits. Test codeunit 50931 TestCu was called"),
     );
 }

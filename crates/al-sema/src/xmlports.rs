@@ -193,13 +193,6 @@ impl Layout {
             .map(|p| p.value_text())
     }
 
-    /// `UseTemporary = true` on table node `i`.
-    pub fn use_temporary(&self, i: usize) -> bool {
-        self.property(i, "UseTemporary")
-            .and_then(|v| bool_prop(&v))
-            .unwrap_or(false)
-    }
-
     /// The nearest table node named `name` at or above node `from`.
     fn table_named(&self, from: Option<usize>, name: &str) -> Option<usize> {
         let mut cur = from;
@@ -452,6 +445,41 @@ mod tests {
         assert!(all.contains("request pages"), "{all}");
     }
 
+    // Mutation-testing additions (docs/status.md debt).
+
+    #[test]
+    fn only_utf8_is_an_accepted_text_encoding() {
+        for ok in ["UTF8", "utf8", "UTF8 "] {
+            let l = layout_of(&format!("xmlport 1 X {{ TextEncoding = {ok}; schema {{ textelement(Root) {{ }} }} }}"));
+            assert!(l.reasons.is_empty(), "{ok}: {:?}", l.reasons);
+        }
+        let l = layout_of("xmlport 1 X { TextEncoding = UTF16; schema { textelement(Root) { } } }");
+        assert!(l.reasons.join(";").contains("property textencoding"), "{:?}", l.reasons);
+    }
+
+    #[test]
+    fn inert_object_properties_are_accepted_and_others_are_reasons() {
+        for name in INERT_OBJECT_PROPERTIES {
+            let l = layout_of(&format!("xmlport 1 X {{ {name} = 'x'; schema {{ textelement(Root) {{ }} }} }}"));
+            assert!(l.reasons.is_empty(), "{name}: {:?}", l.reasons);
+        }
+        let l = layout_of("xmlport 1 X { Encoding = Windows; schema { textelement(Root) { } } }");
+        assert!(l.reasons.join(";").contains("property encoding"), "{:?}", l.reasons);
+    }
+
+    #[test]
+    fn a_quote_hides_parentheses_from_the_nesting_count() {
+        assert_eq!(
+            split_top("\"A(B\" = FIELD(X), C = FIELD(Y)", ','),
+            vec!["\"A(B\" = FIELD(X)", " C = FIELD(Y)"]
+        );
+        assert_eq!(
+            split_top("\"A)B\" = FIELD(X), C = FIELD(Y)", ','),
+            vec!["\"A)B\" = FIELD(X)", " C = FIELD(Y)"]
+        );
+        assert_eq!(split_top("A = FIELD(X, Y), B", ','), vec!["A = FIELD(X, Y)", " B"]);
+    }
+
     #[test]
     fn link_fields_split_at_top_level_commas() {
         assert_eq!(
@@ -565,4 +593,65 @@ xmlport 50010 X
         let why = o.xmlport.as_ref().unwrap().unsupported.join(";");
         assert!(why.contains("unknown field Nope"), "{why}");
     }
+    // Mutation-testing additions (docs/status.md debt).
+
+    fn reasons_of(src: String) -> String {
+        let (_, l) = compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src)],
+            }],
+            &Default::default(),
+        );
+        let o = l.program.objects.iter().find(|o| o.kind == "xmlport").unwrap();
+        o.xmlport.as_ref().unwrap().unsupported.join(";")
+    }
+
+    #[test]
+    fn a_field_must_sit_inside_a_table_element_of_the_name_it_binds() {
+        // Root is a text element, Q is no element at all, and P is a table element of another name.
+        for name in ["Root", "Q"] {
+            let why = reasons_of(SRC.replace("fieldelement(Number; P.No)", &format!("fieldelement(Number; {name}.No)")));
+            assert!(why.contains(&format!("is not inside a table element named {name}")), "{name}: {why}");
+        }
+        assert_eq!(reasons_of(SRC.to_string()), "");
+    }
+
+    #[test]
+    fn link_table_must_name_a_table_element_above() {
+        for name in ["Root", "Q", "C"] {
+            let why = reasons_of(SRC.replace("LinkTable = P;", &format!("LinkTable = {name};")));
+            assert!(why.contains(&format!("LinkTable {name} is not a table element above it")), "{name}: {why}");
+        }
+        let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", ""));
+        assert!(why.contains("LinkTable and LinkFields must be given together"), "{why}");
+    }
+
+    #[test]
+    fn a_container_text_element_with_a_trigger_is_a_reason() {
+        let why = reasons_of(SRC.replace(
+            "XmlName = 'Docs';",
+            "XmlName = 'Docs'; trigger OnBeforePassVariable() begin end;",
+        ));
+        assert!(why.contains("triggers of the container text element Root"), "{why}");
+    }
+
+    #[test]
+    fn a_table_outside_the_workspace_is_a_reason_even_with_its_variable_in_place() {
+        let why = reasons_of(SRC.replace("tableelement(P; Parent)", "tableelement(P; Nowhere)"));
+        assert!(why.contains("table element P: table Nowhere is outside the workspace"), "{why}");
+    }
+
+    #[test]
+    fn a_link_field_that_is_not_field_of_something_is_not_understood() {
+        let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "LinkFields = ParentNo = No;"));
+        assert!(why.contains("LinkFields entry `ParentNo = No` is not understood"), "{why}");
+        // Only a FIELD( prefix makes the right-hand side a field reference; a name that merely
+        // ends in a parenthesis and has a real field after six characters is not one.
+        let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "LinkFields = ParentNo = ABCDEFNo);"));
+        assert!(why.contains("is not understood"), "{why}");
+    }
+
 }

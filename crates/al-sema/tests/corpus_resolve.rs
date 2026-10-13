@@ -56,9 +56,16 @@ pub fn corpus() -> Workspace {
 #[test]
 fn unresolved_references_are_exactly_the_known_external_set() {
     let ws = corpus();
+    let members = al_sema::members::build(&ws);
+    let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
     let mut unresolved: BTreeMap<String, usize> = BTreeMap::new();
     let mut other = Vec::new();
-    for d in &ws.diagnostics {
+    for d in ws
+        .diagnostics
+        .iter()
+        .chain(&checked.diagnostics)
+        .filter(|d| !d.code.starts_with("AR1"))
+    {
         if d.code == "AR0002" {
             *unresolved.entry(d.message.clone()).or_default() += 1;
         } else {
@@ -99,4 +106,55 @@ fn every_corpus_table_field_has_a_known_type() {
         unknown.len(),
         unknown.join("\n")
     );
+}
+
+/// Milestone 1: every name, member and call in every corpus body resolves,
+/// except references into apps outside the workspace (golden list above).
+#[test]
+fn corpus_bodies_resolve_with_no_model_gaps() {
+    let ws = corpus();
+    let members = al_sema::members::build(&ws);
+    let r = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let gaps: Vec<String> = r
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.starts_with("AR1"))
+        .map(|d| format!("{} {}: {}", d.code, d.file, d.message))
+        .collect();
+    assert!(
+        gaps.is_empty(),
+        "{} model gap(s):\n{}",
+        gaps.len(),
+        gaps.iter().take(40).cloned().collect::<Vec<_>>().join("\n")
+    );
+}
+
+/// Prints the resolver's diagnostics over the corpus (run with --nocapture).
+#[test]
+#[ignore = "exploration aid, not a gate"]
+fn explore_body_resolution() {
+    let ws = corpus();
+    let members = al_sema::members::build(&ws);
+    let r = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let mut by_msg: BTreeMap<String, usize> = BTreeMap::new();
+    let mut by_code: BTreeMap<&str, usize> = BTreeMap::new();
+    for d in &r.diagnostics {
+        *by_code.entry(d.code).or_default() += 1;
+        *by_msg.entry(format!("{} {}", d.code, d.message)).or_default() += 1;
+    }
+    println!("{by_code:?}");
+    let mut v: Vec<_> = by_msg.into_iter().collect();
+    v.sort_by_key(|e| std::cmp::Reverse(e.1));
+    for (m, n) in v.iter().take(80) {
+        println!("{n:5} {m}");
+    }
+    if let Ok(pat) = std::env::var("SHOW") {
+        for d in r.diagnostics.iter().filter(|d| d.message.contains(&pat)).take(6) {
+            let f = ws.files.iter().find(|f| f.path == d.file).unwrap();
+            let src = al_syntax::SyntaxNode::new_root(f.green.clone()).text().to_string();
+            let line = src[..d.offset].matches('\n').count() + 1;
+            let text = src.lines().nth(line - 1).unwrap_or("").trim();
+            println!("  {}:{line}: {text}", d.file);
+        }
+    }
 }

@@ -1,0 +1,19 @@
+# Corrections to the generated signatures.txt (ADR-008).
+#
+# Each block starts with one or more `#` lines giving the evidence, then
+# `- <line>` removes a generated line (it must exist) and `+ <line>` adds one.
+# Evidence is a corpus file that BC compiles, a probe result, or a doc page.
+
+# The instance overload is scraped as `Codeunit.Run(var Record: Record)`, but
+# BC compiles a call with no argument: corpus codeunit/TestCodeunitRunGuard.al:69
+# `Ok := RunGuard.Run();`.
+- Codeunit.Run inst (var Record: Record) -> Boolean?
++ Codeunit.Run inst (?var Record: Record) -> Boolean?
+
+# TestPage.Filter is a property (methods-auto only scrapes methods). Corpus:
+# handlers/TestPageModalNewRowLine_Tests.al:136 `TP.Filter.SetFilter(Closed, ...)`.
++ TestPage.Filter inst () -> TestFilter
+
+# TestPart.Filter is a property, like TestPage.Filter. Corpus:
+# testfilter/TestTestFilter.al:586 `Host.Lines.Filter.SetFilter("Line No.", '20');`.
++ TestPart.Filter inst () -> TestFilter

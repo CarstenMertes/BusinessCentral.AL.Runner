@@ -29,6 +29,10 @@ pub enum Ty {
     Object(ObjKind, String),
     TestPage(String),
     TestRequestPage(String),
+    /// A part on a test page, carrying the page it hosts.
+    TestPart(String),
+    /// `TestPage.Filter` or a request page data item: a filter on this table.
+    TestFilter(String),
     List(Box<Ty>),
     Dictionary(Box<Ty>, Box<Ty>),
     Array(Vec<u32>, Box<Ty>),
@@ -80,6 +84,29 @@ impl Ty {
                 Some(kind) => Ty::Object(kind, obj()),
                 None => Ty::Builtin(canonical_builtin(&name)),
             },
+        }
+    }
+}
+
+impl std::fmt::Display for Ty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ty::Text(Some(n)) => write!(f, "Text[{n}]"),
+            Ty::Code(Some(n)) => write!(f, "Code[{n}]"),
+            Ty::Code(None) => write!(f, "Code"),
+            Ty::Text(None) => write!(f, "Text"),
+            Ty::Enum(n) => write!(f, "Enum \"{n}\""),
+            Ty::Record { table, .. } => write!(f, "Record \"{table}\""),
+            Ty::Object(k, n) => write!(f, "{} \"{n}\"", k.label()),
+            Ty::TestPage(n) => write!(f, "TestPage \"{n}\""),
+            Ty::TestRequestPage(n) => write!(f, "TestRequestPage \"{n}\""),
+            Ty::TestPart(n) => write!(f, "TestPart \"{n}\""),
+            Ty::TestFilter(n) => write!(f, "TestFilter \"{n}\""),
+            Ty::List(t) => write!(f, "List of [{t}]"),
+            Ty::Dictionary(k, v) => write!(f, "Dictionary of [{k}, {v}]"),
+            Ty::Array(d, t) => write!(f, "array{d:?} of {t}"),
+            Ty::Builtin(n) => write!(f, "{n}"),
+            other => write!(f, "{other:?}"),
         }
     }
 }

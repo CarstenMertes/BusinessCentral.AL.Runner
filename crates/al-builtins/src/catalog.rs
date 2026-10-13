@@ -5,10 +5,48 @@ use std::collections::{BTreeMap, HashMap};
 
 /// The checked-in catalog, compiled into the binary (no file access at runtime, ADR-006).
 const SIGNATURES: &str = include_str!("../catalog/signatures.txt");
+const OVERRIDES: &str = include_str!("../catalog/overrides.txt");
+
+/// Applies `overrides` to the generated `lines`. Every change must follow a
+/// `#` evidence comment, and every removed line must exist.
+pub fn apply_overrides(lines: &[&str], overrides: &str) -> Result<Vec<String>, String> {
+    let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    let mut has_evidence = false;
+    for (n, raw) in overrides.lines().enumerate() {
+        let line = raw.trim_end();
+        if line.trim().is_empty() {
+            has_evidence = false;
+        } else if line.starts_with('#') {
+            has_evidence = true;
+        } else if let Some(rest) = line.strip_prefix("- ").or_else(|| line.strip_prefix("+ ")) {
+            if !has_evidence {
+                return Err(format!(
+                    "overrides.txt:{}: change without a preceding `#` evidence comment",
+                    n + 1
+                ));
+            }
+            if line.starts_with('-') {
+                let i = out
+                    .iter()
+                    .position(|l| l == rest)
+                    .ok_or_else(|| format!("overrides.txt:{}: `{rest}` is not in the catalog", n + 1))?;
+                out.remove(i);
+            } else {
+                out.push(rest.to_string());
+            }
+        } else {
+            return Err(format!("overrides.txt:{}: expected `#`, `- ` or `+ `", n + 1));
+        }
+    }
+    out.sort();
+    Ok(out)
+}
 
 /// Receivers whose static methods can be called without a qualifier
 /// (`Message(...)`, `Format(...)`, `CopyStr(...)`, `Commit()`, `BindSubscription(...)`).
-pub const GLOBAL_RECEIVERS: &[&str] = &["System", "Dialog", "Text", "Database", "Session"];
+/// `SecretText` is here because corpus types/TestSecretText.al:73 calls
+/// `SecretStrSubstNo(...)` unqualified and BC compiles it.
+pub const GLOBAL_RECEIVERS: &[&str] = &["System", "Dialog", "Text", "Database", "Session", "SecretText"];
 
 pub struct Catalog {
     pub signatures: Vec<Signature>,
@@ -18,9 +56,13 @@ pub struct Catalog {
 
 impl Catalog {
     pub fn load() -> Catalog {
-        let signatures: Vec<Signature> = SIGNATURES
+        let base: Vec<&str> = SIGNATURES
             .lines()
             .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .collect();
+        let lines = apply_overrides(&base, OVERRIDES).unwrap_or_else(|e| panic!("{e}"));
+        let signatures: Vec<Signature> = lines
+            .iter()
             .map(|l| Signature::from_line(l).unwrap_or_else(|e| panic!("bad catalog line `{l}`: {e}")))
             .collect();
         let mut by_method: HashMap<(String, String), Vec<usize>> = HashMap::new();
@@ -97,6 +139,40 @@ pub fn generate(surface_json: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overrides_remove_and_add_lines() {
+        let out = apply_overrides(&["A.x inst ()", "A.y inst ()"], "# why\n- A.x inst ()\n+ A.z inst ()\n").unwrap();
+        assert_eq!(out, vec!["A.y inst ()", "A.z inst ()"]);
+    }
+
+    #[test]
+    fn override_without_evidence_is_rejected() {
+        assert!(apply_overrides(&["A.x inst ()"], "- A.x inst ()\n").is_err());
+        assert!(
+            apply_overrides(&["A.x inst ()"], "# why\n- A.x inst ()\n\n+ A.z inst ()\n").is_err(),
+            "blank line ends a block"
+        );
+    }
+
+    #[test]
+    fn removing_a_line_that_does_not_exist_is_rejected() {
+        assert!(apply_overrides(&["A.x inst ()"], "# why\n- A.nope inst ()\n").is_err());
+    }
+
+    #[test]
+    fn checked_in_overrides_apply_and_parse() {
+        let base: Vec<&str> = SIGNATURES.lines().filter(|l| !l.starts_with('#')).collect();
+        for l in apply_overrides(&base, OVERRIDES).unwrap() {
+            Signature::from_line(&l).unwrap();
+        }
+        let c = Catalog::load();
+        assert!(
+            c.overloads("Codeunit", "Run")
+                .iter()
+                .any(|s| s.instance && s.params[0].optional)
+        );
+    }
 
     #[test]
     fn every_catalog_line_round_trips() {

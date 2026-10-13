@@ -12,14 +12,15 @@
    4 unresolved codeunit `User Permissions`
    2 unresolved enum `Deferral Document Type`
    1 unresolved enum `EventCategory`
-   6 unresolved enum `Job Queue Report Output Type`
-   8 unresolved enum `Printer Paper Kind`
-   1 unresolved enum `Production Order Status`
-   1 unresolved enum `Reservation Demand Type`
-   1 unresolved enum `Reservation Status`
+  15 unresolved enum `Job Queue Report Output Type`
+  10 unresolved enum `Printer Paper Kind`
+   5 unresolved enum `Production Order Status`
+   6 unresolved enum `Reservation Demand Type`
+   2 unresolved enum `Reservation From Stock`
+   5 unresolved enum `Reservation Status`
    1 unresolved enum `Resource Skill Type`
-   1 unresolved enum `Service Document Type`
-   3 unresolved enum `Transfer Order Post`
+   5 unresolved enum `Service Document Type`
+   6 unresolved enum `Transfer Order Post`
    1 unresolved page `Allocation Account List`
    1 unresolved page `Catalog Item List`
    1 unresolved page `Chart of Accounts (G/L)`
@@ -40,15 +41,15 @@
    1 unresolved page `G/L Registers`
    2 unresolved page `Integration Field Mapping List`
    7 unresolved page `Inventory Posting Groups`
-   2 unresolved page `Item Attribute Values`
-   3 unresolved page `Item Attribute`
+   3 unresolved page `Item Attribute Values`
+   5 unresolved page `Item Attribute`
    4 unresolved page `Item Tracing`
    1 unresolved page `Job Queue Entries`
    3 unresolved page `Languages`
    3 unresolved page `Location Card`
    1 unresolved page `Marketing Setup`
    2 unresolved page `Microsoft.Foundation.Shipping.Shipping Agent Services`
-   1 unresolved page `No. Series Generation`
+   2 unresolved page `No. Series Generation`
    2 unresolved page `No. Series`
    4 unresolved page `Package No. Information List`
    1 unresolved page `Product Video Topics`
@@ -60,32 +61,40 @@
    4 unresolved page `Schedule a Report`
    2 unresolved page `Skill Codes`
    3 unresolved page `Standard Text Codes`
-   7 unresolved page `VAT Rate Change Setup`
+   9 unresolved page `VAT Rate Change Setup`
    2 unresolved page `Warehouse Reason Codes`
    1 unresolved page `Whse. Internal Pick`
    3 unresolved query `Qty. Reserved From Item Ledger`
    2 unresolved query `Role Center from Plans`
-   1 unresolved report `Batch Post Sales Orders`
-   1 unresolved report `Batch Post Transfer Orders`
-   1 unresolved report `Calc. and Post VAT Settlement`
-   1 unresolved report `Employee - Addresses`
-   7 unresolved report `Export Consolidation`
+   2 unresolved report `Batch Post Sales Orders`
+   3 unresolved report `Batch Post Transfer Orders`
+   3 unresolved report `Calc. and Post VAT Settlement`
+   2 unresolved report `Change Log Setup List`
+   2 unresolved report `Customer - List`
+   3 unresolved report `Customer - Order Summary`
+   2 unresolved report `Employee - Addresses`
+  14 unresolved report `Export Consolidation`
+   1 unresolved report `G/L Register`
    3 unresolved report `Generate Dupl. Search String`
    6 unresolved report `Get Demand To Reserve`
    1 unresolved report `Insurance - Analysis`
-   7 unresolved report `Reset Cost Is Adjusted`
+   1 unresolved report `Notification Email`
+   1 unresolved report `Prod. Order - List`
+  14 unresolved report `Reset Cost Is Adjusted`
+   4 unresolved report `Standard Sales - Invoice`
    3 unresolved report `Update Cost Acctg. Dimensions`
-   1 unresolved report `VAT Report Request Page`
+   3 unresolved report `VAT Report Request Page`
    1 unresolved table `Access Control`
   11 unresolved table `Active Session`
   15 unresolved table `Aggregate Permission Set`
   21 unresolved table `All Profile`
-  22 unresolved table `AllObjWithCaption`
+  25 unresolved table `AllObjWithCaption`
   19 unresolved table `AllObj`
-   1 unresolved table `Allocation Account`
-   2 unresolved table `Analysis Line`
+   2 unresolved table `Allocation Account`
+   3 unresolved table `Analysis Line`
    7 unresolved table `Assembly Line`
    2 unresolved table `Bin`
+   1 unresolved table `Capacity Ledger Entry`
    2 unresolved table `Change Log Setup (Field)`
    3 unresolved table `Change Log Setup (Table)`
    2 unresolved table `Change Log Setup`
@@ -93,71 +102,75 @@
    6 unresolved table `Code Coverage Tests Run`
    9 unresolved table `Code Coverage`
   34 unresolved table `CodeUnit Metadata`
-   1 unresolved table `Company Information`
+   2 unresolved table `Company Information`
   13 unresolved table `Company`
    1 unresolved table `Config. Template Header`
    1 unresolved table `Cost Accounting Setup`
    2 unresolved table `Currency`
-   2 unresolved table `Customer Bank Account`
-  11 unresolved table `Customer`
-  25 unresolved table `Date`
+   3 unresolved table `Customer Bank Account`
+   1 unresolved table `Customer Discount Group`
+  17 unresolved table `Customer`
+  28 unresolved table `Date`
    2 unresolved table `Deferral Line`
-   7 unresolved table `Dimension Correction`
+   9 unresolved table `Dimension Correction`
    1 unresolved table `Dimension`
+   1 unresolved table `Employee`
    7 unresolved table `Event Subscription`
-  25 unresolved table `Expanded Permission`
+  26 unresolved table `Expanded Permission`
    2 unresolved table `Experience Tier Setup`
    5 unresolved table `Feature Key`
   23 unresolved table `Field`
    3 unresolved table `G/L Account Category`
-   1 unresolved table `G/L Account`
-   1 unresolved table `G/L Entry`
+   2 unresolved table `G/L Account`
+   2 unresolved table `G/L Entry`
    3 unresolved table `G/L Register`
    1 unresolved table `Gen. Journal Line`
    1 unresolved table `General Ledger Setup`
+   1 unresolved table `IC Partner`
    2 unresolved table `Industry Group`
    2 unresolved table `Ins. Coverage Ledger Entry`
    3 unresolved table `Insurance`
   10 unresolved table `Integer`
-   1 unresolved table `Inventory Setup`
+   2 unresolved table `Inventory Setup`
    2 unresolved table `Item Analysis View`
    5 unresolved table `Item Attribute`
-   2 unresolved table `Item Journal Line`
-   2 unresolved table `Item Ledger Entry`
-   1 unresolved table `Item Register`
-   9 unresolved table `Item`
+   4 unresolved table `Item Journal Line`
+   4 unresolved table `Item Ledger Entry`
+   2 unresolved table `Item Register`
+  13 unresolved table `Item`
    2 unresolved table `Job Queue Entry`
-  10 unresolved table `Job`
+  11 unresolved table `Job`
    6 unresolved table `Key`
-  14 unresolved table `Location`
+  15 unresolved table `Location`
    2 unresolved table `Mailing Group`
    1 unresolved table `Marketing Setup`
-  16 unresolved table `Metadata Permission Set`
-   5 unresolved table `Metadata Permission`
-   5 unresolved table `Microsoft.Foundation.Shipping.Shipment Method`
+  18 unresolved table `Metadata Permission Set`
+   6 unresolved table `Metadata Permission`
+   7 unresolved table `Microsoft.Foundation.Shipping.Shipment Method`
    3 unresolved table `Microsoft.Foundation.Shipping.Shipping Agent`
-   2 unresolved table `Microsoft.Sales.Customer.Customer`
-   8 unresolved table `NAV App Installed App`
+   3 unresolved table `Microsoft.Sales.Customer.Customer`
+   9 unresolved table `NAV App Installed App`
    9 unresolved table `Page Action`
   22 unresolved table `Page Control Field`
   12 unresolved table `Page Metadata`
    3 unresolved table `Payment Terms`
-  10 unresolved table `Permission Set`
+  11 unresolved table `Permission Set`
    4 unresolved table `Permission`
+   1 unresolved table `Post Code`
    2 unresolved table `Prod. Order Line`
-   1 unresolved table `Production Forecast Name`
+   2 unresolved table `Production Forecast Name`
    8 unresolved table `Query Metadata`
   26 unresolved table `Record Link`
   10 unresolved table `Report Data Items`
   13 unresolved table `Report Layout List`
    5 unresolved table `Report Metadata`
-   1 unresolved table `Requisition Line`
+   2 unresolved table `Requisition Line`
    3 unresolved table `Reservation Entry`
    5 unresolved table `Resource Skill`
    2 unresolved table `Retention Policy Setup`
-   2 unresolved table `Sales Header`
+   4 unresolved table `Sales Header`
    1 unresolved table `Sales Line Discount`
-  14 unresolved table `Sales Line`
+  19 unresolved table `Sales Line`
    2 unresolved table `Service Line`
    2 unresolved table `Service Zone`
   12 unresolved table `Session`
@@ -174,13 +187,16 @@
    7 unresolved table `Time Zone`
    2 unresolved table `Transfer Header`
    2 unresolved table `User Personalization`
-   4 unresolved table `User`
-   7 unresolved table `VAT Rate Change Setup`
+   5 unresolved table `User`
+   9 unresolved table `VAT Rate Change Setup`
    4 unresolved table `VAT Report Header`
+   1 unresolved table `Vendor`
    1 unresolved table `Warehouse Employee`
    1 unresolved table `Whse. Internal Pick Header`
    1 unresolved table `Whse. Internal Pick Line`
    7 unresolved table `Windows Language`
   11 unresolved table `XmlPort Metadata`
-   2 unresolved xmlport `Export Permission Sets System`
-   2 unresolved xmlport `Import Permission Sets`
+   2 unresolved xmlport `Export Contact`
+   5 unresolved xmlport `Export Permission Sets System`
+   1 unresolved xmlport `Export Permission Sets Tenant`
+   4 unresolved xmlport `Import Permission Sets`

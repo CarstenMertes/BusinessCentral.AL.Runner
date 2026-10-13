@@ -37,6 +37,7 @@ The decision at the end is one of:
 3. **No guessing at semantics.** If behavior is unclear, write a probe test, run it on real BC, and add it to the corpus. Then implement.
 4. **Unsupported means a compile-time error.** Builtins that are not implemented must fail at compile time with a clear diagnostic, never silently at runtime.
 5. **Architecture changes go through an ADR** (`docs/adr/`). Agents fill in implementations; seams change only through a recorded decision.
+6. **Observable equivalence (ADR-009).** As long as the observable outcome is the same, the runtime may improve on the original AL language and BC stack.
 
 ## Architecture
 

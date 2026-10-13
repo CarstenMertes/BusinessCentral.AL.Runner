@@ -17,6 +17,11 @@ Read `docs/handoff.md` (the spike brief) and `docs/adr/README.md` first.
 4. **Unsupported means a compile-time error.** A builtin that is not
    implemented fails in `al-sema` with a diagnostic naming it, never at runtime.
 5. **Seams change only through an ADR** in `docs/adr/`.
+6. **Match BC where it is observable; improve on it everywhere else**
+   (ADR-009). Values, errors, database state, trigger and event order, host
+   interaction and whether code compiles must match real BC. Internals,
+   performance, determinism, diagnostics and tooling are free to be better.
+   Never reject code BC accepts, and never "fix" BC behaviour AL code can see.
 
 ## Workflow
 

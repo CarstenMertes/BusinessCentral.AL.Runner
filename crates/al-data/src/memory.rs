@@ -39,6 +39,8 @@ pub struct MemStore {
     committed_versions: im::OrdMap<(String, u32), u64>,
     /// Handed out by writes; never goes back, so a stamp is never reused.
     counter: u64,
+    /// Tables that have no stored rows (ADR-018).
+    virtuals: Option<std::rc::Rc<dyn VirtualTables>>,
 }
 
 fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
@@ -57,6 +59,23 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 }
 
 impl MemStore {
+    /// A store whose virtual tables are answered by `v`.
+    pub fn with_virtual_tables(v: std::rc::Rc<dyn VirtualTables>) -> MemStore {
+        MemStore {
+            virtuals: Some(v),
+            ..Default::default()
+        }
+    }
+
+    /// The provider of table `t`, if its rows are computed.
+    fn virtual_of(&self, t: &TableDef) -> Option<&dyn VirtualTables> {
+        self.virtuals.as_deref().filter(|v| v.serves(t))
+    }
+
+    fn read_only(t: &TableDef, what: &str) -> StoreError {
+        StoreError::Refused(format!("{what} on virtual table '{}': its rows are computed, not stored", t.name))
+    }
+
     /// Whether any write since the last commit or rollback is pending.
     pub fn has_uncommitted(&self) -> bool {
         !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
@@ -65,6 +84,9 @@ impl MemStore {
     /// A number that changes whenever the rows of table `t` change (a rollback included). Queries
     /// compare it to tell whether their result set is stale (corpus query/TestQueryReadAfterWrite.al).
     pub fn table_stamp(&self, cx: &AccessContext, t: &TableDef) -> u64 {
+        if self.virtual_of(t).is_some() {
+            return 0;
+        }
         self.versions.get(&slot(cx, t)).copied().unwrap_or(0)
     }
 
@@ -84,6 +106,9 @@ impl MemStore {
 
 impl Store for MemStore {
     fn insert(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<InsertOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Insert"));
+        }
         let k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if table.contains_key(&k) {
@@ -95,10 +120,16 @@ impl Store for MemStore {
     }
 
     fn get(&self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+        if let Some(v) = self.virtual_of(t) {
+            return v.get(cx, t, pk);
+        }
         Ok(self.table(cx, t).and_then(|m| m.get(&Key(pk.to_vec())).cloned()))
     }
 
     fn modify(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<WriteOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Modify"));
+        }
         let k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if !table.contains_key(&k) {
@@ -110,6 +141,9 @@ impl Store for MemStore {
     }
 
     fn delete(&mut self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<WriteOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Delete"));
+        }
         Ok(match self.table_mut(cx, t).remove(&Key(pk.to_vec())) {
             Some(_) => {
                 self.touch(cx, t);
@@ -126,6 +160,9 @@ impl Store for MemStore {
         old: &[Value],
         row: Row,
     ) -> Result<RenameOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Rename"));
+        }
         let new_k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if !table.contains_key(&Key(old.to_vec())) {
@@ -141,6 +178,9 @@ impl Store for MemStore {
     }
 
     fn next(&self, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+        if let Some(v) = self.virtual_of(t) {
+            return v.next(cx, t, scan);
+        }
         let Some(table) = self.table(cx, t) else {
             return Ok(None);
         };
@@ -174,12 +214,18 @@ impl Store for MemStore {
     }
 
     fn count(&self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
+        if let Some(v) = self.virtual_of(t) {
+            return v.count(cx, t, f);
+        }
         Ok(self
             .table(cx, t)
             .map_or(0, |m| m.values().filter(|r| passes(r, f)).count()))
     }
 
     fn delete_all(&mut self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "DeleteAll"));
+        }
         let table = self.table_mut(cx, t);
         let doomed: Vec<Key> = table
             .iter()

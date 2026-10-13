@@ -26,6 +26,7 @@ pub mod media;
 pub mod moduleinfo;
 pub mod native;
 pub mod ops;
+pub mod platform;
 pub mod pagebuiltins;
 pub mod pagefmt;
 pub mod querybuiltins;

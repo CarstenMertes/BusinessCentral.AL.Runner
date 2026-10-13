@@ -49,6 +49,9 @@ pub enum StoreError {
     Conflict,
     Deadlock,
     ChangedByAnotherUser,
+    /// The store will not do this and says why (a write to a table whose rows are computed on
+    /// read, a read it cannot answer without guessing). Callers report it as unsupported.
+    Refused(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +82,19 @@ pub struct Scan<'a> {
     pub filters: &'a [FieldFilter],
     pub ascending: bool,
     pub after: Option<&'a [Value]>,
+}
+
+/// Tables whose rows are computed on read instead of stored (ADR-018): the platform's virtual and
+/// metadata tables. A [`memory::MemStore`] given one asks it first for every table it `serves`;
+/// those tables have no rows of their own, cannot be written, and are not part of a snapshot,
+/// commit or rollback.
+pub trait VirtualTables {
+    /// Whether table `t` is answered by this provider.
+    fn serves(&self, t: &TableDef) -> bool;
+    fn get(&self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError>;
+    /// The next row of a scan, as [`Store::next`].
+    fn next(&self, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError>;
+    fn count(&self, cx: &AccessContext, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError>;
 }
 
 pub trait Store {

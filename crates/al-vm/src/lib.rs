@@ -22,6 +22,7 @@ mod hostvalues;
 mod interfaces;
 mod pages;
 mod partial;
+mod platform;
 mod queries;
 mod recmeta;
 mod records;
@@ -237,6 +238,7 @@ impl Session {
     /// A session whose clock and identity come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
+        let store = al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine)));
         Session {
             global_language: host.identity.global_language(),
             host,
@@ -247,7 +249,7 @@ impl Session {
             last_error: AlError::default(),
             depth: 0,
             singletons: Default::default(),
-            store: Default::default(),
+            store,
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,

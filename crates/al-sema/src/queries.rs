@@ -156,7 +156,10 @@ impl Builder<'_> {
             {
                 Resolution::Found(i) => i,
                 _ => {
-                    self.reason(format!("dataitem {name}: table `{t}` is outside the workspace"));
+                    self.reason(format!(
+                        "dataitem {name}: {}",
+                        self.ws.outside_workspace(ObjKind::Table, t)
+                    ));
                     usize::MAX
                 }
             },

@@ -257,7 +257,10 @@ pub fn lower_with_positions(
         if let Some(t) = prop("SourceTable") {
             match ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()]) {
                 Resolution::Found(t) => table_of[oi] = Some(t),
-                _ => page_reasons[oi].push(format!("source table {t} is outside the workspace")),
+                _ => page_reasons[oi].push(format!(
+                    "source table: {}",
+                    ws.outside_workspace(ObjKind::Table, &t)
+                )),
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
@@ -1948,8 +1951,8 @@ impl Lowerer<'_> {
             .resolve_ref(file, ObjKind::Table, std::slice::from_ref(&f.table))
         else {
             return Err(format!(
-                "CalcFormula source table `{}` is outside the workspace",
-                f.table
+                "CalcFormula source: {}",
+                self.ws.outside_workspace(ObjKind::Table, &f.table)
             ));
         };
         let src_fields = &self.members[src].fields;
@@ -2032,11 +2035,7 @@ impl Lowerer<'_> {
     fn resolve_obj_in(&self, file: usize, kind: ObjKind, name: &str) -> L<usize> {
         match self.ws.resolve_ref(file, kind, &crate::types::qualified_parts(name)) {
             Resolution::Found(i) => Ok(i),
-            _ => Err(format!(
-                "{} `{}` is outside the workspace",
-                kind.label(),
-                crate::types::display_name(name)
-            )),
+            _ => Err(self.ws.outside_workspace(kind, &crate::types::display_name(name))),
         }
     }
 

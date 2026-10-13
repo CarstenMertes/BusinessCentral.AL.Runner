@@ -84,8 +84,9 @@ fn main() {
         let engine = al_vm::Engine::new(lowered.program.clone(), blocked);
         laps.mark(7);
         summary = format!(
-            "{} objects, {} diagnostics",
+            "{} objects, {} source positions, {} diagnostics",
             lowered.program.objects.len(),
+            lowered.program.positions.len(),
             checked.diagnostics.len()
         );
         drop(engine);

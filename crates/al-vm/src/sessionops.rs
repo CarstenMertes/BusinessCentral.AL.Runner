@@ -81,6 +81,9 @@ impl Session {
                 Some(other) => unsupported(format!("CodeCoverageLog with {other:?}")),
             };
         }
+        if let Some(v) = self.error_collection_op(id, args) {
+            return v;
+        }
         if let Some(rest) = id.strip_prefix("IsolatedStorage.") {
             return self.isolated_storage_op(rest, args);
         }

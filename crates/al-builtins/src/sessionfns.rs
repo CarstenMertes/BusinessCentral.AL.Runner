@@ -32,4 +32,8 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "IsolatedStorage.SetEncrypted#1",
     "IsolatedStorage.SetEncrypted#2",
     "System.CodeCoverageLog#1",
+    "System.ClearCollectedErrors#1",
+    "System.HasCollectedErrors#1",
+    "System.IsCollectingErrors#1",
+    "System.GetCollectedErrors#1",
 ];

@@ -98,6 +98,12 @@ pub trait Ctx: FormatCtx {
     fn install_scope(&self) -> bool {
         false
     }
+    /// `Error(ErrorInfo)` of a collectible error: inside a `[ErrorBehavior(Collect)]` scope the
+    /// session keeps a copy and the call returns normally (`true`); outside one it is raised like
+    /// any other error (`false`).
+    fn collect_error(&mut self, _info: &Value) -> bool {
+        false
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).

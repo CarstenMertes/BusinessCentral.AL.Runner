@@ -187,15 +187,6 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             .map(|&r| (obj.routines[r].name.clone(), o.clone()))
             .collect::<Vec<_>>()
     };
-    // [ErrorBehavior] is not implemented; tests in such a codeunit depend on each other, so none
-    // of them runs. ([CommitBehavior] and [TransactionModel] are: see al-vm transactions.rs.)
-    if let Some(a) = tests
-        .iter()
-        .flat_map(|&r| &obj.routines[r].attributes)
-        .find(|a| a.name.eq_ignore_ascii_case("ErrorBehavior"))
-    {
-        return all(Outcome::NotRun(format!("[{}] is not implemented yet", a.name)));
-    }
     // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
     let mut models = std::collections::HashMap::new();
     for &r in &tests {

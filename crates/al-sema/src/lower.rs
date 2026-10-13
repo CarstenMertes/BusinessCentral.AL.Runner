@@ -1489,12 +1489,6 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
-        for a in r.attributes() {
-            let n = a.name();
-            if n.eq_ignore_ascii_case("ErrorBehavior") {
-                self.reasons.push(format!("[{n}] is not implemented yet"));
-            }
-        }
         let body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),

@@ -319,10 +319,10 @@ fn create_guid_gives_distinct_non_null_guids() {
 }
 
 #[test]
-fn error_behavior_and_unpinned_commit_behaviors_are_unsupported() {
-    // [CommitBehavior(Ignore | Error)] is implemented (tests/transactions.rs); [ErrorBehavior]
-    // and any other CommitBehavior value are refused.
-    let src = cu("[ErrorBehavior(ErrorBehavior::Collect)] procedure G() begin end; procedure F() begin G(); end;");
+fn unpinned_error_and_commit_behaviors_are_unsupported() {
+    // [CommitBehavior(Ignore | Error)] is implemented (tests/transactions.rs) and so is
+    // [ErrorBehavior(Collect)] (tests/errorcollect.rs); any other value is refused.
+    let src = cu("[ErrorBehavior(ErrorBehavior::Default)] procedure G() begin end; procedure F() begin G(); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("ErrorBehavior")));
     let src = cu("[CommitBehavior(CommitBehavior::Allow)] procedure G() begin end; procedure F() begin G(); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("CommitBehavior")));

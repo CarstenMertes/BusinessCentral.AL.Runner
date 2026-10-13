@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 mod autoinc;
 mod dispatch;
+mod errorcollect;
 pub mod events;
 mod flowfields;
 mod interfaces;
@@ -138,6 +139,9 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
+    /// (see `errorcollect.rs`).
+    pub(crate) error_scopes: errorcollect::Scopes,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -181,6 +185,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            error_scopes: Default::default(),
         }
     }
 
@@ -382,10 +387,17 @@ impl Session {
                 }
             }
         }
+        let collecting = errorcollect::declares_collect(&r.attributes)?;
+        if collecting {
+            self.error_scopes.open();
+        }
         self.try_depth += usize::from(is_try);
         self.frames.push(object);
-        let outcome = self.exec_block(&r.body, &mut frame);
+        let mut outcome = self.exec_block(&r.body, &mut frame);
         self.frames.pop();
+        if collecting {
+            outcome = self.close_error_scope(outcome);
+        }
         self.try_depth -= usize::from(is_try);
         self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
@@ -981,6 +993,9 @@ impl al_builtins::native::Ctx for Session {
     }
     fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
+    }
+    fn collect_error(&mut self, info: &Value) -> bool {
+        Session::collect_error(self, info)
     }
     fn module_at_frame(&self, depth: usize) -> Option<al_builtins::value::ModuleInfoState> {
         let at = self.frames.len().checked_sub(1 + depth)?;

@@ -2548,6 +2548,26 @@ impl Session {
     }
 
     fn control_text(&mut self, st: &St, idx: usize, v: &Value) -> Result<String, Signal> {
+        // A Media control shows the id of its media, a MediaSet control the id of the first media
+        // of its set; lowercase, no braces, empty when there is none
+        // (handlers/TestPageFieldFormats_Tests.al:28, :628-640, TestPageFieldFormatsMediaFilled_Tests.al).
+        if let (Some(RtType::Library(n)), Value::Guid(id)) = (self.control_type(st, idx, v), v) {
+            let shown = if n.eq_ignore_ascii_case("Media") {
+                Some(*id)
+            } else if n.eq_ignore_ascii_case("MediaSet") {
+                self.media.sets.get(id).and_then(|m| m.first().copied())
+            } else {
+                None
+            };
+            if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet") {
+                return Ok(match shown {
+                    Some(g) if g != [0; 16] => al_builtins::pagefmt::guid_text(&g)
+                        .trim_matches(['{', '}'])
+                        .to_lowercase(),
+                    _ => String::new(),
+                });
+            }
+        }
         if let Value::Library(name, _) = v {
             return unsupported(format!("control text of a {name} value"));
         }

@@ -143,6 +143,8 @@ pub struct Session {
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
+    /// Imported media objects and media sets (the platform tables behind Media fields).
+    pub(crate) media: al_builtins::media::MediaStore,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -187,6 +189,7 @@ impl Session {
             commit_behavior: Default::default(),
             in_test_codeunit: false,
             error_scopes: Default::default(),
+            media: Default::default(),
         }
     }
 
@@ -1012,6 +1015,9 @@ impl al_builtins::native::Ctx for Session {
     }
     fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
+    }
+    fn media_store(&mut self) -> Option<&mut al_builtins::media::MediaStore> {
+        Some(&mut self.media)
     }
     fn collect_error(&mut self, info: &Value) -> bool {
         Session::collect_error(self, info)

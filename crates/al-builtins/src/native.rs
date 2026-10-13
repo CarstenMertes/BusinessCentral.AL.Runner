@@ -104,6 +104,10 @@ pub trait Ctx: FormatCtx {
     fn collect_error(&mut self, _info: &Value) -> bool {
         false
     }
+    /// The session's media objects and media sets (`Media` and `MediaSet` fields).
+    fn media_store(&mut self) -> Option<&mut crate::media::MediaStore> {
+        None
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -272,6 +276,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .chain(crate::datefns::REGISTRY)
         .chain(crate::mathfns::REGISTRY)
         .chain(crate::sessionfns::REGISTRY)
+        .chain(crate::media::REGISTRY)
         .chain(crate::moduleinfo::REGISTRY)
 }
 

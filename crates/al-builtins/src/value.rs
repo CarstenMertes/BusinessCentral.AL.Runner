@@ -567,6 +567,10 @@ impl Value {
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
             RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
+            // A Media or MediaSet holds the id of its media (or set): a Guid, null while empty.
+            RtType::Library(name) if name.eq_ignore_ascii_case("Media") || name.eq_ignore_ascii_case("MediaSet") => {
+                Value::Guid([0; 16])
+            }
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),
         }
     }

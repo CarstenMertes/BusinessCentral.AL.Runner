@@ -22,6 +22,7 @@ pub mod formatstr;
 pub mod iso;
 pub mod json;
 pub mod mathfns;
+pub mod media;
 pub mod moduleinfo;
 pub mod native;
 pub mod ops;

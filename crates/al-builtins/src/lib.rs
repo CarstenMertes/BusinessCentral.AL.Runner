@@ -6,6 +6,7 @@ pub mod stream;
 pub mod textfns;
 pub mod value;
 pub mod xml;
+pub mod xmlport;
 
 pub mod catalog;
 pub mod collections;

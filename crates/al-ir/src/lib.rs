@@ -35,6 +35,78 @@ pub struct Object {
     /// For queries: dataitems, columns and the query-level properties.
     #[serde(default)]
     pub query: Option<Query>,
+    /// For xmlports: the schema. Triggers and procedures are ordinary routines of the object.
+    #[serde(default)]
+    pub xmlport: Option<XmlPort>,
+}
+
+/// The direction an xmlport declares (`Direction`, default `Both`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum XmlDirection {
+    Import,
+    Export,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum XmlNodeKind {
+    /// `textelement`: a container when it has children, else it carries a variable's text.
+    Text,
+    /// `textattribute`: an attribute carrying a variable's text.
+    TextAttr,
+    /// `tableelement`: one element per record of a table.
+    Table,
+    /// `fieldelement`: an element carrying a field of the enclosing table element's record.
+    Field,
+    /// `fieldattribute`: an attribute carrying such a field.
+    FieldAttr,
+}
+
+/// An xmlport as the runtime sees it (`Format = Xml`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct XmlPort {
+    pub direction: XmlDirection,
+    /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
+    pub nodes: Vec<XmlNode>,
+    /// Global slots of the source `InStream` and destination `OutStream` set by
+    /// `SetSource` / `SetDestination`.
+    pub source_slot: usize,
+    pub destination_slot: usize,
+    /// Why the runtime cannot run this xmlport yet; empty = it can.
+    pub unsupported: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct XmlNode {
+    /// The name in the schema (the AL variable for text and table nodes).
+    pub name: String,
+    /// The element or attribute name in the document (`XmlName`, else `name`).
+    pub xml_name: String,
+    pub kind: XmlNodeKind,
+    pub parent: Option<usize>,
+    /// Global slot of the Text variable (text nodes) or the record buffer (table nodes).
+    pub slot: Option<usize>,
+    /// For table nodes: the object index of the table.
+    pub table: Option<usize>,
+    /// For field nodes: the table node holding the record, and the field's position in the table.
+    pub table_node: Option<usize>,
+    pub field: Option<usize>,
+    /// For nested table nodes: the `LinkTable` node and (own field, link-table field) positions.
+    pub link_node: Option<usize>,
+    pub link_fields: Vec<(usize, usize)>,
+    /// Table node properties (`AutoSave` defaults to true, the others to false, as in AL).
+    pub auto_save: bool,
+    pub auto_update: bool,
+    pub auto_replace: bool,
+    pub use_temporary: bool,
+    /// Triggers by lower-case name (`onbeforepassvariable`, ...) to routine index.
+    pub triggers: Vec<(String, usize)>,
+}
+
+impl XmlNode {
+    pub fn trigger(&self, name: &str) -> Option<usize> {
+        self.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
+    }
 }
 
 /// A query object (corpus query/): a chain of dataitems joined by `DataItemLink`, and the
@@ -526,6 +598,7 @@ mod tests {
                 xrec_slot: None,
                 page: None,
                 query: None,
+                xmlport: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

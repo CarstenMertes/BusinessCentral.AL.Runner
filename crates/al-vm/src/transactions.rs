@@ -61,7 +61,7 @@ impl CommitBehavior {
 /// Refusal of a guarded `Codeunit.Run` while the caller holds an uncommitted write. The corpus
 /// pins the fragment `the transaction is stopped` (codeunit/TestCodeunitRunWriteTransaction.al:76);
 /// the full sentence is quoted from a BC log in corpus docs/handoff-2026-05-25-test-failures.md:242.
-const TRANSACTION_STOPPED: &str =
+pub(crate) const TRANSACTION_STOPPED: &str =
     "An error occurred and the transaction is stopped. Contact your administrator for further assistance.";
 
 /// record/TestTransactionModelAutoRollback.al:ExplicitCommitNotAllowedErr.

@@ -58,6 +58,11 @@ needs more.
   ordinary routines. A headless client in `al-vm/src/pages.rs` plays the BC
   test client: open/close, navigation, SetValue and validation, actions, and
   modal and page handlers.
+- **XmlPorts.** An xmlport lowers to an object whose first globals are its
+  element variables (text and table elements, in schema order), two hidden
+  stream slots, then its declared variables; the schema is `Object::xmlport`.
+  A variable is a codeunit-like instance. `Import` and `Export` run in
+  `al-vm/src/xmlports.rs` over the document tree of `al-builtins/src/xmlport.rs`.
 - **Culture.** Fixed en-US, which matches the oracle.
 
 ## Budgets (tests, run in CI in release)

@@ -418,6 +418,34 @@ impl Session {
         Ok(())
     }
 
+    /// Whether an insert or modify of `t` would run table code (a trigger, an extension trigger
+    /// or an event subscriber). XmlPort import refuses such tables: whether it runs them is not
+    /// pinned (docs/probes-needed.md).
+    pub(crate) fn has_write_hooks(&mut self, t: &TableDef) -> Result<bool, Signal> {
+        let mut any = ["OnInsert", "OnModify"]
+            .iter()
+            .any(|n| self.table_trigger(t, n).is_some());
+        for n in [
+            "OnBeforeInsert",
+            "OnInsert",
+            "OnAfterInsert",
+            "OnBeforeModify",
+            "OnModify",
+            "OnAfterModify",
+        ] {
+            any |= self.ext_trigger(t, n)?.is_some();
+        }
+        for e in [
+            "onbeforeinsertevent",
+            "onafterinsertevent",
+            "onbeforemodifyevent",
+            "onaftermodifyevent",
+        ] {
+            any |= self.listened(t, e, None)?;
+        }
+        Ok(any)
+    }
+
     fn table_trigger(&self, t: &TableDef, name: &str) -> Option<usize> {
         self.engine.program.objects[t.object as usize]
             .routines

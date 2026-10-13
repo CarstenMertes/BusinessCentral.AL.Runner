@@ -1,0 +1,53 @@
+name: CI
+
+# Every push and PR: lint, unit + contract tests, then the corpus pass-rate
+# report. The daily schedule produces one report per day even without pushes,
+# which is the spike's pass-rate curve (one `pass-rate-<date>` artifact per day).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+      # Fails the job on any regression against metrics/passing.txt (exit 1),
+      # or when the oracle and the corpus pin disagree (exit 2).
+      - name: Corpus pass rate
+        run: |
+          cargo run --release -p al-test-cli -- \
+            --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml
+          cat pass-rate.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Date stamp
+        if: always()
+        id: date
+        run: echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pass-rate-${{ steps.date.outputs.d }}-${{ github.run_id }}
+          path: |
+            pass-rate.json
+            pass-rate.md
+            runtime-junit.xml
+          retention-days: 90

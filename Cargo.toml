@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+al-syntax = { path = "crates/al-syntax" }
+al-sema = { path = "crates/al-sema" }
+al-builtins = { path = "crates/al-builtins" }
+al-ir = { path = "crates/al-ir" }
+al-vm = { path = "crates/al-vm" }
+al-data = { path = "crates/al-data" }
+al-host = { path = "crates/al-host" }
+quick-xml = "0.37"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"

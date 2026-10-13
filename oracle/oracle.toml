@@ -1,0 +1,6 @@
+bc_version = "27.5"
+corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
+workflow_run = 38306086475
+junit = "junit-27.5.xml"
+corpus_repo = "corpus"
+corpus_app = "corpus/tests/al-language"

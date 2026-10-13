@@ -59,3 +59,18 @@ reviewed it.
   the test runner empties the areas before each test method.
 - 2026-10-13, ADR-012 (page extensions): `DrillDown`, `AssistEdit` and `Lookup`
   on a TestField run the control's trigger (its own or a `modify` block's).
+- 2026-10-13, ADR-013, host values: `SessionId()` and `ServiceInstanceId()` answer 1
+  (positive), not 0, because codeunit 60023 asserts `> 0`.
+- 2026-10-13, ADR-013, host values: the host clock is a trait. It is frozen at
+  2024-01-15T12:00:00Z in the deterministic host and is the system clock on the
+  command line. `Sleep` moves it forward without waiting.
+- 2026-10-13, ADR-013, host values: the session time zone is UTC (AL Runner uses the
+  machine's zone). `SessionSettings.Init` answers `UTC`.
+- 2026-10-13, ADR-013, host values: `WorkDate()` is today until set, per session. A new
+  test codeunit starts at today again.
+- 2026-10-13, ADR-013, host values: `CurrentClientType()` is `Background` and
+  `DefaultClientType()` is `Web`.
+- 2026-10-13, ADR-013, host values: `CompanyName()` is `My Company` instead of the
+  placeholder `CRONUS`.
+- 2026-10-13, ADR-013, host values: temporary records are not stamped with the system
+  created and modified fields.

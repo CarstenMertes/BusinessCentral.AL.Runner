@@ -60,6 +60,7 @@ version = "0.1.0"
 dependencies = [
  "al-builtins",
  "al-data",
+ "al-host",
  "al-ir",
  "al-sema",
  "al-syntax",
@@ -77,6 +78,7 @@ version = "0.1.0"
 dependencies = [
  "al-builtins",
  "al-data",
+ "al-host",
  "al-ir",
  "al-sema",
  "rust_decimal",

@@ -71,6 +71,11 @@ pub trait Ctx: FormatCtx {
     fn session_op(&mut self, id: &str, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id} needs a session")))
     }
+    /// The language id, locale id and Windows time zone name of the running session, which
+    /// `SessionSettings.Init` reads. `None` where the context has no host.
+    fn session_locale(&self) -> Option<(i32, i32, String)> {
+        None
+    }
     /// The app of the routine `depth` frames out on the call stack: 0 is the routine that runs the
     /// builtin, 1 its caller. `None` when there is no such frame (the caller of a test is the test
     /// runner) or the app's manifest has no readable id.

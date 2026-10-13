@@ -179,6 +179,7 @@ impl Session {
                     self.next_row_version += 1;
                     changed[i] = Value::BigInteger(self.next_row_version);
                 }
+                self.stamp_row_modified(&child, &mut changed);
                 let changed = self.stored_view(&child, &changed);
                 let in_key = child.keys[0].contains(&r.pos);
                 let done = if in_key {

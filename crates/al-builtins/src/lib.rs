@@ -24,4 +24,5 @@ pub mod pagebuiltins;
 pub mod pagefmt;
 pub mod refs;
 pub mod sessionfns;
+pub mod sessiontypes;
 pub mod sysenum;

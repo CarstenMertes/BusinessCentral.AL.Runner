@@ -26,6 +26,14 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::List(_), T::List(_))
         | (v @ Value::Dictionary(_), T::Dictionary(..))
         | (v @ Value::Array(_), T::Array(..)) => v,
+        // A SessionSettings is a value: assignment copies it (session/TestSessionSettings.al:222-262).
+        (Value::Library(n, cell), T::Library(_)) if n == "SessionSettings" => {
+            let copy = match &*cell.borrow() {
+                LibraryValue::SessionSettings(s) => LibraryValue::SessionSettings(s.clone()),
+                _ => LibraryValue::Empty,
+            };
+            Value::Library(n, Rc::new(RefCell::new(copy)))
+        }
         (v @ Value::Codeunit(_), T::Codeunit(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
@@ -235,6 +243,16 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => a.cmp(b),
+        // SessionSettings compare by value (session/TestSessionSettings.al:513-545).
+        (V::Library(na, a), V::Library(nb, b)) if na == "SessionSettings" && nb == "SessionSettings" => {
+            use crate::value::LibraryValue as L;
+            let state = |l: &L| match l {
+                L::SessionSettings(s) => s.clone(),
+                _ => Default::default(),
+            };
+            let (a, b) = (state(&a.borrow()), state(&b.borrow()));
+            if a == b { Ordering::Equal } else { Ordering::Less }
+        }
         (V::Library(_, a), V::Library(_, b)) => {
             use crate::value::LibraryValue as L;
             match (&*a.borrow(), &*b.borrow()) {

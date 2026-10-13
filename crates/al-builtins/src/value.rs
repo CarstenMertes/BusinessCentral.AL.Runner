@@ -267,6 +267,29 @@ pub struct WebServiceActionState {
     pub keys: Vec<i32>,
 }
 
+/// What a `SessionSettings` holds. A property nobody wrote is `None`: the corpus does not say what
+/// a pristine language id, locale id, time zone or profile id reads as, so reading one is refused.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionSettingsState {
+    pub language_id: Option<i32>,
+    pub locale_id: Option<i32>,
+    pub time_zone: Option<String>,
+    pub profile_id: Option<String>,
+    pub profile_app_id: Option<[u8; 16]>,
+    pub company: String,
+}
+
+/// What a `Notification` holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NotificationState {
+    pub message: Option<String>,
+    /// Ordinal in the `NotificationScope` members.
+    pub scope: Option<i32>,
+    pub data: Vec<(String, String)>,
+    /// (Caption, codeunit id, method name, description): kept, never run.
+    pub actions: Vec<(String, i32, String, Option<String>)>,
+}
+
 /// The global variables of one codeunit instance.
 #[derive(Debug, Default)]
 pub struct Instance {
@@ -300,6 +323,10 @@ pub enum LibraryValue {
     },
     /// A `WebServiceActionContext` that has been written to (an untouched one is `Empty`).
     WebServiceAction(WebServiceActionState),
+    /// A `SessionSettings` that has been written to (an untouched one is `Empty`).
+    SessionSettings(SessionSettingsState),
+    /// A `Notification` that has been written to (an untouched one is `Empty`).
+    Notification(NotificationState),
     /// A JSON node behind a JsonObject / JsonArray / JsonToken / JsonValue handle.
     Json(crate::json::JsonCell),
     /// A node behind an Xml* handle.

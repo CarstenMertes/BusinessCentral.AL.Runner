@@ -266,7 +266,10 @@ fn a_write_opens_a_write_transaction_until_the_commit() {
 // ---------------------------------------------------------------- WebServiceActionContext
 
 fn wsac(body: &str) -> Result<String, Signal> {
-    text_of("c: WebServiceActionContext; d: WebServiceActionContext; a: Text; b: Boolean; v: Variant;", body)
+    text_of(
+        "c: WebServiceActionContext; d: WebServiceActionContext; a: Text; b: Boolean; v: Variant;",
+        body,
+    )
 }
 
 #[test]
@@ -346,4 +349,124 @@ fn wsac_in_a_variant_has_an_empty_text() {
          exit(Format(v.IsInteger()) + Format(v.IsText()) + Format(v.IsRecord()) + '|' + Format(v));",
     );
     assert_eq!(r.unwrap(), "NoNoNo|");
+}
+
+// ---------------------------------------------------------------- SessionSettings
+
+fn settings(body: &str) -> Result<String, Signal> {
+    text_of(
+        "s: SessionSettings; t: SessionSettings; p: SessionSettings; a: Text; g: Guid; v: Variant;",
+        body,
+    )
+}
+
+#[test]
+fn session_settings_properties_round_trip_and_are_independent() {
+    // session/TestSessionSettings.al:25-165.
+    let r = settings(
+        "s.LanguageId(1030); s.LocaleId(2057); s.TimeZone('Pacific Standard Time'); s.ProfileId('ALT PROFILE');
+         s.Company('ALT Company'); g := CreateGuid(); s.ProfileAppId(g);
+         s.TimeZone('UTC');
+         exit(Format(s.LanguageId()) + '|' + Format(s.LocaleId()) + '|' + s.TimeZone() + '|' + s.ProfileId() + '|' + s.Company() + '|' + Format(s.ProfileAppId() = g));",
+    );
+    assert_eq!(r.unwrap(), "1030|2057|UTC|ALT PROFILE|ALT Company|Yes");
+}
+
+#[test]
+fn session_settings_profile_system_scope_ignores_its_argument() {
+    // session/TestSessionSettings.al:172-215.
+    let r = settings(
+        "a := Format(s.ProfileSystemScope()); s.ProfileSystemScope(true); a += Format(s.ProfileSystemScope());
+         s.ProfileSystemScope(false); exit(a + Format(s.ProfileSystemScope()));",
+    );
+    assert_eq!(r.unwrap(), "NoNoNo");
+}
+
+#[test]
+fn session_settings_assignment_copies_by_value() {
+    // session/TestSessionSettings.al:222-262.
+    let r = settings(
+        "s.Company('Source'); s.LanguageId(1030); t := s; t.Company('Target'); t.LanguageId(2057);
+         exit(s.Company() + Format(s.LanguageId()) + '|' + t.Company() + Format(t.LanguageId()));",
+    );
+    assert_eq!(r.unwrap(), "Source1030|Target2057");
+}
+
+#[test]
+fn session_settings_compare_by_value_and_format_shows_the_contents() {
+    // session/TestSessionSettings.al:478-560.
+    let r = settings(
+        "s.Company('C'); s.LanguageId(1030); t.Company('C'); t.LanguageId(1030);
+         a := Format(s = t);
+         t.LanguageId(2057); a += Format(s = t);
+         s.TimeZone('Pacific Standard Time'); t.TimeZone('UTC');
+         a += Format(StrPos(Format(s), 'Pacific Standard Time') > 0) + Format(Format(s) = Format(t));
+         v := s; 
+         exit(a);",
+    );
+    assert_eq!(r.unwrap(), "YesNoYesNo");
+}
+
+#[test]
+fn session_settings_clear_returns_to_a_pristine_instance() {
+    // session/TestSessionSettings.al:565-595.
+    let r = settings("s.Company('C'); s.LanguageId(1030); Clear(s); a := Format(s = p) + s.Company(); exit(a);");
+    assert_eq!(r.unwrap(), "Yes");
+}
+
+#[test]
+fn session_settings_forms_that_need_the_running_session_are_refused() {
+    // Init() reads language, locale and time zone of the session; RequestSessionUpdate goes to a
+    // handler; an unset language id is 0 or 1033 and the corpus does not say which.
+    for body in [
+        "s.Init();",
+        "s.RequestSessionUpdate(false);",
+        "if s.LanguageId() = 0 then;",
+        "if s.TimeZone() = '' then;",
+    ] {
+        let r = settings(&format!("{body} exit('');"));
+        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
+    }
+}
+
+// ---------------------------------------------------------------- Notification
+
+fn notification(body: &str) -> Result<String, Signal> {
+    text_of("n: Notification; a: Text; v: Variant;", body)
+}
+
+#[test]
+fn notification_message_and_data() {
+    // handlers/TestNotificationHandler.al:28-35, session/TestMiscTypes.al:155-184,
+    // session/TestCalcDateNotificationContracts.al:130-180.
+    let r = notification(
+        "n.Message('Hello'); a := n.Message();
+         a += '|' + Format(n.HasData('k1'));
+         n.SetData('k1', 'v1'); n.SetData('k2', 'v2');
+         a += Format(n.HasData('k1')) + n.GetData('k1') + n.GetData('k2');
+         n.SetData('k1', 'again');
+         exit(a + n.GetData('k1'));",
+    );
+    assert_eq!(r.unwrap(), "Hello|NoYesv1v2again");
+}
+
+#[test]
+fn notification_scope_and_actions_are_accepted() {
+    // session/TestCalcDateNotificationContracts.al:182-188, session/TestSystemExtended.al:553-575,
+    // session/TestMiscComplete.al:106-119: they must not throw.
+    let r = notification(
+        "n.Message('Test'); n.Scope(NotificationScope::LocalScope);
+         n.AddAction('Click me', 60019, 'Initialize'); n.AddAction('Click Me', 60145, 'Initialize', 'Action description');
+         v := n;
+         exit(Format(v.IsNotification()));",
+    );
+    assert_eq!(r.unwrap(), "Yes");
+}
+
+#[test]
+fn notification_reads_that_the_corpus_does_not_pin_are_refused() {
+    for body in ["if n.GetData('missing') = '' then;", "if n.Message() = '' then;"] {
+        let r = notification(&format!("{body} exit('');"));
+        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
+    }
 }

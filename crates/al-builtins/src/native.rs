@@ -160,6 +160,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsDictionary#1", |_, r, _| is(r, "Dictionary")),
     ("Variant.IsCodeunit#1", |_, r, _| is(r, "Codeunit")),
     // RecordId, RecordRef and FieldRef variables are library handles named after their type.
+    ("Variant.IsNotification#1", |_, r, _| is(r, "Notification")),
+    ("Variant.IsTextBuilder#1", |_, r, _| is(r, "TextBuilder")),
     ("Variant.IsRecordId#1", |_, r, _| is(r, "RecordId")),
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
     ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
@@ -198,6 +200,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                     .or_else(|| crate::stream::native_for(sig))
                     .or_else(|| crate::textfns::native_for(sig))
                     .or_else(|| crate::wsac::native_for(sig))
+                    .or_else(|| crate::sessiontypes::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })
             .collect()
@@ -437,7 +440,13 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Library(name, _)
             if matches!(
                 name.as_str(),
-                "RecordRef" | "FieldRef" | "KeyRef" | "RecordId" | "WebServiceActionContext"
+                "RecordRef"
+                    | "FieldRef"
+                    | "KeyRef"
+                    | "RecordId"
+                    | "WebServiceActionContext"
+                    | "SessionSettings"
+                    | "Notification"
             ) =>
         {
             Value::Library(name.clone(), Default::default())

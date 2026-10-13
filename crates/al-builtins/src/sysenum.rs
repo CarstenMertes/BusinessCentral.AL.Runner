@@ -38,6 +38,8 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         ]),
         // Five members over four values: Get and Updated are both 200
         // (session/TestWebServiceActionContext.al:100-110).
+        // Only `LocalScope` is named by the corpus; the ordinals are not pinned.
+        "notificationscope" => Some(&["LocalScope", "GlobalScope"]),
         "webserviceactionresultcode" => Some(&["None", "Get", "Created", "Updated", "Deleted"]),
         "fieldtype" => Some(&[
             "TableFilter",

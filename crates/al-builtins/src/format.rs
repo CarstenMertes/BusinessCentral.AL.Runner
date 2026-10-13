@@ -47,6 +47,20 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
         Value::Time(t) if standard == 2 => format_time_12h(t - 1),
         Value::DateTime(t) if standard == 2 || standard == 9 => format_datetime(t - 1, standard),
         Value::DateFormula(f) => f.clone(),
+        // A SessionSettings renders its contents; the layout is not pinned, only that it shows the
+        // time zone and differs when a property differs (session/TestSessionSettings.al:457-493).
+        Value::Library(name, l) if name == "SessionSettings" => match &*l.borrow() {
+            crate::value::LibraryValue::SessionSettings(s) => format!(
+                "Company={};LanguageId={};LocaleId={};TimeZone={};ProfileId={};ProfileAppId={}",
+                s.company,
+                s.language_id.map_or(String::new(), |v| v.to_string()),
+                s.locale_id.map_or(String::new(), |v| v.to_string()),
+                s.time_zone.clone().unwrap_or_default(),
+                s.profile_id.clone().unwrap_or_default(),
+                s.profile_app_id.map_or(String::new(), |g| format_guid(&g)),
+            ),
+            _ => "Company=;LanguageId=;LocaleId=;TimeZone=;ProfileId=;ProfileAppId=".to_string(),
+        },
         // A WebServiceActionContext has no text form (session/TestWebServiceActionContext.al:615-650).
         Value::Library(name, _) if name == "WebServiceActionContext" => String::new(),
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs

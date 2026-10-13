@@ -110,8 +110,10 @@ impl Session {
         // Corpus record/TestCalcFieldsFieldClass.Codeunit.al:76,92,108: only a FlowField
         // (or a Blob) is accepted, and the refusal names the field and its table.
         if f.stored || f.flow_filter {
-            if f.stored && matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Blob")) {
-                return unsupported("CalcFields on a Blob field (streams are not implemented yet)");
+            if let (true, RtType::Library(n)) = (f.stored, &f.ty) {
+                return unsupported(format!(
+                    "CalcFields on a {n} field (streams and media are not implemented yet)"
+                ));
             }
             return error(format!("The {} field in the {tcap} table must be a FlowField.", f.name));
         }

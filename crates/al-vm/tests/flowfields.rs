@@ -1059,3 +1059,45 @@ fn truncate_with_a_filter_that_excludes_rows_or_on_a_temporary_record_is_refused
     );
     assert!(unsupported(t).contains("temporary"));
 }
+
+// A FlowField holds no data: what the buffer shows after CalcFields is not written by Insert or
+// Modify, so a later Get reads an uncalculated field (corpus record/TestSetAutoCalcFieldsOnGet.Codeunit.al:38).
+#[test]
+fn calculated_flow_field_values_are_never_stored() {
+    let r = run(&format!(
+        "{SEED}
+        procedure F(): Text
+        var P: Record \"ALT Parent\"; Q: Record \"ALT Parent\"; Seen: Text;
+        begin
+            Seed();
+            P.Get(1);
+            P.CalcFields(\"Child Count\");
+            P.Code := 'X';
+            P.Modify();
+            Q.Get(1);
+            Seen := Format(P.\"Child Count\") + Format(Q.\"Child Count\") + Q.Code;
+            P.\"Entry No.\" := 77;
+            P.\"Child Count\" := 9;
+            P.Insert();
+            Q.Get(77);
+            exit(Seen + Format(Q.\"Child Count\"));
+        end;"
+    ));
+    assert_eq!(text(r), "20X0");
+}
+
+// corpus record/TestCalcFieldsFieldClass.Codeunit.al:140 accepts a Blob in CalcFields, which loads
+// its bytes; streams are not implemented, so it is refused rather than reported as "not a FlowField".
+#[test]
+fn calcfields_on_a_blob_field_is_refused_not_misreported() {
+    let r = run_with(
+        "table 60480 \"BL Row\" { fields { field(1; K; Code[10]) { } field(2; Data; Blob) { } } }",
+        "procedure F()
+        var R: Record \"BL Row\";
+        begin
+            R.CalcFields(Data);
+        end;",
+        "F",
+    );
+    assert!(unsupported(r).contains("Blob"));
+}

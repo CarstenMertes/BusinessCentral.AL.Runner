@@ -152,6 +152,21 @@ impl Session {
         Ok(())
     }
 
+    /// The row as the store keeps it: FlowFields and FlowFilters hold no data, whatever the
+    /// buffer shows after CalcFields or an assignment.
+    fn stored_view(&mut self, t: &TableDef, row: &[Value]) -> Vec<Value> {
+        row.iter()
+            .enumerate()
+            .map(|(i, v)| {
+                if t.fields[i].stored {
+                    v.clone()
+                } else {
+                    self.default_value(&t.fields[i].ty)
+                }
+            })
+            .collect()
+    }
+
     /// Whether inserting `row` would repeat the values of a unique secondary key (a row with
     /// the same primary key is the duplicate-key failure instead).
     fn violates_unique_key(&mut self, rec: &Rec, t: &TableDef, row: &[Value]) -> Result<bool, Signal> {
@@ -411,9 +426,10 @@ impl Session {
                     }
                     return self.fail_unique(&t);
                 }
+                let stored = self.stored_view(&t, &row);
                 match self
                     .store_for(rec)
-                    .insert(&cx, &t, row.clone())
+                    .insert(&cx, &t, stored.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     InsertOutcome::Inserted => {
@@ -446,9 +462,10 @@ impl Session {
                 }
                 self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
+                let stored = self.stored_view(&t, &row);
                 match self
                     .store_for(rec)
-                    .modify(&cx, &t, row.clone())
+                    .modify(&cx, &t, stored.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     WriteOutcome::Done => Ok(Value::Boolean(true)),
@@ -706,9 +723,10 @@ impl Session {
                 self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
                 let old_pk = t.primary_key(&old);
+                let stored = self.stored_view(&t, &row);
                 match self
                     .store_for(rec)
-                    .rename(&cx, &t, &old_pk, row.clone())
+                    .rename(&cx, &t, &old_pk, stored.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     RenameOutcome::Renamed => Ok(Value::Boolean(true)),

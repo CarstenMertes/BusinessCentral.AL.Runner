@@ -330,10 +330,12 @@ impl Lowerer<'_> {
             .iter()
             .map(|f| {
                 let (calc, refusal) = match (&f.class, &f.calc_formula) {
-                    (crate::members::FieldClass::FlowField, Some(text)) => match self.lower_calc(oi, text) {
-                        Ok(c) => (Some(c), None),
-                        Err(e) => (None, Some(e)),
-                    },
+                    (crate::members::FieldClass::FlowField, Some(text)) => {
+                        match self.lower_calc(oi, f.declared_in.unwrap_or(oi), text) {
+                            Ok(c) => (Some(c), None),
+                            Err(e) => (None, Some(e)),
+                        }
+                    }
                     _ => (None, None),
                 };
                 ir::Field {
@@ -402,13 +404,14 @@ impl Lowerer<'_> {
         }
     }
 
-    /// A FlowField's `CalcFormula` with names resolved against the table
-    /// `oi` it belongs to. `Err` is why it cannot be calculated yet.
-    fn lower_calc(&self, oi: usize, text: &str) -> Result<ir::CalcFormula, String> {
+    /// A FlowField's `CalcFormula` with field names resolved against the table
+    /// `oi` it belongs to and object names in the file of `declared_in` (the table or table
+    /// extension that wrote it). `Err` is why it cannot be calculated yet.
+    fn lower_calc(&self, oi: usize, declared_in: usize, text: &str) -> Result<ir::CalcFormula, String> {
         use crate::calcformula::{CondValue, parse};
         let f = parse(text)?;
         // Names resolve where the field was written: its table or table extension.
-        let file = self.ws.objects[oi].file;
+        let file = self.ws.objects[declared_in].file;
         let Resolution::Found(src) = self
             .ws
             .resolve_ref(file, ObjKind::Table, std::slice::from_ref(&f.table))
@@ -1558,6 +1561,42 @@ table 50921 H { fields { field(1; K; Integer) { }
             l.unsupported[oi][stamped]
         );
         assert!(l.unsupported[oi][id].is_empty(), "{:?}", l.unsupported[oi][id]);
+    }
+
+    // corpus _fixtures/ALTRelationScopeExtension.al: a name in a tableextension's CalcFormula means
+    // what it means in the extension's file (own namespace first), not in the extended table's.
+    #[test]
+    fn a_table_extension_formula_resolves_names_in_the_extensions_file() {
+        let files = vec![
+            (
+                "a.al".to_string(),
+                "namespace N1;
+                table 70001 Pkg { fields { field(1; Code; Code[10]) { } } }
+                table 70000 Base { fields { field(1; Code; Code[10]) { } } }"
+                    .to_string(),
+            ),
+            (
+                "b.al".to_string(),
+                "namespace N2;
+                using N1;
+                table 70002 Pkg { fields { field(1; Code; Code[10]) { } } }
+                tableextension 70003 Ext extends Base { fields {
+                    field(5; Rows; Integer) { FieldClass = FlowField; CalcFormula = count(Pkg where(Code = field(Code))); } } }"
+                    .to_string(),
+            ),
+        ];
+        let (_, l) = crate::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files,
+            }],
+            &Default::default(),
+        );
+        let local = l.program.objects.iter().position(|o| o.id == Some(70002)).unwrap();
+        let f = flow(&l, "Base", "Rows");
+        assert_eq!(f.calc.map(|c| c.table), Some(local), "{:?}", f.calc_refusal);
     }
 
     #[test]

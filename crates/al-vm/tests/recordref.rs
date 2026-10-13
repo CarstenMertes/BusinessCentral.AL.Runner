@@ -28,6 +28,22 @@ table 50900 "ALT T"
     }
     keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } }
 }
+
+table 50902 "ALT CF Line"
+{
+    fields { field(1; "No."; Code[20]) { } field(2; Seq; Integer) { } }
+    keys { key(PK; "No.", Seq) { } }
+}
+table 50903 "ALT CF Head"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(2; Lines; Integer) { FieldClass = FlowField; CalcFormula = count("ALT CF Line" where("No." = field("No."))); }
+        field(3; Plain; Integer) { }
+    }
+    keys { key(PK; "No.") { } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -477,4 +493,42 @@ fn gettable_works_on_a_ref_that_was_never_opened_even_through_a_variant() {
         "F",
     );
     assert_eq!(text(r), "50900YesYesGrp: 5");
+}
+
+#[test]
+fn fieldref_calcfield_calculates_a_flowfield() {
+    // corpus fieldref/TestRelationTargetNamespaceScope.al:61-75: `RecRef.Field(3).CalcField()`, then
+    // `.Value` reads the calculated count.
+    let r = run(
+        "procedure F(): Text var L: Record \"ALT CF Line\"; RR: RecordRef; s: Text; begin
+            L.\"No.\" := 'X'; L.Seq := 1; L.Insert();
+            L.Seq := 2; L.Insert();
+            L.\"No.\" := 'Y'; L.Seq := 1; L.Insert();
+            RR.Open(50903);
+            RR.Init();
+            RR.Field(1).Value := 'X';
+            RR.Field(2).CalcField();
+            exit(Format(RR.Field(2).Value));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "2");
+}
+
+#[test]
+fn fieldref_calcfield_on_a_normal_field_is_refused() {
+    // Record.CalcFields names the field and table (record/TestCalcFieldsFieldClass.Codeunit.al:106);
+    // that FieldRef.CalcField raises the same text is not pinned, so it is refused.
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; begin
+            RR.Open(50903);
+            RR.Field(3).CalcField();
+            exit('ran');
+        end;",
+        "F",
+    );
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("FieldRef.CalcField"), "{why}"),
+        other => panic!("{other:?}"),
+    }
 }

@@ -385,6 +385,24 @@ impl Session {
                 a.extend(args.iter().cloned());
                 self.record_op("Validate", &rec, &mut a)
             }
+            // `RecRef.Field(n).CalcField()` calculates a FlowField like Record.CalcFields
+            // (corpus fieldref/TestRelationTargetNamespaceScope.al:61-75). The error text for
+            // a field that is no FlowField is pinned for Record.CalcFields only.
+            "CalcField" => {
+                let engine = self.engine.clone();
+                let schema = engine.program.objects[rec.borrow().table as usize]
+                    .table
+                    .as_ref()
+                    .expect("a record has a table");
+                let f = &schema.fields[pos];
+                if f.stored || f.flow_filter || (f.calc.is_none() && f.calc_refusal.is_none()) {
+                    return unsupported(
+                        "FieldRef.CalcField on a field that is not a FlowField with a formula (error text not pinned)",
+                    );
+                }
+                self.calc_fields(&rec, &[pos])?;
+                Ok(Value::Boolean(true))
+            }
             "TestField" | "FieldError" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());

@@ -119,29 +119,26 @@ impl Session {
     }
 
     /// Hooks around `op` that this runtime cannot run are refused rather than
-    /// silently skipped (hard rule 4): triggers declared by table extensions, and
-    /// the platform events of the Base App's `Global Triggers` codeunit.
+    /// silently skipped (hard rule 4): the triggers a table extension attaches to a
+    /// field (`modify(Field) { trigger OnBeforeValidate }`), and the platform events
+    /// of the Base App's `Global Triggers` codeunit.
     fn check_hooks(&self, t: &TableDef, op: &str) -> Result<(), Signal> {
-        // Only the extension's table-level triggers for this operation matter;
-        // its field OnValidate triggers already run through Validate.
-        let op_triggers: &[&str] = match op {
-            "Insert" => &["OnBeforeInsert", "OnInsert", "OnAfterInsert"],
-            "Modify" => &["OnBeforeModify", "OnModify", "OnAfterModify"],
-            "Delete" | "DeleteAll" => &["OnBeforeDelete", "OnDelete", "OnAfterDelete"],
-            "Rename" => &["OnBeforeRename", "OnRename", "OnAfterRename"],
-            "Validate" => &["OnBeforeValidate", "OnAfterValidate"],
-            _ => &[],
-        };
-        if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
-            for &e in &schema.extensions {
-                let hit = self.engine.program.objects[e].routines.iter().any(|r| {
-                    r.is_trigger && r.field.is_none() && op_triggers.iter().any(|n| r.name.eq_ignore_ascii_case(n))
-                });
-                if hit {
-                    return unsupported(format!(
-                        "{op} on {}: table extension triggers are not implemented yet",
-                        t.name
-                    ));
+        if op == "Validate" {
+            if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
+                for &e in &schema.extensions {
+                    let hit = self.engine.program.objects[e].routines.iter().any(|r| {
+                        r.is_trigger
+                            && r.field.is_none()
+                            && ["OnBeforeValidate", "OnAfterValidate"]
+                                .iter()
+                                .any(|n| r.name.eq_ignore_ascii_case(n))
+                    });
+                    if hit {
+                        return unsupported(format!(
+                            "{op} on {}: table extension triggers on fields are not implemented yet",
+                            t.name
+                        ));
+                    }
                 }
             }
         }
@@ -155,6 +152,37 @@ impl Session {
             ));
         }
         Ok(())
+    }
+
+    /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) a table extension
+    /// declares. The order of several extensions' triggers is not pinned, so two
+    /// declaring the same one are refused.
+    fn ext_trigger(&self, t: &TableDef, name: &str) -> Result<Option<(usize, usize)>, Signal> {
+        let mut found = Vec::new();
+        if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
+            for &e in &schema.extensions {
+                for (ri, r) in self.engine.program.objects[e].routines.iter().enumerate() {
+                    if r.is_trigger && r.field.is_none() && r.name.eq_ignore_ascii_case(name) {
+                        found.push((e, ri));
+                    }
+                }
+            }
+        }
+        match found.len() {
+            0 | 1 => Ok(found.first().copied()),
+            _ => unsupported(format!(
+                "{name} on {}: declared by more than one table extension (their order is not pinned)",
+                t.name
+            )),
+        }
+    }
+
+    /// Runs the extension trigger `name`, if any, with the record and `xrec`.
+    fn run_ext_trigger(&mut self, t: &TableDef, name: &str, rec: &Rec, xrec: Option<&Rec>) -> Result<(), Signal> {
+        match self.ext_trigger(t, name)? {
+            Some((o, r)) => self.run_trigger(o, r, rec, xrec),
+            None => Ok(()),
+        }
     }
 
     /// Whether `event` of table `t` would reach a subscriber now (static ones, and
@@ -238,10 +266,12 @@ impl Session {
         }
         self.table_event(t, "onbeforedeleteevent", rec, None, run, None)?;
         if run {
+            let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
+            self.run_ext_trigger(t, "OnBeforeDelete", rec, Some(&x))?;
             if let Some(tr) = self.table_trigger(t, "OnDelete") {
-                let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
                 self.run_trigger(t.object as usize, tr, rec, Some(&x))?;
             }
+            self.run_ext_trigger(t, "OnDelete", rec, Some(&x))?;
         }
         let row = rec.borrow().fields.clone();
         let pk = t.primary_key(&row);
@@ -251,6 +281,10 @@ impl Session {
             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
         {
             WriteOutcome::Done => {
+                if run {
+                    let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
+                    self.run_ext_trigger(t, "OnAfterDelete", rec, Some(&x))?;
+                }
                 self.table_event(t, "onafterdeleteevent", rec, None, run, None)?;
                 Ok(Value::Boolean(true))
             }
@@ -429,9 +463,13 @@ impl Session {
                 // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
                 self.table_event(&t, "onbeforeinsertevent", rec, None, run, None)?;
                 if run {
+                    // The extension's triggers bracket the base table's own (tableextensiontrigger/
+                    // TestTableExtensionTableTriggers_Tests.al); Insert(false) runs none of them.
+                    self.run_ext_trigger(&t, "OnBeforeInsert", rec, None)?;
                     if let Some(tr) = self.table_trigger(&t, "OnInsert") {
                         self.run_trigger(t.object as usize, tr, rec, None)?;
                     }
+                    self.run_ext_trigger(&t, "OnInsert", rec, None)?;
                 }
                 self.assign_system_id(&t, rec);
                 let old_version = self.bump_row_version(&t, rec);
@@ -442,6 +480,9 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     InsertOutcome::Inserted => {
+                        if run {
+                            self.run_ext_trigger(&t, "OnAfterInsert", rec, None)?;
+                        }
                         self.table_event(&t, "onafterinsertevent", rec, None, run, None)?;
                         Ok(Value::Boolean(true))
                     }
@@ -493,9 +534,11 @@ impl Session {
                 let xrec = stored.map(|f| Self::xrec_handle(rec, f));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {
+                    self.run_ext_trigger(&t, "OnBeforeModify", rec, xrec.as_ref())?;
                     if let Some(tr) = self.table_trigger(&t, "OnModify") {
                         self.run_trigger(t.object as usize, tr, rec, xrec.as_ref())?;
                     }
+                    self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
                 let old_version = self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
@@ -505,6 +548,9 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     WriteOutcome::Done => {
+                        if run {
+                            self.run_ext_trigger(&t, "OnAfterModify", rec, xrec.as_ref())?;
+                        }
                         self.table_event(&t, "onaftermodifyevent", rec, xrec.as_ref(), run, None)?;
                         Ok(Value::Boolean(true))
                     }
@@ -533,7 +579,10 @@ impl Session {
                 self.check_hooks(&t, "DeleteAll")?;
                 let events =
                     self.listened(&t, "onbeforedeleteevent", None)? || self.listened(&t, "onafterdeleteevent", None)?;
-                let trigger = self.table_trigger(&t, "OnDelete").is_some();
+                let mut trigger = self.table_trigger(&t, "OnDelete").is_some();
+                for n in ["OnBeforeDelete", "OnDelete", "OnAfterDelete"] {
+                    trigger |= self.ext_trigger(&t, n)?.is_some();
+                }
                 if !run && events {
                     // Whether DeleteAll(false) raises the delete events per row (as BC must when
                     // Truncate is refused for subscribed tables, record/TestRecordTruncateEventAndFilterGuards.al)
@@ -797,9 +846,11 @@ impl Session {
                 let xrec = Self::xrec_handle(rec, old.clone());
                 // Rename always runs the trigger; RunTrigger is true (docs/probes-needed.md).
                 self.table_event(&t, "onbeforerenameevent", rec, Some(&xrec), true, None)?;
+                self.run_ext_trigger(&t, "OnBeforeRename", rec, Some(&xrec))?;
                 if let Some(tr) = self.table_trigger(&t, "OnRename") {
                     self.run_trigger(t.object as usize, tr, rec, Some(&xrec))?;
                 }
+                self.run_ext_trigger(&t, "OnRename", rec, Some(&xrec))?;
                 let _ = self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
                 match self
@@ -808,6 +859,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     RenameOutcome::Renamed => {
+                        self.run_ext_trigger(&t, "OnAfterRename", rec, Some(&xrec))?;
                         self.table_event(&t, "onafterrenameevent", rec, Some(&xrec), true, None)?;
                         Ok(Value::Boolean(true))
                     }

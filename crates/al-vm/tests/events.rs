@@ -957,3 +957,134 @@ codeunit 50100 C
 }"#;
     assert_eq!(text(run(src, "F")), "validate refused 99|10");
 }
+
+// ---- table extension triggers -------------------------------------------------------
+
+const EXT: &str = r#"
+codeunit 50300 Trace
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(S: Text) begin if Log <> '' then Log += ','; Log += S; end;
+    procedure Get(): Text begin exit(Log); end;
+    procedure Clear() begin Log := ''; end;
+}
+table 50301 ET
+{
+    fields { field(1; "No."; Integer) { } field(2; Name; Text[30]) { } }
+    keys { key(PK; "No.") { } }
+    trigger OnInsert() var T: Codeunit Trace; begin T.Add('BaseOnInsert'); end;
+}
+tableextension 50302 ETExt extends ET
+{
+    trigger OnBeforeInsert() var T: Codeunit Trace; begin T.Add('ExtBeforeInsert'); end;
+    trigger OnAfterInsert() var T: Codeunit Trace; begin T.Add('ExtAfterInsert'); end;
+    trigger OnBeforeModify() var T: Codeunit Trace; begin T.Add('ExtBeforeModify' + xRec.Name + '>' + Rec.Name); end;
+    trigger OnAfterModify() var T: Codeunit Trace; begin T.Add('ExtAfterModify'); end;
+    trigger OnBeforeDelete() var T: Codeunit Trace; begin T.Add('ExtBeforeDelete'); end;
+    trigger OnAfterDelete() var T: Codeunit Trace; begin T.Add('ExtAfterDelete'); end;
+    trigger OnBeforeRename() var T: Codeunit Trace; begin T.Add('ExtBeforeRename' + Format(xRec."No.") + '>' + Format(Rec."No.")); end;
+    trigger OnAfterRename() var T: Codeunit Trace; begin T.Add('ExtAfterRename'); end;
+}
+codeunit 50310 Subs
+{
+    [EventSubscriber(ObjectType::Table, Database::ET, 'OnBeforeInsertEvent', '', false, false)]
+    local procedure BI(var Rec: Record ET) var T: Codeunit Trace; begin T.Add('EvBeforeInsert'); end;
+    [EventSubscriber(ObjectType::Table, Database::ET, 'OnAfterInsertEvent', '', false, false)]
+    local procedure AI(var Rec: Record ET) var T: Codeunit Trace; begin T.Add('EvAfterInsert'); end;
+}
+"#;
+
+fn ext_trace(body: &str) -> Result<Value, Signal> {
+    let src = format!(
+        "{EXT}
+codeunit 50100 C
+{{
+    procedure F(): Text
+    var R: Record ET; T: Codeunit Trace;
+    begin
+        {body}
+        exit(T.Get());
+    end;
+}}"
+    );
+    run(&src, "F")
+}
+
+// tableextensiontrigger/TestTableExtensionTableTriggers_Tests.al and
+// record/TestTriggerDispatchOrder.al: the extension's OnBefore/OnAfter triggers bracket the
+// base table's own trigger, inside the Before and After events; Insert(false) runs none.
+#[test]
+fn table_extension_insert_triggers_bracket_the_base_trigger_inside_the_events() {
+    assert_eq!(
+        text(ext_trace("R.\"No.\" := 1; R.Insert(true);")),
+        "EvBeforeInsert,ExtBeforeInsert,BaseOnInsert,ExtAfterInsert,EvAfterInsert"
+    );
+    assert_eq!(
+        text(ext_trace("R.\"No.\" := 1; R.Insert(false);")),
+        "EvBeforeInsert,EvAfterInsert"
+    );
+}
+
+#[test]
+fn table_extension_modify_delete_rename_triggers_run_with_xrec() {
+    assert_eq!(
+        text(ext_trace(
+            "R.\"No.\" := 1; R.Name := 'a'; R.Insert(false); T.Clear(); R.Name := 'b'; R.Modify(true);
+             R.Modify(false);"
+        )),
+        "ExtBeforeModifya>b,ExtAfterModify"
+    );
+    assert_eq!(
+        text(ext_trace(
+            "R.\"No.\" := 1; R.Insert(false); T.Clear(); R.Delete(true); R.\"No.\" := 2; R.Insert(false); R.Delete(false);"
+        )),
+        "ExtBeforeDelete,ExtAfterDelete,EvBeforeInsert,EvAfterInsert"
+    );
+    // Rename takes no RunTrigger flag and always runs the triggers.
+    assert_eq!(
+        text(ext_trace("R.\"No.\" := 1; R.Insert(false); T.Clear(); R.Rename(5);")),
+        "ExtBeforeRename1>5,ExtAfterRename"
+    );
+}
+
+#[test]
+fn delete_all_true_runs_the_extension_triggers_per_row_and_false_runs_none() {
+    assert_eq!(
+        text(ext_trace(
+            "R.\"No.\" := 1; R.Insert(false); R.\"No.\" := 2; R.Insert(false); T.Clear();
+             R.DeleteAll(false); R.\"No.\" := 3; R.Insert(false); T.Clear(); R.DeleteAll(true);"
+        )),
+        "ExtBeforeDelete,ExtAfterDelete"
+    );
+}
+
+// The order of two extensions' triggers is not pinned, so two declaring the same one is refused.
+#[test]
+fn two_extensions_declaring_the_same_trigger_are_refused() {
+    let src = format!(
+        "{EXT}
+tableextension 50303 ETExt2 extends ET
+{{
+    trigger OnBeforeInsert() begin end;
+}}
+codeunit 50100 C
+{{
+    procedure F() var R: Record ET; begin R.\"No.\" := 1; R.Insert(true); end;
+}}"
+    );
+    assert!(matches!(run(&src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
+}
+
+// Field triggers an extension attaches (modify(Field) { trigger OnBeforeValidate }) are still refused.
+#[test]
+fn table_extension_validate_triggers_are_still_refused() {
+    let src = r#"
+table 50301 ET { fields { field(1; "No."; Integer) { } field(2; Name; Text[30]) { } } keys { key(PK; "No.") { } } }
+tableextension 50302 ETExt extends ET
+{
+    fields { modify(Name) { trigger OnBeforeValidate() begin end; } }
+}
+codeunit 50100 C { procedure F() var R: Record ET; begin R.Validate(Name, 'x'); end; }"#;
+    assert!(matches!(run(src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
+}

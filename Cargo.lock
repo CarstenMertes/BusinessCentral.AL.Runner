@@ -21,6 +21,12 @@ version = "0.1.0"
 [[package]]
 name = "al-sema"
 version = "0.1.0"
+dependencies = [
+ "al-syntax",
+ "rowan",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "al-syntax"

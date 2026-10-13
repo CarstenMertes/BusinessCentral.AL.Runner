@@ -1,5 +1,6 @@
 //! AL syntax: lexer, preprocessor and lossless parser.
 
+pub mod ast;
 mod grammar;
 pub mod lexer;
 mod parser;

@@ -1,0 +1,680 @@
+//! A workspace is a set of apps. Each app is its manifest plus its sources
+//! (path, text). Loading parses every file and builds the object table.
+
+use al_syntax::ast;
+use std::collections::{BTreeSet, HashMap};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ObjKind {
+    Table,
+    TableExtension,
+    Page,
+    PageExtension,
+    Codeunit,
+    Report,
+    ReportExtension,
+    Query,
+    XmlPort,
+    Enum,
+    EnumExtension,
+    Interface,
+    PermissionSet,
+    PermissionSetExtension,
+    Profile,
+    Other,
+}
+
+#[derive(Debug, Clone)]
+pub struct AppSource {
+    pub id: String,
+    pub name: String,
+    pub dependencies: Vec<String>,
+    pub files: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Diagnostic {
+    pub file: String,
+    pub offset: usize,
+    pub code: &'static str,
+    pub message: String,
+}
+
+impl ObjKind {
+    pub fn from_keyword(kw: &str) -> ObjKind {
+        match kw.to_ascii_lowercase().as_str() {
+            "table" => ObjKind::Table,
+            "tableextension" => ObjKind::TableExtension,
+            "page" => ObjKind::Page,
+            "pageextension" => ObjKind::PageExtension,
+            "codeunit" => ObjKind::Codeunit,
+            "report" => ObjKind::Report,
+            "reportextension" => ObjKind::ReportExtension,
+            "query" => ObjKind::Query,
+            "xmlport" => ObjKind::XmlPort,
+            "enum" => ObjKind::Enum,
+            "enumextension" => ObjKind::EnumExtension,
+            "interface" => ObjKind::Interface,
+            "permissionset" => ObjKind::PermissionSet,
+            "permissionsetextension" => ObjKind::PermissionSetExtension,
+            "profile" => ObjKind::Profile,
+            _ => ObjKind::Other,
+        }
+    }
+
+    /// The object kind a variable type keyword refers to (`Record` → table).
+    pub fn from_type_name(ty: &str) -> Option<ObjKind> {
+        Some(match ty.to_ascii_lowercase().as_str() {
+            "record" => ObjKind::Table,
+            "codeunit" => ObjKind::Codeunit,
+            "page" | "testpage" => ObjKind::Page,
+            "report" | "testrequestpage" => ObjKind::Report,
+            "query" => ObjKind::Query,
+            "xmlport" => ObjKind::XmlPort,
+            "enum" => ObjKind::Enum,
+            "interface" => ObjKind::Interface,
+            _ => return None,
+        })
+    }
+
+    /// The kind an extension object extends.
+    pub fn extended(self) -> Option<ObjKind> {
+        Some(match self {
+            ObjKind::TableExtension => ObjKind::Table,
+            ObjKind::PageExtension => ObjKind::Page,
+            ObjKind::EnumExtension => ObjKind::Enum,
+            ObjKind::ReportExtension => ObjKind::Report,
+            ObjKind::PermissionSetExtension => ObjKind::PermissionSet,
+            _ => return None,
+        })
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ObjKind::Table => "table",
+            ObjKind::TableExtension => "tableextension",
+            ObjKind::Page => "page",
+            ObjKind::PageExtension => "pageextension",
+            ObjKind::Codeunit => "codeunit",
+            ObjKind::Report => "report",
+            ObjKind::ReportExtension => "reportextension",
+            ObjKind::Query => "query",
+            ObjKind::XmlPort => "xmlport",
+            ObjKind::Enum => "enum",
+            ObjKind::EnumExtension => "enumextension",
+            ObjKind::Interface => "interface",
+            ObjKind::PermissionSet => "permissionset",
+            ObjKind::PermissionSetExtension => "permissionsetextension",
+            ObjKind::Profile => "profile",
+            ObjKind::Other => "object",
+        }
+    }
+}
+
+pub struct SourceFileData {
+    pub path: String,
+    pub app: usize,
+    pub green: rowan::GreenNode,
+    pub namespace: Option<String>,
+    pub usings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Resolution {
+    Found(usize),
+    Missing,
+    Ambiguous(Vec<usize>),
+}
+
+#[derive(Debug, Clone)]
+pub struct ObjectSym {
+    pub app: usize,
+    pub file: usize,
+    pub kind: ObjKind,
+    pub id: Option<u32>,
+    pub name: String,
+    pub namespace: Option<String>,
+    /// Offset of the object node in its file.
+    pub offset: usize,
+}
+
+pub struct Workspace {
+    pub apps: Vec<AppSource>,
+    pub files: Vec<SourceFileData>,
+    pub objects: Vec<ObjectSym>,
+    pub diagnostics: Vec<Diagnostic>,
+    /// For each app, the set of apps it can see (itself + transitive dependencies).
+    visible: Vec<BTreeSet<usize>>,
+    by_name: HashMap<(ObjKind, String), Vec<usize>>,
+    by_id: HashMap<(ObjKind, u32), Vec<usize>>,
+}
+
+impl Workspace {
+    pub fn load(apps: Vec<AppSource>, symbols: &BTreeSet<String>) -> Workspace {
+        let mut ws = Workspace {
+            visible: Vec::new(),
+            files: Vec::new(),
+            objects: Vec::new(),
+            diagnostics: Vec::new(),
+            by_name: HashMap::new(),
+            by_id: HashMap::new(),
+            apps: Vec::new(),
+        };
+        ws.visible = (0..apps.len()).map(|i| visible_from(&apps, i)).collect();
+        for (ai, app) in apps.iter().enumerate() {
+            for (path, src) in &app.files {
+                let parse = al_syntax::parse(src, symbols);
+                for e in &parse.errors {
+                    ws.diagnostics.push(Diagnostic {
+                        file: path.clone(),
+                        offset: e.offset,
+                        code: "AR0000",
+                        message: e.message.clone(),
+                    });
+                }
+                let fi = ws.files.len();
+                let root = ast::SourceFile::cast(parse.syntax()).expect("root is a SourceFile");
+                ws.files.push(SourceFileData {
+                    path: path.clone(),
+                    app: ai,
+                    green: parse.green.clone(),
+                    namespace: root.namespace(),
+                    usings: root.usings(),
+                });
+                for o in root.objects() {
+                    ws.add_object(ObjectSym {
+                        app: ai,
+                        file: fi,
+                        kind: ObjKind::from_keyword(&o.kind()),
+                        id: o.id(),
+                        name: o.name(),
+                        namespace: root.namespace(),
+                        offset: o.syntax().text_range().start().into(),
+                    });
+                }
+            }
+        }
+        ws.apps = apps;
+        ws.resolve_references();
+        ws.diagnostics.sort_by_key(|d| {
+            (
+                ws.files.iter().position(|f| f.path == d.file).unwrap_or(usize::MAX),
+                d.offset,
+            )
+        });
+        ws
+    }
+
+    fn add_object(&mut self, o: ObjectSym) {
+        let oi = self.objects.len();
+        let file = self.files[o.file].path.clone();
+        if let Some(id) = o.id {
+            let ids = self.by_id.entry((o.kind, id)).or_default();
+            if !ids.is_empty() {
+                self.diagnostics.push(Diagnostic {
+                    file: file.clone(),
+                    offset: o.offset,
+                    code: "AR0001",
+                    message: format!("duplicate {} id {id}", o.kind.label()),
+                });
+            }
+            ids.push(oi);
+        }
+        // One object of a kind per name in a module, and per name in a namespace.
+        let names = self.by_name.entry((o.kind, o.name.to_lowercase())).or_default();
+        let clash = names.iter().any(|&j| {
+            let other = &self.objects[j];
+            other.app == o.app || eq_ns(&other.namespace, &o.namespace)
+        });
+        if clash {
+            self.diagnostics.push(Diagnostic {
+                file,
+                offset: o.offset,
+                code: "AR0001",
+                message: format!("duplicate {} name `{}`", o.kind.label(), o.name),
+            });
+        }
+        names.push(oi);
+        self.objects.push(o);
+    }
+
+    /// Resolves an object reference written in `file`. `parts` is the name
+    /// split into namespace segments, or a single numeric id.
+    ///
+    /// Qualified: only the named namespace. Unqualified, closest scope first:
+    /// the file's namespace, its `using`s, objects without a namespace, then a
+    /// unique match in any namespace (corpus evidence: files with neither
+    /// namespace nor `using` reference namespaced Base App tables and compile).
+    pub fn resolve_ref(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
+        let f = &self.files[file];
+        let visible = |i: &usize| self.visible[f.app].contains(&self.objects[*i].app);
+        let Some(name) = parts.last() else {
+            return Resolution::Missing;
+        };
+        if parts.len() == 1 {
+            if let Ok(id) = name.parse::<u32>() {
+                return pick(
+                    self.by_id
+                        .get(&(kind, id))
+                        .into_iter()
+                        .flatten()
+                        .copied()
+                        .filter(visible)
+                        .collect(),
+                );
+            }
+        }
+        let cands: Vec<usize> = self
+            .by_name
+            .get(&(kind, name.to_lowercase()))
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(visible)
+            .collect();
+        if parts.len() > 1 {
+            let ns = Some(parts[..parts.len() - 1].join("."));
+            return pick(
+                cands
+                    .into_iter()
+                    .filter(|&i| eq_ns(&self.objects[i].namespace, &ns))
+                    .collect(),
+            );
+        }
+        let in_ns = |ns: &Option<String>| {
+            cands
+                .iter()
+                .copied()
+                .filter(|&i| eq_ns(&self.objects[i].namespace, ns))
+                .collect::<Vec<_>>()
+        };
+        let tiers = [
+            f.namespace
+                .as_ref()
+                .map(|n| in_ns(&Some(n.clone())))
+                .unwrap_or_default(),
+            f.usings.iter().flat_map(|u| in_ns(&Some(u.clone()))).collect(),
+            in_ns(&None),
+            cands.clone(),
+        ];
+        for tier in tiers {
+            if !tier.is_empty() {
+                return pick(tier);
+            }
+        }
+        Resolution::Missing
+    }
+
+    /// Looks an object up by kind and name (case-insensitive) or by numeric id text.
+    pub fn find(&self, kind: ObjKind, name_or_id: &str) -> Option<(String, Option<u32>)> {
+        self.lookup(None, kind, name_or_id)
+            .map(|i| (self.objects[i].name.clone(), self.objects[i].id))
+    }
+
+    /// Resolves a reference as seen from `from_app` (None = from anywhere).
+    pub fn lookup(&self, from_app: Option<usize>, kind: ObjKind, name_or_id: &str) -> Option<usize> {
+        let visible = |i: &&usize| from_app.is_none_or(|a| self.visible[a].contains(&self.objects[**i].app));
+        let hits = match name_or_id.parse::<u32>() {
+            Ok(id) => self.by_id.get(&(kind, id)),
+            Err(_) => self.by_name.get(&(kind, name_or_id.to_lowercase())),
+        };
+        hits?.iter().find(visible).copied()
+    }
+
+    fn resolve_references(&mut self) {
+        let mut diags = Vec::new();
+        for o in &self.objects {
+            let file = &self.files[o.file];
+            let root = al_syntax::SyntaxNode::new_root(file.green.clone());
+            let Some(node) = root
+                .descendants()
+                .find(|n| n.kind() == al_syntax::SyntaxKind::Object && usize::from(n.text_range().start()) == o.offset)
+            else {
+                continue;
+            };
+            let obj = ast::Object::cast(node.clone()).expect("object node");
+            let mut check = |kind: ObjKind, parts: &[String], offset: usize| {
+                let name = parts.join(".");
+                let (code, message) = match self.resolve_ref(o.file, kind, parts) {
+                    Resolution::Found(_) => return,
+                    Resolution::Missing => ("AR0002", format!("unresolved {} `{name}`", kind.label())),
+                    Resolution::Ambiguous(c) => (
+                        "AR0003",
+                        format!("ambiguous {} `{name}` ({} candidates)", kind.label(), c.len()),
+                    ),
+                };
+                diags.push(Diagnostic {
+                    file: file.path.clone(),
+                    offset,
+                    code,
+                    message,
+                });
+            };
+            let header_off = o.offset;
+            if let (Some(target), Some(base)) = (o.kind.extended(), obj.extends_parts()) {
+                check(target, &base, header_off);
+            }
+            for i in obj.implements_parts() {
+                check(ObjKind::Interface, &i, header_off);
+            }
+            for t in node.descendants().filter_map(ast::TypeRef::cast) {
+                if let Some(kind) = ObjKind::from_type_name(&t.type_name()) {
+                    let parts = t.object_name_parts();
+                    if !parts.is_empty() {
+                        check(kind, &parts, t.syntax().text_range().start().into());
+                    }
+                }
+            }
+        }
+        self.diagnostics.extend(diags);
+    }
+}
+
+fn eq_ns(a: &Option<String>, b: &Option<String>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+        _ => false,
+    }
+}
+
+fn pick(c: Vec<usize>) -> Resolution {
+    match c.len() {
+        0 => Resolution::Missing,
+        1 => Resolution::Found(c[0]),
+        _ => Resolution::Ambiguous(c),
+    }
+}
+
+fn visible_from(apps: &[AppSource], start: usize) -> BTreeSet<usize> {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![start];
+    while let Some(i) = stack.pop() {
+        if seen.insert(i) {
+            for d in &apps[i].dependencies {
+                if let Some(j) = apps.iter().position(|a| a.id.eq_ignore_ascii_case(d)) {
+                    stack.push(j);
+                }
+            }
+        }
+    }
+    seen
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(id: &str, deps: &[&str], files: &[(&str, &str)]) -> AppSource {
+        AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files: files.iter().map(|(p, s)| (p.to_string(), s.to_string())).collect(),
+        }
+    }
+
+    fn load(apps: Vec<AppSource>) -> Workspace {
+        Workspace::load(apps, &["BC27PLUS".to_string()].into())
+    }
+
+    fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {
+        ws.diagnostics.iter().map(|d| (d.code, d.message.clone())).collect()
+    }
+
+    #[test]
+    fn finds_objects_by_name_case_insensitively_and_by_id() {
+        let ws = load(vec![app("a", &[], &[("t.al", "table 50900 \"ALT Universal\" { }")])]);
+        assert_eq!(
+            ws.find(ObjKind::Table, "alt universal"),
+            Some(("ALT Universal".into(), Some(50900)))
+        );
+        assert_eq!(
+            ws.find(ObjKind::Table, "50900"),
+            Some(("ALT Universal".into(), Some(50900)))
+        );
+        assert_eq!(ws.find(ObjKind::Codeunit, "ALT Universal"), None);
+    }
+
+    #[test]
+    fn resolved_type_references_produce_no_diagnostics() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[
+                ("t.al", "table 50900 \"ALT Universal\" { }"),
+                (
+                    "c.al",
+                    "codeunit 60100 T { var R: Record \"ALT Universal\"; L: List of [Integer]; procedure P(x: Codeunit T) begin end; }",
+                ),
+            ],
+        )]);
+        assert_eq!(codes(&ws), vec![]);
+    }
+
+    #[test]
+    fn unresolved_object_reference_is_diagnosed() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[("c.al", "codeunit 1 C { var R: Record Customer; }")],
+        )]);
+        assert_eq!(codes(&ws), vec![("AR0002", "unresolved table `Customer`".to_string())]);
+    }
+
+    #[test]
+    fn references_inside_routines_and_nested_type_args_are_checked() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[(
+                "c.al",
+                "codeunit 1 C { procedure P(): Record X var L: List of [Codeunit Y]; begin end; }",
+            )],
+        )]);
+        assert_eq!(
+            codes(&ws),
+            vec![
+                ("AR0002", "unresolved table `X`".to_string()),
+                ("AR0002", "unresolved codeunit `Y`".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn objects_of_a_dependency_are_visible_but_not_the_reverse() {
+        let ws = load(vec![
+            app("base", &[], &[("t.al", "table 1 T { var C: Codeunit Top; }")]),
+            app("top", &["base"], &[("c.al", "codeunit 2 Top { var R: Record T; }")]),
+        ]);
+        assert_eq!(codes(&ws), vec![("AR0002", "unresolved codeunit `Top`".to_string())]);
+    }
+
+    #[test]
+    fn duplicate_object_ids_and_names_are_diagnosed() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[("x.al", "codeunit 1 A { }\ncodeunit 1 B { }\ncodeunit 2 a { }")],
+        )]);
+        assert_eq!(
+            codes(&ws),
+            vec![
+                ("AR0001", "duplicate codeunit id 1".to_string()),
+                ("AR0001", "duplicate codeunit name `a`".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn extends_and_implements_are_resolved() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[(
+                "x.al",
+                "interface I { }\nenum 1 E implements I, J { }\ntableextension 2 X extends Missing { }",
+            )],
+        )]);
+        assert_eq!(
+            codes(&ws),
+            vec![
+                ("AR0002", "unresolved interface `J`".to_string()),
+                ("AR0002", "unresolved table `Missing`".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn namespace_qualified_reference_resolves_in_that_namespace() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[
+                ("b.al", "namespace System.Utilities;\ncodeunit 1 \"Temp Blob\" { }"),
+                (
+                    "u.al",
+                    "codeunit 2 U { var B: Codeunit System.Utilities.\"Temp Blob\"; }",
+                ),
+            ],
+        )]);
+        assert_eq!(codes(&ws), vec![]);
+    }
+
+    #[test]
+    fn qualified_reference_does_not_fall_back_to_an_object_without_namespace() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[(
+                "x.al",
+                "codeunit 1 \"Temp Blob\" { }\ncodeunit 2 U { var B: Codeunit System.Utilities.\"Temp Blob\"; }",
+            )],
+        )]);
+        assert_eq!(
+            codes(&ws),
+            vec![("AR0002", "unresolved codeunit `System.Utilities.Temp Blob`".to_string())]
+        );
+    }
+
+    #[test]
+    fn namespace_qualified_reference_to_a_name_containing_a_dot() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[
+                ("t.al", "namespace A.B;\ntable 1 \"Config. Package Table\" { }"),
+                ("u.al", "codeunit 2 U { var R: Record A.B.\"Config. Package Table\"; }"),
+            ],
+        )]);
+        assert_eq!(codes(&ws), vec![]);
+    }
+
+    fn resolved(ws: &Workspace, file: &str, kind: ObjKind, parts: &[&str]) -> Option<(Option<String>, u32)> {
+        let fi = ws.files.iter().position(|f| f.path == file).unwrap();
+        let parts: Vec<String> = parts.iter().map(|p| p.to_string()).collect();
+        match ws.resolve_ref(fi, kind, &parts) {
+            Resolution::Found(i) => Some((ws.objects[i].namespace.clone(), ws.objects[i].id.unwrap())),
+            _ => None,
+        }
+    }
+
+    fn ns_app() -> Workspace {
+        load(vec![app(
+            "a",
+            &[],
+            &[
+                (
+                    "local.al",
+                    "namespace X.Local;\ntable 1 \"Ship\" { }\ntable 4 \"Only Local\" { }",
+                ),
+                ("base.al", "namespace X.Base;\ntable 2 \"Ship\" { }"),
+                ("global.al", "table 3 \"Glob\" { }"),
+                ("user_local.al", "namespace X.Local;\ncodeunit 10 A { }"),
+                ("user_using.al", "namespace X.Other;\nusing X.Base;\ncodeunit 11 B { }"),
+                ("user_none.al", "codeunit 12 C { }"),
+            ],
+        )])
+    }
+
+    #[test]
+    fn qualified_reference_resolves_only_in_the_named_namespace() {
+        let ws = ns_app();
+        assert_eq!(
+            resolved(&ws, "user_none.al", ObjKind::Table, &["X", "Base", "Ship"]),
+            Some((Some("X.Base".into()), 2))
+        );
+        assert_eq!(
+            resolved(&ws, "user_none.al", ObjKind::Table, &["X", "Local", "Ship"]),
+            Some((Some("X.Local".into()), 1))
+        );
+        assert_eq!(
+            resolved(&ws, "user_none.al", ObjKind::Table, &["X", "Base", "Only Local"]),
+            None
+        );
+    }
+
+    #[test]
+    fn unqualified_reference_prefers_the_own_namespace_then_usings() {
+        let ws = ns_app();
+        assert_eq!(
+            resolved(&ws, "user_local.al", ObjKind::Table, &["Ship"]),
+            Some((Some("X.Local".into()), 1))
+        );
+        assert_eq!(
+            resolved(&ws, "user_using.al", ObjKind::Table, &["Ship"]),
+            Some((Some("X.Base".into()), 2))
+        );
+    }
+
+    #[test]
+    fn unqualified_reference_falls_back_to_a_unique_match_anywhere() {
+        // Corpus evidence: files without namespace or using reference Base App
+        // tables such as `Record Customer` (namespace Microsoft.Sales.Customer) and compile.
+        let ws = ns_app();
+        assert_eq!(
+            resolved(&ws, "user_none.al", ObjKind::Table, &["Glob"]),
+            Some((None, 3))
+        );
+        assert_eq!(
+            resolved(&ws, "user_none.al", ObjKind::Table, &["Only Local"]),
+            Some((Some("X.Local".into()), 4))
+        );
+    }
+
+    #[test]
+    fn unqualified_reference_matching_several_namespaces_is_ambiguous() {
+        let ws = ns_app();
+        let fi = ws.files.iter().position(|f| f.path == "user_none.al").unwrap();
+        assert!(matches!(
+            ws.resolve_ref(fi, ObjKind::Table, &["Ship".to_string()]),
+            Resolution::Ambiguous(_)
+        ));
+    }
+
+    #[test]
+    fn qualified_extends_resolves_by_namespace() {
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[
+                ("p.al", "namespace N.Local;\npage 1 \"Svc\" { }"),
+                (
+                    "e.al",
+                    "pageextension 2 E1 extends N.Local.\"Svc\" { }\npageextension 3 E2 extends N.Other.\"Svc\" { }",
+                ),
+            ],
+        )]);
+        assert_eq!(
+            codes(&ws),
+            vec![("AR0002", "unresolved page `N.Other.Svc`".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_errors_are_reported_as_diagnostics() {
+        let ws = load(vec![app("a", &[], &[("x.al", "codeunit 1 A { 42 }")])]);
+        assert_eq!(ws.diagnostics.len(), 1);
+        assert_eq!(ws.diagnostics[0].code, "AR0000");
+    }
+}

@@ -1,0 +1,645 @@
+//! Typed views over the untyped tree. Each wrapper is a cheap handle around a
+//! `SyntaxNode` of one kind; accessors read children on demand.
+
+use crate::{SyntaxKind, SyntaxNode, SyntaxToken};
+
+macro_rules! ast_node {
+    ($name:ident, $kind:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+        pub struct $name(pub SyntaxNode);
+        impl $name {
+            pub fn cast(node: SyntaxNode) -> Option<Self> {
+                (node.kind() == SyntaxKind::$kind).then(|| Self(node))
+            }
+            pub fn syntax(&self) -> &SyntaxNode {
+                &self.0
+            }
+        }
+    };
+}
+
+ast_node!(SourceFile, SourceFile);
+ast_node!(Object, Object);
+ast_node!(Property, Property);
+ast_node!(Section, Section);
+ast_node!(VarSection, VarSection);
+ast_node!(VarDecl, VarDecl);
+ast_node!(TypeRef, TypeRef);
+ast_node!(Param, Param);
+ast_node!(Attribute, Attribute);
+
+/// A procedure or a trigger.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Routine(pub SyntaxNode);
+impl Routine {
+    pub fn cast(node: SyntaxNode) -> Option<Self> {
+        matches!(node.kind(), SyntaxKind::Procedure | SyntaxKind::Trigger).then(|| Self(node))
+    }
+    pub fn syntax(&self) -> &SyntaxNode {
+        &self.0
+    }
+}
+
+/// AL identifiers compare case-insensitively; quoted ones lose their quotes.
+pub fn ident_text(tok: &SyntaxToken) -> String {
+    let t = tok.text();
+    t.strip_prefix('"')
+        .and_then(|t| t.strip_suffix('"'))
+        .unwrap_or(t)
+        .to_string()
+}
+
+fn significant_tokens(node: &SyntaxNode) -> impl Iterator<Item = SyntaxToken> {
+    node.children_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| !t.kind().is_trivia())
+}
+
+fn children<T>(node: &SyntaxNode, cast: fn(SyntaxNode) -> Option<T>) -> impl Iterator<Item = T> {
+    node.children().filter_map(cast)
+}
+
+fn trimmed(node: &SyntaxNode) -> String {
+    node.text().to_string().trim().to_string()
+}
+
+/// Joins `A . B . "C"` style token runs into `A.B.C`.
+fn qualified(tokens: &[SyntaxToken]) -> String {
+    tokens
+        .iter()
+        .map(|t| {
+            if t.kind() == SyntaxKind::Dot {
+                ".".to_string()
+            } else {
+                ident_text(t)
+            }
+        })
+        .collect()
+}
+
+fn is_name(t: &SyntaxToken) -> bool {
+    matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent | SyntaxKind::Dot)
+}
+
+impl SourceFile {
+    pub fn objects(&self) -> impl Iterator<Item = Object> {
+        children(&self.0, Object::cast)
+    }
+    pub fn namespace(&self) -> Option<String> {
+        let ns = self.0.children().find(|n| n.kind() == SyntaxKind::NamespaceDecl)?;
+        let toks: Vec<_> = significant_tokens(&ns).skip(1).filter(is_name).collect();
+        Some(qualified(&toks))
+    }
+    pub fn usings(&self) -> Vec<String> {
+        self.0
+            .children()
+            .filter(|n| n.kind() == SyntaxKind::UsingDecl)
+            .map(|u| qualified(&significant_tokens(&u).skip(1).filter(is_name).collect::<Vec<_>>()))
+            .collect()
+    }
+}
+
+impl Object {
+    fn header(&self) -> Vec<SyntaxToken> {
+        significant_tokens(&self.0).collect()
+    }
+    fn body(&self) -> Option<SyntaxNode> {
+        self.0.children().find(|n| n.kind() == SyntaxKind::ObjectBody)
+    }
+    fn members(&self) -> impl Iterator<Item = SyntaxNode> {
+        self.body().into_iter().flat_map(|b| b.children())
+    }
+    /// Lower-case object kind keyword: `codeunit`, `tableextension`, ...
+    pub fn kind(&self) -> String {
+        self.header()
+            .first()
+            .map(|t| t.text().to_ascii_lowercase())
+            .unwrap_or_default()
+    }
+    pub fn id(&self) -> Option<u32> {
+        self.header()
+            .iter()
+            .find(|t| t.kind() == SyntaxKind::Integer)
+            .and_then(|t| t.text().parse().ok())
+    }
+    /// Header words after the name: (`extends`|`implements`|`customizes`, names as parts).
+    fn clause_parts(&self) -> Vec<(String, Vec<Vec<String>>)> {
+        let toks = self.header();
+        let mut out = Vec::new();
+        let is_clause = |t: &SyntaxToken| {
+            ["extends", "implements", "customizes"]
+                .iter()
+                .any(|k| t.text().eq_ignore_ascii_case(k))
+        };
+        let mut i = toks.iter().position(is_clause).unwrap_or(toks.len());
+        while i < toks.len() && is_clause(&toks[i]) {
+            let kw = toks[i].text().to_ascii_lowercase();
+            i += 1;
+            let mut names = Vec::new();
+            loop {
+                let mut parts = Vec::new();
+                while i < toks.len() && is_name(&toks[i]) && !is_clause(&toks[i]) {
+                    if toks[i].kind() != SyntaxKind::Dot {
+                        parts.push(ident_text(&toks[i]));
+                    }
+                    i += 1;
+                }
+                names.push(parts);
+                if toks.get(i).is_some_and(|t| t.kind() == SyntaxKind::Comma) {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            out.push((kw, names));
+        }
+        out
+    }
+    pub fn extends_parts(&self) -> Option<Vec<String>> {
+        self.clause_parts()
+            .into_iter()
+            .find(|(k, _)| k == "extends")
+            .and_then(|(_, n)| n.into_iter().next())
+    }
+    pub fn implements_parts(&self) -> Vec<Vec<String>> {
+        self.clause_parts()
+            .into_iter()
+            .find(|(k, _)| k == "implements")
+            .map(|(_, n)| n)
+            .unwrap_or_default()
+    }
+    fn clauses(&self) -> (String, Vec<(String, Vec<String>)>) {
+        let toks = self.header();
+        let mut i = 1;
+        if toks.get(i).is_some_and(|t| t.kind() == SyntaxKind::Integer) {
+            i += 1;
+        }
+        let is_clause = |t: &SyntaxToken| {
+            ["extends", "implements", "customizes"]
+                .iter()
+                .any(|k| t.text().eq_ignore_ascii_case(k))
+        };
+        let start = i;
+        while i < toks.len() && is_name(&toks[i]) && !is_clause(&toks[i]) {
+            i += 1;
+        }
+        let name = qualified(&toks[start..i]);
+        let mut clauses = Vec::new();
+        while i < toks.len() && is_clause(&toks[i]) {
+            let kw = toks[i].text().to_ascii_lowercase();
+            i += 1;
+            let mut names = Vec::new();
+            loop {
+                let s = i;
+                while i < toks.len() && is_name(&toks[i]) && !is_clause(&toks[i]) {
+                    i += 1;
+                }
+                names.push(qualified(&toks[s..i]));
+                if toks.get(i).is_some_and(|t| t.kind() == SyntaxKind::Comma) {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            clauses.push((kw, names));
+        }
+        (name, clauses)
+    }
+    pub fn name(&self) -> String {
+        self.clauses().0
+    }
+    pub fn extends(&self) -> Option<String> {
+        self.clauses()
+            .1
+            .into_iter()
+            .find(|(k, _)| k == "extends")
+            .and_then(|(_, n)| n.into_iter().next())
+    }
+    pub fn implements(&self) -> Vec<String> {
+        self.clauses()
+            .1
+            .into_iter()
+            .find(|(k, _)| k == "implements")
+            .map(|(_, n)| n)
+            .unwrap_or_default()
+    }
+    pub fn properties(&self) -> impl Iterator<Item = Property> {
+        self.members().filter_map(Property::cast)
+    }
+    pub fn var_decls(&self) -> impl Iterator<Item = VarDecl> {
+        self.members()
+            .filter_map(VarSection::cast)
+            .flat_map(|s| s.decls().collect::<Vec<_>>())
+    }
+    pub fn routines(&self) -> impl Iterator<Item = Routine> {
+        self.members()
+            .filter(|n| n.kind() == SyntaxKind::Procedure)
+            .filter_map(Routine::cast)
+    }
+    pub fn triggers(&self) -> impl Iterator<Item = Routine> {
+        self.members()
+            .filter(|n| n.kind() == SyntaxKind::Trigger)
+            .filter_map(Routine::cast)
+    }
+    pub fn sections(&self) -> impl Iterator<Item = Section> {
+        self.members().filter_map(Section::cast)
+    }
+}
+
+impl Property {
+    pub fn name(&self) -> String {
+        significant_tokens(&self.0)
+            .next()
+            .map(|t| ident_text(&t))
+            .unwrap_or_default()
+    }
+    pub fn value_text(&self) -> String {
+        self.0
+            .children()
+            .find(|n| n.kind() == SyntaxKind::PropertyValue)
+            .map(|v| trimmed(&v))
+            .unwrap_or_default()
+    }
+}
+
+impl Section {
+    pub fn name(&self) -> String {
+        significant_tokens(&self.0)
+            .next()
+            .map(|t| t.text().to_string())
+            .unwrap_or_default()
+    }
+    /// The `;`-separated arguments in parentheses, each as trimmed source text
+    /// (a lone quoted identifier loses its quotes).
+    pub fn args(&self) -> Vec<String> {
+        let Some(args) = self.0.children().find(|n| n.kind() == SyntaxKind::SectionArgs) else {
+            return Vec::new();
+        };
+        let toks: Vec<_> = args.descendants_with_tokens().filter_map(|e| e.into_token()).collect();
+        let inner = &toks[1..toks.len().saturating_sub(1)];
+        let mut out = Vec::new();
+        let mut cur: Vec<&SyntaxToken> = Vec::new();
+        let mut flush = |cur: &mut Vec<&SyntaxToken>| {
+            let sig: Vec<_> = cur.iter().filter(|t| !t.kind().is_trivia()).collect();
+            let text = if sig.len() == 1 && sig[0].kind() == SyntaxKind::QuotedIdent {
+                ident_text(sig[0])
+            } else {
+                cur.iter().map(|t| t.text()).collect::<String>().trim().to_string()
+            };
+            out.push(text);
+            cur.clear();
+        };
+        let mut depth = 0;
+        for t in inner {
+            match t.kind() {
+                SyntaxKind::LParen | SyntaxKind::LBrack => depth += 1,
+                SyntaxKind::RParen | SyntaxKind::RBrack => depth -= 1,
+                SyntaxKind::Semicolon if depth == 0 => {
+                    flush(&mut cur);
+                    continue;
+                }
+                _ => {}
+            }
+            cur.push(t);
+        }
+        if !inner.is_empty() {
+            flush(&mut cur);
+        }
+        out
+    }
+    fn members(&self) -> impl Iterator<Item = SyntaxNode> {
+        self.0
+            .children()
+            .filter(|n| n.kind() == SyntaxKind::ObjectBody)
+            .flat_map(|b| b.children())
+    }
+    pub fn properties(&self) -> impl Iterator<Item = Property> {
+        self.members().filter_map(Property::cast)
+    }
+    pub fn sections(&self) -> impl Iterator<Item = Section> {
+        self.members().filter_map(Section::cast)
+    }
+    pub fn triggers(&self) -> impl Iterator<Item = Routine> {
+        self.members().filter_map(Routine::cast)
+    }
+}
+
+impl VarSection {
+    pub fn decls(&self) -> impl Iterator<Item = VarDecl> {
+        children(&self.0, VarDecl::cast)
+    }
+    pub fn is_protected(&self) -> bool {
+        significant_tokens(&self.0)
+            .next()
+            .is_some_and(|t| t.text().eq_ignore_ascii_case("protected"))
+    }
+}
+
+impl VarDecl {
+    pub fn names(&self) -> Vec<String> {
+        significant_tokens(&self.0)
+            .take_while(|t| t.kind() != SyntaxKind::Colon)
+            .filter(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))
+            .map(|t| ident_text(&t))
+            .collect()
+    }
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        children(&self.0, TypeRef::cast).next()
+    }
+}
+
+impl TypeRef {
+    pub fn text(&self) -> String {
+        trimmed(&self.0)
+    }
+    /// `Record`, `Text`, `List`, `array`, ...
+    pub fn type_name(&self) -> String {
+        significant_tokens(&self.0)
+            .next()
+            .map(|t| t.text().to_string())
+            .unwrap_or_default()
+    }
+    /// For object types, the referenced object (`"ALT Universal"` → `ALT Universal`,
+    /// `18` → `18`, `System.Utilities."Temp Blob"` → `System.Utilities.Temp Blob`).
+    pub fn object_name(&self) -> Option<String> {
+        let toks: Vec<_> = significant_tokens(&self.0).skip(1).collect();
+        let first = toks.first()?;
+        if first.kind() == SyntaxKind::Integer {
+            return Some(first.text().to_string());
+        }
+        let run: Vec<_> = toks
+            .iter()
+            .take_while(|t| {
+                is_name(t) && !t.text().eq_ignore_ascii_case("temporary") && !t.text().eq_ignore_ascii_case("of")
+            })
+            .cloned()
+            .collect();
+        (!run.is_empty() && first.kind() != SyntaxKind::StringLit).then(|| qualified(&run))
+    }
+    /// The object reference split into namespace segments and the name
+    /// (`System.Utilities."Temp Blob"` → `["System", "Utilities", "Temp Blob"]`).
+    pub fn object_name_parts(&self) -> Vec<String> {
+        let toks: Vec<_> = significant_tokens(&self.0).skip(1).collect();
+        match toks.first() {
+            Some(t) if t.kind() == SyntaxKind::Integer => vec![t.text().to_string()],
+            Some(t) if t.kind() == SyntaxKind::StringLit => Vec::new(),
+            _ => toks
+                .iter()
+                .take_while(|t| {
+                    is_name(t) && !t.text().eq_ignore_ascii_case("temporary") && !t.text().eq_ignore_ascii_case("of")
+                })
+                .filter(|t| t.kind() != SyntaxKind::Dot)
+                .map(ident_text)
+                .collect(),
+        }
+    }
+    pub fn is_temporary(&self) -> bool {
+        significant_tokens(&self.0).any(|t| t.text().eq_ignore_ascii_case("temporary"))
+    }
+    /// Nested type arguments (`List of [T]`, `array[..] of T`).
+    pub fn type_args(&self) -> Vec<TypeRef> {
+        let mut out: Vec<TypeRef> = children(&self.0, TypeRef::cast).collect();
+        for args in self.0.children().filter(|n| n.kind() == SyntaxKind::TypeArgs) {
+            out.extend(children(&args, TypeRef::cast));
+        }
+        out
+    }
+}
+
+impl Routine {
+    pub fn is_trigger(&self) -> bool {
+        self.0.kind() == SyntaxKind::Trigger
+    }
+    fn keyword_pos(&self) -> Vec<SyntaxToken> {
+        significant_tokens(&self.0).collect()
+    }
+    pub fn name(&self) -> String {
+        let toks = self.keyword_pos();
+        let kw = toks
+            .iter()
+            .position(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"));
+        kw.and_then(|i| toks.get(i + 1)).map(ident_text).unwrap_or_default()
+    }
+    fn has_modifier(&self, m: &str) -> bool {
+        self.keyword_pos()
+            .iter()
+            .take_while(|t| !t.text().eq_ignore_ascii_case("procedure") && !t.text().eq_ignore_ascii_case("trigger"))
+            .any(|t| t.text().eq_ignore_ascii_case(m))
+    }
+    pub fn is_local(&self) -> bool {
+        self.has_modifier("local")
+    }
+    pub fn is_internal(&self) -> bool {
+        self.has_modifier("internal")
+    }
+    pub fn is_protected(&self) -> bool {
+        self.has_modifier("protected")
+    }
+    pub fn attributes(&self) -> impl Iterator<Item = Attribute> {
+        children(&self.0, Attribute::cast)
+    }
+    pub fn params(&self) -> impl Iterator<Item = Param> {
+        self.0
+            .children()
+            .filter(|n| n.kind() == SyntaxKind::ParamList)
+            .flat_map(|l| children(&l, Param::cast).collect::<Vec<_>>())
+    }
+    fn return_spec(&self) -> Option<SyntaxNode> {
+        self.0.children().find(|n| n.kind() == SyntaxKind::ReturnSpec)
+    }
+    pub fn return_name(&self) -> Option<String> {
+        let first = significant_tokens(&self.return_spec()?).next()?;
+        (first.kind() != SyntaxKind::Colon).then(|| ident_text(&first))
+    }
+    pub fn return_type(&self) -> Option<TypeRef> {
+        children(&self.return_spec()?, TypeRef::cast).next()
+    }
+    pub fn local_var_decls(&self) -> impl Iterator<Item = VarDecl> {
+        children(&self.0, VarSection::cast).flat_map(|s| s.decls().collect::<Vec<_>>())
+    }
+    pub fn body(&self) -> Option<SyntaxNode> {
+        self.0.children().find(|n| n.kind() == SyntaxKind::Block)
+    }
+}
+
+impl Param {
+    pub fn is_var(&self) -> bool {
+        significant_tokens(&self.0)
+            .next()
+            .is_some_and(|t| t.text().eq_ignore_ascii_case("var"))
+    }
+    pub fn name(&self) -> String {
+        significant_tokens(&self.0)
+            .find(|t| {
+                matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent) && !t.text().eq_ignore_ascii_case("var")
+            })
+            .map(|t| ident_text(&t))
+            .unwrap_or_default()
+    }
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        children(&self.0, TypeRef::cast).next()
+    }
+}
+
+impl Attribute {
+    pub fn name(&self) -> String {
+        significant_tokens(&self.0)
+            .nth(1)
+            .map(|t| ident_text(&t))
+            .unwrap_or_default()
+    }
+    pub fn args(&self) -> Option<SyntaxNode> {
+        self.0.children().find(|n| n.kind() == SyntaxKind::ArgList)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file(src: &str) -> SourceFile {
+        let p = crate::parse(src, &Default::default());
+        assert!(p.errors.is_empty(), "{:?}", p.errors);
+        SourceFile::cast(p.syntax()).unwrap()
+    }
+
+    const SRC: &str = r#"namespace A.B;
+codeunit 60100 "Test X" implements IOne, "I Two"
+{
+    Subtype = Test;
+    Permissions = tabledata "ALT Universal" = RIMD;
+
+    var
+        Assert: Codeunit Assert;
+        A, B: Record "ALT Universal" temporary;
+
+    trigger OnRun()
+    begin
+    end;
+
+    [Test]
+    [HandlerFunctions('H')]
+    local procedure T(var R: Record Customer; N: Integer) Result: Text[30]
+    var
+        L: List of [Integer];
+    begin
+    end;
+}
+tableextension 50100 Ext extends "Sales Header" { fields { field(50100; F; Integer) { } } }
+"#;
+
+    #[test]
+    fn source_file_lists_objects_and_namespace() {
+        let f = file(SRC);
+        assert_eq!(f.namespace().as_deref(), Some("A.B"));
+        let objs: Vec<_> = f.objects().map(|o| (o.kind(), o.id(), o.name())).collect();
+        assert_eq!(
+            objs,
+            vec![
+                ("codeunit".to_string(), Some(60100), "Test X".to_string()),
+                ("tableextension".to_string(), Some(50100), "Ext".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn object_header_extends_and_implements() {
+        let f = file(SRC);
+        let objs: Vec<_> = f.objects().collect();
+        assert_eq!(objs[0].implements(), vec!["IOne", "I Two"]);
+        assert_eq!(objs[0].extends(), None);
+        assert_eq!(objs[1].extends().as_deref(), Some("Sales Header"));
+        assert_eq!(objs[1].extends_parts(), Some(vec!["Sales Header".to_string()]));
+        assert_eq!(
+            objs[0].implements_parts(),
+            vec![vec!["IOne".to_string()], vec!["I Two".to_string()]]
+        );
+    }
+
+    #[test]
+    fn properties_by_name_and_raw_value() {
+        let o = file(SRC).objects().next().unwrap();
+        let props: Vec<_> = o.properties().map(|p| (p.name(), p.value_text())).collect();
+        assert_eq!(
+            props,
+            vec![
+                ("Subtype".to_string(), "Test".to_string()),
+                (
+                    "Permissions".to_string(),
+                    "tabledata \"ALT Universal\" = RIMD".to_string()
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn global_variables_with_types() {
+        let o = file(SRC).objects().next().unwrap();
+        let vars: Vec<_> = o
+            .var_decls()
+            .map(|v| (v.names(), v.type_ref().unwrap().text()))
+            .collect();
+        assert_eq!(
+            vars,
+            vec![
+                (vec!["Assert".to_string()], "Codeunit Assert".to_string()),
+                (
+                    vec!["A".to_string(), "B".to_string()],
+                    "Record \"ALT Universal\" temporary".to_string()
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn type_ref_parts() {
+        let o = file(SRC).objects().next().unwrap();
+        let t = o.var_decls().nth(1).unwrap().type_ref().unwrap();
+        assert_eq!(t.type_name(), "Record");
+        assert_eq!(t.object_name().as_deref(), Some("ALT Universal"));
+        assert!(t.is_temporary());
+        assert_eq!(t.object_name_parts(), vec!["ALT Universal"]);
+    }
+
+    #[test]
+    fn routine_signature_attributes_and_locals() {
+        let o = file(SRC).objects().next().unwrap();
+        let r = o.routines().next().unwrap();
+        assert_eq!(r.name(), "T");
+        assert!(r.is_local());
+        assert_eq!(
+            r.attributes().map(|a| a.name()).collect::<Vec<_>>(),
+            vec!["Test", "HandlerFunctions"]
+        );
+        let params: Vec<_> = r
+            .params()
+            .map(|p| (p.is_var(), p.name(), p.type_ref().unwrap().text()))
+            .collect();
+        assert_eq!(
+            params,
+            vec![
+                (true, "R".to_string(), "Record Customer".to_string()),
+                (false, "N".to_string(), "Integer".to_string())
+            ]
+        );
+        assert_eq!(r.return_name().as_deref(), Some("Result"));
+        assert_eq!(r.return_type().unwrap().text(), "Text[30]");
+        assert_eq!(
+            r.local_var_decls().map(|v| v.names()).collect::<Vec<_>>(),
+            vec![vec!["L".to_string()]]
+        );
+        assert!(r.body().is_some());
+    }
+
+    #[test]
+    fn triggers_and_sections() {
+        let f = file(SRC);
+        let objs: Vec<_> = f.objects().collect();
+        assert_eq!(objs[0].triggers().map(|t| t.name()).collect::<Vec<_>>(), vec!["OnRun"]);
+        let fields = objs[1].sections().next().unwrap();
+        assert_eq!(fields.name(), "fields");
+        let field = fields.sections().next().unwrap();
+        assert_eq!(field.name(), "field");
+        assert_eq!(field.args(), vec!["50100", "F", "Integer"]);
+    }
+}

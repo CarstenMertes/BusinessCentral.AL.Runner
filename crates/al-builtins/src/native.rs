@@ -160,6 +160,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Dialog.StrMenu#1", str_menu),
     ("Text.StrLen#1", strlen),
     ("Text.StrPos#1", strpos),
+    ("Text.StrCheckSum#1", strchecksum),
     ("Text.CopyStr#1", copystr),
     ("Text.StrSubstNo#1", strsubstno),
     ("Text.UpperCase#1", uppercase),
@@ -561,6 +562,42 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     Ok(Value::Integer(pos as i32))
 }
 
+/// `StrCheckSum(String [, WeightString] [, Modulus])`: `(M - (sum of digit * weight) mod M) mod M`, the
+/// formula of the documentation (methods-auto/text/text-strchecksum-method.md, its example gives 0
+/// for '4378' with weights '1234' and modulus 7). The corpus pins only that the result is not
+/// negative, is below the modulus and is not 0 for '12345' (session/TestSystemExtended.al:218-256).
+/// The documentation says a non-digit or a too long weight string raises, without a text: refused.
+fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let digits = |s: &str| -> Option<Vec<i64>> { s.chars().map(|c| c.to_digit(10).map(i64::from)).collect() };
+    let source = text_arg(args, 0)?;
+    let Some(source) = digits(&source) else {
+        return unsupported("StrCheckSum of a string with a character that is not 0-9 (error text not pinned)");
+    };
+    let mut weights = match args.get(1) {
+        Some(_) => {
+            let Some(w) = digits(&text_arg(args, 1)?) else {
+                return unsupported("StrCheckSum with a weight character that is not 0-9 (error text not pinned)");
+            };
+            w
+        }
+        None => Vec::new(),
+    };
+    if weights.len() > source.len() {
+        return unsupported("StrCheckSum with a weight string longer than the source (error text not pinned)");
+    }
+    // A short weight string is padded with 1 up to the length of the source.
+    weights.resize(source.len(), 1);
+    let modulus = int_arg(args, 2).unwrap_or(10);
+    if modulus < 1 {
+        return unsupported("StrCheckSum with a modulus below 1 (not pinned)");
+    }
+    if source.is_empty() {
+        return Ok(Value::Integer(0));
+    }
+    let sum: i64 = source.iter().zip(&weights).map(|(d, w)| d * w).sum();
+    Ok(Value::Integer(((modulus - sum % modulus) % modulus) as i32))
+}
+
 fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let s: Vec<u16> = text_arg(args, 0)?.encode_utf16().collect();
     let pos = int_arg(args, 1).unwrap_or(1);
@@ -876,6 +913,38 @@ pub(crate) mod tests {
         };
         assert!(matches!(&stack, Value::Text(s) if !s.is_empty()));
         assert!(text_of(&stack).is_none(), "its content cannot be inspected");
+    }
+
+    // session/TestSystemExtended.al:218-256 pins the range; the values are the documentation's formula.
+    #[test]
+    fn strchecksum_follows_the_documented_formula() {
+        let n = |v: Result<Value, Signal>| int(v);
+        assert_eq!(n(call("Text.StrCheckSum#1", vec![t("12345")])), 5);
+        assert_eq!(n(call("Text.StrCheckSum#1", vec![t("12345"), t("5432")])), 5); // weights 54321: 35 mod 10 = 5
+        assert_eq!(
+            n(call(
+                "Text.StrCheckSum#1",
+                vec![t("12345"), t("5432"), Value::Integer(10)]
+            )),
+            5
+        );
+        // The example of the documentation: (7 - (4*1 + 3*2 + 7*3 + 8*4) mod 7) mod 7 = 0.
+        assert_eq!(
+            n(call(
+                "Text.StrCheckSum#1",
+                vec![t("4378"), t("1234"), Value::Integer(7)]
+            )),
+            0
+        );
+        assert_eq!(n(call("Text.StrCheckSum#1", vec![t("")])), 0);
+        assert!(matches!(
+            call("Text.StrCheckSum#1", vec![t("12a")]),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(
+            call("Text.StrCheckSum#1", vec![t("12"), t("123")]),
+            Err(Signal::Unsupported(_))
+        ));
     }
 
     #[test]

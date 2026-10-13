@@ -7,6 +7,7 @@ comment as a corpus citation and is deleted here.
 
 | Area | What is assumed | Source today | Code |
 |---|---|---|---|
+| StrCheckSum | The result is `(M - (sum of digit*weight) mod M) mod M` with M defaulting to 10, a short weight string padded with `1` at the end, an empty source giving 0. A non-digit, a weight string longer than the source and a modulus below 1 are REFUSED (the documentation gives no text) | doc `text-strchecksum-method.md` (its example); corpus `session/TestSystemExtended.al:218-256` pins range and non-zero only | `al-builtins/src/native.rs` `strchecksum` |
 | Format | Decimal format 0/1 uses `,` thousands and `.` decimals (en-US), decimals trimmed of trailing zeros | doc table "Standard decimal formats" (US) | `al-builtins/src/format.rs` `format_decimal` |
 | Format | Date format 0/1 is `MM/DD/YY`, format 2 `MMDDYY[C]D` (en-US) | doc table "Standard date formats" (US) | `format_date` |
 | Format | Decimal format 2 trims trailing zeros (`1.50` → `1.5`) | doc `<Decimals>` field, no precision | `format_decimal` |

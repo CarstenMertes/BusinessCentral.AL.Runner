@@ -88,6 +88,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "FieldRef.GetFilter#1",
     "FieldRef.Record#1",
     "FieldRef.Validate#1",
+    "FieldRef.CalcField#1",
     "FieldRef.IsOptimizedForTextSearch#1",
     "FieldRef.IsEnum#1",
     "FieldRef.EnumValueCount#1",

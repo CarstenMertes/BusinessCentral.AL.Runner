@@ -383,6 +383,19 @@ impl Session {
             "Relation" => self.field_relation(&rec, &t, pos).map(Value::Integer),
             "GetFilter" => self.field_filter_text(&rec, pos).map(Value::Text),
             "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
+            // fieldref/TestRelationTargetNamespaceScope.al:63-75. Record.CalcFields raises a pinned
+            // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);
+            // whether FieldRef.CalcField says the same is not pinned, so it is refused.
+            "CalcField" => {
+                let stored = self.engine.program.objects[t.object as usize]
+                    .table
+                    .as_ref()
+                    .is_some_and(|s| s.fields[pos].stored || s.fields[pos].flow_filter);
+                if stored {
+                    return unsupported("FieldRef.CalcField of a field that is not a FlowField (not pinned)");
+                }
+                self.flow_op("CalcFields", &rec, &[Value::Integer(pos as i32)])
+            }
             "Validate" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());

@@ -869,6 +869,9 @@ impl<'a> Checker<'a> {
         if let Some(i) = self.resolve(sc, ObjKind::Enum, &n) {
             return Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())));
         }
+        if key == "textencoding" {
+            return Some(E::TypeName(Ty::Option(crate::types::text_encoding_members())));
+        }
         if self.system_enums.contains(&key) {
             return Some(E::TypeName(Ty::Builtin(n)));
         }

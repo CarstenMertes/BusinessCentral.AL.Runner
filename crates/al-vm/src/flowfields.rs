@@ -180,11 +180,19 @@ impl Session {
     /// and a refused call changes nothing (corpus
     /// record/TestCalcFormulaValidationTests.Codeunit.al:211,
     /// record/TestCalcFieldsFieldClass.Codeunit.al:204).
-    pub(crate) fn calc_fields(&mut self, rec: &Rec, positions: &[usize]) -> Result<(), Signal> {
+    pub(crate) fn calc_fields(&mut self, rec: &Rec, all: &[usize]) -> Result<(), Signal> {
         let table = rec.borrow().table as usize;
+        // Blob fields are not FlowFields: CalcFields loads their content (streams/TestBlob.al).
+        let is_blob = |p: usize| {
+            let f = &self.engine.program.objects[table].table.as_ref().expect("table").fields[p];
+            f.stored && f.ty == RtType::Library("Blob".into())
+        };
+        let (blobs, positions): (Vec<usize>, Vec<usize>) = all.iter().partition(|p| is_blob(**p));
+        let positions = &positions[..];
         for &p in positions {
             self.check_calc_field(table, p)?;
         }
+        self.load_blobs(rec, &blobs)?;
         let mut out = Vec::new();
         for &p in positions {
             out.push((p, self.calc_value(rec, p, &mut Vec::new())?));

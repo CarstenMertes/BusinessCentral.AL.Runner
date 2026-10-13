@@ -1087,9 +1087,10 @@ fn calculated_flow_field_values_are_never_stored() {
 }
 
 // corpus record/TestCalcFieldsFieldClass.Codeunit.al:140 accepts a Blob in CalcFields, which loads
-// its bytes; streams are not implemented, so it is refused rather than reported as "not a FlowField".
+// its bytes. Streams are implemented now (streams/), so the call succeeds instead of being refused
+// (it was a refusal placeholder until then; the Blob semantics are tested in tests/streams.rs).
 #[test]
-fn calcfields_on_a_blob_field_is_refused_not_misreported() {
+fn calcfields_on_a_blob_field_is_accepted() {
     let r = run_with(
         "table 60480 \"BL Row\" { fields { field(1; K; Code[10]) { } field(2; Data; Blob) { } } }",
         "procedure F()
@@ -1099,7 +1100,7 @@ fn calcfields_on_a_blob_field_is_refused_not_misreported() {
         end;",
         "F",
     );
-    assert!(unsupported(r).contains("Blob"));
+    assert!(r.is_ok(), "{r:?}");
 }
 
 // corpus types/TestEnumBlankOptionFilterTests.Codeunit.al:100-160: SetFilter on an enum field

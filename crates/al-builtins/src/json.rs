@@ -1,0 +1,1171 @@
+//! JsonObject, JsonArray, JsonToken and JsonValue.
+//!
+//! All four AL types are handles onto the same node tree (corpus
+//! json/TestJsonToken.al: `JTok := JObj.AsToken(); JAsObj := JTok.AsObject()`
+//! reach the object that was built). A node is an `Rc<RefCell<LibraryValue>>`;
+//! containers hold their children as such handles, so a token obtained with
+//! `Get` shares the child. Behaviour the corpus does not pin (error texts,
+//! duplicate keys, out-of-range indexes) raises `Signal::Unsupported`.
+
+use crate::native::{Ctx, NativeFn, Signal};
+use crate::signature::Signature;
+use crate::value::{LibraryValue, Value};
+use rust_decimal::Decimal;
+use std::cell::RefCell;
+use std::rc::{Rc, Weak};
+
+pub type Handle = Rc<RefCell<LibraryValue>>;
+
+/// A node plus the container it is attached to (for `Path`).
+#[derive(Debug)]
+pub struct JsonCell {
+    pub node: JsonNode,
+    pub parent: Option<Weak<RefCell<LibraryValue>>>,
+}
+
+#[derive(Debug)]
+pub enum JsonNode {
+    Object(Vec<(String, Handle)>),
+    Array(Vec<Handle>),
+    Scalar(Scalar),
+}
+
+#[derive(Debug, Clone)]
+pub enum Scalar {
+    Null,
+    Undefined,
+    /// A typed AL value: Boolean, Integer, BigInteger, Byte, Decimal, Text, Code,
+    /// Char, Date, Time, DateTime, Duration or Option.
+    Val(Value),
+}
+
+fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
+    Err(Signal::Unsupported(what.into()))
+}
+
+fn new_handle(node: JsonNode) -> Handle {
+    Rc::new(RefCell::new(LibraryValue::Json(JsonCell { node, parent: None })))
+}
+
+/// The handle of a JSON-family value, giving a never-used JsonObject / JsonArray /
+/// JsonValue variable its empty content on first use.
+fn handle_of(v: &Value) -> Result<Handle, Signal> {
+    let Value::Library(name, h) = v else {
+        return unsupported(format!("{v:?} used as a JSON handle"));
+    };
+    if matches!(&*h.borrow(), LibraryValue::Empty) {
+        let node = match name.to_ascii_lowercase().as_str() {
+            "jsonobject" => JsonNode::Object(Vec::new()),
+            "jsonarray" => JsonNode::Array(Vec::new()),
+            "jsonvalue" => JsonNode::Scalar(Scalar::Undefined),
+            other => return unsupported(format!("use of an unassigned {other}")),
+        };
+        *h.borrow_mut() = LibraryValue::Json(JsonCell { node, parent: None });
+    }
+    match &*h.borrow() {
+        LibraryValue::Json(_) => Ok(h.clone()),
+        other => unsupported(format!("{name} handle holding {other:?}")),
+    }
+}
+
+fn recv(r: Option<&mut Value>) -> Result<Handle, Signal> {
+    match r {
+        Some(v) => handle_of(v),
+        None => unsupported("JSON method without a receiver"),
+    }
+}
+
+fn tagged(name: &str, h: Handle) -> Value {
+    Value::Library(name.to_string(), h)
+}
+
+fn with_node<T>(h: &Handle, f: impl FnOnce(&mut JsonNode) -> T) -> T {
+    match &mut *h.borrow_mut() {
+        LibraryValue::Json(c) => f(&mut c.node),
+        _ => unreachable!("checked by handle_of"),
+    }
+}
+
+fn kind_name(h: &Handle) -> &'static str {
+    with_node(h, |n| match n {
+        JsonNode::Object(_) => "an object",
+        JsonNode::Array(_) => "an array",
+        JsonNode::Scalar(_) => "a value",
+    })
+}
+
+// ------------------------------------------------------------------ tree
+
+fn deep_clone(h: &Handle) -> Handle {
+    let node = with_node(h, |n| match n {
+        JsonNode::Scalar(s) => JsonNode::Scalar(s.clone()),
+        JsonNode::Object(kids) => JsonNode::Object(kids.iter().map(|(k, c)| (k.clone(), deep_clone(c))).collect()),
+        JsonNode::Array(kids) => JsonNode::Array(kids.iter().map(deep_clone).collect()),
+    });
+    let out = new_handle(node);
+    adopt_children(&out);
+    out
+}
+
+fn adopt_children(h: &Handle) {
+    let kids: Vec<Handle> = with_node(h, |n| match n {
+        JsonNode::Object(k) => k.iter().map(|(_, c)| c.clone()).collect(),
+        JsonNode::Array(k) => k.clone(),
+        JsonNode::Scalar(_) => Vec::new(),
+    });
+    for k in kids {
+        set_parent(&k, Some(h));
+    }
+}
+
+fn set_parent(child: &Handle, parent: Option<&Handle>) {
+    if let LibraryValue::Json(c) = &mut *child.borrow_mut() {
+        c.parent = parent.map(Rc::downgrade);
+    }
+}
+
+fn parent_of(h: &Handle) -> Option<Handle> {
+    match &*h.borrow() {
+        LibraryValue::Json(c) => c.parent.as_ref().and_then(Weak::upgrade),
+        _ => None,
+    }
+}
+
+/// Whether `maybe_ancestor` is `h` or one of its ancestors.
+fn is_ancestor_or_self(maybe_ancestor: &Handle, h: &Handle) -> bool {
+    let mut cur = Some(h.clone());
+    while let Some(c) = cur {
+        if Rc::ptr_eq(&c, maybe_ancestor) {
+            return true;
+        }
+        cur = parent_of(&c);
+    }
+    false
+}
+
+/// The handle to store when `child` is added to `container`: the child itself when it
+/// is free, a deep copy when it already belongs to a tree (or would form a cycle).
+/// Docs/probes-needed.md records that the corpus does not pin sharing versus copying.
+fn attachable(container: &Handle, child: Handle) -> Handle {
+    let attached = parent_of(&child).is_some();
+    if attached || is_ancestor_or_self(&child, container) {
+        deep_clone(&child)
+    } else {
+        child
+    }
+}
+
+/// A node for an `Add`/`SetValue` argument.
+fn node_for(v: &Value) -> Result<Handle, Signal> {
+    match v {
+        Value::Library(..) => handle_of(v),
+        Value::Boolean(_)
+        | Value::Integer(_)
+        | Value::BigInteger(_)
+        | Value::Byte(_)
+        | Value::Decimal(_)
+        | Value::Text(_)
+        | Value::Code(_)
+        | Value::Char(_)
+        | Value::Date(..)
+        | Value::Time(_)
+        | Value::DateTime(_)
+        | Value::Duration(_)
+        | Value::Option(..) => Ok(new_handle(JsonNode::Scalar(Scalar::Val(v.clone())))),
+        other => unsupported(format!("{other:?} as a JSON value")),
+    }
+}
+
+fn attach(container: &Handle, child: Handle) -> Handle {
+    let child = attachable(container, child);
+    set_parent(&child, Some(container));
+    child
+}
+
+fn path_of(h: &Handle) -> String {
+    let mut segs: Vec<String> = Vec::new();
+    let mut cur = h.clone();
+    while let Some(p) = parent_of(&cur) {
+        let seg = with_node(&p, |n| match n {
+            JsonNode::Object(kids) => kids.iter().find(|(_, c)| Rc::ptr_eq(c, &cur)).map(|(k, _)| {
+                if !k.is_empty() && k.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    format!(".{k}")
+                } else {
+                    format!("['{}']", k.replace('\'', "\\'"))
+                }
+            }),
+            JsonNode::Array(kids) => kids.iter().position(|c| Rc::ptr_eq(c, &cur)).map(|i| format!("[{i}]")),
+            JsonNode::Scalar(_) => None,
+        });
+        segs.push(seg.unwrap_or_default());
+        cur = p;
+    }
+    let joined: String = segs.iter().rev().cloned().collect();
+    joined.strip_prefix('.').map_or(joined.clone(), str::to_string)
+}
+
+// ---------------------------------------------------------------- parsing
+
+struct Parser<'a> {
+    s: &'a [u8],
+    i: usize,
+    depth: usize,
+}
+
+type PResult<T> = Result<T, ParseError>;
+
+#[derive(Debug)]
+enum ParseError {
+    /// Not valid JSON: ReadFrom reports failure.
+    Invalid,
+    /// Valid JSON the model does not represent (duplicate keys, huge nesting).
+    Unsupported(&'static str),
+}
+
+impl Parser<'_> {
+    fn ws(&mut self) {
+        while self.i < self.s.len() && matches!(self.s[self.i], b' ' | b'\t' | b'\n' | b'\r') {
+            self.i += 1;
+        }
+    }
+    fn eat(&mut self, c: u8) -> bool {
+        if self.s.get(self.i) == Some(&c) {
+            self.i += 1;
+            true
+        } else {
+            false
+        }
+    }
+    fn lit(&mut self, word: &str) -> bool {
+        if self.s[self.i..].starts_with(word.as_bytes()) {
+            self.i += word.len();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn value(&mut self) -> PResult<Handle> {
+        self.ws();
+        self.depth += 1;
+        if self.depth > 256 {
+            return Err(ParseError::Unsupported("JSON nested deeper than 256 levels"));
+        }
+        let h = match self.s.get(self.i) {
+            Some(b'{') => self.object()?,
+            Some(b'[') => self.array()?,
+            Some(b'"') => {
+                let t = self.string()?;
+                new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(t))))
+            }
+            Some(b't') if self.lit("true") => new_handle(JsonNode::Scalar(Scalar::Val(Value::Boolean(true)))),
+            Some(b'f') if self.lit("false") => new_handle(JsonNode::Scalar(Scalar::Val(Value::Boolean(false)))),
+            Some(b'n') if self.lit("null") => new_handle(JsonNode::Scalar(Scalar::Null)),
+            Some(b'-' | b'0'..=b'9') => self.number()?,
+            _ => return Err(ParseError::Invalid),
+        };
+        self.depth -= 1;
+        Ok(h)
+    }
+
+    fn object(&mut self) -> PResult<Handle> {
+        self.i += 1;
+        let mut kids: Vec<(String, Handle)> = Vec::new();
+        self.ws();
+        if !self.eat(b'}') {
+            loop {
+                self.ws();
+                if self.s.get(self.i) != Some(&b'"') {
+                    return Err(ParseError::Invalid);
+                }
+                let k = self.string()?;
+                self.ws();
+                if !self.eat(b':') {
+                    return Err(ParseError::Invalid);
+                }
+                let v = self.value()?;
+                if kids.iter().any(|(e, _)| *e == k) {
+                    return Err(ParseError::Unsupported("duplicate keys in a JSON object"));
+                }
+                kids.push((k, v));
+                self.ws();
+                if self.eat(b',') {
+                    continue;
+                }
+                if self.eat(b'}') {
+                    break;
+                }
+                return Err(ParseError::Invalid);
+            }
+        }
+        let h = new_handle(JsonNode::Object(kids));
+        adopt_children(&h);
+        Ok(h)
+    }
+
+    fn array(&mut self) -> PResult<Handle> {
+        self.i += 1;
+        let mut kids = Vec::new();
+        self.ws();
+        if !self.eat(b']') {
+            loop {
+                kids.push(self.value()?);
+                self.ws();
+                if self.eat(b',') {
+                    continue;
+                }
+                if self.eat(b']') {
+                    break;
+                }
+                return Err(ParseError::Invalid);
+            }
+        }
+        let h = new_handle(JsonNode::Array(kids));
+        adopt_children(&h);
+        Ok(h)
+    }
+
+    fn hex4(&mut self) -> PResult<u16> {
+        let h = self.s.get(self.i..self.i + 4).ok_or(ParseError::Invalid)?;
+        let h = std::str::from_utf8(h).map_err(|_| ParseError::Invalid)?;
+        let v = u16::from_str_radix(h, 16).map_err(|_| ParseError::Invalid)?;
+        self.i += 4;
+        Ok(v)
+    }
+
+    fn string(&mut self) -> PResult<String> {
+        self.i += 1;
+        let mut units: Vec<u16> = Vec::new();
+        loop {
+            let b = *self.s.get(self.i).ok_or(ParseError::Invalid)?;
+            match b {
+                b'"' => {
+                    self.i += 1;
+                    break;
+                }
+                b'\\' => {
+                    self.i += 1;
+                    let e = *self.s.get(self.i).ok_or(ParseError::Invalid)?;
+                    self.i += 1;
+                    let c = match e {
+                        b'"' => '"' as u16,
+                        b'\\' => '\\' as u16,
+                        b'/' => '/' as u16,
+                        b'b' => 8,
+                        b'f' => 12,
+                        b'n' => 10,
+                        b'r' => 13,
+                        b't' => 9,
+                        b'u' => self.hex4()?,
+                        _ => return Err(ParseError::Invalid),
+                    };
+                    units.push(c);
+                }
+                0..=0x1f => return Err(ParseError::Invalid),
+                _ => {
+                    // A UTF-8 sequence copied through as UTF-16.
+                    let len = match b {
+                        0..=0x7f => 1,
+                        0xc0..=0xdf => 2,
+                        0xe0..=0xef => 3,
+                        _ => 4,
+                    };
+                    let seq = self.s.get(self.i..self.i + len).ok_or(ParseError::Invalid)?;
+                    let ch = std::str::from_utf8(seq)
+                        .map_err(|_| ParseError::Invalid)?
+                        .chars()
+                        .next()
+                        .ok_or(ParseError::Invalid)?;
+                    let mut buf = [0u16; 2];
+                    units.extend_from_slice(ch.encode_utf16(&mut buf));
+                    self.i += len;
+                }
+            }
+        }
+        Ok(String::from_utf16_lossy(&units))
+    }
+
+    fn number(&mut self) -> PResult<Handle> {
+        let start = self.i;
+        self.eat(b'-');
+        let int_start = self.i;
+        while self.s.get(self.i).is_some_and(u8::is_ascii_digit) {
+            self.i += 1;
+        }
+        let int_len = self.i - int_start;
+        if int_len == 0 || (int_len > 1 && self.s[int_start] == b'0') {
+            return Err(ParseError::Invalid);
+        }
+        let mut is_int = true;
+        if self.eat(b'.') {
+            is_int = false;
+            let f = self.i;
+            while self.s.get(self.i).is_some_and(u8::is_ascii_digit) {
+                self.i += 1;
+            }
+            if self.i == f {
+                return Err(ParseError::Invalid);
+            }
+        }
+        if matches!(self.s.get(self.i), Some(b'e' | b'E')) {
+            is_int = false;
+            self.i += 1;
+            if matches!(self.s.get(self.i), Some(b'+' | b'-')) {
+                self.i += 1;
+            }
+            let f = self.i;
+            while self.s.get(self.i).is_some_and(u8::is_ascii_digit) {
+                self.i += 1;
+            }
+            if self.i == f {
+                return Err(ParseError::Invalid);
+            }
+        }
+        let text = std::str::from_utf8(&self.s[start..self.i]).map_err(|_| ParseError::Invalid)?;
+        let v = if is_int {
+            match text.parse::<i64>() {
+                Ok(n) => Value::BigInteger(n),
+                Err(_) => Value::Decimal(
+                    text.parse::<Decimal>()
+                        .map_err(|_| ParseError::Unsupported("integer outside the Decimal range"))?,
+                ),
+            }
+        } else {
+            let d = if text.contains(['e', 'E']) {
+                Decimal::from_scientific(text)
+            } else {
+                text.parse::<Decimal>()
+            };
+            Value::Decimal(d.map_err(|_| ParseError::Unsupported("number outside the Decimal range"))?)
+        };
+        Ok(new_handle(JsonNode::Scalar(Scalar::Val(v))))
+    }
+}
+
+/// `Ok(None)`: not valid JSON.
+fn parse(text: &str) -> Result<Option<Handle>, Signal> {
+    let mut p = Parser {
+        s: text.as_bytes(),
+        i: 0,
+        depth: 0,
+    };
+    match p.value() {
+        Ok(h) => {
+            p.ws();
+            if p.i == p.s.len() { Ok(Some(h)) } else { Ok(None) }
+        }
+        Err(ParseError::Invalid) => Ok(None),
+        Err(ParseError::Unsupported(what)) => unsupported(what),
+    }
+}
+
+// ---------------------------------------------------------------- writing
+
+fn write_string(out: &mut String, s: &str) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
+/// Compact JSON (no whitespace); the corpus only pins `{}`, `[]` and that keys appear quoted
+/// (json/TestJsonXmlDeepContracts.al, TestJsonObject.al JsonObject_WriteTo_SerializesJSON).
+fn write(h: &Handle, out: &mut String) -> Result<(), Signal> {
+    enum Step {
+        Object(Vec<(String, Handle)>),
+        Array(Vec<Handle>),
+        Scalar(Scalar),
+    }
+    let step = with_node(h, |n| match n {
+        JsonNode::Object(k) => Step::Object(k.clone()),
+        JsonNode::Array(k) => Step::Array(k.clone()),
+        JsonNode::Scalar(s) => Step::Scalar(s.clone()),
+    });
+    match step {
+        Step::Object(kids) => {
+            out.push('{');
+            for (i, (k, c)) in kids.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_string(out, k);
+                out.push(':');
+                write(c, out)?;
+            }
+            out.push('}');
+        }
+        Step::Array(kids) => {
+            out.push('[');
+            for (i, c) in kids.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write(c, out)?;
+            }
+            out.push(']');
+        }
+        Step::Scalar(Scalar::Null) => out.push_str("null"),
+        Step::Scalar(Scalar::Undefined) => return unsupported("serialising an undefined JsonValue"),
+        Step::Scalar(Scalar::Val(v)) => match v {
+            Value::Boolean(b) => out.push_str(if b { "true" } else { "false" }),
+            Value::Integer(n) => out.push_str(&n.to_string()),
+            Value::BigInteger(n) => out.push_str(&n.to_string()),
+            Value::Byte(n) => out.push_str(&n.to_string()),
+            Value::Option(n, _) => out.push_str(&n.to_string()),
+            Value::Decimal(d) => out.push_str(&d.normalize().to_string()),
+            Value::Text(s) | Value::Code(s) => write_string(out, &s),
+            Value::Char(c) => write_string(out, &char::from_u32(u32::from(c)).map(String::from).unwrap_or_default()),
+            other => return unsupported(format!("serialising {other:?} to JSON text (not pinned yet)")),
+        },
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- scalars
+
+fn scalar_of(h: &Handle) -> Result<Scalar, Signal> {
+    with_node(h, |n| match n {
+        JsonNode::Scalar(s) => Ok(s.clone()),
+        JsonNode::Object(_) => unsupported("a value was read from a JSON object (error text not pinned yet)"),
+        JsonNode::Array(_) => unsupported("a value was read from a JSON array (error text not pinned yet)"),
+    })
+}
+
+fn as_i64(s: &Scalar) -> Result<i64, Signal> {
+    match s {
+        Scalar::Val(Value::Integer(n)) => Ok(i64::from(*n)),
+        Scalar::Val(Value::BigInteger(n)) => Ok(*n),
+        Scalar::Val(Value::Byte(n)) => Ok(i64::from(*n)),
+        Scalar::Val(Value::Option(n, _)) => Ok(i64::from(*n)),
+        Scalar::Val(Value::Duration(n)) => Ok(*n),
+        Scalar::Val(Value::Decimal(d)) if d.fract().is_zero() => {
+            i64::try_from(d.trunc().mantissa() / 10i128.pow(d.trunc().scale()))
+                .or_else(|_| unsupported("number out of range"))
+        }
+        other => unsupported(format!(
+            "reading {other:?} as a whole number (conversion not pinned yet)"
+        )),
+    }
+}
+
+fn as_boolean(s: &Scalar) -> Result<Value, Signal> {
+    match s {
+        Scalar::Val(Value::Boolean(b)) => Ok(Value::Boolean(*b)),
+        other => unsupported(format!("reading {other:?} as Boolean (conversion not pinned yet)")),
+    }
+}
+
+fn as_integer(s: &Scalar) -> Result<Value, Signal> {
+    i32::try_from(as_i64(s)?)
+        .map(Value::Integer)
+        .or_else(|_| unsupported("number out of Integer range"))
+}
+
+fn as_biginteger(s: &Scalar) -> Result<Value, Signal> {
+    as_i64(s).map(Value::BigInteger)
+}
+
+fn as_byte(s: &Scalar) -> Result<Value, Signal> {
+    u8::try_from(as_i64(s)?)
+        .map(Value::Byte)
+        .or_else(|_| unsupported("number out of Byte range"))
+}
+
+fn as_option(s: &Scalar) -> Result<Value, Signal> {
+    let n = i32::try_from(as_i64(s)?).or_else(|_| unsupported("number out of Option range"))?;
+    Ok(Value::Option(n, Rc::from(Vec::<String>::new())))
+}
+
+fn as_duration(s: &Scalar) -> Result<Value, Signal> {
+    as_i64(s).map(Value::Duration)
+}
+
+fn as_decimal(s: &Scalar) -> Result<Value, Signal> {
+    match s {
+        Scalar::Val(Value::Decimal(d)) => Ok(Value::Decimal(*d)),
+        Scalar::Val(Value::Integer(n)) => Ok(Value::Decimal(Decimal::from(*n))),
+        Scalar::Val(Value::BigInteger(n)) => Ok(Value::Decimal(Decimal::from(*n))),
+        Scalar::Val(Value::Byte(n)) => Ok(Value::Decimal(Decimal::from(*n))),
+        other => unsupported(format!("reading {other:?} as Decimal (conversion not pinned yet)")),
+    }
+}
+
+fn as_text(s: &Scalar) -> Result<Value, Signal> {
+    match s {
+        Scalar::Val(Value::Text(t) | Value::Code(t)) => Ok(Value::Text(t.clone())),
+        Scalar::Val(Value::Char(c)) => Ok(Value::Text(
+            char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
+        )),
+        other => unsupported(format!("reading {other:?} as Text (conversion not pinned yet)")),
+    }
+}
+
+fn as_code(s: &Scalar) -> Result<Value, Signal> {
+    match as_text(s)? {
+        Value::Text(t) => crate::ops::convert(Value::Text(t), &crate::value::RtType::Code(None)),
+        other => Ok(other),
+    }
+}
+
+fn as_char(s: &Scalar) -> Result<Value, Signal> {
+    match s {
+        Scalar::Val(Value::Char(c)) => Ok(Value::Char(*c)),
+        Scalar::Val(Value::Text(t) | Value::Code(t)) => {
+            let u: Vec<u16> = t.encode_utf16().collect();
+            match u.as_slice() {
+                [c] => Ok(Value::Char(*c)),
+                _ => unsupported(format!("reading text of length {} as Char", u.len())),
+            }
+        }
+        other => unsupported(format!("reading {other:?} as Char (conversion not pinned yet)")),
+    }
+}
+
+fn as_date(s: &Scalar) -> Result<Value, Signal> {
+    match s {
+        Scalar::Val(Value::Date(d, c)) => Ok(Value::Date(*d, *c)),
+        Scalar::Val(Value::Text(t)) => match crate::iso::parse_date(t) {
+            Some(d) => Ok(Value::Date(d, false)),
+            None => unsupported("reading text that is not an ISO date as Date (error text not pinned yet)"),
+        },
+        other => unsupported(format!("reading {other:?} as Date (conversion not pinned yet)")),
+    }
+}
+
+fn as_datetime(s: &Scalar) -> Result<Value, Signal> {
+    match s {
+        Scalar::Val(Value::DateTime(d)) => Ok(Value::DateTime(*d)),
+        Scalar::Val(Value::Text(t)) => match crate::iso::parse_datetime(t) {
+            Some(d) => Ok(Value::DateTime(d)),
+            None => unsupported("reading text that is not an ISO date-time as DateTime (error text not pinned yet)"),
+        },
+        other => unsupported(format!("reading {other:?} as DateTime (conversion not pinned yet)")),
+    }
+}
+
+fn as_time(s: &Scalar) -> Result<Value, Signal> {
+    match s {
+        Scalar::Val(Value::Time(t)) => Ok(Value::Time(*t)),
+        Scalar::Val(Value::Text(t)) => match crate::iso::parse_time(t) {
+            Some(t) => Ok(Value::Time(t)),
+            None => unsupported("reading text that is not an ISO time as Time (error text not pinned yet)"),
+        },
+        other => unsupported(format!("reading {other:?} as Time (conversion not pinned yet)")),
+    }
+}
+
+type Coerce = fn(&Scalar) -> Result<Value, Signal>;
+
+// ---------------------------------------------------------------- natives
+
+fn key_text(v: &Value) -> Result<String, Signal> {
+    crate::native::text_of(v).ok_or_else(|| Signal::Unsupported("JSON key that is not text".into()))
+}
+
+fn object_get_child(h: &Handle, key: &Value) -> Result<Option<Handle>, Signal> {
+    let key = key_text(key)?;
+    with_node(h, |n| match n {
+        JsonNode::Object(kids) => Ok(kids.iter().find(|(k, _)| *k == key).map(|(_, c)| c.clone())),
+        _ => unsupported("JsonObject method on a JSON value that is not an object"),
+    })
+}
+
+fn array_get_child(h: &Handle, index: &Value) -> Result<Option<Handle>, Signal> {
+    let i = match index {
+        Value::Integer(i) => i64::from(*i),
+        other => return unsupported(format!("JSON array index {other:?}")),
+    };
+    with_node(h, |n| match n {
+        JsonNode::Array(kids) => Ok(usize::try_from(i).ok().and_then(|i| kids.get(i)).cloned()),
+        _ => unsupported("JsonArray method on a JSON value that is not an array"),
+    })
+}
+
+fn object_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let key = key_text(&a[0])?;
+    if object_get_child(&h, &a[0])?.is_some() {
+        return unsupported("JsonObject.Add of an existing key (behaviour not pinned yet)");
+    }
+    let child = attach(&h, node_for(&a[1])?);
+    with_node(&h, |n| {
+        if let JsonNode::Object(kids) = n {
+            kids.push((key, child));
+        }
+    });
+    Ok(Value::Boolean(true))
+}
+
+fn object_contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    Ok(Value::Boolean(object_get_child(&h, &a[0])?.is_some()))
+}
+
+fn object_get(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match object_get_child(&h, &a[0])? {
+        Some(child) => {
+            a[1] = tagged("JsonToken", child);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => unsupported("JsonObject.Get of a missing key without using the result (error text not pinned yet)"),
+    }
+}
+
+fn object_remove(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let key = key_text(&a[0])?;
+    let removed = with_node(&h, |n| match n {
+        JsonNode::Object(kids) => Ok(kids.iter().position(|(k, _)| *k == key).map(|i| kids.remove(i).1)),
+        _ => unsupported("JsonObject.Remove on a JSON value that is not an object"),
+    })?;
+    match removed {
+        Some(child) => {
+            set_parent(&child, None);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => unsupported("JsonObject.Remove of a missing key without using the result (error text not pinned yet)"),
+    }
+}
+
+/// `GetX(Key [, DefaultIfNotFound])`. The corpus pins that a missing key throws even with
+/// `DefaultIfNotFound = false` (json/TestJsonTypedGetters.al JsonObject_GetBoolean_MissingKey_Throws)
+/// but not the text, nor the `true` case.
+fn object_typed(r: Option<&mut Value>, a: &mut [Value], coerce: Coerce) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match object_get_child(&h, &a[0])? {
+        Some(child) => coerce(&scalar_of(&child)?),
+        None => unsupported("JsonObject.GetX of a missing key (error text not pinned yet)"),
+    }
+}
+
+fn array_typed(r: Option<&mut Value>, a: &mut [Value], coerce: Coerce) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match array_get_child(&h, &a[0])? {
+        Some(child) => coerce(&scalar_of(&child)?),
+        None => unsupported("JsonArray.GetX with an index out of range (error text not pinned yet)"),
+    }
+}
+
+macro_rules! typed_getters {
+    ($($obj:ident, $arr:ident, $val:ident => $coerce:path;)*) => {$(
+        fn $obj(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+            object_typed(r, a, $coerce)
+        }
+        fn $arr(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+            array_typed(r, a, $coerce)
+        }
+        fn $val(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+            let h = recv(r)?;
+            $coerce(&scalar_of(&h)?)
+        }
+    )*};
+}
+
+typed_getters! {
+    obj_boolean, arr_boolean, val_boolean => as_boolean;
+    obj_integer, arr_integer, val_integer => as_integer;
+    obj_biginteger, arr_biginteger, val_biginteger => as_biginteger;
+    obj_byte, arr_byte, val_byte => as_byte;
+    obj_option, arr_option, val_option => as_option;
+    obj_duration, arr_duration, val_duration => as_duration;
+    obj_decimal, arr_decimal, val_decimal => as_decimal;
+    obj_text, arr_text, val_text => as_text;
+    obj_char, arr_char, val_char => as_char;
+    obj_date, arr_date, val_date => as_date;
+    obj_datetime, arr_datetime, val_datetime => as_datetime;
+    obj_time, arr_time, val_time => as_time;
+}
+
+fn val_code(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    as_code(&scalar_of(&recv(r)?)?)
+}
+
+/// `GetObject` / `GetArray` / `AsObject` / `AsArray`: the node itself (a reference, like `Get`).
+fn child_as(child: Handle, want: &str, tag: &str) -> Result<Value, Signal> {
+    let ok = with_node(&child, |n| {
+        matches!(
+            (n, want),
+            (JsonNode::Object(_), "object") | (JsonNode::Array(_), "array")
+        )
+    });
+    if ok {
+        Ok(tagged(tag, child))
+    } else {
+        unsupported(format!(
+            "{tag} requested from {} (error text not pinned yet)",
+            kind_name(&child)
+        ))
+    }
+}
+
+fn obj_get_object(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match object_get_child(&h, &a[0])? {
+        Some(c) => child_as(c, "object", "JsonObject"),
+        None => unsupported("JsonObject.GetObject of a missing key (error text not pinned yet)"),
+    }
+}
+
+fn obj_get_array(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match object_get_child(&h, &a[0])? {
+        Some(c) => child_as(c, "array", "JsonArray"),
+        None => unsupported("JsonObject.GetArray of a missing key (error text not pinned yet)"),
+    }
+}
+
+fn arr_get_object(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match array_get_child(&h, &a[0])? {
+        Some(c) => child_as(c, "object", "JsonObject"),
+        None => unsupported("JsonArray.GetObject with an index out of range (error text not pinned yet)"),
+    }
+}
+
+fn arr_get_array(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match array_get_child(&h, &a[0])? {
+        Some(c) => child_as(c, "array", "JsonArray"),
+        None => unsupported("JsonArray.GetArray with an index out of range (error text not pinned yet)"),
+    }
+}
+
+fn array_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let child = attach(&h, node_for(&a[0])?);
+    with_node(&h, |n| match n {
+        JsonNode::Array(kids) => {
+            kids.push(child);
+            Ok(Value::Boolean(true))
+        }
+        _ => unsupported("JsonArray.Add on a JSON value that is not an array"),
+    })
+}
+
+fn array_count(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    with_node(&h, |n| match n {
+        JsonNode::Array(kids) => Ok(Value::Integer(kids.len() as i32)),
+        _ => unsupported("JsonArray.Count on a JSON value that is not an array"),
+    })
+}
+
+fn array_get(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    match array_get_child(&h, &a[0])? {
+        Some(child) => {
+            a[1] = tagged("JsonToken", child);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => unsupported("JsonArray.Get with an index out of range, result unused (error text not pinned yet)"),
+    }
+}
+
+/// Replaces the content of the receiver's node with a parsed tree of the wanted kind.
+/// Invalid JSON is reported as `false` when the result is used (docs: "returns false if
+/// the operation was not successful"; no corpus test feeds invalid JSON, see probes-needed.md).
+fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Option<&str>) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let Some(text) = crate::native::text_of(&a[0]) else {
+        return unsupported("ReadFrom with an argument that is not text");
+    };
+    let parsed = parse(&text)?.filter(|p| {
+        with_node(p, |n| {
+            matches!(
+                (n, want),
+                (JsonNode::Object(_), Some("object")) | (JsonNode::Array(_), Some("array")) | (_, None)
+            )
+        })
+    });
+    let Some(parsed) = parsed else {
+        return if c.ret_used() {
+            Ok(Value::Boolean(false))
+        } else {
+            unsupported("ReadFrom of invalid JSON, result unused (error text not pinned yet)")
+        };
+    };
+    let LibraryValue::Json(JsonCell { node, .. }) = std::mem::take(&mut *parsed.borrow_mut()) else {
+        unreachable!("parse builds JSON nodes")
+    };
+    let parent = parent_link(&h);
+    *h.borrow_mut() = LibraryValue::Json(JsonCell { node, parent });
+    // The children were adopted by the temporary root; re-point them at the receiver.
+    adopt_children(&h);
+    Ok(Value::Boolean(true))
+}
+
+fn parent_link(h: &Handle) -> Option<Weak<RefCell<LibraryValue>>> {
+    match &*h.borrow() {
+        LibraryValue::Json(c) => c.parent.clone(),
+        _ => None,
+    }
+}
+
+fn object_read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    read_from(c, r, a, Some("object"))
+}
+fn array_read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    read_from(c, r, a, Some("array"))
+}
+fn any_read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    read_from(c, r, a, None)
+}
+
+fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let mut out = String::new();
+    write(&h, &mut out)?;
+    a[0] = Value::Text(out);
+    Ok(Value::Boolean(true))
+}
+
+fn as_token(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    Ok(tagged("JsonToken", recv(r)?))
+}
+
+fn token_as_object(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    child_as(recv(r)?, "object", "JsonObject")
+}
+fn token_as_array(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    child_as(recv(r)?, "array", "JsonArray")
+}
+fn token_as_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    if with_node(&h, |n| matches!(n, JsonNode::Scalar(_))) {
+        Ok(tagged("JsonValue", h))
+    } else {
+        unsupported(format!("AsValue on {} (error text not pinned yet)", kind_name(&h)))
+    }
+}
+
+fn token_is_object(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    Ok(Value::Boolean(with_node(&h, |n| matches!(n, JsonNode::Object(_)))))
+}
+fn token_is_array(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    Ok(Value::Boolean(with_node(&h, |n| matches!(n, JsonNode::Array(_)))))
+}
+fn token_is_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    Ok(Value::Boolean(with_node(&h, |n| matches!(n, JsonNode::Scalar(_)))))
+}
+
+fn clone_token(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    Ok(tagged("JsonToken", deep_clone(&recv(r)?)))
+}
+
+fn path(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    Ok(Value::Text(path_of(&recv(r)?)))
+}
+
+fn value_is_null(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    Ok(Value::Boolean(matches!(scalar_of(&h)?, Scalar::Null)))
+}
+
+fn value_is_undefined(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    Ok(Value::Boolean(matches!(scalar_of(&h)?, Scalar::Undefined)))
+}
+
+fn set_scalar(h: &Handle, s: Scalar) -> Result<Value, Signal> {
+    with_node(h, |n| match n {
+        JsonNode::Scalar(slot) => {
+            *slot = s;
+            Ok(Value::Null)
+        }
+        _ => unsupported("SetValue on a JSON node that is not a value"),
+    })
+}
+
+fn value_set(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let src = node_for(&a[0])?;
+    let s = scalar_of(&src)?;
+    set_scalar(&h, s)
+}
+fn value_set_null(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    set_scalar(&recv(r)?, Scalar::Null)
+}
+fn value_set_undefined(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    set_scalar(&recv(r)?, Scalar::Undefined)
+}
+
+// ------------------------------------------------------------ SelectToken
+
+enum Seg {
+    Key(String),
+    Index(usize),
+}
+
+/// Dotted names and `[n]` / `['name']` indexers, with an optional leading `$`.
+/// Wildcards, recursive descent and filters are not pinned by the corpus.
+fn parse_path(p: &str) -> Result<Vec<Seg>, Signal> {
+    let b = p.as_bytes();
+    let mut i = 0;
+    let mut segs = Vec::new();
+    if b.first() == Some(&b'$') {
+        i = 1;
+    }
+    while i < b.len() {
+        match b[i] {
+            b'[' => {
+                let close = p[i..]
+                    .find(']')
+                    .map(|c| c + i)
+                    .ok_or_else(|| Signal::Unsupported("SelectToken path with an unclosed [".into()))?;
+                let inner = &p[i + 1..close];
+                if let Some(q) = inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+                    segs.push(Seg::Key(q.to_string()));
+                } else if let Ok(n) = inner.parse::<usize>() {
+                    segs.push(Seg::Index(n));
+                } else {
+                    return unsupported("SelectToken indexer form not pinned by the corpus");
+                }
+                i = close + 1;
+            }
+            c => {
+                if c == b'.' {
+                    i += 1;
+                    if b.get(i) == Some(&b'.') {
+                        return unsupported("SelectToken recursive descent (..)");
+                    }
+                }
+                let s = i;
+                while i < b.len() && b[i] != b'.' && b[i] != b'[' {
+                    i += 1;
+                }
+                let name = &p[s..i];
+                if name.is_empty() || name.contains(['*', '?', '@']) {
+                    return unsupported("SelectToken path form not pinned by the corpus");
+                }
+                segs.push(Seg::Key(name.to_string()));
+            }
+        }
+    }
+    Ok(segs)
+}
+
+fn select_token(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let Some(p) = crate::native::text_of(&a[0]) else {
+        return unsupported("SelectToken path that is not text");
+    };
+    let mut cur = h;
+    for seg in parse_path(&p)? {
+        let next = with_node(&cur, |n| match (n, &seg) {
+            (JsonNode::Object(kids), Seg::Key(k)) => kids.iter().find(|(e, _)| e == k).map(|(_, c)| c.clone()),
+            (JsonNode::Array(kids), Seg::Index(i)) => kids.get(*i).cloned(),
+            _ => None,
+        });
+        match next {
+            Some(n) => cur = n,
+            None if c.ret_used() => return Ok(Value::Boolean(false)),
+            None => return unsupported("SelectToken without a match, result unused (error text not pinned yet)"),
+        }
+    }
+    a[1] = tagged("JsonToken", cur);
+    Ok(Value::Boolean(true))
+}
+
+// --------------------------------------------------------------- dispatch
+
+/// The implementation of one catalog overload, if the corpus pins enough of it.
+/// Overloads with stream parameters are not implemented here.
+pub fn native_for(sig: &Signature) -> Option<NativeFn> {
+    let params: Vec<&str> = sig.params.iter().map(|p| p.ty.as_str()).collect();
+    let first_by_var = sig.params.first().is_some_and(|p| p.by_var);
+    let method = format!("{}.{}", sig.receiver, sig.name);
+    let f: NativeFn = match (method.as_str(), params.as_slice()) {
+        ("JsonObject.Add", [_, _]) => object_add,
+        ("JsonObject.Contains", [_]) => object_contains,
+        ("JsonObject.Get", [_, _]) => object_get,
+        ("JsonObject.Remove", [_]) => object_remove,
+        ("JsonObject.GetBoolean", _) => obj_boolean,
+        ("JsonObject.GetInteger", _) => obj_integer,
+        ("JsonObject.GetBigInteger", _) => obj_biginteger,
+        ("JsonObject.GetByte", _) => obj_byte,
+        ("JsonObject.GetOption", _) => obj_option,
+        ("JsonObject.GetDuration", _) => obj_duration,
+        ("JsonObject.GetDecimal", _) => obj_decimal,
+        ("JsonObject.GetText", _) => obj_text,
+        ("JsonObject.GetChar", _) => obj_char,
+        ("JsonObject.GetDate", _) => obj_date,
+        ("JsonObject.GetDateTime", _) => obj_datetime,
+        ("JsonObject.GetTime", _) => obj_time,
+        ("JsonObject.GetObject", _) => obj_get_object,
+        ("JsonObject.GetArray", _) => obj_get_array,
+        ("JsonObject.ReadFrom", ["Text"]) => object_read_from,
+        ("JsonObject.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonObject.AsToken" | "JsonArray.AsToken" | "JsonValue.AsToken", []) => as_token,
+        ("JsonObject.Clone" | "JsonArray.Clone" | "JsonValue.Clone" | "JsonToken.Clone", []) => clone_token,
+        ("JsonObject.Path" | "JsonArray.Path" | "JsonValue.Path" | "JsonToken.Path", []) => path,
+        (
+            "JsonObject.SelectToken" | "JsonArray.SelectToken" | "JsonValue.SelectToken" | "JsonToken.SelectToken",
+            [_, _],
+        ) => select_token,
+        ("JsonArray.Add", [_]) => array_add,
+        ("JsonArray.Count", []) => array_count,
+        ("JsonArray.Get", [_, _]) => array_get,
+        ("JsonArray.GetBoolean", _) => arr_boolean,
+        ("JsonArray.GetInteger", _) => arr_integer,
+        ("JsonArray.GetBigInteger", _) => arr_biginteger,
+        ("JsonArray.GetByte", _) => arr_byte,
+        ("JsonArray.GetOption", _) => arr_option,
+        ("JsonArray.GetDuration", _) => arr_duration,
+        ("JsonArray.GetDecimal", _) => arr_decimal,
+        ("JsonArray.GetText", _) => arr_text,
+        ("JsonArray.GetChar", _) => arr_char,
+        ("JsonArray.GetDate", _) => arr_date,
+        ("JsonArray.GetDateTime", _) => arr_datetime,
+        ("JsonArray.GetTime", _) => arr_time,
+        ("JsonArray.GetObject", _) => arr_get_object,
+        ("JsonArray.GetArray", _) => arr_get_array,
+        ("JsonArray.ReadFrom", ["Text"]) => array_read_from,
+        ("JsonArray.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonToken.ReadFrom" | "JsonValue.ReadFrom", ["Text"]) => any_read_from,
+        ("JsonToken.WriteTo" | "JsonValue.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonToken.AsObject", []) => token_as_object,
+        ("JsonToken.AsArray", []) => token_as_array,
+        ("JsonToken.AsValue", []) => token_as_value,
+        ("JsonToken.IsObject", []) => token_is_object,
+        ("JsonToken.IsArray", []) => token_is_array,
+        ("JsonToken.IsValue", []) => token_is_value,
+        ("JsonValue.IsNull", []) => value_is_null,
+        ("JsonValue.IsUndefined", []) => value_is_undefined,
+        ("JsonValue.SetValue", [_]) => value_set,
+        ("JsonValue.SetValueToNull", []) => value_set_null,
+        ("JsonValue.SetValueToUndefined", []) => value_set_undefined,
+        ("JsonValue.AsBoolean", []) => val_boolean,
+        ("JsonValue.AsInteger", []) => val_integer,
+        ("JsonValue.AsBigInteger", []) => val_biginteger,
+        ("JsonValue.AsByte", []) => val_byte,
+        ("JsonValue.AsOption", []) => val_option,
+        ("JsonValue.AsDuration", []) => val_duration,
+        ("JsonValue.AsDecimal", []) => val_decimal,
+        ("JsonValue.AsText", []) => val_text,
+        ("JsonValue.AsCode", []) => val_code,
+        ("JsonValue.AsChar", []) => val_char,
+        ("JsonValue.AsDate", []) => val_date,
+        ("JsonValue.AsDateTime", []) => val_datetime,
+        ("JsonValue.AsTime", []) => val_time,
+        _ => return None,
+    };
+    Some(f)
+}

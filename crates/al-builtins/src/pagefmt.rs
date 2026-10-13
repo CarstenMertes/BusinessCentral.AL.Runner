@@ -223,6 +223,158 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
     }
 }
 
+/// What a control accepts as text for a value of type `ty`: the inverse of [`control_text`]
+/// (corpus handlers/TestPageFieldFormats_Tests.al:1-40, "SetValue is spelled the same way and read
+/// back by the client's own parser"). `None` = not an acceptable value
+/// (handlers/TestPageBooleanSpelling_Tests.al: `Yes`/`No` only; `False` is refused).
+/// `enum_by_text` finds an enum value's ordinal by caption or name.
+pub fn parse_control_text(
+    text: &str,
+    ty: &crate::value::RtType,
+    f: &ControlFormat,
+    enum_by_text: &dyn Fn(u32, &str) -> Option<i32>,
+) -> Result<Value, ParseError> {
+    use crate::value::RtType as T;
+    let t = text.trim();
+    parse_typed(text, t, ty, f, enum_by_text).ok_or(match ty {
+        T::Text(_)
+        | T::Code(_)
+        | T::Integer
+        | T::BigInteger
+        | T::Decimal
+        | T::Boolean
+        | T::Option(_)
+        | T::Enum(_)
+        | T::Date
+        | T::Time
+        | T::DateTime
+        | T::Guid => ParseError::Invalid,
+        _ => ParseError::Unsupported,
+    })
+}
+
+/// Why a control text did not become a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseError {
+    /// The client refuses it: "Your entry of '...' is not an acceptable value".
+    Invalid,
+    /// This type's spelling is not modelled yet.
+    Unsupported,
+}
+
+fn parse_typed(
+    text: &str,
+    t: &str,
+    ty: &crate::value::RtType,
+    f: &ControlFormat,
+    enum_by_text: &dyn Fn(u32, &str) -> Option<i32>,
+) -> Option<Value> {
+    use crate::value::RtType as T;
+    Some(match ty {
+        T::Text(_) => Value::Text(text.to_string()),
+        T::Code(_) => Value::Code(text.to_string()),
+        T::Integer => Value::Integer(if t.is_empty() { 0 } else { t.parse().ok()? }),
+        T::BigInteger => Value::BigInteger(if t.is_empty() { 0 } else { t.parse().ok()? }),
+        T::Decimal => Value::Decimal(if t.is_empty() {
+            Decimal::ZERO
+        } else {
+            t.replace(',', "").parse().ok()?
+        }),
+        T::Boolean => match t.to_ascii_lowercase().as_str() {
+            "yes" => Value::Boolean(true),
+            "no" => Value::Boolean(false),
+            _ => return None,
+        },
+        T::Option(members) => {
+            let by_caption = f
+                .option_captions
+                .as_ref()
+                .and_then(|c| c.iter().position(|x| x.eq_ignore_ascii_case(t)));
+            let i = by_caption.or_else(|| members.iter().position(|x| x.eq_ignore_ascii_case(t)))?;
+            Value::Option(i as i32, members.clone().into())
+        }
+        T::Enum(id) => Value::Enum(*id, enum_by_text(*id, t)?),
+        T::Date => {
+            if t.is_empty() {
+                Value::Date(0, false)
+            } else {
+                let mut p = t.split('/');
+                let (m, d, y): (u32, u32, i32) = (
+                    p.next()?.parse().ok()?,
+                    p.next()?.parse().ok()?,
+                    p.next()?.parse().ok()?,
+                );
+                if p.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+                    return None;
+                }
+                Value::Date(crate::format::day_from_civil(y, m, d), false)
+            }
+        }
+        T::Time => {
+            if t.is_empty() {
+                Value::Time(0)
+            } else {
+                Value::Time(parse_time(t)? + 1)
+            }
+        }
+        T::DateTime => {
+            if t.is_empty() {
+                Value::DateTime(0)
+            } else {
+                let (date, time) = t.split_once(' ')?;
+                let mut p = date.split('/');
+                let (m, d, y): (u32, u32, i32) = (
+                    p.next()?.parse().ok()?,
+                    p.next()?.parse().ok()?,
+                    p.next()?.parse().ok()?,
+                );
+                if p.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+                    return None;
+                }
+                let day = i64::from(crate::format::day_from_civil(y, m, d) - 1);
+                Value::DateTime(day * 86_400_000 + parse_time(time.trim())? + 1)
+            }
+        }
+        T::Guid => {
+            let h: String = t
+                .trim_matches(|c| c == '{' || c == '}')
+                .chars()
+                .filter(|c| *c != '-')
+                .collect();
+            if h.len() != 32 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+                return None;
+            }
+            let mut g = [0u8; 16];
+            for (i, b) in g.iter_mut().enumerate() {
+                *b = u8::from_str_radix(&h[2 * i..2 * i + 2], 16).ok()?;
+            }
+            Value::Guid(g)
+        }
+        _ => return None,
+    })
+}
+
+/// `2:30:00 PM` / `2:30 PM` as milliseconds since midnight.
+fn parse_time(t: &str) -> Option<i64> {
+    let (hms, ap) = t.rsplit_once(' ')?;
+    let pm = match ap.to_ascii_uppercase().as_str() {
+        "AM" => false,
+        "PM" => true,
+        _ => return None,
+    };
+    let mut p = hms.split(':');
+    let h: i64 = p.next()?.parse().ok()?;
+    let m: i64 = p.next()?.parse().ok()?;
+    let s: i64 = match p.next() {
+        Some(s) => s.parse().ok()?,
+        None => 0,
+    };
+    if p.next().is_some() || !(1..=12).contains(&h) || m > 59 || s > 59 {
+        return None;
+    }
+    Some((((h % 12) + if pm { 12 } else { 0 }) * 3600 + m * 60 + s) * 1000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,6 +527,46 @@ mod tests {
         ] {
             assert_eq!(t(&Value::Duration(ms), &f), want, "{ms}");
         }
+    }
+
+    // handlers/TestPageBooleanSpelling_Tests.al: SetValue accepts Yes/No and refuses True/False;
+    // handlers/TestPageFieldFormats_Tests.al:1-40: "a blank text written to a numeric control is zero".
+    #[test]
+    fn control_text_parses_back() {
+        use crate::value::RtType as T;
+        let f = ControlFormat::default();
+        let none = |_: u32, _: &str| None;
+        let p = |text: &str, ty: &T| parse_control_text(text, ty, &f, &none);
+        assert!(matches!(p("Yes", &T::Boolean), Ok(Value::Boolean(true))));
+        assert!(matches!(p("no", &T::Boolean), Ok(Value::Boolean(false))));
+        assert_eq!(p("False", &T::Boolean).unwrap_err(), ParseError::Invalid);
+        assert!(matches!(p("", &T::Integer), Ok(Value::Integer(0))));
+        assert!(matches!(p("12", &T::Integer), Ok(Value::Integer(12))));
+        assert_eq!(p("abc", &T::Integer).unwrap_err(), ParseError::Invalid);
+        assert_eq!(p("5 seconds", &T::Duration).unwrap_err(), ParseError::Unsupported);
+        assert!(
+            matches!(p("1,234.50", &T::Decimal), Ok(Value::Decimal(d)) if d == Decimal::from_str("1234.50").unwrap())
+        );
+        assert!(
+            matches!(p("3/2/2024", &T::Date), Ok(Value::Date(d, false)) if d == crate::format::day_from_civil(2024, 3, 2))
+        );
+        // The spelling Value() answers for a Time and a DateTime reads back.
+        assert!(matches!(p("2:30:00 PM", &T::Time), Ok(Value::Time(t)) if t == (14 * 3600 + 30 * 60) * 1000 + 1));
+        assert!(matches!(p("12:00:01 AM", &T::Time), Ok(Value::Time(t)) if t == 1001));
+        assert!(matches!(p("3/2/2024 12:34 PM", &T::DateTime), Ok(Value::DateTime(_))));
+        let cap = ControlFormat {
+            option_captions: Some(vec!["Eins".into(), "Zwei".into()]),
+            ..Default::default()
+        };
+        let o = T::Option(vec!["Alpha".into(), "Beta".into()]);
+        assert!(matches!(
+            parse_control_text("Zwei", &o, &cap, &none),
+            Ok(Value::Option(1, _))
+        ));
+        assert!(matches!(
+            parse_control_text("Alpha", &o, &cap, &none),
+            Ok(Value::Option(0, _))
+        ));
     }
 
     #[test]

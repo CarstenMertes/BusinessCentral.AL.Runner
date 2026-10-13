@@ -12,9 +12,11 @@ table 50000 "PG Row"
     fields
     {
         field(1; "No."; Code[20]) { }
-        field(2; Qty; Integer) { }
+        field(2; Qty; Integer) { MinValue = 0; MaxValue = 10; trigger OnValidate() begin Trace.Add('t-qty;'); end; }
         field(3; Descr; Text[50]) { }
     }
+    var
+        Trace: Codeunit "PG Trace";
     keys { key(PK; "No.") { } }
 }
 
@@ -83,6 +85,58 @@ page 50005 "PG Maker"
             action(FieldsOnly) { trigger OnAction() begin Rec.Qty := 9; end; }
         }
     }
+}
+
+page 50006 "PG Edit"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    layout
+    {
+        area(Content)
+        {
+            field(NoCtl; Rec."No.") { }
+            field(QtyCtl; Rec.Qty) { trigger OnValidate() begin Trace.Add('p-qty;'); end; }
+            field(DescrCtl; Rec.Descr) { }
+            field(Guard; GuardVar) { trigger OnValidate() begin if GuardVar = 'REFUSE' then Error('guard refused'); end; }
+        }
+    }
+    var
+        GuardVar: Text;
+        Trace: Codeunit "PG Trace";
+    trigger OnNewRecord(BelowxRec: Boolean) begin Trace.Add('new:' + Format(BelowxRec) + ',x=' + xRec."No." + ';'); Rec.Descr := 'seeded'; end;
+    trigger OnInsertRecord(BelowxRec: Boolean): Boolean begin Trace.Add('ins:' + Rec."No." + '/' + Rec.Descr + ';'); exit(true); end;
+    trigger OnModifyRecord(): Boolean begin Trace.Add('mod:' + xRec.Descr + '>' + Rec.Descr + ';'); exit(true); end;
+    trigger OnClosePage() begin Trace.Add('close;'); end;
+}
+
+page 50007 "PG NoInsert"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    InsertAllowed = false;
+    layout
+    {
+        area(Content)
+        {
+            field(NoCtl; Rec."No.") { }
+            group(Hidden)
+            {
+                Visible = false;
+                field(InHidden; Rec.Qty) { }
+            }
+            field(OwnHidden; Rec.Descr) { Visible = false; }
+        }
+    }
+    actions { area(Processing) { action(Quiet) { Visible = false; trigger OnAction() begin Rec.Descr := 'ran'; Rec.Modify(); end; } } }
+}
+
+page 50008 "PG DelayedList"
+{
+    PageType = List;
+    SourceTable = "PG Row";
+    DelayedInsert = true;
+    layout { area(Content) { repeater(Lines) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } }
 }
 
 page 50004 "PG FormatList"
@@ -469,4 +523,206 @@ fn a_page_with_no_row_reads_blank_until_page_code_inserts_and_positions_a_row() 
         "F",
     );
     assert_eq!(text(r), "[]0[][4]M");
+}
+
+// handlers/TestPageReadOnlySetValue.al:253-330, TestPageBlankKeyInsert.al, TestPageSaveRecordInOnValidate_Tests.al:
+// SetValue validates (table trigger, then the page control's), shows at once, and reaches the
+// table when the page leaves the row (Close); writing back the same value modifies nothing.
+#[test]
+fn set_value_validates_and_the_row_is_saved_when_the_page_closes() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; T: Codeunit \"PG Trace\"; X: Text; begin
+                {}
+                TP.OpenEdit();
+                TP.QtyCtl.SetValue(5);
+                X := TP.QtyCtl.Value();
+                R.Get('A');
+                X += '|' + Format(R.Qty);
+                TP.Close();
+                R.Get('A');
+                exit(X + '|' + Format(R.Qty) + '|' + T.Take());
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    // table OnValidate before the page control's; OnModifyRecord sees xRec; OnClosePage after the save.
+    assert_eq!(text(r), "5|1|5|t-qty;p-qty;mod:>;close;");
+}
+
+// handlers/TestPageSameValueSetValue_Tests.al:1-30: writing back the value the field already holds
+// does not modify the row.
+#[test]
+fn writing_the_same_value_back_does_not_modify() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; T: Codeunit \"PG Trace\"; begin
+                {}
+                TP.OpenEdit();
+                TP.DescrCtl.SetValue('');
+                TP.Close();
+                exit(T.Take());
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "close;");
+}
+
+// handlers/TestPageFieldMinMaxValue_Tests.al:20-110: MinValue and MaxValue are enforced on a control write
+// and a refused write does not reach the row.
+#[test]
+fn min_and_max_value_refuse_a_control_write() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; X: Text; begin
+                {}
+                Commit();
+                TP.OpenEdit();
+                asserterror TP.QtyCtl.SetValue(11);
+                X := GetLastErrorText();
+                TP.Close();
+                R.Get('A');
+                exit(X + '|' + Format(R.Qty));
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    let t = text(r);
+    assert!(t.contains("The value must be less than or equal to 10"), "{t}");
+    assert!(t.ends_with("|1"), "{t}");
+}
+
+// handlers/TestPageValidationError_Tests.al:62-250: a refusing OnValidate records one validation error
+// on the control and the page (with the refresh suffix for a Rec-bound control, none for a page
+// variable) and raises the wrapper.
+#[test]
+fn a_refused_write_is_recorded_as_a_validation_error() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; X: Text; begin
+                {}
+                TP.OpenEdit();
+                asserterror TP.Guard.SetValue('REFUSE');
+                X := GetLastErrorText() + '|' + Format(TP.Guard.ValidationErrorCount()) + '|' + TP.Guard.GetValidationError(1);
+                X += '|' + Format(TP.ValidationErrorCount()) + '|' + TP.GetValidationError(1);
+                exit(X);
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "Validation error for Field: Guard,  Message = 'guard refused'|1|guard refused|1|guard refused"
+    );
+}
+
+// handlers/TestPageBooleanSpelling_Tests.al: SetValue('False') is not an acceptable Boolean text.
+// (TextBool: a Text value written to an Integer control that cannot parse it.)
+#[test]
+fn a_text_that_does_not_parse_is_refused_with_the_acceptable_value_message() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; begin
+                {}
+                TP.OpenEdit();
+                TP.QtyCtl.SetValue('abc');
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(
+        error_text(r),
+        "Validation error for Field: QtyCtl,  Message = 'Your entry of 'abc' is not an acceptable value for 'Qty'. (Select Refresh to discard errors)'"
+    );
+}
+
+// handlers/TestPageRecordTriggers.al:32-130, TestPageCreateModeNewRecordArgs.al:243-270: OpenNew runs OnNewRecord
+// (BelowxRec true, xRec the last row) before anything is typed; the key alone does not insert a
+// Card row, a non-key control does (TestPageBlankKeyInsert.al:Card_TypedKey_ThenNonKeyWrite_InsertsBeforeClose).
+#[test]
+fn open_new_runs_on_new_record_and_a_non_key_write_inserts_the_row() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; T: Codeunit \"PG Trace\"; X: Text; begin
+                {}
+                TP.OpenNew();
+                TP.NoCtl.SetValue('N');
+                X := Format(R.Count());
+                TP.DescrCtl.SetValue('typed');
+                X += Format(R.Count());
+                TP.Close();
+                R.Get('N');
+                exit(X + '|' + R.Descr + '|' + T.Take());
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "12|typed|new:Yes,x=A;ins:N/seeded;mod:seeded>typed;close;");
+}
+
+// handlers/TestPageInsertAllowed_Tests.al:70 New_OnInsertAllowedFalsePage_IsDenied
+#[test]
+fn new_is_denied_on_a_page_that_does_not_allow_inserts() {
+    let r = run(
+        "procedure F() var TP: TestPage \"PG NoInsert\"; begin TP.OpenEdit(); TP.New(); end;",
+        "F",
+    );
+    assert_eq!(error_text(r), "New method failed because Insert is not allowed.");
+}
+
+// handlers/TestPageFieldVisibleGroup_Tests.al:1-30 and TestPageActionReachability_Tests.al:100-122: a control
+// whose Visible is the literal false (or inside such a group) is not on the page; an action is, and still runs.
+#[test]
+fn literal_false_visible_removes_a_control_but_not_an_action() {
+    let body = |stmt: &str| {
+        format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG NoInsert\"; X: Boolean; begin
+                {} TP.OpenEdit(); {stmt}
+            end;",
+            rows(&[("A", 1)])
+        )
+    };
+    let e = error_text(run(&body("X := TP.InHidden.Visible();"), "F"));
+    assert!(e.ends_with("is not found on the page."), "{e}");
+    let e = error_text(run(&body("X := TP.OwnHidden.Visible();"), "F"));
+    assert!(e.ends_with("is not found on the page."), "{e}");
+    let r = run(
+        &body("exit(Format(TP.Quiet.Visible()) + Format(TP.Quiet.Enabled()));"),
+        "F",
+    );
+    assert_eq!(text(r), "NoYes");
+}
+
+// handlers/TestPageFailedInsert_Tests.al:1-30: a started line whose insert fails raises nothing on New(),
+// stays, and counts one validation error on its key control; Previous() moves on and Close() raises.
+#[test]
+fn a_started_line_whose_insert_fails_is_not_raised_on_new_but_on_close_after_previous() {
+    let f = |mv: &str, close: &str| {
+        run(
+            &format!(
+                "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG DelayedList\"; X: Text; begin
+                    {}
+                    TP.OpenNew();
+                    TP.NoCtl.SetValue('A');
+                    TP.DescrCtl.SetValue('typed');
+                    {mv}
+                    X := TP.NoCtl.Value() + Format(TP.NoCtl.ValidationErrorCount()) + Format(TP.DescrCtl.ValidationErrorCount());
+                    {close}
+                    exit(X);
+                end;",
+                rows(&[("A", 1)])
+            ),
+            "F",
+        )
+    };
+    assert_eq!(text(f("TP.New();", "TP.Close();")), "A10");
+    let e = error_text(f("TP.First();", "TP.Close();"));
+    assert!(e.starts_with("The record in table PG Row already exists."), "{e}");
 }

@@ -28,3 +28,14 @@ comment as a corpus citation and is deleted here.
 | Handlers | Two distinct handler functions of one kind in one `[HandlerFunctions]` list: refused (BC may reject it at compile time or bind the first) | none | `al-test-cli/src/runtime.rs` `resolve_handlers` |
 | Confirm | An omitted `Default` is false | doc dialog-confirm-method | `al-builtins/src/native.rs` `confirm` |
 | StrMenu | An omitted `DefaultNumber` is 1, an omitted `Instruction` is empty, and the handler's `Choice` starts at the default | doc dialog-strmenu-method; corpus network/TestHttpClient.al:36 sets `Choice` unconditionally | `native.rs` `str_menu` |
+| TestPage | `GetValidationError(0)` on the page raises a catchable error; the text is not pinned (the test only needs it non-empty) | corpus handlers/TestPageValidationError_Tests.al:Claim 9 | `al-vm/src/pages.rs` `test_page_op` |
+| TestPage | a control that is not on the runtime page raises `The field <name> is not found on the page.`; BC's text carries a compiler-assigned control id (`The field with ID = N ...`) we cannot derive | corpus handlers/TestPageFieldVisibleGroup_Tests.al (substring only) | `control_eliminated` |
+| TestPage | a Guid control shows lower-case hex in braces (the corpus only has digits) | .NET `Guid.ToString("B")` | `al-builtins/src/pagefmt.rs` `guid_text` |
+| TestPage | `BlankNumbers` members other than `BlankNeg` / `BlankZeroAndPos` (`BlankNegAndZero`, `BlankZero`, `BlankPos`) blank what their names say | doc property page | `pagefmt::blanked` |
+| TestPage | a negative Duration spells as `-` plus the words | none | `pagefmt::duration_text` |
+| TestPage | GoToKey / GoToRecord scan forward from the FIRST row and populate every row they pass (OnAfterGetCurrRecord too); the corpus pins only that the scan passes a failing row and restores the cursor on a miss | corpus autoformat/TestAutoFormatExpressionTiming.al, handlers/TestPageGoToRecordNonKeyRefresh_Tests.al | `page_go_to_key` |
+| TestPage | a repeater populates a window of 20 rows (pinned between 20 and 24) and re-populates a window starting at a row outside it | corpus autoformat/TestAutoFormatExpressionTiming.al:5-12 | `WINDOW` |
+| TestPage | OnInsertRecord receives BelowxRec = false when the insert is the client's own | none | `insert_draft` |
+| TestPage | SetValue of the value a field already holds runs no OnValidate trigger | corpus handlers/TestPageSameValueSetValue_Tests.al pins only that OnModify does not run | `control_set_value` |
+| TestPage | a page that showed no row shows one when page code left Rec on a stored row that the view admits and that was not stored before the action; the same for any action | corpus testpart/BnrBlankPart.al NoRow_Action_* | `show_row_page_code_positioned` |
+

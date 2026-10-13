@@ -24,6 +24,11 @@ const NOT_OPEN: &str = "The TestPage is not open.";
 /// corpus testpageclose/TestPageClosingActions.al:339
 const ALREADY_OPEN: &str = "The TestPage is already open.";
 
+enum Left {
+    Go,
+    Stay,
+}
+
 fn error(message: impl Into<String>) -> Signal {
     Signal::Error(AlError {
         message: message.into(),
@@ -148,6 +153,35 @@ impl Session {
                 self.require_open(st)?;
                 self.page_go_to_key(st, args)
             }
+            "New" => {
+                self.require_open(st)?;
+                self.new_record(st)
+            }
+            "ValidationErrorCount" => {
+                self.require_open(st)?;
+                Ok(Value::Integer(st.borrow().errors.len() as i32))
+            }
+            "GetValidationError" => {
+                self.require_open(st)?;
+                let i = match args.first() {
+                    Some(Value::Integer(i)) => *i,
+                    _ => return unsupported("GetValidationError without an index"),
+                };
+                let s = st.borrow();
+                match usize::try_from(i - 1).ok().and_then(|n| s.errors.get(n)) {
+                    Some((_, t)) => Ok(Value::Text(t.clone())),
+                    None => Err(error(format!("The index {i} is out of range."))),
+                }
+            }
+            "Update" | "SaveRecord" => {
+                self.require_open(st)?;
+                let save = method.ends_with("SaveRecord") || matches!(args.first(), Some(Value::Boolean(true)));
+                if !save {
+                    return unsupported("CurrPage.Update(false)");
+                }
+                self.save_row(st)?;
+                Ok(Value::Null)
+            }
             "GoToRecord" => {
                 self.require_open(st)?;
                 let Some(Value::Record(r)) = args.first() else {
@@ -186,6 +220,9 @@ impl Session {
             s.dirty = false;
             s.frozen_visible = Vec::new();
             s.window = Vec::new();
+            s.focus = None;
+            s.focus_in_row = false;
+            s.errors = Vec::new();
         }
         let result = (|| {
             self.page_trigger(st, "oninit", vec![])?;
@@ -199,7 +236,12 @@ impl Session {
             }
             st.borrow_mut().frozen_visible = frozen;
             if mode == PageMode::New {
-                return unsupported("OpenNew");
+                // corpus handlers/TestPageCreateModeNewRecordArgs.al:243-270: OnOpenPage, then
+                // OnNewRecord with BelowxRec true and xRec on the last row.
+                self.ret_used = true;
+                let rec = self.page_rec(st);
+                self.record_op("FindLast", &rec, &mut [])?;
+                return self.start_draft(st, false);
             }
             self.page_first_row(st)
         })();
@@ -214,7 +256,24 @@ impl Session {
 
     fn page_close(&mut self, st: &St) -> Result<Value, Signal> {
         self.require_open(st)?;
-        // corpus handlers/TestPageRecordTriggers.al:187 OnClosePage_RunsWhenThePageIsClosed
+        // The client saves what was typed when the page closes, even a new record
+        // (corpus handlers/TestPageRecordTriggers.al:125 Close_WithoutOK_StillPersistsTheNewRow),
+        // then OnClosePage runs (TestPageRecordTriggers.al:187).
+        if st.borrow().refused {
+            // The refused line was reported when it was left; closing drops it.
+            let mut s = st.borrow_mut();
+            s.refused = false;
+            s.draft = false;
+            s.dirty = false;
+        }
+        let pending = st.borrow_mut().pending.take();
+        if let Some(fields) = pending {
+            let rec = self.page_rec(st);
+            rec.borrow_mut().fields = fields;
+            self.ret_used = false;
+            self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
+        }
+        self.save_row(st)?;
         self.page_trigger(st, "onclosepage", vec![])?;
         st.borrow_mut().open = false;
         Ok(Value::Null)
@@ -304,8 +363,8 @@ impl Session {
 
     /// Populates the current row: the control expressions, then OnAfterGetRecord.
     fn populate_current(&mut self, st: &St) -> Result<(), Signal> {
-        st.borrow_mut().draft = false;
         st.borrow_mut().dirty = false;
+        self.set_xrec(st);
         self.populate_expressions(st)?;
         self.page_trigger(st, "onaftergetrecord", vec![])?;
         Ok(())
@@ -383,6 +442,10 @@ impl Session {
 
     /// Moves the cursor; the Boolean the move methods return.
     fn page_move(&mut self, st: &St, how: &str) -> Result<Value, Signal> {
+        // Leaving a row saves it.
+        if let Left::Stay = self.leave_row(st, how)? {
+            return Ok(Value::Boolean(false));
+        }
         let r = self.page_move_inner(st, how);
         self.torn_down_on_error(st, r).map(Value::Boolean)
     }
@@ -451,6 +514,7 @@ impl Session {
     /// A key no row has leaves the page on the row it stood on
     /// (corpus handlers/TestPageGoToRecordNonKeyRefresh_Tests.al:1-15).
     fn page_go_to_key(&mut self, st: &St, key: &mut [Value]) -> Result<Value, Signal> {
+        self.save_row(st)?;
         let rec = self.page_rec(st);
         let table = self.table(&rec)?;
         let want: Vec<Value> = table.keys[0]
@@ -493,6 +557,385 @@ impl Session {
         Ok(Value::Boolean(found))
     }
 
+    // ---- writing ------------------------------------------------------------------------
+
+    /// `TestPage.New()` (corpus handlers/TestPageInsertAllowed_Tests.al:70 New_OnInsertAllowedFalsePage_IsDenied,
+    /// handlers/TestPageOpenNewAfterGetCurrRecord.al New_OnAnOpenCard_RunsOnAfterGetCurrRecordForTheNewRecord).
+    fn new_record(&mut self, st: &St) -> Result<Value, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let insert_denied = engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("InsertAllowed") && v.trim().eq_ignore_ascii_case("false"));
+        if insert_denied {
+            return Err(error("New method failed because Insert is not allowed."));
+        }
+        match self.leave_row(st, "New")? {
+            Left::Stay => Ok(Value::Null),
+            Left::Go => self.start_draft(st, true).map(|_| Value::Null),
+        }
+    }
+
+    /// Saves the row the cursor is leaving. A started line whose insert fails does not raise:
+    /// New(), Next() and Last() stay on it with one validation error on its key control; Previous()
+    /// and First() move on and the insert fails again at Close()
+    /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30).
+    fn leave_row(&mut self, st: &St, how: &str) -> Result<Left, Signal> {
+        let r = self.save_row(st);
+        match r {
+            Err(Signal::Error(e)) if st.borrow().draft && st.borrow().dirty => match how {
+                "New" | "Next" | "Last" => {
+                    let key_ctl = self.key_control(st);
+                    let mut s = st.borrow_mut();
+                    if !s.refused {
+                        s.errors.push((key_ctl, e.message));
+                        s.refused = true;
+                    }
+                    Ok(Left::Stay)
+                }
+                "Previous" | "First" => {
+                    let fields = self.page_rec(st).borrow().fields.clone();
+                    let mut s = st.borrow_mut();
+                    s.pending = Some(fields);
+                    s.draft = false;
+                    s.dirty = false;
+                    Ok(Left::Go)
+                }
+                _ => Err(Signal::Error(e)),
+            },
+            Err(e) => Err(e),
+            Ok(()) => Ok(Left::Go),
+        }
+    }
+
+    /// The control bound to the first field of the primary key.
+    fn key_control(&self, st: &St) -> usize {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let table = self.page_rec(st).borrow().table as usize;
+        let key0 = engine.program.objects[table].table.as_ref().map(|t| t.keys[0][0]);
+        page.controls
+            .iter()
+            .position(|c| matches!(c.binding, ir::Binding::Field(p) if Some(p) == key0))
+            .unwrap_or(0)
+    }
+
+    /// xRec := Rec, the row as the client read it.
+    fn set_xrec(&mut self, st: &St) {
+        let object = st.borrow().object as usize;
+        let Some(slot) = self.engine.program.objects[object].xrec_slot else {
+            return;
+        };
+        let fields = self.page_rec(st).borrow().fields.clone();
+        let inst = st.borrow().instance.clone().expect("open page");
+        if let Value::Record(x) = &inst.borrow().globals[slot] {
+            x.borrow_mut().fields = fields;
+        }
+    }
+
+    fn page_xrec_fields(&self, st: &St) -> Vec<Value> {
+        let object = st.borrow().object as usize;
+        let slot = self.engine.program.objects[object]
+            .xrec_slot
+            .expect("page with a source table");
+        let inst = st.borrow().instance.clone().expect("open page");
+        let v = inst.borrow().globals[slot].clone();
+        match v {
+            Value::Record(x) => x.borrow().fields.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn same_values(a: &[Value], b: &[Value]) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(x, y)| ops::compare(x, y).map(|o| o.is_eq()).unwrap_or(false))
+    }
+
+    /// The stored row with `rec`'s primary key, whatever the view says.
+    fn stored_row(&mut self, rec: &Rec) -> Result<Option<Vec<Value>>, Signal> {
+        let table = self.table(rec)?;
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        probe.borrow_mut().filters.clear();
+        let mut pk = table.primary_key(&rec.borrow().fields);
+        self.ret_used = true;
+        Ok(match self.record_op("Get", &probe, &mut pk)? {
+            Value::Boolean(true) => Some(probe.borrow().fields.clone()),
+            _ => None,
+        })
+    }
+
+    /// A new record on the page: xRec stays on the row the cursor was on, Rec starts from the table's
+    /// defaults, OnNewRecord runs with BelowxRec true (corpus
+    /// handlers/TestPageCreateModeNewRecordArgs.al:243-270), then the row is populated
+    /// (handlers/TestPageOpenNewAfterGetCurrRecord.al:1-12: OnAfterGetCurrRecord runs after OnNewRecord).
+    fn start_draft(&mut self, st: &St, keep_focus: bool) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        self.set_xrec(st);
+        let table = rec.borrow().table as usize;
+        let fresh = self.initial_fields(table);
+        rec.borrow_mut().fields = fresh;
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let first = page.controls.iter().position(|c| c.kind == ir::ControlKind::Field);
+        {
+            let mut s = st.borrow_mut();
+            s.cursor = if page.controls.iter().any(|c| c.kind == ir::ControlKind::Repeater) {
+                Cursor::NewLine
+            } else {
+                Cursor::Row
+            };
+            s.draft = true;
+            s.dirty = false;
+            s.refused = false;
+            if !keep_focus {
+                s.focus = first;
+                s.focus_in_row = true;
+            } else {
+                // Focus stays on the control of the row the cursor left
+                // (corpus handlers/TestPageBlankKeyInsert.al, List_NewRow_FocusStays...).
+                s.focus_in_row = false;
+            }
+        }
+        let existed = self.stored_row(&rec)?.is_some();
+        self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+        self.populate_expressions(st)?;
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        // Page code that inserts the new row itself (a template step) hands the page the stored row.
+        if !existed && self.stored_row(&rec)?.is_some() {
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.cursor = Cursor::Row;
+            drop(s);
+            self.set_xrec(st);
+        }
+        Ok(())
+    }
+
+    /// Writes what the client holds for the current row: inserts a typed new record, modifies an
+    /// edited one when a value really differs (corpus handlers/TestPageSameValueSetValue_Tests.al:1-30).
+    fn save_row(&mut self, st: &St) -> Result<(), Signal> {
+        let (cursor, draft, dirty) = {
+            let s = st.borrow();
+            (s.cursor, s.draft, s.dirty)
+        };
+        if cursor == Cursor::None || !dirty {
+            return Ok(());
+        }
+        if draft {
+            return self.insert_draft(st);
+        }
+        let rec = self.page_rec(st);
+        if Self::same_values(&rec.borrow().fields, &self.page_xrec_fields(st)) {
+            st.borrow_mut().dirty = false;
+            return Ok(());
+        }
+        // corpus handlers/TestPageTriggerEvents.al (ModifyRecordEvent_RunsAfterThePagesOwnOnModifyRecordTrigger)
+        let keep = self.page_trigger(st, "onmodifyrecord", vec![])?;
+        if matches!(keep, Some(Value::Boolean(false))) {
+            return Ok(());
+        }
+        self.ret_used = false;
+        self.record_op("Modify", &rec, &mut [Value::Boolean(true)])?;
+        st.borrow_mut().dirty = false;
+        self.set_xrec(st);
+        Ok(())
+    }
+
+    /// OnInsertRecord decides whether the typed record is inserted at all (corpus
+    /// handlers/TestPageRecordTriggers.al:76 OnInsertRecord_ReturningFalse_SuppressesTheInsert).
+    fn insert_draft(&mut self, st: &St) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let go = self.page_trigger(st, "oninsertrecord", vec![Value::Boolean(false)])?;
+        if matches!(go, Some(Value::Boolean(false))) {
+            return Ok(());
+        }
+        self.ret_used = false;
+        self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
+        {
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.dirty = false;
+            s.cursor = Cursor::Row;
+        }
+        self.set_xrec(st);
+        Ok(())
+    }
+
+    /// Focus moves to control `idx`. On a new record of a page that inserts as you go, moving from
+    /// a control of that row to a non-key control inserts it (corpus
+    /// handlers/TestPageBlankKeyInsert.al:1-25 and its List_NewRow_Focus... arm: after New() the
+    /// focus still sits on the old row's control).
+    fn activate(&mut self, st: &St, idx: usize) -> Result<(), Signal> {
+        let (prev, in_row) = {
+            let s = st.borrow();
+            (s.focus, s.focus_in_row)
+        };
+        if prev == Some(idx) {
+            return Ok(());
+        }
+        {
+            let mut s = st.borrow_mut();
+            s.focus = Some(idx);
+            s.focus_in_row = true;
+        }
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let delayed = engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("DelayedInsert") && v.trim().eq_ignore_ascii_case("true"));
+        let page = page_of(&engine, st);
+        let non_key = match page.controls[idx].binding {
+            ir::Binding::Field(pos) => {
+                let table = self.page_rec(st).borrow().table as usize;
+                !engine.program.objects[table]
+                    .table
+                    .as_ref()
+                    .is_some_and(|t| t.keys[0].contains(&pos))
+            }
+            _ => false,
+        };
+        if st.borrow().draft && in_row && prev.is_some() && !delayed && non_key {
+            self.insert_draft(st)?;
+        }
+        Ok(())
+    }
+
+    /// `TestField.SetValue`: activates the control, turns the value into what the control would
+    /// have been typed with, validates the field (the table's OnValidate, then the page control's),
+    /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
+    /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
+    fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
+        self.activate(st, idx)?;
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let ctl = &page.controls[idx];
+        let current = self.control_value(st, idx)?;
+        let Some(ty) = self.control_type(st, idx, &current) else {
+            return unsupported("SetValue on a control whose type is not known");
+        };
+        let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
+        let caption = self.control_caption(st, idx)?;
+        let fmt = self.control_format(st, idx)?;
+        let arg = args.first().cloned().unwrap_or(Value::Null);
+        let text = match &arg {
+            Value::Text(t) | Value::Code(t) => t.clone(),
+            other => {
+                let converted = ops::convert(other.clone(), &ty)?;
+                self.control_text(st, idx, &converted)?
+            }
+        };
+        let enum_engine = engine.clone();
+        let by_text = move |id: u32, t: &str| {
+            let o = &enum_engine.program.objects[id as usize];
+            o.enum_captions
+                .iter()
+                .chain(o.enum_values.iter())
+                .find(|(_, c)| c.eq_ignore_ascii_case(t))
+                .map(|(v, _)| *v)
+        };
+        let suffix = if rec_bound {
+            " (Select Refresh to discard errors)"
+        } else {
+            ""
+        };
+        let refuse = |this: &mut Session, msg: String| -> Signal {
+            let stored = format!("{msg}{suffix}");
+            st.borrow_mut().errors.push((idx, stored.clone()));
+            let _ = this;
+            error(format!(
+                "Validation error for Field: {},  Message = '{stored}'",
+                page_of(&engine, st).controls[idx].name
+            ))
+        };
+        let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
+            Ok(v) => v,
+            Err(al_builtins::pagefmt::ParseError::Invalid) => {
+                let msg = format!("Your entry of '{text}' is not an acceptable value for '{caption}'.");
+                return Err(refuse(self, msg));
+            }
+            Err(al_builtins::pagefmt::ParseError::Unsupported) => {
+                return unsupported(format!(
+                    "SetValue of a {ty:?} control: its spelling is not modelled yet"
+                ));
+            }
+        };
+        let parsed = ops::convert(parsed, &ty)?;
+        // MinValue / MaxValue are enforced on a control write, not on Rec.Validate (corpus
+        // handlers/TestPageFieldMinMaxValue_Tests.al:20-110).
+        if let Some(f) = self.control_field(st, idx) {
+            let bound = |n: &str| f.props.iter().find(|(k, _)| k == n).map(|(_, v)| v.trim().to_string());
+            let num = |v: &Value| match v {
+                Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
+                Value::BigInteger(i) => Some(rust_decimal::Decimal::from(*i)),
+                Value::Decimal(d) => Some(*d),
+                _ => None,
+            };
+            if let Some(n) = num(&parsed) {
+                if let Some(min) = bound("minvalue") {
+                    if min.parse::<rust_decimal::Decimal>().is_ok_and(|m| n < m) {
+                        return Err(refuse(
+                            self,
+                            format!("The value must be greater than or equal to {min}"),
+                        ));
+                    }
+                }
+                if let Some(max) = bound("maxvalue") {
+                    if max.parse::<rust_decimal::Decimal>().is_ok_and(|m| n > m) {
+                        return Err(refuse(self, format!("The value must be less than or equal to {max}")));
+                    }
+                }
+            }
+        }
+        if Self::same_values(std::slice::from_ref(&current), std::slice::from_ref(&parsed)) {
+            return Ok(Value::Null);
+        }
+        let rec = if rec_bound { Some(self.page_rec(st)) } else { None };
+        let before = rec.as_ref().map(|r| r.borrow().fields.clone());
+        let was_dirty = st.borrow().dirty;
+        // CurrPage.SaveRecord() inside the control's OnValidate must see the edit (corpus
+        // handlers/TestPageSaveRecordInOnValidate_Tests.al:SaveRecordInOnValidatePersistsBeforeThePageCloses).
+        st.borrow_mut().dirty = true;
+        let result = (|| -> Result<(), Signal> {
+            match ctl.binding.clone() {
+                ir::Binding::Field(pos) => {
+                    self.ret_used = false;
+                    let rec = rec.clone().expect("rec-bound");
+                    self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()])?;
+                }
+                ir::Binding::Var(slot) => {
+                    let inst = st.borrow().instance.clone().expect("open page");
+                    inst.borrow_mut().globals[slot] = parsed.clone();
+                }
+                _ => return unsupported("SetValue on a read-only control"),
+            }
+            if let Some(r) = ctl.trigger("onvalidate") {
+                self.page_routine(st, r)?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => Ok(Value::Null),
+            Err(Signal::Error(e)) => {
+                st.borrow_mut().dirty = was_dirty;
+                // The refused edit does not stay (corpus handlers/TestPageBooleanSpelling_Tests.al,
+                // SetValue_TrueFalseSpelling_IsRefused: the stored value is untouched).
+                if let (Some(rec), Some(before)) = (&rec, before) {
+                    rec.borrow_mut().fields = before;
+                } else if let ir::Binding::Var(slot) = ctl.binding {
+                    let inst = st.borrow().instance.clone().expect("open page");
+                    inst.borrow_mut().globals[slot] = current.clone();
+                }
+                Err(refuse(self, e.message))
+            }
+            Err(other) => Err(other),
+        }
+    }
+
     // ---- controls -----------------------------------------------------------------------
 
     fn test_control_op(&mut self, method: &str, c: &ControlRef, args: &mut [Value]) -> Result<Value, Signal> {
@@ -502,6 +945,13 @@ impl Session {
         let ControlTarget::Control(idx) = c.target else {
             return unsupported(format!("{method} on a built-in control"));
         };
+        // A control whose Visible is the literal false, or that sits in a group whose Visible is,
+        // is not on the runtime page at all (corpus handlers/TestPageFieldVisibleGroup_Tests.al:1-30).
+        if self.control_eliminated(st, idx) {
+            let engine = self.engine();
+            let ctl = &page_of(&engine, st).controls[idx];
+            return Err(error(format!("The field {} is not found on the page.", ctl.name)));
+        }
         match m {
             "Value" => {
                 if self.shows_no_row(st, idx) {
@@ -523,8 +973,54 @@ impl Session {
             "Enabled" => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
             "Visible" => Ok(Value::Boolean(self.control_visible(st, idx)?)),
             "Invoke" => self.action_invoke(st, idx),
+            "SetValue" => self.control_set_value(st, idx, args),
+            "Activate" => {
+                self.activate(st, idx)?;
+                Ok(Value::Null)
+            }
+            "ValidationErrorCount" => {
+                let n = st.borrow().errors.iter().filter(|(i, _)| *i == idx).count();
+                Ok(Value::Integer(n as i32))
+            }
+            "GetValidationError" => {
+                let i = match args.first() {
+                    Some(Value::Integer(i)) => *i,
+                    None => 1,
+                    _ => return unsupported("GetValidationError with a non-integer index"),
+                };
+                let s = st.borrow();
+                let mine: Vec<&String> = s.errors.iter().filter(|(c, _)| *c == idx).map(|(_, t)| t).collect();
+                // An index past the control's ledger escapes AL as an untrappable CLR exception
+                // (corpus handlers/TestPageValidationError_Tests.al:1-40), so it is not modelled.
+                match usize::try_from(i - 1).ok().and_then(|n| mine.get(n)) {
+                    Some(t) => Ok(Value::Text((*t).clone())),
+                    None => unsupported("GetValidationError past the ledger"),
+                }
+            }
             other => unsupported(format!("TestField.{other}")),
         }
+    }
+
+    fn control_eliminated(&self, st: &St, idx: usize) -> bool {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        // Actions are not eliminated, whatever their Visible says (corpus
+        // handlers/TestPageActionReachability_Tests.al:100-122).
+        if matches!(
+            page.controls[idx].kind,
+            ir::ControlKind::Action | ir::ControlKind::ActionGroup
+        ) {
+            return false;
+        }
+        let mut at = Some(idx);
+        while let Some(i) = at {
+            if matches!(page.controls[i].prop("visible"), Some(ir::PropVal::Lit(v)) if v.trim().eq_ignore_ascii_case("false"))
+            {
+                return true;
+            }
+            at = page.controls[i].parent;
+        }
+        false
     }
 
     /// `TestAction.Invoke`: runs the action's OnAction when it is enabled; a disabled action
@@ -537,9 +1033,50 @@ impl Session {
         let engine = self.engine();
         if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             self.page_routine(st, r)?;
-            self.show_row_page_code_positioned(st)?;
+            self.settle_after_action(st)?;
         }
         Ok(Value::Null)
+    }
+
+    /// What the page does once an action returns: a page that showed no row may show the one the
+    /// action inserted; a row the action deleted closes a card, and moves a list to the next row,
+    /// else the previous one, else none (corpus pageupdate/TestPageUpdateGoneRow.al:1-30).
+    fn settle_after_action(&mut self, st: &St) -> Result<(), Signal> {
+        self.show_row_page_code_positioned(st)?;
+        if !st.borrow().open || st.borrow().cursor != Cursor::Row || st.borrow().draft {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        if self.stored_row(&rec)?.is_some() {
+            return Ok(());
+        }
+        if !self.is_list(st) {
+            self.page_trigger(st, "onclosepage", vec![])?;
+            st.borrow_mut().open = false;
+            return Ok(());
+        }
+        if self.engine.program.objects[st.borrow().object as usize]
+            .page
+            .as_ref()
+            .is_some_and(|p| p.triggers.iter().any(|(n, _)| n == "onfindrecord"))
+        {
+            return unsupported("a list whose current row an action deleted, with an OnFindRecord trigger");
+        }
+        self.ret_used = true;
+        let moved = matches!(
+            self.record_op("Next", &rec, &mut [Value::Integer(1)])?,
+            Value::Integer(1)
+        ) || matches!(
+            self.record_op("Next", &rec, &mut [Value::Integer(-1)])?,
+            Value::Integer(-1)
+        );
+        if moved {
+            let r = self.arrive(st);
+            self.torn_down_on_error(st, r)?;
+        } else {
+            st.borrow_mut().cursor = Cursor::None;
+        }
+        Ok(())
     }
 
     /// A page that showed no row shows one again once page code has inserted a row the view
@@ -661,6 +1198,11 @@ impl Session {
         f.option_captions = lit("optioncaption")
             .or_else(|| from_field("optioncaption"))
             .map(|c| unquote(&c).split(',').map(str::to_string).collect());
+        if f.option_captions.is_none() {
+            // Without captions an option shows its member names, a blank member as nothing.
+            f.option_captions =
+                from_field("optionmembers").map(|c| unquote(&c).split(',').map(|m| m.trim().to_string()).collect());
+        }
         Ok(f)
     }
 

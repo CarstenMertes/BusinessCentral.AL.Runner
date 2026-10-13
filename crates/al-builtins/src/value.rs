@@ -119,6 +119,18 @@ pub struct PageState {
     pub frozen_visible: Vec<bool>,
     /// Primary keys of the rows a repeater page has populated (its window).
     pub window: Vec<Vec<Value>>,
+    /// The control that has the client's focus, and whether it is on the current row. Moving
+    /// focus to a non-key control of a new row is what inserts it (corpus
+    /// handlers/TestPageBlankKeyInsert.al:1-25).
+    pub focus: Option<usize>,
+    pub focus_in_row: bool,
+    /// Validation errors the client holds: (control index, stored text).
+    pub errors: Vec<(usize, String)>,
+    /// The started line's insert was refused and the client moved on without raising
+    /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30): `refused` keeps the line, `pending`
+    /// is the line left behind by Previous()/First(), whose insert fails again at Close().
+    pub refused: bool,
+    pub pending: Option<Vec<Value>>,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -145,6 +157,11 @@ impl PageState {
             dirty: false,
             frozen_visible: Vec::new(),
             window: Vec::new(),
+            focus: None,
+            focus_in_row: false,
+            errors: Vec::new(),
+            refused: false,
+            pending: None,
         }
     }
 }

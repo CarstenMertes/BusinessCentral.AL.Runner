@@ -80,6 +80,8 @@ pub enum Res {
         query: usize,
         column: usize,
     },
+    /// A member of a `DotNet` value: only its name is known at compile time (ADR-014).
+    DotNetMember(String),
 }
 
 pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckResult {
@@ -733,6 +735,18 @@ impl<'a> Checker<'a> {
                 if let Some(r) = self.field_res(sc, &base_ty, &mname) {
                     self.record(sc, node, r);
                 }
+                // `Host.OpenView.Invoke()` is the control called OpenView, not the built-in method:
+                // a member that is itself the receiver of another member can only be a control
+                // (corpus handlers/TestPageActionRunPageMode.al: actions named OpenView and OpenEdit).
+                if matches!(base_ty, Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_))
+                    && node
+                        .parent()
+                        .is_some_and(|p| p.kind() == MemberExpr && p.children().next().as_ref() == Some(node))
+                {
+                    if let Some(e) = self.page_control_member(sc, &base_ty, &mname) {
+                        return e;
+                    }
+                }
                 match self.member(sc, &base_ty, &mname) {
                     Some(e) => e,
                     None => {
@@ -958,9 +972,56 @@ impl<'a> Checker<'a> {
             .collect()
     }
 
+    /// The control `name` of page (or request page) `oi`, typed as a test client handle.
+    fn control_of_section(&self, oi: usize, name: &str) -> Option<E> {
+        let sec = self.named_section(oi, name)?;
+        Some(E::Val(match sec.name().to_ascii_lowercase().as_str() {
+            "dataitem" => match sec.args().get(1) {
+                Some(table) => Ty::TestFilter(table.clone()),
+                None => Ty::Unknown,
+            },
+            "part" => match sec.args().get(1) {
+                Some(page) => Ty::TestPart(page.clone()),
+                None => Ty::Unknown,
+            },
+            "systempart" => Ty::Builtin("TestPart".into()),
+            "action" | "actionref" | "customaction" | "systemaction" | "fileuploadaction" => {
+                Ty::Builtin("TestAction".into())
+            }
+            _ => Ty::Builtin("TestField".into()),
+        }))
+    }
+
+    /// `TP.Name` as a control of the page `TP` shows, if it has one.
+    fn page_control_member(&mut self, sc: &Scope, t: &Ty, name: &str) -> Option<E> {
+        let (Ty::TestPage(p) | Ty::TestRequestPage(p) | Ty::TestPart(p)) = t else {
+            return None;
+        };
+        let kind = if matches!(t, Ty::TestRequestPage(_)) {
+            ObjKind::Report
+        } else {
+            ObjKind::Page
+        };
+        let oi = self.resolve(sc, kind, p)?;
+        self.control_of_section(oi, name)
+    }
+
     /// Members of a value of type `t`: fields, procedures, library methods.
     fn member(&mut self, sc: &Scope, t: &Ty, name: &str) -> Option<E> {
         match t {
+            // Members of a .NET type come from reflection at run time: any name, any arity,
+            // a result whose type is known only then (ADR-014).
+            Ty::DotNet(_) => {
+                return Some(E::Callable(vec![Cand {
+                    min: 0,
+                    max: usize::MAX,
+                    ret: Ty::DotNet(String::new()),
+                    target: Res::DotNetMember(name.to_string()),
+                    param_tys: Vec::new(),
+                    fields: Vec::new(),
+                    rest_field: false,
+                }]));
+            }
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),
             Ty::Record { table, .. } => {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
@@ -1045,22 +1106,8 @@ impl<'a> Checker<'a> {
                     }
                 }
                 if let Some(oi) = resolved {
-                    if let Some(sec) = self.named_section(oi, name) {
-                        return Some(E::Val(match sec.name().to_ascii_lowercase().as_str() {
-                            "dataitem" => match sec.args().get(1) {
-                                Some(table) => Ty::TestFilter(table.clone()),
-                                None => Ty::Unknown,
-                            },
-                            "part" => match sec.args().get(1) {
-                                Some(page) => Ty::TestPart(page.clone()),
-                                None => Ty::Unknown,
-                            },
-                            "systempart" => Ty::Builtin("TestPart".into()),
-                            "action" | "customaction" | "systemaction" | "fileuploadaction" => {
-                                Ty::Builtin("TestAction".into())
-                            }
-                            _ => Ty::Builtin("TestField".into()),
-                        }));
+                    if let Some(e) = self.control_of_section(oi, name) {
+                        return Some(e);
                     }
                 } else {
                     return Some(E::Val(Ty::Unknown));

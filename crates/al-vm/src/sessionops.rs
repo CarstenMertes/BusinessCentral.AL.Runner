@@ -57,6 +57,9 @@ impl Session {
     }
 
     pub(crate) fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
+        if let Some(answer) = self.host_op(id, args) {
+            return answer;
+        }
         if id == "Database.IsInWriteTransaction#1" {
             // An uncommitted write opens one, a Commit and the test boundary close it
             // (codeunit/TestWriteTxTestBoundary.al:93,103,142). Writes to temporary tables are
@@ -69,9 +72,6 @@ impl Session {
             return Ok(Value::Text(self.cx.company.clone()));
         }
         match id {
-            // A test runs with a client on a service tier: true in a test body and inside a page
-            // trigger (session/TestBCPlatformContracts.al:26-43, handlers/TestConfirmNoHandler.al:28).
-            "System.GuiAllowed#1" | "System.IsServiceTier#1" => return Ok(Value::Boolean(true)),
             // The counter has handed out `next_row_version` so far; the database never reports
             // zero (session/TestSystemExtended.al:635-659, TestBCDatabaseContracts.al:100-117).
             "Database.LastUsedRowVersion#1" => return Ok(Value::BigInteger(self.next_row_version.max(1))),

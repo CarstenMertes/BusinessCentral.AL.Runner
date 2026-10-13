@@ -95,13 +95,11 @@ Each test is counted under the first thing that stops it.
 ADR-013 (Proposed, revised 2026-10-13) now waits on one question and on the
 owner accepting the revision.
 
-1. **`DotNet` types in Microsoft's AL.** May the runtime contain Rust code that
-   stands in for a .NET class declared in Microsoft's AL? Options: no (refuse
-   every `DotNet` use); yes for standard-library classes only (`Convert`,
-   `Encoding`, `MemoryStream`, ...); yes for those and for Microsoft server
-   classes (`NavTenantSettingsHelper`, `NavUserAccountHelper`, ...). At most 20
-   to 28 corpus tests are affected. Real cases are in `docs/dotnet-examples.md`.
-   Until decided, a `DotNet` call is refused.
+1. **`DotNet` types in Microsoft's AL.** Decided (ADR-014, accepted
+   2026-10-13) and implemented on the branch `dotnet-impl`: a .NET 8 sidecar
+   process serves the calls; the runtime provides the server classes itself
+   through a registry that waits for probes (`docs/probes-needed.md`). No corpus
+   test reaches `DotNet` until the dependency apps (ADR-013) load.
 
 Answered on 2026-10-13 and recorded in ADR-013:
 
@@ -126,5 +124,18 @@ Answered on 2026-10-13 and recorded in ADR-013:
 - About 135 assumptions in `docs/probes-needed.md` wait for probes on real BC.
   They include the exact "Unhandled UI" text, JSON and XML `WriteTo`
   formatting, and the `Format` of Time and DateTime.
-- `al-host` is still a placeholder. Clock, identity and network go through it
+- `al-host` holds only the `DotNet` capability so far. Clock, identity and network go through it
   once ADR-013 lands.
+
+## Next targets after the corpus (owner, 2026-10-13)
+
+Start these when the corpus is green or nearly green and nothing big is left:
+
+1. **Microsoft's own Base App test buckets.** AL Runner has a skill for this:
+   `BusinessCentral.AL.Runner/.claude/skills/running-ms-test-buckets/SKILL.md`.
+   It measures how many of Microsoft's own test cases this runtime can run.
+   The tests need CRONUS demo data (`--test-data`), not an empty database.
+2. **CRONUS demo data in native Rust.** `bcdb` (repo `BusinessCentral.BakReader`, C#) reads BC
+   data straight from a `.bak` or `.bacpac` file, with no SQL Server. AL Runner uses it
+   for `--test-data`. Port it to Rust: here at first, possibly in that repo later.
+   This gives speed and native support for loading CRONUS into the store.

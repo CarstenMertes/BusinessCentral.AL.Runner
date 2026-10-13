@@ -47,6 +47,12 @@ pub(crate) fn source_file(p: &mut Parser) {
             p.finish();
         } else if at_object_start(p) {
             object(p);
+        } else if p.at_kw("dotnet") && p.nth(1) == LBrace {
+            // `dotnet { assembly(..) { type(..; Alias) { } } }`: a declaration block, not an object.
+            p.start(DotNetBlock);
+            p.bump_any();
+            body(p);
+            p.finish();
         } else {
             p.err_and_bump("expected an object");
         }
@@ -234,6 +240,16 @@ mod tests {
         assert_eq!(
             f("pageextension 1 P extends Q { layout { moveafter(A; B); addlast(Content) { field(X; Rec.X) { } } } }"),
             "(Object pageextension 1 P extends Q (ObjectBody { (Section layout (ObjectBody { (Section moveafter (SectionArgs ( A ; B )) ;) (Section addlast (SectionArgs ( Content )) (ObjectBody { (Section field (SectionArgs ( X ; Rec . X )) (ObjectBody { })) })) })) }))"
+        );
+    }
+
+    #[test]
+    fn dotnet_block_with_assembly_and_types() {
+        assert_eq!(
+            f(
+                "dotnet { assembly(\"mscorlib\") { Version = '4.0.0.0'; type(\"System.Convert\"; \"Convert\") { } } }\ncodeunit 1 A { }"
+            ),
+            "(DotNetBlock dotnet (ObjectBody { (Section assembly (SectionArgs ( \"mscorlib\" )) (ObjectBody { (Property Version = (PropertyValue '4.0.0.0') ;) (Section type (SectionArgs ( \"System.Convert\" ; \"Convert\" )) (ObjectBody { })) })) })) (Object codeunit 1 A (ObjectBody { }))"
         );
     }
 

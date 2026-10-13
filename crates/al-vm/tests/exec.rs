@@ -214,8 +214,8 @@ fn asserterror_without_an_error_is_an_error() {
 
 #[test]
 fn a_blocked_routine_reports_unsupported() {
-    let src = cu("procedure F() begin Sleep(1); end;");
-    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("Sleep")));
+    let src = cu("procedure F() begin MinimumActiveRowVersion(); end;");
+    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("MinimumActiveRowVersion")));
 }
 
 #[test]

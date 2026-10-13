@@ -230,6 +230,58 @@ pub struct Control {
     /// For parts: how the part's rows follow the host's current row.
     #[serde(default)]
     pub part_link: Option<PartLink>,
+    /// For actions: what `RunObject` runs (ADR-012 follow-up).
+    #[serde(default)]
+    pub run_object: Option<RunObject>,
+    /// For `actionref(Name; Target)` controls: the action they stand for.
+    #[serde(default)]
+    pub action_ref: Option<ActionRef>,
+}
+
+/// The action an `actionref` delegates to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ActionRef {
+    /// Index of the action control on the same page.
+    Target(usize),
+    /// Why the target is not an action of this page the client can follow.
+    Unresolved(String),
+}
+
+/// The kind of object a `RunObject` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RunKind {
+    Page,
+    Codeunit,
+    Report,
+    XmlPort,
+    Query,
+}
+
+/// `RunPageMode` of an action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RunMode {
+    #[default]
+    Default,
+    View,
+    Edit,
+    Create,
+}
+
+/// The `RunObject` property of an action, with the properties that go with it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunObject {
+    pub kind: RunKind,
+    /// The page or codeunit object; `None` for a report, xmlport or query (the test client
+    /// refuses those before it looks at the target) and for a target that did not resolve.
+    pub object: Option<usize>,
+    /// `RunPageOnRec = true`.
+    pub on_rec: bool,
+    pub mode: RunMode,
+    /// `RunPageLink` as entries (target field, host field or filter) and `RunPageView` as
+    /// written; `provider` is unused.
+    pub link: Option<PartLink>,
+    /// Why the test client cannot run this action yet; `None` = it can.
+    pub unsupported: Option<String>,
 }
 
 /// `SubPageLink`, `SubPageView` and `Provider` of a part control (ADR-012 follow-up).

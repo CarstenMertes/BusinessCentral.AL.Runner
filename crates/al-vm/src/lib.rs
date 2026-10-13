@@ -115,6 +115,10 @@ pub struct Session {
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
     pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
+    /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a
+    /// page saving a row passes its own xRec (corpus
+    /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
+    pub(crate) page_xrec: Option<Vec<Value>>,
     /// The transaction model of the running test method (set by the test runner).
     pub tx_model: TxModel,
     /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
@@ -157,6 +161,7 @@ impl Session {
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
+            page_xrec: None,
             tx_model: TxModel::default(),
             tx_world: 0,
             commit_behavior: Default::default(),

@@ -49,6 +49,9 @@ impl UiKind {
     }
 }
 
+/// A page handler found for a page: (object, routine, instance).
+pub(crate) type BoundHandler = (usize, usize, Rc<RefCell<Instance>>);
+
 /// A handler function bound to the running test method.
 pub struct UiHandler {
     kind: UiKind,
@@ -196,6 +199,26 @@ impl Session {
         };
         h.fired = true;
         Ok((h.object, h.routine, h.instance.clone()))
+    }
+
+    /// The bound handler of `kind` for `page`, marked as used, or `None` when the test bound
+    /// none. A `RunObject` action looks the handler up after the page opened and treats a missing
+    /// one differently from `Page.Run` (corpus handlers/TestPageActionRunObjectNoHandler_Tests.al).
+    pub(crate) fn try_bind_page_handler(&mut self, kind: UiKind, page: u32) -> Result<Option<BoundHandler>, Signal> {
+        let Some(scope) = self.ui.as_mut() else {
+            return Err(Signal::Unsupported(format!(
+                "{} outside a test method (what the runner does then is not pinned)",
+                kind.label()
+            )));
+        };
+        Ok(scope
+            .handlers
+            .iter_mut()
+            .find(|h| h.kind == kind && h.page == Some(page))
+            .map(|h| {
+                h.fired = true;
+                (h.object, h.routine, h.instance.clone())
+            }))
     }
 
     pub(crate) fn ui_message(&mut self, text: String) -> Result<(), Signal> {

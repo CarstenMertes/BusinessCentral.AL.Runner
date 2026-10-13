@@ -776,8 +776,7 @@ fn test_filter_changes_the_key_and_direction_of_the_page() {
 #[test]
 fn a_new_hosts_part_follows_the_header_once_it_is_stored() {
     let r = run(
-        &format!(
-            "procedure F(): Text var D: Record \"PT Doc\"; L: Record \"PT Doc Line\"; C: TestPage \"PT Doc Card\"; begin
+        "procedure F(): Text var D: Record \"PT Doc\"; L: Record \"PT Doc Line\"; C: TestPage \"PT Doc Card\"; begin
                 C.OpenNew();
                 C.DocNo.SetValue('N1');
                 C.Descr.SetValue('header');
@@ -786,8 +785,7 @@ fn a_new_hosts_part_follows_the_header_once_it_is_stored() {
                 L.SetRange(\"Doc No.\", 'N1');
                 L.FindFirst();
                 exit(L.\"Doc No.\" + '/' + L.\"Seen Doc\" + '/' + Format(L.\"Line No.\"));
-            end;"
-        ),
+            end;",
         "F",
     );
     assert_eq!(text(r), "N1/N1/20000");

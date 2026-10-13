@@ -85,20 +85,28 @@ Each test is counted under the first thing that stops it.
 
 ## Open decisions for the project owner
 
-ADR-013 (Proposed) waits on these questions:
+ADR-013 (Proposed, revised 2026-10-13) now waits on one question and on the
+owner accepting the revision.
 
-1. **Licensing.** Download Microsoft's app source into a local cache and CI
-   cache and compile it, committing nothing. Acceptable?
-2. **Native layer.** Rust row providers for system tables and shims for
-   `DotNet` types, placed behind their real AL declarations and refused when
-   absent. Is that within "do not fake objects from dependent apps"?
-3. **Pinning.** Ask the corpus CI to record its artifact build, or pin the
-   latest 27.5 build in `oracle.toml` and warn on a mismatch?
-4. **Budget.** Compiling the Base Application costs about 16 s cold today. Is
-   "1 s warm plus what the run reaches" acceptable, or should a persistent
-   cache come first?
-5. **Install triggers.** Run the dependency apps' install and
-   Company-Initialize code into the baseline, or not?
+1. **`DotNet` types in Microsoft's AL.** May the runtime contain Rust code that
+   stands in for a .NET class declared in Microsoft's AL? Options: no (refuse
+   every `DotNet` use); yes for standard-library classes only (`Convert`,
+   `Encoding`, `MemoryStream`, ...); yes for those and for Microsoft server
+   classes (`NavTenantSettingsHelper`, `NavUserAccountHelper`, ...). At most 20
+   to 28 corpus tests are affected. Real cases are in `docs/dotnet-examples.md`.
+   Until decided, a `DotNet` call is refused.
+
+Answered on 2026-10-13 and recorded in ADR-013:
+
+- Licensing: download Microsoft's app source into a local cache and a CI cache,
+  compile it, commit nothing.
+- Native layer: AL that exists is taken as AL and never shimmed. Platform
+  tables with no AL body get native row providers.
+- Version selection: driven by the project's `app.json`, using the same
+  mechanism as AL Runner. Not corpus-specific. The corpus harness passes the
+  oracle's BC minor.
+- Budget: demand-driven compilation. A persistent cache is an optimisation.
+- Install triggers and Company-Initialize: mirror AL Runner.
 
 ## Known issues and debt
 

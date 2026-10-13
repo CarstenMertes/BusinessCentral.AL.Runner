@@ -35,6 +35,12 @@ pub trait Ctx: FormatCtx {
         Err(Signal::Unsupported(format!("{method} needs a page runtime")))
     }
 
+    /// `Query` variable methods: the VM executes the query (`al-vm/src/queries.rs`).
+    /// `method` is the catalog name (`Open`, `SetRange`, ...).
+    fn query(&mut self, method: &str, _recv: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("Query.{method} needs a query runtime")))
+    }
+
     /// `RecordRef`, `FieldRef` and `KeyRef` methods need the table schema and
     /// the store, like record methods. `id` is the catalog overload id
     /// (`RecordRef.Open#2`); the VM resolves it to the method.
@@ -110,6 +116,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // (al-vm dispatch.rs). Registered so lowering accepts them.
     ("Session.BindSubscription#1", vm_only),
     ("Session.UnbindSubscription#1", vm_only),
+    // Codeunit.Run runs a codeunit and `IsInWriteTransaction` reads the transaction: both are
+    // session state, run by the VM (al-vm transactions.rs).
+    ("Codeunit.Run#1", vm_only),
+    ("Codeunit.Run#2", vm_only),
+    ("Codeunit.Run#3", vm_only),
+    ("Database.IsInWriteTransaction#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
@@ -159,6 +171,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .iter()
         .chain(crate::collections::REGISTRY)
         .chain(crate::pagebuiltins::REGISTRY)
+        .chain(crate::querybuiltins::REGISTRY)
         .chain(crate::refs::REGISTRY)
         .chain(crate::refs::RECORD_REGISTRY)
 }

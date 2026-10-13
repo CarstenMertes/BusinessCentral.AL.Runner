@@ -1,0 +1,307 @@
+//! Runs test codeunits the way BC's test runner does, as far as the corpus
+//! pins it: one instance per test codeunit, `OnRun` once before the tests
+//! (codeunit/TestCodeunitOnRun.al), tests in declaration order.
+
+use crate::report::Outcome;
+use al_builtins::native::Signal;
+use al_sema::lower::Lowered;
+use al_vm::{Engine, Session};
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+/// Reads an app folder: its `app.json` manifest and every `.al` file under it.
+pub fn load_app(dir: &std::path::Path) -> Result<al_sema::workspace::AppSource, String> {
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.join("app.json")).map_err(|e| format!("{}: {e}", dir.display()))?,
+    )
+    .map_err(|e| format!("{}/app.json: {e}", dir.display()))?;
+    let mut files = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).map_err(|e| e.to_string())? {
+            let p = e.map_err(|e| e.to_string())?.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "al") {
+                let rel = p.strip_prefix(dir).unwrap_or(&p).to_string_lossy().into_owned();
+                files.push((
+                    rel,
+                    std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?,
+                ));
+            }
+        }
+    }
+    files.sort();
+    let s = |k: &str| manifest[k].as_str().unwrap_or_default().to_string();
+    Ok(al_sema::workspace::AppSource {
+        id: s("id"),
+        name: s("name"),
+        dependencies: manifest["dependencies"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|d| d["id"].as_str().map(String::from)).collect())
+            .unwrap_or_default(),
+        files,
+    })
+}
+
+/// Every corpus test's outcome on this runtime, keyed by (codeunit id, procedure).
+pub struct CorpusRuntime {
+    outcomes: std::collections::HashMap<(u32, String), Outcome>,
+    pub panics: usize,
+}
+
+impl CorpusRuntime {
+    pub fn run(apps: Vec<al_sema::workspace::AppSource>, symbols: &BTreeSet<String>) -> CorpusRuntime {
+        let (_ws, lowered) = al_sema::lower::compile(apps, symbols);
+        let blocked = lowered
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let engine = Engine::new(lowered.program.clone(), blocked);
+        let mut outcomes = std::collections::HashMap::new();
+        let mut panics = 0;
+        for (oi, o) in lowered.program.objects.iter().enumerate() {
+            let is_test = o.kind == "codeunit"
+                && o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
+            let Some(id) = o.id.filter(|_| is_test) else { continue };
+            // A Rust panic is a runtime bug; contain it to this codeunit and report it.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_codeunit(&engine, &lowered, oi)));
+            match result {
+                Ok(list) => {
+                    for (name, outcome) in list {
+                        outcomes.insert((id, name.to_lowercase()), outcome);
+                    }
+                }
+                Err(p) => {
+                    panics += 1;
+                    let msg = p
+                        .downcast_ref::<String>()
+                        .cloned()
+                        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                        .unwrap_or_default();
+                    for r in o
+                        .routines
+                        .iter()
+                        .filter(|r| r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")))
+                    {
+                        outcomes.insert(
+                            (id, r.name.to_lowercase()),
+                            Outcome::NotRun(format!("runtime panic (bug): {msg}")),
+                        );
+                    }
+                }
+            }
+        }
+        CorpusRuntime { outcomes, panics }
+    }
+}
+
+impl crate::runner::Runner for CorpusRuntime {
+    fn outcome(&self, case: &crate::oracle::CaseId) -> Outcome {
+        self.outcomes
+            .get(&(case.codeunit, case.name.to_lowercase()))
+            .cloned()
+            .unwrap_or_else(|| Outcome::NotRun("test procedure not found in the compiled corpus".into()))
+    }
+}
+
+/// Outcomes of every `[Test]` procedure of test codeunit `object`, in order.
+pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> Vec<(String, Outcome)> {
+    let obj = &lowered.program.objects[object];
+    let mut session = Session::new(engine.clone());
+    let instance = session.instance(object);
+    let tests: Vec<usize> = (0..obj.routines.len())
+        .filter(|&r| {
+            obj.routines[r]
+                .attributes
+                .iter()
+                .any(|a| a.name.eq_ignore_ascii_case("Test"))
+        })
+        .collect();
+    let all = |o: Outcome| {
+        tests
+            .iter()
+            .map(|&r| (obj.routines[r].name.clone(), o.clone()))
+            .collect::<Vec<_>>()
+    };
+    if let Some(on_run) = (0..obj.routines.len())
+        .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
+    {
+        if let Some(reason) = blocked_reason(lowered, object, on_run) {
+            return all(Outcome::NotRun(format!("OnRun: {reason}")));
+        }
+        match session.call(object, on_run, instance.clone(), Vec::new()) {
+            Ok(_) => {}
+            Err(Signal::Unsupported(r)) => return all(Outcome::NotRun(format!("OnRun: {r}"))),
+            Err(Signal::Error(e)) => {
+                return all(Outcome::NotRun(format!(
+                    "OnRun failed (runner behaviour not pinned): {}",
+                    e.message
+                )));
+            }
+            Err(_) => {}
+        }
+    }
+    let mut out = Vec::new();
+    for r in tests {
+        let routine = &obj.routines[r];
+        let outcome = if routine
+            .attributes
+            .iter()
+            .any(|a| a.name.eq_ignore_ascii_case("HandlerFunctions"))
+        {
+            Outcome::NotRun("handler functions are not supported yet".into())
+        } else if let Some(reason) = blocked_reason(lowered, object, r) {
+            Outcome::NotRun(reason)
+        } else {
+            session.last_error = Default::default();
+            match session.call(object, r, instance.clone(), Vec::new()) {
+                Ok(_) => Outcome::Pass,
+                Err(Signal::Error(e)) => Outcome::Fail(e.message),
+                Err(Signal::Unsupported(r)) => Outcome::NotRun(r),
+                Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
+            }
+        };
+        out.push((routine.name.clone(), outcome));
+    }
+    out
+}
+
+/// Why routine `routine` of `object` cannot run: the first reason found in
+/// anything it can reach through static calls (hard rule 4: decided before running).
+pub fn blocked_reason(lowered: &Lowered, object: usize, routine: usize) -> Option<String> {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(object, routine)];
+    while let Some((o, r)) = stack.pop() {
+        if !seen.insert((o, r)) {
+            continue;
+        }
+        if let Some(reason) = lowered.unsupported[o][r].first() {
+            let name = &lowered.program.objects[o].routines[r].name;
+            let obj = &lowered.program.objects[o].name;
+            return Some(format!("{obj}.{name}: {reason}"));
+        }
+        stack.extend(lowered.calls[o][r].iter().copied());
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use al_sema::workspace::AppSource;
+
+    fn outcomes(src: &str) -> Vec<(String, Outcome)> {
+        let (ws, l) = al_sema::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let blocked = l
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let engine = Engine::new(l.program.clone(), blocked);
+        let oi = l
+            .program
+            .objects
+            .iter()
+            .position(|o| {
+                o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.eq_ignore_ascii_case("Test"))
+            })
+            .unwrap();
+        run_codeunit(&engine, &l, oi)
+    }
+
+    const SRC: &str = "codeunit 60100 T
+{
+    Subtype = Test;
+    var
+        Seen: Integer;
+
+    trigger OnRun()
+    begin
+        Seen := 41;
+    end;
+
+    [Test]
+    procedure A_Passes()
+    begin
+        Seen += 1;
+        if Seen <> 42 then Error('OnRun did not run first: %1', Seen);
+    end;
+
+    [Test]
+    procedure B_Fails()
+    begin
+        Error('expected failure');
+    end;
+
+    [Test]
+    procedure C_NotRun()
+    begin
+        Helper();
+    end;
+
+    local procedure Helper()
+    begin
+        Sleep(1);
+    end;
+
+    procedure NotATest()
+    begin
+        Error('must not run');
+    end;
+
+    [Test]
+    [HandlerFunctions('MsgHandler')]
+    procedure D_NeedsHandler()
+    begin
+    end;
+
+    [MessageHandler]
+    procedure MsgHandler(Msg: Text)
+    begin
+    end;
+}";
+
+    #[test]
+    fn runs_tests_in_order_after_onrun_on_one_instance() {
+        let o = outcomes(SRC);
+        let names: Vec<_> = o.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["A_Passes", "B_Fails", "C_NotRun", "D_NeedsHandler"]);
+        assert_eq!(o[0].1, Outcome::Pass);
+        assert_eq!(o[1].1, Outcome::Fail("expected failure".into()));
+    }
+
+    #[test]
+    fn unreachable_code_does_not_block_but_reachable_unsupported_code_does() {
+        let o = outcomes(SRC);
+        assert!(
+            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("Sleep")),
+            "{:?}",
+            o[2].1
+        );
+    }
+
+    #[test]
+    fn handler_functions_are_not_supported_yet() {
+        let o = outcomes(SRC);
+        assert!(
+            matches!(&o[3].1, Outcome::NotRun(r) if r.contains("handler")),
+            "{:?}",
+            o[3].1
+        );
+    }
+}

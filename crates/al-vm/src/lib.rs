@@ -25,13 +25,22 @@ impl Engine {
 pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
+    depth: usize,
+    /// The one instance of each `SingleInstance = true` codeunit in this session.
+    singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
 }
+
+/// Nested AL calls allowed before the session gives up. BC's own limit and
+/// its error are not pinned by the corpus, so exceeding it is Unsupported.
+pub const MAX_CALL_DEPTH: usize = 400;
 
 impl Session {
     pub fn new(engine: Arc<Engine>) -> Session {
         Session {
             engine,
             last_error: AlError::default(),
+            depth: 0,
+            singletons: Default::default(),
         }
     }
 
@@ -70,6 +79,24 @@ impl Session {
         if let Some(Some(reason)) = self.engine.blocked.get(object).and_then(|o| o.get(routine)) {
             return Err(Signal::Unsupported(reason.clone()));
         }
+        if self.depth >= MAX_CALL_DEPTH {
+            return Err(Signal::Unsupported(format!(
+                "call depth over {MAX_CALL_DEPTH} (BC's limit not pinned)"
+            )));
+        }
+        self.depth += 1;
+        let r = self.call_inner(object, routine, instance, args);
+        self.depth -= 1;
+        r
+    }
+
+    fn call_inner(
+        &mut self,
+        object: usize,
+        routine: usize,
+        instance: Rc<RefCell<Instance>>,
+        args: Vec<Value>,
+    ) -> Result<(Value, Vec<Value>), Signal> {
         self.ensure_initialized(&instance);
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
@@ -298,11 +325,12 @@ impl Session {
                 routine,
                 instance,
                 args,
+                try_call,
             } => {
                 let inst = match instance {
                     None => f.instance.clone(),
                     Some(e) => match self.eval(e, f)? {
-                        Value::Codeunit(i) => i,
+                        Value::Codeunit(i) => self.shared_instance(i),
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };
@@ -313,7 +341,15 @@ impl Session {
                         ir::Arg::Ref(p) => self.read(p, f)?,
                     });
                 }
-                let (ret, finals) = self.call(*object, *routine, inst, values)?;
+                let result = self.call(*object, *routine, inst, values);
+                let (ret, finals) = match (result, try_call) {
+                    (Err(Signal::Error(e)), true) => {
+                        self.last_error = e;
+                        return Ok(Value::Boolean(false));
+                    }
+                    (Ok((_, finals)), true) => (Value::Boolean(true), finals),
+                    (r, _) => r?,
+                };
                 for (a, v) in args.iter().zip(finals) {
                     if let ir::Arg::Ref(p) = a {
                         self.write(p, v, f)?;
@@ -348,6 +384,35 @@ impl Session {
                 Ok(ret)
             }
         }
+    }
+
+    /// The instance a call on codeunit value `i` runs on: the session's
+    /// singleton for `SingleInstance = true` codeunits, `i` itself otherwise.
+    fn shared_instance(&mut self, i: Rc<RefCell<Instance>>) -> Rc<RefCell<Instance>> {
+        let object = i.borrow().object as usize;
+        let single = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("SingleInstance") && v.trim().eq_ignore_ascii_case("true"));
+        if !single {
+            return i;
+        }
+        let engine = self.engine.clone();
+        self.singletons
+            .entry(object)
+            .or_insert_with(|| {
+                let globals = engine.program.objects[object]
+                    .globals
+                    .iter()
+                    .map(|g| Value::default_for(&g.ty))
+                    .collect();
+                Rc::new(RefCell::new(Instance {
+                    object: object as u32,
+                    globals,
+                    initialized: true,
+                }))
+            })
+            .clone()
     }
 
     fn place_type(&self, p: &ir::Place, f: &Frame) -> RtType {

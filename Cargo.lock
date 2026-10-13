@@ -51,6 +51,10 @@ dependencies = [
 name = "al-test-cli"
 version = "0.1.0"
 dependencies = [
+ "al-builtins",
+ "al-ir",
+ "al-sema",
+ "al-vm",
  "quick-xml",
  "serde",
  "serde_json",

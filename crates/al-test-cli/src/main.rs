@@ -3,10 +3,7 @@
 //! Exit codes: 0 ok, 1 regression against the baseline, 2 setup error
 //! (oracle and corpus disagree, unreadable input, bad arguments).
 
-use al_test_cli::{
-    corpus, oracle, output, report,
-    runner::{NoRuntime, Runner},
-};
+use al_test_cli::{corpus, oracle, output, report, runner::Runner, runtime};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -54,7 +51,12 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn main() -> ExitCode {
-    match run() {
+    // The tree-walking VM recurses on the native stack per AL call; give it room.
+    let worker = std::thread::Builder::new()
+        .stack_size(512 << 20)
+        .spawn(run)
+        .expect("spawn runner thread");
+    match worker.join().expect("runner thread panicked") {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");
@@ -90,8 +92,25 @@ fn run() -> Result<ExitCode, String> {
     let cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
 
-    let runtime = NoRuntime;
-    let outcome = |c: &oracle::CaseId| runtime.outcome(c);
+    // ADR-007: BC 27.5 defines BC27PLUS.
+    let symbols = ["BC27PLUS".to_string()].into();
+    let corpus_tests = root
+        .join(&cfg.corpus_app)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let apps = vec![
+        runtime::load_app(&corpus_tests.join("al-language-internals-fixture"))?,
+        runtime::load_app(&root.join(&cfg.corpus_app))?,
+    ];
+    let rt = runtime::CorpusRuntime::run(apps, &symbols);
+    if rt.panics > 0 {
+        eprintln!(
+            "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",
+            rt.panics
+        );
+    }
+    let outcome = |c: &oracle::CaseId| rt.outcome(c);
     let area_of = |cu: u32| index.area_of(cu).map(str::to_string);
     let rep = report::build(&cases, &area_of, &outcome);
     if !rep.unmapped.is_empty() {

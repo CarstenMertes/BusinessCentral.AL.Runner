@@ -81,13 +81,10 @@ fn a_baseline_case_that_does_not_pass_fails_the_run() {
     require_corpus();
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().join("passing.txt");
-    std::fs::write(&base, "60002 TestCodeunitOnRun_RunsExactlyOncePerCodeunit\n").unwrap();
+    std::fs::write(&base, "60002 NoSuchProcedure_UsedByTheRegressionTest\n").unwrap();
     let (code, _, err) = cli(&["--baseline", base.to_str().unwrap()]);
     assert_eq!(code, 1, "{err}");
-    assert!(
-        err.contains("60002 TestCodeunitOnRun_RunsExactlyOncePerCodeunit"),
-        "{err}"
-    );
+    assert!(err.contains("60002 NoSuchProcedure_UsedByTheRegressionTest"), "{err}");
 }
 
 #[test]

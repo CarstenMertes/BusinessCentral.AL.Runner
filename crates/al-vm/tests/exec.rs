@@ -224,3 +224,50 @@ fn enum_values_format_by_name() {
         + &cu("procedure F(): Text var X: Enum E; begin X := E::\"Beta Two\"; exit(Format(X)); end;");
     assert_eq!(text(run(&src, "F", vec![])), "Beta Two");
 }
+
+#[test]
+fn runaway_recursion_is_unsupported_not_a_crash() {
+    // Same stack the CLI gives the VM (al-test-cli main).
+    std::thread::Builder::new()
+        .stack_size(512 << 20)
+        .spawn(|| {
+            let src = cu("procedure F(N: Integer): Integer begin exit(F(N + 1)); end;");
+            assert!(matches!(run(&src, "F", vec![Value::Integer(0)]), Err(Signal::Unsupported(r)) if r.contains("call depth")));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn try_function_used_as_a_value_catches_errors() {
+    // Doc (TryFunction attribute): the return value tells whether the method ran without errors.
+    let src = cu("[TryFunction] procedure T(Fail: Boolean) begin if Fail then Error('inner'); end;
+        procedure F(): Text var Ok1: Boolean; Ok2: Boolean; begin Ok1 := T(false); Ok2 := T(true); exit(Format(Ok1) + '/' + Format(Ok2) + '/' + GetLastErrorText()); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "Yes/No/inner");
+}
+
+#[test]
+fn try_function_called_as_a_statement_raises() {
+    // Doc: when the return value is not used, the try method behaves like a normal method.
+    let src = cu("[TryFunction] procedure T() begin Error('inner'); end; procedure F() begin T(); end;");
+    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Error(e)) if e.message == "inner"));
+}
+
+#[test]
+fn single_instance_codeunits_share_state_across_variables() {
+    let src = "codeunit 50102 Single { SingleInstance = true; var N: Integer; procedure Add(): Integer begin N += 1; exit(N); end; }\n".to_string()
+        + &cu("procedure F(): Integer var A: Codeunit Single; B: Codeunit Single; begin A.Add(); exit(B.Add()); end;");
+    assert_eq!(int(run(&src, "F", vec![])), 2);
+}
+
+#[test]
+fn calling_an_event_publisher_is_unsupported_until_events_exist() {
+    // Running the empty publisher body would silently skip every subscriber.
+    let src = cu("[IntegrationEvent(false, false)] procedure OnX() begin end; procedure F() begin OnX(); end;");
+    assert!(
+        matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("event")),
+        "{:?}",
+        run(&src, "F", vec![])
+    );
+}

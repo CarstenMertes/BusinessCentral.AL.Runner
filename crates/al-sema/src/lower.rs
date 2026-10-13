@@ -293,7 +293,24 @@ impl Lowerer<'_> {
         let kids: Vec<SyntaxNode> = n.children().collect();
         let r = match n.kind() {
             Block => return self.stmts_of(n),
-            ExprStmt => self.expr(&kids[0]).map(ir::Stmt::Expr),
+            // A try function called as a statement behaves like a normal method
+            // (doc: TryFunction attribute), so its errors propagate.
+            ExprStmt => self.expr(&kids[0]).map(|e| match e {
+                ir::Expr::Call {
+                    object,
+                    routine,
+                    instance,
+                    args,
+                    ..
+                } => ir::Stmt::Expr(ir::Expr::Call {
+                    object,
+                    routine,
+                    instance,
+                    args,
+                    try_call: false,
+                }),
+                e => ir::Stmt::Expr(e),
+            }),
             AssignStmt => self.assign(n, &kids),
             IfStmt => {
                 let else_at = sig_tokens(n)
@@ -605,6 +622,18 @@ impl Lowerer<'_> {
         }
     }
 
+    /// Lower-case attribute names of the routine at `offset` in `object`.
+    fn routine_attributes(&self, object: usize, offset: usize) -> Vec<String> {
+        self.ws
+            .object_ast(object)
+            .syntax()
+            .descendants()
+            .filter_map(ast::Routine::cast)
+            .find(|r| usize::from(r.syntax().text_range().start()) == offset)
+            .map(|r| r.attributes().map(|a| a.name().to_ascii_lowercase()).collect())
+            .unwrap_or_default()
+    }
+
     /// A call resolved on `node` (the CallExpr, or the callee for a call without parentheses).
     fn call(&mut self, node: &SyntaxNode, callee: &SyntaxNode, args: &[SyntaxNode]) -> L<ir::Expr> {
         let receiver_node = (callee.kind() == SyntaxKind::MemberExpr)
@@ -640,11 +669,20 @@ impl Lowerer<'_> {
                     }
                 }
                 self.calls.push((object, routine));
+                let attrs = self.routine_attributes(object, offset);
+                if attrs
+                    .iter()
+                    .any(|a| ["integrationevent", "businessevent", "internalevent"].contains(&a.as_str()))
+                {
+                    return Err("event publishing is not implemented yet".into());
+                }
+                let try_call = attrs.iter().any(|a| a == "tryfunction");
                 Ok(ir::Expr::Call {
                     object,
                     routine,
                     instance,
                     args: out,
+                    try_call,
                 })
             }
             Some(Res::Builtin(id)) => {
@@ -813,7 +851,8 @@ mod tests {
                 object: 0,
                 routine: qi,
                 instance: None,
-                args: vec![ir::Arg::Ref(ir::Place::Local(0))]
+                args: vec![ir::Arg::Ref(ir::Place::Local(0))],
+                try_call: false,
             })]
         );
         assert_eq!(l.calls[0][pi], vec![(0, qi)]);

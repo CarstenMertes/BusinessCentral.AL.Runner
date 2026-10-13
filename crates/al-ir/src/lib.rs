@@ -123,11 +123,14 @@ pub enum Expr {
     Convert(RtType, Box<Expr>),
     /// A procedure of object `object` (index into `Program::objects`) called
     /// on the current instance (`instance` = None) or on a codeunit value.
+    /// `try_call`: the target is a `[TryFunction]` whose result is used, so an
+    /// error is caught and the call yields `false`.
     Call {
         object: usize,
         routine: usize,
         instance: Option<Box<Expr>>,
         args: Vec<Arg>,
+        try_call: bool,
     },
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     Builtin {

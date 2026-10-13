@@ -1,0 +1,435 @@
+//! Lossless lexer: the concatenated token texts are exactly the input.
+
+use crate::SyntaxKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Token {
+    pub kind: SyntaxKind,
+    /// Length in bytes.
+    pub len: u32,
+}
+
+pub fn lex(src: &str) -> Vec<Token> {
+    let mut lx = Lexer {
+        src: src.as_bytes(),
+        pos: 0,
+        line_has_code: false,
+        out: Vec::new(),
+    };
+    if src.starts_with('\u{FEFF}') {
+        lx.pos = 3;
+        lx.push(SyntaxKind::Bom, 0);
+    }
+    while lx.pos < lx.src.len() {
+        lx.next_token();
+    }
+    lx.out
+}
+
+struct Lexer<'a> {
+    src: &'a [u8],
+    pos: usize,
+    /// Whether a non-trivia token has appeared on the current line, which
+    /// decides if `#` starts a directive.
+    line_has_code: bool,
+    out: Vec<Token>,
+}
+
+fn is_ident_start(c: char) -> bool {
+    c == '_' || c.is_alphabetic()
+}
+
+fn is_ident_continue(c: char) -> bool {
+    c == '_' || c.is_alphanumeric()
+}
+
+impl Lexer<'_> {
+    fn push(&mut self, kind: SyntaxKind, start: usize) {
+        self.out.push(Token {
+            kind,
+            len: (self.pos - start) as u32,
+        });
+        if !kind.is_trivia() {
+            self.line_has_code = true;
+        }
+    }
+
+    fn peek(&self, off: usize) -> u8 {
+        self.src.get(self.pos + off).copied().unwrap_or(0)
+    }
+
+    fn char_at(&self, pos: usize) -> Option<char> {
+        // `src` came from a `&str` and `pos` is always on a char boundary.
+        std::str::from_utf8(&self.src[pos..]).ok()?.chars().next()
+    }
+
+    fn eat_while(&mut self, f: impl Fn(u8) -> bool) {
+        while self.pos < self.src.len() && f(self.src[self.pos]) {
+            self.pos += 1;
+        }
+    }
+
+    fn eat_ident_rest(&mut self) {
+        while let Some(c) = self.char_at(self.pos) {
+            if !is_ident_continue(c) {
+                break;
+            }
+            self.pos += c.len_utf8();
+        }
+    }
+
+    fn next_token(&mut self) {
+        use SyntaxKind::*;
+        let start = self.pos;
+        let c = self.src[self.pos];
+        match c {
+            b'\n' => {
+                self.pos += 1;
+                self.push(Newline, start);
+                self.line_has_code = false;
+            }
+            b'\r' if self.peek(1) == b'\n' => {
+                self.pos += 2;
+                self.push(Newline, start);
+                self.line_has_code = false;
+            }
+            b' ' | b'\t' | b'\r' | 0x0c => {
+                self.eat_while(|b| matches!(b, b' ' | b'\t' | 0x0c));
+                if self.pos == start {
+                    self.pos += 1; // lone \r
+                }
+                self.push(Whitespace, start);
+            }
+            b'/' if self.peek(1) == b'/' => {
+                self.eat_while(|b| b != b'\n' && b != b'\r');
+                self.push(LineComment, start);
+            }
+            b'/' if self.peek(1) == b'*' => {
+                self.pos += 2;
+                loop {
+                    if self.pos >= self.src.len() {
+                        self.push(Error, start);
+                        return;
+                    }
+                    if self.src[self.pos] == b'*' && self.peek(1) == b'/' {
+                        self.pos += 2;
+                        break;
+                    }
+                    self.pos += 1;
+                }
+                self.push(BlockComment, start);
+            }
+            b'#' if !self.line_has_code => {
+                self.eat_while(|b| b != b'\n' && b != b'\r');
+                self.push(Directive, start);
+            }
+            b'\'' => self.string(start),
+            b'"' => {
+                self.pos += 1;
+                self.eat_while(|b| b != b'"' && b != b'\n');
+                if self.peek(0) == b'"' {
+                    self.pos += 1;
+                    self.push(QuotedIdent, start);
+                } else {
+                    self.push(Error, start);
+                }
+            }
+            b'0'..=b'9' => self.number(start),
+            _ => {
+                let ch = self.char_at(self.pos).expect("valid utf-8");
+                if is_ident_start(ch) {
+                    self.pos += ch.len_utf8();
+                    self.eat_ident_rest();
+                    self.push(Ident, start);
+                } else {
+                    self.punct(start, ch);
+                }
+            }
+        }
+    }
+
+    fn string(&mut self, start: usize) {
+        self.pos += 1;
+        loop {
+            match self.peek(0) {
+                b'\'' if self.peek(1) == b'\'' => self.pos += 2,
+                b'\'' => {
+                    self.pos += 1;
+                    self.push(SyntaxKind::String, start);
+                    return;
+                }
+                0 if self.pos >= self.src.len() => break,
+                b'\n' | b'\r' => break,
+                _ => self.pos += 1,
+            }
+        }
+        self.push(SyntaxKind::Error, start);
+    }
+
+    fn number(&mut self, start: usize) {
+        use SyntaxKind::*;
+        self.eat_while(|b| b.is_ascii_digit());
+        let mut kind = Integer;
+        if self.peek(0) == b'.' && self.peek(1).is_ascii_digit() {
+            self.pos += 1;
+            self.eat_while(|b| b.is_ascii_digit());
+            kind = Decimal;
+        }
+        let suffix_start = self.pos;
+        self.eat_ident_rest();
+        let suffix = std::str::from_utf8(&self.src[suffix_start..self.pos])
+            .expect("utf-8")
+            .to_ascii_uppercase();
+        kind = match (suffix.as_str(), kind) {
+            ("", k) => k,
+            ("D", Integer) => DateLit,
+            ("DT", Integer) => DateTimeLit,
+            ("T", _) => TimeLit,
+            ("L", Integer) => BigIntLit,
+            _ => Error,
+        };
+        self.push(kind, start);
+    }
+
+    fn punct(&mut self, start: usize, ch: char) {
+        use SyntaxKind::*;
+        let two = match (self.peek(0), self.peek(1)) {
+            (b':', b'=') => Some(Assign),
+            (b'+', b'=') => Some(PlusAssign),
+            (b'-', b'=') => Some(MinusAssign),
+            (b'*', b'=') => Some(StarAssign),
+            (b'/', b'=') => Some(SlashAssign),
+            (b'.', b'.') => Some(DotDot),
+            (b':', b':') => Some(ColonColon),
+            (b'<', b'>') => Some(Neq),
+            (b'<', b'=') => Some(Le),
+            (b'>', b'=') => Some(Ge),
+            _ => None,
+        };
+        if let Some(k) = two {
+            self.pos += 2;
+            return self.push(k, start);
+        }
+        let one = match ch {
+            '(' => LParen,
+            ')' => RParen,
+            '[' => LBrack,
+            ']' => RBrack,
+            '{' => LBrace,
+            '}' => RBrace,
+            ',' => Comma,
+            ';' => Semicolon,
+            ':' => Colon,
+            '.' => Dot,
+            '+' => Plus,
+            '-' => Minus,
+            '*' => Star,
+            '/' => Slash,
+            '=' => Eq,
+            '<' => Lt,
+            '>' => Gt,
+            '?' => Question,
+            '|' => Pipe,
+            _ => Error,
+        };
+        self.pos += ch.len_utf8();
+        self.push(one, start);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use SyntaxKind::*;
+
+    fn kinds(src: &str) -> Vec<(SyntaxKind, &str)> {
+        let mut out = Vec::new();
+        let mut pos = 0;
+        for t in lex(src) {
+            let end = pos + t.len as usize;
+            out.push((t.kind, &src[pos..end]));
+            pos = end;
+        }
+        assert_eq!(pos, src.len(), "tokens must cover the input");
+        out
+    }
+
+    fn significant(src: &str) -> Vec<(SyntaxKind, &str)> {
+        kinds(src).into_iter().filter(|(k, _)| !k.is_trivia()).collect()
+    }
+
+    #[test]
+    fn empty_input_has_no_tokens() {
+        assert!(lex("").is_empty());
+    }
+
+    #[test]
+    fn identifiers_and_quoted_identifiers() {
+        assert_eq!(
+            significant(r#"Rec "ALT Universal" _x1"#),
+            vec![(Ident, "Rec"), (QuotedIdent, "\"ALT Universal\""), (Ident, "_x1")]
+        );
+    }
+
+    #[test]
+    fn strings_with_doubled_quote_escape() {
+        assert_eq!(significant("'it''s' ''"), vec![(String, "'it''s'"), (String, "''")]);
+    }
+
+    #[test]
+    fn string_does_not_end_a_comment_marker_inside_it() {
+        assert_eq!(significant("'a // b' x"), vec![(String, "'a // b'"), (Ident, "x")]);
+    }
+
+    #[test]
+    fn unterminated_string_stops_at_end_of_line_as_error() {
+        assert_eq!(kinds("'abc\nx"), vec![(Error, "'abc"), (Newline, "\n"), (Ident, "x")]);
+    }
+
+    #[test]
+    fn numbers_and_typed_literals() {
+        assert_eq!(
+            significant("42 1.5 0D 20240101d 120000T 0DT 1L 120000.5T"),
+            vec![
+                (Integer, "42"),
+                (Decimal, "1.5"),
+                (DateLit, "0D"),
+                (DateLit, "20240101d"),
+                (TimeLit, "120000T"),
+                (DateTimeLit, "0DT"),
+                (BigIntLit, "1L"),
+                (TimeLit, "120000.5T"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_range_is_not_a_decimal() {
+        assert_eq!(
+            significant("1..5"),
+            vec![(Integer, "1"), (DotDot, ".."), (Integer, "5")]
+        );
+    }
+
+    #[test]
+    fn a_letter_after_digits_that_is_not_a_suffix_is_not_swallowed() {
+        // `1Day` is not a date literal; the lexer must not split it as `1D` + `ay`.
+        assert_eq!(significant("1Day"), vec![(Error, "1Day")]);
+    }
+
+    #[test]
+    fn compound_operators_take_the_longest_match() {
+        assert_eq!(
+            significant(":= += -= *= /= .. :: <> <= >= = < > + - * / : . ( ) [ ] { } , ;")
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect::<Vec<_>>(),
+            vec![
+                Assign,
+                PlusAssign,
+                MinusAssign,
+                StarAssign,
+                SlashAssign,
+                DotDot,
+                ColonColon,
+                Neq,
+                Le,
+                Ge,
+                Eq,
+                Lt,
+                Gt,
+                Plus,
+                Minus,
+                Star,
+                Slash,
+                Colon,
+                Dot,
+                LParen,
+                RParen,
+                LBrack,
+                RBrack,
+                LBrace,
+                RBrace,
+                Comma,
+                Semicolon
+            ]
+        );
+    }
+
+    #[test]
+    fn comments_are_trivia() {
+        assert_eq!(
+            kinds("a // c\n/* b\n */b"),
+            vec![
+                (Ident, "a"),
+                (Whitespace, " "),
+                (LineComment, "// c"),
+                (Newline, "\n"),
+                (BlockComment, "/* b\n */"),
+                (Ident, "b")
+            ]
+        );
+    }
+
+    #[test]
+    fn unterminated_block_comment_is_an_error_to_end_of_input() {
+        assert_eq!(kinds("/* x"), vec![(Error, "/* x")]);
+    }
+
+    #[test]
+    fn crlf_is_one_newline_token() {
+        assert_eq!(kinds("a\r\nb"), vec![(Ident, "a"), (Newline, "\r\n"), (Ident, "b")]);
+    }
+
+    #[test]
+    fn directive_at_line_start_spans_the_line() {
+        assert_eq!(
+            kinds("  #if BC29PLUS // why\nx"),
+            vec![
+                (Whitespace, "  "),
+                (Directive, "#if BC29PLUS // why"),
+                (Newline, "\n"),
+                (Ident, "x")
+            ]
+        );
+    }
+
+    #[test]
+    fn hash_after_code_on_the_same_line_is_an_error() {
+        assert_eq!(significant("x #if"), vec![(Ident, "x"), (Error, "#"), (Ident, "if")]);
+    }
+
+    #[test]
+    fn bom_is_its_own_trivia_token() {
+        assert_eq!(kinds("\u{FEFF}x"), vec![(Bom, "\u{FEFF}"), (Ident, "x")]);
+    }
+
+    #[test]
+    fn non_ascii_in_comments_and_strings_keeps_char_boundaries() {
+        assert_eq!(significant("'ä — ü' x // ✓"), vec![(String, "'ä — ü'"), (Ident, "x")]);
+    }
+
+    #[test]
+    fn ternary_question_mark_and_filter_pipe() {
+        assert_eq!(
+            significant("c ? filter(1 | 2) : x"),
+            vec![
+                (Ident, "c"),
+                (Question, "?"),
+                (Ident, "filter"),
+                (LParen, "("),
+                (Integer, "1"),
+                (Pipe, "|"),
+                (Integer, "2"),
+                (RParen, ")"),
+                (Colon, ":"),
+                (Ident, "x")
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_character_is_a_one_char_error() {
+        assert_eq!(significant("a ~ b"), vec![(Ident, "a"), (Error, "~"), (Ident, "b")]);
+    }
+}

@@ -61,6 +61,92 @@ pub struct Object {
     /// For xmlports: the schema. Triggers and procedures are ordinary routines of the object.
     #[serde(default)]
     pub xmlport: Option<XmlPort>,
+    /// For reports: the data items and report-level triggers. The triggers and procedures are
+    /// ordinary routines of the object.
+    #[serde(default)]
+    pub report: Option<Report>,
+    /// For reportextensions that change what a run does: the triggers and data items they add.
+    #[serde(default)]
+    pub report_ext: Option<ReportExt>,
+}
+
+/// A report as the runtime sees it: processing only, with no layout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Report {
+    /// `ProcessingOnly = true`.
+    pub processing_only: bool,
+    /// `UseRequestPage` when the report declares it (it defaults to true).
+    pub use_request_page: Option<bool>,
+    /// The report declares a `requestpage` section.
+    pub has_request_page: bool,
+    /// `TransactionType`, lower-case, when the report declares it.
+    pub transaction_type: Option<String>,
+    /// Data items in source order; `parent` makes the tree. Top-level items have no parent.
+    pub items: Vec<ReportItem>,
+    /// `OnInitReport`, `OnPreReport` and `OnPostReport` as routine indices.
+    pub on_init: Option<usize>,
+    pub on_pre: Option<usize>,
+    pub on_post: Option<usize>,
+    /// The one reportextension (object index) that changes what a run does, if any.
+    #[serde(default)]
+    pub extension: Option<usize>,
+    /// Global slot of the hidden flag `Report.UseRequestPage(x)` sets: 0 = not set, 1 = true, 2 = false.
+    pub request_flag_slot: usize,
+    /// Why the runtime cannot run this report yet; empty = it can.
+    pub unsupported: Vec<String>,
+}
+
+/// What a reportextension adds to a run of the report it extends.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReportExt {
+    /// Object index of the extended report.
+    pub base: usize,
+    /// `OnPreReport` and `OnPostReport` of the extension, as routine indices.
+    pub on_pre: Option<usize>,
+    pub on_post: Option<usize>,
+    /// (base item index, global slot of the extension that names that item's record).
+    pub aliases: Vec<(usize, usize)>,
+    /// `modify(Item)` blocks.
+    pub modifies: Vec<ReportExtModify>,
+    /// Data items the extension adds with `addlast`.
+    pub added: Vec<AddedItem>,
+}
+
+/// The triggers of a `modify(Item)` block of a reportextension.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReportExtModify {
+    /// Index of the base item.
+    pub item: usize,
+    /// `OnBeforeAfterGetRecord` and `OnAfterAfterGetRecord` as routine indices.
+    pub before: Option<usize>,
+    pub after: Option<usize>,
+}
+
+/// A data item added by `addlast`: under a base item, or (`item.parent`) under another added item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AddedItem {
+    /// `item.parent` indexes `ReportExt::added`.
+    pub item: ReportItem,
+    /// The base item it is added under (top-level added items).
+    pub base_parent: Option<usize>,
+}
+
+/// A `dataitem` of a report.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReportItem {
+    pub name: String,
+    pub parent: Option<usize>,
+    /// Global slot of the item's record, and the object index of its table.
+    pub slot: Option<usize>,
+    pub table: Option<usize>,
+    /// `DataItemTableView` as written (`sorting(..) where(..)`).
+    pub view: Option<String>,
+    /// `DataItemLink` pairs (own field position, parent item field position).
+    pub link: Vec<(usize, usize)>,
+    /// `OnPreDataItem`, `OnAfterGetRecord` and `OnPostDataItem` as routine indices.
+    pub on_pre: Option<usize>,
+    pub on_after_get: Option<usize>,
+    pub on_post: Option<usize>,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).
@@ -624,6 +710,8 @@ mod tests {
                 app: 0,
                 query: None,
                 xmlport: None,
+                report: None,
+                report_ext: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

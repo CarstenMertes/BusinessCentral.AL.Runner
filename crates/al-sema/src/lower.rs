@@ -217,6 +217,96 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         xml_irs[oi] = Some(crate::xmlports::build(&cx, Vec::new()));
         xml_layouts[oi] = Some(l);
     }
+    // Reports: the dataset, and the reasons the runtime cannot run one yet. The data item records
+    // take the first global slots (in source order), then the hidden `UseRequestPage` flag, so the
+    // slots are known before anything is lowered. A reportextension that changes what a run does
+    // (it has a procedure, a trigger or a section other than a request page) belongs to the
+    // report it extends; one that changes nothing is ignored.
+    let mut report_layouts: Vec<Option<crate::reports::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut report_irs: Vec<Option<ir::Report>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut ext_layouts: Vec<Option<crate::reports::ExtLayout>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut ext_irs: Vec<Option<ir::ReportExt>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut ext_base: Vec<Option<usize>> = vec![None; ws.objects.len()];
+    // Per report: the reportextensions that change a run.
+    let mut changing: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (oi, o) in ws.objects.iter().enumerate() {
+        if o.kind != ObjKind::ReportExtension {
+            continue;
+        }
+        let ext = ws.object_ast(oi);
+        let changes_a_run = ext.routines().next().is_some()
+            || ext.triggers().next().is_some()
+            || ext.sections().any(|s| !s.name().eq_ignore_ascii_case("requestpage"));
+        if let (true, Some(base)) = (changes_a_run, ext.extends_parts()) {
+            if let Resolution::Found(r) = ws.resolve_ref(o.file, ObjKind::Report, &base) {
+                changing.entry(r).or_default().push(oi);
+                ext_base[oi] = Some(r);
+                ext_layouts[oi] = Some(crate::reports::ext_layout(&ext));
+            }
+        }
+    }
+    for (oi, o) in ws.objects.iter().enumerate() {
+        if o.kind != ObjKind::Report {
+            continue;
+        }
+        let obj = ws.object_ast(oi);
+        let l = crate::reports::layout(&obj);
+        let mut slots = HashMap::new();
+        for i in &l.items {
+            let next = slots.len();
+            slots.entry(i.name.to_lowercase()).or_insert(next);
+        }
+        let exts = changing.get(&oi).cloned().unwrap_or_default();
+        let extension_reasons = if exts.len() > 1 {
+            vec!["more than one reportextension changes the run (their order is not pinned)".to_string()]
+        } else {
+            Vec::new()
+        };
+        let cx = crate::reports::Context {
+            ws,
+            members,
+            file: o.file,
+            oi,
+            layout: &l,
+            slots: &slots,
+            request_flag_slot: slots.len(),
+            routine_at: &routine_at,
+            extension_reasons,
+            extension: exts.first().copied().filter(|_| exts.len() == 1),
+        };
+        report_irs[oi] = Some(crate::reports::build(&cx, &obj, Vec::new()));
+        report_layouts[oi] = Some(l);
+    }
+    for (ei, base) in ext_base.iter().enumerate() {
+        let (Some(base), Some(layout)) = (*base, ext_layouts[ei].as_ref()) else {
+            continue;
+        };
+        let (Some(base_layout), Some(base_ir)) = (report_layouts[base].as_ref(), report_irs[base].as_ref()) else {
+            continue;
+        };
+        let cx = crate::reports::ExtContext {
+            ws,
+            members,
+            file: ws.objects[ei].file,
+            oi: ei,
+            base,
+            base_layout,
+            base_items: &base_ir.items,
+            layout,
+            routine_at: &routine_at,
+        };
+        let (ir, reasons) = crate::reports::build_ext(&cx, &ws.object_ast(ei));
+        ext_irs[ei] = Some(ir);
+        // The extension's reasons stop the report it changes.
+        let name = &ws.objects[ei].name;
+        if let Some(r) = report_irs[base].as_mut() {
+            r.unsupported.extend(
+                reasons
+                    .into_iter()
+                    .map(|why| format!("reportextension \"{name}\": {why}")),
+            );
+        }
+    }
     for (oi, o) in ws.objects.iter().enumerate() {
         let obj = ws.object_ast(oi);
         let mut lw = Lowerer {
@@ -238,6 +328,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             page_reasons: &page_reasons,
             layouts: &layouts,
             xmlports: &xml_irs,
+            reports: &report_irs,
             attrs: Default::default(),
         };
         let mut globals = Vec::new();
@@ -289,6 +380,65 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 });
             }
         }
+        if let Some(l) = &report_layouts[oi] {
+            for i in &l.items {
+                let key = i.name.to_lowercase();
+                if lw.globals.contains_key(&key) {
+                    continue;
+                }
+                let ty = lw.rt(&Ty::Record {
+                    table: i.table.clone(),
+                    temporary: false,
+                });
+                lw.globals.insert(key, globals.len());
+                match ty {
+                    Ok(rt) => globals.push(ir::Slot {
+                        name: i.name.clone(),
+                        ty: rt,
+                    }),
+                    Err(e) => {
+                        global_reasons.push(format!("dataitem `{}`: {e}", i.name));
+                        globals.push(ir::Slot {
+                            name: i.name.clone(),
+                            ty: RtType::Variant,
+                        });
+                    }
+                }
+            }
+            globals.push(ir::Slot {
+                name: "__userequestpage".into(),
+                ty: RtType::Integer,
+            });
+        }
+        // A reportextension that changes a run names the base items' records first (the run points
+        // them at the report's own), then the items it adds.
+        if let (Some(base), Some(l)) = (ext_base[oi], &ext_layouts[oi]) {
+            let base_items = report_layouts[base].as_ref().map_or(&[][..], |b| &b.items[..]);
+            for i in base_items.iter().chain(&l.items) {
+                let key = i.name.to_lowercase();
+                if lw.globals.contains_key(&key) {
+                    continue;
+                }
+                let ty = lw.rt(&Ty::Record {
+                    table: i.table.clone(),
+                    temporary: false,
+                });
+                lw.globals.insert(key, globals.len());
+                match ty {
+                    Ok(rt) => globals.push(ir::Slot {
+                        name: i.name.clone(),
+                        ty: rt,
+                    }),
+                    Err(e) => {
+                        global_reasons.push(format!("dataitem `{}`: {e}", i.name));
+                        globals.push(ir::Slot {
+                            name: i.name.clone(),
+                            ty: RtType::Variant,
+                        });
+                    }
+                }
+            }
+        }
         for v in obj.var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
@@ -330,6 +480,16 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         for r in &routine_nodes[oi] {
             lw.reasons = global_reasons.clone();
             lw.calls.clear();
+            // A trigger of a data item runs with the item's record as its `Rec`.
+            if matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension) {
+                lw.rec_slot = r
+                    .syntax()
+                    .ancestors()
+                    .filter_map(ast::Section::cast)
+                    .find(|s| ["dataitem", "modify"].iter().any(|k| s.name().eq_ignore_ascii_case(k)))
+                    .and_then(|s| s.args().into_iter().next())
+                    .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
+            }
             let routine = lw.routine(r);
             // A TestPage drives page routines the call graph cannot see (ADR-012).
             for s in routine.locals.iter().chain(&globals) {
@@ -348,11 +508,15 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                         }
                     }
                 }
-                // An xmlport's triggers are run by Import and Export, which the graph cannot see.
+                // An xmlport's triggers are run by Import and Export, and a report's by Run, which
+                // the graph cannot see.
                 if let RtType::Codeunit(p) = s.ty {
                     let p = p as usize;
-                    if ws.objects[p].kind == ObjKind::XmlPort {
+                    if matches!(ws.objects[p].kind, ObjKind::XmlPort | ObjKind::Report) {
                         lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
+                    }
+                    if let Some(e) = report_irs[p].as_ref().and_then(|r| r.extension) {
+                        lw.calls.extend((0..routine_nodes[e].len()).map(|ri| (e, ri)));
                     }
                 }
             }
@@ -387,6 +551,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             page,
             app: o.app as u32,
             xmlport: xml_irs[oi].clone(),
+            report: report_irs[oi].clone(),
+            report_ext: ext_irs[oi].clone(),
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.unsupported.push(unsupported);
@@ -623,6 +789,8 @@ struct Lowerer<'a> {
     layouts: &'a [Option<crate::pages::Layout>],
     /// Per object: the schema of an xmlport (its `unsupported` says why a variable is refused).
     xmlports: &'a [Option<ir::XmlPort>],
+    /// Per object: the dataset of a report (its `unsupported` says why a variable is refused).
+    reports: &'a [Option<ir::Report>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
 }
@@ -1216,6 +1384,14 @@ impl Lowerer<'_> {
                 match self.xmlports[x].as_ref().and_then(|p| p.unsupported.first()) {
                     None => RtType::Codeunit(x as u32),
                     Some(why) => return Err(format!("XmlPort \"{}\": {why}", crate::types::display_name(n))),
+                }
+            }
+            // A report variable is an instance with its own globals, like a codeunit's.
+            Ty::Object(ObjKind::Report, n) => {
+                let r = self.resolve_obj(ObjKind::Report, n)?;
+                match self.reports[r].as_ref().and_then(|p| p.unsupported.first()) {
+                    None => RtType::Codeunit(r as u32),
+                    Some(why) => return Err(format!("Report \"{}\": {why}", crate::types::display_name(n))),
                 }
             }
             Ty::Object(ObjKind::Page, n) => {
@@ -2078,7 +2254,10 @@ impl Lowerer<'_> {
                     Some(r)
                         if matches!(
                             self.ty_of(r),
-                            Ty::Object(ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort, _) | Ty::Record { .. }
+                            Ty::Object(
+                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report,
+                                _
+                            ) | Ty::Record { .. }
                         ) =>
                     {
                         Some(Box::new(self.expr(r)?))
@@ -2152,6 +2331,16 @@ impl Lowerer<'_> {
                     .ok_or_else(|| format!("{id} not in catalog"))?
                     .clone();
                 let receiver = match &receiver_node {
+                    // `CurrReport` is the report whose code is running: the VM takes the running
+                    // instance when a report builtin has no receiver.
+                    Some(r)
+                        if sig.instance
+                            && sig.receiver == "Report"
+                            && self.ws.objects[self.oi].kind == ObjKind::Report
+                            && r.text().to_string().trim().eq_ignore_ascii_case("CurrReport") =>
+                    {
+                        None
+                    }
                     // Enum metadata calls (`"Name".Names()`, `Var.Ordinals()`, `"Name".FromInteger(n)`)
                     // receive the enum itself: its object index, as an enum constant.
                     Some(r) if sig.receiver == "Enum" && sig.name != "AsInteger" => {

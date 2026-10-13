@@ -15,7 +15,7 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [004](004-snapshot-store.md) | Snapshots live on a separate `SnapshotStore` trait | Accepted |
 | [005](005-company-and-access-context.md) | Company in every table identity; access context on every data op | Accepted |
 | [006](006-core-purity.md) | No OS access in core crates; WASM-compatible | Accepted |
-| [007](007-oracle-and-ratchet.md) | Oracle = corpus CI JUnit for BC 27.5; passing set is a ratchet | Accepted |
+| [007](007-oracle-and-ratchet.md) | Oracle = corpus CI JUnit for BC 27.5; passing set is a ratchet (one oracle and one ratchet per BC major since ADR-015) | Accepted |
 | [009](009-observable-equivalence.md) | The contract is observable behaviour; internals, performance, diagnostics and tooling may improve on BC | Accepted |
 | [008](008-builtins-catalog.md) | Builtin signatures generated from the docs; implementations registered by overload id; value model in al-builtins | Accepted |
 | [010](010-value-model.md) | One Value enum in al-builtins; value types copy, reference types share; records are handles | Accepted |

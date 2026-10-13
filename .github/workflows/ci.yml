@@ -51,13 +51,13 @@ jobs:
       - name: Build release binary
         run: cargo build --release -p al-test-cli
 
-      # Fails the job on any regression against metrics/passing.txt (exit 1),
+      # Fails the job on any regression against metrics/<major>/passing.txt of every version in oracle/oracle.toml (exit 1),
       # or when the oracle and the corpus pin disagree (exit 2).
       - name: Corpus pass rate
         run: |
-          ./target/release/al-test-cli --require-dotnet \
+          ./target/release/al-test-cli --all-versions --require-dotnet \
             --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml
-          cat pass-rate.md >> "$GITHUB_STEP_SUMMARY"
+          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
 
       # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s,
       # parser throughput at least 50 MB/s. #[ignore]d in plain `cargo test`
@@ -79,7 +79,7 @@ jobs:
         with:
           name: pass-rate-${{ steps.date.outputs.d }}-${{ github.run_id }}
           path: |
-            pass-rate.json
-            pass-rate.md
-            runtime-junit.xml
+            pass-rate-*.json
+            pass-rate-*.md
+            runtime-junit-*.xml
           retention-days: 90

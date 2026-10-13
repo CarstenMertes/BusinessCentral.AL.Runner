@@ -41,19 +41,40 @@ pub struct Engine {
     pub tables: Vec<Option<al_data::TableDef>>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
+    /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
+    pub target: Option<al_version::Target>,
     /// The .NET host, the registry of runtime-provided classes and the policy (ADR-014).
     pub dotnet: dotnet::DotNetConfig,
 }
 
 impl Engine {
     pub fn new(program: ir::Program, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
-        Engine::with_dotnet(program, blocked, dotnet::DotNetConfig::default())
+        Engine::with_config(program, blocked, None, dotnet::DotNetConfig::default())
+    }
+
+    /// An engine that runs as `target`: version-gated behaviour follows it (ADR-015 3.4).
+    pub fn with_target(
+        program: ir::Program,
+        blocked: Vec<Vec<Option<String>>>,
+        target: Option<al_version::Target>,
+    ) -> Arc<Engine> {
+        Engine::with_config(program, blocked, target, dotnet::DotNetConfig::default())
     }
 
     /// An engine whose `DotNet` calls are served by `dotnet` (ADR-014). `new` uses no .NET.
     pub fn with_dotnet(
         program: ir::Program,
         blocked: Vec<Vec<Option<String>>>,
+        dotnet: dotnet::DotNetConfig,
+    ) -> Arc<Engine> {
+        Engine::with_config(program, blocked, None, dotnet)
+    }
+
+    /// Target and .NET host together.
+    pub fn with_config(
+        program: ir::Program,
+        blocked: Vec<Vec<Option<String>>>,
+        target: Option<al_version::Target>,
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
         let tables = program
@@ -85,6 +106,7 @@ impl Engine {
             blocked,
             tables,
             events,
+            target,
             dotnet,
         })
     }

@@ -272,6 +272,8 @@ pub struct PageState {
     /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30): `refused` keeps the line, `pending`
     /// is the line left behind by Previous()/First(), whose insert fails again at Close().
     pub refused: bool,
+    /// The last close was refused because OnQueryClosePage raised an error (shown as a message).
+    pub close_error: bool,
     pub pending: Option<Vec<Value>>,
     /// Opened by AL code (`Page.RunModal`, `Page.Run`) and answered by a handler, not by the test.
     pub modal: bool,
@@ -347,6 +349,7 @@ impl PageState {
             focus_in_row: false,
             errors: Vec::new(),
             refused: false,
+            close_error: false,
             pending: None,
             modal: false,
             lookup: false,

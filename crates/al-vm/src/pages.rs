@@ -1083,10 +1083,12 @@ impl Session {
         let veto = match self.page_trigger_answer(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
             Err(Signal::Error(e)) => {
                 self.ui_message(e.message)?;
+                st.borrow_mut().close_error = true;
                 return Ok(Value::Null);
             }
             other => other?,
         };
+        st.borrow_mut().close_error = false;
         if veto == Some(false) {
             return Ok(Value::Null);
         }
@@ -1976,7 +1978,17 @@ impl Session {
             let a = self.unattended_action(&st);
             self.close_with(&st, a, true, false)?;
             if st.borrow().open {
-                return unsupported("a page whose OnQueryClosePage refused the platform's close");
+                // The platform closes the page the handler left open, and OnQueryClosePage
+                // raises again: a second message, a second refusal. The caller gets control back
+                // with the page gone and no action completed; the page's writes stay (corpus
+                // handlers/TestPageQueryCloseMessageHandler_Tests.al:
+                // ErrorInQueryClosePage_MessageConsumed_CallerRegainsControl, ..._SettlesThePagesUncommittedWrite).
+                // A refusal by a plain `false` is not pinned for a modal page.
+                if !(modal && st.borrow().close_error) {
+                    return unsupported("a page whose OnQueryClosePage refused the platform's close");
+                }
+                self.mark_closed(&st);
+                st.borrow_mut().result = Some("None".into());
             }
         }
         // A handler that left its page torn down closed it without OK (corpus

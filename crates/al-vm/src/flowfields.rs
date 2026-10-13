@@ -162,9 +162,10 @@ impl Session {
                 {
                     // The file's header comment says BC 29 also accepts BigInteger into Integer,
                     // but only the sum of an Integer source into a BigInteger FlowField is asserted.
-                    return unsupported(
-                        "BC 29 accepts this Integer/BigInteger pair, but the corpus pins only a sum of an Integer source into a BigInteger FlowField",
-                    );
+                    return unsupported(format!(
+                        "BC {} accepts this Integer/BigInteger pair, but the corpus pins only a sum of an Integer source into a BigInteger FlowField",
+                        al_version::Gate::FlowFieldSumIntegerIntoBigInteger.since_bc()
+                    ));
                 }
                 if std::mem::discriminant(&f.ty) != std::mem::discriminant(&s.ty)
                     && !(relaxed

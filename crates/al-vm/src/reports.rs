@@ -305,7 +305,7 @@ impl Session {
 
     // ------------------------------------------------------------------ table views
 
-    fn report_item_record(&self, inst: &Inst, item: &ir::ReportItem) -> Result<Rec, Signal> {
+    fn base_item_record(&self, inst: &Inst, item: &ir::ReportItem) -> Result<Rec, Signal> {
         match item.slot.map(|s| inst.borrow().globals[s].clone()) {
             Some(Value::Record(rc)) => Ok(rc),
             other => unsupported(format!("dataitem {} holds {other:?}", item.name)),
@@ -344,7 +344,7 @@ impl Session {
                 item.name
             ));
         }
-        let target = self.report_item_record(inst, item)?;
+        let target = self.base_item_record(inst, item)?;
         let mut t = target.borrow_mut();
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
@@ -437,23 +437,52 @@ impl Session {
         }
     }
 
-    /// `OnPreReport`, every top-level data item, `OnPostReport`. The order of the report triggers
-    /// among themselves is pinned by reportextension/TestReportExtensionTriggers.al:244-250
-    /// (pre before post); the rest is the order the BC documentation gives
+    /// `OnPreReport`, every top-level data item, `OnPostReport`; a reportextension's triggers
+    /// follow the base report's own. The order of the report triggers among themselves is pinned
+    /// by reportextension/TestReportExtensionTriggers.al:244-250 (base pre, extension pre, base
+    /// post, extension post); the rest is the order the BC documentation gives
     /// (docs/probes-needed.md).
     fn report_body(&mut self, inst: &Inst, schema: &Schema) -> Result<(), Signal> {
         let report = schema.report();
+        // A reportextension that changes the run gets an instance of its own for this run, whose
+        // names for the base items point at the report's own records.
+        let ext = match report.extension {
+            None => None,
+            Some(e) => {
+                let ext_inst = self.instance(e);
+                let eir = self.engine.program.objects[e]
+                    .report_ext
+                    .as_ref()
+                    .expect("a report names only extensions that were lowered");
+                for &(base_item, slot) in &eir.aliases {
+                    let base_slot = report.items[base_item].slot.expect("an alias has a record");
+                    let record = inst.borrow().globals[base_slot].clone();
+                    ext_inst.borrow_mut().globals[slot] = record;
+                }
+                Some((ext_inst, e))
+            }
+        };
+        let run = Run {
+            engine: self.engine.clone(),
+            object: schema.object,
+            base: inst.clone(),
+            ext,
+        };
         // The data items' own views are in force before OnPreReport, which may refine them
         // (handlers/TestReportGetFilterInTriggers.al:43-52 reads the view there).
-        for item in &report.items {
-            let Some(view) = &item.view else { continue };
-            let rec = self.report_item_record(inst, item)?;
+        for r in run.all_items() {
+            let Some(view) = run.item(r).view.clone() else { continue };
+            let rec = self.report_item_record(&run, r)?;
             let t = self.table(&rec)?;
-            self.set_view(&rec, &t, view)?;
+            self.set_view(&rec, &t, &view)?;
         }
         // How a filter on a field a DataItemLink joins combines with the link is not pinned.
-        for item in report.items.iter().filter(|i| !i.link.is_empty()) {
-            let rec = self.report_item_record(inst, item)?;
+        for r in run.all_items() {
+            let item = run.item(r);
+            if item.link.is_empty() {
+                continue;
+            }
+            let rec = self.report_item_record(&run, r)?;
             if rec
                 .borrow()
                 .filters
@@ -467,55 +496,163 @@ impl Session {
             }
         }
         if let Some(r) = report.on_pre {
-            self.call(schema.object, r, inst.clone(), Vec::new())?;
+            self.call(run.object, r, run.base.clone(), Vec::new())?;
         }
-        for (i, item) in report.items.iter().enumerate() {
-            if item.parent.is_none() {
-                self.report_item(inst, schema, i)?;
+        if let Some((ext_inst, e)) = &run.ext {
+            if let Some(r) = run.ext_ir().and_then(|x| x.on_pre) {
+                self.call(*e, r, ext_inst.clone(), Vec::new())?;
+            }
+        }
+        for i in 0..report.items.len() {
+            if report.items[i].parent.is_none() {
+                self.report_item(&run, ItemRef::Base(i), None)?;
             }
         }
         if let Some(r) = report.on_post {
-            self.call(schema.object, r, inst.clone(), Vec::new())?;
+            self.call(run.object, r, run.base.clone(), Vec::new())?;
+        }
+        if let Some((ext_inst, e)) = &run.ext {
+            if let Some(r) = run.ext_ir().and_then(|x| x.on_post) {
+                self.call(*e, r, ext_inst.clone(), Vec::new())?;
+            }
         }
         Ok(())
+    }
+
+    fn report_item_record(&self, run: &Run, r: ItemRef) -> Result<Rec, Signal> {
+        let item = run.item(r);
+        let (owner, _) = run.owner(r);
+        match item.slot.map(|s| owner.borrow().globals[s].clone()) {
+            Some(Value::Record(rc)) => Ok(rc),
+            other => unsupported(format!("dataitem {} holds {other:?}", item.name)),
+        }
     }
 
     /// One data item: `OnPreDataItem`, `OnAfterGetRecord` per row with the nested items run for
     /// each row, `OnPostDataItem`. A nested item runs again for every row of its parent, over the
     /// rows its `DataItemLink` joins to that row
     /// (reportextension/TestReportExtensionTriggers.al:253-259 for the repetition,
-    /// handlers/TestReportNestedLinkImplicitParent.al:113-134 for the link).
-    fn report_item(&mut self, inst: &Inst, schema: &Schema, index: usize) -> Result<(), Signal> {
-        let item = &schema.report().items[index];
-        let rec = self.report_item_record(inst, item)?;
-        if let Some(parent) = item.parent {
-            let parent_rec = self.report_item_record(inst, &schema.report().items[parent])?;
+    /// handlers/TestReportNestedLinkImplicitParent.al:113-134 for the link). A reportextension's
+    /// `modify` triggers bracket the base item's `OnAfterGetRecord`, row by row (:262-268), and
+    /// the items it adds run after the item's own nested items.
+    fn report_item(&mut self, run: &Run, r: ItemRef, parent_rec: Option<Rec>) -> Result<(), Signal> {
+        let item = run.item(r);
+        let (owner, object) = run.owner(r);
+        let rec = self.report_item_record(run, r)?;
+        if let Some(parent) = parent_rec {
             for &(own, other) in &item.link {
-                let v = parent_rec.borrow().fields[other].clone();
+                let v = parent.borrow().fields[other].clone();
                 self.ret_used = false;
                 self.record_op("SetRange", &rec, &mut [Value::Integer(own as i32), v])?;
             }
         }
-        if let Some(r) = item.on_pre {
-            self.call(schema.object, r, inst.clone(), Vec::new())?;
+        if let Some(t) = item.on_pre {
+            self.call(object, t, owner.clone(), Vec::new())?;
         }
+        let modify = match r {
+            ItemRef::Base(i) => run.ext_ir().and_then(|x| x.modifies.iter().find(|m| m.item == i)),
+            ItemRef::Added(_) => None,
+        };
         self.ret_used = true;
         let mut more = matches!(self.record_op("FindSet", &rec, &mut [])?, Value::Boolean(true));
         while more {
-            if let Some(r) = item.on_after_get {
-                self.call(schema.object, r, inst.clone(), Vec::new())?;
+            if let (Some(t), Some((ext_inst, e))) = (modify.and_then(|m| m.before), &run.ext) {
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
             }
-            for (child, c) in schema.report().items.iter().enumerate() {
-                if c.parent == Some(index) {
-                    self.report_item(inst, schema, child)?;
-                }
+            if let Some(t) = item.on_after_get {
+                self.call(object, t, owner.clone(), Vec::new())?;
+            }
+            if let (Some(t), Some((ext_inst, e))) = (modify.and_then(|m| m.after), &run.ext) {
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            }
+            for child in run.children(r) {
+                self.report_item(run, child, Some(rec.clone()))?;
             }
             self.ret_used = true;
             more = !matches!(self.record_op("Next", &rec, &mut [])?, Value::Integer(0));
         }
-        if let Some(r) = item.on_post {
-            self.call(schema.object, r, inst.clone(), Vec::new())?;
+        if let Some(t) = item.on_post {
+            self.call(object, t, owner.clone(), Vec::new())?;
         }
         Ok(())
+    }
+}
+
+/// A data item of the running report: one of its own, or one its reportextension adds.
+#[derive(Clone, Copy)]
+enum ItemRef {
+    Base(usize),
+    Added(usize),
+}
+
+/// The instances a run executes: the report, and the reportextension that changes it (if any).
+struct Run {
+    engine: Arc<crate::Engine>,
+    /// The report's object index.
+    object: usize,
+    base: Inst,
+    /// The extension's instance and object index.
+    ext: Option<(Inst, usize)>,
+}
+
+impl Run {
+    fn report(&self) -> &ir::Report {
+        self.engine.program.objects[self.object]
+            .report
+            .as_ref()
+            .expect("a run is of a report")
+    }
+
+    fn ext_ir(&self) -> Option<&ir::ReportExt> {
+        self.ext
+            .as_ref()
+            .and_then(|(_, e)| self.engine.program.objects[*e].report_ext.as_ref())
+    }
+
+    fn item(&self, r: ItemRef) -> &ir::ReportItem {
+        match r {
+            ItemRef::Base(i) => &self.report().items[i],
+            ItemRef::Added(i) => &self.ext_ir().expect("an added item has an extension").added[i].item,
+        }
+    }
+
+    /// The instance that owns the item's record and triggers, and its object index.
+    fn owner(&self, r: ItemRef) -> (&Inst, usize) {
+        match (r, &self.ext) {
+            (ItemRef::Added(_), Some((inst, e))) => (inst, *e),
+            _ => (&self.base, self.object),
+        }
+    }
+
+    fn all_items(&self) -> Vec<ItemRef> {
+        let added = self.ext_ir().map_or(0, |x| x.added.len());
+        (0..self.report().items.len())
+            .map(ItemRef::Base)
+            .chain((0..added).map(ItemRef::Added))
+            .collect()
+    }
+
+    /// The items nested directly under `r`, in the order they run: a base item's own, then the
+    /// ones the extension added under it.
+    fn children(&self, r: ItemRef) -> Vec<ItemRef> {
+        let mut out = Vec::new();
+        if let ItemRef::Base(i) = r {
+            out.extend(
+                (0..self.report().items.len())
+                    .filter(|&c| self.report().items[c].parent == Some(i))
+                    .map(ItemRef::Base),
+            );
+        }
+        if let Some(x) = self.ext_ir() {
+            out.extend(
+                (0..x.added.len())
+                    .filter(|&c| match r {
+                        ItemRef::Base(i) => x.added[c].base_parent == Some(i),
+                        ItemRef::Added(k) => x.added[c].item.parent == Some(k),
+                    })
+                    .map(ItemRef::Added),
+            );
+        }
+        out
     }
 }

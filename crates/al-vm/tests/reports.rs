@@ -344,6 +344,99 @@ report 60876 "Default Page Report"
     dataset { dataitem(Rows; "RRE Row") { } }
 }
 
+
+// corpus reportextensiontrigger/TestReportExtensionTriggers.al, with a table of numbers for Integer.
+codeunit 68000 "RXT Log"
+{
+    SingleInstance = true;
+    var Entries: Dictionary of [Text, Text]; FailExtPreReport: Boolean;
+    procedure Reset() begin if Entries.Remove('Report') then; if Entries.Remove('Modify') then; if Entries.Remove('Added') then; FailExtPreReport := false; end;
+    procedure Add(Category: Text; Entry: Text)
+    var Existing: Text;
+    begin
+        if Entries.Get(Category, Existing) then
+            Entries.Set(Category, Existing + '|' + Entry)
+        else
+            Entries.Add(Category, Entry);
+    end;
+    procedure Read(Category: Text): Text
+    var Existing: Text;
+    begin
+        if Entries.Get(Category, Existing) then exit(Existing);
+        exit('');
+    end;
+    procedure SetFailExtPreReport(Fail: Boolean) begin FailExtPreReport := Fail; end;
+    procedure ShouldFailExtPreReport(): Boolean begin exit(FailExtPreReport); end;
+}
+
+report 68000 "RXT Proc Report"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(BaseItem; "Num Row")
+        {
+            DataItemTableView = sorting(Number) where(Number = filter(1 .. 2));
+            trigger OnAfterGetRecord()
+            begin
+                Log.Add('Modify', 'base-' + Format(Number));
+            end;
+        }
+    }
+    trigger OnPreReport() begin Log.Add('Report', 'base-pre'); end;
+    trigger OnPostReport() begin Log.Add('Report', 'base-post'); end;
+    var Log: Codeunit "RXT Log";
+}
+
+reportextension 68000 "RXT Proc Report Ext" extends "RXT Proc Report"
+{
+    dataset
+    {
+        modify(BaseItem)
+        {
+            trigger OnBeforeAfterGetRecord() begin Log.Add('Modify', 'ext-before-' + Format(BaseItem.Number)); end;
+            trigger OnAfterAfterGetRecord() begin Log.Add('Modify', 'ext-after-' + Format(BaseItem.Number)); end;
+        }
+        addlast(BaseItem)
+        {
+            dataitem(ExtItem; "Num Row")
+            {
+                DataItemTableView = sorting(Number) where(Number = filter(1 .. 3));
+                trigger OnPreDataItem() begin Log.Add('Added', 'pre'); end;
+                trigger OnAfterGetRecord() begin Log.Add('Added', 'row-' + Format(Number)); end;
+                trigger OnPostDataItem() begin Log.Add('Added', 'post'); end;
+            }
+        }
+    }
+    trigger OnPreReport()
+    begin
+        Log.Add('Report', 'ext-pre');
+        if Log.ShouldFailExtPreReport() then
+            Error('RXT extension OnPreReport failed');
+    end;
+    trigger OnPostReport() begin Log.Add('Report', 'ext-post'); end;
+    var Log: Codeunit "RXT Log";
+}
+
+// An extension that adds a column and a procedure changes nothing a run can see... except the
+// procedure, which a variable of the base report could not call: refused.
+report 68010 "Ext Proc Base"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset { dataitem(Rows; "Num Row") { } }
+}
+reportextension 68010 "Ext Proc Ext" extends "Ext Proc Base"
+{
+    procedure Raise(Value: Integer) begin end;
+}
+
+// An empty extension, as the corpus has several (_fixtures/ALTExtensionSubtypeFixtures.al:16-26).
+reportextension 68011 "Empty Ext" extends "RRE ProcessingOnly Report"
+{
+}
+
 codeunit 50110 Helpers
 {
     procedure Seed()
@@ -999,4 +1092,78 @@ fn a_report_that_renders_output_is_refused() {
         end;",
     );
     assert!(why.contains("Layout Report"), "{why}");
+}
+
+// ---------------------------------------------------------------- reportextensions
+
+// reportextensiontrigger/TestReportExtensionTriggers.al:ReportRun_ExtPreAndPostReport_RunAfterTheBaseTriggers (:244-250)
+#[test]
+fn an_extensions_report_triggers_run_after_the_base_triggers() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Log: Codeunit \"RXT Log\"; begin
+            H.Seed(); Log.Reset();
+            Report.Run(Report::\"RXT Proc Report\", false);
+            exit(Log.Read('Report'));
+        end;"),
+        "base-pre|ext-pre|base-post|ext-post"
+    );
+}
+
+// :ReportRun_AddedDataItem_RunsItsTriggersOverItsRows (:253-259)
+#[test]
+fn an_added_data_item_runs_for_every_parent_row() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Log: Codeunit \"RXT Log\"; begin
+            H.Seed(); Log.Reset();
+            Report.Run(Report::\"RXT Proc Report\", false);
+            exit(Log.Read('Added'));
+        end;"),
+        "pre|row-1|row-2|row-3|post|pre|row-1|row-2|row-3|post"
+    );
+}
+
+// :ReportRun_ModifiedDataItem_ExtTriggersBracketTheBaseAfterGetRecord (:262-268)
+#[test]
+fn modify_triggers_bracket_the_base_aftergetrecord() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Log: Codeunit \"RXT Log\"; begin
+            H.Seed(); Log.Reset();
+            Report.Run(Report::\"RXT Proc Report\", false);
+            exit(Log.Read('Modify'));
+        end;"),
+        "ext-before-1|base-1|ext-after-1|ext-before-2|base-2|ext-after-2"
+    );
+}
+
+// :ReportRun_ExtPreReportError_FailsTheRun (:271-280)
+#[test]
+fn an_error_in_the_extensions_prereport_fails_the_run() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Log: Codeunit \"RXT Log\"; begin
+            H.Seed(); Log.Reset();
+            Log.SetFailExtPreReport(true);
+            asserterror Report.Run(Report::\"RXT Proc Report\", false);
+            Log.SetFailExtPreReport(false);
+            exit(GetLastErrorText() + '|' + Log.Read('Report'));
+        end;"),
+        "RXT extension OnPreReport failed|base-pre|ext-pre"
+    );
+}
+
+#[test]
+fn an_extension_with_a_procedure_is_refused() {
+    let why = refusal("var R: Report \"Ext Proc Base\"; begin R.UseRequestPage(false); exit('x'); end;");
+    assert!(why.contains("Ext Proc Ext"), "{why}");
+}
+
+#[test]
+fn an_empty_extension_changes_nothing() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; begin
+            H.Seed();
+            Report.Run(Report::\"RRE ProcessingOnly Report\", false, false);
+            exit(Format(H.Count('A-row')));
+        end;"),
+        "3"
+    );
 }

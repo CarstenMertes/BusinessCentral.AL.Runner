@@ -148,8 +148,15 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
     // Reports: the dataset, and the reasons the runtime cannot run one yet. The data item records
     // take the first global slots (in source order), then the hidden `UseRequestPage` flag, so the
     // slots are known before anything is lowered. A reportextension that changes what a run does
-    // is a reason on the report it extends.
-    let mut extension_reasons: HashMap<usize, Vec<String>> = HashMap::new();
+    // (it has a procedure, a trigger or a section other than a request page) belongs to the
+    // report it extends; one that changes nothing is ignored.
+    let mut report_layouts: Vec<Option<crate::reports::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut report_irs: Vec<Option<ir::Report>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut ext_layouts: Vec<Option<crate::reports::ExtLayout>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut ext_irs: Vec<Option<ir::ReportExt>> = (0..ws.objects.len()).map(|_| None).collect();
+    let mut ext_base: Vec<Option<usize>> = vec![None; ws.objects.len()];
+    // Per report: the reportextensions that change a run.
+    let mut changing: HashMap<usize, Vec<usize>> = HashMap::new();
     for (oi, o) in ws.objects.iter().enumerate() {
         if o.kind != ObjKind::ReportExtension {
             continue;
@@ -160,15 +167,12 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             || ext.sections().any(|s| !s.name().eq_ignore_ascii_case("requestpage"));
         if let (true, Some(base)) = (changes_a_run, ext.extends_parts()) {
             if let Resolution::Found(r) = ws.resolve_ref(o.file, ObjKind::Report, &base) {
-                extension_reasons.entry(r).or_default().push(format!(
-                    "reportextension \"{}\" extends it (running a reportextension is not supported yet)",
-                    o.name
-                ));
+                changing.entry(r).or_default().push(oi);
+                ext_base[oi] = Some(r);
+                ext_layouts[oi] = Some(crate::reports::ext_layout(&ext));
             }
         }
     }
-    let mut report_layouts: Vec<Option<crate::reports::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
-    let mut report_irs: Vec<Option<ir::Report>> = (0..ws.objects.len()).map(|_| None).collect();
     for (oi, o) in ws.objects.iter().enumerate() {
         if o.kind != ObjKind::Report {
             continue;
@@ -180,6 +184,12 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             let next = slots.len();
             slots.entry(i.name.to_lowercase()).or_insert(next);
         }
+        let exts = changing.get(&oi).cloned().unwrap_or_default();
+        let extension_reasons = if exts.len() > 1 {
+            vec!["more than one reportextension changes the run (their order is not pinned)".to_string()]
+        } else {
+            Vec::new()
+        };
         let cx = crate::reports::Context {
             ws,
             members,
@@ -189,10 +199,41 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             slots: &slots,
             request_flag_slot: slots.len(),
             routine_at: &routine_at,
-            extension_reasons: extension_reasons.remove(&oi).unwrap_or_default(),
+            extension_reasons,
+            extension: exts.first().copied().filter(|_| exts.len() == 1),
         };
         report_irs[oi] = Some(crate::reports::build(&cx, &obj, Vec::new()));
         report_layouts[oi] = Some(l);
+    }
+    for (ei, base) in ext_base.iter().enumerate() {
+        let (Some(base), Some(layout)) = (*base, ext_layouts[ei].as_ref()) else {
+            continue;
+        };
+        let (Some(base_layout), Some(base_ir)) = (report_layouts[base].as_ref(), report_irs[base].as_ref()) else {
+            continue;
+        };
+        let cx = crate::reports::ExtContext {
+            ws,
+            members,
+            file: ws.objects[ei].file,
+            oi: ei,
+            base,
+            base_layout,
+            base_items: &base_ir.items,
+            layout,
+            routine_at: &routine_at,
+        };
+        let (ir, reasons) = crate::reports::build_ext(&cx, &ws.object_ast(ei));
+        ext_irs[ei] = Some(ir);
+        // The extension's reasons stop the report it changes.
+        let name = &ws.objects[ei].name;
+        if let Some(r) = report_irs[base].as_mut() {
+            r.unsupported.extend(
+                reasons
+                    .into_iter()
+                    .map(|why| format!("reportextension \"{name}\": {why}")),
+            );
+        }
     }
     for (oi, o) in ws.objects.iter().enumerate() {
         let obj = ws.object_ast(oi);
@@ -297,6 +338,35 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 ty: RtType::Integer,
             });
         }
+        // A reportextension that changes a run names the base items' records first (the run points
+        // them at the report's own), then the items it adds.
+        if let (Some(base), Some(l)) = (ext_base[oi], &ext_layouts[oi]) {
+            let base_items = report_layouts[base].as_ref().map_or(&[][..], |b| &b.items[..]);
+            for i in base_items.iter().chain(&l.items) {
+                let key = i.name.to_lowercase();
+                if lw.globals.contains_key(&key) {
+                    continue;
+                }
+                let ty = lw.rt(&Ty::Record {
+                    table: i.table.clone(),
+                    temporary: false,
+                });
+                lw.globals.insert(key, globals.len());
+                match ty {
+                    Ok(rt) => globals.push(ir::Slot {
+                        name: i.name.clone(),
+                        ty: rt,
+                    }),
+                    Err(e) => {
+                        global_reasons.push(format!("dataitem `{}`: {e}", i.name));
+                        globals.push(ir::Slot {
+                            name: i.name.clone(),
+                            ty: RtType::Variant,
+                        });
+                    }
+                }
+            }
+        }
         for v in obj.var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
@@ -339,12 +409,12 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             lw.reasons = global_reasons.clone();
             lw.calls.clear();
             // A trigger of a data item runs with the item's record as its `Rec`.
-            if o.kind == ObjKind::Report {
+            if matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension) {
                 lw.rec_slot = r
                     .syntax()
                     .ancestors()
                     .filter_map(ast::Section::cast)
-                    .find(|s| s.name().eq_ignore_ascii_case("dataitem"))
+                    .find(|s| ["dataitem", "modify"].iter().any(|k| s.name().eq_ignore_ascii_case(k)))
                     .and_then(|s| s.args().into_iter().next())
                     .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
             }
@@ -361,6 +431,9 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                     let p = p as usize;
                     if matches!(ws.objects[p].kind, ObjKind::XmlPort | ObjKind::Report) {
                         lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
+                    }
+                    if let Some(e) = report_irs[p].as_ref().and_then(|r| r.extension) {
+                        lw.calls.extend((0..routine_nodes[e].len()).map(|ri| (e, ri)));
                     }
                 }
             }
@@ -395,6 +468,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             page,
             xmlport: xml_irs[oi].clone(),
             report: report_irs[oi].clone(),
+            report_ext: ext_irs[oi].clone(),
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.unsupported.push(unsupported);

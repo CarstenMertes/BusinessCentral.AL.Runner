@@ -46,10 +46,10 @@ pub struct Registry {
     /// Whether any subscriber of `Global Triggers` exists.
     pub has_global_triggers: bool,
     /// Subscribers (object, routine) of `Global Triggers` in a dependency app that cannot run
-    /// (they reach something refused, such as a platform table with no provider). The host that
-    /// sets this must report as not run every test that could observe what they would do; the
-    /// events skip them (al-test-cli `runtime.rs`, ADR-013 as built, "bridge").
-    pub unavailable_global: std::collections::HashSet<(usize, usize)>,
+    /// (they reach something refused, such as a platform table with no provider), and what they
+    /// read. Raising an event one of them would receive is refused (`dispatch.rs`), except for the
+    /// two setup events while the tables the subscriber reads hold no row.
+    pub unavailable_global: std::collections::HashMap<(usize, usize), UnavailableGlobal>,
 }
 
 impl Default for Registry {
@@ -68,6 +68,17 @@ fn is_manual(o: &ir::Object) -> bool {
     o.properties
         .iter()
         .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"))
+}
+
+/// A subscriber of `Global Triggers` in a dependency app that cannot run.
+#[derive(Debug, Clone, Default)]
+pub struct UnavailableGlobal {
+    /// Why it cannot run.
+    pub why: String,
+    /// The configuration tables its decision reads: the record variables of the routines it calls
+    /// within two levels. While none holds a row, the setup events find nothing configured and a
+    /// subscriber that cannot run would have answered "no" (see `dispatch.rs`).
+    pub config: Vec<u32>,
 }
 
 fn flag(args: &[String], i: usize) -> bool {

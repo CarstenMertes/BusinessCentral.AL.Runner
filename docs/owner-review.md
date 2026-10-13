@@ -155,9 +155,11 @@ reviewed it.
 - 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that
   stops is rolled back; the tables they would have written and that hold no row are `unseeded`, and a `Get` that finds
   nothing in dependency code is refused only for those.
-- 2026-10-14, ADR-013 (Global Triggers): dependency subscribers to `Global Triggers` that cannot run (Base Application's
-  `GlobalTriggerManagement` reaches platform tables with no provider) are skipped and reported on stderr, as main always
-  did, instead of refusing every write; remove when nothing is unavailable.
+- 2026-10-14, ADR-013 (Global Triggers): an event that a dependency subscriber which cannot run (Base Application's
+  `GlobalTriggerManagement`, platform tables with no provider) would receive is refused; the setup events skip it while
+  the configuration tables it reads are empty. The 73 tests behind `ALT Triggered` stay not run until `API Webhook
+  Subscription` and `Database::User` exist.
+- 2026-10-14, ADR-013 (baseline): every read of a table the baseline could not fill is refused, not only a missing `Get`.
 - 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
 - 2026-10-14, ADR-018, telemetry: `Session.LogMessage` is a no-op in every overload.

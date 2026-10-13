@@ -939,10 +939,17 @@ a pseudo object key. The order and the cases are in `docs/probes-needed.md`. In 
 (`check/demand.rs`) a write to any table, of any app, reaches the subscribers in dependency apps: the setup events
 always, the database events of the operations used (Base Application's codeunit 49 `GlobalTriggerManagement` among
 them). Base Application's subscribers reach platform tables that have no provider (`API Webhook Subscription`,
-`User`), so they cannot run yet: `al-test-cli` marks them unavailable and the events skip them, with a line on stderr.
-This is what main did before (it never raised the events); what it leaves out is Base Application's own reaction to
-a write (change log, Dataverse, API webhooks), which needs configuration rows a run starts without. Delete the skip
-when the providers of the `platform-tables` work make them runnable.
+`User`), so five of them cannot run yet. `al-test-cli` tells the engine which (`global_triggers_find_unavailable`) and
+`dispatch.rs` refuses, with `Signal::Unsupported` naming the subscriber and what it lacks, to raise an event one of them
+would receive. The two setup events are the one exception: while no table the subscriber's decision reads (the record
+variables of the routines it calls within two levels: change log setup, Dataverse and CDS connection setup, API webhook
+subscriptions) holds a row, nothing is configured and the subscriber would have answered "no" for every table, so it is
+skipped; with a row in one of them the setup event is refused too. Without that exception every write in a run with
+Base Application would be refused (measured: 1724 of 4836 pass). With it, a test is refused only when a database event is
+enabled for a table (by a workspace subscriber, as `ALT Triggered` does) and so reaches `GlobalTriggerManagement`
+`OnDatabaseInsert` and its siblings: all 73 tests that wait on Global Triggers events, because every one of them uses
+`ALT Triggered`. What unblocks them: the platform table `API Webhook Subscription` (and `Database::User`, which
+`Change Log Management.IsAlwaysLoggedTable` names) from the `platform-tables` work.
 
 **Install baseline** (`al-test-cli/src/baseline.rs`, `al-vm/src/baseline.rs`). Roots of the check: the install
 codeunits of every dependency app (`Subtype = Install`, found by the scan) and Base Application's `Company-Initialize`.
@@ -953,9 +960,13 @@ per-company table is refused there, a `DataPerCompany = false` table works); the
 sequences). Every test codeunit's session starts with `restore_baseline` (the persistent store makes both O(1));
 the project's own install codeunits still run per test codeunit, as before. A root that stops (Unsupported or an AL
 error) is reported on stderr: `Company-Initialize` keeps the rows it wrote before, an install trigger is rolled back.
-The tables such a root can write, minus the tables that hold a row in the baseline, are `Engine::unseeded`; only for
-them does a `Get` that finds nothing in dependency code stay refused (decision 5 of this ADR); for every other table
-it is BC's real error. Not built: seeding the platform rows (Published Application, User, Company, Access Control:
+The tables such a root writes rows to (a record variable's `Insert`, `Modify`, `Rename` or `ModifyAll` in its static
+closure and the subscribers its writes reach; `RecordRef` writes are not found), minus the tables that hold a row in the
+baseline, are `Engine::unseeded`. For them every read whose answer depends on the rows is refused, from dependency code
+and from the corpus's own: `Find*`, `Next`, `Count`, `IsEmpty`, `CalcSums`, a FlowField over them, the miss of a
+`TableRelation` check, a `Get` that finds nothing. A `Get` that finds the row is answered, and so is a temporary record.
+Rows the session wrote itself are not an exception (BC may hold more). For every other table a read is BC's real answer.
+The project's own install codeunits follow the measured order too (all per-company, then per-database with no company). Not built: seeding the platform rows (Published Application, User, Company, Access Control:
 they wait for the providers), the second snapshot after the project's own installs, a persistent copy.
 
 What stops it today on the corpus (Base Application 27.5): `Company-Initialize` stops in its `OnBeforeOnRun`
@@ -975,12 +986,17 @@ synthetic dependency apps (`al-test-cli/src/runtime.rs` tests).
 2. **A root that stops.** `Company-Initialize` keeps its earlier rows (AL Runner's partial company initialization);
    an install trigger is rolled back (the existing handling of the project's own installers). Options: keep both,
    roll back both. Chosen as stated; the rows before a stop are exactly a prefix of BC's own.
-3. **Which `Get` misses stay refused.** Options: all of them in dependency code (the old rule); none; those for
-   tables a failed root could have written and that hold no row. Chosen: the last.
-4. **Skipping Base Application's `Global Triggers` subscribers that cannot run**, instead of refusing every write.
-   Options: refuse every write in a run with Base Application (loses about 2300 passes); skip silently (main's
-   behaviour); refuse the tests that touch tables the subscribers read (the closure is hundreds of tables: it
-   removed 43 passing tests). Chosen: skip, with a line on stderr, until the providers exist.
+3. **Which reads of install-seeded tables are refused.** Options: only a missing `Get` in dependency code (the old
+   rule); none; every read whose answer depends on the rows, anywhere, for tables a failed root writes and that hold
+   no row. Chosen: the last (reviewer's instruction). The 4 baseline cases it turned into "not run" read an empty
+   Cost Accounting Setup or Dimension Correction and passed by accident; they were removed from the baselines in a
+   dedicated commit (hard rule 2).
+4. **Base Application's `Global Triggers` subscribers that cannot run.** Options: refuse every write in a run with
+   Base Application (loses about 2300 passes); skip them silently (main's behaviour; hard rule 4); refuse the tests
+   that touch the tables they read (hundreds, it removed 43 passing tests); refuse when an event reaches one,
+   with the setup events skipped while the configuration tables they read are empty (chosen, after the reviewer's
+   instruction to refuse dynamically). Cost: the 73 tests behind `ALT Triggered` stay not run until the platform
+   tables exist.
 5. **`Session.LogMessage` is a no-op** and `TelemetryScope` has the members `ExtensionPublisher` and `All`
    (Microsoft docs; ordinals not pinned). Telemetry is not observable from AL.
 6. **`DeleteAll(false)` and the database events.** Per row, with the table events and the database event, following

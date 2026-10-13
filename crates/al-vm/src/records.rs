@@ -92,6 +92,20 @@ impl Session {
             .is_some_and(|a| a.dependency)
     }
 
+    /// Refuses a read whose answer depends on the rows of table `t` when the install baseline could
+    /// not create the rows BC has there (`Engine::unseeded`, ADR-013 decision 5): the answer would
+    /// be "empty" or "fewer rows", which is not BC's. Rows this session wrote itself do not make
+    /// the answer BC's, so they are not an exception. Temporary records are private to the session.
+    pub(crate) fn unseeded_read(&self, t: &TableDef, temporary: bool, what: &str) -> Result<(), Signal> {
+        if !temporary && self.engine.unseeded.contains(&(t.object as usize)) {
+            return unsupported(format!(
+                "{what} on {}: BC holds rows here that an install trigger or Company-Initialize creates, and the install baseline could not create them (ADR-013 decision 5)",
+                t.name
+            ));
+        }
+        Ok(())
+    }
+
     /// Message texts: docs/probes-needed.md (the corpus pins 'already exists'
     /// and 'does not exist' fragments only).
     fn fail(&mut self, t: &TableDef, fields: &[Value], exists: bool) -> Result<Value, Signal> {
@@ -525,6 +539,8 @@ impl Session {
         ascending: bool,
         after: Option<Vec<Value>>,
     ) -> Result<Option<Vec<Value>>, Signal> {
+        let temporary = rec.borrow().temporary;
+        self.unseeded_read(t, temporary, "reading rows")?;
         let key = rec.borrow().key;
         // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
         let (filters, flow_field_filters) = self.split_filters(rec);
@@ -677,6 +693,13 @@ impl Session {
 
     pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         let t = self.table(rec)?;
+        if matches!(
+            method,
+            "Find" | "FindFirst" | "FindLast" | "FindSet" | "Next" | "Count" | "IsEmpty" | "CalcSums"
+        ) {
+            let temporary = rec.borrow().temporary;
+            self.unseeded_read(&t, temporary, method)?;
+        }
         let cx = self.cx.clone();
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             if let Some(f) = schema.fields.iter().find(|f| f.init_text.is_some() && f.init.is_none()) {

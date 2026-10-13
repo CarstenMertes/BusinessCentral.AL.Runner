@@ -178,8 +178,29 @@ impl Session {
         };
         let mut targets = Vec::new();
         for s in subs {
-            if object == engine.events.global_key && engine.events.unavailable_global.contains(&(s.object, s.routine)) {
-                continue;
+            if object == engine.events.global_key {
+                if let Some(u) = engine.events.unavailable_global.get(&(s.object, s.routine)) {
+                    // A subscriber that cannot run would receive this event. BC runs it, and what it
+                    // does (change log, Dataverse, API webhooks) AL code can see: refuse. The setup
+                    // events are the one exception: while no table the subscriber's decision reads
+                    // holds a row, nothing is configured and it answers "no" for every table.
+                    let setup = matches!(event, "getglobaltabletriggermask" | "getdatabasetabletriggersetup");
+                    let configured = u.config.iter().find(|&&t| self.store.has_rows(t));
+                    if !setup || configured.is_some() {
+                        let o = &engine.program.objects[s.object];
+                        return unsupported(format!(
+                            "Global Triggers event {event}: subscriber {}.{} cannot run ({}){}",
+                            o.name,
+                            o.routines[s.routine].name,
+                            u.why,
+                            configured.map_or(String::new(), |&t| format!(
+                                " and {} holds rows, which it reads",
+                                engine.program.objects[t as usize].name
+                            ))
+                        ));
+                    }
+                    continue;
+                }
             }
             if let Some(el) = element {
                 if !s.element.eq_ignore_ascii_case(el) {

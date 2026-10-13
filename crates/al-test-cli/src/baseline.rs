@@ -12,7 +12,6 @@
 //! engine's `unseeded` set, so that a `Get` that finds nothing in dependency code is refused for
 //! exactly those tables instead of answered.
 
-use crate::runtime::{subscribers_reached, tables_touched};
 use al_builtins::native::Signal;
 use al_sema::lower::Lowered;
 use al_vm::{Baseline, Engine, Session};
@@ -22,8 +21,9 @@ use std::sync::Arc;
 /// What the baseline run leaves.
 pub struct BaselineRun {
     pub baseline: Baseline,
-    /// Tables the roots that did not run (or stopped early) would have written to, and that hold
-    /// no row in the baseline: object indexes.
+    /// Tables the roots that did not run (or stopped early) would have written rows to (a record
+    /// variable's Insert, Modify, Rename or ModifyAll), and that hold no row in the baseline: object
+    /// indexes.
     pub unseeded: BTreeSet<u32>,
     /// How many tables hold a row in the baseline.
     pub filled: usize,
@@ -127,10 +127,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
                         ""
                     }
                 ));
-                touched.extend(tables_touched(lowered, oi, ri));
-                for (so, sr) in subscribers_reached(engine, lowered, oi, ri) {
-                    touched.extend(tables_touched(lowered, so, sr));
-                }
+                touched.extend(tables_written(engine, lowered, oi, ri));
             }
         }
     }
@@ -146,4 +143,203 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         ran,
         total: roots.len(),
     })
+}
+
+/// The tables that code reachable from `routine` of `object` writes rows to: a record variable's
+/// `Insert`, `Modify`, `Rename`, `ModifyAll` or `Validate`-free equivalents, found in the lowered
+/// bodies of everything it calls and of the subscribers its table writes can set off. Temporary
+/// records are left out. Writes through a `RecordRef` have no static table and are not counted.
+pub(crate) fn tables_written(engine: &Engine, lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
+    use al_builtins::value::RtType;
+    use al_ir::{Arg, Expr, Place, Stmt};
+
+    struct W<'a> {
+        locals: &'a [al_ir::Slot],
+        globals: &'a [al_ir::Slot],
+        out: &'a mut BTreeSet<u32>,
+    }
+    impl W<'_> {
+        fn root<'p>(p: &'p Place) -> Option<&'p Place> {
+            match p {
+                Place::Local(_) | Place::Global(_) => Some(p),
+                Place::Index(inner, _) => Self::root(inner),
+                Place::Field(..) => None,
+            }
+        }
+        fn record_of(&self, p: &Place) -> Option<u32> {
+            let ty = match Self::root(p)? {
+                Place::Local(i) => &self.locals.get(*i)?.ty,
+                Place::Global(i) => &self.globals.get(*i)?.ty,
+                _ => return None,
+            };
+            match ty {
+                RtType::Record(t, false) => Some(*t),
+                _ => None,
+            }
+        }
+        fn arg(&mut self, a: &Arg) {
+            match a {
+                Arg::Value(e) => self.expr(e),
+                Arg::Ref(p) => self.place(p),
+            }
+        }
+        fn place(&mut self, p: &Place) {
+            match p {
+                Place::Index(inner, idx) => {
+                    self.place(inner);
+                    idx.iter().for_each(|e| self.expr(e));
+                }
+                Place::Field(inner, _) => self.place(inner),
+                _ => {}
+            }
+        }
+        fn expr(&mut self, e: &Expr) {
+            match e {
+                Expr::Const(_) => {}
+                Expr::Load(p) => self.place(p),
+                Expr::Unary(_, a) | Expr::Convert(_, a) | Expr::DotNetCoerce(_, a) => self.expr(a),
+                Expr::Binary(_, a, b) => {
+                    self.expr(a);
+                    self.expr(b);
+                }
+                Expr::In(a, set) => {
+                    self.expr(a);
+                    for s in set {
+                        match s {
+                            al_ir::SetElem::One(e) => self.expr(e),
+                            al_ir::SetElem::Range(a, b) => {
+                                a.iter().chain(b).for_each(|e| self.expr(e));
+                            }
+                        }
+                    }
+                }
+                Expr::Ternary(a, b, c) => {
+                    self.expr(a);
+                    self.expr(b);
+                    self.expr(c);
+                }
+                Expr::Call { instance, args, .. } => {
+                    instance.iter().for_each(|e| self.expr(e));
+                    args.iter().for_each(|a| self.arg(a));
+                }
+                Expr::InterfaceCall { receiver, args, .. } => {
+                    self.expr(receiver);
+                    args.iter().for_each(|a| self.arg(a));
+                }
+                Expr::EnumImpl { value, .. } => self.expr(value),
+                Expr::Control { page, .. } => self.expr(page),
+                Expr::QueryColumn { query, .. } => self.expr(query),
+                Expr::DotNet { receiver, args, .. } => {
+                    receiver.iter().for_each(|e| self.expr(e));
+                    args.iter().for_each(|a| self.arg(a));
+                }
+                Expr::Builtin { id, receiver, args, .. } => {
+                    if let Some(r) = receiver {
+                        if let Some(rest) = id.strip_prefix("Record.") {
+                            let method = rest.split('#').next().unwrap_or("");
+                            if matches!(method, "Insert" | "Modify" | "Rename" | "ModifyAll") {
+                                let place = match &**r {
+                                    Arg::Ref(p) => Some(p),
+                                    Arg::Value(Expr::Load(p)) => Some(p),
+                                    Arg::Value(_) => None,
+                                };
+                                if let Some(t) = place.and_then(|p| self.record_of(p)) {
+                                    self.out.insert(t);
+                                }
+                            }
+                        }
+                        self.arg(r);
+                    }
+                    args.iter().for_each(|a| self.arg(a));
+                }
+            }
+        }
+        fn stmts(&mut self, body: &[Stmt]) {
+            for s in body {
+                match s {
+                    Stmt::Assign(p, e) => {
+                        self.place(p);
+                        self.expr(e);
+                    }
+                    Stmt::Expr(e) => self.expr(e),
+                    Stmt::If(c, a, b) => {
+                        self.expr(c);
+                        self.stmts(a);
+                        self.stmts(b);
+                    }
+                    Stmt::While(c, b) | Stmt::Repeat(b, c) => {
+                        self.expr(c);
+                        self.stmts(b);
+                    }
+                    Stmt::For {
+                        var, from, to, body, ..
+                    } => {
+                        self.place(var);
+                        self.expr(from);
+                        self.expr(to);
+                        self.stmts(body);
+                    }
+                    Stmt::Foreach { var, collection, body } => {
+                        self.place(var);
+                        self.expr(collection);
+                        self.stmts(body);
+                    }
+                    Stmt::Case {
+                        scrutinee,
+                        branches,
+                        otherwise,
+                    } => {
+                        self.expr(scrutinee);
+                        for (labels, b) in branches {
+                            for l in labels {
+                                match l {
+                                    al_ir::SetElem::One(e) => self.expr(e),
+                                    al_ir::SetElem::Range(a, b) => {
+                                        a.iter().chain(b).for_each(|e| self.expr(e));
+                                    }
+                                }
+                            }
+                            self.stmts(b);
+                        }
+                        self.stmts(otherwise);
+                    }
+                    Stmt::Exit(e) => e.iter().for_each(|e| self.expr(e)),
+                    Stmt::AssertError(b) => self.stmts(b),
+                    Stmt::Break | Stmt::Pos(_) => {}
+                }
+            }
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(object, routine)];
+    while let Some((o, r)) = stack.pop() {
+        if !seen.insert((o, r)) {
+            continue;
+        }
+        let obj = &lowered.program.objects[o];
+        let rt = &obj.routines[r];
+        W {
+            locals: &rt.locals,
+            globals: &obj.globals,
+            out: &mut out,
+        }
+        .stmts(&rt.body);
+        stack.extend(lowered.calls[o][r].iter().copied());
+    }
+    // The subscribers of events the writes raise.
+    for (so, sr) in crate::runtime::subscribers_reached(engine, lowered, object, routine) {
+        if seen.insert((so, sr)) {
+            let obj = &lowered.program.objects[so];
+            let rt = &obj.routines[sr];
+            W {
+                locals: &rt.locals,
+                globals: &obj.globals,
+                out: &mut out,
+            }
+            .stmts(&rt.body);
+        }
+    }
+    out
 }

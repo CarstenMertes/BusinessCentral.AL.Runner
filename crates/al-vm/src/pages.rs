@@ -114,6 +114,27 @@ impl Session {
         self.call(object, r, inst, args).map(|(v, _)| Some(v))
     }
 
+    /// A page trigger that answers Boolean: `Some(answer)` when the trigger exists and can state one,
+    /// `None` when it is absent or never executes `exit(value)`. A trigger that falls off its end
+    /// without an exit does not veto (corpus pageupdate/PageUpdateNewRowCard.Page.al: OnInsertRecord
+    /// assigns the key and exits nothing, and the row is saved; handlers/TrtCardNoInsert.Page.al
+    /// exits false and it is not).
+    fn page_trigger_answer(&mut self, st: &St, name: &str, args: Vec<Value>) -> Result<Option<bool>, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let routine = page_of(&engine, st)
+            .triggers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, r)| *r);
+        let states_answer = routine.is_some_and(|r| has_value_exit(&engine.program.objects[object].routines[r].body));
+        let v = self.page_trigger(st, name, args)?;
+        Ok(match v {
+            Some(Value::Boolean(b)) if states_answer => Some(b),
+            _ => None,
+        })
+    }
+
     /// Raises the platform event `event` that BC publishes after the page's own trigger of that name
     /// (corpus handlers/TestPageTriggerEvents.al:1-20): the page's own trigger runs first, the event is
     /// the platform's last word. `allow` is the `var Allow...` parameter some of them carry; the
@@ -296,6 +317,20 @@ impl Session {
                 self.require_open(st)?;
                 self.page_go_to_key(st, args)
             }
+            m @ ("FindFirstField" | "FindNextField" | "FindPreviousField") => {
+                self.require_open(st)?;
+                self.page_find_field(st, m, args)
+            }
+            // A page that is not a tree has nothing to expand (docs only; the corpus calls them,
+            // TestPageAdvanced.al:104, :283, asserting nothing about the answer).
+            "Expand" => {
+                self.require_open(st)?;
+                Ok(Value::Null)
+            }
+            "IsExpanded" => {
+                self.require_open(st)?;
+                Ok(Value::Boolean(false))
+            }
             m @ ("OK" | "Cancel" | "Yes" | "No") => {
                 self.require_open(st)?;
                 if !self.builtin_offered(st, m) {
@@ -325,6 +360,23 @@ impl Session {
                     .map(|(_, v)| unquote(v))
                     .unwrap_or_else(|| o.name.clone());
                 Ok(Value::Text(cap))
+            }
+            "Editable" if method.starts_with("Page.") => {
+                self.require_open(st)?;
+                match args.first() {
+                    // CurrPage.Editable(false) in OnOpenPage makes the page, page-variable controls
+                    // included, read-only; Editable(true) there does not widen a View page. Calls
+                    // from later triggers leave TestPage.Editable() alone (corpus
+                    // handlers/TestPageControlEditableRoutes.al:536-555, TestPageEditable_Tests.al:150-180;
+                    // their effect on Rec-bound controls is docs/probes-needed.md).
+                    Some(v) => {
+                        if st.borrow().opening && !ops::truthy(v)? {
+                            st.borrow_mut().editable_off = true;
+                        }
+                        Ok(Value::Null)
+                    }
+                    None => Ok(Value::Boolean(self.page_editable(st))),
+                }
             }
             "Editable" => {
                 self.require_open(st)?;
@@ -373,12 +425,31 @@ impl Session {
             }
             "Update" | "SaveRecord" => {
                 self.require_open(st)?;
-                let save = method.ends_with("SaveRecord") || matches!(args.first(), Some(Value::Boolean(true)));
+                // CurrPage.Update() without an argument saves (the parameter defaults to true).
+                let save = method.ends_with("SaveRecord") || !matches!(args.first(), Some(Value::Boolean(false)));
+                if !method.ends_with("SaveRecord") {
+                    // The refresh lands after the trigger that asked for it returns (corpus
+                    // pageupdate/TestPageUpdate.al: ValidateBegin;ValidateEnd;HostAGCR).
+                    st.borrow_mut().refresh = true;
+                }
                 if !save {
-                    return unsupported("CurrPage.Update(false)");
+                    return Ok(Value::Null);
                 }
                 // Page code changed Rec: SaveRecord writes it whether or not the client typed anything
                 // (corpus handlers/TestPageTriggerEvents.al, ModifyRecordEvent_PageDrivenSave_*).
+                // Page code that inserted the new row itself and copied it into Rec hands the page
+                // that row (corpus handlers/TestPageOpenNewAfterGetCurrRecord.al:44-63).
+                if st.borrow().draft && !st.borrow().draft_stored && {
+                    let rec = self.page_rec(st);
+                    self.stored_row(&rec)?.is_some()
+                } {
+                    let mut s = st.borrow_mut();
+                    s.draft = false;
+                    s.dirty = false;
+                    drop(s);
+                    self.set_xrec(st);
+                    return Ok(Value::Null);
+                }
                 if st.borrow().cursor == Cursor::Row {
                     st.borrow_mut().dirty = true;
                 }
@@ -467,8 +538,20 @@ impl Session {
             s.refused = false;
             s.pending = None;
             s.result = None;
+            s.editable_off = false;
+            s.opening = true;
         }
         let has_source = self.has_source(st);
+        // The rowset a page serves from OnFindRecord / OnNextRecord is not modelled: refused rather
+        // than walked as the table (corpus pagefindrecord/TestPageFindRecord.al).
+        if let Some(t) = page
+            .triggers
+            .iter()
+            .find(|(n, _)| n == "onfindrecord" || n == "onnextrecord")
+        {
+            st.borrow_mut().open = false;
+            return unsupported(format!("a page with an {} trigger (the rowset page code serves)", t.0));
+        }
         // SourceTableView is the page's own view of its table (corpus
         // pagefindrecord/TestPageFindRecord.al:192 PlainPage_WithoutTheTriggers_WalksTheTableDescending);
         // how it combines with the view of a record handed to Page.Run is not pinned.
@@ -504,7 +587,9 @@ impl Session {
             }
             self.restore_page_values(st);
             self.check_page_events(st)?;
-            self.page_trigger(st, "onopenpage", vec![])?;
+            let opened = self.page_trigger(st, "onopenpage", vec![]);
+            st.borrow_mut().opening = false;
+            opened?;
             self.page_event(st, "onopenpageevent", None, None)?;
             let new_line = has_source && self.offers_new_line(st)?;
             st.borrow_mut().new_line = new_line;
@@ -669,14 +754,14 @@ impl Session {
             .unwrap_or(0) as i32;
         // An AL error raised in OnQueryClosePage is shown as a message and refuses the close
         // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
-        let veto = match self.page_trigger(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
+        let veto = match self.page_trigger_answer(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
             Err(Signal::Error(e)) => {
                 self.ui_message(e.message)?;
                 return Ok(Value::Null);
             }
             other => other?,
         };
-        if matches!(veto, Some(Value::Boolean(false))) {
+        if veto == Some(false) {
             return Ok(Value::Null);
         }
         if !self.page_event(st, "onqueryclosepageevent", Some(true), None)? {
@@ -1073,6 +1158,56 @@ impl Session {
         Ok(Value::Boolean(found))
     }
 
+    /// `FindFirstField` / `FindNextField` / `FindPreviousField`: walks the rows of the view from the
+    /// first row, the row after the current one, or the row before it, and stops on the first row
+    /// whose control shows `value`. The Variant is type-sensitive: a Text never matches an Integer
+    /// field (corpus handlers/TestPageAdvanced.al:302 Page_FindPreviousField_StringValue_*). A miss
+    /// leaves the cursor where it was (docs/probes-needed.md).
+    fn page_find_field(&mut self, st: &St, how: &str, args: &mut [Value]) -> Result<Value, Signal> {
+        if !self.has_source(st) {
+            return unsupported(format!("{how} on a page without a source table"));
+        }
+        let Some(Value::TestControl(c)) = args.first() else {
+            return unsupported(format!("{how} without a control"));
+        };
+        let ControlTarget::Control(idx) = c.target else {
+            return unsupported(format!("{how} on a built-in control"));
+        };
+        let wanted = args.get(1).cloned().unwrap_or(Value::Null);
+        let origin = self.row_key(&self.page_rec(st))?;
+        let (first_step, step) = match how {
+            "FindFirstField" => ("First", "Next"),
+            "FindNextField" => ("Next", "Next"),
+            _ => ("Previous", "Previous"),
+        };
+        let mut at = self.page_move(st, first_step)?;
+        while matches!(at, Value::Boolean(true)) {
+            let here = self.control_value(st, idx)?;
+            if Self::variant_matches(&here, &wanted) {
+                return Ok(Value::Boolean(true));
+            }
+            at = self.page_move(st, step)?;
+        }
+        let mut key = origin;
+        self.page_go_to_key(st, &mut key)?;
+        Ok(Value::Boolean(false))
+    }
+
+    fn variant_matches(here: &Value, wanted: &Value) -> bool {
+        let class = |v: &Value| match v {
+            Value::Text(_) | Value::Code(_) => 1,
+            Value::Integer(_) => 2,
+            Value::BigInteger(_) => 3,
+            Value::Decimal(_) => 4,
+            Value::Boolean(_) => 5,
+            Value::Date(..) => 6,
+            _ => 0,
+        };
+        class(here) == class(wanted)
+            && class(here) != 0
+            && ops::compare(here, wanted).map(|o| o.is_eq()).unwrap_or(false)
+    }
+
     /// A `Trap()` set on a TestPage that belongs to a routine ends with the routine; one set through
     /// a `var` parameter belongs to the caller (corpus handlers/TestPageTrapScope_Tests.al:1-15).
     pub(crate) fn end_trap_scope(&mut self, frame: &crate::Frame, params: usize, by_var: &[bool]) {
@@ -1361,10 +1496,12 @@ impl Session {
             }
         }
         let existed = self.stored_row(&rec)?.is_some();
+        st.borrow_mut().draft_stored = existed;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        // A new row nobody has saved raises OnAfterGetCurrRecord but no OnAfterGetRecord (corpus
+        // pageupdate/TestPageUpdateNewRow.al:OpenNew_TraceIsOneOnAfterGetCurrRecord).
         self.populate_expressions(st)?;
-        self.page_trigger(st, "onaftergetrecord", vec![])?;
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
         self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         // Page code that inserts the new row itself (a template step) hands the page the stored row.
@@ -1397,8 +1534,8 @@ impl Session {
             return Ok(());
         }
         // corpus handlers/TestPageTriggerEvents.al (ModifyRecordEvent_RunsAfterThePagesOwnOnModifyRecordTrigger)
-        let keep = self.page_trigger(st, "onmodifyrecord", vec![])?;
-        if matches!(keep, Some(Value::Boolean(false))) {
+        let keep = self.page_trigger_answer(st, "onmodifyrecord", vec![])?;
+        if keep == Some(false) {
             return Ok(());
         }
         if !self.page_event(st, "onmodifyrecordevent", Some(true), None)? {
@@ -1415,8 +1552,8 @@ impl Session {
     /// handlers/TestPageRecordTriggers.al:76 OnInsertRecord_ReturningFalse_SuppressesTheInsert).
     fn insert_draft(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
-        let go = self.page_trigger(st, "oninsertrecord", vec![Value::Boolean(false)])?;
-        if matches!(go, Some(Value::Boolean(false))) {
+        let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(false)])?;
+        if go == Some(false) {
             return Ok(());
         }
         if !self.page_event(st, "oninsertrecordevent", Some(true), Some(false))? {
@@ -1480,6 +1617,8 @@ impl Session {
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
         self.activate(st, idx)?;
+        // Only an Update() requested by this call's triggers refreshes at its end.
+        st.borrow_mut().refresh = false;
         let engine = self.engine();
         let page = page_of(&engine, st);
         let ctl = &page.controls[idx];
@@ -1593,8 +1732,12 @@ impl Session {
             Ok(())
         })();
         match result {
-            Ok(()) => Ok(Value::Null),
+            Ok(()) => {
+                self.run_refresh(st)?;
+                Ok(Value::Null)
+            }
             Err(Signal::Error(e)) => {
+                st.borrow_mut().refresh = false;
                 st.borrow_mut().dirty = was_dirty;
                 // The refused edit does not stay (corpus handlers/TestPageBooleanSpelling_Tests.al,
                 // SetValue_TrueFalseSpelling_IsRefused: the stored value is untouched).
@@ -1671,6 +1814,49 @@ impl Session {
             "AsDateTime" => self.control_as(st, idx, &RtType::DateTime),
             "AssertEquals" => self.control_assert_equals(st, idx, args),
             "Caption" => Ok(Value::Text(self.control_caption(st, idx)?)),
+            "OptionCount" | "GetOption" => {
+                let current = self.control_value(st, idx)?;
+                let engine = self.engine();
+                let members: Vec<i32> = match self.control_type(st, idx, &current) {
+                    Some(RtType::Option(names)) => (0..names.len() as i32).collect(),
+                    Some(RtType::Enum(id)) => engine.program.objects[id as usize]
+                        .enum_values
+                        .iter()
+                        .map(|(v, _)| *v)
+                        .collect(),
+                    _ => return unsupported(format!("TestField.{m} on a control that is not an option")),
+                };
+                if m == "OptionCount" {
+                    return Ok(Value::Integer(members.len() as i32));
+                }
+                let i = match args.first() {
+                    Some(Value::Integer(i)) => *i,
+                    _ => return unsupported("GetOption without an index"),
+                };
+                let Some(ordinal) = i
+                    .checked_sub(1)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .and_then(|n| members.get(n))
+                else {
+                    return unsupported(format!("GetOption({i}) outside the options (error text not pinned)"));
+                };
+                let v = match self.control_type(st, idx, &current) {
+                    Some(RtType::Option(names)) => Value::Option(*ordinal, names.into()),
+                    Some(RtType::Enum(id)) => Value::Enum(id, *ordinal),
+                    _ => unreachable!(),
+                };
+                Ok(Value::Text(self.control_text(st, idx, &v)?))
+            }
+            // The properties as written; a computed one is not read (docs only).
+            "HideValue" | "ShowMandatory" => {
+                let name = if m == "HideValue" { "hidevalue" } else { "showmandatory" };
+                let engine = self.engine();
+                match page_of(&engine, st).controls[idx].prop(name) {
+                    None => Ok(Value::Boolean(false)),
+                    Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(unquote(l).eq_ignore_ascii_case("true"))),
+                    Some(_) => unsupported(format!("TestField.{m} of a computed property")),
+                }
+            }
             "Editable" => Ok(Value::Boolean(self.control_editable(st, idx)?)),
             "Enabled" => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
             "Visible" => Ok(Value::Boolean(self.control_visible(st, idx)?)),
@@ -1733,11 +1919,48 @@ impl Session {
             return Ok(Value::Null);
         }
         let engine = self.engine();
+        st.borrow_mut().refresh = false;
         if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
-            self.page_routine(st, r)?;
+            let r = self.page_routine(st, r);
+            if r.is_err() {
+                st.borrow_mut().refresh = false;
+            }
+            r?;
             self.settle_after_action(st)?;
+            self.run_refresh(st)?;
         }
         Ok(Value::Null)
+    }
+
+    /// The re-read `CurrPage.Update` asked for, once the call that made it has returned: the
+    /// stored current row loads again and raises OnAfterGetRecord and OnAfterGetCurrRecord; a new
+    /// row nobody has saved has nothing to re-read (corpus pageupdate/TestPageUpdateNewRow.al:1-30,
+    /// TestPageUpdateGoneRow.al StoredRow_OnValidateUpdateFalse_Trace). The row is read from the
+    /// table unless the client holds edits of it that are not saved yet.
+    fn run_refresh(&mut self, st: &St) -> Result<(), Signal> {
+        if !std::mem::take(&mut st.borrow_mut().refresh) {
+            return Ok(());
+        }
+        if !st.borrow().open || !self.has_source(st) || st.borrow().cursor != Cursor::Row || st.borrow().draft {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        if self.stored_row(&rec)?.is_none() {
+            return Ok(());
+        }
+        if !st.borrow().dirty {
+            self.ret_used = true;
+            let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+            self.record_op("Get", &rec, &mut pk)?;
+        }
+        let r = (|| {
+            self.populate_current(st)?;
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)
+        })();
+        self.torn_down_on_error(st, r)?;
+        st.borrow_mut().refresh = false;
+        Ok(())
     }
 
     /// What the page does once an action returns: a page that showed no row may show the one the
@@ -1779,7 +2002,22 @@ impl Session {
             let r = self.arrive(st);
             self.torn_down_on_error(st, r)?;
         } else {
+            // No stored row is left: the list shows its blank line, which raises
+            // OnAfterGetCurrRecord three times after an action that called CurrPage.Update (corpus
+            // pageupdate/TestPageUpdateGoneRow.al:List_DeletedByAction_OnlyRow_ShowsNoStoredRow);
+            // what an action that did not call it raises is not pinned.
+            if !st.borrow().refresh {
+                return unsupported("a list whose only row an action deleted, without CurrPage.Update");
+            }
+            st.borrow_mut().refresh = false;
+            let table = rec.borrow().table as usize;
+            let fresh = self.initial_fields(table);
+            rec.borrow_mut().fields = fresh;
             st.borrow_mut().cursor = Cursor::None;
+            for _ in 0..3 {
+                self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+            }
         }
         Ok(())
     }
@@ -2031,6 +2269,7 @@ impl Session {
         // A list handed over in lookup mode is read-only, page-variable controls included
         // (corpus handlers/TestPageControlEditableRoutes.al:446 List_RunModal_LookupMode).
         st.borrow().mode != PageMode::View
+            && !st.borrow().editable_off
             && !(st.borrow().lookup && self.is_list_page(st))
             && !props
                 .iter()
@@ -2044,7 +2283,8 @@ impl Session {
         // handlers/TestPageReadOnlySetValue.al:365 OpenView_PageVariableControl_StaysEditable).
         let engine = self.engine();
         let rec_bound = !matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Var(_))
-            || (st.borrow().lookup && self.is_list_page(st));
+            || (st.borrow().lookup && self.is_list_page(st))
+            || st.borrow().editable_off;
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }
 
@@ -2070,4 +2310,19 @@ impl Session {
         }
         Ok(visible)
     }
+}
+
+/// Whether any statement of `body` executes `exit(value)`.
+fn has_value_exit(body: &[ir::Stmt]) -> bool {
+    use ir::Stmt;
+    body.iter().any(|s| match s {
+        Stmt::Exit(Some(_)) => true,
+        Stmt::If(_, a, b) => has_value_exit(a) || has_value_exit(b),
+        Stmt::While(_, b) | Stmt::Repeat(b, _) | Stmt::AssertError(b) => has_value_exit(b),
+        Stmt::For { body, .. } | Stmt::Foreach { body, .. } => has_value_exit(body),
+        Stmt::Case {
+            branches, otherwise, ..
+        } => branches.iter().any(|(_, b)| has_value_exit(b)) || has_value_exit(otherwise),
+        _ => false,
+    })
 }

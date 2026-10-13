@@ -157,6 +157,13 @@ pub struct PageState {
     pub result: Option<String>,
     /// `TestPage.Trap()` was called on this variable and no page has been caught yet.
     pub trapping: bool,
+    /// `CurrPage.Update` was called: the client re-reads the row once the call that made it returns.
+    pub refresh: bool,
+    /// A row with the new record's starting key was already stored when the draft started.
+    pub draft_stored: bool,
+    /// OnInit/OnOpenPage are running, and `CurrPage.Editable(false)` has been called in them.
+    pub opening: bool,
+    pub editable_off: bool,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -192,6 +199,10 @@ impl PageState {
             lookup: false,
             result: None,
             trapping: false,
+            refresh: false,
+            draft_stored: false,
+            opening: false,
+            editable_off: false,
         }
     }
 }

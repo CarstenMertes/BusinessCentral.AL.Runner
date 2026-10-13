@@ -877,6 +877,20 @@ page 60702 "PH Host"
     actions { area(Processing) { action(Pick) { trigger OnAction() var M: Page "PH Card"; R: Record "PH Row"; Res: Action; begin
         R.Init(); R."No." := 'RESULT'; Res := M.RunModal(); R.Descr := Format(Res); R.Insert(); end; } } }
 }
+table 60706 "PH Nr" { fields { field(1; Id; Guid) { } field(2; Name; Code[50]) { } } keys { key(PK; Id) { } } }
+page 60707 "PH NrCard"
+{
+    PageType = Card; SourceTable = "PH Nr"; DelayedInsert = true;
+    layout { area(Content) {
+        field(IdField; Rec.Id) { Visible = false; }
+        field(NameField; Rec.Name) { trigger OnValidate() begin CurrPage.Update(); end; } } }
+    trigger OnInsertRecord(BelowxRec: Boolean): Boolean begin Rec.Id := CreateGuid(); end;
+    trigger OnAfterGetRecord() var T: Codeunit PhTrace; begin T.Note('AGR:' + Rec.Name); end;
+    trigger OnAfterGetCurrRecord() var T: Codeunit PhTrace; begin T.Note('AGCR'); CurrPage.Update(false); end;
+}
+codeunit 60708 PhTrace { SingleInstance = true; var Log: Text; procedure Note(T: Text) begin Log += T + ';'; end; procedure Get(): Text begin exit(Log); end; procedure Reset() begin Log := ''; end; }
+page 60709 "PH Ro" { PageType = Card; SourceTable = "PH Row"; layout { area(Content) { field(NoCtl; Rec."No.") { } field(NoteCtl; Note) { } } } trigger OnOpenPage() begin CurrPage.Editable(false); end; var Note: Text[20]; }
+page 60710 "PH Desc" { PageType = List; SourceTable = "PH Row"; SourceTableView = sorting("No.") order(descending); layout { area(Content) { repeater(R) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } } }
 table 60704 "PH Lk" { LookupPageId = "PH Card"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
 page 60705 "PH Saved" { PageType = StandardDialog; SaveValues = true; layout { area(Content) { field(Rem; RemTxt) { } } } var RemTxt: Text[30]; }
 codeunit 60703 PhT
@@ -981,6 +995,45 @@ codeunit 60703 PhT
         A.Trap(); B := A; Out := B;
     end;
 
+    // pageupdate/TestPageUpdateNewRow.al: Update() in OnValidate saves a DelayedInsert new row, then the refresh runs AGR for it
+    [Test]
+    procedure UpdateSavesTheNewRowAndRefreshesIt()
+    var C: TestPage "PH NrCard"; R: Record "PH Nr"; T: Codeunit PhTrace;
+    begin
+        T.Reset(); C.OpenNew();
+        if T.Get() <> 'AGCR;' then Error('open: %1', T.Get());
+        T.Reset(); C.NameField.SetValue('Nx');
+        if StrPos(T.Get(), 'AGR:NX;') = 0 then Error('set: %1', T.Get());
+        C.Close();
+        R.SetRange(Name, 'Nx'); if R.Count() <> 1 then Error('rows %1', R.Count());
+    end;
+
+    // handlers/TestPageControlEditableRoutes.al:548: CurrPage.Editable(false) in OnOpenPage narrows every control
+    [Test]
+    procedure CurrPageEditableFalseInOnOpenPageNarrowsEverything()
+    var C: TestPage "PH Ro"; R: Record "PH Row";
+    begin
+        R."No." := 'E1'; R.Insert();
+        C.OpenEdit();
+        if C.Editable() or C.NoCtl.Editable() or C.NoteCtl.Editable() then Error('still editable');
+        C.Close();
+    end;
+
+    // pagefindrecord/TestPageFindRecord.al:192: SourceTableView sorting descending; Find*Field walks the view
+    [Test]
+    procedure SourceTableViewOrdersTheRowsAndFindFieldWalksThem()
+    var L: TestPage "PH Desc"; R: Record "PH Row";
+    begin
+        R."No." := 'ZD1'; R.Insert(); R."No." := 'ZD2'; R.Insert(); R."No." := 'ZD3'; R.Insert();
+        L.OpenView(); L.First();
+        if L.NoCtl.Value() <> 'ZD3' then Error('first %1', L.NoCtl.Value());
+        if not L.FindNextField(L.NoCtl, 'ZD1') then Error('next');
+        if L.NoCtl.Value() <> 'ZD1' then Error('at %1', L.NoCtl.Value());
+        if L.FindFirstField(L.NoCtl, 5) then Error('an Integer must not match a Code control');
+        if L.NoCtl.Value() <> 'ZD1' then Error('a miss keeps the row, at %1', L.NoCtl.Value());
+        L.Close();
+    end;
+
     [ModalPageHandler] procedure SaveRem(var P: TestPage "PH Saved")
     begin
         if Seen = 'x' then begin P.Rem.SetValue('kept'); P.OK().Invoke(); end
@@ -1009,6 +1062,9 @@ codeunit 60703 PhT
             "IdZeroUsesLookupPageId",
             "SaveValuesKeepsWhatOkStored",
             "TrapSurvivesWhileAnotherVariableHoldsThePage",
+            "UpdateSavesTheNewRowAndRefreshesIt",
+            "CurrPageEditableFalseInOnOpenPageNarrowsEverything",
+            "SourceTableViewOrdersTheRowsAndFindFieldWalksThem",
         ] {
             assert_eq!(ph(n), Outcome::Pass, "{n}");
         }

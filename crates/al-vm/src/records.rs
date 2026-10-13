@@ -1353,6 +1353,7 @@ impl Session {
                     RenameOutcome::Renamed => {
                         if !same_key {
                             self.propagate_rename(&t, &refs, &old_fields, &row)?;
+                            self.move_record_links(&t, rec, &old_fields)?;
                         }
                         self.run_ext_trigger(&t, "OnAfterRename", rec, Some(&xrec))?;
                         self.table_event(&t, "onafterrenameevent", rec, Some(&xrec), true, None)?;

@@ -54,6 +54,8 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_006, "Company", Provider::Stored),
     (2_000_000_120, "User", Provider::Stored),
     (2_000_000_053, "Access Control", Provider::Stored),
+    // Written by Record.AddLink and friends (al-vm `platform/links.rs`).
+    (2_000_000_068, "Record Link", Provider::Stored),
 ];
 
 /// The provider of platform table `id`, if it has one.

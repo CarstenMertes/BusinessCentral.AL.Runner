@@ -237,6 +237,18 @@ impl Session {
         recv: Option<&mut Value>,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        // A TestPage begins a transaction of its own (see `in_page_transaction`); running a page
+        // with no TestPage, from a test with no transaction, is not pinned.
+        if recv.is_none() && self.no_transaction() {
+            return unsupported(format!("{method} under TransactionModel::None (not pinned)"));
+        }
+        if recv.is_some() && self.no_transaction() {
+            return self.in_page_transaction(|s| s.page_op_inner(method, recv, args));
+        }
+        self.page_op_inner(method, recv, args)
+    }
+
+    fn page_op_inner(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         match recv {
             None if method == "Page.RunStatic" || method == "Page.RunModalStatic" => {
                 let n = match args.first() {

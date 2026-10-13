@@ -996,7 +996,7 @@ impl Lowerer<'_> {
         }
         for a in r.attributes() {
             let n = a.name();
-            if n.eq_ignore_ascii_case("CommitBehavior") || n.eq_ignore_ascii_case("ErrorBehavior") {
+            if n.eq_ignore_ascii_case("ErrorBehavior") {
                 self.reasons.push(format!("[{n}] is not implemented yet"));
             }
         }

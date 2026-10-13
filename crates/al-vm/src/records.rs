@@ -649,6 +649,13 @@ impl Session {
                 ));
             }
         }
+        if matches!(
+            method,
+            "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate"
+        ) && !rec.borrow().temporary
+        {
+            self.gate_write(method)?;
+        }
         match method {
             "Init" => {
                 let fresh = self.initial_fields(t.object as usize);

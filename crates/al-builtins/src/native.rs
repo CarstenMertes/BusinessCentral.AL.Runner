@@ -126,7 +126,11 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
         let cat = crate::catalog::Catalog::load();
         cat.signatures
             .iter()
-            .filter_map(|sig| crate::json::native_for(sig).map(|f| (cat.id(sig), f)))
+            .filter_map(|sig| {
+                crate::json::native_for(sig)
+                    .or_else(|| crate::xml::native_for(sig))
+                    .map(|f| (cat.id(sig), f))
+            })
             .collect()
     })
 }

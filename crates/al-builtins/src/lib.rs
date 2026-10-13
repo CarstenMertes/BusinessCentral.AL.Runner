@@ -3,6 +3,7 @@
 
 pub mod signature;
 pub mod value;
+pub mod xml;
 
 pub mod catalog;
 pub mod collections;

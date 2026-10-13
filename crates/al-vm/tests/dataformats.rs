@@ -418,3 +418,270 @@ fn evaluate_of_forms_the_corpus_does_not_pin_is_refused() {
     assert!(unsupported("I: Integer;", "Evaluate(I, '1,000'); exit('');"));
     assert!(unsupported("B: Boolean;", "Evaluate(B, 'maybe'); exit('');"));
 }
+
+// ----------------------------------------------------------------- XML
+
+#[test]
+fn xml_read_from_and_get_root() {
+    // xml/TestXmlDocument.al: ReadFrom parses, GetRoot returns the root element, invalid XML returns false.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; Ok: Boolean;",
+        "Ok := XmlDocument.ReadFrom('<r><c>hello</c></r>', D); D.GetRoot(E); exit(Format(Ok) + E.Name());",
+    );
+    assert_eq!(t, "Yesr");
+    let t = text_of(
+        "D: XmlDocument; Ok: Boolean;",
+        "Ok := XmlDocument.ReadFrom('not xml', D); exit(Format(Ok));",
+    );
+    assert_eq!(t, "No");
+    // The error text of a failed ReadFrom whose result is unused is not pinned.
+    assert!(unsupported(
+        "D: XmlDocument;",
+        "XmlDocument.ReadFrom('not xml', D); exit('');"
+    ));
+}
+
+#[test]
+fn xml_inner_text_and_cdata() {
+    // xml/TestXmlDocument.al, TestXmlElement.al, json/TestJsonXmlDeepContracts.al.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement;",
+        "XmlDocument.ReadFrom('<r>content</r>', D); D.GetRoot(E); exit(E.InnerText());",
+    );
+    assert_eq!(t, "content");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement;",
+        "XmlDocument.ReadFrom('<empty/>', D); D.GetRoot(E); exit('[' + E.InnerText() + ']' + E.InnerXml());",
+    );
+    assert_eq!(t, "[]");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement;",
+        "XmlDocument.ReadFrom('<r><![CDATA[<not markup> & raw]]></r>', D); D.GetRoot(E); exit(E.InnerText());",
+    );
+    assert_eq!(t, "<not markup> & raw");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement;",
+        "XmlDocument.ReadFrom('<item attr=\"v\">content text</item>', D); D.GetRoot(E); exit(E.InnerText());",
+    );
+    assert_eq!(t, "content text");
+}
+
+#[test]
+fn xml_names_and_namespaces() {
+    // xml/TestXmlNamespace.al and TestXmlNamespaceManager.al.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; P: Text; Ns: Text; A: Boolean; B: Boolean;",
+        "XmlDocument.ReadFrom('<ns:root xmlns:ns=\"http://test.com\"/>', D); D.GetRoot(E);
+         A := E.GetPrefixOfNamespace('http://test.com', P); B := E.GetNamespaceOfPrefix('ns', Ns);
+         exit(E.LocalName() + '|' + E.Name() + '|' + E.NamespaceUri() + '|' + Format(A) + P + '|' + Format(B) + Ns);",
+    );
+    assert_eq!(t, "root|ns:root|http://test.com|Yesns|Yeshttp://test.com");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement;",
+        "XmlDocument.ReadFrom('<root xmlns=\"http://default\"/>', D); D.GetRoot(E); exit(E.LocalName() + E.NamespaceUri());",
+    );
+    assert_eq!(t, "roothttp://default");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement;",
+        "XmlDocument.ReadFrom('<root/>', D); D.GetRoot(E); exit('[' + E.NamespaceUri() + ']');",
+    );
+    assert_eq!(t, "[]");
+    let t = text_of(
+        "D: XmlDocument; Ok: Boolean;",
+        "Ok := XmlDocument.ReadFrom('<a:root xmlns:a=\"http://a\" xmlns:b=\"http://b\"><b:child/></a:root>', D); exit(Format(Ok));",
+    );
+    assert_eq!(t, "Yes");
+}
+
+#[test]
+fn xml_build_and_write() {
+    // xml/TestXmlDocument.al XmlDocument_WriteTo_SerializesXml; json/TestJsonXmlDeepContracts.al
+    // XmlElement_TextContent_SpecialChars_EscapedOnWrite and _SpecialChars_RoundTrip.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; S: Text;",
+        "D := XmlDocument.Create(); E := XmlElement.Create('test'); D.Add(E); D.WriteTo(S); exit(Format(StrPos(S, '<test') > 0));",
+    );
+    assert_eq!(t, "Yes");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; S: Text;",
+        "D := XmlDocument.Create(); E := XmlElement.Create('r'); E.Add(XmlText.Create('a < b & c > d')); D.Add(E); D.WriteTo(S);
+         exit(Format(StrPos(S, '&lt;') > 0) + Format(StrPos(S, '&amp;') > 0));",
+    );
+    assert_eq!(t, "YesYes");
+    let t = text_of(
+        "D: XmlDocument; D2: XmlDocument; E: XmlElement; E2: XmlElement; S: Text;",
+        "D := XmlDocument.Create(); E := XmlElement.Create('r'); E.Add(XmlText.Create('x < y')); D.Add(E); D.WriteTo(S);
+         XmlDocument.ReadFrom(S, D2); D2.GetRoot(E2); exit(E2.InnerText());",
+    );
+    assert_eq!(t, "x < y");
+    // Comments survive a round trip (XmlDocument_Comment_Preserved_InRoundTrip).
+    let t = text_of(
+        "D: XmlDocument; S: Text;",
+        "XmlDocument.ReadFrom('<root><!-- my comment --><child/></root>', D); D.WriteTo(S); exit(Format(StrPos(S, 'my comment') > 0));",
+    );
+    assert_eq!(t, "Yes");
+}
+
+#[test]
+fn xml_element_children_and_attributes() {
+    // xml/TestXmlElement.al, TestXmlExtended.al, TestXmlDeep.al, TestXmlComplete.al.
+    let t = text_of(
+        "E: XmlElement; C: XmlElement; N: XmlNode; F: Boolean;",
+        "E := XmlElement.Create('parent'); C := XmlElement.Create('child'); E.Add(C); F := E.SelectSingleNode('child', N); exit(Format(F) + N.AsXmlElement().Name());",
+    );
+    assert_eq!(t, "Yeschild");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement;",
+        "XmlDocument.ReadFrom('<root><a/><b/><a/></root>', D); D.GetRoot(E);
+         exit(Format(E.GetChildElements().Count()) + Format(E.GetChildElements('a').Count()) + Format(E.GetDescendantElements('a').Count()) + Format(E.HasElements()));",
+    );
+    assert_eq!(t, "322Yes");
+    let t = text_of(
+        "E: XmlElement;",
+        "E := XmlElement.Create('e'); E.SetAttribute('a', '1'); E.SetAttribute('b', '2'); E.RemoveAttribute('a');
+         exit(Format(E.HasAttributes()) + Format(E.Attributes().Count())); ",
+    );
+    assert_eq!(t, "Yes1");
+    let t = text_of(
+        "E: XmlElement;",
+        "E := XmlElement.Create('e'); E.SetAttribute('a', '1'); E.RemoveAllAttributes(); exit(Format(E.HasAttributes()));",
+    );
+    assert_eq!(t, "No");
+}
+
+#[test]
+fn xml_node_lists_and_node_kinds() {
+    // xml/TestXmlComplete.al: GetChildNodes indexes from 1 and includes text, CDATA and comments.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; L: XmlNodeList; N: XmlNode;",
+        "XmlDocument.ReadFrom('<r>hello</r>', D); D.GetRoot(E); L := E.GetChildNodes(); L.Get(1, N); exit(Format(N.IsXmlText()) + Format(N.IsXmlElement()) + Format(N.IsXmlCData()));",
+    );
+    assert_eq!(t, "YesNoNo");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; L: XmlNodeList; N: XmlNode;",
+        "XmlDocument.ReadFrom('<r><![CDATA[data]]></r>', D); D.GetRoot(E); L := E.GetChildNodes(); L.Get(1, N); exit(Format(N.IsXmlCData()));",
+    );
+    assert_eq!(t, "Yes");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; L: XmlNodeList; N: XmlNode;",
+        "XmlDocument.ReadFrom('<root><!-- comment --><a/></root>', D); D.GetRoot(E); L := E.GetChildNodes(); L.Get(1, N); exit(Format(N.IsXmlComment()) + Format(L.Count()));",
+    );
+    assert_eq!(t, "Yes2");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; N: XmlNode;",
+        "XmlDocument.ReadFrom('<r/>', D); D.GetRoot(E); N := E.AsXmlNode(); exit(Format(N.IsXmlElement()) + Format(N.IsXmlDocument()) + Format(N.IsXmlText()) + N.AsXmlElement().Name());",
+    );
+    assert_eq!(t, "YesNoNor");
+}
+
+#[test]
+fn xml_mutation_through_nodes() {
+    // xml/TestXmlDeep.al Remove/ReplaceWith; TestXmlExtended.al AddAfterSelf/AddBeforeSelf/AddFirst;
+    // elements are reference types, so edits through a node are visible in the document.
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; N: XmlNode;",
+        "XmlDocument.ReadFrom('<root><a/><b/></root>', D); D.GetRoot(E); E.GetChildElements().Get(1, N); N.AsXmlElement().Remove(); exit(Format(E.GetChildElements().Count()));",
+    );
+    assert_eq!(t, "1");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; N: XmlNode; N2: XmlNode;",
+        "XmlDocument.ReadFrom('<root><old/></root>', D); D.GetRoot(E); E.GetChildElements().Get(1, N); N.AsXmlElement().ReplaceWith(XmlElement.Create('new')); E.GetChildElements().Get(1, N2); exit(N2.AsXmlElement().Name());",
+    );
+    assert_eq!(t, "new");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; N: XmlNode; N2: XmlNode;",
+        "XmlDocument.ReadFrom('<root><b/></root>', D); D.GetRoot(E); E.GetChildElements().Get(1, N); N.AddBeforeSelf(XmlElement.Create('a')); N.AddAfterSelf(XmlElement.Create('c')); E.AddFirst(XmlElement.Create('z'));
+         E.GetChildElements().Get(1, N2); exit(N2.AsXmlElement().Name() + Format(E.GetChildElements().Count()));",
+    );
+    assert_eq!(t, "z4");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; Ch: XmlNode; P: XmlElement;",
+        "XmlDocument.ReadFrom('<root><child/></root>', D); D.GetRoot(E); E.GetChildElements().Get(1, Ch); Ch.GetParent(P); exit(P.Name());",
+    );
+    assert_eq!(t, "root");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; D2: XmlDocument;",
+        "XmlDocument.ReadFrom('<r/>', D); D.GetRoot(E); exit(Format(E.GetDocument(D2)));",
+    );
+    assert_eq!(t, "Yes");
+}
+
+#[test]
+fn xml_select_nodes_by_xpath() {
+    // xml/TestXmlDocument.al XmlDocument_SelectSingleNode_FindsNode ('//child'); TestXmlExtended.al SelectNodes.
+    let t = text_of(
+        "D: XmlDocument; N: XmlNode;",
+        "XmlDocument.ReadFrom('<root><child id=\"1\"/></root>', D); D.SelectSingleNode('//child', N); exit(N.AsXmlElement().Name());",
+    );
+    assert_eq!(t, "child");
+    let t = text_of(
+        "D: XmlDocument; E: XmlElement; L: XmlNodeList;",
+        "XmlDocument.ReadFrom('<r><a/><a/><a/></r>', D); D.GetRoot(E); E.SelectNodes('a', L); exit(Format(L.Count()));",
+    );
+    assert_eq!(t, "3");
+    // Prefixed names need a namespace manager, which the corpus never uses: refused.
+    assert!(unsupported(
+        "D: XmlDocument; N: XmlNode;",
+        "XmlDocument.ReadFrom('<a:r xmlns:a=\"u\"/>', D); D.SelectSingleNode('/a:r', N); exit('');"
+    ));
+}
+
+#[test]
+fn xml_declarations_attributes_and_processing_instructions() {
+    // xml/TestXmlComplete.al and TestXmlDeep.al.
+    let t = text_of(
+        "X: XmlDeclaration;",
+        "X := XmlDeclaration.Create('1.0', 'UTF-8', ''); exit(X.Encoding());",
+    );
+    assert_eq!(t, "UTF-8");
+    let t = text_of(
+        "X: XmlDeclaration;",
+        "X := XmlDeclaration.Create('1.0', '', ''); X.Encoding('UTF-16'); X.Standalone('yes'); exit(X.Encoding() + X.Standalone() + X.Version());",
+    );
+    assert_eq!(t, "UTF-16yes1.0");
+    let t = text_of(
+        "D: XmlDocument; X: XmlDeclaration; Y: XmlDeclaration;",
+        "XmlDocument.ReadFrom('<root/>', D); X := XmlDeclaration.Create('1.0', 'UTF-8', ''); D.SetDeclaration(X); D.GetDeclaration(Y); exit(Y.Encoding());",
+    );
+    assert_eq!(t, "UTF-8");
+    let t = text_of(
+        "P: XmlProcessingInstruction; Tg: Text;",
+        "P := XmlProcessingInstruction.Create('mypi', 'data'); P.GetTarget(Tg); exit(Tg);",
+    );
+    assert_eq!(t, "mypi");
+    let t = text_of(
+        "A: XmlAttribute; N: XmlNode;",
+        "A := XmlAttribute.Create('color', 'red'); N := A.AsXmlNode(); exit(A.Name() + A.Value() + A.LocalName() + '[' + A.NamespaceUri() + ']' + Format(N.IsXmlAttribute()));",
+    );
+    assert_eq!(t, "colorredcolor[]Yes");
+    let t = text_of(
+        "A: XmlAttribute;",
+        "A := XmlAttribute.CreateNamespaceDeclaration('ns', 'http://example.com'); exit(A.NamespacePrefix() + Format(A.IsNamespaceDeclaration()));",
+    );
+    assert_eq!(t, "xmlnsYes");
+}
+
+#[test]
+fn xml_get_document_type_without_a_doctype_is_refused_not_invented() {
+    // xml/TestXmlComplete.al XmlDocument_GetDocumentType_IsCallable pins that it throws but no text.
+    assert!(unsupported(
+        "D: XmlDocument; T: XmlDocumentType;",
+        "XmlDocument.ReadFrom('<root/>', D); D.GetDocumentType(T); exit('');"
+    ));
+}
+
+#[test]
+fn variants_report_json_and_xml_handles() {
+    // types/TestVariantComplete.al: IsJsonArray/IsJsonObject/IsJsonToken/IsJsonValue/IsXmlElement.
+    let t = text_of(
+        "V: Variant; A: JsonArray; O: JsonObject; T: JsonToken; X: JsonValue; D: XmlDocument; E: XmlElement; S: Text;",
+        "V := A; S := Format(V.IsJsonArray()) + Format(V.IsJsonObject());
+         V := O; S += Format(V.IsJsonObject()) + Format(V.IsJsonArray());
+         T := O.AsToken(); V := T; S += Format(V.IsJsonToken());
+         V := X; S += Format(V.IsJsonValue());
+         XmlDocument.ReadFrom('<r/>', D); D.GetRoot(E); V := E; S += Format(V.IsXmlElement());
+         V := 5; S += Format(V.IsJsonArray());
+         exit(S);",
+    );
+    assert_eq!(t, "YesNoYesNoYesYesYesNo");
+}

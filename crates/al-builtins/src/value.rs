@@ -103,6 +103,14 @@ pub enum LibraryValue {
     Text(String),
     /// A JSON node behind a JsonObject / JsonArray / JsonToken / JsonValue handle.
     Json(crate::json::JsonCell),
+    /// A node behind an Xml* handle.
+    Xml(crate::xml::XmlCell),
+    /// An XmlNodeList: a snapshot of nodes.
+    XmlList(Vec<crate::json::Handle>),
+    /// An XmlAttributeCollection: a view of one element's attributes.
+    XmlAttrs(crate::json::Handle),
+    /// An XmlNameTable (opaque).
+    XmlNameTable,
 }
 
 impl Value {

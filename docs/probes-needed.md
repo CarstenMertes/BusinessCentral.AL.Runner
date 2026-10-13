@@ -39,3 +39,8 @@ comment as a corpus citation and is deleted here.
 | XML | XPath: only simple location paths (names, `*`, `.`, `..`, `@a`, `//`, `[n]`, `[@a='v']`); unprefixed names match no-namespace elements (XPath 1.0); prefixed names and `XmlNamespaceManager` overloads are not implemented | xml/TestXmlDocument.al `//child`, TestXmlExtended.al | `xml.rs` `parse_xpath` |
 | XML | `ReadFrom` of invalid XML returns false when the result is used | xml/TestXmlDocument.al `XmlDocument_ReadFrom_InvalidXml_ReturnsFalse` (pinned); the statement form's error text is not | `xml.rs` `read_from_text` |
 | XML | `XmlDocument.GetDocumentType` throws without a DOCTYPE | xml/TestXmlComplete.al:194 pins "throws", not the text; refused | `xml.rs` `get_document_type` |
+| Streams | `WriteText` writes UTF-8 with no terminator, `Write(Integer)` 4 little-endian bytes; only round trips and `Length() > 0` are observed | streams/TestInOutStream.al, TestBlob.al | `al-builtins/src/stream.rs` |
+| Streams | `ReadText` stops at CR, LF or CRLF (consumed) or the end of the stream | corpus comments ("ReadText reads until CR/LF or EOS"); every corpus read is of text written without a terminator | `stream.rs` `in_read_text` |
+| Streams | `CreateOutStream` empties the Blob first; an InStream reads a snapshot taken at creation | none | `stream.rs` |
+| Streams | assigning a record that has a Blob field (`:=`) and renaming a temporary record that has one are refused (BC's behaviour for these is only partly pinned) | streams/TestBlobRenameIsolation.al | `al-vm/src/lib.rs`, `records.rs` |
+| Streams | `Blob.Length` of a Blob not loaded with `CalcFields`, `ArrayLen(A, Dim)` (the array value keeps no shape), `PadStr` shorter than the text | none | `stream.rs` |

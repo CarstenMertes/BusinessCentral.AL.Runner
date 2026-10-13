@@ -21,6 +21,7 @@
 60087 Text_CopyStr_ExtractsSubstring
 60087 Text_CopyStr_WithLength_LimitsResult
 60087 Text_LowerCase_ConvertsToLower
+60087 Text_PadStr_PadsToLength
 60087 Text_StrLen_ReturnsLength
 60087 Text_StrPos_FindsSubstring
 60087 Text_StrPos_NotFound_ReturnsZero

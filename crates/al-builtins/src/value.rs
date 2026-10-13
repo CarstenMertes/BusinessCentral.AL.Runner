@@ -67,6 +67,8 @@ pub enum Value {
     Library(String, Rc<RefCell<LibraryValue>>),
     /// A record variable (ADR-010: a handle; `:=` copies fields, see the VM).
     Record(Rc<RefCell<RecordState>>),
+    /// A Blob field's content: a shared buffer that streams write to (see `stream`).
+    Blob(crate::stream::BlobRef),
 }
 
 /// Everything a record variable carries.
@@ -111,6 +113,10 @@ pub enum LibraryValue {
     XmlAttrs(crate::json::Handle),
     /// An XmlNameTable (opaque).
     XmlNameTable,
+    /// An InStream: a snapshot being read.
+    InStream(crate::stream::InState),
+    /// An OutStream: appends to a Blob buffer.
+    OutStream(crate::stream::BlobRef),
 }
 
 impl Value {
@@ -145,6 +151,7 @@ impl Value {
             }))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
+            RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),
         }
     }
@@ -181,6 +188,7 @@ impl Value {
             Value::Codeunit(_) => k == "codeunit",
             Value::Library(n, _) => n.eq_ignore_ascii_case(&k),
             Value::Record(_) => k == "record",
+            Value::Blob(_) => false,
         }
     }
 }

@@ -951,6 +951,23 @@ impl Lowerer<'_> {
                         .ok_or("too many arguments")?;
                     let field_param =
                         p.name.to_ascii_lowercase().starts_with("field") || p.name.eq_ignore_ascii_case("FromField");
+                    // Only Blob fields are calculated so far (streams/): a FlowField here would let the
+                    // routine run past filter and calculation semantics that are not implemented.
+                    if id == "Record.CalcFields#1" {
+                        let blob = match self.res(a).cloned() {
+                            Some(Res::Field { table, id: fid }) => self.members[table]
+                                .fields
+                                .iter()
+                                .find(|f| f.id == fid)
+                                .is_some_and(|f| f.ty == Ty::Builtin("Blob".into())),
+                            _ => false,
+                        };
+                        if !blob {
+                            return Err(
+                                "CalcFields of a field that is not a Blob (FlowFields are not implemented yet)".into(),
+                            );
+                        }
+                    }
                     if let (true, Some(Res::Field { table, id })) = (field_param, self.res(a).cloned()) {
                         let pos = self.field_pos(table, id).ok_or("field position")?;
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));

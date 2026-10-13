@@ -81,6 +81,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
     }),
     ("Record.Reset#1", |c, r, a| c.record("Reset", r, a)),
+    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
@@ -129,6 +130,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
             .filter_map(|sig| {
                 crate::json::native_for(sig)
                     .or_else(|| crate::xml::native_for(sig))
+                    .or_else(|| crate::stream::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })
             .collect()
@@ -312,6 +314,8 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Duration(_) => Value::Duration(0),
         Value::Guid(_) => Value::Guid([0; 16]),
         Value::Option(_, m) => Value::Option(0, m.clone()),
+        // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
+        Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
         other => return unsupported(&format!("Clear of {other:?}")),
     };
     Ok(Value::Null)

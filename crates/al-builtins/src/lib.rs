@@ -2,6 +2,7 @@
 //! ADR-008) and, later, the value model and native implementations.
 
 pub mod signature;
+pub mod stream;
 pub mod value;
 pub mod xml;
 

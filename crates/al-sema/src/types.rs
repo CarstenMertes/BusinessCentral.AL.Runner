@@ -99,7 +99,12 @@ impl Ty {
                     .map(|m| m.to_string())
                     .collect(),
             ),
-            "promptmode" => Ty::Option(al_builtins::value::PROMPT_MODE_MEMBERS.iter().map(|m| m.to_string()).collect()),
+            "promptmode" => Ty::Option(
+                al_builtins::value::PROMPT_MODE_MEMBERS
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect(),
+            ),
             "textencoding" => Ty::Option(text_encoding_members()),
             "enum" => Ty::Enum(obj()),
             "record" => Ty::Record {

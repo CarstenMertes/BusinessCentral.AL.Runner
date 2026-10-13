@@ -147,12 +147,15 @@ impl Registry {
                                     && (target.eq_ignore_ascii_case("Caption Class") || target == "42")
                                     && event == "onresolvecaptionclass" =>
                                 {
-                                    reg.subscribers.entry((CAPTION_CLASS, event)).or_default().push(Subscriber {
-                                        object: oi,
-                                        routine: ri,
-                                        manual: is_manual(o),
-                                        element: String::new(),
-                                    })
+                                    reg.subscribers
+                                        .entry((CAPTION_CLASS, event))
+                                        .or_default()
+                                        .push(Subscriber {
+                                            object: oi,
+                                            routine: ri,
+                                            manual: is_manual(o),
+                                            element: String::new(),
+                                        })
                                 }
                                 None if kind == "codeunit" && target.eq_ignore_ascii_case("Global Triggers") => {
                                     reg.has_global_triggers = true;

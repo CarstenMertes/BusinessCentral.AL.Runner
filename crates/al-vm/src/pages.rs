@@ -523,7 +523,9 @@ impl Session {
                 Some(Value::Option(n, members)) if members.get(*n as usize).is_some_and(|m| m == "Prompt") => {
                     Ok(Value::Null)
                 }
-                Some(Value::Enum(..)) | Some(Value::Option(..)) => unsupported("CurrPage.PromptMode other than Prompt (not pinned)"),
+                Some(Value::Enum(..)) | Some(Value::Option(..)) => {
+                    unsupported("CurrPage.PromptMode other than Prompt (not pinned)")
+                }
                 other => unsupported(format!("CurrPage.PromptMode with {other:?}")),
             },
             "Editable" if method.starts_with("Page.") => {
@@ -751,7 +753,11 @@ impl Session {
         }
         let (instance, exts, inited) = {
             let mut f = from.borrow_mut();
-            (f.instance.take(), std::mem::take(&mut f.ext_instances), std::mem::take(&mut f.inited))
+            (
+                f.instance.take(),
+                std::mem::take(&mut f.ext_instances),
+                std::mem::take(&mut f.inited),
+            )
         };
         let engine = self.engine();
         if let Some(inst) = &instance {
@@ -1415,7 +1421,11 @@ impl Session {
         if text.contains(',') && area.trim().parse::<u32>().is_ok() {
             return unsupported(format!("CaptionClass `{text}` is resolved by the platform"));
         }
-        if !self.engine.events.is_subscribed(crate::events::CAPTION_CLASS, "onresolvecaptionclass") {
+        if !self
+            .engine
+            .events
+            .is_subscribed(crate::events::CAPTION_CLASS, "onresolvecaptionclass")
+        {
             return Ok(text.to_string());
         }
         let _ = st;
@@ -2734,7 +2744,9 @@ impl Session {
                         // Written back as the client would type it.
                         self.control_set_value(st, idx, &mut [Value::Text(t.clone())])
                     }
-                    (Value::Boolean(true), other) => unsupported(format!("an OnLookup trigger whose Text is {other:?}")),
+                    (Value::Boolean(true), other) => {
+                        unsupported(format!("an OnLookup trigger whose Text is {other:?}"))
+                    }
                     _ => Ok(Value::Null),
                 })
         } else {
@@ -2789,8 +2801,7 @@ impl Session {
                 .find(|(k, _)| k.eq_ignore_ascii_case(prop))
                 .map(|(_, v)| v.trim().trim_matches('"').to_string())?;
             engine.program.objects.iter().position(|o| {
-                o.kind == "page"
-                    && (o.name.eq_ignore_ascii_case(&name) || o.id.is_some_and(|i| i.to_string() == name))
+                o.kind == "page" && (o.name.eq_ignore_ascii_case(&name) || o.id.is_some_and(|i| i.to_string() == name))
             })
         });
         let Some(page_object) = page_of_table else {
@@ -2806,14 +2817,18 @@ impl Session {
             return Err(error("Unhandled UI: ModalPage"));
         };
         if !wheres.is_empty() {
-            return unsupported("Lookup over a TableRelation with a where() clause (the lookup page's filter is not pinned)");
+            return unsupported(
+                "Lookup over a TableRelation with a where() clause (the lookup page's filter is not pinned)",
+            );
         }
         let current = self.control_value(st, idx)?;
         if !Self::same_values(
             std::slice::from_ref(&current),
             std::slice::from_ref(&Value::default_for(&field.ty)),
         ) {
-            return unsupported("Lookup over a TableRelation from a field that already holds a value (the page's position is not pinned)");
+            return unsupported(
+                "Lookup over a TableRelation from a field that already holds a value (the page's position is not pinned)",
+            );
         }
         let related = Rc::new(RefCell::new(PageState::closed(page_object as u32)));
         related.borrow_mut().lookup = true;
@@ -2920,7 +2935,9 @@ impl Session {
         // cursor moves, and the page's row triggers must not matter.
         if self.declares(st, "onfindrecord") || self.declares(st, "onnextrecord") {
             if self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord") {
-                return unsupported("CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned)");
+                return unsupported(
+                    "CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned)",
+                );
             }
             st.borrow_mut().stale = true;
             return Ok(());
@@ -3006,6 +3023,7 @@ impl Session {
     ///   the row it settled on, which is the one `=>` answered, else the row before the gone one;
     /// * when it knows no other row: `=>` and `=><` only, and then it shows the blank line, raising
     ///   OnAfterGetCurrRecord once before the two calls and twice after.
+    ///
     /// "Knows other rows" is read as: the rows it populated hold more than the gone one. That reading is
     /// only checked against these four shapes (docs/probes-needed.md); a list the client knows as
     /// one row while the view holds more is refused.
@@ -3037,7 +3055,9 @@ impl Session {
         let probe = Rc::new(RefCell::new(rec.borrow().clone()));
         self.ret_used = true;
         if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
-            return unsupported("a list whose only populated row an action deleted, with more rows in its view (not pinned)");
+            return unsupported(
+                "a list whose only populated row an action deleted, with more rows in its view (not pinned)",
+            );
         }
         let table = rec.borrow().table as usize;
         let fresh = self.initial_fields(table);
@@ -3101,7 +3121,9 @@ impl Session {
         match page_of(&engine, st).controls[idx].binding.clone() {
             ir::Binding::Field(pos) => {
                 if st.borrow().stale {
-                    return unsupported("reading a row after CurrPage.Update on a page with OnFindRecord (the row it settles on is not pinned)");
+                    return unsupported(
+                        "reading a row after CurrPage.Update on a page with OnFindRecord (the row it settles on is not pinned)",
+                    );
                 }
                 Ok(self.page_rec(st).borrow().fields[pos].clone())
             }

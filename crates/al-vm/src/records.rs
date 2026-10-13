@@ -1056,8 +1056,16 @@ impl Session {
                             Some(row) => Some(row),
                             None => {
                                 let pos = position(&t, 0, &rec.borrow().fields);
-                                let next = if w == "=<" { None } else { self.scan(rec, &t, asc, Some(pos.clone()))? };
-                                let prev = if w == "=>" { None } else { self.scan(rec, &t, !asc, Some(pos))? };
+                                let next = if w == "=<" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, asc, Some(pos.clone()))?
+                                };
+                                let prev = if w == "=>" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, !asc, Some(pos))?
+                                };
                                 match (next, prev) {
                                     (Some(n), Some(_)) if w == "=><" => {
                                         let _ = n;

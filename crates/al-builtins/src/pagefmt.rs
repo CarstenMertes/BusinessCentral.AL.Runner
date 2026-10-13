@@ -373,7 +373,11 @@ fn parse_typed(
             if t.is_empty() {
                 Value::DateFormula(String::new())
             } else {
-                let bracketed = if t.starts_with('<') { t.to_string() } else { format!("<{t}>") };
+                let bracketed = if t.starts_with('<') {
+                    t.to_string()
+                } else {
+                    format!("<{t}>")
+                };
                 crate::datefns::check_formula(&bracketed).ok()?;
                 Value::DateFormula(bracketed)
             }
@@ -615,10 +619,19 @@ mod tests {
         // (the control's own spelling reads back); other spellings are not pinned.
         assert!(matches!(p("5 seconds", &T::Duration), Ok(Value::Duration(5000))));
         assert!(matches!(p("", &T::Duration), Ok(Value::Duration(0))));
-        assert!(matches!(p("1 hour 2 minutes 3 seconds", &T::Duration), Ok(Value::Duration(3_723_000))));
-        assert!(matches!(p("-1 day 1 millisecond", &T::Duration), Ok(Value::Duration(-86_400_001))));
+        assert!(matches!(
+            p("1 hour 2 minutes 3 seconds", &T::Duration),
+            Ok(Value::Duration(3_723_000))
+        ));
+        assert!(matches!(
+            p("-1 day 1 millisecond", &T::Duration),
+            Ok(Value::Duration(-86_400_001))
+        ));
         assert_eq!(p("5s", &T::Duration).unwrap_err(), ParseError::Unsupported);
-        assert_eq!(p("1 second 2 hours", &T::Duration).unwrap_err(), ParseError::Unsupported);
+        assert_eq!(
+            p("1 second 2 hours", &T::Duration).unwrap_err(),
+            ParseError::Unsupported
+        );
         // dateformulacontrol/TestDateFormulaControl.al: '<1D>' and the unbracketed '3D' name the same formula.
         assert!(matches!(p("<1D>", &T::DateFormula), Ok(Value::DateFormula(s)) if s == "<1D>"));
         assert!(matches!(p("3D", &T::DateFormula), Ok(Value::DateFormula(s)) if s == "<3D>"));

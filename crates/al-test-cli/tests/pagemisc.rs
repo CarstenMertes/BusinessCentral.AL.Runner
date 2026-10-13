@@ -317,7 +317,10 @@ fn reading_a_rec_bound_control_after_a_refresh_of_a_rowset_page_is_refused() {
             Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
             Check('L0008', L.\"No.\".Value); end;"
     ));
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("after CurrPage.Update")), "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("after CurrPage.Update")),
+        "{o:?}"
+    );
 }
 
 const LOOK: &str = "procedure OpenOn(var C: TestPage \"PM Look Card\") var L: Record \"PM Look\"; R: Record \"PM Related\"; X: Record \"PM Pageless\"; begin
@@ -385,7 +388,10 @@ fn an_unhandled_lookup_with_writes_pending_is_refused() {
         procedure Pending() var C: TestPage \"PM Look Card\"; begin
             OpenOn(C); C.Pageless.SetValue('PL-A'); asserterror C.Pageless.Lookup(); end;"
     ));
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("writes pending")), "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("writes pending")),
+        "{o:?}"
+    );
 }
 
 const BG: &str = "procedure SeedBg() var R: Record \"PM Row\"; begin R.DeleteAll();
@@ -447,5 +453,8 @@ fn a_commit_in_a_worker_is_refused() {
         procedure Commits() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; begin
             SeedBg(); C.OpenView(); P.Add('No', 'COMMIT'); R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
     ));
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("Commit in a page background task")), "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("Commit in a page background task")),
+        "{o:?}"
+    );
 }

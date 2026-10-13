@@ -653,7 +653,9 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 }
                 s.object
             };
-            Value::TestPage(std::rc::Rc::new(std::cell::RefCell::new(crate::value::PageState::closed(object))))
+            Value::TestPage(std::rc::Rc::new(std::cell::RefCell::new(
+                crate::value::PageState::closed(object),
+            )))
         }
         // A codeunit or report variable nothing has used yet has no instance to release, so
         // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`
@@ -744,6 +746,12 @@ fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value
 
 fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
     Ok(Value::Boolean(receiver.is_some_and(|v| v.is(kind))))
+}
+
+/// The kind of a value for a refusal reason: the variant name, never its contents.
+fn value_kind(v: &Value) -> String {
+    let d = format!("{v:?}");
+    d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
 #[cfg(test)]
@@ -968,10 +976,4 @@ pub(crate) mod tests {
             Ok(Value::Boolean(true))
         ));
     }
-}
-
-/// The kind of a value for a refusal reason: the variant name, never its contents.
-fn value_kind(v: &Value) -> String {
-    let d = format!("{v:?}");
-    d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }

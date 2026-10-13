@@ -62,7 +62,9 @@ impl Session {
             .iter()
             .position(|o| o.kind == "codeunit" && o.id == Some(codeunit as u32))
         else {
-            return unsupported(format!("background task of codeunit {codeunit}, which no object declares"));
+            return unsupported(format!(
+                "background task of codeunit {codeunit}, which no object declares"
+            ));
         };
         let Some(on_run) = engine.program.objects[object]
             .routines
@@ -210,7 +212,9 @@ impl Session {
             return Ok(());
         }
         if !matches!(method, "Insert" | "Modify" | "Rename") {
-            return unsupported(format!("{method} in a page background task (the refusal text is not pinned)"));
+            return unsupported(format!(
+                "{method} in a page background task (the refusal text is not pinned)"
+            ));
         }
         let o = &self.engine.program.objects[table];
         let app = self

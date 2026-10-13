@@ -22,6 +22,5 @@ Read `docs/handoff.md` (the spike brief) and `docs/adr/README.md` first.
 
 - After making corpus cases pass: `cargo run -p al-test-cli -- --update-baseline`
   and commit `metrics/passing.txt` with the code.
-- `cargo fmt --all && cargo clippy --all-targets -- -D warnings && cargo test --workspace`
-  before every commit.
+- `./check.sh` before every commit (fmt, clippy -D warnings, tests; fails on the first error).
 - Core crates do no OS access (ADR-006).

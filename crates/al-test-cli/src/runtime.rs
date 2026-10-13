@@ -52,13 +52,22 @@ pub struct CorpusRuntime {
 
 impl CorpusRuntime {
     pub fn run(apps: Vec<al_sema::workspace::AppSource>, symbols: &BTreeSet<String>) -> CorpusRuntime {
+        Self::run_with(apps, symbols, al_vm::dotnet::DotNetConfig::default())
+    }
+
+    /// [`run`](Self::run) with a `DotNet` host (ADR-014); the default has none.
+    pub fn run_with(
+        apps: Vec<al_sema::workspace::AppSource>,
+        symbols: &BTreeSet<String>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+    ) -> CorpusRuntime {
         let (_ws, lowered) = al_sema::lower::compile(apps, symbols);
         let blocked = lowered
             .unsupported
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
-        let engine = Engine::new(lowered.program.clone(), blocked);
+        let engine = Engine::with_dotnet(lowered.program.clone(), blocked, dotnet);
         let mut outcomes = std::collections::HashMap::new();
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {

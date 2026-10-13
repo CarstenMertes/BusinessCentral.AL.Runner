@@ -242,6 +242,20 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
 /// Stands for a call stack that exists in BC but is not tracked here (a private-use character).
 pub const UNTRACKED_CALL_STACK: &str = "\u{E000}";
 
+/// Stands for the text and code of an error BC raises but whose wording the corpus does not pin.
+/// `GetLastErrorText` and `GetLastErrorCode` refuse to answer while it is the last error, so a
+/// test that reads it is not run, and one that only needs the call to fail still passes.
+pub const UNPINNED_ERROR: &str = "\u{E001}";
+
+/// The last error to set when a call fails with an error whose text is not pinned.
+pub fn unpinned_error() -> AlError {
+    AlError {
+        message: UNPINNED_ERROR.into(),
+        code: UNPINNED_ERROR.into(),
+        call_stack: String::new(),
+    }
+}
+
 /// Text of a Text/Code/Char argument (Text parameters accept all three). Text that holds the
 /// untracked call stack marker is refused, so its content is never silently wrong.
 pub fn text_of(v: &Value) -> Option<String> {
@@ -278,11 +292,19 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
 }
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(ctx.last_error().message))
+    let e = ctx.last_error();
+    if e.message == UNPINNED_ERROR {
+        return unsupported("GetLastErrorText of an error whose text is not pinned");
+    }
+    Ok(Value::Text(e.message))
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(ctx.last_error().code))
+    let e = ctx.last_error();
+    if e.code == UNPINNED_ERROR {
+        return unsupported("GetLastErrorCode of an error whose text is not pinned");
+    }
+    Ok(Value::Text(e.code))
 }
 
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

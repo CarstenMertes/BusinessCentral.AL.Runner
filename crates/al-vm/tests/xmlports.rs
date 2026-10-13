@@ -719,3 +719,23 @@ fn xmlports_the_runtime_cannot_run_are_refused_before_they_start() {
     let r = refusal("P: XmlPort \"ALT Request Page XmlPort\";", "exit('');");
     assert!(r.contains("request page"), "{r}");
 }
+
+// The text of a failed import is not pinned by the corpus, so reading it is refused rather than
+// answered with an invented sentence (hard rule 3); the pinned parts (false, rollback) still hold.
+#[test]
+fn the_last_error_of_a_failed_guarded_import_cannot_be_read() {
+    let bad = "'<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>x</IntegerValue></Universal></Universals>'";
+    for read in ["GetLastErrorText()", "GetLastErrorCode()"] {
+        let r = refusal(
+            &format!("{IMPORT_VARS} Ok: Boolean;"),
+            &format!("H.Stage(B, InStr, {bad}); Ok := XmlPort.Import(60023, InStr); exit({read});"),
+        );
+        assert!(r.contains("not pinned"), "{r}");
+    }
+    // Without a read the import still reports false.
+    let out = text(
+        &format!("{IMPORT_VARS} Ok: Boolean;"),
+        &format!("H.Stage(B, InStr, {bad}); Ok := XmlPort.Import(60023, InStr); exit(Format(Ok));"),
+    );
+    assert_eq!(out, "No");
+}

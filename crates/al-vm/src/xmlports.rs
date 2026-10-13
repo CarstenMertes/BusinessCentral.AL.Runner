@@ -252,11 +252,9 @@ impl Session {
                     return unsupported("guarded XmlPort.Import with a pending write under AutoRollback (not pinned)");
                 }
                 return if static_form {
-                    // That the trapped refusal becomes the last error is an assumption.
-                    self.last_error = AlError {
-                        message: TRANSACTION_STOPPED.into(),
-                        ..Default::default()
-                    };
+                    // Whether the trapped refusal becomes the last error, and with what text, is not
+                    // pinned: reading it is refused.
+                    self.last_error = al_builtins::native::unpinned_error();
                     Ok(Value::Boolean(false))
                 } else {
                     Err(al_error(TRANSACTION_STOPPED))
@@ -294,7 +292,13 @@ impl Session {
             Err(Signal::Error(e)) if guarded => {
                 self.rollback_transaction();
                 self.error_finals = None;
-                self.last_error = e;
+                // An error of ours has no BC text to give; an error raised by AL code inside a
+                // trigger keeps its own.
+                self.last_error = if e.code == IMPORT_FAILURE {
+                    al_builtins::native::unpinned_error()
+                } else {
+                    e
+                };
                 Ok(Value::Boolean(false))
             }
             Err(Signal::Error(e)) if e.code == IMPORT_FAILURE => unsupported(format!(

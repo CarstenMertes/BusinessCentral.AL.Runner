@@ -67,13 +67,16 @@ pub enum DotNetTarget {
     Instance(DotNetHandle),
 }
 
-/// Bytes the host moved through a stream bridge during one call (ADR-014 section 4).
+/// What the host did with AL streams during one call (ADR-014 section 4, "Streams").
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct StreamEffects {
     /// Per `InStream` argument position: how many bytes .NET consumed.
     pub consumed: Vec<(usize, usize)>,
-    /// Per `OutStream` argument position: the bytes .NET wrote since the last drain.
-    pub written: Vec<(usize, Vec<u8>)>,
+    /// `OutStream` arguments of this call, as (argument position, bridge id). The bridge lives
+    /// until the session ends; the VM keeps the AL stream that belongs to the id.
+    pub bridges: Vec<(usize, u64)>,
+    /// Bytes written into any live bridge since the last reply, by bridge id.
+    pub written: Vec<(u64, Vec<u8>)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +119,8 @@ pub enum DotNetFailure {
     Exception(DotNetException),
 }
 
-/// Why the host cannot serve any call in this run.
+/// Why the host cannot serve any call in this run. The text finishes the sentence
+/// `DotNet 'T' ...` (ADR-014 section 11): `needs a .NET host; none is configured`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DotNetUnavailable(pub String);
 
@@ -164,7 +168,7 @@ pub struct NoDotNet;
 
 impl DotNetHost for NoDotNet {
     fn availability(&self) -> Result<(), DotNetUnavailable> {
-        Err(DotNetUnavailable("no .NET host configured".into()))
+        Err(DotNetUnavailable("needs a .NET host; none is configured".into()))
     }
     fn open_session(&self, _cfg: &DotNetSessionConfig) -> Box<dyn DotNetSession> {
         Box::new(NoDotNetSession)
@@ -175,7 +179,7 @@ struct NoDotNetSession;
 
 impl NoDotNetSession {
     fn refuse<T>() -> Result<T, DotNetFailure> {
-        Err(DotNetFailure::Refused("no .NET host configured".into()))
+        Err(DotNetFailure::Refused("needs a .NET host; none is configured".into()))
     }
 }
 
@@ -205,7 +209,7 @@ mod tests {
         let host = NoDotNet;
         assert_eq!(
             host.availability(),
-            Err(DotNetUnavailable("no .NET host configured".into()))
+            Err(DotNetUnavailable("needs a .NET host; none is configured".into()))
         );
         let mut s = host.open_session(&DotNetSessionConfig::default());
         let ty = DotNetType {
@@ -213,7 +217,7 @@ mod tests {
             name: "System.Convert".into(),
             ..Default::default()
         };
-        let want = Err(DotNetFailure::Refused("no .NET host configured".into()));
+        let want = Err(DotNetFailure::Refused("needs a .NET host; none is configured".into()));
         assert_eq!(s.invoke(DotNetTarget::Static(ty.clone()), "ToBase64String", vec![]), want);
         assert_eq!(s.construct(&ty, vec![]), want);
         assert_eq!(s.get_property(DotNetTarget::Instance(1), "Length"), want);

@@ -28,6 +28,8 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         | (v @ Value::Array(_), T::Array(..)) => v,
         (v @ Value::Codeunit(_), T::Codeunit(_) | T::Interface(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
+        // A DotNet variable shares the object it is assigned (ADR-014; probe pending).
+        (v @ Value::DotNet(_), T::DotNet(_)) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
         (v @ Value::Blob(_), T::Library(n)) if n.eq_ignore_ascii_case("Blob") => v,
         // A Text (not a literal) assigns into a SecretText (types/TestSecretText.al).

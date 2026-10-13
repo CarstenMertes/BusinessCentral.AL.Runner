@@ -303,13 +303,13 @@ mod tests {
     fn iso_week_numbers_and_names() {
         let t = test_table();
         let r = row(&t, 1, d(2026, 1, 19));
-        assert_eq!(r[pos(&t, PERIOD_NO)], Value::Integer(4));
-        assert_eq!(r[pos(&t, PERIOD_NAME)], Value::Text("4".into()));
+        assert!(matches!(r[pos(&t, PERIOD_NO)], Value::Integer(4)));
+        assert!(matches!(&r[pos(&t, PERIOD_NAME)], Value::Text(n) if n == "4"));
         let r = row(&t, 0, d(2026, 1, 25));
-        assert_eq!(r[pos(&t, PERIOD_NO)], Value::Integer(7));
-        assert_eq!(r[pos(&t, PERIOD_NAME)], Value::Text("Sunday".into()));
+        assert!(matches!(r[pos(&t, PERIOD_NO)], Value::Integer(7)));
+        assert!(matches!(&r[pos(&t, PERIOD_NAME)], Value::Text(n) if n == "Sunday"));
         let r = row(&t, 2, d(2024, 2, 1));
-        assert_eq!(r[pos(&t, PERIOD_END)], Value::Date(d(2024, 2, 29) as i32, true));
+        assert!(matches!(r[pos(&t, PERIOD_END)], Value::Date(e, true) if i64::from(e) == d(2024, 2, 29)));
     }
 
     fn test_table() -> TableDef {

@@ -470,3 +470,153 @@ fn notification_reads_that_the_corpus_does_not_pin_are_refused() {
         assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
     }
 }
+
+// ---------------------------------------------------------------- ErrorInfo
+
+const EI_ROW: &str = "table 50901 \"EI Row\" { fields { field(1; Id; Integer) { } field(2; Payload; Text[30]) { } } keys { key(PK; Id) { } } }\n";
+
+fn error_info(body: &str) -> Result<String, Signal> {
+    let src = format!(
+        "{EI_ROW}codeunit 50100 C {{ procedure F(): Text var e: ErrorInfo; f: ErrorInfo; r1: Record \"EI Row\"; r2: Record \"EI Row\"; a: Text; d: Dictionary of [Text, Text]; back: Dictionary of [Text, Text]; begin {body} end; }}"
+    );
+    match run(&src, "F")? {
+        Value::Text(s) => Ok(s),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn error_info_create_defaults() {
+    // errorinfo/TestErrorInfoType.al:21-60: the zero-argument Create is collectible, Create(Message)
+    // is not; Verbosity::Error and DataClassification::CustomerContent are the defaults.
+    let r = error_info(
+        "e := ErrorInfo.Create();
+         a := Format(e.Verbosity()) + '|' + Format(e.DataClassification()) + '|' + Format(e.Collectible()) + '|' + e.Message() + e.Title() + e.DetailedMessage();
+         f := ErrorInfo.Create('the message');
+         exit(a + '|' + f.Message() + '|' + Format(f.Collectible()) + '|' + Format(f.Verbosity()) + '|' + Format(e.TableId()) + Format(e.FieldNo()) + Format(e.PageNo()));",
+    );
+    assert_eq!(r.unwrap(), "Error|CustomerContent|Yes||the message|No|Error|000");
+}
+
+#[test]
+fn error_info_accessors_round_trip_independently() {
+    // errorinfo/TestErrorInfoType.al:64-160 and :330-440.
+    let r = error_info(
+        "e := ErrorInfo.Create();
+         e.Message('MSG'); e.Title('TITLE'); e.DetailedMessage('DETAIL'); e.ControlName('CTRL');
+         e.Verbosity(Verbosity::Warning); e.DataClassification(DataClassification::SystemMetadata);
+         e.PageNo(42); e.FieldNo(7); e.Collectible(false);
+         e.ErrorType(ErrorType::Internal);
+         a := e.Message() + e.Title() + e.DetailedMessage() + e.ControlName() + Format(e.Verbosity()) + Format(e.DataClassification());
+         exit(a + Format(e.PageNo()) + Format(e.FieldNo()) + Format(e.Collectible()) + Format(e.ErrorType()));",
+    );
+    assert_eq!(r.unwrap(), "MSGTITLEDETAILCTRLWarningSystemMetadata427NoInternal");
+}
+
+#[test]
+fn error_info_create_with_a_record_sets_table_id_record_id_and_field() {
+    // errorinfo/TestErrorInfoType.al:243-326.
+    let r = error_info(
+        "r1.Id := 1; r1.Insert(); r2.Id := 2; r2.Insert();
+         e := ErrorInfo.Create('m', true, r1, r1.FieldNo(Payload));
+         a := Format(e.TableId() = Database::\"EI Row\") + Format(Format(e.RecordId()) = Format(r1.RecordId())) + Format(Format(e.RecordId()) = Format(r2.RecordId()));
+         exit(a + Format(e.FieldNo()) + Format(e.PageNo()));",
+    );
+    assert_eq!(r.unwrap(), "YesYesNo20");
+}
+
+#[test]
+fn error_info_custom_dimensions_round_trip() {
+    // errorinfo/TestErrorInfoType.al:313-345.
+    let r = error_info(
+        "e := ErrorInfo.Create(); a := Format(e.CustomDimensions().Count());
+         d.Add('alpha', 'one'); d.Add('beta', 'two'); e.CustomDimensions(d);
+         back := e.CustomDimensions();
+         exit(a + Format(back.Count()) + back.Get('alpha') + back.Get('beta'));",
+    );
+    assert_eq!(r.unwrap(), "02onetwo");
+}
+
+#[test]
+fn error_info_actions_do_not_disturb_the_state() {
+    // errorinfo/TestErrorInfoType.al:523-557.
+    let r = error_info(
+        "e := ErrorInfo.Create('an error', true); e.Title('a title');
+         e.AddAction('Fix it', 50100, 'F'); e.AddNavigationAction('Show me');
+         exit(e.Message() + e.Title() + Format(e.Collectible()));",
+    );
+    assert_eq!(r.unwrap(), "an errora titleYes");
+}
+
+// ---------------------------------------------------------------- small builtins
+
+#[test]
+fn a_progress_dialog_is_a_headless_no_op() {
+    // handlers/TestHandlersDialogProgressNoOp.al:24-110: Open, Update (all forms) and Close run and
+    // change nothing.
+    let src = "codeunit 50100 C { var Window: Dialog; procedure F(): Integer var i: Integer; total: Integer; begin
+        Window.Open('Processing record #1######');
+        for i := 1 to 5 do begin Window.Update(1, i); Window.Update(); total += i; end;
+        Window.Close();
+        exit(total);
+    end; }";
+    assert!(matches!(run(src, "F"), Ok(Value::Integer(15))));
+}
+
+#[test]
+fn select_latest_version_does_nothing() {
+    // session/TestBCDatabaseContracts.al:170-187, session/TestMiscComplete.al:36-55.
+    let r = text_of("", "SelectLatestVersion(); SelectLatestVersion(60000); exit('ok');");
+    assert_eq!(r.unwrap(), "ok");
+}
+
+#[test]
+fn company_name_is_the_company_of_the_session() {
+    // session/TestSessionFunctions.al:25 (not empty), session/TestDatabase.al:69-75 (same as CurrentCompany).
+    let src = "table 50900 \"ALT Row\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var R: Record \"ALT Row\"; begin exit(Format(CompanyName() = R.CurrentCompany()) + Format(CompanyName() <> '')); end; }";
+    assert!(matches!(run(src, "F"), Ok(Value::Text(ref s)) if s == "YesYes"));
+}
+
+#[test]
+fn change_company_to_the_session_company_succeeds_and_other_companies_are_refused() {
+    // record/TestSecurityFilteringContracts.al:108-138, record/TestRecordChangeCompanyRows.al:115:
+    // `Rec.ChangeCompany(CompanyName())` is true and the rows stay visible. Another company needs
+    // the Company table (outside the workspace).
+    let src = "table 50900 \"ALT Row\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var R: Record \"ALT Row\"; B: Record \"ALT Row\"; ok: Boolean; begin
+            R.Id := 1; R.Insert();
+            ok := B.ChangeCompany(CompanyName());
+            exit(Format(ok) + Format(B.Count()) + B.CurrentCompany());
+        end; procedure G() var R: Record \"ALT Row\"; ok: Boolean; begin ok := R.ChangeCompany('Some Other Company'); end; }";
+    assert!(matches!(run(src, "F"), Ok(Value::Text(ref s)) if s.starts_with("Yes1")));
+    assert!(matches!(run(src, "G"), Err(Signal::Unsupported(_))));
+}
+
+#[test]
+fn a_sequential_guid_is_not_null_and_not_repeated() {
+    // session/TestSystemExtended.al:306-328.
+    let r = text_of(
+        "a: Guid; b: Guid;",
+        "a := Guid.CreateSequentialGuid(); b := Guid.CreateSequentialGuid(); exit(Format(IsNullGuid(a)) + Format(a = b));",
+    );
+    assert_eq!(r.unwrap(), "NoNo");
+}
+
+#[test]
+fn text_builder_max_capacity_is_large() {
+    // session/TestSystemExtended.al:450-473: positive and at least a million.
+    let r = text_of("tb: TextBuilder;", "exit(Format(tb.MaxCapacity() >= 1000000));");
+    assert_eq!(r.unwrap(), "Yes");
+}
+
+#[test]
+fn a_version_is_read_by_evaluate_and_split_in_parts() {
+    // session/TestMiscTypes.al:44-80.
+    let r = text_of(
+        "v: Version; w: Version;",
+        "Evaluate(v, '1.2.3.4'); Evaluate(w, '5.6.7.8');
+         exit(Format(v.Major()) + Format(v.Minor()) + Format(v.Build()) + Format(v.Revision()) + '|' + Format(w.Revision()));",
+    );
+    assert_eq!(r.unwrap(), "1234|8");
+}

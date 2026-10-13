@@ -288,6 +288,17 @@ impl Session {
             // (SetAscending(Amount, false) makes FindFirst return the largest), :158-181
             // (GetAscending). A field of a longer key, or outside the key, has a direction of its
             // own that is not pinned.
+            // The session company is the one company this runtime has; any other needs the Company
+            // table, which is outside the workspace (ADR-013). A record on the session company
+            // keeps its rows (record/TestSecurityFilteringContracts.al:108-138,
+            // TestRecordChangeCompanyRows.al:115).
+            "ChangeCompany" => match args.first().and_then(al_builtins::native::text_of) {
+                Some(name) if name == self.cx.company => Ok(Value::Boolean(true)),
+                Some(name) => unsupported(format!(
+                    "ChangeCompany to `{name}`: a company other than the session company needs the Company table"
+                )),
+                None => unsupported("ChangeCompany without a company name (not pinned)"),
+            },
             "SetAscending" | "GetAscending" => {
                 let pos = arg_pos(args, 0)?;
                 if t.keys[rec.borrow().key] != [pos] {

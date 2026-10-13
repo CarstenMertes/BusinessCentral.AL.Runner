@@ -61,6 +61,11 @@ impl Session {
             // not counted: they never reach the database (not pinned).
             return Ok(Value::Boolean(self.store.has_uncommitted()));
         }
+        if id == "Database.CompanyName#1" {
+            // The company of the session, the same name `Record.CurrentCompany` answers
+            // (session/TestDatabase.al:69-75, session/TestSessionFunctions.al:25).
+            return Ok(Value::Text(self.cx.company.clone()));
+        }
         let method = id.strip_prefix("NumberSequence.").and_then(|m| m.split('#').next());
         let Some(method) = method else {
             return unsupported(format!("builtin {id}"));

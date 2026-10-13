@@ -102,6 +102,18 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.LowerCase#1", lowercase),
     ("Database.Commit#1", |c, _, _| c.commit().map(|_| Value::Null)),
     ("System.Clear#1", clear),
+    // A progress dialog is a headless no-op in a test (handlers/TestHandlersDialogProgressNoOp.al:24-110).
+    ("Dialog.Open#1", |_, _, _| Ok(Value::Null)),
+    ("Dialog.Update#1", |_, _, _| Ok(Value::Null)),
+    ("Dialog.Close#1", |_, _, _| Ok(Value::Null)),
+    // Reading the latest committed data is what this runtime always does (session/TestBCDatabaseContracts.al:170-187).
+    ("Database.SelectLatestVersion#1", |_, _, _| Ok(Value::Null)),
+    ("Database.SelectLatestVersion#2", |_, _, _| Ok(Value::Null)),
+    // Unique and not null is all the corpus asks (session/TestSystemExtended.al:306-328).
+    ("Guid.CreateSequentialGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    // A TextBuilder is bounded by the Integer range; the corpus needs at least a million
+    // (session/TestSystemExtended.al:450-473).
+    ("TextBuilder.MaxCapacity#1", |_, _, _| Ok(Value::Integer(i32::MAX))),
     ("Enum.AsInteger#1", enum_as_integer),
     ("Enum.Names#1", enum_names),
     ("Enum.Ordinals#1", enum_ordinals),
@@ -200,6 +212,8 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                     .or_else(|| crate::stream::native_for(sig))
                     .or_else(|| crate::textfns::native_for(sig))
                     .or_else(|| crate::wsac::native_for(sig))
+                    .or_else(|| crate::errorinfo::native_for(sig))
+                    .or_else(|| crate::version::native_for(sig))
                     .or_else(|| crate::sessiontypes::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })

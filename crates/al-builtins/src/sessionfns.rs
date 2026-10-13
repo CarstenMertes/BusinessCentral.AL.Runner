@@ -19,4 +19,5 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "NumberSequence.Range#2",
     "NumberSequence.Restart#1",
     "Database.IsInWriteTransaction#1",
+    "Database.CompanyName#1",
 ];

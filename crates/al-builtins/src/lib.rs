@@ -5,12 +5,14 @@ pub mod signature;
 pub mod stream;
 pub mod textfns;
 pub mod value;
+pub mod version;
 pub mod wsac;
 pub mod xml;
 
 pub mod catalog;
 pub mod collections;
 pub mod datefns;
+pub mod errorinfo;
 pub mod evaluate;
 pub mod filter;
 pub mod format;

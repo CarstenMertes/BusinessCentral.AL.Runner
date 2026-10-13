@@ -290,6 +290,27 @@ pub struct NotificationState {
     pub actions: Vec<(String, i32, String, Option<String>)>,
 }
 
+/// What an `ErrorInfo` holds (corpus errorinfo/TestErrorInfoType.al).
+#[derive(Debug, Clone)]
+pub struct ErrorInfoState {
+    pub message: String,
+    pub title: String,
+    pub detailed_message: String,
+    pub control_name: String,
+    /// Indexes into the `Verbosity` and `DataClassification` members.
+    pub verbosity: i32,
+    pub data_classification: i32,
+    /// `None` until a test sets one: the default is not pinned.
+    pub error_type: Option<i32>,
+    pub collectible: bool,
+    pub table_id: i32,
+    /// The `RecordId` value of the record `Create` was given.
+    pub record_id: Option<Value>,
+    pub field_no: i32,
+    pub page_no: i32,
+    pub custom_dimensions: Vec<(String, String)>,
+}
+
 /// The global variables of one codeunit instance.
 #[derive(Debug, Default)]
 pub struct Instance {
@@ -327,6 +348,10 @@ pub enum LibraryValue {
     SessionSettings(SessionSettingsState),
     /// A `Notification` that has been written to (an untouched one is `Empty`).
     Notification(NotificationState),
+    /// A `Version`: major, minor, build, revision.
+    Version([i32; 4]),
+    /// An `ErrorInfo` (the zero-argument `Create` and `Create(Message, ...)` build one).
+    ErrorInfo(ErrorInfoState),
     /// A JSON node behind a JsonObject / JsonArray / JsonToken / JsonValue handle.
     Json(crate::json::JsonCell),
     /// A node behind an Xml* handle.

@@ -469,6 +469,23 @@ impl Session {
             s.result = None;
         }
         let has_source = self.has_source(st);
+        // SourceTableView is the page's own view of its table (corpus
+        // pagefindrecord/TestPageFindRecord.al:192 PlainPage_WithoutTheTriggers_WalksTheTableDescending);
+        // how it combines with the view of a record handed to Page.Run is not pinned.
+        let source_view = engine.program.objects[st.borrow().object as usize]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"))
+            .map(|(_, v)| v.trim().to_string());
+        if let (Some(view), true) = (source_view, has_source) {
+            if record.is_some() {
+                st.borrow_mut().open = false;
+                return unsupported("Page.Run with a record on a page that declares SourceTableView");
+            }
+            let rec = self.page_rec(st);
+            let table = self.table(&rec)?;
+            self.set_view(&rec, &table, &view)?;
+        }
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
             let src = r.borrow();
@@ -476,6 +493,8 @@ impl Session {
             dst.fields = src.fields.clone();
             dst.filters = src.filters.clone();
             dst.key = src.key;
+            dst.temporary = src.temporary;
+            dst.temp_id = src.temp_id;
             dst.ascending = src.ascending;
         }
         let result = (|| {
@@ -797,9 +816,53 @@ impl Session {
         Ok(())
     }
 
+    /// The FlowFields the page shows are calculated when a row loads. A temporary source row
+    /// reads them from the database tables (corpus handlers/TestPageRunTempRecordStoredRow_Tests.al:
+    /// TempRecordFlowFieldIsCalculatedFromTheDatabase).
+    fn calc_row_flowfields(&mut self, st: &St) -> Result<(), Signal> {
+        if !self.has_source(st) {
+            return Ok(());
+        }
+        let engine = self.engine();
+        let rec = self.page_rec(st);
+        let table = rec.borrow().table as usize;
+        let Some(def) = engine.program.objects[table].table.as_ref() else {
+            return Ok(());
+        };
+        let mut positions: Vec<usize> = page_of(&engine, st)
+            .controls
+            .iter()
+            .filter_map(|c| match c.binding {
+                ir::Binding::Field(p) if def.fields[p].calc.is_some() => Some(p),
+                _ => None,
+            })
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        if positions.is_empty() {
+            return Ok(());
+        }
+        if !rec.borrow().temporary {
+            return self.calc_fields(&rec, &positions);
+        }
+        let probe = {
+            let mut p = rec.borrow().clone();
+            p.temporary = false;
+            p.auto_calc.clear();
+            Rc::new(RefCell::new(p))
+        };
+        for p in positions {
+            self.check_calc_field(table, p)?;
+            let v = self.calc_value(&probe, p, &mut Vec::new())?;
+            rec.borrow_mut().fields[p] = v;
+        }
+        Ok(())
+    }
+
     /// Populates the current row: the control expressions, then OnAfterGetRecord.
     fn populate_current(&mut self, st: &St) -> Result<(), Signal> {
         st.borrow_mut().dirty = false;
+        self.calc_row_flowfields(st)?;
         self.set_xrec(st);
         self.populate_expressions(st)?;
         self.page_trigger(st, "onaftergetrecord", vec![])?;
@@ -1474,7 +1537,12 @@ impl Session {
         // MinValue / MaxValue are enforced on a control write, not on Rec.Validate (corpus
         // handlers/TestPageFieldMinMaxValue_Tests.al:20-110).
         if let Some(f) = self.control_field(st, idx) {
-            let bound = |n: &str| f.props.iter().find(|(k, _)| k == n).map(|(_, v)| v.trim().to_string());
+            let bound = |n: &str| {
+                f.properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                    .map(|(_, v)| v.trim().to_string())
+            };
             let num = |v: &Value| match v {
                 Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
                 Value::BigInteger(i) => Some(rust_decimal::Decimal::from(*i)),
@@ -1734,6 +1802,7 @@ impl Session {
             p.filters.push(al_builtins::filter::FieldFilter {
                 field: f,
                 expr: al_builtins::filter::FilterExpr::Range(Some(pk[n].clone()), Some(pk[n].clone())),
+                group: 0,
             });
         }
         self.ret_used = true;
@@ -1802,9 +1871,12 @@ impl Session {
         let ctl = &page.controls[idx];
         let field = self.control_field(st, idx);
         let from_field = |n: &str| {
-            field
-                .as_ref()
-                .and_then(|f| f.props.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone()))
+            field.as_ref().and_then(|f| {
+                f.properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                    .map(|(_, v)| v.clone())
+            })
         };
         let lit = |n: &str| match ctl.prop(n) {
             Some(ir::PropVal::Lit(v)) => Some(v.clone()),
@@ -1934,7 +2006,7 @@ impl Session {
             return Ok(unquote(c));
         }
         if let Some(f) = self.control_field(st, idx) {
-            if let Some((_, c)) = f.props.iter().find(|(k, _)| k == "caption") {
+            if let Some((_, c)) = f.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("caption")) {
                 return Ok(unquote(c));
             }
             return Ok(f.name);

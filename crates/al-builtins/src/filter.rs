@@ -92,7 +92,7 @@ pub fn parse_filter_with(
 enum Tok {
     /// Unquoted text (may hold wildcards).
     Raw(String),
-    /// Quoted literal: no operators or wildcards inside.
+    /// Quoted expression: no filter operators inside (`@` and wildcards stay active).
     Quoted(String),
     /// A `%n` placeholder's typed value.
     Typed(Value),
@@ -272,6 +272,22 @@ impl Parser<'_> {
     /// A single value, which may be a wildcard pattern on text fields.
     fn single(&mut self, t: Tok, case_insensitive: bool) -> Result<FilterExpr, String> {
         use crate::value::RtType as T;
+        // `@` and wildcards stay active inside a quoted expression; only the filter operators
+        // are literal there (record/TestFilterQuotedLiterals.al).
+        if let (Tok::Quoted(q), T::Text(_) | T::Code(_)) = (&t, self.ty) {
+            let (body, ci) = match q.strip_prefix('@') {
+                Some(b) => (b, true),
+                None => (q.as_str(), case_insensitive),
+            };
+            if body.contains(['*', '?']) || ci {
+                let body = if matches!(self.ty, T::Code(_)) && !ci {
+                    body.to_uppercase()
+                } else {
+                    body.to_string()
+                };
+                return Ok(FilterExpr::Like(body, ci));
+            }
+        }
         if let (Tok::Raw(s), T::Text(_) | T::Code(_)) = (&t, self.ty) {
             let s = if matches!(self.ty, T::Code(_)) && !case_insensitive {
                 s.to_uppercase()
@@ -349,6 +365,8 @@ impl Parser<'_> {
 pub struct FieldFilter {
     pub field: usize,
     pub expr: FilterExpr,
+    /// The filter group it was set in (`FilterGroup(n)`); every group applies at once.
+    pub group: i32,
 }
 
 /// Total order on key tuples (field-wise `compare`; incomparable counts as equal).
@@ -535,6 +553,45 @@ mod tests {
         assert!(hits(&empty, "''").is_err());
         assert_eq!(hits(&empty, "2").unwrap(), [2]);
         assert!(hits(&empty, "Purple").is_err());
+    }
+
+    #[test]
+    fn option_filter_matches_member_names_trimmed_case_blind_and_skips_zero_length_members() {
+        // corpus types/TestEnumBlankOptionFilterTests.Codeunit.al:1-12, :187-205
+        let members: Vec<String> = vec!["".into(), "Draft".into(), " ".into()];
+        let ty = RtType::Option(members);
+        let ord = |f: &FilterExpr| {
+            (0..3)
+                .map(|i| f.matches(&Value::Option(i, Default::default())))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ord(&pf(" draft ", &[], ty.clone())), [false, true, false]);
+        assert_eq!(ord(&pf("'DRAFT'", &[], ty.clone())), [false, true, false]);
+        // The empty string names the blank member " " (trimmed), never the zero-length one.
+        assert_eq!(ord(&pf("''", &[], ty.clone())), [false, false, true]);
+        let zero_length_only = RtType::Option(vec!["".into(), "Draft".into()]);
+        assert!(
+            parse_filter("''", &[], &zero_length_only).is_err(),
+            "'' names no member here"
+        );
+    }
+
+    #[test]
+    fn at_and_wildcards_stay_active_inside_a_quoted_expression() {
+        // record/TestFilterQuotedLiterals.al: `'@*Smith & Sons*'` ("quote so &, (, ), =, | are literal,
+        // and keep @ and * active"): a case-insensitive "contains" filter on a value with operators in it.
+        let f = pf("'@*Smith & Sons*'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("Mr smith & sons LLC".into())));
+        assert!(!f.matches(&Value::Text("Acme Co".into())));
+        let f = pf("'@*(2025)*'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("Expenses (2025) - Diana".into())));
+        assert!(!f.matches(&Value::Text("Expenses 2025".into())));
+        // Without @ the quoted wildcard still matches case-sensitively.
+        let f = pf("'*A|B*'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("xA|By".into())) && !f.matches(&Value::Text("xa|by".into())));
+        // A quoted expression without wildcards is a plain literal.
+        let f = pf("'Smith & Sons'", &[], RtType::Text(None));
+        assert!(f.matches(&Value::Text("Smith & Sons".into())) && !f.matches(&Value::Text("smith & sons".into())));
     }
 
     #[test]

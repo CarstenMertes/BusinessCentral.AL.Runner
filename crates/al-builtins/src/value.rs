@@ -86,6 +86,8 @@ pub enum Value {
     Library(String, Rc<RefCell<LibraryValue>>),
     /// A record variable (ADR-010: a handle; `:=` copies fields, see the VM).
     Record(Rc<RefCell<RecordState>>),
+    /// A Blob field's content: a shared buffer that streams write to (see `stream`).
+    Blob(crate::stream::BlobRef),
     /// A `TestPage` (or `TestPart`): a handle on a page and the test client
     /// driving it (ADR-012). Shared like a codeunit instance.
     TestPage(Rc<RefCell<PageState>>),
@@ -222,6 +224,14 @@ pub struct RecordState {
     /// Field values in the table's field order.
     pub fields: Vec<Value>,
     pub filters: Vec<crate::filter::FieldFilter>,
+    /// The filter group `SetRange` and `SetFilter` write to and `GetFilter` reads.
+    pub filter_group: i32,
+    /// Primary keys marked with `Mark(true)`, and whether `MarkedOnly` restricts the set to them.
+    pub marks: Vec<Vec<Value>>,
+    pub marked_only: bool,
+    /// `ReadIsolation` and `SecurityFiltering` as member indexes of their platform option types.
+    pub read_isolation: i32,
+    pub security_filtering: i32,
     /// Index of the current key in the table's keys.
     pub key: usize,
     pub ascending: bool,
@@ -245,6 +255,37 @@ pub enum LibraryValue {
     #[default]
     Empty,
     Text(String),
+    /// An open `RecordRef`: it owns a record buffer exactly as a `Record`
+    /// variable does (fields, filters, key), so record operations are shared.
+    RecordRef(Rc<RefCell<RecordState>>),
+    /// A `FieldRef`: the record buffer it points into and the field's position.
+    FieldRef(Rc<RefCell<RecordState>>, usize),
+    /// A `KeyRef`: the record buffer and the key's index in the table's keys.
+    KeyRef(Rc<RefCell<RecordState>>, usize),
+    /// A `RecordRef` opened on a system table the workspace has no schema for:
+    /// only its number is known (corpus recordref/TestRecordRefOpenCompilationTarget.al).
+    SystemTable(i64),
+    /// A `RecordId`: table object index and number, table name (for `Format`), primary key values.
+    RecordId {
+        table: u32,
+        table_no: u32,
+        name: String,
+        key: Vec<Value>,
+    },
+    /// A JSON node behind a JsonObject / JsonArray / JsonToken / JsonValue handle.
+    Json(crate::json::JsonCell),
+    /// A node behind an Xml* handle.
+    Xml(crate::xml::XmlCell),
+    /// An XmlNodeList: a snapshot of nodes.
+    XmlList(Vec<crate::json::Handle>),
+    /// An XmlAttributeCollection: a view of one element's attributes.
+    XmlAttrs(crate::json::Handle),
+    /// An XmlNameTable (opaque).
+    XmlNameTable,
+    /// An InStream: a snapshot being read.
+    InStream(crate::stream::InState),
+    /// An OutStream: appends to a Blob buffer.
+    OutStream(crate::stream::BlobRef, crate::stream::Encoding),
 }
 
 impl Value {
@@ -280,6 +321,7 @@ impl Value {
             RtType::TestPage(id) | RtType::Page(id) => Value::TestPage(Rc::new(RefCell::new(PageState::closed(*id)))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
+            RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),
         }
     }
@@ -317,6 +359,7 @@ impl Value {
             Value::Library(n, _) => n.eq_ignore_ascii_case(&k),
             Value::Record(_) => k == "record",
             Value::TestPage(_) | Value::TestControl(_) => false,
+            Value::Blob(_) => false,
         }
     }
 }

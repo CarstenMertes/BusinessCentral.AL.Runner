@@ -29,5 +29,11 @@ Read `docs/handoff.md` (the spike brief) and `docs/adr/README.md` first.
 
 - After making corpus cases pass: `cargo run -p al-test-cli -- --update-baseline`
   and commit `metrics/passing.txt` with the code.
+- Perf budgets (cold compile of the corpus <= 1 s, parser >= 50 MB/s) are
+  `#[ignore]`d tests that need release: `cargo test --release --no-fail-fast
+  -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget
+  -- --ignored --nocapture`. CI runs them. `cargo run --release -p al-test-cli
+  --example phases` prints per-phase timings; `--example compile_dump` dumps
+  every compile output, to diff before/after a performance change.
 - `./check.sh` before every commit (fmt, clippy -D warnings, tests; fails on the first error).
 - Core crates do no OS access (ADR-006).

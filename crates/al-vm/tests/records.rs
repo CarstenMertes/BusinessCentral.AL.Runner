@@ -362,10 +362,13 @@ fn date_and_time_init_values() {
     assert_eq!(text(s.call(oi, 0, inst, vec![]).map(|(v, _)| v)), "2024-01-15 Yes");
 }
 
+// Was `rename_of_a_table_other_fields_relate_to_is_unsupported`: the refusal stood in for rename
+// propagation until it was implemented (tests/rename.rs holds the full set); the same scenario now
+// follows the relation (corpus record/TestRenamePropagation.al:20-40).
 #[test]
-fn rename_of_a_table_other_fields_relate_to_is_unsupported() {
+fn rename_of_a_table_other_fields_relate_to_rewrites_them() {
     let src = "table 50911 P { fields { field(1; K; Code[10]) { } } }\ntable 50912 Ch { fields { field(1; Id; Integer) { } field(2; Parent; Code[10]) { TableRelation = P.K; } } }\n";
-    let body = "procedure F() var R: Record P; begin R.K := 'A'; R.Insert(); R.Rename('B'); end;";
+    let body = "procedure F(): Text var R: Record P; C: Record Ch; begin R.K := 'A'; R.Insert(); C.Id := 1; C.Parent := 'A'; C.Insert(); R.Rename('B'); C.Get(1); exit(C.Parent); end;";
     let (_, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),
@@ -383,7 +386,7 @@ fn rename_of_a_table_other_fields_relate_to_is_unsupported() {
         .collect();
     let mut s = Session::new(Engine::new(l.program, blocked));
     let inst = s.instance(oi);
-    assert!(matches!(s.call(oi, 0, inst, vec![]), Err(Signal::Unsupported(r)) if r.contains("relat")));
+    assert_eq!(text(s.call(oi, 0, inst, vec![]).map(|(v, _)| v)), "B");
 }
 
 #[test]
@@ -467,10 +470,11 @@ fn writes_assign_increasing_row_versions() {
 }
 
 // record/TestRenamePropagationConditional.al: a rename must re-key related rows, and a conditional
-// relation relates to every table of its arms (the else table too). Re-keying is not
-// implemented, so renaming any table some relation points to is refused.
+// relation relates to every table of its arms (the else table too). Was a refusal until rename
+// propagation existed; now every arm's table renames, and tests/rename.rs pins what happens to the
+// related rows.
 #[test]
-fn renaming_a_table_any_arm_of_a_relation_points_to_is_refused() {
+fn renaming_a_table_any_arm_of_a_relation_points_to_succeeds() {
     let src = r#"
 table 50901 PA { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }
 table 50902 PB { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }
@@ -522,8 +526,8 @@ codeunit 50100 C
         let inst = s.instance(oi);
         s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
     };
-    assert!(matches!(call("R1"), Err(Signal::Unsupported(m)) if m.contains("relate")));
-    assert!(matches!(call("R2"), Err(Signal::Unsupported(m)) if m.contains("relate")));
+    assert!(call("R1").is_ok(), "{:?}", call("R1"));
+    assert!(call("R2").is_ok(), "{:?}", call("R2"));
     assert!(call("R3").is_ok(), "{:?}", call("R3"));
 }
 

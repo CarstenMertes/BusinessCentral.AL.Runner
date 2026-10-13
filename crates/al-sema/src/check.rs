@@ -9,13 +9,41 @@ use al_builtins::catalog::Catalog;
 use al_builtins::signature::Signature;
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// FxHash (as in rustc): the per-expression maps below are keyed by three
+/// small integers and written for every node, where SipHash dominated their
+/// cost. Not DoS-resistant, which does not matter for compiler-internal keys;
+/// it is also deterministic.
+#[derive(Default, Clone, Copy)]
+pub struct FxHasher(u64);
+
+impl Hasher for FxHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u64(&mut self, i: u64) {
+        self.0 = (self.0.rotate_left(5) ^ i).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+    fn write_usize(&mut self, i: usize) {
+        self.write_u64(i as u64);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// A `HashMap` keyed by node position, hashed with [`FxHasher`].
+pub type PosMap<V> = HashMap<(usize, usize, usize), V, BuildHasherDefault<FxHasher>>;
 
 pub struct CheckResult {
     pub diagnostics: Vec<Diagnostic>,
     /// Inferred type of every expression, keyed by (file index, start offset, end offset).
-    pub types: HashMap<(usize, usize, usize), Ty>,
+    pub types: PosMap<Ty>,
     /// What each name, member and call resolved to, same keys.
-    pub resolutions: HashMap<(usize, usize, usize), Res>,
+    pub resolutions: PosMap<Res>,
 }
 
 /// The target of a resolved name, member or call.
@@ -61,10 +89,11 @@ pub fn check(ws: &Workspace, members: &[Members], catalog: &Catalog) -> CheckRes
         members,
         catalog,
         diags: Vec::new(),
-        types: HashMap::new(),
-        resolutions: HashMap::new(),
+        types: Default::default(),
+        resolutions: Default::default(),
         system_enums: system_enums(catalog),
         extensions,
+        sections: Default::default(),
     };
     for oi in 0..ws.objects.len() {
         c.check_object(oi);
@@ -157,16 +186,21 @@ struct Scope {
     self_obj: usize,
 }
 
+/// A section with its first argument (its name, for controls and data items).
+type NamedSection = (Option<String>, ast::Section);
+
 struct Checker<'a> {
     ws: &'a Workspace,
     members: &'a [Members],
     catalog: &'a Catalog,
     diags: Vec<Diagnostic>,
-    types: HashMap<(usize, usize, usize), Ty>,
-    resolutions: HashMap<(usize, usize, usize), Res>,
+    types: PosMap<Ty>,
+    resolutions: PosMap<Res>,
     system_enums: HashSet<String>,
     /// Extended object → its extension objects.
     extensions: HashMap<usize, Vec<usize>>,
+    /// `sections_of` memo by object, for `named_section`.
+    sections: std::cell::RefCell<HashMap<usize, Vec<NamedSection>>>,
 }
 
 fn name_of(node: &SyntaxNode) -> String {
@@ -247,7 +281,8 @@ impl<'a> Checker<'a> {
             }
         }
         // Report/query/xmlport data items are record variables in the object's scope.
-        for sec in obj.syntax().descendants().filter_map(ast::Section::cast) {
+        let sections = ast::sections_in(obj.syntax());
+        for sec in &sections {
             let n = sec.name().to_ascii_lowercase();
             if n == "dataitem" || n == "tableelement" {
                 let args = sec.args();
@@ -262,7 +297,7 @@ impl<'a> Checker<'a> {
                 }
             }
         }
-        for sec in obj.syntax().descendants().filter_map(ast::Section::cast) {
+        for sec in &sections {
             let n = sec.name().to_ascii_lowercase();
             if n == "textelement" || n == "textattribute" {
                 if let Some(name) = sec.args().first() {
@@ -363,13 +398,7 @@ impl<'a> Checker<'a> {
         if o.kind == ObjKind::ReportExtension {
             if let Some(base) = obj.extends_parts() {
                 if let Resolution::Found(r) = self.ws.resolve_ref(o.file, ObjKind::Report, &base) {
-                    for sec in self
-                        .ws
-                        .object_ast(r)
-                        .syntax()
-                        .descendants()
-                        .filter_map(ast::Section::cast)
-                    {
+                    for sec in ast::sections_in(self.ws.object_ast(r).syntax()) {
                         if sec.name().eq_ignore_ascii_case("dataitem") {
                             let a = sec.args();
                             if let (Some(n), Some(t)) = (a.first(), a.get(1)) {
@@ -388,7 +417,7 @@ impl<'a> Checker<'a> {
             }
         }
         let file = o.file;
-        for r in obj.syntax().descendants().filter_map(ast::Routine::cast) {
+        for r in ast::routines_in(obj.syntax()) {
             let item_rec = r.syntax().ancestors().filter_map(ast::Section::cast).find_map(|s| {
                 let a = s.args();
                 match s.name().to_ascii_lowercase().as_str() {
@@ -730,6 +759,14 @@ impl<'a> Checker<'a> {
                                     self.record(sc, node, Res::OptionValue(i as i32));
                                 }
                             }
+                            // `FieldClass::Normal`: platform option types.
+                            Ty::Builtin(n) => {
+                                if let Some(i) = al_builtins::sysenum::members(n)
+                                    .and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(&rhs)))
+                                {
+                                    self.record(sc, node, Res::OptionValue(i as i32));
+                                }
+                            }
                             _ => {}
                         }
                         E::Val(t)
@@ -854,6 +891,9 @@ impl<'a> Checker<'a> {
                     .map(|m| m.to_string())
                     .collect(),
             )));
+        }
+        if key == "textencoding" {
+            return Some(E::TypeName(Ty::Option(crate::types::text_encoding_members())));
         }
         if self.system_enums.contains(&key) {
             return Some(E::TypeName(Ty::Builtin(n)));
@@ -1034,12 +1074,18 @@ impl<'a> Checker<'a> {
         std::iter::once(oi)
             .chain(self.extensions.get(&oi).cloned().unwrap_or_default())
             .find_map(|o| {
-                self.ws
-                    .object_ast(o)
-                    .syntax()
-                    .descendants()
-                    .filter_map(ast::Section::cast)
-                    .find(|s| s.args().first().is_some_and(|a| a.eq_ignore_ascii_case(name)))
+                self.sections
+                    .borrow_mut()
+                    .entry(o)
+                    .or_insert_with(|| {
+                        ast::sections_in(self.ws.object_ast(o).syntax())
+                            .into_iter()
+                            .map(|s| (s.args().into_iter().next(), s))
+                            .collect()
+                    })
+                    .iter()
+                    .find(|(first, _)| first.as_ref().is_some_and(|a| a.eq_ignore_ascii_case(name)))
+                    .map(|(_, s)| s.clone())
             })
     }
 
@@ -1250,10 +1296,20 @@ fn catalog_ty(s: &str, recv: &Ty) -> Ty {
     if s.is_empty() || s.eq_ignore_ascii_case("Any") || s.eq_ignore_ascii_case("Joker") {
         return Ty::Unknown;
     }
-    let Some(tr) = al_syntax::parse_type(s) else {
-        return Ty::Unknown;
-    };
-    subst(Ty::from_type_ref(&tr), recv)
+    // Catalog spellings repeat on every call site of a method; parse each once.
+    thread_local! {
+        static PARSED: std::cell::RefCell<HashMap<String, Option<Ty>>> = Default::default();
+    }
+    let parsed = PARSED.with(|c| {
+        c.borrow_mut()
+            .entry(s.to_string())
+            .or_insert_with(|| al_syntax::parse_type(s).map(|tr| Ty::from_type_ref(&tr)))
+            .clone()
+    });
+    match parsed {
+        Some(t) => subst(t, recv),
+        None => Ty::Unknown,
+    }
 }
 
 fn subst(t: Ty, recv: &Ty) -> Ty {

@@ -15,8 +15,13 @@ mod dispatch;
 pub mod events;
 mod flowfields;
 mod pages;
+mod recmeta;
 mod records;
+mod refs;
+mod relations;
+mod rename;
 mod ui;
+mod views;
 pub use ui::{UiHandler, UiKind};
 
 pub struct Engine {
@@ -168,6 +173,15 @@ impl Session {
     pub fn default_value(&mut self, t: &RtType) -> Value {
         match t {
             RtType::Record(table, temporary) => {
+                // A table declared `TableType = Temporary` is temporary for every variable
+                // (corpus record 60198 TempOnly_IsTemporary_AlwaysTrue).
+                let temporary = &(*temporary
+                    || self.engine.program.objects[*table as usize]
+                        .properties
+                        .iter()
+                        .any(|(k, v)| {
+                            k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")
+                        }));
                 let temp_id = temporary.then(|| {
                     self.next_temp += 1;
                     self.next_temp
@@ -178,6 +192,12 @@ impl Session {
                     temp_id,
                     fields: self.initial_fields(*table as usize),
                     filters: Vec::new(),
+                    filter_group: 0,
+                    marks: Vec::new(),
+                    marked_only: false,
+                    read_isolation: 0,
+                    // A record in a test run is Validated (corpus record/TestSecurityFilteringContracts.al:161-175).
+                    security_filtering: 2,
                     key: 0,
                     ascending: true,
                     position: None,
@@ -662,6 +682,10 @@ impl Session {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
                     if !Rc::ptr_eq(src, &dst) {
                         let fields = src.borrow().fields.clone();
+                        if fields.iter().any(|f| matches!(f, Value::Blob(_))) {
+                            // Whether a copied record shares or copies its Blob is not pinned.
+                            return Err(Signal::Unsupported("record assignment with a Blob field".into()));
+                        }
                         dst.borrow_mut().fields = fields;
                     }
                     return Ok(());
@@ -784,6 +808,10 @@ impl al_builtins::native::Ctx for Session {
     }
     fn page(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         self.page_op(method, recv, args)
+    }
+
+    fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        Session::ref_op(self, id, receiver, args)
     }
     fn commit(&mut self) -> Result<(), Signal> {
         self.commit_transaction();

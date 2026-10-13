@@ -40,6 +40,44 @@ impl Routine {
     }
 }
 
+/// Every routine under `node`, in source order. A routine's body holds only
+/// statements, so unlike `descendants()` this does not walk into routines.
+pub fn routines_in(node: &SyntaxNode) -> Vec<Routine> {
+    let mut out = Vec::new();
+    walk_outside_routines(node, |n| {
+        if let Some(r) = Routine::cast(n.clone()) {
+            out.push(r);
+        }
+    });
+    out
+}
+
+/// Every `Section` under `node`, in source order, not looking inside routines
+/// (sections are object structure; a routine body never contains one).
+pub fn sections_in(node: &SyntaxNode) -> Vec<Section> {
+    let mut out = Vec::new();
+    walk_outside_routines(node, |n| {
+        if n.kind() == SyntaxKind::Section {
+            out.push(Section(n.clone()));
+        }
+    });
+    out
+}
+
+/// Preorder over `node`'s descendants, calling `f` on each node and skipping the
+/// children of procedures and triggers (the routine node itself is visited).
+fn walk_outside_routines(node: &SyntaxNode, mut f: impl FnMut(&SyntaxNode)) {
+    let mut it = node.preorder();
+    while let Some(ev) = it.next() {
+        if let rowan::WalkEvent::Enter(n) = ev {
+            f(&n);
+            if matches!(n.kind(), SyntaxKind::Procedure | SyntaxKind::Trigger) {
+                it.skip_subtree();
+            }
+        }
+    }
+}
+
 /// AL identifiers compare case-insensitively; quoted ones lose their quotes.
 pub fn ident_text(tok: &SyntaxToken) -> String {
     let t = tok.text();
@@ -675,5 +713,67 @@ tableextension 50100 Ext extends "Sales Header" { fields { field(50100; F; Integ
         let field = fields.sections().next().unwrap();
         assert_eq!(field.name(), "field");
         assert_eq!(field.args(), vec!["50100", "F", "Integer"]);
+    }
+
+    const WITH_SECTIONS: &str = r#"page 50100 P
+{
+    layout
+    {
+        area(Content)
+        {
+            field(A; Rec.A)
+            {
+                trigger OnValidate()
+                begin
+                    Message('x');
+                end;
+            }
+        }
+    }
+    actions
+    {
+        area(Processing)
+        {
+            action(Go)
+            {
+                trigger OnAction()
+                begin
+                end;
+            }
+        }
+    }
+
+    trigger OnOpenPage()
+    begin
+    end;
+
+    procedure Q()
+    begin
+    end;
+}
+"#;
+
+    #[test]
+    fn routines_in_matches_a_full_descendant_walk() {
+        let f = file(WITH_SECTIONS);
+        let o = f.objects().next().unwrap();
+        let walked: Vec<_> = o.syntax().descendants().filter_map(Routine::cast).collect();
+        assert_eq!(routines_in(o.syntax()), walked);
+        assert_eq!(
+            routines_in(o.syntax()).iter().map(|r| r.name()).collect::<Vec<_>>(),
+            vec!["OnValidate", "OnAction", "OnOpenPage", "Q"]
+        );
+    }
+
+    #[test]
+    fn sections_in_matches_a_full_descendant_walk() {
+        let f = file(WITH_SECTIONS);
+        let o = f.objects().next().unwrap();
+        let walked: Vec<_> = o.syntax().descendants().filter_map(Section::cast).collect();
+        assert_eq!(sections_in(o.syntax()), walked);
+        assert_eq!(
+            sections_in(o.syntax()).iter().map(|s| s.name()).collect::<Vec<_>>(),
+            vec!["layout", "area", "field", "actions", "area", "action"]
+        );
     }
 }

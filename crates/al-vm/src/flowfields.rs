@@ -102,7 +102,7 @@ fn to_number(d: Decimal, ty: &RtType, drop_small_fraction: bool) -> Result<Value
 impl Session {
     /// Why a field cannot be handed to `CalcFields`, or `Ok` when it is a
     /// FlowField with a formula this runtime can calculate.
-    fn check_calc_field(&mut self, table: usize, pos: usize) -> Result<(), Signal> {
+    pub(crate) fn check_calc_field(&mut self, table: usize, pos: usize) -> Result<(), Signal> {
         let engine = self.engine.clone();
         let schema = engine.program.objects[table].table.as_ref().expect("table");
         let f = &schema.fields[pos];
@@ -180,11 +180,19 @@ impl Session {
     /// and a refused call changes nothing (corpus
     /// record/TestCalcFormulaValidationTests.Codeunit.al:211,
     /// record/TestCalcFieldsFieldClass.Codeunit.al:204).
-    pub(crate) fn calc_fields(&mut self, rec: &Rec, positions: &[usize]) -> Result<(), Signal> {
+    pub(crate) fn calc_fields(&mut self, rec: &Rec, all: &[usize]) -> Result<(), Signal> {
         let table = rec.borrow().table as usize;
+        // Blob fields are not FlowFields: CalcFields loads their content (streams/TestBlob.al).
+        let is_blob = |p: usize| {
+            let f = &self.engine.program.objects[table].table.as_ref().expect("table").fields[p];
+            f.stored && f.ty == RtType::Library("Blob".into())
+        };
+        let (blobs, positions): (Vec<usize>, Vec<usize>) = all.iter().partition(|p| is_blob(**p));
+        let positions = &positions[..];
         for &p in positions {
             self.check_calc_field(table, p)?;
         }
+        self.load_blobs(rec, &blobs)?;
         let mut out = Vec::new();
         for &p in positions {
             out.push((p, self.calc_value(rec, p, &mut Vec::new())?));
@@ -210,7 +218,7 @@ impl Session {
     }
 
     /// Calculates the FlowField at `pos` of `rec` from the table as it is now.
-    fn calc_value(&mut self, rec: &Rec, pos: usize, stack: &mut Vec<usize>) -> Result<Value, Signal> {
+    pub(crate) fn calc_value(&mut self, rec: &Rec, pos: usize, stack: &mut Vec<usize>) -> Result<Value, Signal> {
         // Corpus record/TestCalcFormulaFlowFieldValueTests.Codeunit.al:176-221: a formula
         // that needs itself, directly or through another FlowField, is a recursion error.
         if stack.contains(&pos) {
@@ -402,7 +410,7 @@ impl Session {
         Ok(parts
             .into_iter()
             .filter(|(field, _, is_override)| *is_override || !overridden.contains(field))
-            .map(|(field, expr, _)| FieldFilter { field, expr })
+            .map(|(field, expr, _)| FieldFilter { field, expr, group: 0 })
             .collect())
     }
 

@@ -2,9 +2,11 @@
 //! (ADR-010: conversions live next to the value model).
 
 use crate::native::Signal;
-use crate::value::{RtType, Value};
+use crate::value::{LibraryValue, RtType, Value};
 use rust_decimal::Decimal;
+use std::cell::RefCell;
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 fn unsupported<T>(what: String) -> Result<T, Signal> {
     Err(Signal::Unsupported(what))
@@ -27,8 +29,16 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Codeunit(_), T::Codeunit(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
+        (v @ Value::Blob(_), T::Library(n)) if n.eq_ignore_ascii_case("Blob") => v,
+        // A Text (not a literal) assigns into a SecretText (types/TestSecretText.al).
+        (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => {
+            Value::Library("SecretText".into(), Rc::new(RefCell::new(LibraryValue::Text(s))))
+        }
         (v @ Value::Enum(..), T::Enum(_)) => v,
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
+        (Value::Option(o, _), T::Integer) => Value::Integer(o),
+        (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
+        (Value::BigInteger(n), T::Duration) => Value::Duration(n),
         (Value::Integer(i), T::Option(m)) => Value::Option(i, m.clone().into()),
         // A Duration is a count of milliseconds.
         (v, T::Duration) if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) => {
@@ -67,6 +77,8 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 _ => unreachable!(),
             }
         }
+        // The untracked call stack marker moves between Text slots unread (see `native::text_of`).
+        (Value::Text(s), T::Text(_)) if s.contains(crate::native::UNTRACKED_CALL_STACK) => Value::Text(s),
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
             Value::Text(fit(crate::native::text_of(&v).expect("text"), *max)?)
@@ -216,10 +228,49 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Guid(a), V::Guid(b)) => a.cmp(b),
         (V::Option(a, _), V::Option(b, _)) => a.cmp(b),
         (V::Option(a, _), V::Integer(b)) | (V::Integer(a), V::Option(b, _)) => a.cmp(b),
+        // A Duration compares with a whole number of milliseconds (json/TestJsonComplete.al: `Dur > 0`).
+        (V::Duration(a), V::Integer(b)) => a.cmp(&i64::from(*b)),
+        (V::Integer(a), V::Duration(b)) => i64::from(*a).cmp(b),
+        (V::Duration(a), V::BigInteger(b)) => a.cmp(b),
+        (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => a.cmp(b),
+        (V::Library(_, a), V::Library(_, b)) => {
+            use crate::value::LibraryValue as L;
+            match (&*a.borrow(), &*b.borrow()) {
+                (L::Empty, L::Empty) => Ordering::Equal,
+                (L::Empty, L::RecordId { .. }) => Ordering::Less,
+                (L::RecordId { .. }, L::Empty) => Ordering::Greater,
+                (
+                    L::RecordId {
+                        table_no: ta, key: ka, ..
+                    },
+                    L::RecordId {
+                        table_no: tb, key: kb, ..
+                    },
+                ) => {
+                    let mut o = ta.cmp(tb);
+                    for (x, y) in ka.iter().zip(kb) {
+                        if o != Ordering::Equal {
+                            break;
+                        }
+                        o = compare(x, y)?;
+                    }
+                    o.then(ka.len().cmp(&kb.len()))
+                }
+                _ => return unsupported(format!("comparison of {l:?} and {r:?}")),
+            }
+        }
         _ => return unsupported(format!("comparison of {l:?} and {r:?}")),
     })
+}
+
+/// Whether two primary keys are the same value for value.
+pub fn compare_keys(a: &[Value], b: &[Value]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b)
+            .all(|(x, y)| compare(x, y).ok() == Some(Ordering::Equal))
 }
 
 pub fn truthy(v: &Value) -> Result<bool, Signal> {
@@ -294,6 +345,24 @@ mod tests {
             ),
             "other Duration arithmetic is not pinned"
         );
+    }
+
+    #[test]
+    fn convert_option_to_integer_and_integer_to_duration() {
+        // json/TestJsonComplete.al JsonObject_GetOption_ReturnsInteger: `Opt: Integer; Opt := JObj.GetOption('o')`;
+        // JsonArray_GetDuration_ReturnsDuration: `Dur: Duration; Dur := 86400000`.
+        assert!(matches!(
+            convert(Value::Option(2, std::rc::Rc::from(vec![])), &RtType::Integer),
+            Ok(Value::Integer(2))
+        ));
+        assert!(matches!(
+            convert(Value::Integer(86_400_000), &RtType::Duration),
+            Ok(Value::Duration(86_400_000))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(5), &RtType::Duration),
+            Ok(Value::Duration(5))
+        ));
     }
 
     #[test]
@@ -406,5 +475,14 @@ mod tests {
             Ordering::Equal
         );
         assert!(compare(&Value::Integer(1), &Value::Text("1".into())).is_err());
+        // json/TestJsonComplete.al JsonObject_GetDuration_ReturnsDuration: `Dur > 0`.
+        assert_eq!(
+            compare(&Value::Duration(3_600_000), &Value::Integer(0)).unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            compare(&Value::Integer(0), &Value::Duration(5)).unwrap(),
+            Ordering::Less
+        );
     }
 }

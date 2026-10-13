@@ -5,9 +5,10 @@
 //! innermost node open when the next significant token arrives; nodes start
 //! *after* pending trivia, so leading comments belong to the parent.
 
+use crate::builder::{Checkpoint, TreeBuilder, TreeCache};
 use crate::preprocessor::preprocess;
 use crate::{SyntaxKind, SyntaxNode, Token, lex};
-use rowan::{Checkpoint, GreenNode, GreenNodeBuilder};
+use rowan::GreenNode;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,27 +30,59 @@ impl Parse {
 
 /// Lex, preprocess with `symbols`, and parse a whole `.al` file.
 pub fn parse(src: &str, symbols: &BTreeSet<String>) -> Parse {
-    parse_entry(src, symbols, crate::grammar::source_file)
+    thread_local! {
+        static CACHE: std::cell::RefCell<TreeCache> = Default::default();
+    }
+    // One cache per thread, so repeated calls share tokens and pay for the
+    // table once. Fall back to a private one if this is somehow re-entered.
+    CACHE.with(|c| match c.try_borrow_mut() {
+        Ok(mut cache) => parse_with_cache(src, symbols, &mut cache),
+        Err(_) => parse_with_cache(src, symbols, &mut TreeCache::default()),
+    })
+}
+
+/// [`parse`], interning tree nodes in `cache`. The result is identical.
+pub fn parse_with_cache(src: &str, symbols: &BTreeSet<String>, cache: &mut TreeCache) -> Parse {
+    parse_entry(src, symbols, cache, crate::grammar::source_file)
 }
 
 /// Parses a standalone type such as a table field's `Code[20]`; `None` if it is
 /// not exactly one well-formed type.
 pub fn parse_type(src: &str) -> Option<crate::ast::TypeRef> {
-    let p = parse_entry(src, &BTreeSet::new(), crate::grammar::type_ref);
+    let p = parse_entry(
+        src,
+        &BTreeSet::new(),
+        &mut TreeCache::default(),
+        crate::grammar::type_ref,
+    );
     if !p.errors.is_empty() {
         return None;
     }
     p.syntax().children().find_map(crate::ast::TypeRef::cast)
 }
 
-pub(crate) fn parse_entry(src: &str, symbols: &BTreeSet<String>, entry: fn(&mut Parser)) -> Parse {
-    let pre = preprocess(src, &lex(src), symbols);
-    let mut p = Parser::new(src, &pre.tokens);
+pub(crate) fn parse_entry(
+    src: &str,
+    symbols: &BTreeSet<String>,
+    cache: &mut TreeCache,
+    entry: fn(&mut Parser),
+) -> Parse {
+    let tokens = lex(src);
+    // Without a directive the preprocessor would copy the tokens unchanged.
+    let pre = if tokens.iter().any(|t| t.kind == SyntaxKind::Directive) {
+        preprocess(src, &tokens, symbols)
+    } else {
+        crate::preprocessor::Preprocessed {
+            tokens,
+            diagnostics: Vec::new(),
+        }
+    };
+    let mut p = Parser::new(src, &pre.tokens, cache);
     p.errors.extend(pre.diagnostics.into_iter().map(|d| ParseError {
         offset: d.offset,
         message: d.message,
     }));
-    p.builder.start_node(SyntaxKind::SourceFile.into());
+    p.builder.start_node(SyntaxKind::SourceFile);
     entry(&mut p);
     // Anything the entry point did not consume is an error, but still part of the tree.
     if !p.at_eof() {
@@ -70,52 +103,62 @@ pub(crate) fn parse_entry(src: &str, symbols: &BTreeSet<String>, entry: fn(&mut 
 
 pub(crate) struct Parser<'a> {
     src: &'a str,
+    /// Every token, trivia included: kind, start and end byte offsets.
     tokens: Vec<(SyntaxKind, usize, usize)>,
     pos: usize,
-    builder: GreenNodeBuilder<'static>,
+    /// The significant (non-trivia) tokens only, so look-ahead is an index
+    /// instead of a scan over trivia, and `sp` is how many have been consumed.
+    sig: Vec<(SyntaxKind, u32, u32)>,
+    sp: usize,
+    builder: TreeBuilder<'a>,
     pub(crate) errors: Vec<ParseError>,
     /// Guards against grammar loops that do not consume input.
     fuel: std::cell::Cell<u32>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(src: &'a str, toks: &[Token]) -> Self {
+    fn new(src: &'a str, toks: &[Token], cache: &'a mut TreeCache) -> Self {
         let mut tokens = Vec::with_capacity(toks.len());
+        let mut sig = Vec::with_capacity(toks.len() / 2);
         let mut off = 0;
         for t in toks {
-            tokens.push((t.kind, off, off + t.len as usize));
-            off += t.len as usize;
+            let end = off + t.len as usize;
+            tokens.push((t.kind, off, end));
+            if !t.kind.is_trivia() {
+                sig.push((t.kind, off as u32, end as u32));
+            }
+            off = end;
         }
         Parser {
             src,
             tokens,
             pos: 0,
-            builder: GreenNodeBuilder::new(),
+            sig,
+            sp: 0,
+            builder: TreeBuilder::new(cache),
             errors: Vec::new(),
             fuel: 256.into(),
         }
     }
 
-    fn sig(&self, n: usize) -> Option<usize> {
-        let mut seen = 0;
-        for i in self.pos..self.tokens.len() {
-            if !self.tokens[i].0.is_trivia() {
-                if seen == n {
-                    return Some(i);
-                }
-                seen += 1;
-            }
-        }
-        None
+    /// The n-th significant token ahead (0 = current).
+    #[inline]
+    fn sig(&self, n: usize) -> Option<(SyntaxKind, usize, usize)> {
+        self.sig.get(self.sp + n).map(|&(k, s, e)| (k, s as usize, e as usize))
     }
 
-    /// Kind of the n-th significant token ahead (0 = current).
-    pub(crate) fn nth(&self, n: usize) -> SyntaxKind {
+    #[inline]
+    fn tick(&self) {
         if self.fuel.get() == 0 {
             panic!("parser made no progress at offset {}", self.offset());
         }
         self.fuel.set(self.fuel.get() - 1);
-        self.sig(n).map_or(SyntaxKind::__Last, |i| self.tokens[i].0)
+    }
+
+    /// Kind of the n-th significant token ahead (0 = current).
+    pub(crate) fn nth(&self, n: usize) -> SyntaxKind {
+        self.tick();
+        self.sig.get(self.sp + n).map_or(SyntaxKind::__Last, |t| t.0)
     }
 
     pub(crate) fn current(&self) -> SyntaxKind {
@@ -123,8 +166,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn nth_text(&self, n: usize) -> &'a str {
-        self.sig(n)
-            .map_or("", |i| &self.src[self.tokens[i].1..self.tokens[i].2])
+        self.sig(n).map_or("", |(_, s, e)| &self.src[s..e])
     }
 
     pub(crate) fn at(&self, kind: SyntaxKind) -> bool {
@@ -132,7 +174,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn at_eof(&self) -> bool {
-        self.sig(0).is_none()
+        self.sp >= self.sig.len()
     }
 
     /// Current token is the identifier `kw`, case-insensitively.
@@ -141,11 +183,18 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn nth_kw(&self, n: usize, kw: &str) -> bool {
-        self.nth(n) == SyntaxKind::Ident && self.nth_text(n).eq_ignore_ascii_case(kw)
+        self.tick();
+        let Some(&(kind, start, end)) = self.sig.get(self.sp + n) else {
+            return false;
+        };
+        let (start, end) = (start as usize, end as usize);
+        kind == SyntaxKind::Ident
+            && end - start == kw.len()
+            && self.src.as_bytes()[start..end].eq_ignore_ascii_case(kw.as_bytes())
     }
 
     pub(crate) fn offset(&self) -> usize {
-        self.sig(0).map_or(self.src.len(), |i| self.tokens[i].1)
+        self.sig(0).map_or(self.src.len(), |(_, s, _)| s)
     }
 
     fn flush_trivia(&mut self) {
@@ -156,13 +205,16 @@ impl<'a> Parser<'a> {
 
     fn push_raw(&mut self) {
         let (k, s, e) = self.tokens[self.pos];
-        self.builder.token(k.into(), &self.src[s..e]);
+        self.builder.token(k, &self.src[s..e]);
         self.pos += 1;
+        if !k.is_trivia() {
+            self.sp += 1;
+        }
     }
 
     pub(crate) fn start(&mut self, kind: SyntaxKind) {
         self.flush_trivia();
-        self.builder.start_node(kind.into());
+        self.builder.start_node(kind);
     }
 
     pub(crate) fn finish(&mut self) {
@@ -175,7 +227,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn start_at(&mut self, cp: Checkpoint, kind: SyntaxKind) {
-        self.builder.start_node_at(cp, kind.into());
+        self.builder.start_node_at(cp, kind);
     }
 
     pub(crate) fn bump_any(&mut self) {
@@ -265,4 +317,35 @@ fn write_node(node: &SyntaxNode, s: &mut String) {
         }
     }
     s.push(')');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A: &str = "codeunit 1 A { procedure P() begin if true then exit; end; }";
+    const B: &str = "table 2 B { fields { field(1; X; Integer) { } } }\n#if BC27PLUS\ncodeunit 3 C { }\n#endif\n";
+
+    #[test]
+    fn a_shared_cache_gives_the_same_trees_as_a_fresh_one() {
+        let syms: BTreeSet<String> = ["BC27PLUS".to_string()].into();
+        let mut cache = TreeCache::default();
+        for src in [A, B, A, B, ""] {
+            let shared = parse_with_cache(src, &syms, &mut cache);
+            let fresh = parse_with_cache(src, &syms, &mut TreeCache::default());
+            assert_eq!(debug_tree(&shared.syntax()), debug_tree(&fresh.syntax()));
+            assert_eq!(shared.syntax().text(), src);
+            assert_eq!(shared.errors, fresh.errors);
+            assert_eq!(shared.green, fresh.green, "structurally equal trees");
+        }
+    }
+
+    #[test]
+    fn parse_uses_the_directive_free_fast_path_and_the_preprocessor_alike() {
+        // Same code with and without a directive line: only the disabled text differs.
+        let plain = parse(A, &BTreeSet::new());
+        let with = parse(&format!("#if NOPE\nx\n#endif\n{A}"), &BTreeSet::new());
+        assert!(plain.errors.is_empty() && with.errors.is_empty());
+        assert_eq!(debug_tree(&plain.syntax()), debug_tree(&with.syntax()));
+    }
 }

@@ -161,6 +161,7 @@ pub fn filters_count_and_delete_all<S: Store>(mut s: S) {
     let f = [FieldFilter {
         field: 1,
         expr: FilterExpr::Range(Some(Value::Integer(10)), None),
+        group: 0,
     }];
     assert_eq!(scan_all(&s, &c, &t, 0, &f, true), ["B", "C"]);
     assert_eq!(s.count(&c, &t, &f).unwrap(), 2);

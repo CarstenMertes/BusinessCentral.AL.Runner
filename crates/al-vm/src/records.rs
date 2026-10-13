@@ -54,7 +54,7 @@ impl Session {
             .collect()
     }
 
-    fn store_for(&mut self, rec: &Rec) -> &mut MemStore {
+    pub(crate) fn store_for(&mut self, rec: &Rec) -> &mut MemStore {
         match rec.borrow().temp_id {
             Some(id) => self.temps.entry(id).or_default(),
             None => &mut self.store,
@@ -330,7 +330,7 @@ impl Session {
 
     /// The row as the store keeps it: FlowFields and FlowFilters hold no data, whatever the
     /// buffer shows after CalcFields or an assignment.
-    fn stored_view(&mut self, t: &TableDef, row: &[Value]) -> Vec<Value> {
+    pub(crate) fn stored_view(&mut self, t: &TableDef, row: &[Value]) -> Vec<Value> {
         row.iter()
             .enumerate()
             .map(|(i, v)| {
@@ -374,6 +374,7 @@ impl Session {
                 .map(|&f| FieldFilter {
                     field: f,
                     expr: FilterExpr::Eq(row[f].clone()),
+                    group: 0,
                 })
                 .collect();
             let n = self
@@ -475,10 +476,13 @@ impl Session {
         }
     }
 
-    fn assign_system_id(&mut self, t: &TableDef, rec: &Rec) {
+    /// Gives the row its SystemId: the one in the buffer when `keep` (`Insert(_, true)`) and it is
+    /// set, otherwise a fresh one (corpus record/TestRecordInsert.al:84-110).
+    fn assign_system_id(&mut self, t: &TableDef, rec: &Rec, keep: bool) {
         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) {
             let mut r = rec.borrow_mut();
-            if matches!(r.fields[i], Value::Guid(g) if g == [0; 16]) {
+            let unset = matches!(r.fields[i], Value::Guid(g) if g == [0; 16]);
+            if unset || !keep {
                 // Deterministic ids (ADR-006: no OS randomness in the core).
                 self.next_guid += 1;
                 let mut g = [0u8; 16];
@@ -489,7 +493,7 @@ impl Session {
         }
     }
 
-    fn scan(
+    pub(crate) fn scan(
         &mut self,
         rec: &Rec,
         t: &TableDef,
@@ -499,6 +503,7 @@ impl Session {
         let key = rec.borrow().key;
         // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
         let (filters, flow_field_filters) = self.split_filters(rec);
+        let marked_only = rec.borrow().marked_only;
         let cx = self.cx.clone();
         let mut after = after;
         loop {
@@ -516,6 +521,8 @@ impl Session {
                 )
                 .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
             match row {
+                // MarkedOnly narrows the set to the marked rows (corpus record/TestRecordFind.al:258-290).
+                Some(row) if marked_only && !Self::is_marked(rec, t, &row) => after = Some(position(t, key, &row)),
                 Some(row) if !flow_field_filters.is_empty() => {
                     if self.passes_flow_field_filters(rec, &row, &flow_field_filters)? {
                         return Ok(Some(row));
@@ -527,10 +534,106 @@ impl Session {
         }
     }
 
-    /// Reads a row into the record, then calculates its `SetAutoCalcFields` fields.
-    fn load(&mut self, rec: &Rec, row: Vec<Value>) -> Result<(), Signal> {
+    fn is_marked(rec: &Rec, t: &TableDef, row: &[Value]) -> bool {
+        let pk = t.primary_key(row);
+        rec.borrow()
+            .marks
+            .iter()
+            .any(|m| key_cmp(m, &pk) == std::cmp::Ordering::Equal)
+    }
+
+    /// Refuses an explicit SystemId another row already holds. The wording after the pinned
+    /// fragments is docs/probes-needed.md (record/TestRecordSystemId.al:86-168, TestAutoIncrementEdges.al:282).
+    fn check_system_id_unique(&mut self, rec: &Rec, t: &TableDef) -> Result<(), Signal> {
+        let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) else {
+            return Ok(());
+        };
+        let id = rec.borrow().fields[i].clone();
+        let filters = [FieldFilter {
+            field: i,
+            expr: FilterExpr::Eq(id.clone()),
+            group: 0,
+        }];
+        let cx = self.cx.clone();
+        let taken = self
+            .store_for(rec)
+            .count(&cx, t, &filters)
+            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+        if taken == 0 {
+            return Ok(());
+        }
+        Err(Signal::Error(AlError {
+            message: format!(
+                "There is already a record in table {} that has the same values in a unique index. \
+                 The conflict is in the following fields: {}='{}'.",
+                self.caption(t),
+                self.field_caption(t, i),
+                al_builtins::format::format(&id, 0, 0, self)
+            ),
+            code: "DB:RecordExists".into(),
+            call_stack: String::new(),
+        }))
+    }
+
+    /// Reads a row into the record, then calculates its `SetAutoCalcFields` fields. A database
+    /// table hands out its own copy of every Blob, not yet loaded
+    /// (streams/TestBlobUncommittedWriteIsolation.al, TestBlob.al Blob_Get_WithoutCalcFields_InStreamReadsEmpty);
+    /// a temporary table's rows hold the record's own Blob objects
+    /// (TempBlob_UncommittedWrite_SameInstanceReGet_KeepsWrite).
+    pub(crate) fn load(&mut self, rec: &Rec, mut row: Vec<Value>) -> Result<(), Signal> {
+        if rec.borrow().temp_id.is_none() {
+            for v in &mut row {
+                if let Value::Blob(b) = v {
+                    *b = al_builtins::stream::copy_blob(b, false);
+                }
+            }
+        }
         rec.borrow_mut().fields = row;
         self.auto_calculate(rec)
+    }
+
+    /// The row to hand to the store: a database table keeps its own copy of every Blob.
+    fn to_store(rec: &Rec, mut row: Vec<Value>) -> Vec<Value> {
+        if rec.borrow().temp_id.is_none() {
+            for v in &mut row {
+                if let Value::Blob(b) = v {
+                    *b = al_builtins::stream::copy_blob(b, true);
+                }
+            }
+        }
+        row
+    }
+
+    /// `CalcFields` of Blob fields: a database record's Blob is fetched from the stored row unless
+    /// the buffer already holds it (an in-memory write is kept:
+    /// streams/TestBlobCalcFieldsUncommittedWrite.al); a temporary record's Blob is always loaded.
+    pub(crate) fn load_blobs(&mut self, rec: &Rec, positions: &[usize]) -> Result<(), Signal> {
+        let t = self.table(rec)?;
+        let cx = self.cx.clone();
+        let mut stored: Option<Vec<Value>> = None;
+        for &pos in positions {
+            let Value::Blob(buf) = rec.borrow().fields[pos].clone() else {
+                return unsupported("CalcFields of a Blob field that holds no Blob");
+            };
+            if buf.borrow().loaded {
+                continue;
+            }
+            if stored.is_none() {
+                let pk = t.primary_key(&rec.borrow().fields);
+                stored = self
+                    .store_for(rec)
+                    .get(&cx, &t, &pk)
+                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            }
+            let Some(Value::Blob(src)) = stored.as_ref().map(|row| row[pos].clone()) else {
+                return unsupported("CalcFields of a Blob whose row is gone (error text not pinned)");
+            };
+            let bytes = src.borrow().bytes.clone();
+            let mut b = buf.borrow_mut();
+            b.bytes = bytes;
+            b.loaded = true;
+        }
+        Ok(())
     }
 
     pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
@@ -569,6 +672,9 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 r.fields = fresh;
                 r.filters.clear();
+                r.filter_group = 0;
+                r.marks.clear();
+                r.marked_only = false;
                 r.key = 0;
                 r.ascending = true;
                 r.position = None;
@@ -610,7 +716,14 @@ impl Session {
                     }
                     self.run_ext_trigger(&t, "OnInsert", rec, None)?;
                 }
-                self.assign_system_id(&t, rec);
+                let keep_id = match args.get(1) {
+                    Some(v) => ops::truthy(v)?,
+                    None => false,
+                };
+                self.assign_system_id(&t, rec, keep_id);
+                if keep_id {
+                    self.check_system_id_unique(rec, &t)?;
+                }
                 let old_version = self.bump_row_version(&t, rec);
                 // The key is chosen below the trigger: OnInsert starts with it still 0 and a
                 // refused Insert never takes a value (corpus record/TestAutoIncrementExplicitKey.al:63,
@@ -635,7 +748,7 @@ impl Session {
                     }
                     return self.fail_unique(&t);
                 }
-                let stored = self.stored_view(&t, &row);
+                let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
                     .store_for(rec)
                     .insert(&cx, &t, stored.clone())
@@ -700,6 +813,16 @@ impl Session {
                         }));
                     }
                 }
+                // Modify never changes the stored SystemId, whatever the buffer carries
+                // (corpus record/TestRecordSystemId.al:176-215, :285-330).
+                let kept: Vec<(usize, Value)> = match &stored {
+                    Some(old) => [2_000_000_000, 2_000_000_001, 2_000_000_002]
+                        .iter()
+                        .filter_map(|id| t.fields.iter().position(|f| f.id == *id))
+                        .map(|i| (i, old[i].clone()))
+                        .collect(),
+                    None => Vec::new(),
+                };
                 // xRec is the stored row, one handle for the events and the trigger.
                 let xrec = stored.map(|f| Self::xrec_handle(rec, f));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
@@ -711,8 +834,11 @@ impl Session {
                     self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
                 let old_version = self.bump_row_version(&t, rec);
-                let row = rec.borrow().fields.clone();
-                let stored = self.stored_view(&t, &row);
+                let mut row = rec.borrow().fields.clone();
+                for (i, v) in kept {
+                    row[i] = v;
+                }
+                let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
                     .store_for(rec)
                     .modify(&cx, &t, stored.clone())
@@ -875,7 +1001,7 @@ impl Session {
             }
             "Count" | "IsEmpty" => {
                 let (filters, flow_field_filters) = self.split_filters(rec);
-                let n = if flow_field_filters.is_empty() {
+                let n = if flow_field_filters.is_empty() && !rec.borrow().marked_only {
                     self.store_for(rec)
                         .count(&cx, &t, &filters)
                         .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
@@ -902,7 +1028,8 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let mut r = rec.borrow_mut();
-                r.filters.retain(|f| f.field != pos);
+                let group = r.filter_group;
+                r.filters.retain(|f| !(f.field == pos && f.group == group));
                 if let Some(from) = args.get(1) {
                     let from = ops::convert(from.clone(), &ty)?;
                     let to = match args.get(2) {
@@ -912,6 +1039,7 @@ impl Session {
                     r.filters.push(FieldFilter {
                         field: pos,
                         expr: FilterExpr::Range(Some(from), Some(to)),
+                        group,
                     });
                 }
                 Ok(Value::Null)
@@ -925,8 +1053,13 @@ impl Session {
                 let expr = al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
                     .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?;
                 let mut r = rec.borrow_mut();
-                r.filters.retain(|f| f.field != pos);
-                r.filters.push(FieldFilter { field: pos, expr });
+                let group = r.filter_group;
+                r.filters.retain(|f| !(f.field == pos && f.group == group));
+                r.filters.push(FieldFilter {
+                    field: pos,
+                    expr,
+                    group,
+                });
                 Ok(Value::Null)
             }
             "Reset" => {
@@ -961,9 +1094,6 @@ impl Session {
                     .expect("table");
                 let field = schema.fields[pos].clone();
                 self.check_hooks(&t, "Validate")?;
-                if field.relation {
-                    return unsupported("Validate of a field with a TableRelation");
-                }
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
                 let handle = Rc::as_ptr(rec) as usize;
@@ -974,8 +1104,14 @@ impl Session {
                     .map(|(_, b)| b.clone());
                 let before = outer.clone().unwrap_or_else(|| rec.borrow().fields.clone());
                 let old_value = rec.borrow().fields[pos].clone();
-                if let Some(v) = args.get(1) {
-                    let v = ops::convert(v.clone(), &field.ty)?;
+                let new_value = match args.get(1) {
+                    Some(v) => Some(ops::convert(v.clone(), &field.ty)?),
+                    None => None,
+                };
+                // The relation is checked before the value goes in and before OnValidate runs; a
+                // refused value is never stored (corpus record/TestCalcFormulaSystemFieldsTests.Codeunit.al:253).
+                self.validate_relation(rec, &t, pos, new_value.clone().unwrap_or_else(|| old_value.clone()))?;
+                if let Some(v) = new_value {
                     rec.borrow_mut().fields[pos] = v;
                 }
                 let xrec = Self::xrec_handle(rec, before.clone());
@@ -991,22 +1127,18 @@ impl Session {
             }
             "Rename" => {
                 self.check_hooks(&t, "Rename")?;
-                self.check_unique_keys(&t)?;
-                let name = t.name.to_lowercase();
-                let related = self
-                    .engine
-                    .program
-                    .objects
-                    .iter()
-                    .filter_map(|o| o.table.as_ref())
-                    .flat_map(|tb| &tb.fields)
-                    .any(|f| f.relation_tables.contains(&name));
-                if related {
-                    return unsupported(format!(
-                        "Rename of {}: other tables relate to it (re-keying related rows is not implemented yet)",
-                        t.name
-                    ));
+                if rec.borrow().temp_id.is_some() && rec.borrow().fields.iter().any(|f| matches!(f, Value::Blob(_))) {
+                    // streams/TestBlobRenameIsolation.al: BC keeps an unpersisted Blob write across a
+                    // temporary Rename but loses one persisted with Modify; no model here does both.
+                    return unsupported("Rename of a temporary record with a Blob field");
                 }
+                self.check_unique_keys(&t)?;
+                // Fields that relate to this table follow the rename; a temporary record has none.
+                let refs = if rec.borrow().temporary {
+                    Vec::new()
+                } else {
+                    self.rename_references(&t)?
+                };
                 let old = rec.borrow().fields.clone();
                 let mut new = old.clone();
                 for (n, &field) in t.keys[0].iter().enumerate() {
@@ -1036,6 +1168,7 @@ impl Session {
                 }
                 // Rec carries the new key and xRec the old row in the events and the trigger
                 // (record/TestTableEventDispatch.al:TableEvent_OnAfterRename_Subscriber_FiresWithOldAndNewKeys).
+                let old_fields = old.clone();
                 rec.borrow_mut().fields = new.clone();
                 let xrec = Self::xrec_handle(rec, old.clone());
                 // Rename always runs the trigger; RunTrigger is true (docs/probes-needed.md).
@@ -1047,13 +1180,14 @@ impl Session {
                 self.run_ext_trigger(&t, "OnRename", rec, Some(&xrec))?;
                 let _ = self.bump_row_version(&t, rec);
                 let row = rec.borrow().fields.clone();
-                let stored = self.stored_view(&t, &row);
+                let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
                     .store_for(rec)
                     .rename(&cx, &t, &old_pk, stored.clone())
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                 {
                     RenameOutcome::Renamed => {
+                        self.propagate_rename(&t, &refs, &old_fields, &row)?;
                         self.run_ext_trigger(&t, "OnAfterRename", rec, Some(&xrec))?;
                         self.table_event(&t, "onafterrenameevent", rec, Some(&xrec), true, None)?;
                         Ok(Value::Boolean(true))
@@ -1070,7 +1204,7 @@ impl Session {
             }
             "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
             "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
-            other => unsupported(format!("Record.{other}")),
+            other => self.record_meta_op(other, rec, &t, args),
         }
     }
 }

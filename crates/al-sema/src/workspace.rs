@@ -2,6 +2,7 @@
 //! (path, text). Loading parses every file and builds the object table.
 
 use al_syntax::ast;
+use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -161,40 +162,62 @@ impl Workspace {
             apps: Vec::new(),
         };
         ws.visible = (0..apps.len()).map(|i| visible_from(&apps, i)).collect();
-        for (ai, app) in apps.iter().enumerate() {
-            for (path, src) in &app.files {
-                // Expression-valued page properties become routines (ADR-012).
-                let expanded = crate::pages::expand(src, symbols);
-                let src = expanded.as_ref().unwrap_or(src);
-                let parse = al_syntax::parse(src, symbols);
-                for e in &parse.errors {
-                    ws.diagnostics.push(Diagnostic {
-                        file: path.clone(),
-                        offset: e.offset,
-                        code: "AR0000",
-                        message: e.message.clone(),
-                    });
-                }
-                let fi = ws.files.len();
-                let root = ast::SourceFile::cast(parse.syntax()).expect("root is a SourceFile");
-                ws.files.push(SourceFileData {
-                    path: path.clone(),
-                    app: ai,
-                    green: parse.green.clone(),
-                    namespace: root.namespace(),
-                    usings: root.usings(),
+        // Parsing dominates loading and each file is independent, so it runs on
+        // all cores. `collect` keeps the input order, so the sequential merge
+        // below sees files, diagnostics and objects exactly as a serial load would.
+        // Expression-valued page properties become routines first (ADR-012).
+        let expanded: Vec<Vec<Option<String>>> = apps
+            .iter()
+            .map(|app| {
+                app.files
+                    .iter()
+                    .map(|(_, src)| crate::pages::expand(src, symbols))
+                    .collect()
+            })
+            .collect();
+        let inputs: Vec<(usize, &str, &str)> =
+            apps.iter()
+                .enumerate()
+                .flat_map(|(ai, app)| {
+                    let expanded = &expanded[ai];
+                    app.files.iter().enumerate().map(move |(fi, (path, src))| {
+                        (ai, path.as_str(), expanded[fi].as_deref().unwrap_or(src.as_str()))
+                    })
+                })
+                .collect();
+        let parsed: Vec<ParsedFile> = inputs
+            .par_iter()
+            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, src)| {
+                parse_file(src, symbols, cache)
+            })
+            .collect();
+        for ((ai, path, _), file) in inputs.into_iter().zip(parsed) {
+            for e in &file.errors {
+                ws.diagnostics.push(Diagnostic {
+                    file: path.to_string(),
+                    offset: e.offset,
+                    code: "AR0000",
+                    message: e.message.clone(),
                 });
-                for o in root.objects() {
-                    ws.add_object(ObjectSym {
-                        app: ai,
-                        file: fi,
-                        kind: ObjKind::from_keyword(&o.kind()),
-                        id: o.id(),
-                        name: o.name(),
-                        namespace: root.namespace(),
-                        offset: o.syntax().text_range().start().into(),
-                    });
-                }
+            }
+            let fi = ws.files.len();
+            ws.files.push(SourceFileData {
+                path: path.to_string(),
+                app: ai,
+                green: file.green,
+                namespace: file.namespace.clone(),
+                usings: file.usings,
+            });
+            for (kind, id, name, offset) in file.objects {
+                ws.add_object(ObjectSym {
+                    app: ai,
+                    file: fi,
+                    kind,
+                    id,
+                    name,
+                    namespace: file.namespace.clone(),
+                    offset,
+                });
             }
         }
         ws.apps = apps;
@@ -249,6 +272,21 @@ impl Workspace {
     /// unique match in any namespace (corpus evidence: files with neither
     /// namespace nor `using` reference namespaced Base App tables and compile).
     pub fn resolve_ref(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
+        self.resolve_in_scope(file, kind, parts, false)
+    }
+
+    /// What a name means at run time (a `TableRelation` target), where BC resolves it against
+    /// every installed app: this workspace has no Base Application, so a hit is only certain
+    /// when no tier above it could hold a Base Application object of that name. That is the
+    /// file's own namespace; the `using`s when the file has no namespace of its own; the global
+    /// namespace when it has neither. Anything else is `Missing`, never a guess (corpus fieldref/
+    /// TestRelationTargetNamespaceScope.al and TestRelationOwnNamespaceDependency.al: an
+    /// imported or global workspace table must not stand in for a Base Application one).
+    pub fn resolve_ref_certain(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
+        self.resolve_in_scope(file, kind, parts, true)
+    }
+
+    fn resolve_in_scope(&self, file: usize, kind: ObjKind, parts: &[String], certain_only: bool) -> Resolution {
         let f = &self.files[file];
         let visible = |i: &usize| self.visible[f.app].contains(&self.objects[*i].app);
         let Some(name) = parts.last() else {
@@ -291,14 +329,23 @@ impl Workspace {
                 .filter(|&i| eq_ns(&self.objects[i].namespace, ns))
                 .collect::<Vec<_>>()
         };
+        let no_ns = f.namespace.is_none();
         let tiers = [
             f.namespace
                 .as_ref()
                 .map(|n| in_ns(&Some(n.clone())))
                 .unwrap_or_default(),
-            f.usings.iter().flat_map(|u| in_ns(&Some(u.clone()))).collect(),
-            in_ns(&None),
-            cands.clone(),
+            if certain_only && !no_ns {
+                Vec::new()
+            } else {
+                f.usings.iter().flat_map(|u| in_ns(&Some(u.clone()))).collect()
+            },
+            if certain_only && !(no_ns && f.usings.is_empty()) {
+                Vec::new()
+            } else {
+                in_ns(&None)
+            },
+            if certain_only { Vec::new() } else { cands.clone() },
         ];
         for tier in tiers {
             if !tier.is_empty() {
@@ -326,26 +373,27 @@ impl Workspace {
 
     /// The syntax node of object `i`.
     pub fn object_ast(&self, i: usize) -> ast::Object {
-        let o = &self.objects[i];
+        self.object_node(&self.objects[i])
+            .expect("object node at recorded offset")
+    }
+
+    /// Objects are direct children of the file's root, so look there rather than
+    /// walking every node of the file.
+    fn object_node(&self, o: &ObjectSym) -> Option<ast::Object> {
         let root = al_syntax::SyntaxNode::new_root(self.files[o.file].green.clone());
-        root.descendants()
+        root.children()
             .filter_map(ast::Object::cast)
             .find(|n| usize::from(n.syntax().text_range().start()) == o.offset)
-            .expect("object node at recorded offset")
     }
 
     fn resolve_references(&mut self) {
         let mut diags = Vec::new();
         for o in &self.objects {
             let file = &self.files[o.file];
-            let root = al_syntax::SyntaxNode::new_root(file.green.clone());
-            let Some(node) = root
-                .descendants()
-                .find(|n| n.kind() == al_syntax::SyntaxKind::Object && usize::from(n.text_range().start()) == o.offset)
-            else {
+            let Some(obj) = self.object_node(o) else {
                 continue;
             };
-            let obj = ast::Object::cast(node.clone()).expect("object node");
+            let node = obj.syntax().clone();
             let mut check = |kind: ObjKind, parts: &[String], offset: usize| {
                 let name = parts.join(".");
                 let (code, message) = match self.resolve_ref(o.file, kind, parts) {
@@ -380,6 +428,39 @@ impl Workspace {
             }
         }
         self.diagnostics.extend(diags);
+    }
+}
+
+/// What loading needs from one parsed file; plain data, so it can be produced
+/// on a worker thread (syntax nodes cannot cross threads, green trees can).
+struct ParsedFile {
+    green: rowan::GreenNode,
+    errors: Vec<al_syntax::ParseError>,
+    namespace: Option<String>,
+    usings: Vec<String>,
+    /// (kind, id, name, offset) of each object, in source order.
+    objects: Vec<(ObjKind, Option<u32>, String, usize)>,
+}
+
+fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
+    let parse = al_syntax::parse_with_cache(src, symbols, cache);
+    let root = ast::SourceFile::cast(parse.syntax()).expect("root is a SourceFile");
+    ParsedFile {
+        namespace: root.namespace(),
+        usings: root.usings(),
+        objects: root
+            .objects()
+            .map(|o| {
+                (
+                    ObjKind::from_keyword(&o.kind()),
+                    o.id(),
+                    o.name(),
+                    o.syntax().text_range().start().into(),
+                )
+            })
+            .collect(),
+        green: parse.green,
+        errors: parse.errors,
     }
 }
 
@@ -433,6 +514,103 @@ mod tests {
 
     fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {
         ws.diagnostics.iter().map(|d| (d.code, d.message.clone())).collect()
+    }
+
+    #[test]
+    fn run_time_resolution_only_trusts_tiers_no_absent_app_could_shadow() {
+        // corpus fieldref/TestRelationOwnNamespaceDependency.al, TestRelationTargetNamespaceScope.al:
+        // a workspace table must not stand in for a Base Application one that is not here.
+        let ws = load(vec![app(
+            "a",
+            &[],
+            &[
+                ("t.al", "namespace Imported; table 50900 \"Agent\" { }"),
+                ("g.al", "table 50901 \"Global Agent\" { }"),
+                ("own.al", "namespace Own; table 50902 \"Own Agent\" { }"),
+                ("c1.al", "namespace Own; using Imported; codeunit 60100 C1 { }"),
+                ("c2.al", "using Imported; codeunit 60101 C2 { }"),
+                ("c3.al", "codeunit 60102 C3 { }"),
+                ("c4.al", "namespace Other; codeunit 60103 C4 { }"),
+            ],
+        )]);
+        let file = |name: &str| ws.objects.iter().find(|o| o.name == name).unwrap().file;
+        let found = |r: Resolution| matches!(r, Resolution::Found(_));
+        let one = |n: &str| vec![n.to_string()];
+        // The ordinary compile-time resolution finds each of them.
+        assert!(found(ws.resolve_ref(file("C1"), ObjKind::Table, &one("Agent"))));
+        // Own namespace: certain.
+        assert!(found(ws.resolve_ref_certain(
+            file("C1"),
+            ObjKind::Table,
+            &one("Own Agent")
+        )));
+        // A `using` hit under a namespaced file could be shadowed by a Base Application table of the
+        // file's own namespace: not certain. Without a namespace of its own it is.
+        assert!(!found(ws.resolve_ref_certain(
+            file("C1"),
+            ObjKind::Table,
+            &one("Agent")
+        )));
+        assert!(found(ws.resolve_ref_certain(file("C2"), ObjKind::Table, &one("Agent"))));
+        // A global table is only certain for a file with neither namespace nor usings.
+        assert!(!found(ws.resolve_ref_certain(
+            file("C2"),
+            ObjKind::Table,
+            &one("Global Agent")
+        )));
+        assert!(found(ws.resolve_ref_certain(
+            file("C3"),
+            ObjKind::Table,
+            &one("Global Agent")
+        )));
+        assert!(!found(ws.resolve_ref_certain(
+            file("C4"),
+            ObjKind::Table,
+            &one("Global Agent")
+        )));
+        // Qualified names are exact.
+        assert!(found(ws.resolve_ref_certain(
+            file("C4"),
+            ObjKind::Table,
+            &["Imported".to_string(), "Agent".to_string()]
+        )));
+    }
+
+    #[test]
+    fn files_objects_and_diagnostics_keep_input_order_with_parallel_parsing() {
+        // Many files so that rayon really splits the work; a parse error and a
+        // duplicate id are planted in the middle and must be reported in file order.
+        let mut files: Vec<(String, String)> = (0..200)
+            .map(|i| (format!("f{i:03}.al"), format!("codeunit {} C{i} {{ }}", 50000 + i)))
+            .collect();
+        files[100].1 = "codeunit 50100 C100 { procedure ( }".into();
+        files[150].1 = "codeunit 50007 Dup { }".into();
+        let a = AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files,
+        };
+        let b = app("b", &["a"], &[("z.al", "codeunit 60000 Z { }")]);
+        let ws = load(vec![a.clone(), b.clone()]);
+        let paths: Vec<_> = ws.files.iter().map(|f| f.path.as_str()).collect();
+        let want: Vec<String> = a.files.iter().chain(&b.files).map(|f| f.0.clone()).collect();
+        assert_eq!(paths, want.iter().map(String::as_str).collect::<Vec<_>>());
+        let names: Vec<_> = ws.objects.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(names[..3], ["C0", "C1", "C2"]);
+        assert_eq!(names.last(), Some(&"Z"));
+        let diag_files: Vec<_> = ws.diagnostics.iter().map(|d| d.file.as_str()).collect();
+        let mut sorted = diag_files.clone();
+        sorted.sort();
+        assert_eq!(diag_files, sorted, "diagnostics come in file order");
+        assert!(diag_files.contains(&"f100.al") && diag_files.contains(&"f150.al"));
+        // Loading is deterministic.
+        let again = load(vec![a, b]);
+        assert_eq!(codes(&ws), codes(&again));
+        assert_eq!(
+            ws.objects.iter().map(|o| (o.file, o.offset)).collect::<Vec<_>>(),
+            again.objects.iter().map(|o| (o.file, o.offset)).collect::<Vec<_>>()
+        );
     }
 
     #[test]

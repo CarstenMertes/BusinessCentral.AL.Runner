@@ -1,6 +1,6 @@
 //! Native builtin implementations, registered by catalog overload id (ADR-008).
 
-use crate::format::{FormatCtx, format};
+use crate::format::{FormatCtx, try_format};
 use crate::value::Value;
 
 /// The error state AL code can read back (`GetLastErrorText`, ...).
@@ -34,6 +34,13 @@ pub trait Ctx: FormatCtx {
     fn page(&mut self, method: &str, _recv: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("{method} needs a page runtime")))
     }
+
+    /// `RecordRef`, `FieldRef` and `KeyRef` methods need the table schema and
+    /// the store, like record methods. `id` is the catalog overload id
+    /// (`RecordRef.Open#2`); the VM resolves it to the method.
+    fn ref_op(&mut self, id: &str, _receiver: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("builtin {id}")))
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -64,6 +71,7 @@ pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result
 
 const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
+    ("System.Evaluate#1", crate::evaluate::evaluate),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     ("System.GetLastErrorCode#1", get_last_error_code),
@@ -107,11 +115,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
     }),
     ("Record.Reset#1", |c, r, a| c.record("Reset", r, a)),
+    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
     ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
-    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
     ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record("SetAutoCalcFields", r, a)
@@ -151,16 +159,44 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .iter()
         .chain(crate::collections::REGISTRY)
         .chain(crate::pagebuiltins::REGISTRY)
+        .chain(crate::refs::REGISTRY)
+        .chain(crate::refs::RECORD_REGISTRY)
+}
+
+/// Implementations chosen per catalog signature instead of being listed by id
+/// (families with many near-identical overloads: JSON, XML, streams). Built once
+/// from the catalog, so a lookup is a hash probe.
+fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
+    static TABLE: std::sync::OnceLock<std::collections::HashMap<String, NativeFn>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let cat = crate::catalog::Catalog::load();
+        cat.signatures
+            .iter()
+            .filter_map(|sig| {
+                crate::json::native_for(sig)
+                    .or_else(|| crate::xml::native_for(sig))
+                    .or_else(|| crate::stream::native_for(sig))
+                    .or_else(|| crate::textfns::native_for(sig))
+                    .map(|f| (cat.id(sig), f))
+            })
+            .collect()
+    })
 }
 
 /// The implementation registered for overload `id`, if any.
 pub fn lookup(id: &str) -> Option<NativeFn> {
-    all().find(|(i, _)| *i == id).map(|(_, f)| *f)
+    all()
+        .find(|(i, _)| *i == id)
+        .map(|(_, f)| *f)
+        .or_else(|| derived().get(id).copied())
 }
 
 /// Every registered id, for the conformance test.
 pub fn registered_ids() -> Vec<&'static str> {
-    all().map(|(i, _)| *i).collect()
+    all()
+        .map(|(i, _)| *i)
+        .chain(derived().keys().map(String::as_str))
+        .collect()
 }
 
 fn vm_only(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -181,9 +217,14 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
     }
 }
 
-/// Text of a Text/Code/Char argument (Text parameters accept all three).
+/// Stands for a call stack that exists in BC but is not tracked here (a private-use character).
+pub const UNTRACKED_CALL_STACK: &str = "\u{E000}";
+
+/// Text of a Text/Code/Char argument (Text parameters accept all three). Text that holds the
+/// untracked call stack marker is refused, so its content is never silently wrong.
 pub fn text_of(v: &Value) -> Option<String> {
     match v {
+        Value::Text(s) | Value::Code(s) if s.contains(UNTRACKED_CALL_STACK) => None,
         Value::Text(s) | Value::Code(s) => Some(s.clone()),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from),
         _ => None,
@@ -200,10 +241,9 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
-    if !crate::format::is_pinned(&args[0]) {
-        return unsupported(&format!("Format of {:?} (its format is not pinned yet)", args[0]));
-    }
-    Ok(Value::Text(format(&args[0], len, std, ctx)))
+    try_format(&args[0], len, std, ctx)
+        .map(Value::Text)
+        .map_err(Signal::Unsupported)
 }
 
 fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -224,7 +264,15 @@ fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
 }
 
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(ctx.last_error().call_stack))
+    let e = ctx.last_error();
+    if e.call_stack.is_empty() && !(e.message.is_empty() && e.code.is_empty()) {
+        // BC returns the AL frames of the error (codeunit/TestCodeunitAlCallStack.al); they are not
+        // tracked. The answer is non-empty, as in BC, but its content is a marker that every text
+        // function refuses to read ([`text_of`]), so a test that inspects the frames is not run
+        // while one that only calls the function (error-handling/TestGetLastError.al) still passes.
+        return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string()));
+    }
+    Ok(Value::Text(e.call_stack))
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -292,7 +340,7 @@ pub fn substitute(template: &str, args: &[Value], ctx: &dyn FormatCtx) -> Result
             if let Some(d) = chars.peek().and_then(|d| d.to_digit(10)).filter(|d| *d >= 1) {
                 chars.next();
                 match args.get(d as usize - 1) {
-                    Some(v) => out.push_str(&format(v, 0, 0, ctx)),
+                    Some(v) => out.push_str(&try_format(v, 0, 0, ctx).map_err(Signal::Unsupported)?),
                     None => return unsupported("StrSubstNo placeholder without an argument"),
                 }
                 continue;
@@ -309,8 +357,9 @@ fn strlen(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
 
 fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let (s, sub) = (text_arg(args, 0)?, text_arg(args, 1)?);
+    // text/TestTextProcessingContracts.al StrPos_EmptySubstring_ReturnsZero.
     if sub.is_empty() {
-        return unsupported("StrPos with an empty substring");
+        return Ok(Value::Integer(0));
     }
     let hay: Vec<u16> = s.encode_utf16().collect();
     let needle: Vec<u16> = sub.encode_utf16().collect();
@@ -354,6 +403,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     let v = &mut args[0];
     *v = match v {
         Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
+        // Clearing a RecordRef/FieldRef/KeyRef closes it: a fresh, unopened handle.
+        Value::Library(name, _) if matches!(name.as_str(), "RecordRef" | "FieldRef" | "KeyRef" | "RecordId") => {
+            Value::Library(name.clone(), Default::default())
+        }
         Value::Boolean(_) => Value::Boolean(false),
         Value::Integer(_) => Value::Integer(0),
         Value::BigInteger(_) => Value::BigInteger(0),
@@ -368,6 +421,8 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Duration(_) => Value::Duration(0),
         Value::Guid(_) => Value::Guid([0; 16]),
         Value::Option(_, m) => Value::Option(0, m.clone()),
+        // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
+        Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
         other => return unsupported(&format!("Clear of {other:?}")),
     };
     Ok(Value::Null)
@@ -465,6 +520,39 @@ mod tests {
                 "Format must refuse"
             );
         }
+    }
+
+    #[test]
+    fn formats_that_are_not_pinned_are_refused_not_panics() {
+        // Format of a Duration is not pinned by the corpus yet: Unsupported, so the test is
+        // reported as not run instead of a panic taking the whole codeunit down.
+        assert!(matches!(
+            call("System.Format#1", vec![Value::Duration(86_400_000)]),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(
+            call("Text.StrSubstNo#1", vec![t("%1"), Value::Duration(5)]),
+            Err(Signal::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn the_call_stack_of_a_recorded_error_is_refused_not_invented() {
+        // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`; call
+        // stacks are not tracked: after an error the answer is a marker no text function reads.
+        let mut ctx = TestCtx::default();
+        let f = lookup("System.GetLastErrorCallStack#1").unwrap();
+        assert!(matches!(f(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s.is_empty()));
+        ctx.set_last_error(AlError {
+            message: "boom".into(),
+            code: "Dialog".into(),
+            call_stack: String::new(),
+        });
+        let Ok(stack @ Value::Text(_)) = f(&mut ctx, None, &mut []) else {
+            panic!("a call stack is returned after an error")
+        };
+        assert!(matches!(&stack, Value::Text(s) if !s.is_empty()));
+        assert!(text_of(&stack).is_none(), "its content cannot be inspected");
     }
 
     #[test]

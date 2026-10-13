@@ -340,6 +340,25 @@ pub struct WebServiceActionState {
     pub keys: Vec<i32>,
 }
 
+/// One control of a `FilterPageBuilder`: a name and the record buffer whose filters it holds.
+#[derive(Debug, Clone)]
+pub struct FilterControl {
+    pub name: String,
+    /// Object index of the table.
+    pub table: u32,
+    /// Shared between copies of the builder (corpus filterpage/TestFilterPageBuilder.al:
+    /// FilterPageBuilder_Assignment_ViewOnCopyDoesReachOriginal).
+    pub record: Rc<RefCell<RecordState>>,
+}
+
+/// What a `FilterPageBuilder` holds. An untouched one is `LibraryValue::Empty`.
+#[derive(Debug, Clone, Default)]
+pub struct FilterPageState {
+    pub controls: Vec<FilterControl>,
+    /// `None` until assigned: the getter then answers a default.
+    pub caption: Option<String>,
+}
+
 /// What a `SessionSettings` holds. A property nobody wrote is `None`: the corpus does not say what
 /// a pristine language id, locale id, time zone or profile id reads as, so reading one is refused.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -431,6 +450,8 @@ pub enum LibraryValue {
     WebServiceAction(WebServiceActionState),
     /// A `SessionSettings` that has been written to (an untouched one is `Empty`).
     SessionSettings(SessionSettingsState),
+    /// A `FilterPageBuilder` that has been written to (an untouched one is `Empty`).
+    FilterPageBuilder(FilterPageState),
     /// A `Notification` that has been written to (an untouched one is `Empty`).
     Notification(NotificationState),
     /// A `ModuleInfo`: what one app reports about itself.

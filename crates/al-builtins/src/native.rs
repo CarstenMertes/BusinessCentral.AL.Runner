@@ -206,6 +206,19 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
     // ids not listed (SaveAs, SaveAsPdf, Preview, the layout accessors, Skip, Break, ...) need
     // output or behaviour the corpus does not pin and are refused in lowering.
+    // A FilterPageBuilder keeps record buffers and renders views: the VM runs it (al-vm filterpage.rs).
+    ("FilterPageBuilder.AddTable#1", vm_only),
+    ("FilterPageBuilder.AddRecord#1", vm_only),
+    ("FilterPageBuilder.AddRecordRef#1", vm_only),
+    ("FilterPageBuilder.AddField#1", vm_only),
+    ("FilterPageBuilder.AddField#2", vm_only),
+    ("FilterPageBuilder.AddFieldNo#1", vm_only),
+    ("FilterPageBuilder.Count#1", vm_only),
+    ("FilterPageBuilder.GetView#1", vm_only),
+    ("FilterPageBuilder.SetView#1", vm_only),
+    ("FilterPageBuilder.Name#1", vm_only),
+    ("FilterPageBuilder.PageCaption#1", vm_only),
+    ("FilterPageBuilder.RunModal#1", vm_only),
     ("Report.Run#1", vm_only),
     ("Report.Run#3", vm_only),
     ("Report.RunModal#1", vm_only),
@@ -570,6 +583,19 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             ) =>
         {
             Value::Library(name.clone(), Default::default())
+        }
+        // Clear empties the controls and leaves an assigned page caption alone
+        // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Clear_KeepsTheAssignedCaption).
+        Value::Library(name, cell) if name == "FilterPageBuilder" => {
+            let caption = match &*cell.borrow() {
+                crate::value::LibraryValue::FilterPageBuilder(s) => s.caption.clone(),
+                _ => None,
+            };
+            let state = crate::value::LibraryValue::FilterPageBuilder(crate::value::FilterPageState {
+                controls: Vec::new(),
+                caption,
+            });
+            Value::Library(name.clone(), std::rc::Rc::new(std::cell::RefCell::new(state)))
         }
         Value::Boolean(_) => Value::Boolean(false),
         Value::Integer(_) => Value::Integer(0),

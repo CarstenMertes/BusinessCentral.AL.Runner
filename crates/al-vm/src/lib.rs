@@ -13,6 +13,7 @@ use std::sync::Arc;
 mod autoinc;
 mod dispatch;
 pub mod events;
+mod filterpage;
 mod flowfields;
 mod interfaces;
 mod pages;
@@ -700,6 +701,7 @@ impl Session {
                 if id.starts_with("Codeunit.Run#")
                     || id.starts_with("Xmlport.")
                     || id.starts_with("Report.")
+                    || id.starts_with("FilterPageBuilder.")
                     || id == "Database.IsInWriteTransaction#1"
                 {
                     let recv = match receiver.as_deref() {
@@ -722,6 +724,9 @@ impl Session {
                     }
                     if id.starts_with("Report.") {
                         return self.report_builtin(id, recv, &values, f.instance.clone());
+                    }
+                    if id.starts_with("FilterPageBuilder.") {
+                        return self.filter_page_builder_op(id, recv, &values, *ret_used);
                     }
                     return self.codeunit_run(id, recv, &values, *ret_used);
                 }
@@ -854,6 +859,14 @@ impl Session {
     }
 
     fn write(&mut self, p: &ir::Place, v: Value, f: &mut Frame) -> Result<(), Signal> {
+        // `:=` between FilterPageBuilders copies the control collection and shares the records
+        // (corpus filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Assignment_*).
+        let v = match v {
+            Value::Library(n, cell) if n == "FilterPageBuilder" => {
+                Value::Library(n, filterpage::copy_for_assignment(&cell))
+            }
+            v => v,
+        };
         // `:=` between records copies the fields into the target record (ADR-010).
         if let Value::Record(src) = &v {
             if !matches!(p, ir::Place::Field(..)) {

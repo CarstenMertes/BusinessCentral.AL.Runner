@@ -99,7 +99,7 @@ impl Session {
         }
     }
 
-    fn table_object(&self, no: i64) -> Option<usize> {
+    pub(crate) fn table_object(&self, no: i64) -> Option<usize> {
         let no = u32::try_from(no).ok()?;
         self.engine
             .program

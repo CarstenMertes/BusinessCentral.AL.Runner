@@ -1101,3 +1101,86 @@ fn calcfields_on_a_blob_field_is_refused_not_misreported() {
     );
     assert!(unsupported(r).contains("Blob"));
 }
+
+// corpus types/TestEnumBlankOptionFilterTests.Codeunit.al:100-160: SetFilter on an enum field
+// names members (case-insensitively, trimmed) or gives an ordinal; the same filter grammar the
+// CalcFormula filter() condition uses.
+#[test]
+fn set_filter_on_an_enum_field_names_members() {
+    let r = run_with(
+        "enum 60490 \"EN Kind\" { value(0; \" \") { } value(1; \"Initial Entry\") { } value(5; Application) { } }
+         table 60491 \"EN Row\" { fields { field(1; K; Integer) { } field(2; Kind; Enum \"EN Kind\") { } } keys { key(PK; K) { } } }",
+        "procedure F(): Text
+        var R: Record \"EN Row\"; Seen: Text;
+        begin
+            R.K := 1; R.Kind := R.Kind::\"Initial Entry\"; R.Insert();
+            R.K := 2; R.Kind := R.Kind::Application; R.Insert();
+            R.K := 3; R.Kind := R.Kind::\" \"; R.Insert();
+            R.SetFilter(Kind, 'application');
+            Seen := Format(R.Count());
+            R.SetFilter(Kind, ''' Initial Entry '' | 5');
+            Seen += Format(R.Count());
+            R.SetFilter(Kind, '<>'' ''');
+            exit(Seen + Format(R.Count()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "122");
+}
+
+// corpus record/TestRenamePropagationCond*.al (Record_Rename_ConditionalRelation_ElseArm_Propagates):
+// a table named only by the else arm of a conditional TableRelation is related too, so renaming
+// its rows (which would have to re-key the related rows) is refused until propagation exists.
+#[test]
+fn renaming_a_table_named_by_the_else_arm_of_a_conditional_relation_is_refused() {
+    let r = run_with(
+        "table 60500 \"RL Parent A\" { fields { field(1; Code; Code[10]) { } } }
+         table 60501 \"RL Parent B\" { fields { field(1; Code; Code[10]) { } } }
+         table 60502 \"RL Child\" { fields { field(1; K; Integer) { } field(2; Kind; Option) { OptionMembers = A,B; }
+            field(3; Ref; Code[10]) { TableRelation = if (Kind = const(A)) \"RL Parent A\".Code else \"RL Parent B\".Code; } } }",
+        "procedure F()
+        var B: Record \"RL Parent B\";
+        begin
+            B.Code := 'OLD'; B.Insert();
+            B.Rename('NEW');
+        end;",
+        "F",
+    );
+    assert!(unsupported(r).contains("relate"));
+}
+
+// corpus record/TestXRecContracts.al:133 (an OnValidate that nests a Validate on the same record:
+// the inner trigger's xRec is the record as it was before the OUTER call) and :166 (a plain
+// Validate sees the stored value as xRec).
+#[test]
+fn a_nested_validate_sees_the_record_as_it_was_before_the_outer_one() {
+    let tables = "table 60510 \"NV Row\" { fields {
+            field(1; Code; Code[10]) { }
+            field(2; Kind; Option) { OptionMembers = First,Second; trigger OnValidate() begin Validate(Ref, ''); end; }
+            field(3; Ref; Code[20]) { trigger OnValidate() begin Seen := Format(xRec.Kind) + '|' + xRec.Ref + '|' + Ref; end; }
+            field(4; Seen; Text[100]) { } } keys { key(PK; Code) { } } }";
+    let r = run_with(
+        tables,
+        "procedure F(): Text
+        var R: Record \"NV Row\";
+        begin
+            R.Code := 'A'; R.Kind := R.Kind::First; R.Ref := 'X'; R.Insert(true);
+            R.Validate(Ref, 'Y');
+            exit(R.Seen);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "First|X|Y");
+    let nested = run_with(
+        tables,
+        "procedure F(): Text
+        var R: Record \"NV Row\";
+        begin
+            R.Code := 'A'; R.Kind := R.Kind::First; R.Ref := 'X'; R.Insert(true);
+            R.Validate(Kind, R.Kind::Second);
+            exit(R.Seen);
+        end;",
+        "F",
+    );
+    assert_eq!(text(nested), "First|X|");
+}

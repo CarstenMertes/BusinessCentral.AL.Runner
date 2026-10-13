@@ -53,6 +53,8 @@ pub struct Field {
     pub init_text: Option<String>,
     /// Lower-case name of the table a `TableRelation` points to.
     pub relation_table: Option<String>,
+    /// Lower-case names of every table the relation names (all arms of a conditional one).
+    pub relation_tables: Vec<String>,
     pub auto_increment: bool,
     /// The field declares a `TableRelation`.
     pub relation: bool,

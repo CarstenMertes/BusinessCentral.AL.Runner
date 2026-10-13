@@ -637,7 +637,9 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
-                let expr = al_builtins::filter::parse_filter(&text, &args[2..], &ty)
+                let engine = self.engine.clone();
+                let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+                let expr = al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
                     .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?;
                 let mut r = rec.borrow_mut();
                 r.filters.retain(|f| f.field != pos);
@@ -679,13 +681,28 @@ impl Session {
                 if field.relation {
                     return unsupported("Validate of a field with a TableRelation");
                 }
-                let before = rec.borrow().fields.clone();
+                // A Validate nested in an OnValidate of the same record keeps the outer call's
+                // before-image as xRec (corpus record/TestXRecContracts.al:133).
+                let handle = Rc::as_ptr(rec) as usize;
+                let outer = self
+                    .validating
+                    .iter()
+                    .find(|(h, _)| *h == handle)
+                    .map(|(_, b)| b.clone());
+                let before = outer.clone().unwrap_or_else(|| rec.borrow().fields.clone());
                 if let Some(v) = args.get(1) {
                     let v = ops::convert(v.clone(), &field.ty)?;
                     rec.borrow_mut().fields[pos] = v;
                 }
                 if let Some((object, routine)) = field.on_validate {
-                    self.run_trigger(object, routine, rec, Some(before))?;
+                    if outer.is_none() {
+                        self.validating.push((handle, before.clone()));
+                    }
+                    let r = self.run_trigger(object, routine, rec, Some(before));
+                    if outer.is_none() {
+                        self.validating.pop();
+                    }
+                    r?;
                 }
                 Ok(Value::Null)
             }
@@ -700,7 +717,7 @@ impl Session {
                     .iter()
                     .filter_map(|o| o.table.as_ref())
                     .flat_map(|tb| &tb.fields)
-                    .any(|f| f.relation_table.as_deref() == Some(name.as_str()));
+                    .any(|f| f.relation_tables.contains(&name));
                 if related {
                     return unsupported(format!(
                         "Rename of {}: other tables relate to it (re-keying related rows is not implemented yet)",

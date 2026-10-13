@@ -239,7 +239,12 @@ impl Parser<'_> {
             // Format(false) = 'No' is used as a filter value in the corpus.
             T::Boolean if ["yes", "true"].contains(&text.to_lowercase().as_str()) => Value::Boolean(true),
             T::Boolean if ["no", "false"].contains(&text.to_lowercase().as_str()) => Value::Boolean(false),
-            T::Option(m) => match m.iter().position(|x| x.eq_ignore_ascii_case(&text)) {
+            // The matcher trims both sides and skips zero-length member names (corpus
+            // types/TestEnumBlankOptionFilterTests.Codeunit.al:122,188).
+            T::Option(m) => match m
+                .iter()
+                .position(|x| !x.is_empty() && x.trim().eq_ignore_ascii_case(text.trim()))
+            {
                 Some(i) => Value::Option(i as i32, m.clone().into()),
                 None => Value::Option(
                     text.parse().map_err(|_| format!("`{text}` is not an option member"))?,
@@ -249,7 +254,7 @@ impl Parser<'_> {
             T::Enum(id) => {
                 let named = (self.enums)(*id)
                     .into_iter()
-                    .find(|(_, n)| n.eq_ignore_ascii_case(&text))
+                    .find(|(_, n)| !n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim()))
                     .map(|(v, _)| v);
                 match named.or_else(|| text.trim().parse().ok()) {
                     Some(v) => Value::Enum(*id, v),
@@ -478,6 +483,33 @@ mod tests {
         assert_eq!(enum_hits("application"), [3]);
         assert_eq!(enum_hits("2"), [2]);
         assert!(parse_filter_with("Nope", &[], &RtType::Enum(7), &enum_members).is_err());
+    }
+
+    // corpus types/TestEnumBlankOptionFilterTests.Codeunit.al:122,160,188: the option matcher
+    // trims both sides, skips zero-length member names, and falls back to an ordinal.
+    #[test]
+    fn option_filters_trim_both_sides_and_skip_zero_length_member_names() {
+        let opt = |members: &[&str]| RtType::Option(members.iter().map(|m| m.to_string()).collect());
+        let hits = |ty: &RtType, text: &str| -> Result<Vec<i32>, String> {
+            let f = parse_filter(text, &[], ty)?;
+            let names: Vec<String> = match ty {
+                RtType::Option(m) => m.clone(),
+                _ => unreachable!(),
+            };
+            Ok((0..names.len() as i32)
+                .filter(|i| f.matches(&Value::Option(*i, names.clone().into())))
+                .collect())
+        };
+        // A member named with one space is matched by the empty string.
+        let space = opt(&[" ", "Draft", "Active"]);
+        assert_eq!(hits(&space, "''").unwrap(), [0]);
+        assert_eq!(hits(&space, "' Draft '").unwrap(), [1]);
+        assert_eq!(hits(&space, "active").unwrap(), [2]);
+        // A member with no name at all is skipped, so the empty string names nothing.
+        let empty = opt(&["", "Draft", "Active"]);
+        assert!(hits(&empty, "''").is_err());
+        assert_eq!(hits(&empty, "2").unwrap(), [2]);
+        assert!(hits(&empty, "Purple").is_err());
     }
 
     #[test]

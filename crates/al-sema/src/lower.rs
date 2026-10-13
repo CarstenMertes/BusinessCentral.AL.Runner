@@ -348,6 +348,7 @@ impl Lowerer<'_> {
                     relation: f.table_relation,
                     init_text: f.init_value.clone(),
                     relation_table: f.relation_table.clone(),
+                    relation_tables: f.relation_tables.clone(),
                     on_validate: match (f.declared_in, f.on_validate) {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,

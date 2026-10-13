@@ -108,6 +108,10 @@ pub struct Session {
     /// The counter each table had before the first Truncate of the open transaction; a
     /// rollback puts it back (corpus record/TestAutoIncrementEdges.al:36-170).
     pub(crate) truncate_undo: std::collections::HashMap<(String, u32), i64>,
+    /// Records inside an OnValidate (by handle) with the field values from before the outermost
+    /// Validate, which nested Validates of the same record see as xRec (corpus
+    /// record/TestXRecContracts.al:133).
+    pub(crate) validating: Vec<(usize, Vec<Value>)>,
     /// Try functions on the call stack (Truncate is refused inside them).
     pub(crate) try_depth: usize,
     pub(crate) cx: al_data::AccessContext,
@@ -133,6 +137,7 @@ impl Session {
             next_row_version: 0,
             autoinc: Default::default(),
             truncate_undo: Default::default(),
+            validating: Vec::new(),
             try_depth: 0,
             cx: al_data::AccessContext {
                 company: "CRONUS".into(),

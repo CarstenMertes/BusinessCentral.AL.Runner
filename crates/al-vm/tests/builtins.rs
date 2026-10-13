@@ -43,9 +43,7 @@ const STATUS: &str = "enum 50101 \"ALT Status\" { value(0; \" \") { Caption = ' 
 
 /// Runs `procedure F(): Integer var <vars> begin <body> end;` next to the enum.
 fn int_of(vars: &str, body: &str) -> Result<i32, Signal> {
-    let src = format!(
-        "{STATUS}codeunit 50100 C {{ procedure F(): Integer var {vars} begin {body} end; }}"
-    );
+    let src = format!("{STATUS}codeunit 50100 C {{ procedure F(): Integer var {vars} begin {body} end; }}");
     match run(&src, "F")? {
         Value::Integer(i) => Ok(i),
         other => panic!("{other:?}"),
@@ -59,21 +57,34 @@ fn enum_names_lists_every_declared_name() {
     // types/TestEnumNamesContracts.al:19-60: `"ALT Status".Names()` holds the names, blank ordinal included.
     let v = "N: List of [Text];";
     assert_eq!(int_of(v, "N := \"ALT Status\".Names(); exit(N.Count());").unwrap(), 3);
-    assert_eq!(int_of(v, "N := \"ALT Status\".Names(); if N.Contains('Draft') and N.Contains('Closed') then exit(1); exit(0);").unwrap(), 1);
+    assert_eq!(
+        int_of(
+            v,
+            "N := \"ALT Status\".Names(); if N.Contains('Draft') and N.Contains('Closed') then exit(1); exit(0);"
+        )
+        .unwrap(),
+        1
+    );
 }
 
 #[test]
 fn enum_names_works_on_a_variable() {
     // types/TestEnumNamesContracts.al:77-85 (`S.Names()`).
     let v = "S: Enum \"ALT Status\"; N: List of [Text];";
-    assert_eq!(int_of(v, "S := \"ALT Status\"::Draft; N := S.Names(); exit(N.Count());").unwrap(), 3);
+    assert_eq!(
+        int_of(v, "S := \"ALT Status\"::Draft; N := S.Names(); exit(N.Count());").unwrap(),
+        3
+    );
 }
 
 #[test]
 fn enum_ordinals_lists_every_declared_value() {
     // session/TestSystemExtended.al:381-390 and types/TestLanguageEdgeCases.al:91-105.
     let v = "O: List of [Integer];";
-    assert_eq!(int_of(v, "O := \"ALT Status\".Ordinals(); exit(O.Count());").unwrap(), 3);
+    assert_eq!(
+        int_of(v, "O := \"ALT Status\".Ordinals(); exit(O.Count());").unwrap(),
+        3
+    );
     assert_eq!(int_of(v, "O := \"ALT Status\".Ordinals(); if O.Contains(0) and O.Contains(1) and O.Contains(5) then exit(1); exit(0);").unwrap(), 1);
 }
 
@@ -91,7 +102,10 @@ fn names_and_ordinals_line_up() {
 fn enum_as_integer_returns_the_ordinal() {
     // types/TestEnum.al:27-40.
     let v = "S: Enum \"ALT Status\";";
-    assert_eq!(int_of(v, "S := \"ALT Status\"::Closed; exit(S.AsInteger());").unwrap(), 5);
+    assert_eq!(
+        int_of(v, "S := \"ALT Status\"::Closed; exit(S.AsInteger());").unwrap(),
+        5
+    );
     assert_eq!(int_of(v, "exit(S.AsInteger());").unwrap(), 0);
 }
 
@@ -101,7 +115,150 @@ fn enum_from_integer_carries_any_ordinal() {
     // (an undeclared one keeps its number); types/TestEnumShippedOrdinalTests.Codeunit.al:91 spells the
     // receiver `Enum::"Name"`.
     let v = "S: Enum \"ALT Status\";";
-    assert_eq!(int_of(v, "S := \"ALT Status\".FromInteger(5); if S = \"ALT Status\"::Closed then exit(1); exit(0);").unwrap(), 1);
-    assert_eq!(int_of(v, "S := \"ALT Status\".FromInteger(99); exit(S.AsInteger());").unwrap(), 99);
-    assert_eq!(int_of(v, "S := Enum::\"ALT Status\".FromInteger(1); exit(S.AsInteger());").unwrap(), 1);
+    assert_eq!(
+        int_of(
+            v,
+            "S := \"ALT Status\".FromInteger(5); if S = \"ALT Status\"::Closed then exit(1); exit(0);"
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        int_of(v, "S := \"ALT Status\".FromInteger(99); exit(S.AsInteger());").unwrap(),
+        99
+    );
+    assert_eq!(
+        int_of(v, "S := Enum::\"ALT Status\".FromInteger(1); exit(S.AsInteger());").unwrap(),
+        1
+    );
+}
+
+// ---------------------------------------------------------------- NumberSequence
+
+fn text_of(vars: &str, body: &str) -> Result<String, Signal> {
+    let src = format!("codeunit 50100 C {{ procedure F(): Text var {vars} begin {body} end; }}");
+    match run(&src, "F")? {
+        Value::Text(s) | Value::Code(s) => Ok(s),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn number_sequence_honours_seed_and_increment_per_scope() {
+    // session/TestNumberSequence.al:15-60: the default scope is company specific, a global one is
+    // independent, and Next starts at the seed and advances by the increment.
+    let r = text_of(
+        "a: Text;",
+        "NumberSequence.Insert('S', 5, 2);
+         a := Format(NumberSequence.Exists('S', true)) + Format(NumberSequence.Exists('S', false));
+         a += '|' + Format(NumberSequence.Next('S')) + ',' + Format(NumberSequence.Next('S'));
+         NumberSequence.Insert('S', 100, 10, false);
+         a += '|' + Format(NumberSequence.Next('S', false)) + ',' + Format(NumberSequence.Next('S', true));
+         exit(a);",
+    );
+    assert_eq!(r.unwrap(), "YesNo|5,7|100,9");
+}
+
+#[test]
+fn number_sequence_current_restart_range_and_delete() {
+    // session/TestNumberSequence.al:63-170.
+    let r = text_of(
+        "a: Text; i: BigInteger; first: BigInteger;",
+        "NumberSequence.Insert('S', 10, 3, false);
+         a := Format(NumberSequence.Current('S', false));
+         first := NumberSequence.Range('S', 4, false);
+         a += '|' + Format(first) + ',' + Format(NumberSequence.Current('S', false)) + ',' + Format(NumberSequence.Next('S', false));
+         NumberSequence.Restart('S', 50, false);
+         a += '|' + Format(NumberSequence.Next('S', false)) + ',' + Format(NumberSequence.Next('S', false));
+         first := NumberSequence.Range('S', 2, i, false);
+         a += '|' + Format(first) + ',' + Format(i);
+         NumberSequence.Delete('S', false);
+         exit(a + '|' + Format(NumberSequence.Exists('S', false)));",
+    );
+    assert_eq!(r.unwrap(), "10|10,19,22|50,53|56,3|No");
+}
+
+#[test]
+fn number_sequence_errors_are_catchable_and_a_missing_delete_is_not_one() {
+    // session/TestNumberSequence.al:173-205 and error-handling/TestNumberSequenceTrappableErrors.al.
+    let r = text_of(
+        "a: Text; v: BigInteger;",
+        "NumberSequence.Insert('S', 1, 1, false);
+         asserterror NumberSequence.Insert('S', 100, 10, false);
+         a := GetLastErrorText();
+         NumberSequence.Delete('S', false);
+         NumberSequence.Delete('S', false);
+         asserterror v := NumberSequence.Next('S', false);
+         a += '|' + GetLastErrorText();
+         asserterror v := NumberSequence.Current('S', false);
+         a += '|' + GetLastErrorText();
+         asserterror NumberSequence.Restart('S', 1, false);
+         a += '|' + GetLastErrorText();
+         asserterror v := NumberSequence.Range('S', 3, false);
+         a += '|' + GetLastErrorText();
+         exit(a + '|' + Format(NumberSequence.Exists('S', false)));",
+    );
+    let r = r.unwrap();
+    let parts: Vec<&str> = r.split('|').collect();
+    assert!(parts[0].contains("already exists"), "{r}");
+    assert!(parts[1..=4].iter().all(|p| p.contains("does not exist")), "{r}");
+    assert_eq!(parts[5], "No");
+}
+
+#[test]
+fn number_sequence_survives_an_asserterror_rollback() {
+    // session/TestNumberSequence.al:173-186 and :188-201: a failed call leaves the sequence as it
+    // was; error-handling/TestNumberSequenceTrappableErrors.al:134 ("Number sequences are
+    // database objects, not rows"): a sequence outlives the rollback an asserterror triggers.
+    let r = text_of(
+        "a: Text;",
+        "NumberSequence.Insert('S', 1, 1, false);
+         asserterror Error('x');
+         exit(Format(NumberSequence.Exists('S', false)));",
+    );
+    assert_eq!(r.unwrap(), "Yes");
+}
+
+#[test]
+fn number_sequence_forms_the_corpus_does_not_pin_are_refused() {
+    let r = text_of("", "NumberSequence.Insert('S'); exit('');");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    let r = text_of(
+        "",
+        "NumberSequence.Insert('S', 1, 1); NumberSequence.Restart('S'); exit('');",
+    );
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+// ---------------------------------------------------------------- Database.IsInWriteTransaction
+
+const ROWS: &str = "table 50900 \"ALT Row\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }\n";
+
+fn text_with_table(body: &str) -> Result<String, Signal> {
+    let src = format!("{ROWS}codeunit 50100 C {{ procedure F(): Text var R: Record \"ALT Row\"; begin {body} end; }}");
+    match run(&src, "F")? {
+        Value::Text(s) => Ok(s),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_write_opens_a_write_transaction_until_the_commit() {
+    // codeunit/TestWriteTxTestBoundary.al:93,103,142: an uncommitted Insert leaves one open; a
+    // Commit (and the test boundary) closes it.
+    let r = text_with_table(
+        "exit(Format(Database.IsInWriteTransaction()));
+         ",
+    );
+    assert_eq!(r.unwrap(), "No");
+    let r = text_with_table(
+        "R.Id := 1; R.Insert();
+         exit(Format(Database.IsInWriteTransaction()));",
+    );
+    assert_eq!(r.unwrap(), "Yes");
+    let r = text_with_table(
+        "R.Id := 1; R.Insert(); Commit();
+         exit(Format(Database.IsInWriteTransaction()));",
+    );
+    assert_eq!(r.unwrap(), "No");
 }

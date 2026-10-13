@@ -677,6 +677,7 @@ impl Session {
                 r.marked_only = false;
                 r.key = 0;
                 r.ascending = true;
+                r.field_descending = false;
                 r.position = None;
                 Ok(Value::Null)
             }
@@ -942,7 +943,10 @@ impl Session {
                 }
             }
             "FindFirst" | "FindSet" | "FindLast" | "Find" => {
-                let asc = rec.borrow().ascending;
+                let asc = {
+                    let r = rec.borrow();
+                    r.ascending && !r.field_descending
+                };
                 let which = match (method, args.first()) {
                     ("FindLast", _) => "+".to_string(),
                     ("Find", Some(v)) => al_builtins::native::text_of(v).unwrap_or_default(),
@@ -983,7 +987,7 @@ impl Session {
                 };
                 let (key, asc) = {
                     let r = rec.borrow();
-                    (r.key, r.ascending)
+                    (r.key, r.ascending && !r.field_descending)
                 };
                 let forward = (steps >= 0) == asc;
                 let mut moved = 0;
@@ -1070,6 +1074,7 @@ impl Session {
                 r.filters.clear();
                 r.key = 0;
                 r.ascending = true;
+                r.field_descending = false;
                 Ok(Value::Null)
             }
             "SetCurrentKey" => {

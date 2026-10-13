@@ -60,7 +60,9 @@ fn int_of(v: Option<&Value>) -> Option<i32> {
 fn plain_date(v: &Value, what: &str) -> Result<i32, Signal> {
     match v {
         Value::Date(n, false) if *n > 0 => Ok(*n),
-        other => unsupported(format!("{what} of {other:?}: only a defined, non-closing Date is pinned")),
+        other => unsupported(format!(
+            "{what} of {other:?}: only a defined, non-closing Date is pinned"
+        )),
     }
 }
 
@@ -72,7 +74,9 @@ fn dmy2date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         return unsupported("DMY2Date without all of Day, Month and Year (not pinned by the corpus)");
     };
     if !(1..=9999).contains(&y) || !(1..=12).contains(&m) || d < 1 || d as u32 > days_in_month(y, m as u32) {
-        return unsupported(format!("DMY2Date({d}, {m}, {y}) is not a calendar date (error text not pinned)"));
+        return unsupported(format!(
+            "DMY2Date({d}, {m}, {y}) is not a calendar date (error text not pinned)"
+        ));
     }
     Ok(Value::Date(day_from_civil(y, m as u32, d as u32), false))
 }
@@ -284,9 +288,7 @@ fn apply(terms: &[Term], from: i32) -> Result<i32, Signal> {
                 day_from_civil(ny as i32, m, d.min(days_in_month(ny as i32, m)))
             }
             Term::Step(Unit::Quarter, _) => return unsupported("CalcDate quarter step"),
-            Term::Edge { unit: Unit::Month, end } => {
-                day_from_civil(y, m, if end { days_in_month(y, m) } else { 1 })
-            }
+            Term::Edge { unit: Unit::Month, end } => day_from_civil(y, m, if end { days_in_month(y, m) } else { 1 }),
             Term::Edge { unit: Unit::Year, end } => {
                 if end {
                     day_from_civil(y, 12, 31)
@@ -294,7 +296,9 @@ fn apply(terms: &[Term], from: i32) -> Result<i32, Signal> {
                     day_from_civil(y, 1, 1)
                 }
             }
-            Term::Edge { unit: Unit::Quarter, .. } => {
+            Term::Edge {
+                unit: Unit::Quarter, ..
+            } => {
                 let last = (m - 1) / 3 * 3 + 3;
                 day_from_civil(y, last, days_in_month(y, last))
             }
@@ -332,7 +336,6 @@ fn calcdate_formula(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::format::day_from_civil;
     use crate::native::tests::{TestCtx, call, t};
     use crate::native::{Signal, lookup};
@@ -369,7 +372,12 @@ mod tests {
     fn dmy2date_builds_a_date() {
         // fieldref/TestFieldRefValue.al:122 `DMY2Date(1, 1, 2024)`; record/TestDateVirtualTableFlowField.al:65
         // `DMY2Date(3, 1, 1)` and :83 `DMY2Date(31, 12, 9999)` are the ends of the range.
-        let d = |a: i32, b: i32, c: i32| call("System.DMY2Date#1", vec![Value::Integer(a), Value::Integer(b), Value::Integer(c)]);
+        let d = |a: i32, b: i32, c: i32| {
+            call(
+                "System.DMY2Date#1",
+                vec![Value::Integer(a), Value::Integer(b), Value::Integer(c)],
+            )
+        };
         is_date(d(1, 1, 2024), 2024, 1, 1);
         is_date(d(31, 12, 9999), 9999, 12, 31);
         is_date(d(3, 1, 1), 1, 1, 3);
@@ -401,17 +409,33 @@ mod tests {
             call("System.CreateDateTime#1", vec![date(2024, 1, 15), Value::Time(0)]),
             Ok(Value::DateTime(n)) if n == day * 86_400_000 + 1
         ));
-        refused(call("System.CreateDateTime#1", vec![Value::Date(0, false), Value::Time(1)]));
-        refused(call("System.CreateDateTime#1", vec![Value::Date(0, false), Value::Time(0)]));
-        refused(call("System.CreateDateTime#1", vec![Value::Date(5, true), Value::Time(1)]));
+        refused(call(
+            "System.CreateDateTime#1",
+            vec![Value::Date(0, false), Value::Time(1)],
+        ));
+        refused(call(
+            "System.CreateDateTime#1",
+            vec![Value::Date(0, false), Value::Time(0)],
+        ));
+        refused(call(
+            "System.CreateDateTime#1",
+            vec![Value::Date(5, true), Value::Time(1)],
+        ));
     }
 
     #[test]
     fn dt2date_and_dt2time_split_a_datetime() {
         // handlers/TestPageTemporalSetValue_Tests.al:117-118.
-        let dt = call("System.CreateDateTime#1", vec![date(2024, 3, 17), Value::Time(52_200_000 + 1)]).unwrap();
+        let dt = call(
+            "System.CreateDateTime#1",
+            vec![date(2024, 3, 17), Value::Time(52_200_000 + 1)],
+        )
+        .unwrap();
         is_date(call("System.DT2Date#1", vec![dt.clone()]), 2024, 3, 17);
-        assert!(matches!(call("System.DT2Time#1", vec![dt]), Ok(Value::Time(52_200_001))));
+        assert!(matches!(
+            call("System.DT2Time#1", vec![dt]),
+            Ok(Value::Time(52_200_001))
+        ));
         refused(call("System.DT2Date#1", vec![Value::DateTime(0)]));
         refused(call("System.DT2Time#1", vec![Value::DateTime(0)]));
     }
@@ -432,7 +456,10 @@ mod tests {
         let part = |n: i32| int(call("System.Date2DMY#1", vec![date(2024, 3, 15), Value::Integer(n)]));
         assert_eq!((part(1), part(2), part(3)), (15, 3, 2024));
         refused(call("System.Date2DMY#1", vec![date(2024, 3, 15), Value::Integer(4)]));
-        refused(call("System.Date2DMY#1", vec![Value::Date(0, false), Value::Integer(1)]));
+        refused(call(
+            "System.Date2DMY#1",
+            vec![Value::Date(0, false), Value::Integer(1)],
+        ));
     }
 
     #[test]
@@ -514,8 +541,8 @@ mod tests {
     fn calcdate_refuses_forms_the_corpus_does_not_pin() {
         let from = date(2024, 3, 15);
         for f in [
-            "<1W>", "<CW>", "<CD>", "<-CQ>", "<1Q>", "<MON>", "<1W+MON>", "<WD1>", "<2CM>", "<>", "", "1D", "<1X>", "<D>",
-            "<+>", "<1D", "<1M1D>",
+            "<1W>", "<CW>", "<CD>", "<-CQ>", "<1Q>", "<MON>", "<1W+MON>", "<WD1>", "<2CM>", "<>", "", "1D", "<1X>",
+            "<D>", "<+>", "<1D", "<1M1D>",
         ] {
             refused(calc(f, from.clone()));
         }
@@ -544,7 +571,10 @@ mod tests {
         // types/TestDateFormulaContracts.al:21,31,43,139: Evaluate then Format, CalcDate.
         let mut args = vec![Value::DateFormula(String::new()), t("<1D>")];
         let f = lookup("System.Evaluate#1").unwrap();
-        assert!(matches!(f(&mut TestCtx::default(), None, &mut args), Ok(Value::Boolean(true))));
+        assert!(matches!(
+            f(&mut TestCtx::default(), None, &mut args),
+            Ok(Value::Boolean(true))
+        ));
         assert!(matches!(&args[0], Value::DateFormula(s) if s == "<1D>"));
         let mut args = vec![Value::DateFormula(String::new()), t("not a formula")];
         refused(f(&mut TestCtx::default(), None, &mut args));

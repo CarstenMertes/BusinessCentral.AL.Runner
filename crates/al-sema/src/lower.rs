@@ -1618,7 +1618,10 @@ impl Lowerer<'_> {
                             return Err(format!("{id}: the receiver is not an enum type"));
                         };
                         let object = self.resolve_obj(ObjKind::Enum, &name)?;
-                        Some(Box::new(ir::Arg::Value(ir::Expr::Const(ir::Const::Enum(object as u32, 0)))))
+                        Some(Box::new(ir::Arg::Value(ir::Expr::Const(ir::Const::Enum(
+                            object as u32,
+                            0,
+                        )))))
                     }
                     Some(r) if sig.instance => Some(Box::new(match self.place(r) {
                         Ok(p) => ir::Arg::Ref(p),

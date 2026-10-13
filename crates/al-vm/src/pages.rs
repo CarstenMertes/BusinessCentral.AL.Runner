@@ -111,7 +111,23 @@ impl Session {
             return Ok(None);
         };
         let inst = st.borrow().instance.clone().expect("open page");
-        self.call(object, r, inst, args).map(|(v, _)| Some(v))
+        let result = self.call(object, r, inst, args).map(|(v, _)| Some(v));
+        self.end_page_call(st);
+        result
+    }
+
+    /// A page-driven call ends: the client takes the page's view back, which carries the key and
+    /// `Ascending` but not a per-field `SetAscending` (corpus handlers/TestPageViewRoundTripRoutes.al,
+    /// Action_SetAscending_ReadInTheSameTrigger_IsDescending against ..._ReadByALaterAction).
+    fn end_page_call(&mut self, st: &St) {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        if engine.program.objects[object].rec_slot.is_none() {
+            return;
+        }
+        if st.borrow().instance.is_some() {
+            self.page_rec(st).borrow_mut().field_descending = false;
+        }
     }
 
     /// A page trigger that answers Boolean: `Some(answer)` when the trigger exists and can state one,
@@ -227,7 +243,9 @@ impl Session {
     fn page_routine(&mut self, st: &St, r: usize) -> Result<Value, Signal> {
         let object = st.borrow().object as usize;
         let inst = st.borrow().instance.clone().expect("open page");
-        self.call(object, r, inst, vec![]).map(|(v, _)| v)
+        let result = self.call(object, r, inst, vec![]).map(|(v, _)| v);
+        self.end_page_call(st);
+        result
     }
 
     /// The `TestPage.*` / `TestField.*` methods (ADR-012).

@@ -47,6 +47,12 @@ pub trait Ctx: FormatCtx {
     fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
         None
     }
+    /// Builtins that read or change session state (number sequences, the transaction state): the
+    /// VM implements them. `id` is the catalog overload id (`NumberSequence.Next#1`); `args` holds
+    /// the call's arguments, with `var` parameters written back in place.
+    fn session_op(&mut self, id: &str, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("builtin {id} needs a session")))
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -77,6 +83,7 @@ pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result
 
 const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
+    ("System.Format#2", format_2),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
@@ -172,6 +179,8 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .chain(crate::refs::REGISTRY)
         .chain(crate::refs::RECORD_REGISTRY)
         .chain(crate::datefns::REGISTRY)
+        .chain(crate::mathfns::REGISTRY)
+        .chain(crate::sessionfns::REGISTRY)
 }
 
 /// Implementations chosen per catalog signature instead of being listed by id
@@ -253,6 +262,15 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
     try_format(&args[0], len, std, ctx)
+        .map(Value::Text)
+        .map_err(Signal::Unsupported)
+}
+
+/// `Format(Value, Length, FormatString)`: see [`crate::formatstr`].
+fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let len = int_arg(args, 1).unwrap_or(0) as i32;
+    let template = text_arg(args, 2)?;
+    crate::formatstr::format_with_string(&args[0], len, &template, ctx)
         .map(Value::Text)
         .map_err(Signal::Unsupported)
 }
@@ -454,9 +472,10 @@ fn enum_receiver(ctx: &dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<(u3
         return unsupported(&format!("{what} without an enum receiver"));
     };
     let id = *id;
-    ctx.enum_members(id)
-        .map(|m| (id, m))
-        .map_or_else(|| unsupported(&format!("{what}: this context has no enum metadata")), Ok)
+    ctx.enum_members(id).map(|m| (id, m)).map_or_else(
+        || unsupported(&format!("{what}: this context has no enum metadata")),
+        Ok,
+    )
 }
 
 fn list_of(items: Vec<Value>) -> Value {

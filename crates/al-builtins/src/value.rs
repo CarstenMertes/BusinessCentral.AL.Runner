@@ -246,6 +246,9 @@ pub struct RecordState {
     /// Index of the current key in the table's keys.
     pub key: usize,
     pub ascending: bool,
+    /// `SetAscending(Field, false)` on the single field of the current key. Unlike `ascending` it
+    /// does not survive a page's view round trip (handlers/TestPageViewRoundTripRoutes.al).
+    pub field_descending: bool,
     /// Position of the last row found (key fields then primary key), for `Next`.
     pub position: Option<Vec<Value>>,
     /// Field positions of `SetAutoCalcFields`: calculated whenever a row is read.

@@ -177,6 +177,8 @@ record_methods! {
     "Record.ModifyAll#1" => "ModifyAll",
     "Record.IsTemporary#1" => "IsTemporary",
     "Record.Ascending#1" => "Ascending",
+    "Record.SetAscending#1" => "SetAscending",
+    "Record.GetAscending#1" => "GetAscending",
     "Record.CurrentKey#1" => "CurrentKey",
     "Record.HasFilter#1" => "HasFilter",
     "Record.GetFilters#1" => "GetFilters",

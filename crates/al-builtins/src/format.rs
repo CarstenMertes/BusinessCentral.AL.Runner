@@ -72,7 +72,7 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
 
 /// A positive length right-aligns in that many characters (text/TestFormat.al:
 /// `Format(42, 5) = '   42'`).
-fn pad(s: String, length: i32) -> String {
+pub(crate) fn pad(s: String, length: i32) -> String {
     let n = crate::value::Value::text_len(&s);
     if length > 0 && (length as usize) > n {
         format!("{}{s}", " ".repeat(length as usize - n))

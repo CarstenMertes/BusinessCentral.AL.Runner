@@ -130,6 +130,11 @@ impl Session {
         };
         let (key, ascending) = {
             let r = rec.borrow();
+            if r.field_descending {
+                return Err(Signal::Unsupported(
+                    "GetView after a per-field SetAscending (not pinned)".into(),
+                ));
+            }
             (r.key, r.ascending)
         };
         let mut out = format!(

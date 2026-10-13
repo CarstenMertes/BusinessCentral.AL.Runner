@@ -20,6 +20,7 @@ mod records;
 mod refs;
 mod relations;
 mod rename;
+mod sessionops;
 mod ui;
 mod views;
 pub use ui::{UiHandler, UiKind};
@@ -75,6 +76,8 @@ pub struct Session {
     depth: usize,
     /// Page handler functions running right now (`[PageHandler]`, `[ModalPageHandler]`).
     pub(crate) page_handler_depth: usize,
+    /// Number sequences by (company, name); a global sequence has an empty company.
+    pub(crate) sequences: std::collections::HashMap<(String, String), sessionops::Sequence>,
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
@@ -143,6 +146,7 @@ impl Session {
             error_finals: None,
             committed_row_version: 0,
             page_handler_depth: 0,
+            sequences: Default::default(),
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
@@ -203,6 +207,7 @@ impl Session {
                     security_filtering: 2,
                     key: 0,
                     ascending: true,
+                    field_descending: false,
                     position: None,
                     auto_calc: Vec::new(),
                 })))
@@ -829,6 +834,9 @@ impl al_builtins::native::Ctx for Session {
 
     fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         Session::ref_op(self, id, receiver, args)
+    }
+    fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
+        Session::session_op(self, id, args)
     }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())

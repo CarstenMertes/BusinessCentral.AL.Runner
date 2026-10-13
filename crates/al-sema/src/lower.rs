@@ -171,6 +171,22 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
     for (oi, o) in ws.objects.iter().enumerate() {
         match o.kind {
             ObjKind::Table => table_of[oi] = Some(oi),
+            // `TableNo` gives a codeunit's OnRun a `Rec` (corpus
+            // handlers/TestPageActionRunObjectKinds_Objects.al:254-268).
+            ObjKind::Codeunit => {
+                let table = ws
+                    .object_ast(oi)
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("TableNo"))
+                    .map(|p| p.value_text());
+                if let Some(t) = table {
+                    if let Resolution::Found(t) =
+                        ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()])
+                    {
+                        table_of[oi] = Some(t);
+                    }
+                }
+            }
             ObjKind::TableExtension => {
                 if let Some(base) = ws.object_ast(oi).extends_parts() {
                     if let Resolution::Found(t) = ws.resolve_ref(o.file, ObjKind::Table, &base) {
@@ -458,6 +474,10 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         let (mut rec_slot, mut xrec_slot) = (None, None);
         if let Some(t) = table_of[oi] {
             for (name, slot) in [("Rec", &mut rec_slot), ("xRec", &mut xrec_slot)] {
+                // A codeunit has no xRec.
+                if name == "xRec" && o.kind == ObjKind::Codeunit {
+                    continue;
+                }
                 *slot = Some(globals.len());
                 lw.globals.insert(name.to_lowercase(), globals.len());
                 globals.push(ir::Slot {

@@ -8,7 +8,9 @@
 //! listed in docs/probes-needed.md.
 
 use crate::{AlError, Session, Signal};
-use al_builtins::value::Value;
+use al_builtins::value::{RecordState, Value};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// The transaction model of the running test method (`[TransactionModel(...)]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -95,6 +97,11 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+/// What a caller sees of a record: its field values, filters and position.
+fn record_snapshot(r: &RecordState) -> String {
+    format!("{:?}|{:?}|{:?}|{:?}", r.fields, r.filters, r.position, r.marks)
+}
+
 impl Session {
     /// Whether the session holds an open write transaction
     /// (codeunit/TestWriteTxTestBoundary.al:Test02/Test03, `Database.IsInWriteTransaction`).
@@ -173,15 +180,42 @@ impl Session {
         if is_test && self.in_test_codeunit {
             return Err(al_error(&nested_test_codeunit(obj.id.unwrap_or(0), &obj.name)));
         }
-        if has_property("TableNo") {
-            return unsupported(format!(
-                "Codeunit.Run of {} (TableNo: passing Rec is not pinned)",
-                obj.name
-            ));
-        }
         // A record passed to a codeunit without TableNo is not touched
         // (codeunit/TestCodeunitRunContracts.al:Codeunit_Run_WithRecord_PassesRecord).
-        let _ = record_arg;
+        //
+        // A codeunit with TableNo reads the record as its Rec
+        // (handlers/TestPageActionRunObjectKinds_Tests.al:ProbeControlEachTargetRecordsItsOwnExecution,
+        // :143-150, reads Rec.Descr in OnRun). Whether a change OnRun makes to Rec reaches the
+        // caller's variable, and what Rec holds when no record is passed, is not pinned: the
+        // first is refused after the run, the second before it (docs/probes-needed.md).
+        let mut passed: Option<(Rc<RefCell<RecordState>>, String)> = None;
+        if has_property("TableNo") {
+            let Some(slot) = obj.rec_slot else {
+                return unsupported(format!(
+                    "Codeunit.Run of {} (its TableNo table is outside the workspace)",
+                    obj.name
+                ));
+            };
+            let Some(Value::Record(rc)) = record_arg else {
+                return unsupported(format!(
+                    "Codeunit.Run of {} without a record (Rec of a TableNo codeunit is not pinned)",
+                    obj.name
+                ));
+            };
+            if rc.borrow().temporary {
+                return unsupported(format!(
+                    "Codeunit.Run of {} with a temporary record (not pinned)",
+                    obj.name
+                ));
+            }
+            self.ensure_initialized(&inst);
+            let Value::Record(copy) = self.record_by_value(rc) else {
+                unreachable!("record_by_value returns a record");
+            };
+            inst.borrow_mut().globals[slot] = Value::Record(copy.clone());
+            let before = record_snapshot(&copy.borrow());
+            passed = Some((copy, before));
+        }
 
         if guarded {
             // The guarded form needs a transaction world of its own, which BC refuses to open
@@ -218,6 +252,13 @@ impl Session {
         self.tx_world += 1;
         let result = self.call(object, on_run, inst, Vec::new());
         self.tx_world -= 1;
+        let result = match (result, &passed) {
+            (Ok(_), Some((copy, before))) if record_snapshot(&copy.borrow()) != *before => unsupported(format!(
+                "Codeunit.Run of {}: OnRun changed Rec, and whether the caller's record sees it is not pinned",
+                obj.name
+            )),
+            (r, _) => r,
+        };
 
         match result {
             Ok(_) if guarded => {

@@ -239,6 +239,11 @@ pub struct PageState {
     /// The session's application areas when the page opened: controls whose area they do not
     /// enable are not on the page.
     pub areas: String,
+    /// OnInit has run on the current instance. BC constructs a page, and so runs OnInit, when a
+    /// `Page` variable is first used, which may be a procedure call before it runs (corpus
+    /// handlers/TestPageOnInit_Tests.al:188 POI_SetterBeforeRunModal_RunsAfterOnInitAndSurvives);
+    /// the open that follows must not run it again. The open consumes the flag.
+    pub inited: bool,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -284,6 +289,7 @@ impl PageState {
             host: None,
             ext_instances: Vec::new(),
             areas: String::new(),
+            inited: false,
         }
     }
 }

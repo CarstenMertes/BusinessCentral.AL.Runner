@@ -62,11 +62,17 @@ fn flag(args: &[String], i: usize) -> bool {
 impl Registry {
     pub fn build(program: &ir::Program) -> Registry {
         let mut reg = Registry::default();
-        // Events declared in a table extension are subscribed to on the base table.
+        // Events declared in a table or page extension are subscribed to on the base object
+        // (corpus extensionevents/TestExtensionDeclaredEvents.al:92 PageExtEvent_SubscriberBoundToBasePage_...).
         let mut base_of: HashMap<usize, usize> = HashMap::new();
         for (oi, o) in program.objects.iter().enumerate() {
             if let Some(t) = &o.table {
                 for &e in &t.extensions {
+                    base_of.insert(e, oi);
+                }
+            }
+            if let Some(p) = &o.page {
+                for &e in &p.extensions {
                     base_of.insert(e, oi);
                 }
             }

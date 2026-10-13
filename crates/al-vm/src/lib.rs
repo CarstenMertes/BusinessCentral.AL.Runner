@@ -673,10 +673,10 @@ impl Session {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
                         Value::Record(rc) => self.record_instance(*object, rc, None)?,
-                        // The page a part shows (`CurrPage.<Part>.Page`).
-                        // A `Page` variable's procedures (OnInit at first use) are not modelled.
-                        Value::TestPage(st) if st.borrow().host.is_some() => {
-                            let i = self.page_instance(&st)?;
+                        // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
+                        // is constructed at first use.
+                        Value::TestPage(st) => {
+                            let i = self.construct_page(&st)?;
                             // A procedure a page extension declares runs on the extension's instance.
                             let ext = st
                                 .borrow()
@@ -686,7 +686,12 @@ impl Session {
                                 .map(|(_, i)| i.clone());
                             self.shared_instance(ext.unwrap_or(i))
                         }
-                        other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
+                        other => {
+                            return Err(Signal::Unsupported(format!(
+                                "a procedure call on a {} value",
+                                value_kind(&other)
+                            )));
+                        }
                     },
                 };
                 self.finish_call(*object, *routine, inst, args, *try_call, f)
@@ -982,6 +987,12 @@ fn int(v: &Value) -> Result<i64, Signal> {
         Value::Char(c) => Ok(i64::from(*c)),
         other => Err(Signal::Unsupported(format!("{other:?} used as an integer"))),
     }
+}
+
+/// The kind of a value for a refusal reason: the variant name, never its contents.
+pub(crate) fn value_kind(v: &Value) -> String {
+    let d = format!("{v:?}");
+    d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
 fn constant(c: &ir::Const) -> Value {

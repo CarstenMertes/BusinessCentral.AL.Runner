@@ -635,6 +635,7 @@ impl Session {
         }
         // A reopened variable shows a fresh page.
         st.borrow_mut().instance = None;
+        st.borrow_mut().inited = false;
         st.borrow_mut().modal = false;
         self.open_page(st, mode, None, None).map(|_| Value::Null)
     }
@@ -680,6 +681,46 @@ impl Session {
         st.borrow_mut().ext_instances = exts;
         st.borrow_mut().instance = Some(inst.clone());
         Ok(inst)
+    }
+
+    /// A call on a `Page` variable constructs the page on first use: its instance, and OnInit once
+    /// (handlers/TestPageOnInit_Tests.al:188 POI_SetterBeforeRunModal_RunsAfterOnInitAndSurvives,
+    /// handlers/TestPageEnumGlobal*: a getter on a variable that never ran reads the declared default).
+    pub(crate) fn construct_page(&mut self, st: &St) -> Result<Rc<RefCell<al_builtins::value::Instance>>, Signal> {
+        let inst = self.page_instance(st)?;
+        if st.borrow().host.is_none() && !st.borrow().inited {
+            st.borrow_mut().inited = true;
+            self.page_trigger(st, "oninit", vec![])?;
+        }
+        Ok(inst)
+    }
+
+    /// `to` takes over the page `from` constructed, if it did, else starts without one.
+    fn adopt_instance(&mut self, from: &St, to: &St) {
+        if Rc::ptr_eq(from, to) {
+            to.borrow_mut().instance = None;
+            to.borrow_mut().inited = false;
+            return;
+        }
+        let (instance, exts, inited) = {
+            let mut f = from.borrow_mut();
+            (f.instance.take(), std::mem::take(&mut f.ext_instances), std::mem::take(&mut f.inited))
+        };
+        let engine = self.engine();
+        if let Some(inst) = &instance {
+            let page = page_of(&engine, to);
+            inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(to.clone());
+            for (e, ext) in &exts {
+                let obj = &engine.program.objects[*e];
+                if let Some(slot) = obj.globals.iter().position(|g| g.name == "CurrPage") {
+                    ext.borrow_mut().globals[slot] = Value::TestPage(to.clone());
+                }
+            }
+        }
+        let mut t = to.borrow_mut();
+        t.instance = instance;
+        t.ext_instances = exts;
+        t.inited = inited;
     }
 
     /// Opens the page: OnInit, OnOpenPage, the control expressions and the first row. `record`
@@ -786,7 +827,11 @@ impl Session {
             dst.ascending = src.ascending;
         }
         let result = (|| {
-            self.page_trigger(st, "oninit", vec![])?;
+            // A `Page` variable whose procedure ran before this open was constructed then, and its
+            // OnInit has run (handlers/TestPageOnInit_Tests.al:188).
+            if !std::mem::take(&mut st.borrow_mut().inited) {
+                self.page_trigger(st, "oninit", vec![])?;
+            }
             if let Some(kind) = bind {
                 handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
             }
@@ -1743,8 +1788,10 @@ impl Session {
                     return unsupported("a Trap() for another page than the one Page.Run opens");
                 }
                 trap.borrow_mut().trapping = false;
-                // The trapped variable receives the page and keeps it open for the test.
-                trap.borrow_mut().instance = None;
+                // The trapped variable receives the page and keeps it open for the test. A `Page`
+                // variable that was set up first hands its instance over
+                // (handlers/TestPageOnInit_Tests.al:223 POI_SetterBeforeTrappedRun_...).
+                self.adopt_instance(&st, &trap);
                 st = trap;
                 trapped = true;
             }

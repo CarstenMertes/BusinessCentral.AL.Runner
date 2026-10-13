@@ -161,7 +161,9 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                     ir::RunKind::Codeunit => Some(ObjKind::Codeunit),
                     _ => None,
                 };
-                if let Some(Resolution::Found(t)) = found.map(|k| ws.resolve_ref(ws.objects[c.owner.unwrap_or(oi)].file, k, &parts)) {
+                if let Some(Resolution::Found(t)) =
+                    found.map(|k| ws.resolve_ref(ws.objects[c.owner.unwrap_or(oi)].file, k, &parts))
+                {
                     if !page_runs[oi].contains(&t) {
                         page_runs[oi].push(t);
                     }

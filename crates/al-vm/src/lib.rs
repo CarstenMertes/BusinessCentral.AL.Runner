@@ -657,7 +657,14 @@ impl Session {
                         // A `Page` variable's procedures (OnInit at first use) are not modelled.
                         Value::TestPage(st) if st.borrow().host.is_some() => {
                             let i = self.page_instance(&st)?;
-                            self.shared_instance(i)
+                            // A procedure a page extension declares runs on the extension's instance.
+                            let ext = st
+                                .borrow()
+                                .ext_instances
+                                .iter()
+                                .find(|(e, _)| e == object)
+                                .map(|(_, i)| i.clone());
+                            self.shared_instance(ext.unwrap_or(i))
                         }
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },

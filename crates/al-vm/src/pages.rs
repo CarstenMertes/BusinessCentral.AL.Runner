@@ -2334,9 +2334,24 @@ impl Session {
             };
             return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
         }
-        // Only Invoke of an actionref is pinned: it runs the action it stands for.
-        if m != "Invoke" && page_of(&self.engine(), st).controls[idx].action_ref.is_some() {
-            return unsupported(format!("TestAction.{m} of an actionref"));
+        // Only Invoke of an actionref is pinned: it runs the action it stands for. A found actionref
+        // reads Visible true when neither it nor its target states a Visible (corpus
+        // pageapplicationarea/TestPageApplicationAreaExtensionActionPartRemoval.al:
+        // ExtActionRef_TargetEnabled_IsFound, ExtActionRef_TargetNotEnabled_IsNotFound).
+        if m != "Invoke" {
+            let engine = self.engine();
+            let page = page_of(&engine, st);
+            let ctl = &page.controls[idx];
+            if let Some(action_ref) = &ctl.action_ref {
+                let target_plain = match action_ref {
+                    ir::ActionRef::Target(t) => page.controls[*t].prop("visible").is_none(),
+                    ir::ActionRef::Unresolved(_) => false,
+                };
+                if m == "Visible" && target_plain && ctl.prop("visible").is_none() {
+                    return Ok(Value::Boolean(true));
+                }
+                return unsupported(format!("TestAction.{m} of an actionref"));
+            }
         }
         match m {
             "Value" => {

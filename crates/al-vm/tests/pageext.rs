@@ -178,6 +178,30 @@ pageextension 52011 "PX Host Ext" extends "PX Host"
     } }
 }
 
+page 52012 "PX Host Two"
+{
+    PageType = Card;
+    SourceTable = "PX Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } part(Sub; "PX Sub") { } } }
+    trigger OnOpenPage() begin CurrPage.Sub.Page.Mark('base'); end;
+}
+page 52013 "PX Sub"
+{
+    PageType = CardPart;
+    layout { area(Content) { field(Msg; Message) { } } }
+    var Message: Text;
+    procedure Mark(What: Text) var T: Codeunit "PX Trace"; begin T.Add('sub-' + What + ';'); end;
+}
+pageextension 52013 "PX Sub Ext" extends "PX Sub"
+{
+    layout { addlast(Content) { field(OwnCtl; Own) { } } }
+    var Own: Text;
+    procedure MarkExt(What: Text) var T: Codeunit "PX Trace"; begin Own := What; T.Add('subext-' + Own + ';'); end;
+}
+pageextension 52014 "PX Host Two Ext" extends "PX Host Two"
+{
+    trigger OnOpenPage() begin CurrPage.Sub.Page.MarkExt('ext'); end;
+}
 page 52020 "PX Twice"
 {
     PageType = Card;
@@ -723,7 +747,7 @@ fn actions_and_actionrefs_follow_the_areas_and_parts_are_removed() {
             asserterror C.ServiceAct.Invoke();
             X := GetLastErrorText() + '|';
             asserterror C.ServiceRef.Invoke();
-            X += GetLastErrorText() + '|';
+            X += GetLastErrorText() + '|' + Format(C.BasicRef.Visible()) + '|';
             asserterror B := C.ExtServicePart.Visible();
             X += GetLastErrorText() + '|' + Format(C.ExtBasicPart.Visible()) + '|' + T.Take();
             ApplicationArea('');
@@ -774,4 +798,21 @@ fn changing_the_areas_while_a_page_is_open_is_refused() {
         "F",
     );
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+// handlers/TestPagePartAgcr_Tests.al (a host reaches its part's page through CurrPage.<Part>.Page) with
+// pageextensioncontrol/TestPageExtensionControlBinding_Page.al (a procedure of the part page's extension runs on the
+// extension's own instance, where its variables live).
+#[test]
+fn a_procedure_of_a_part_pages_extension_runs_on_the_extensions_instance() {
+    let r = run(
+        "procedure F(): Text var H: TestPage \"PX Host Two\"; T: Codeunit \"PX Trace\"; X: Text; begin
+            H.OpenView();
+            X := H.Sub.OwnCtl.Value() + '|';
+            H.Close();
+            exit(X + T.Take());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "ext|sub-base;subext-ext;");
 }

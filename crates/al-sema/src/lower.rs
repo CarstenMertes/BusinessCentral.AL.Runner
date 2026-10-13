@@ -1950,6 +1950,18 @@ impl Lowerer<'_> {
                 Some(Res::Global(name)) if self.global_labels.contains_key(&name) => {
                     Ok(ir::Expr::Const(ir::Const::Text(self.global_labels[&name].clone())))
                 }
+                // `CurrFieldNo` in table code: a property of the implicit `Rec` the VM reads.
+                Some(Res::Global(name)) if name == "currfieldno" && !self.globals.contains_key(&name) => {
+                    let rec = self
+                        .rec_slot
+                        .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
+                    Ok(ir::Expr::Builtin {
+                        id: "Record.CurrFieldNo#1".into(),
+                        receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
+                        args: Vec::new(),
+                        ret_used: true,
+                    })
+                }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },
             other => Err(format!("expression {other:?} `{}` is not lowered yet", n.text())),

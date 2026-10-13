@@ -2086,7 +2086,18 @@ impl Session {
                 ir::Binding::Field(pos) => {
                     self.ret_used = false;
                     let rec = rec.clone().expect("rec-bound");
-                    self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()])?;
+                    // The field's OnValidate sees its own number as CurrFieldNo
+                    // (handlers/TestPageCurrFieldNo_Tests.al:36-60); the page's save later sees 0 (:105-123).
+                    let number = {
+                        let table = rec.borrow().table as usize;
+                        self.engine.tables[table]
+                            .as_ref()
+                            .map_or(0, |t| t.fields[pos].id as i32)
+                    };
+                    self.curr_field_no.push((Rc::as_ptr(&rec) as usize, number));
+                    let validated = self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()]);
+                    self.curr_field_no.pop();
+                    validated?;
                 }
                 ir::Binding::Var(slot) => {
                     let inst = st.borrow().instance.clone().expect("open page");

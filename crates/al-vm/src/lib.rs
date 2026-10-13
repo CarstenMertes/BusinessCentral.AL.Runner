@@ -143,6 +143,9 @@ pub struct Session {
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
+    /// Records (by handle) whose field a TestPage write is validating, with the field's number:
+    /// what `CurrFieldNo` reads in the field's OnValidate.
+    pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
     /// Imported media objects and media sets (the platform tables behind Media fields).
@@ -192,6 +195,7 @@ impl Session {
             commit_behavior: Default::default(),
             in_test_codeunit: false,
             error_scopes: Default::default(),
+            curr_field_no: Vec::new(),
             lock_timeout: true,
             media: Default::default(),
         }
@@ -706,6 +710,17 @@ impl Session {
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
                 }
+                // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
+                // emits this id with the Rec as receiver.
+                if id == "Record.CurrFieldNo#1" {
+                    let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
+                        return Err(Signal::Unsupported("CurrFieldNo without a record".into()));
+                    };
+                    let Value::Record(rec) = self.read(p, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+                    };
+                    return Ok(Value::Integer(self.curr_field_of(&rec)));
+                }
                 if id.starts_with("Codeunit.Run#")
                     || id.starts_with("Xmlport.")
                     || id == "Database.IsInWriteTransaction#1"
@@ -757,6 +772,17 @@ impl Session {
                 Ok(ret)
             }
         }
+    }
+
+    /// What `CurrFieldNo` reads on `rec`: the field number a TestPage write is validating on this
+    /// record, 0 anywhere else (handlers/TestPageCurrFieldNo_Tests.al:36-123).
+    fn curr_field_of(&self, rec: &Rc<RefCell<RecordState>>) -> i32 {
+        let handle = Rc::as_ptr(rec) as usize;
+        self.curr_field_no
+            .iter()
+            .rev()
+            .find(|(h, _)| *h == handle)
+            .map_or(0, |(_, n)| *n)
     }
 
     /// Evaluates the arguments of a resolved call and runs it on `inst`, writing back the

@@ -847,6 +847,14 @@ impl<'a> Checker<'a> {
         if let Some(i) = self.resolve(sc, ObjKind::Enum, &n) {
             return Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())));
         }
+        if key == "action" {
+            return Some(E::TypeName(Ty::Option(
+                al_builtins::value::ACTION_MEMBERS
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect(),
+            )));
+        }
         if self.system_enums.contains(&key) {
             return Some(E::TypeName(Ty::Builtin(n)));
         }

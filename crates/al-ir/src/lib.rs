@@ -55,6 +55,8 @@ pub enum ControlKind {
     Group,
     Repeater,
     Action,
+    /// `systemaction(OK)` and friends.
+    SystemAction,
     ActionGroup,
     Part,
 }

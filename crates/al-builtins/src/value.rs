@@ -4,6 +4,20 @@ use rust_decimal::Decimal;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// The members of the system option `Action`, in docs order (none of the corpus reads an
+/// ordinal: docs/probes-needed.md).
+pub const ACTION_MEMBERS: [&str; 9] = [
+    "None",
+    "OK",
+    "Cancel",
+    "LookupOK",
+    "LookupCancel",
+    "Yes",
+    "No",
+    "RunObject",
+    "RunSystem",
+];
+
 /// Runtime type of a slot: what a variable, field or parameter holds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RtType {

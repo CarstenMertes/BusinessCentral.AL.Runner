@@ -31,7 +31,7 @@ impl PropType {
 }
 
 /// Section names whose properties belong to a page control.
-const CONTROL_SECTIONS: &[&str] = &["field", "group", "repeater", "part", "action"];
+const CONTROL_SECTIONS: &[&str] = &["field", "group", "repeater", "part", "action", "systemaction"];
 
 /// The type a property evaluates to, when it is one the client evaluates.
 pub fn dynamic_type(prop: &str) -> Option<PropType> {
@@ -233,6 +233,7 @@ fn visit(section: &ast::Section, parent: Option<usize>, in_actions: bool, out: &
             "group" => K::Group,
             "repeater" => K::Repeater,
             "action" => K::Action,
+            "systemaction" => K::SystemAction,
             "part" => K::Part,
             // Promoted-action references and separators carry no behaviour of their own.
             "actionref" | "separator" => continue,

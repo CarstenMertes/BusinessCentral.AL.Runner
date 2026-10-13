@@ -108,6 +108,8 @@ page 50006 "PG Edit"
     trigger OnInsertRecord(BelowxRec: Boolean): Boolean begin Trace.Add('ins:' + Rec."No." + '/' + Rec.Descr + ';'); exit(true); end;
     trigger OnModifyRecord(): Boolean begin Trace.Add('mod:' + xRec.Descr + '>' + Rec.Descr + ';'); exit(true); end;
     trigger OnClosePage() begin Trace.Add('close;'); end;
+    trigger OnQueryClosePage(CloseAction: Action): Boolean begin Trace.Add('qcp:' + Format(CloseAction) + ';'); exit(not Veto); end;
+    var Veto: Boolean;
 }
 
 page 50007 "PG NoInsert"
@@ -548,7 +550,7 @@ fn set_value_validates_and_the_row_is_saved_when_the_page_closes() {
         "F",
     );
     // table OnValidate before the page control's; OnModifyRecord sees xRec; OnClosePage after the save.
-    assert_eq!(text(r), "5|1|5|t-qty;p-qty;mod:>;close;");
+    assert_eq!(text(r), "5|1|5|t-qty;p-qty;mod:>;qcp:Cancel;close;");
 }
 
 // handlers/TestPageSameValueSetValue_Tests.al:1-30: writing back the value the field already holds
@@ -568,7 +570,7 @@ fn writing_the_same_value_back_does_not_modify() {
         ),
         "F",
     );
-    assert_eq!(text(r), "close;");
+    assert_eq!(text(r), "qcp:Cancel;close;");
 }
 
 // handlers/TestPageFieldMinMaxValue_Tests.al:20-110: MinValue and MaxValue are enforced on a control write
@@ -664,7 +666,10 @@ fn open_new_runs_on_new_record_and_a_non_key_write_inserts_the_row() {
         ),
         "F",
     );
-    assert_eq!(text(r), "12|typed|new:Yes,x=A;ins:N/seeded;mod:seeded>typed;close;");
+    assert_eq!(
+        text(r),
+        "12|typed|new:Yes,x=A;ins:N/seeded;mod:seeded>typed;qcp:Cancel;close;"
+    );
 }
 
 // handlers/TestPageInsertAllowed_Tests.al:70 New_OnInsertAllowedFalsePage_IsDenied
@@ -725,4 +730,59 @@ fn a_started_line_whose_insert_fails_is_not_raised_on_new_but_on_close_after_pre
     assert_eq!(text(f("TP.New();", "TP.Close();")), "A10");
     let e = error_text(f("TP.First();", "TP.Close();"));
     assert!(e.starts_with("The record in table PG Row already exists."), "{e}");
+}
+
+// testpageclose/TestPageClosingActions.al:Card_OK_RaisesTheCloseTriggersOnce / _Cancel_IsNotOffered / _OK_RefusedByOnQueryClosePage:
+// OK saves, asks OnQueryClosePage(OK), then OnClosePage; a card offers no Cancel; Close() reports Cancel.
+#[test]
+fn ok_closes_with_the_query_close_page_then_the_close_trigger() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; T: Codeunit \"PG Trace\"; X: Text; begin
+                {}
+                TP.OpenEdit();
+                TP.DescrCtl.SetValue('saved');
+                TP.OK().Invoke();
+                R.Get('A');
+                X := R.Descr + '|' + T.Take();
+                asserterror TP.NoCtl.Value();
+                X += GetLastErrorText();
+                asserterror TP.Cancel();
+                X += '|' + GetLastErrorText();
+                TP.OpenEdit();
+                asserterror TP.Cancel().Invoke();
+                X += '|' + GetLastErrorText();
+                TP.Close();
+                exit(X + '|' + T.Take());
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "saved|mod:>saved;qcp:OK;close;The TestPage is not open.|The TestPage is not open.|The built-in action = Cancel is not found on the page.|qcp:Cancel;close;"
+    );
+}
+
+// handlers/TestPageModeSwitchAction_Tests.al:Claim 1 and 2, TestPageReadOnlySetValue.al:365: the built-in Edit
+// and View switch an open card's mode in place; a page-variable control stays editable on a read-only page.
+#[test]
+fn edit_and_view_switch_a_card_in_place() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; X: Text; begin
+                {}
+                TP.OpenView();
+                X := Format(TP.Editable()) + Format(TP.QtyCtl.Editable()) + Format(TP.Guard.Editable());
+                X += Format(TP.Edit().Enabled()) + Format(TP.View().Enabled());
+                TP.Edit().Invoke();
+                X += '|' + Format(TP.Editable()) + Format(TP.QtyCtl.Editable()) + Format(TP.Edit().Enabled()) + Format(TP.View().Enabled());
+                exit(X);
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "NoNoYesYesNo|YesYesNoYes");
 }

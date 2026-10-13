@@ -153,6 +153,40 @@ impl Session {
                 self.require_open(st)?;
                 self.page_go_to_key(st, args)
             }
+            m @ ("OK" | "Cancel" | "Yes" | "No") => {
+                self.require_open(st)?;
+                if !self.builtin_offered(st, m) {
+                    return Err(error(format!("The built-in action = {m} is not found on the page.")));
+                }
+                Ok(Value::TestControl(Rc::new(ControlRef {
+                    page: st.clone(),
+                    target: ControlTarget::BuiltIn(m.to_string()),
+                })))
+            }
+            m @ ("Edit" | "View") => {
+                self.require_open(st)?;
+                Ok(Value::TestControl(Rc::new(ControlRef {
+                    page: st.clone(),
+                    target: ControlTarget::BuiltIn(m.to_string()),
+                })))
+            }
+            "Caption" => {
+                self.require_open(st)?;
+                let engine = self.engine();
+                let object = st.borrow().object as usize;
+                let o = &engine.program.objects[object];
+                let cap = o
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                    .map(|(_, v)| unquote(v))
+                    .unwrap_or_else(|| o.name.clone());
+                Ok(Value::Text(cap))
+            }
+            "Editable" => {
+                self.require_open(st)?;
+                Ok(Value::Boolean(self.page_editable(st)))
+            }
             "New" => {
                 self.require_open(st)?;
                 self.new_record(st)
@@ -254,11 +288,19 @@ impl Session {
         Ok(Value::Null)
     }
 
+    /// `TestPage.Close()`: the page closes the way a Cancel does (corpus
+    /// testpageclose/TestPageClosingActions.al:Dialog arms, `qcp:Cancel` after Close()).
     fn page_close(&mut self, st: &St) -> Result<Value, Signal> {
+        self.close_with(st, "Cancel", false)
+    }
+
+    /// Closes the page with `action`. The client first saves what was typed; a save the table
+    /// refuses raises at Close() but not at an OK, which counts one validation error and leaves the
+    /// page open (corpus testpageclose/TestPageClosingActions.al, Card_OK_AfterATableRefusedDuplicateKey_*,
+    /// handlers/TestPageFailedInsert_Tests.al). Then OnQueryClosePage(action) decides, then
+    /// OnClosePage runs (TestPageClosingActions.al:Card_OK_RaisesTheCloseTriggersOnce).
+    fn close_with(&mut self, st: &St, action: &str, swallow_save_errors: bool) -> Result<Value, Signal> {
         self.require_open(st)?;
-        // The client saves what was typed when the page closes, even a new record
-        // (corpus handlers/TestPageRecordTriggers.al:125 Close_WithoutOK_StillPersistsTheNewRow),
-        // then OnClosePage runs (TestPageRecordTriggers.al:187).
         if st.borrow().refused {
             // The refused line was reported when it was left; closing drops it.
             let mut s = st.borrow_mut();
@@ -273,10 +315,58 @@ impl Session {
             self.ret_used = false;
             self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
         }
-        self.save_row(st)?;
+        match self.save_row(st) {
+            Err(Signal::Error(e)) if swallow_save_errors => {
+                let key_ctl = self.key_control(st);
+                st.borrow_mut().errors.push((key_ctl, e.message));
+                return Ok(Value::Null);
+            }
+            other => other?,
+        }
+        let members: std::rc::Rc<[String]> = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        let ordinal = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == action)
+            .unwrap_or(0) as i32;
+        let veto = self.page_trigger(st, "onqueryclosepage", vec![Value::Option(ordinal, members)])?;
+        if matches!(veto, Some(Value::Boolean(false))) {
+            return Ok(Value::Null);
+        }
         self.page_trigger(st, "onclosepage", vec![])?;
         st.borrow_mut().open = false;
         Ok(Value::Null)
+    }
+
+    /// The built-in actions a page type offers (corpus handlers/TestPageBuiltInActions_Tests.al:1-30,
+    /// testpageclose/TestPageClosingActions.al:25-30: a card or a list offers OK and no Cancel; a
+    /// StandardDialog both; a NavigatePage only OK; a PromptDialog Cancel, and OK unless it declares
+    /// systemaction(OK); a ConfirmationDialog neither).
+    fn builtin_offered(&self, st: &St, which: &str) -> bool {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let page_type = engine.program.objects[object]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("PageType"))
+            .map(|(_, v)| v.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        match (page_type.as_str(), which) {
+            ("confirmationdialog", "Yes" | "No") => true,
+            ("confirmationdialog", _) => false,
+            (_, "Yes" | "No") => false,
+            ("standarddialog", _) => true,
+            ("navigatepage", "Cancel") => false,
+            ("promptdialog", "Cancel") => true,
+            ("promptdialog", "OK") => !page_of(&engine, st)
+                .controls
+                .iter()
+                .any(|c| c.kind == ir::ControlKind::SystemAction && c.name.eq_ignore_ascii_case("OK")),
+            (_, "Cancel") => false,
+            _ => true,
+        }
     }
 
     /// Whether the page carries the blank line past its data: an editable,
@@ -942,8 +1032,36 @@ impl Session {
         self.require_open(&c.page)?;
         let st = &c.page;
         let m = method.split_once('.').map(|(_, m)| m).unwrap_or(method);
-        let ControlTarget::Control(idx) = c.target else {
-            return unsupported(format!("{method} on a built-in control"));
+        let idx = match &c.target {
+            ControlTarget::Control(i) => *i,
+            ControlTarget::BuiltIn(name) if matches!(name.as_str(), "Edit" | "View") => {
+                // On a card the built-in Edit and View switch the open page's mode in place; both stay
+                // visible, and only the one the current mode does not already have is enabled (corpus
+                // handlers/TestPageModeSwitchAction_Tests.al:Claim 1 and 2). A list opens its card
+                // instead (a page handler): not modelled yet.
+                if self.is_list(st) {
+                    return unsupported(format!("the built-in {name} action of a list page"));
+                }
+                let editable = st.borrow().mode != PageMode::View;
+                let applies = (name == "Edit") == !editable;
+                return match m {
+                    "Visible" => Ok(Value::Boolean(true)),
+                    "Enabled" => Ok(Value::Boolean(applies)),
+                    "Invoke" => {
+                        if applies {
+                            st.borrow_mut().mode = if name == "Edit" { PageMode::Edit } else { PageMode::View };
+                        }
+                        Ok(Value::Null)
+                    }
+                    other => unsupported(format!("TestAction.{other}")),
+                };
+            }
+            ControlTarget::BuiltIn(name) if m == "Invoke" => {
+                // OK and Yes confirm, Cancel and No cancel; a refused save keeps the page open
+                // (corpus testpageclose/TestPageClosingActions.al).
+                return self.close_with(st, name, true);
+            }
+            _ => return unsupported(format!("{method} on a built-in control")),
         };
         // A control whose Visible is the literal false, or that sits in a group whose Visible is,
         // is not on the runtime page at all (corpus handlers/TestPageFieldVisibleGroup_Tests.al:1-30).
@@ -1325,7 +1443,11 @@ impl Session {
     /// Editable and Enabled follow the page state live (corpus
     /// handlers/TestPageControlPropertyLiveness_Tests.al:73, TestPageEditable_Tests.al).
     fn control_editable(&mut self, st: &St, idx: usize) -> Result<bool, Signal> {
-        Ok(self.page_editable(st) && self.prop_bool_now(st, idx, "editable", true)?)
+        // A control bound to a page variable stays editable on a read-only page (corpus
+        // handlers/TestPageReadOnlySetValue.al:365 OpenView_PageVariableControl_StaysEditable).
+        let engine = self.engine();
+        let rec_bound = !matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Var(_));
+        Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }
 
     fn control_enabled(&mut self, st: &St, idx: usize) -> Result<bool, Signal> {

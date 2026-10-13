@@ -70,6 +70,12 @@ impl Ty {
             "label" | "textconst" => Ty::Label,
             "variant" => Ty::Variant,
             "option" => Ty::Option(t.option_members()),
+            "action" => Ty::Option(
+                al_builtins::value::ACTION_MEMBERS
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect(),
+            ),
             "enum" => Ty::Enum(obj()),
             "record" => Ty::Record {
                 table: obj(),

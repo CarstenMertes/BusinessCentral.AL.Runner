@@ -698,6 +698,28 @@ impl Session {
         let cx = self.cx.clone();
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             if let Some(f) = schema.fields.iter().find(|f| f.init_text.is_some() && f.init.is_none()) {
+                // An InitValue BC accepts at compile time and cannot evaluate when it builds the
+                // buffer: Init() on a written record raises, on an untouched one does nothing
+                // (record/TestDateTimeInitValue.Codeunit.al:29-77). Nothing else is pinned.
+                let messages: std::collections::BTreeSet<&String> = (0..schema.fields.len())
+                    .filter_map(|pos| self.engine.unevaluable_init.get(&(t.object, pos)))
+                    .collect();
+                let only_unevaluable = schema
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| f.init_text.is_some() && f.init.is_none())
+                    .all(|(pos, _)| self.engine.unevaluable_init.contains_key(&(t.object, pos)));
+                if method == "Init" && only_unevaluable && messages.len() == 1 {
+                    if !rec.borrow().touched {
+                        return Ok(Value::Null);
+                    }
+                    return Err(Signal::Error(AlError {
+                        message: (*messages.iter().next().expect("one message")).clone(),
+                        code: String::new(),
+                        call_stack: String::new(),
+                    }));
+                }
                 return unsupported(format!(
                     "{}.{}: InitValue `{}` is not implemented yet",
                     t.name,
@@ -1365,4 +1387,26 @@ impl Session {
 #[allow(dead_code)]
 fn _uses(_: RtType, a: &[Value], b: &[Value]) -> std::cmp::Ordering {
     key_cmp(a, b)
+}
+
+/// The error BC raises when it evaluates the `InitValue` of `f`, for the two forms the corpus pins as
+/// unevaluable (record/TestDateTimeInitValue.Codeunit.al): `0DT` on a DateTime, and a closing-date
+/// literal (`C20260101D`) on a Date. Every other form is `None`.
+pub(crate) fn unevaluable_init_value(f: &al_ir::Field) -> Option<String> {
+    use al_builtins::value::RtType;
+    let text = f.init_text.as_deref()?.trim();
+    if f.init.is_some() {
+        return None;
+    }
+    match &f.ty {
+        RtType::DateTime if text.eq_ignore_ascii_case("0DT") => {
+            Some("The value \"01/01/0001 00:00:00\" can't be evaluated into type DateTime.".into())
+        }
+        RtType::Date => {
+            let inner = text.strip_prefix(['C', 'c'])?.strip_suffix(['D', 'd'])?;
+            (inner.len() == 8 && inner.chars().all(|c| c.is_ascii_digit()))
+                .then(|| format!("The format of the Date '{text}' does not match your device's date settings."))
+        }
+        _ => None,
+    }
 }

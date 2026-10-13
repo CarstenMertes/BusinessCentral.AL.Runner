@@ -49,6 +49,9 @@ pub struct Engine {
     pub target: Option<al_version::Target>,
     /// The .NET host, the registry of runtime-provided classes and the policy (ADR-014).
     pub dotnet: dotnet::DotNetConfig,
+    /// (table object, field position) -> the error BC raises when it evaluates the field's
+    /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
+    pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
 }
 
 impl Engine {
@@ -105,6 +108,14 @@ impl Engine {
             })
             .collect();
         let events = events::Registry::build(&program);
+        let mut unevaluable_init = std::collections::HashMap::new();
+        for (i, o) in program.objects.iter().enumerate() {
+            for (pos, f) in o.table.iter().flat_map(|t| t.fields.iter().enumerate()) {
+                if let Some(message) = records::unevaluable_init_value(f) {
+                    unevaluable_init.insert((i as u32, pos), message);
+                }
+            }
+        }
         Arc::new(Engine {
             program,
             blocked,
@@ -112,6 +123,7 @@ impl Engine {
             events,
             target,
             dotnet,
+            unevaluable_init,
         })
     }
 }
@@ -348,6 +360,7 @@ impl Session {
                     position: None,
                     auto_calc: Vec::new(),
                     load: Default::default(),
+                    touched: false,
                 })))
             }
             other => Value::default_for(other),
@@ -889,7 +902,6 @@ impl Session {
                         });
                     }
                     if id == "Database.IsInWriteTransaction#1" {
-                        self.bg_refuse_transaction_call("Database.IsInWriteTransaction")?;
                         return Ok(Value::Boolean(self.in_write_transaction()));
                     }
                     if id.starts_with("Xmlport.") {
@@ -1039,6 +1051,29 @@ impl Session {
             ir::Place::Field(base, pos) => match self.read(base, f)? {
                 Value::Record(rc) => {
                     let r = rc.borrow();
+                    if !self.engine.unevaluable_init.is_empty() && !r.touched {
+                        // The buffer of a record nothing has written is built by this read, which
+                        // evaluates the InitValues (record/TestDateTimeInitValue.Codeunit.al:
+                        // DateTimeInitValue_Table_UntouchedRecordRaisesOnReadNotOnInit).
+                        if let Some(message) = self.engine.unevaluable_init.get(&(r.table, *pos)) {
+                            return Err(Signal::Error(AlError {
+                                message: message.clone(),
+                                code: String::new(),
+                                call_stack: String::new(),
+                            }));
+                        }
+                    }
+                    if !self.engine.unevaluable_init.is_empty() && r.touched {
+                        let engine = self.engine.clone();
+                        if let Some(message) = engine.unevaluable_init.get(&(r.table, *pos)) {
+                            let pristine = self.initial_fields(r.table as usize);
+                            if ops::compare(&r.fields[*pos], &pristine[*pos]).ok() == Some(std::cmp::Ordering::Equal) {
+                                return Err(Signal::Unsupported(format!(
+                                    "a read of the field whose InitValue BC cannot evaluate (`{message}`), in a record where another field was written (not pinned)"
+                                )));
+                            }
+                        }
+                    }
                     let v = r.fields[*pos].clone();
                     if r.load.partial {
                         drop(r);
@@ -1088,6 +1123,7 @@ impl Session {
                 Value::Record(rc) => {
                     let mut r = rc.borrow_mut();
                     r.fields[*pos] = v;
+                    r.touched = true;
                     if r.load.partial {
                         r.load.written(*pos);
                     }
@@ -1334,6 +1370,9 @@ impl al_builtins::native::Ctx for Session {
     fn install_scope(&self) -> bool {
         self.install_scope
     }
+    fn in_test_run(&self) -> bool {
+        self.in_test_codeunit
+    }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
@@ -1351,6 +1390,9 @@ impl al_builtins::native::Ctx for Session {
     }
     fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
         Session::ui_str_menu(self, options, default, instruction)
+    }
+    fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+        Session::ui_session_settings(self, settings)
     }
     fn new_guid(&mut self) -> [u8; 16] {
         // Deterministic ids (ADR-006: no OS randomness in the core).

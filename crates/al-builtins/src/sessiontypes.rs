@@ -149,8 +149,26 @@ fn init(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     .map(|()| Value::Null)
 }
 
-fn request_update_refused(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Out {
-    unsupported("SessionSettings.RequestSessionUpdate goes to a [SessionSettingsHandler], which is not implemented")
+/// `RequestSessionUpdate(false)` asks the client for a new session and is routed to the test's
+/// `[SessionSettingsHandler]`, which gets the assigned settings; the instance stays as it was and
+/// so does the running session (session/TestSessionSettings.al:464-545). `true` also writes the
+/// settings to "User Personalization", which the corpus does not exercise: refused.
+fn request_update(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    match a.first() {
+        Some(Value::Boolean(false)) => {}
+        Some(Value::Boolean(true)) => {
+            return unsupported(
+                "SessionSettings.RequestSessionUpdate(true) writes User Personalization (not pinned by the corpus)",
+            );
+        }
+        other => return unsupported(format!("SessionSettings.RequestSessionUpdate with {other:?}")),
+    }
+    let state = with_settings(r, |s| s.clone())?;
+    let copy = Value::Library(
+        "SessionSettings".into(),
+        std::rc::Rc::new(std::cell::RefCell::new(LibraryValue::SessionSettings(state))),
+    );
+    c.ui_session_settings(copy).map(|()| Value::Null)
 }
 
 // ---- Notification ------------------------------------------------------------------------
@@ -239,7 +257,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("SessionSettings", "Company") => company,
         ("SessionSettings", "ProfileSystemScope") => profile_system_scope,
         ("SessionSettings", "Init") => init,
-        ("SessionSettings", "RequestSessionUpdate") => request_update_refused,
+        ("SessionSettings", "RequestSessionUpdate") => request_update,
         ("Notification", "Message") => n_message,
         ("Notification", "Scope") => n_scope,
         ("Notification", "SetData") => n_set_data,

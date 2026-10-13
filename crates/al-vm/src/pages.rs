@@ -1083,10 +1083,12 @@ impl Session {
         let veto = match self.page_trigger_answer(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
             Err(Signal::Error(e)) => {
                 self.ui_message(e.message)?;
+                st.borrow_mut().close_error = true;
                 return Ok(Value::Null);
             }
             other => other?,
         };
+        st.borrow_mut().close_error = false;
         if veto == Some(false) {
             return Ok(Value::Null);
         }
@@ -1976,7 +1978,17 @@ impl Session {
             let a = self.unattended_action(&st);
             self.close_with(&st, a, true, false)?;
             if st.borrow().open {
-                return unsupported("a page whose OnQueryClosePage refused the platform's close");
+                // The platform closes the page the handler left open, and OnQueryClosePage
+                // raises again: a second message, a second refusal. The caller gets control back
+                // with the page gone and no action completed; the page's writes stay (corpus
+                // handlers/TestPageQueryCloseMessageHandler_Tests.al:
+                // ErrorInQueryClosePage_MessageConsumed_CallerRegainsControl, ..._SettlesThePagesUncommittedWrite).
+                // A refusal by a plain `false` is not pinned for a modal page.
+                if !(modal && st.borrow().close_error) {
+                    return unsupported("a page whose OnQueryClosePage refused the platform's close");
+                }
+                self.mark_closed(&st);
+                st.borrow_mut().result = Some("None".into());
             }
         }
         // A handler that left its page torn down closed it without OK (corpus
@@ -2499,10 +2511,29 @@ impl Session {
                 // ListEditActionOpensTheCardOnTheListsCurrentRowEditable). Whether the action is visible or
                 // enabled on a list is not pinned.
                 if self.is_list(st) {
-                    if m != "Invoke" {
-                        return unsupported(format!("TestAction.{m} of the built-in {name} action of a list page"));
-                    }
-                    return self.list_card_action(st, name == "Edit");
+                    // Both actions are visible on a list whether or not it names a card; View is
+                    // enabled, Edit only when the list names a card that can be edited; a disabled
+                    // action does nothing, and so does View on a list with no card (corpus
+                    // handlers/TestPageModeSwitchAction_Tests.al:
+                    // PlainListWithoutCardPageIdOffersBothActionsAndEnablesOnlyView,
+                    // ListWhoseCardIsReadOnlyLeavesTheEditActionVisibleButNotEnabled,
+                    // ListWithAnEditableCardPageIdEnablesBothActions).
+                    let edit = name == "Edit";
+                    let card = self.list_card_page(st)?;
+                    let enabled = match (edit, card) {
+                        (false, _) => true,
+                        (true, None) => false,
+                        (true, Some(target)) => self.card_allows_edit(target)?,
+                    };
+                    return match m {
+                        "Visible" => Ok(Value::Boolean(true)),
+                        "Enabled" => Ok(Value::Boolean(enabled)),
+                        "Invoke" if !enabled || card.is_none() => Ok(Value::Null),
+                        "Invoke" => self.list_card_action(st, edit),
+                        other => unsupported(format!(
+                            "TestAction.{other} of the built-in {name} action of a list page"
+                        )),
+                    };
                 }
                 let editable = st.borrow().mode != PageMode::View;
                 let applies = (name == "Edit") == !editable;
@@ -2873,6 +2904,51 @@ impl Session {
         st.borrow_mut().refresh = false;
         self.control_set_value(st, idx, &mut [value])?;
         Ok(Value::Null)
+    }
+
+    /// The page a list's `CardPageId` names: `None` when it names none.
+    fn list_card_page(&self, st: &St) -> Result<Option<usize>, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let Some(card) = engine.program.objects[object]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("CardPageId"))
+            .map(|(_, v)| v.trim().trim_matches('"').to_string())
+        else {
+            return Ok(None);
+        };
+        engine
+            .program
+            .objects
+            .iter()
+            .position(|o| {
+                o.kind == "page" && (o.name.eq_ignore_ascii_case(&card) || o.id.is_some_and(|i| i.to_string() == card))
+            })
+            .map(Some)
+            .ok_or_else(|| Signal::Unsupported("CardPageId names a page outside the workspace".into()))
+    }
+
+    /// Whether the card a list's Edit action would open can be edited. Only `Editable = false`
+    /// is pinned (corpus handlers/TestPageModeSwitchAction_Tests.al:
+    /// ListWhoseCardIsReadOnlyLeavesTheEditActionVisibleButNotEnabled); any other restriction is refused.
+    fn card_allows_edit(&self, card: usize) -> Result<bool, Signal> {
+        let engine = self.engine();
+        let prop = |n: &str| {
+            engine.program.objects[card]
+                .properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                .map(|(_, v)| v.trim().to_ascii_lowercase())
+        };
+        if prop("ModifyAllowed").is_some_and(|v| v != "true") {
+            return unsupported("the Edit action of a list whose card sets ModifyAllowed (not pinned)");
+        }
+        match prop("Editable").as_deref() {
+            None | Some("true") => Ok(true),
+            Some("false") => Ok(false),
+            Some(_) => unsupported("the Edit action of a list whose card computes Editable (not pinned)"),
+        }
     }
 
     /// The built-in Edit or View action of a list page: opens the page named by the list's

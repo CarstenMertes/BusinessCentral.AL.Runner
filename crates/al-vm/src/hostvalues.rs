@@ -64,6 +64,13 @@ impl Session {
             "Database.UserId#1" => Ok(Value::Text(self.host.identity.user_id())),
             "Database.UserSecurityId#1" => Ok(Value::Guid(self.host.identity.user_security_id())),
             "Database.SessionId#1" => Ok(Value::Integer(self.host.identity.session_id())),
+            // Only an id no session has is pinned (session/TestSessionComplete.al:45-52: 99999 is not active).
+            "Session.IsSessionActive#1" => match args.first() {
+                Some(Value::Integer(n)) if *n != self.host.identity.session_id() => Ok(Value::Boolean(false)),
+                other => unsupported(format!(
+                    "Session.IsSessionActive({other:?}): only an id other than the running session's is pinned"
+                )),
+            },
             "Database.ServiceInstanceId#1" => Ok(Value::Integer(self.host.identity.service_instance_id())),
             "Database.TenantId#1" => Ok(Value::Text(self.host.identity.tenant_id())),
             "System.GuiAllowed#1" => Ok(Value::Boolean(self.host.identity.gui_allowed())),

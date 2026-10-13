@@ -22,3 +22,4 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [011](011-ir-and-execution.md) | Fully resolved typed IR; tree-walking interpreter first, bytecode only if budgets need it; Result-based control flow; BC test-runner semantics from the corpus | Accepted |
 | [012](012-testpage-runtime.md) | Headless page objects in the IR and a TestPage client over page instances in the same session | Accepted |
 | [013](013-external-objects.md) | Dependency apps compiled from Microsoft's own artifacts (source, cached outside the repo); native providers only for platform objects with no AL body; version selection from app.json as in AL Runner; AL Runner's identity values and install baseline | Proposed (revised) |
+| [015](015-version-independent-runtime.md) | One codebase for BC 27 and every later major: a `Target` value, version-tagged builtin catalog, named behaviour gates, one oracle and one ratchet per version | Proposed |

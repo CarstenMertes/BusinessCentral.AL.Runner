@@ -165,15 +165,26 @@ impl Workspace {
         // Parsing dominates loading and each file is independent, so it runs on
         // all cores. `collect` keeps the input order, so the sequential merge
         // below sees files, diagnostics and objects exactly as a serial load would.
-        let inputs: Vec<(usize, &str, &str)> = apps
+        // Expression-valued page properties become routines first (ADR-012).
+        let expanded: Vec<Vec<Option<String>>> = apps
             .iter()
-            .enumerate()
-            .flat_map(|(ai, app)| {
+            .map(|app| {
                 app.files
                     .iter()
-                    .map(move |(path, src)| (ai, path.as_str(), src.as_str()))
+                    .map(|(_, src)| crate::pages::expand(src, symbols))
+                    .collect()
             })
             .collect();
+        let inputs: Vec<(usize, &str, &str)> =
+            apps.iter()
+                .enumerate()
+                .flat_map(|(ai, app)| {
+                    let expanded = &expanded[ai];
+                    app.files.iter().enumerate().map(move |(fi, (path, src))| {
+                        (ai, path.as_str(), expanded[fi].as_deref().unwrap_or(src.as_str()))
+                    })
+                })
+                .collect();
         let parsed: Vec<ParsedFile> = inputs
             .par_iter()
             .map_init(al_syntax::TreeCache::default, |cache, &(_, _, src)| {

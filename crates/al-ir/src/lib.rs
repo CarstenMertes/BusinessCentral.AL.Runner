@@ -30,6 +30,79 @@ pub struct Object {
     /// Global slots of the implicit `Rec` / `xRec` (tables, table extensions).
     pub rec_slot: Option<usize>,
     pub xrec_slot: Option<usize>,
+    /// For pages: the control tree and page triggers (ADR-012).
+    pub page: Option<Page>,
+}
+
+/// A page object as the test client sees it (ADR-012). The AL code of a page
+/// (triggers, procedures, and one synthetic routine per expression-valued
+/// property) is ordinary routines of the same object; this is the layout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Page {
+    /// Controls in source order; `parent` makes the tree. `area(...)` sections
+    /// are not controls.
+    pub controls: Vec<Control>,
+    /// Page triggers by lower-case name (`onopenpage`) to routine index.
+    pub triggers: Vec<(String, usize)>,
+    /// Global slot of `CurrPage`.
+    pub curr_page_slot: usize,
+    /// Why the test client cannot drive this page yet; empty = it can.
+    pub unsupported: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlKind {
+    Field,
+    Group,
+    Repeater,
+    Action,
+    /// `systemaction(OK)` and friends.
+    SystemAction,
+    ActionGroup,
+    Part,
+}
+
+/// Where a field control reads and writes its value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum Binding {
+    None,
+    /// A field of the page's source record (position in the table).
+    Field(usize),
+    /// A global variable of the page.
+    Var(usize),
+    /// A read-only expression: a routine returning the value.
+    Expr(usize),
+}
+
+/// A control property: written as a literal, or an expression compiled to a
+/// routine of the page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PropVal {
+    Lit(String),
+    Routine(usize),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Control {
+    pub name: String,
+    pub kind: ControlKind,
+    pub parent: Option<usize>,
+    pub binding: Binding,
+    /// Properties by lower-case name (`visible`, `caption`, `decimalplaces`, ...).
+    pub props: Vec<(String, PropVal)>,
+    /// Control triggers by lower-case name (`onvalidate`, `onaction`, ...) to routine index.
+    pub triggers: Vec<(String, usize)>,
+    /// For parts: the page object index.
+    pub part_page: Option<usize>,
+}
+
+impl Control {
+    pub fn prop(&self, name: &str) -> Option<&PropVal> {
+        self.props.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+    }
+    pub fn trigger(&self, name: &str) -> Option<usize> {
+        self.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -271,6 +344,12 @@ pub enum Expr {
         args: Vec<Arg>,
         try_call: bool,
     },
+    /// A control of the test page `page` evaluates to (`TP.Ctl`), by index
+    /// into the page's control list (ADR-012).
+    Control {
+        page: Box<Expr>,
+        control: usize,
+    },
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
     /// result report failure as `false` instead of raising an error.
@@ -338,6 +417,7 @@ mod tests {
                 table: None,
                 rec_slot: None,
                 xrec_slot: None,
+                page: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

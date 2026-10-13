@@ -102,7 +102,7 @@ fn to_number(d: Decimal, ty: &RtType, drop_small_fraction: bool) -> Result<Value
 impl Session {
     /// Why a field cannot be handed to `CalcFields`, or `Ok` when it is a
     /// FlowField with a formula this runtime can calculate.
-    fn check_calc_field(&mut self, table: usize, pos: usize) -> Result<(), Signal> {
+    pub(crate) fn check_calc_field(&mut self, table: usize, pos: usize) -> Result<(), Signal> {
         let engine = self.engine.clone();
         let schema = engine.program.objects[table].table.as_ref().expect("table");
         let f = &schema.fields[pos];
@@ -218,7 +218,7 @@ impl Session {
     }
 
     /// Calculates the FlowField at `pos` of `rec` from the table as it is now.
-    fn calc_value(&mut self, rec: &Rec, pos: usize, stack: &mut Vec<usize>) -> Result<Value, Signal> {
+    pub(crate) fn calc_value(&mut self, rec: &Rec, pos: usize, stack: &mut Vec<usize>) -> Result<Value, Signal> {
         // Corpus record/TestCalcFormulaFlowFieldValueTests.Codeunit.al:176-221: a formula
         // that needs itself, directly or through another FlowField, is a recursion error.
         if stack.contains(&pos) {

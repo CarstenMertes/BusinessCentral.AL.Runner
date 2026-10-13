@@ -28,6 +28,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         | (v @ Value::Array(_), T::Array(..)) => v,
         (v @ Value::Codeunit(_), T::Codeunit(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
+        (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
         (v @ Value::Blob(_), T::Library(n)) if n.eq_ignore_ascii_case("Blob") => v,
         // A Text (not a literal) assigns into a SecretText (types/TestSecretText.al).
         (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => {

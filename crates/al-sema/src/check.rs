@@ -461,8 +461,15 @@ impl<'a> Checker<'a> {
                 }
             }
             sc.vars.push(locals);
+            let before = self.diags.len();
             if let Some(body) = r.body() {
                 self.walk(&mut sc, &body);
+            }
+            // Property expressions of controls were never checked before the test
+            // client needed them (ADR-012); an unresolved name there stays a refusal at
+            // lowering, not a compile diagnostic (check::tests::builtin_test_page_methods_win_over_controls_when_called).
+            if crate::pages::is_synthetic(&r.name()) {
+                self.diags.truncate(before);
             }
         }
     }
@@ -880,6 +887,14 @@ impl<'a> Checker<'a> {
         }
         if let Some(i) = self.resolve(sc, ObjKind::Enum, &n) {
             return Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())));
+        }
+        if key == "action" {
+            return Some(E::TypeName(Ty::Option(
+                al_builtins::value::ACTION_MEMBERS
+                    .iter()
+                    .map(|m| m.to_string())
+                    .collect(),
+            )));
         }
         if key == "textencoding" {
             return Some(E::TypeName(Ty::Option(crate::types::text_encoding_members())));

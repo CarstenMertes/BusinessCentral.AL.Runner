@@ -246,8 +246,8 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
             };
             let Some(kind) = UiKind::from_attribute(kind_attr) else {
                 let why = match kind_attr.to_ascii_lowercase().as_str() {
-                    "pagehandler" | "modalpagehandler" | "requestpagehandler" | "filterpagehandler" => {
-                        "page handlers need TestPage support"
+                    "requestpagehandler" | "filterpagehandler" => {
+                        "it needs request and filter pages (docs/adr/012-testpage-runtime.md)"
                     }
                     "sendnotificationhandler" | "recallnotificationhandler" => "it needs the Notification type",
                     "sessionsettingshandler" => "it needs the SessionSettings type",
@@ -258,7 +258,15 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                     routine.name
                 ));
             };
-            if let Some((_, other)) = out.iter().find(|(k, _)| *k == kind) {
+            let page_of = |r: &al_ir::Routine| match r.locals.first().map(|l| &l.ty) {
+                Some(al_builtins::value::RtType::TestPage(p)) => Some(*p),
+                _ => None,
+            };
+            let is_page = matches!(kind, UiKind::Page | UiKind::ModalPage);
+            if let Some((_, other)) = out
+                .iter()
+                .find(|(k, r)| *k == kind && (!is_page || page_of(&obj.routines[*r]) == page_of(routine)))
+            {
                 return Err(format!(
                     "{} and {} are both {kind:?} handlers; which one BC would bind is not pinned",
                     obj.routines[*other].name, routine.name
@@ -832,8 +840,9 @@ mod tests {
                 [ModalPageHandler] procedure Modal(var P: TestPage Pg) begin end;
                 [RequestPageHandler] procedure Req(var P: TestRequestPage Rp) begin end; }",
         );
+        // A modal handler is supported now; one the test never triggers is reported as BC does.
         assert!(
-            matches!(&o[0].1, Outcome::NotRun(r) if r.contains("ModalPageHandler")),
+            matches!(&o[0].1, Outcome::Fail(r) if r.contains("not executed")),
             "{o:?}"
         );
         assert!(
@@ -854,5 +863,210 @@ mod tests {
             matches!(&o[0].1, Outcome::NotRun(r) if r.contains("OnRun") && r.contains("outside a test method")),
             "{o:?}"
         );
+    }
+
+    // ---- page handlers (ADR-012) ----
+
+    const PAGES: &str = r#"
+table 60700 "PH Row" { fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
+page 60701 "PH Card" { PageType = Card; SourceTable = "PH Row"; layout { area(Content) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } }
+page 60702 "PH Host"
+{
+    PageType = Card; SourceTable = "PH Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    actions { area(Processing) { action(Pick) { trigger OnAction() var M: Page "PH Card"; R: Record "PH Row"; Res: Action; begin
+        R.Init(); R."No." := 'RESULT'; Res := M.RunModal(); R.Descr := Format(Res); R.Insert(); end; } } }
+}
+table 60706 "PH Nr" { fields { field(1; Id; Guid) { } field(2; Name; Code[50]) { } } keys { key(PK; Id) { } } }
+page 60707 "PH NrCard"
+{
+    PageType = Card; SourceTable = "PH Nr"; DelayedInsert = true;
+    layout { area(Content) {
+        field(IdField; Rec.Id) { Visible = false; }
+        field(NameField; Rec.Name) { trigger OnValidate() begin CurrPage.Update(); end; } } }
+    trigger OnInsertRecord(BelowxRec: Boolean): Boolean begin Rec.Id := CreateGuid(); end;
+    trigger OnAfterGetRecord() var T: Codeunit PhTrace; begin T.Note('AGR:' + Rec.Name); end;
+    trigger OnAfterGetCurrRecord() var T: Codeunit PhTrace; begin T.Note('AGCR'); CurrPage.Update(false); end;
+}
+codeunit 60708 PhTrace { SingleInstance = true; var Log: Text; procedure Note(T: Text) begin Log += T + ';'; end; procedure Get(): Text begin exit(Log); end; procedure Reset() begin Log := ''; end; }
+page 60709 "PH Ro" { PageType = Card; SourceTable = "PH Row"; layout { area(Content) { field(NoCtl; Rec."No.") { } field(NoteCtl; Note) { } } } trigger OnOpenPage() begin CurrPage.Editable(false); end; var Note: Text[20]; }
+page 60710 "PH Desc" { PageType = List; SourceTable = "PH Row"; SourceTableView = sorting("No.") order(descending); layout { area(Content) { repeater(R) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } } }
+table 60704 "PH Lk" { LookupPageId = "PH Card"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
+page 60705 "PH Saved" { PageType = StandardDialog; SaveValues = true; layout { area(Content) { field(Rem; RemTxt) { } } } var RemTxt: Text[30]; }
+codeunit 60703 PhT
+{
+    Subtype = Test;
+    var Seen: Text;
+
+    // handlers/TestPageModalHandler_Tests.al:43,83 ModalPageHandlerOkReachesTheCallingAl / CancelReaches (lookup)
+    [Test] [HandlerFunctions('OkModal')]
+    procedure OkReachesTheCaller()
+    var R: Record "PH Row"; H: TestPage "PH Host";
+    begin
+        R."No." := 'A'; R.Insert(); H.OpenEdit(); H.First(); H.Pick.Invoke(); H.Close();
+        R.Get('RESULT'); if R.Descr <> 'OK' then Error('got %1', R.Descr);
+    end;
+
+    // handlers/TestPageModalHandler_Tests.al:105 ModalPageWithoutAHandlerIsRefused
+    [Test]
+    procedure NoHandlerIsRefused()
+    var R: Record "PH Row"; H: TestPage "PH Host";
+    begin
+        R."No." := 'N1'; R.Insert(); Commit(); H.OpenEdit(); H.First();
+        asserterror H.Pick.Invoke();
+        if StrPos(GetLastErrorText(), 'Unhandled UI: ModalPage') = 0 then Error('got %1', GetLastErrorText());
+    end;
+
+    // handlers/TestPageRunHandler_Tests.al:60-90: the handler is handed the record Page.Run was given
+    [Test] [HandlerFunctions('SeePage')]
+    procedure PageRunHandsTheRecord()
+    var R: Record "PH Row";
+    begin
+        R."No." := 'P1'; R.Descr := 'Alpha'; R.Insert(); R."No." := 'P2'; R.Descr := 'Beta'; R.Insert();
+        R.Get('P2');
+        Page.Run(Page::"PH Card", R);
+        if Seen <> 'Beta' then Error('got %1', Seen);
+    end;
+
+    // testpageclose + handlers/TestPageModalQueryClose_Tests.al (b): a handler that invokes nothing leaves a plain modal reporting OK
+    [Test] [HandlerFunctions('Nothing')]
+    procedure UnattendedPlainModalReportsOk()
+    var M: Page "PH Card"; Res: Action;
+    begin
+        Res := M.RunModal();
+        if Format(Res) <> 'OK' then Error('got %1', Format(Res));
+    end;
+
+    // TestPageModalQueryClose_Tests.al (d)/(e): lookup mode cancels
+    [Test] [HandlerFunctions('CancelIt')]
+    procedure LookupCancelReportsLookupCancel()
+    var M: Page "PH Card"; Res: Action;
+    begin
+        M.LookupMode(true);
+        Res := M.RunModal();
+        if Format(Res) <> 'LookupCancel' then Error('got %1', Format(Res));
+    end;
+
+    // TestPageModalQueryClose_Tests.al (b2): a plain modal has no built-in Cancel
+    [Test] [HandlerFunctions('CancelIt')]
+    procedure PlainModalHasNoCancel()
+    var M: Page "PH Card"; Res: Action;
+    begin
+        asserterror Res := M.RunModal();
+        if StrPos(GetLastErrorText(), 'The built-in action = Cancel is not found on the page') = 0 then Error('got %1', GetLastErrorText());
+    end;
+
+    // handlers/TestPageRunModalLookupPageId_Tests.al: id 0 with a record resolves LookupPageId
+    [Test] [HandlerFunctions('OkModal')]
+    procedure IdZeroUsesLookupPageId()
+    var K: Record "PH Lk"; R: Record "PH Row"; Res: Action;
+    begin
+        Res := Page.RunModal(0, K);
+        if Format(Res) <> 'LookupOK' then Error('got %1', Format(Res));
+        asserterror Page.RunModal(0, R);
+        if StrPos(GetLastErrorText(), 'You tried to invoke the Page object with the ID 0') = 0 then Error('got %1', GetLastErrorText());
+    end;
+
+    // handlers/TestPageSaveValues.al: OK stores, the next open shows it; Cancel stores nothing
+    [Test] [HandlerFunctions('SaveRem')]
+    procedure SaveValuesKeepsWhatOkStored()
+    begin
+        Seen := 'x'; Page.RunModal(Page::"PH Saved");
+        Seen := ''; Page.RunModal(Page::"PH Saved");
+        if Seen <> 'kept' then Error('got %1', Seen);
+    end;
+
+    // handlers/TestPageTrapSharedScope_Tests.al:87: a page still held by the caller keeps the trap
+    [Test]
+    procedure TrapSurvivesWhileAnotherVariableHoldsThePage()
+    var T: TestPage "PH Card"; R: Record "PH Row";
+    begin
+        R."No." := 'TS'; R.Insert();
+        TrapAndAssign(T);
+        R.Get('TS');
+        Page.Run(Page::"PH Card", R);
+        if T.NoCtl.Value() <> 'TS' then Error('got %1', T.NoCtl.Value());
+        T.Close();
+    end;
+
+    local procedure TrapAndAssign(var Out: TestPage "PH Card")
+    var A: TestPage "PH Card"; B: TestPage "PH Card";
+    begin
+        A.Trap(); B := A; Out := B;
+    end;
+
+    // pageupdate/TestPageUpdateNewRow.al: Update() in OnValidate saves a DelayedInsert new row, then the refresh runs AGR for it
+    [Test]
+    procedure UpdateSavesTheNewRowAndRefreshesIt()
+    var C: TestPage "PH NrCard"; R: Record "PH Nr"; T: Codeunit PhTrace;
+    begin
+        T.Reset(); C.OpenNew();
+        if T.Get() <> 'AGCR;' then Error('open: %1', T.Get());
+        T.Reset(); C.NameField.SetValue('Nx');
+        if StrPos(T.Get(), 'AGR:NX;') = 0 then Error('set: %1', T.Get());
+        C.Close();
+        R.SetRange(Name, 'Nx'); if R.Count() <> 1 then Error('rows %1', R.Count());
+    end;
+
+    // handlers/TestPageControlEditableRoutes.al:548: CurrPage.Editable(false) in OnOpenPage narrows every control
+    [Test]
+    procedure CurrPageEditableFalseInOnOpenPageNarrowsEverything()
+    var C: TestPage "PH Ro"; R: Record "PH Row";
+    begin
+        R."No." := 'E1'; R.Insert();
+        C.OpenEdit();
+        if C.Editable() or C.NoCtl.Editable() or C.NoteCtl.Editable() then Error('still editable');
+        C.Close();
+    end;
+
+    // pagefindrecord/TestPageFindRecord.al:192: SourceTableView sorting descending; Find*Field walks the view
+    [Test]
+    procedure SourceTableViewOrdersTheRowsAndFindFieldWalksThem()
+    var L: TestPage "PH Desc"; R: Record "PH Row";
+    begin
+        R."No." := 'ZD1'; R.Insert(); R."No." := 'ZD2'; R.Insert(); R."No." := 'ZD3'; R.Insert();
+        L.OpenView(); L.First();
+        if L.NoCtl.Value() <> 'ZD3' then Error('first %1', L.NoCtl.Value());
+        if not L.FindNextField(L.NoCtl, 'ZD1') then Error('next');
+        if L.NoCtl.Value() <> 'ZD1' then Error('at %1', L.NoCtl.Value());
+        if L.FindFirstField(L.NoCtl, 5) then Error('an Integer must not match a Code control');
+        if L.NoCtl.Value() <> 'ZD1' then Error('a miss keeps the row, at %1', L.NoCtl.Value());
+        L.Close();
+    end;
+
+    [ModalPageHandler] procedure SaveRem(var P: TestPage "PH Saved")
+    begin
+        if Seen = 'x' then begin P.Rem.SetValue('kept'); P.OK().Invoke(); end
+        else begin Seen := P.Rem.Value(); P.Cancel().Invoke(); end;
+    end;
+    [ModalPageHandler] procedure OkModal(var P: TestPage "PH Card") begin P.OK().Invoke(); end;
+    [ModalPageHandler] procedure Nothing(var P: TestPage "PH Card") begin end;
+    [ModalPageHandler] procedure CancelIt(var P: TestPage "PH Card") begin P.Cancel().Invoke(); end;
+    [PageHandler] procedure SeePage(var P: TestPage "PH Card") begin Seen := P.DescrCtl.Value(); end;
+}
+"#;
+
+    fn ph(name: &str) -> Outcome {
+        outcome_of(&outcomes(PAGES), name)
+    }
+
+    #[test]
+    fn modal_and_page_handlers_answer_page_opens() {
+        for n in [
+            "OkReachesTheCaller",
+            "NoHandlerIsRefused",
+            "PageRunHandsTheRecord",
+            "UnattendedPlainModalReportsOk",
+            "LookupCancelReportsLookupCancel",
+            "PlainModalHasNoCancel",
+            "IdZeroUsesLookupPageId",
+            "SaveValuesKeepsWhatOkStored",
+            "TrapSurvivesWhileAnotherVariableHoldsThePage",
+            "UpdateSavesTheNewRowAndRefreshesIt",
+            "CurrPageEditableFalseInOnOpenPageNarrowsEverything",
+            "SourceTableViewOrdersTheRowsAndFindFieldWalksThem",
+        ] {
+            assert_eq!(ph(n), Outcome::Pass, "{n}");
+        }
     }
 }

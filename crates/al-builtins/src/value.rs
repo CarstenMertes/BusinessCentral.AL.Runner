@@ -4,6 +4,20 @@ use rust_decimal::Decimal;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// The members of the system option `Action`, in docs order (none of the corpus reads an
+/// ordinal: docs/probes-needed.md).
+pub const ACTION_MEMBERS: [&str; 9] = [
+    "None",
+    "OK",
+    "Cancel",
+    "LookupOK",
+    "LookupCancel",
+    "Yes",
+    "No",
+    "RunObject",
+    "RunSystem",
+];
+
 /// Runtime type of a slot: what a variable, field or parameter holds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RtType {
@@ -31,6 +45,11 @@ pub enum RtType {
     Record(u32, bool),
     /// Codeunit with this object index.
     Codeunit(u32),
+    /// `TestPage` of the page with this object index (ADR-012).
+    TestPage(u32),
+    /// A `Page` variable of the page with this object index: a page instance that exists before
+    /// it is run (ADR-012).
+    Page(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
     Library(String),
 }
@@ -69,6 +88,140 @@ pub enum Value {
     Record(Rc<RefCell<RecordState>>),
     /// A Blob field's content: a shared buffer that streams write to (see `stream`).
     Blob(crate::stream::BlobRef),
+    /// A `TestPage` (or `TestPart`): a handle on a page and the test client
+    /// driving it (ADR-012). Shared like a codeunit instance.
+    TestPage(Rc<RefCell<PageState>>),
+    /// A control of a test page (`TestField`, `TestAction`, `TestFilter`).
+    TestControl(Rc<ControlRef>),
+}
+
+/// How a page was opened by the test client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageMode {
+    View,
+    Edit,
+    New,
+}
+
+/// Where the test client's cursor stands on a page (ADR-012).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cursor {
+    /// No row: an empty view.
+    None,
+    /// On a stored row (or, for a new record, the row being typed).
+    Row,
+    /// On the blank line an editable, insert-allowed repeater carries past its data
+    /// (corpus handlers/TestPageNewRowLine_Tests.al:1-30).
+    NewLine,
+}
+
+/// The test client's state for one page (ADR-012). Fields grow with the
+/// behaviours the corpus pins.
+pub struct PageState {
+    /// Object index of the page.
+    pub object: u32,
+    /// Open pages answer; closed ones, and ones torn down by an error in a row load,
+    /// raise "The TestPage is not open." (corpus testpageteardown/TestPageTeardown.al:3-24).
+    pub open: bool,
+    pub mode: PageMode,
+    /// The running page: its globals hold `Rec`, `xRec` and `CurrPage`.
+    pub instance: Option<Rc<RefCell<Instance>>>,
+    pub cursor: Cursor,
+    /// The page offers the trailing new-row line.
+    pub new_line: bool,
+    /// The cursor stands on a row that is not stored yet (OpenNew, New).
+    pub draft: bool,
+    /// Fields written by the client since the row was loaded.
+    pub dirty: bool,
+    /// `Visible` of each control as it was when the page opened (the property is frozen then,
+    /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
+    pub frozen_visible: Vec<bool>,
+    /// Primary keys of the rows a repeater page has populated (its window).
+    pub window: Vec<Vec<Value>>,
+    /// The control that has the client's focus, and whether it is on the current row. Moving
+    /// focus to a non-key control of a new row is what inserts it (corpus
+    /// handlers/TestPageBlankKeyInsert.al:1-25).
+    pub focus: Option<usize>,
+    pub focus_in_row: bool,
+    /// Validation errors the client holds: (control index, stored text).
+    pub errors: Vec<(usize, String)>,
+    /// The started line's insert was refused and the client moved on without raising
+    /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30): `refused` keeps the line, `pending`
+    /// is the line left behind by Previous()/First(), whose insert fails again at Close().
+    pub refused: bool,
+    pub pending: Option<Vec<Value>>,
+    /// Opened by AL code (`Page.RunModal`, `Page.Run`) and answered by a handler, not by the test.
+    pub modal: bool,
+    pub lookup: bool,
+    /// The `Action` the page closed with, once it has.
+    pub result: Option<String>,
+    /// `TestPage.Trap()` was called on this variable and no page has been caught yet.
+    pub trapping: bool,
+    /// `CurrPage.Update` was called: the client re-reads the row once the call that made it returns.
+    pub refresh: bool,
+    /// A row with the new record's starting key was already stored when the draft started.
+    pub draft_stored: bool,
+    /// OnInit/OnOpenPage are running, and `CurrPage.Editable(false)` has been called in them.
+    pub opening: bool,
+    pub editable_off: bool,
+}
+
+// The page instance holds `CurrPage`, which points back here: print only the facts.
+impl std::fmt::Debug for PageState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PageState(page {}, open {}, mode {:?})",
+            self.object, self.open, self.mode
+        )
+    }
+}
+
+impl PageState {
+    pub fn closed(object: u32) -> PageState {
+        PageState {
+            object,
+            open: false,
+            mode: PageMode::View,
+            instance: None,
+            cursor: Cursor::None,
+            new_line: false,
+            draft: false,
+            dirty: false,
+            frozen_visible: Vec::new(),
+            window: Vec::new(),
+            focus: None,
+            focus_in_row: false,
+            errors: Vec::new(),
+            refused: false,
+            pending: None,
+            modal: false,
+            lookup: false,
+            result: None,
+            trapping: false,
+            refresh: false,
+            draft_stored: false,
+            opening: false,
+            editable_off: false,
+        }
+    }
+}
+
+/// What a `TestControl` stands for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ControlTarget {
+    /// A control of the page by index into its control list.
+    Control(usize),
+    /// A built-in action: OK, Cancel, Yes, No, Edit, View.
+    BuiltIn(String),
+    /// `TestPage.Filter`.
+    Filter,
+}
+
+#[derive(Debug)]
+pub struct ControlRef {
+    pub page: Rc<RefCell<PageState>>,
+    pub target: ControlTarget,
 }
 
 /// Everything a record variable carries.
@@ -176,6 +329,7 @@ impl Value {
                 object: *id,
                 ..Default::default()
             }))),
+            RtType::TestPage(id) | RtType::Page(id) => Value::TestPage(Rc::new(RefCell::new(PageState::closed(*id)))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
             RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
@@ -215,6 +369,7 @@ impl Value {
             Value::Codeunit(_) => k == "codeunit",
             Value::Library(n, _) => n.eq_ignore_ascii_case(&k),
             Value::Record(_) => k == "record",
+            Value::TestPage(_) | Value::TestControl(_) => false,
             Value::Blob(_) => false,
         }
     }

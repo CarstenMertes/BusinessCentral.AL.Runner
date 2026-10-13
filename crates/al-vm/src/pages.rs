@@ -779,16 +779,6 @@ impl Session {
             return Err(e);
         }
         let has_source = self.has_source(st);
-        // The rowset a page serves from OnFindRecord / OnNextRecord is not modelled: refused rather
-        // than walked as the table (corpus pagefindrecord/TestPageFindRecord.al).
-        if let Some(t) = page
-            .triggers
-            .iter()
-            .find(|(n, _)| n == "onfindrecord" || n == "onnextrecord")
-        {
-            self.mark_closed(st);
-            return unsupported(format!("a page with an {} trigger (the rowset page code serves)", t.0));
-        }
         // SourceTableView is the page's own view of its table (corpus
         // pagefindrecord/TestPageFindRecord.al:192 PlainPage_WithoutTheTriggers_WalksTheTableDescending);
         // how it combines with the view of a record handed to Page.Run is not pinned.
@@ -882,6 +872,9 @@ impl Session {
         if mode == PageMode::New {
             // corpus handlers/TestPageCreateModeNewRecordArgs.al:243-270: OnOpenPage, then
             // OnNewRecord with BelowxRec true and xRec on the last row.
+            if self.declares(st, "onfindrecord") {
+                return unsupported("OpenNew on a page with an OnFindRecord trigger (not pinned)");
+            }
             self.ret_used = true;
             let rec = self.page_rec(st);
             self.record_op("FindLast", &rec, &mut [])?;
@@ -1106,14 +1099,46 @@ impl Session {
 
     // ---- rows ---------------------------------------------------------------------------
 
+    /// Whether the page declares trigger `name` (lower case) of its own.
+    fn declares(&self, st: &St, name: &str) -> bool {
+        let engine = self.engine();
+        page_of(&engine, st).triggers.iter().any(|(n, _)| n == name)
+    }
+
+    /// FindFirst (`which` "-") or FindLast ("+") of the page's rowset. A page that declares
+    /// OnFindRecord serves its rows from the trigger, which receives `Which` and answers whether it
+    /// found a row (corpus pagefindrecord/TestPageFindRecord.al:112, :160). The strings the client
+    /// really passes are `=`, `=>` and `=><` forms the corpus pins only for a deleted row
+    /// (pageupdate/TestPageUpdateGoneRow.al:390); `-` and `+` are assumed (docs/probes-needed.md).
+    fn nav_find(&mut self, st: &St, which: &str) -> Result<bool, Signal> {
+        if self.declares(st, "onfindrecord") {
+            let v = self.page_trigger(st, "onfindrecord", vec![Value::Text(which.into())])?;
+            return Ok(matches!(v, Some(Value::Boolean(true))));
+        }
+        let rec = self.page_rec(st);
+        self.ret_used = true;
+        let method = if which == "-" { "FindFirst" } else { "FindLast" };
+        Ok(matches!(self.record_op(method, &rec, &mut [])?, Value::Boolean(true)))
+    }
+
+    /// Next(steps) of the page's rowset: OnNextRecord when the page declares it, which answers how
+    /// many rows it moved (corpus pagefindrecord/TestPageFindRecord.al:129).
+    fn nav_next(&mut self, st: &St, steps: i32) -> Result<bool, Signal> {
+        if self.declares(st, "onnextrecord") {
+            let v = self.page_trigger(st, "onnextrecord", vec![Value::Integer(steps)])?;
+            return Ok(matches!(v, Some(Value::Integer(n)) if n != 0));
+        }
+        let rec = self.page_rec(st);
+        self.ret_used = true;
+        let moved = self.record_op("Next", &rec, &mut [Value::Integer(steps)])?;
+        Ok(matches!(moved, Value::Integer(n) if n != 0))
+    }
+
     /// Lands on the first row of the view when the page opens: a stored row, else
     /// the new-row line, else nothing. The expressions of the controls are evaluated for
     /// an empty view too (corpus autoformat/TestAutoFormatExpressionTiming.al:5-12).
     fn page_first_row(&mut self, st: &St) -> Result<(), Signal> {
-        let rec = self.page_rec(st);
-        self.ret_used = true;
-        let found = self.record_op("FindFirst", &rec, &mut [])?;
-        if matches!(found, Value::Boolean(true)) {
+        if self.nav_find(st, "-")? {
             st.borrow_mut().cursor = Cursor::Row;
             self.arrive(st)
         } else if st.borrow().new_line {
@@ -1432,6 +1457,7 @@ impl Session {
         let rec = self.page_rec(st);
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
+        let mut walked = 0;
         for i in 0..Self::WINDOW {
             let key = self.row_key(&rec)?;
             let stored = rec.borrow().fields.clone();
@@ -1444,17 +1470,23 @@ impl Session {
             if i + 1 == Self::WINDOW {
                 break;
             }
-            self.ret_used = true;
-            if !matches!(
-                self.record_op("Next", &rec, &mut [Value::Integer(1)])?,
-                Value::Integer(1)
-            ) {
+            if !self.nav_next(st, 1)? {
                 break;
             }
+            walked += 1;
         }
-        // Back on the row the cursor is on.
-        self.ret_used = true;
-        self.record_op("Get", &rec, &mut start.clone())?;
+        // Back on the row the cursor is on. A page that serves its rows from triggers steps back
+        // through them: the row is not necessarily in the table.
+        if self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord") {
+            for _ in 0..walked {
+                if !self.nav_next(st, -1)? {
+                    return unsupported("OnNextRecord did not step back over the rows it served");
+                }
+            }
+        } else {
+            self.ret_used = true;
+            self.record_op("Get", &rec, &mut start.clone())?;
+        }
         // The row buffer the page keeps for the row it stands on is what OnAfterGetRecord left.
         if let Some(row) = keys.first() {
             rec.borrow_mut().fields = row.shown.clone();
@@ -1483,6 +1515,7 @@ impl Session {
         // A stored row is not the started record the cursor may have left (corpus
         // handlers/TestPageOpenNewPartLink.al:OpenNew_LinesInsertedInCode_LastThenWriteLandsOnTheLastLine).
         st.borrow_mut().draft = false;
+        st.borrow_mut().stale = false;
         if self.is_list(st) {
             let key = self.row_key(&self.page_rec(st))?;
             if !self.in_window(st, &key) {
@@ -1545,20 +1578,13 @@ impl Session {
     }
 
     fn page_move_inner(&mut self, st: &St, how: &str) -> Result<bool, Signal> {
-        let rec = self.page_rec(st);
         let cursor = st.borrow().cursor;
-        self.ret_used = true;
-        let found = |v: Value| match v {
-            Value::Integer(n) => n != 0,
-            Value::Boolean(b) => b,
-            _ => false,
-        };
         let landed = match how {
-            "First" => found(self.record_op("FindFirst", &rec, &mut [])?),
-            "Last" => found(self.record_op("FindLast", &rec, &mut [])?),
+            "First" => self.nav_find(st, "-")?,
+            "Last" => self.nav_find(st, "+")?,
             "Next" => match cursor {
                 Cursor::Row => {
-                    if found(self.record_op("Next", &rec, &mut [Value::Integer(1)])?) {
+                    if self.nav_next(st, 1)? {
                         true
                     } else if st.borrow().new_line {
                         // corpus handlers/TestPageNewRowLine_Tests.al: Next() past the last data
@@ -1573,8 +1599,8 @@ impl Session {
                 _ => false,
             },
             "Previous" => match cursor {
-                Cursor::NewLine => found(self.record_op("FindLast", &rec, &mut [])?),
-                Cursor::Row => found(self.record_op("Next", &rec, &mut [Value::Integer(-1)])?),
+                Cursor::NewLine => self.nav_find(st, "+")?,
+                Cursor::Row => self.nav_next(st, -1)?,
                 Cursor::None => false,
             },
             _ => unreachable!(),
@@ -1620,10 +1646,9 @@ impl Session {
             .collect::<Result<_, _>>()?;
         let before_fields = rec.borrow().fields.clone();
         let (before_cursor, before_draft) = (st.borrow().cursor, st.borrow().draft);
-        self.ret_used = true;
-        let mut at = self.record_op("FindFirst", &rec, &mut [])?;
+        let mut at = self.nav_find(st, "-")?;
         let mut found = false;
-        while matches!(at, Value::Boolean(true)) {
+        while at {
             st.borrow_mut().cursor = Cursor::Row;
             let r = self.arrive(st);
             self.torn_down_on_error(st, r)?;
@@ -1637,9 +1662,7 @@ impl Session {
                 found = true;
                 break;
             }
-            self.ret_used = true;
-            at = self.record_op("Next", &rec, &mut [Value::Integer(1)])?;
-            at = Value::Boolean(matches!(at, Value::Integer(n) if n != 0));
+            at = self.nav_next(st, 1)?;
         }
         if !found {
             rec.borrow_mut().fields = before_fields;
@@ -2630,6 +2653,17 @@ impl Session {
         if !st.borrow().open || !self.has_source(st) || st.borrow().cursor != Cursor::Row || st.borrow().draft {
             return Ok(());
         }
+        // A page that serves its rows from OnFindRecord asks the trigger to settle the client on a row
+        // again (corpus pageupdate/TestPageUpdateGoneRow.al:390 pins the Which strings of a deleted
+        // row only). Which row that is, is not modelled: nothing that shows it may be read before the
+        // cursor moves, and the page's row triggers must not matter.
+        if self.declares(st, "onfindrecord") || self.declares(st, "onnextrecord") {
+            if self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord") {
+                return unsupported("CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned)");
+            }
+            st.borrow_mut().stale = true;
+            return Ok(());
+        }
         let rec = self.page_rec(st);
         if self.stored_row(&rec)?.is_none() {
             return Ok(());
@@ -2750,7 +2784,12 @@ impl Session {
     fn control_value(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
         let engine = self.engine();
         match page_of(&engine, st).controls[idx].binding.clone() {
-            ir::Binding::Field(pos) => Ok(self.page_rec(st).borrow().fields[pos].clone()),
+            ir::Binding::Field(pos) => {
+                if st.borrow().stale {
+                    return unsupported("reading a row after CurrPage.Update on a page with OnFindRecord (the row it settles on is not pinned)");
+                }
+                Ok(self.page_rec(st).borrow().fields[pos].clone())
+            }
             ir::Binding::Var(slot) => {
                 let inst = self.owner_instance(st, page_of(&engine, st).controls[idx].owner);
                 let v = inst.borrow().globals[slot].clone();

@@ -48,6 +48,38 @@ page 62012 "PM Card"
     PageType = Card; SourceTable = "PM Row";
     layout { area(Content) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } }
 }
+
+page 62013 "PM Rowset"
+{
+    PageType = List; SourceTable = "PM Row"; SourceTableView = sorting("No.") order(descending); Editable = false;
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+    actions { area(Processing) {
+        action(FillEveryOther) { trigger OnAction() var Src: Record "PM Row"; Take: Boolean; begin
+            TempBuf.Reset(); TempBuf.DeleteAll(); Src.SetCurrentKey("No."); Src.Ascending(true); Take := true;
+            if Src.FindSet() then repeat if Take then begin TempBuf := Src; TempBuf.Insert(); end; Take := not Take; until Src.Next() = 0;
+            Activate(); end; }
+        action(FillAll) { trigger OnAction() var Src: Record "PM Row"; begin
+            TempBuf.Reset(); TempBuf.DeleteAll();
+            if Src.FindSet() then repeat TempBuf := Src; TempBuf.Insert(); until Src.Next() = 0;
+            Activate(); end; }
+    } }
+    var TempBuf: Record "PM Row" temporary; RunOnTemp: Boolean;
+    local procedure Activate() begin RunOnTemp := true; Rec.FilterGroup(0); Rec.SetRange("No."); CurrPage.Update(false); end;
+    trigger OnFindRecord(Which: Text): Boolean
+    var P: Codeunit "PM Probe"; Found: Boolean;
+    begin
+        P.Note('F');
+        if not RunOnTemp then exit(Rec.Find(Which));
+        TempBuf.Copy(Rec); Found := TempBuf.Find(Which); if Found then Rec := TempBuf; exit(Found);
+    end;
+    trigger OnNextRecord(Steps: Integer): Integer
+    var P: Codeunit "PM Probe"; Moved: Integer;
+    begin
+        P.Note('N');
+        if not RunOnTemp then exit(Rec.Next(Steps));
+        TempBuf.Copy(Rec); Moved := TempBuf.Next(Steps); if Moved <> 0 then Rec := TempBuf; exit(Moved);
+    end;
+}
 "#;
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
@@ -157,4 +189,81 @@ fn clear_of_a_closed_test_page_gives_a_fresh_variable() {
             Clear(C);
             C.OpenView(); Check('A', C.NoCtl.Value()); C.Close(); end;"
     ));
+}
+
+const EIGHT: &str = "procedure Seed(Alternate: Boolean) var R: Record \"PM Row\"; I: Integer; begin
+    R.DeleteAll();
+    for I := 1 to 8 do begin R.Init(); R.\"No.\" := 'L000' + Format(I); R.Descr := 'Row'; if Alternate then if I mod 2 = 1 then R.Descr := 'Included' else R.Descr := 'Excluded'; R.Insert(); end;
+end;";
+
+// pagefindrecord/TestPageFindRecord.al:112 OnFindRecord_FirstAnswersTheFirstRowOfTheTriggerRowset,
+// :129 OnNextRecord_NextWalksTheTriggerRowsetAndStopsAtItsEnd
+#[test]
+fn first_and_next_walk_the_rows_the_triggers_serve() {
+    passes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure Walk() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            if not L.First() then Error('first'); Check('L0007', L.\"No.\".Value);
+            if not L.Next() then Error('n2'); Check('L0005', L.\"No.\".Value);
+            if not L.Next() then Error('n3'); Check('L0003', L.\"No.\".Value);
+            if not L.Next() then Error('n4'); Check('L0001', L.\"No.\".Value);
+            if L.Next() then Error('past the end');
+            L.Close(); end;"
+    ));
+}
+
+// :160 OnFindRecord_LastAndPreviousWalkTheTriggerRowset, :186 OnFindRecord_GoToKeyRefusesARowTheTriggerRowsetDoesNotServe
+#[test]
+fn last_previous_and_go_to_key_use_the_trigger_rowset() {
+    passes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure LastPrev() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            if not L.Last() then Error('last'); Check('L0001', L.\"No.\".Value);
+            if not L.Previous() then Error('prev'); Check('L0003', L.\"No.\".Value);
+            L.Close(); end;
+        [Test]
+        procedure GoTo() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            if not L.GoToKey('L0003') then Error('served'); Check('L0003', L.\"No.\".Value);
+            if L.GoToKey('L0004') then Error('not served');
+            L.Close(); end;"
+    ));
+}
+
+// :205 PlainPage_WithoutTheTriggers..., :222 OnFindRecord_AManualFilterStillNarrowsTheTriggerRowset
+#[test]
+fn a_manual_filter_narrows_the_trigger_rowset_and_both_triggers_are_reached() {
+    passes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure Filtered() var L: TestPage \"PM Rowset\"; P: Codeunit \"PM Probe\"; begin
+            Seed(true); L.OpenView(); L.Filter.SetFilter(Descr, 'Included'); L.FillAll.Invoke();
+            Check('', L.Filter.GetFilter(\"No.\")); Check('Included', L.Filter.GetFilter(Descr));
+            P.Reset();
+            if not L.First() then Error('first'); Check('L0007', L.\"No.\".Value);
+            if not L.Next() then Error('n2'); Check('L0005', L.\"No.\".Value);
+            if not L.Next() then Error('n3'); Check('L0003', L.\"No.\".Value);
+            if not L.Next() then Error('n4'); Check('L0001', L.\"No.\".Value);
+            if L.Next() then Error('past');
+            if StrPos(P.Trace(), 'F') = 0 then Error('find'); if StrPos(P.Trace(), 'N') = 0 then Error('next');
+            L.Close(); end;"
+    ));
+}
+
+// A control read straight after a refresh of a rowset page shows a row the re-anchoring picks, which
+// the corpus does not pin beyond the Which strings of a deleted row (pageupdate/TestPageUpdateGoneRow.al).
+#[test]
+fn reading_a_rec_bound_control_after_a_refresh_of_a_rowset_page_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure Stale() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            Check('L0008', L.\"No.\".Value); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("after CurrPage.Update")), "{o:?}");
 }

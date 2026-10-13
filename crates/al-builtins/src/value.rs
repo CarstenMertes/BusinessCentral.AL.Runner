@@ -244,6 +244,9 @@ pub struct PageState {
     /// handlers/TestPageOnInit_Tests.al:188 POI_SetterBeforeRunModal_RunsAfterOnInitAndSurvives);
     /// the open that follows must not run it again. The open consumes the flag.
     pub inited: bool,
+    /// A page whose rowset OnFindRecord/OnNextRecord serve was refreshed: which row the client
+    /// settles on is not modelled, so Rec-bound controls are not read until the cursor moves.
+    pub stale: bool,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -290,6 +293,7 @@ impl PageState {
             ext_instances: Vec::new(),
             areas: String::new(),
             inited: false,
+            stale: false,
         }
     }
 }

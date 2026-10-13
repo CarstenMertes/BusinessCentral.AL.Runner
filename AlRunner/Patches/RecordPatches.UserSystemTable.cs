@@ -153,6 +153,7 @@
 //   runtime-engine types, and the row is inserted through BC's own AL insert entry point exactly
 //   as AL code would.
 using System.Reflection;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
@@ -468,13 +469,27 @@ public static partial class RecordPatches
         return (name, fullName, sid);
     }
 
+    private const string SessionWindowsSidSurface = "session user Windows SID (NavUser.windowsSID)";
+
+    /// <summary>
+    /// The skeleton session's NavUser, or null when the session holds none. A moved
+    /// <c>Authenticator</c> / <c>navUser</c> member refuses with a BcShapeGapException rather than
+    /// reading as "no user": a null here must mean the read succeeded (#4147).
+    /// </summary>
+    private static object? SkeletonNavUser(object session)
+    {
+        const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
+        var auth = BcShape.Property(session.GetType(), "Authenticator", F, SessionWindowsSidSurface).GetValue(session);
+        return auth == null ? null : BcShape.Field(auth.GetType(), "navUser", F, SessionWindowsSidSurface).GetValue(auth);
+    }
+
     /// <summary>The skeleton NavUser's Windows SID (<c>NavUser.Sid</c>, what <c>Sid()</c> answers), or "".</summary>
     private static string ReadSkeletonUserWindowsSid(object session)
     {
-        const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
-        var auth = session.GetType().GetProperty("Authenticator", F)?.GetValue(session);
-        var navUser = auth?.GetType().GetField("navUser", F)?.GetValue(auth);
-        return navUser?.GetType().GetField("windowsSID", F)?.GetValue(navUser) as string ?? string.Empty;
+        var navUser = SkeletonNavUser(session);
+        if (navUser == null) return string.Empty;
+        return BcShape.Field(navUser.GetType(), "windowsSID", BcShape.AnyInstance, SessionWindowsSidSurface)
+            .GetValue(navUser) as string ?? string.Empty;
     }
 
     private static void AlignSessionWindowsSidWithRow(object session, NavGuid userSid)
@@ -490,7 +505,7 @@ public static partial class RecordPatches
             var wsid = probe.GetFieldValue(FieldNoByNameOnUser(meta, UserWindowsSecurityIdFieldName))?.ToString() ?? string.Empty;
             TryPokeSessionUserWindowsSid(session, wsid);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (BcShapeGapException.Find(ex) == null)
         {
             // Diagnosis only: the session keeps the generated SID, which is the state before this existed.
             Console.Error.WriteLine(
@@ -500,11 +515,9 @@ public static partial class RecordPatches
 
     private static bool TryPokeSessionUserWindowsSid(object session, string windowsSid)
     {
-        const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
-        var auth = session.GetType().GetProperty("Authenticator", F)?.GetValue(session);
-        var navUser = auth?.GetType().GetField("navUser", F)?.GetValue(auth);
-        var f = navUser?.GetType().GetField("windowsSID", F);
-        if (navUser == null || f == null) return false;
+        var navUser = SkeletonNavUser(session);
+        if (navUser == null) return false;
+        var f = BcShape.Field(navUser.GetType(), "windowsSID", BcShape.AnyInstance, SessionWindowsSidSurface);
         AlRunner.Infrastructure.FieldPoke.SetInstance(f, navUser, windowsSid);
         return true;
     }

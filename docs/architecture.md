@@ -35,8 +35,8 @@ needs more.
 | `al-ir` | Typed IR: program, objects, routines, places, expressions, table and page schemas |
 | `al-vm` | Engine (immutable, `Arc`) and Session (all mutable state). Records, triggers, events and subscribers, FlowFields, AutoIncrement, RecordRef/FieldRef, relations and rename propagation, UI dialogs and handlers, the headless page client |
 | `al-data` | The `Store` trait (ADR-003), `MemStore` on `im` persistent maps, and its contract suite |
-| `al-host` | Capability traits for the host (ADR-006). So far `DotNetHost` / `DotNetSession` and the default `NoDotNet` (ADR-014) |
-| `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet; `SidecarHost`, the one place that starts a process (the .NET sidecar) |
+| `al-host` | Capability traits for the host (ADR-006): `Clock` and `Identity` with AL Runner's defaults (ADR-013); the session reads them for `Today`, `UserId`, the system field stamps and the like. The command line injects the system clock (`al-test-cli/src/host.rs`). Also `DotNetHost` / `DotNetSession` and the default `NoDotNet` (ADR-014) |
+| `al-test-cli` | Corpus discovery, oracle reading, the BC test-runner semantics, reports (text, Markdown, JSON, JUnit), the ratchet; `SidecarHost` (`dotnet.rs`), the one place that starts a process (the .NET sidecar) |
 
 ## Runtime model
 

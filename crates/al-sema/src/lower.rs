@@ -59,6 +59,8 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         }
     }
     let mut page_reasons: Vec<Vec<String>> = vec![Vec::new(); ws.objects.len()];
+    // The page objects each page shows as parts.
+    let mut page_parts: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
     for (oi, o) in ws.objects.iter().enumerate() {
         if o.kind != ObjKind::Page {
             continue;
@@ -66,8 +68,42 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         let obj = ws.object_ast(oi);
         let l = crate::pages::layout(&obj);
         page_reasons[oi].extend(l.reasons.iter().cloned());
-        if l.controls.iter().any(|c| c.kind == ir::ControlKind::Part) {
-            page_reasons[oi].push("parts are not supported by the test client yet".into());
+        for c in l.controls.iter().filter(|c| c.kind == ir::ControlKind::Part) {
+            let prop_of = |n: &str| {
+                c.section
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case(n))
+                    .map(|p| p.value_text())
+            };
+            if let Some(link) = prop_of("SubPageLink") {
+                if let Err(why) = crate::pages::parse_sub_page_link(&link) {
+                    page_reasons[oi].push(format!("part {}: {why} is not supported yet", c.name));
+                }
+            }
+            if let Some(provider) = prop_of("Provider") {
+                let provider = provider.trim().trim_matches('"').to_string();
+                if !l
+                    .controls
+                    .iter()
+                    .any(|p| p.kind == ir::ControlKind::Part && p.name.eq_ignore_ascii_case(&provider))
+                {
+                    page_reasons[oi].push(format!(
+                        "part {}: Provider `{provider}` is not a part of the page",
+                        c.name
+                    ));
+                }
+            }
+            match c.section.args().get(1) {
+                Some(n) => match ws.resolve_ref(o.file, ObjKind::Page, &crate::types::qualified_parts(n)) {
+                    Resolution::Found(p) => page_parts[oi].push(p),
+                    _ => page_reasons[oi].push(format!(
+                        "part {} shows page {} outside the workspace",
+                        c.name,
+                        crate::types::display_name(n)
+                    )),
+                },
+                None => page_reasons[oi].push(format!("part {} names no page", c.name)),
+            }
         }
         if l.controls.iter().any(|c| {
             c.section
@@ -89,11 +125,33 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
-        if page_temporary[oi] {
-            page_reasons[oi].push("SourceTableTemporary is not supported by the test client yet".into());
-        }
         if page_extensions.contains_key(&oi) {
             page_reasons[oi].push("page extensions are not supported by the test client yet".into());
+        }
+    }
+    // A host cannot be driven where a part page cannot.
+    for _ in 0..3 {
+        for oi in 0..ws.objects.len() {
+            for &p in &page_parts[oi].clone() {
+                // What a part page's close triggers do when the host closes is not pinned.
+                let closes = ws.object_ast(p).triggers().any(|t| {
+                    let n = t.name();
+                    n.eq_ignore_ascii_case("OnClosePage") || n.eq_ignore_ascii_case("OnQueryClosePage")
+                });
+                let reason = format!(
+                    "part page `{}` declares a close trigger (what it does when the host closes is not pinned)",
+                    ws.objects[p].name
+                );
+                if closes && !page_reasons[oi].contains(&reason) {
+                    page_reasons[oi].push(reason);
+                }
+                if let Some(why) = page_reasons[p].first().cloned() {
+                    let reason = format!("part page `{}`: {why}", ws.objects[p].name);
+                    if !page_reasons[oi].contains(&reason) {
+                        page_reasons[oi].push(reason);
+                    }
+                }
+            }
         }
     }
     for (oi, o) in ws.objects.iter().enumerate() {
@@ -240,7 +298,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 lw.globals.insert(name.to_lowercase(), globals.len());
                 globals.push(ir::Slot {
                     name: name.into(),
-                    ty: RtType::Record(t as u32, lw.is_temporary_table(t)),
+                    ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
                 });
             }
         }
@@ -262,8 +320,19 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             // A TestPage drives page routines the call graph cannot see (ADR-012).
             for s in routine.locals.iter().chain(&globals) {
                 if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
-                    let p = p as usize;
-                    lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
+                    // The page and, transitively, the pages it shows as parts.
+                    let mut seen = vec![p as usize];
+                    let mut at = 0;
+                    while at < seen.len() {
+                        let q = seen[at];
+                        at += 1;
+                        lw.calls.extend((0..routine_nodes[q].len()).map(|ri| (q, ri)));
+                        for &part in &page_parts[q] {
+                            if !seen.contains(&part) {
+                                seen.push(part);
+                            }
+                        }
+                    }
                 }
                 // An xmlport's triggers are run by Import and Export, which the graph cannot see.
                 if let RtType::Codeunit(p) = s.ty {
@@ -895,6 +964,16 @@ impl Lowerer<'_> {
             } else {
                 None
             };
+            let part_link = match (part_page, raw.kind == ir::ControlKind::Part) {
+                (Some(pp), true) => match self.part_link(oi, layout, sec, pp) {
+                    Ok(l) => Some(l),
+                    Err(why) => {
+                        unsupported.push(format!("part {}: {why}", raw.name));
+                        None
+                    }
+                },
+                _ => None,
+            };
             controls.push(ir::Control {
                 name: raw.name.clone(),
                 kind: raw.kind.clone(),
@@ -903,6 +982,7 @@ impl Lowerer<'_> {
                 props,
                 triggers,
                 part_page,
+                part_link,
             });
         }
         let triggers = obj
@@ -915,6 +995,75 @@ impl Lowerer<'_> {
             curr_page_slot: globals.iter().position(|g| g.name == "CurrPage").unwrap_or(0),
             unsupported,
         }
+    }
+
+    /// `SubPageLink`, `SubPageView` and `Provider` of the part control `sec` of page `oi`, which
+    /// shows page `part_page`. `Err` is why the link cannot be followed yet.
+    fn part_link(
+        &self,
+        oi: usize,
+        layout: &crate::pages::Layout,
+        sec: &ast::Section,
+        part_page: usize,
+    ) -> L<ir::PartLink> {
+        use crate::pages::LinkRhs;
+        let prop = |n: &str| {
+            sec.properties()
+                .find(|p| p.name().eq_ignore_ascii_case(n))
+                .map(|p| p.value_text())
+        };
+        let mut link = ir::PartLink::default();
+        if let Some(pname) = prop("Provider") {
+            let pname = pname.trim().trim_matches('"');
+            let idx = layout
+                .controls
+                .iter()
+                .position(|c| c.kind == ir::ControlKind::Part && c.name.eq_ignore_ascii_case(pname));
+            link.provider = Some(idx.ok_or_else(|| format!("Provider `{pname}` is not a part of the page"))?);
+        }
+        link.view = prop("SubPageView").map(|v| v.trim().to_string());
+        let Some(text) = prop("SubPageLink") else {
+            return Ok(link);
+        };
+        // The host side: the page's own table, or the Provider part's table.
+        let host_table = match link.provider {
+            Some(pi) => {
+                let Some(ppage) = layout.controls[pi]
+                    .section
+                    .args()
+                    .get(1)
+                    .and_then(|n| self.resolve_obj(ObjKind::Page, n).ok())
+                else {
+                    return Err("the Provider part shows a page outside the workspace".into());
+                };
+                self.table_of[ppage]
+            }
+            None => self.table_of[oi],
+        };
+        let part_table = self.table_of[part_page].ok_or("the part page has no source table to link")?;
+        let field_pos = |t: usize, name: &str| {
+            self.members[t]
+                .fields
+                .iter()
+                .position(|x| x.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("SubPageLink names field `{name}`, which table does not have"))
+        };
+        for (left, rhs) in crate::pages::parse_sub_page_link(&text)? {
+            let pf = field_pos(part_table, &left)?;
+            link.entries.push(match rhs {
+                LinkRhs::Field(f) => {
+                    let ht = host_table.ok_or("SubPageLink reads a host field, but the host has no source table")?;
+                    ir::LinkEntry::Field(pf, field_pos(ht, &f)?)
+                }
+                LinkRhs::Filter(t) => ir::LinkEntry::Filter(pf, t),
+                LinkRhs::TableId(name) => {
+                    let t = self.resolve_obj(ObjKind::Table, &name)?;
+                    let id = self.ws.objects[t].id.ok_or("table without an id")?;
+                    ir::LinkEntry::Filter(pf, id.to_string())
+                }
+            });
+        }
+        Ok(link)
     }
 
     /// A FlowField's `CalcFormula` with field names resolved against the table
@@ -1766,6 +1915,11 @@ impl Lowerer<'_> {
                 _ => Err(format!("`{}` is not lowered yet", n.text())),
             },
             MemberExpr if self.is_control_access(n) => self.control(n),
+            // `CurrPage.<Part>.Page`: the page the part shows.
+            MemberExpr if self.is_curr_page_part_page(n) => {
+                let part = n.children().next().ok_or("part page without a part")?;
+                self.control(&part)
+            }
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
                 // `Q.Amount`: the current row's value of a query column.
@@ -1801,9 +1955,33 @@ impl Lowerer<'_> {
                 || matches!(self.ty_of(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction"))
     }
 
+    /// `CurrPage.<Part>.Page`
+    fn is_curr_page_part_page(&self, n: &SyntaxNode) -> bool {
+        let mut kids = n.children();
+        let (Some(part), Some(_)) = (kids.next(), kids.next()) else {
+            return false;
+        };
+        let last_is_page = n
+            .children()
+            .last()
+            .and_then(|m| {
+                m.children_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .find(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))
+            })
+            .is_some_and(|t| ast::ident_text(&t).eq_ignore_ascii_case("Page"));
+        last_is_page
+            && matches!(self.ty_of(&part), Ty::TestPart(_))
+            && part.kind() == SyntaxKind::MemberExpr
+            && part
+                .children()
+                .next()
+                .is_some_and(|r| matches!(self.ty_of(&r), Ty::Object(ObjKind::Page, _)))
+    }
+
     fn control(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         let recv = n.children().next().ok_or("control access without a receiver")?;
-        let (Ty::TestPage(page) | Ty::TestPart(page)) = self.ty_of(&recv) else {
+        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page)) = self.ty_of(&recv) else {
             return Err("control of a non-page".into());
         };
         let page = self.resolve_obj(ObjKind::Page, &page)?;

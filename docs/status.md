@@ -31,7 +31,7 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 | tableextensiontrigger | 13 | 6 | 7 | 46.2% |
 | handlers | 1115 | 497 | 618 | 44.6% |
 | session | 427 | 80 | 347 | 18.7% |
-| testpart | 80 | 10 | 70 | 12.5% |
+| testpart | 80 | 71 | 9 | 88.8% |
 | query | 129 | 0 | 129 | 0% |
 | permissions | 58 | 0 | 58 | 0% |
 | pageapplicationarea | 76 | 0 | 76 | 0% |
@@ -68,7 +68,9 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 - **Pages (ADR-012).** TestPage on Card and List pages: lifecycle,
   navigation, SetValue and validation, actions, page triggers,
   `CurrPage.Update`, `Page.Run` and `RunModal`, lookup mode, SaveValues,
-  control-text formatting.
+  control-text formatting. Parts and `TestPart` (SubPageLink, SubPageView,
+  Provider, navigation, new rows with AutoSplitKey, `CurrPage.<Part>.Page`
+  calls), `TestFilter`, `Page.SetRecord`, SourceTableTemporary pages.
 
 ## Largest remaining blockers
 
@@ -77,7 +79,7 @@ Each test is counted under the first thing that stops it.
 | Tests | Blocker | Plan |
 |---:|---|---|
 | ~550 | Objects outside the workspace: tables (452), codeunits (51), pages (46) | ADR-013 (Proposed): compile Microsoft's real apps from the artifact feed; native providers for system tables |
-| 180 | TestPage parts and TestPart | ADR-012 follow-up; groundwork in place |
+| 23 | Tests that use parts but stop on something else: `DMY2Date` (7), `Session.ApplicationArea` (5), RunObject action (4), the Integer system table (4), page extensions (3) | Each is counted under its own blocker |
 | 121 | Query objects | Not started |
 | 96 | Request and filter pages | ADR-012 follow-up |
 | 94 | Page extensions | ADR-012 follow-up |

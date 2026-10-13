@@ -256,6 +256,103 @@ fn visit(section: &ast::Section, parent: Option<usize>, in_actions: bool, out: &
     }
 }
 
+/// The right-hand side of one `SubPageLink` entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkRhs {
+    /// `field(Name)`
+    Field(String),
+    /// `const(x)` / `filter(x)`: the filter text; quotes of a single-quoted literal are removed.
+    Filter(String),
+    /// `const(Database::"Name")`: the id of the named table.
+    TableId(String),
+}
+
+/// Splits `text` at top-level `sep`, ignoring separators inside parentheses and quotes.
+pub fn split_top(text: &str, sep: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let (mut depth, mut start) = (0i32, 0usize);
+    let mut quote: Option<char> = None;
+    for (i, c) in text.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '(') => depth += 1,
+            (None, ')') => depth -= 1,
+            (None, c) if c == sep && depth == 0 => {
+                out.push(text[start..i].trim().to_string());
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    out.push(text[start..].trim().to_string());
+    out.retain(|s| !s.is_empty());
+    out
+}
+
+fn unquote_name(s: &str) -> String {
+    let t = s.trim();
+    t.strip_prefix('"')
+        .and_then(|x| x.strip_suffix('"'))
+        .unwrap_or(t)
+        .to_string()
+}
+
+/// Parses the value of a `SubPageLink` property: `A = field(B), C = const(x), D = filter(y | z)`.
+/// `Err` names the part it does not understand.
+pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String> {
+    let mut out = Vec::new();
+    for item in split_top(text, ',') {
+        let eq = {
+            // The first `=` outside quotes separates the part's field from the rhs.
+            let mut quote: Option<char> = None;
+            item.char_indices().find_map(|(i, c)| match (quote, c) {
+                (Some(q), c) if c == q => {
+                    quote = None;
+                    None
+                }
+                (Some(_), _) => None,
+                (None, '\'' | '"') => {
+                    quote = Some(c);
+                    None
+                }
+                (None, '=') => Some(i),
+                _ => None,
+            })
+        };
+        let Some(eq) = eq else {
+            return Err(format!("SubPageLink entry `{item}`"));
+        };
+        let left = unquote_name(&item[..eq]);
+        let rhs = item[eq + 1..].trim();
+        let open = rhs.find('(').ok_or_else(|| format!("SubPageLink entry `{item}`"))?;
+        if !rhs.ends_with(')') {
+            return Err(format!("SubPageLink entry `{item}`"));
+        }
+        let kind = rhs[..open].trim().to_ascii_lowercase();
+        let inner = rhs[open + 1..rhs.len() - 1].trim();
+        let parsed = match kind.as_str() {
+            "field" => LinkRhs::Field(unquote_name(inner)),
+            "const" | "filter" => {
+                if let Some(t) = inner
+                    .strip_prefix("Database::")
+                    .or_else(|| inner.strip_prefix("database::"))
+                {
+                    LinkRhs::TableId(unquote_name(t))
+                } else if inner.starts_with('\'') && inner.ends_with('\'') && inner.len() >= 2 {
+                    LinkRhs::Filter(inner[1..inner.len() - 1].replace("''", "'"))
+                } else {
+                    LinkRhs::Filter(inner.to_string())
+                }
+            }
+            other => return Err(format!("SubPageLink with {other}(...)")),
+        };
+        out.push((left, parsed));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +411,26 @@ mod tests {
         );
         assert_eq!(classify_source("Glob", &globals), Source::Var("Glob".into()));
         assert_eq!(classify_source("Format(Rec.Num)", &globals), Source::Expr);
+    }
+
+    // Corpus handlers/TestPageSubpagePartConstFilter.al, TestPagePartLinkFilterGroup.al:
+    // SubPageLink forms field(...), const(...), filter(...).
+    #[test]
+    fn sub_page_link_entries_parse() {
+        let got = parse_sub_page_link(
+            "\"Header No.\" = field(\"No.\"), Kind = const(Attachment), Status = filter(Open | Released), Cat = const('SPECIAL'), \"Table ID\" = const(Database::\"TSPL Header\")",
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            vec![
+                ("Header No.".to_string(), LinkRhs::Field("No.".into())),
+                ("Kind".to_string(), LinkRhs::Filter("Attachment".into())),
+                ("Status".to_string(), LinkRhs::Filter("Open | Released".into())),
+                ("Cat".to_string(), LinkRhs::Filter("SPECIAL".into())),
+                ("Table ID".to_string(), LinkRhs::TableId("TSPL Header".into())),
+            ]
+        );
+        assert!(parse_sub_page_link("A = bogus(B)").is_err());
     }
 }

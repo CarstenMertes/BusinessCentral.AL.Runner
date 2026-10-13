@@ -6,6 +6,7 @@ version = 4
 name = "al-builtins"
 version = "0.1.0"
 dependencies = [
+ "al-version",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -39,6 +40,7 @@ dependencies = [
  "al-builtins",
  "al-ir",
  "al-syntax",
+ "al-version",
  "rayon",
  "rowan",
  "rust_decimal",
@@ -50,6 +52,7 @@ dependencies = [
 name = "al-syntax"
 version = "0.1.0"
 dependencies = [
+ "al-version",
  "libc",
  "rowan",
 ]
@@ -60,9 +63,11 @@ version = "0.1.0"
 dependencies = [
  "al-builtins",
  "al-data",
+ "al-host",
  "al-ir",
  "al-sema",
  "al-syntax",
+ "al-version",
  "al-vm",
  "quick-xml",
  "serde",
@@ -72,13 +77,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "al-version"
+version = "0.1.0"
+
+[[package]]
 name = "al-vm"
 version = "0.1.0"
 dependencies = [
  "al-builtins",
  "al-data",
+ "al-host",
  "al-ir",
  "al-sema",
+ "al-version",
  "rust_decimal",
 ]
 

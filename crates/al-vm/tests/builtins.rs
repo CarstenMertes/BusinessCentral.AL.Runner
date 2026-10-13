@@ -416,10 +416,10 @@ fn session_settings_clear_returns_to_a_pristine_instance() {
 
 #[test]
 fn session_settings_forms_that_need_the_running_session_are_refused() {
-    // Init() reads language, locale and time zone of the session; RequestSessionUpdate goes to a
-    // handler; an unset language id is 0 or 1033 and the corpus does not say which.
+    // Init() reads the host's language, locale and time zone and works (tests/hostvalues.rs);
+    // RequestSessionUpdate goes to a handler; an unset language id is 0 or 1033 and the corpus
+    // does not say which.
     for body in [
-        "s.Init();",
         "s.RequestSessionUpdate(false);",
         "if s.LanguageId() = 0 then;",
         "if s.TimeZone() = '' then;",

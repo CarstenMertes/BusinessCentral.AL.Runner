@@ -55,6 +55,24 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // session/TestMiscComplete.al:192); the ordinals are not pinned.
         "tableconnectiontype" => Some(&["CRM", "ExternalSQL"]),
         "errortype" => Some(&["Client", "Internal"]),
+        // The ordinals are not pinned: the corpus only calls `Session.CurrentClientType()` and
+        // `DefaultClientType()` (session/TestSessionExtended.al:21,31) and names Default and Web
+        // (session/TestFinalCoverage.al:110,120). Nothing may print them as numbers.
+        "clienttype" => Some(&[
+            "Default",
+            "Windows",
+            "SOAP",
+            "OData",
+            "Api",
+            "NAS",
+            "Background",
+            "Management",
+            "Tablet",
+            "Phone",
+            "Web",
+            "Desktop",
+            "ChildSession",
+        ]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).
         "executioncontext" => Some(&["Normal", "Install", "Upgrade"]),

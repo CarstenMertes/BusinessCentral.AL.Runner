@@ -28,7 +28,7 @@ impl Session {
         let engine = self.engine();
         let page = page_of(&engine, st);
         for (i, c) in page.controls.iter().enumerate() {
-            if c.kind != ir::ControlKind::Part || self.control_eliminated(st, i) {
+            if c.kind != ir::ControlKind::Part || self.control_eliminated(st, i) || self.area_removed(st, i) {
                 continue;
             }
             let Some(part_page) = c.part_page else {
@@ -64,6 +64,15 @@ impl Session {
             self.open_page_as(&child, mode, None, None, true)?;
         }
         Ok(())
+    }
+
+    /// Sets the mode of the pages `st` shows as parts, and of theirs.
+    pub(super) fn set_part_modes(&mut self, st: &St, mode: PageMode) {
+        let parts = st.borrow().parts.clone();
+        for (_, child) in parts {
+            child.borrow_mut().mode = mode;
+            self.set_part_modes(&child, mode);
+        }
     }
 
     /// Whether the part control that shows `st` says `Editable = false`. What that does to the

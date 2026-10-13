@@ -41,6 +41,9 @@ pub struct ControlFormat {
     pub blank: Blank,
     /// `OptionCaption` of the control, else of the source field.
     pub option_captions: Option<Vec<String>>,
+    /// The session's work date, which a Date control reads from the shorthand `w`
+    /// (handlers/TestPageTemporalSetValue_Tests.al:272-286). `None` where the caller has none.
+    pub work_date: Option<i32>,
 }
 
 /// `2 : 2`, `0 : 5` or `3` as (min, max) places.
@@ -297,6 +300,8 @@ fn parse_typed(
         T::Date => {
             if t.is_empty() {
                 Value::Date(0, false)
+            } else if t == "w" {
+                Value::Date(f.work_date?, false)
             } else {
                 // The ISO spelling, else `M/D/Y` as the control shows it; a two-digit year is
                 // read as 1930-2029, as Evaluate does.

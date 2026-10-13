@@ -451,6 +451,35 @@ All of gate P, plus:
 8. At least four weeks of preview with no open bug that gives a wrong answer.
 9. The WASM CI job is green. Shipping WASM artifacts is not a v3.0 gate.
 
+## Owner direction (2026-10-13): server mode and watch mode are deferred
+
+AL Runner v2 has `--server` and `--watch` to hide its startup cost. The owner
+asked to defer features like these while startup is not a problem for v3.
+
+- Today the whole corpus compiles and runs in about 0.7 s cold, so start-up is
+  not a concern for workspace-only projects.
+- Standing rule (owner, 2026-10-13): every v2 feature that exists only to hide
+  start-up or run-time cost is deferred under the same rule. As of today that
+  covers:
+  - `--watch` and its dashboard (PERF-4, PERF-5);
+  - `--affected` (PERF-6);
+  - server-mode warm state (ED-5);
+  - `--jobs` worker parallelism (SEL-8);
+  - persistent dependency caches (PERF-2; ADR-013 already makes them
+    optional);
+  - their environment variables (`AL_RUNNER_WATCH_*`, `AL_RUNNER_JOBS_*`).
+
+  The parity table counts these as "deferred", not as missing. Features that
+  are an interface (a protocol, an output format, a flag that changes results)
+  are not covered by this rule.
+- Revisit when either of these happens:
+  1. ADR-013 dependency loading is measured, and a warm start with Base
+     Application is clearly slower than a test run;
+  2. an editor integration is wanted. ALchemist and LethAL drive v2 through
+     `--server` (protocol-v2) and `--dap stdio` (ED-1, ED-10, ED-11). For them
+     the server is the interface, not a speed feature. Supporting them needs
+     the protocol even when start-up is fast.
+
 ## Consequences
 
 - A new crate set (`alrunner-cli`, `al-testrun`, `al-host-std`, `al-deps`) appears.

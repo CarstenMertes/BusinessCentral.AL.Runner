@@ -155,6 +155,9 @@ impl Session {
     }
 
     pub(crate) fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
+        if let Some(answer) = self.host_op(id, args) {
+            return answer;
+        }
         if id == "Database.IsInWriteTransaction#1" {
             // An uncommitted write opens one, a Commit and the test boundary close it
             // (codeunit/TestWriteTxTestBoundary.al:93,103,142). Writes to temporary tables are

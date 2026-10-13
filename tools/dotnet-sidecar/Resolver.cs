@@ -1,0 +1,120 @@
+// Finding assemblies and types (ADR-014 section 3).
+//
+// The default load context serves the .NET standard library from the installed runtime. For
+// everything else, the host sends probe directories (the Add-ins folders of the platform package,
+// its service folder, then user-supplied folders) and this resolver serves an assembly by simple
+// name from them, in that order. The version rule follows AL Runner's guard: serve a candidate
+// whose assembly version is at least the requested one; refuse an older one, except for
+// Microsoft.Dynamics.*, which is stamped per BC build.
+using System.Reflection;
+using System.Runtime.Loader;
+
+namespace AlDotNetSidecar;
+
+public sealed class Resolver
+{
+    public sealed record Dir(string Path, bool Recursive);
+
+    readonly List<Dir> dirs = new();
+    readonly Dictionary<string, Type> types = new();
+    [ThreadStatic] static bool readingVersion;
+
+    public Resolver()
+    {
+        AssemblyLoadContext.Default.Resolving += OnResolving;
+    }
+
+    public void AddDirs(IEnumerable<Dir> more) => dirs.AddRange(more);
+
+    Assembly? OnResolving(AssemblyLoadContext ctx, AssemblyName name)
+    {
+        if (name.Name == null) return null;
+        foreach (var dir in dirs)
+        {
+            if (!Directory.Exists(dir.Path)) continue;
+            foreach (var ext in new[] { ".dll", ".exe" })
+            {
+                var opt = dir.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
+                string? hit = Directory.EnumerateFiles(dir.Path, name.Name + ext, opt).FirstOrDefault();
+                if (hit == null) continue;
+                Guard(name, hit);
+                return ctx.LoadFromAssemblyPath(hit);
+            }
+        }
+        return null;
+    }
+
+    static void Guard(AssemblyName requested, string path)
+    {
+        if (requested.Version == null) return;
+        if (requested.Name!.StartsWith("Microsoft.Dynamics.", StringComparison.OrdinalIgnoreCase)) return;
+        // Reading a version loads System.Reflection.Metadata, which can re-enter this handler:
+        // refuse instead of recursing.
+        if (readingVersion)
+            throw new FileLoadException($"assembly '{requested}' requested while a version was being read; refusing to recurse");
+        readingVersion = true;
+        try
+        {
+            var found = AssemblyName.GetAssemblyName(path).Version;
+            if (found != null && found < requested.Version)
+                throw new FileLoadException(
+                    $"assembly '{requested.Name}' {requested.Version} requested; {path} is {found}, which is older");
+        }
+        finally { readingVersion = false; }
+    }
+
+    /// Resolves a declared type: `{"assembly":..,"version":..,"culture":..,"token":..,"name":..}`.
+    public Type ResolveType(string assembly, string? version, string? culture, string? token, string name)
+    {
+        string key = assembly + "|" + name;
+        if (types.TryGetValue(key, out var cached)) return cached;
+        Type? t = null;
+        Exception? loadError = null;
+        try
+        {
+            if (name.Contains('['))
+            {
+                // A closed generic keeps the CLR spelling: List`1[[System.String, mscorlib]].
+                t = Type.GetType(name + ", " + assembly, a => LoadAssembly(a), null, false);
+            }
+            else
+            {
+                t = LoadAssembly(new AssemblyName(assembly)).GetType(name, false);
+            }
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
+        {
+            loadError = ex;
+        }
+        if (t == null && loadError == null)
+        {
+            // The declaring assembly may be a facade or may not be the one that holds it.
+            foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                t = a.GetType(name, false);
+                if (t != null) break;
+            }
+        }
+        if (t == null)
+            throw new Refusal(loadError != null
+                ? $"assembly '{assembly}' could not be loaded: {loadError.Message}"
+                : $"type '{name}' not found in assembly '{assembly}'");
+        types[key] = t;
+        return t;
+    }
+
+    /// A type named only by its full name, as it arrives inside an enum value.
+    public Type ResolveLoaded(string name)
+    {
+        var t = Type.GetType(name, false);
+        if (t != null) return t;
+        foreach (var a in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            t = a.GetType(name, false);
+            if (t != null) return t;
+        }
+        throw new Refusal($"type '{name}' is not loaded");
+    }
+
+    static Assembly LoadAssembly(AssemblyName name) => Assembly.Load(name);
+}

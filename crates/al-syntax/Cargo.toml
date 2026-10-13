@@ -9,4 +9,5 @@ rust-version.workspace = true
 rowan = "0.16"
 
 [dev-dependencies]
+al-version.workspace = true
 libc = "0.2"

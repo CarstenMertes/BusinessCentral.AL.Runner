@@ -351,3 +351,42 @@ Out (refused explicitly, each with a reason naming the feature):
 * The formatter has table-driven unit tests whose rows are the measured
   values of `TestPageFieldFormats_Tests.al`.
 * The corpus pass-rate ratchet (ADR-007): no AL test may newly fail.
+
+## Decided without owner review (2026-10-13/14)
+
+Page extensions in the test client (branch `pageext`). Each decision has an
+entry in `docs/probes-needed.md` ("Page extensions") and a line in
+`docs/owner-review.md`.
+
+1. **Several extensions that declare one page trigger both run, in application
+   order.** Options: refuse (the table-extension precedent), or run in
+   application order. Chosen: run, because two corpus tests count the runs of
+   two extensions' OnOpenPage and state no order
+   (`pageextensiontrigger/TestPageExtQualifiedExtends_Tests.al`), and
+   `TestModifiedControlValidateTriggers_Page.al` says the order is the
+   platform's load order. Application order is: dependency app first, then
+   object id.
+2. **The page's own trigger runs before the extensions' copies.** No corpus
+   test observes it. AL Runner v2 binds each extension to the page and BC's
+   `RaiseOn<trigger>Async` runs the extension copies after the page's own
+   (`docs/pageextension-binding.md` there).
+3. **Only the void page triggers are supported in an extension** (OnOpenPage,
+   OnClosePage, OnAfterGetRecord, OnAfterGetCurrRecord, OnNewRecord). The
+   Boolean ones (OnQueryClosePage, OnInsertRecord, OnModifyRecord,
+   OnDeleteRecord) are refused because how the answers combine is not pinned.
+   OnInit, OnFindRecord and OnNextRecord are page-only in BC.
+4. **When extensions `modify` one property, the later extension in application
+   order wins**, for every property. Pinned for Caption only
+   (`handlers/TestPageExtensionModifyCaption_Tests.al`).
+5. **Application areas are read when the page opens.** A control the session's
+   areas do not enable is not on the page. A control with no area of its own
+   takes the page's, unless an extension declared it; with the areas
+   restricted, a control with no area at all is removed. An actionref with no
+   area follows its target. If the session's areas change while a page is
+   open, the run is refused. The test runner empties the areas before each
+   test method.
+6. **`DrillDown`, `AssistEdit` and `Lookup` on a TestField run the control's
+   trigger** (its own, or the one a `modify` block adds). Without a trigger,
+   `DrillDown` raises the pinned platform error; the other two are refused.
+7. **An actionref is a control.** Invoking it invokes its target. Its
+   `Visible`, `Enabled` and `Caption` are refused.

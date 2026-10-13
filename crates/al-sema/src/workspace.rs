@@ -139,10 +139,21 @@ pub struct ObjectSym {
     pub offset: usize,
 }
 
+/// A `DotNet` alias declared by a `dotnet { }` block (ADR-014).
+#[derive(Debug, Clone)]
+pub struct DotNetSym {
+    pub app: usize,
+    pub file: usize,
+    pub decl: ast::DotNetTypeDecl,
+}
+
 pub struct Workspace {
     pub apps: Vec<AppSource>,
     pub files: Vec<SourceFileData>,
     pub objects: Vec<ObjectSym>,
+    /// Every declared `DotNet` alias, in file and source order. The index is the one
+    /// `RtType::DotNet` and `ir::Program::dotnet_types` use.
+    pub dotnet: Vec<DotNetSym>,
     pub diagnostics: Vec<Diagnostic>,
     /// For each app, the set of apps it can see (itself + transitive dependencies).
     visible: Vec<BTreeSet<usize>>,
@@ -156,6 +167,7 @@ impl Workspace {
             visible: Vec::new(),
             files: Vec::new(),
             objects: Vec::new(),
+            dotnet: Vec::new(),
             diagnostics: Vec::new(),
             by_name: HashMap::new(),
             by_id: HashMap::new(),
@@ -208,6 +220,13 @@ impl Workspace {
                 namespace: file.namespace.clone(),
                 usings: file.usings,
             });
+            for decl in file.dotnet {
+                ws.dotnet.push(DotNetSym {
+                    app: ai,
+                    file: fi,
+                    decl,
+                });
+            }
             for (kind, id, name, offset) in file.objects {
                 ws.add_object(ObjectSym {
                     app: ai,
@@ -229,6 +248,18 @@ impl Workspace {
             )
         });
         ws
+    }
+
+    /// The `DotNet` alias `alias` as seen from `file`: the file's own app first, then the apps
+    /// it depends on. Aliases are case-insensitive.
+    pub fn resolve_dotnet(&self, file: usize, alias: &str) -> Option<usize> {
+        let app = self.files[file].app;
+        let find = |a: usize| {
+            self.dotnet
+                .iter()
+                .position(|d| d.app == a && d.decl.alias.eq_ignore_ascii_case(alias))
+        };
+        find(app).or_else(|| self.visible[app].iter().find_map(|&a| find(a)))
     }
 
     fn add_object(&mut self, o: ObjectSym) {
@@ -262,6 +293,12 @@ impl Workspace {
         }
         names.push(oi);
         self.objects.push(o);
+    }
+
+    /// How many apps `app` can see (itself and its transitive dependencies). A dependent sees
+    /// more than anything it depends on, so this orders dependencies before their dependents.
+    pub fn app_depth(&self, app: usize) -> usize {
+        self.visible[app].len()
     }
 
     /// Resolves an object reference written in `file`. `parts` is the name
@@ -440,6 +477,8 @@ struct ParsedFile {
     usings: Vec<String>,
     /// (kind, id, name, offset) of each object, in source order.
     objects: Vec<(ObjKind, Option<u32>, String, usize)>,
+    /// The `type(..)` declarations of the file's `dotnet { }` blocks.
+    dotnet: Vec<ast::DotNetTypeDecl>,
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
@@ -459,6 +498,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 )
             })
             .collect(),
+        dotnet: root.dotnet_types(),
         green: parse.green,
         errors: parse.errors,
     }
@@ -509,7 +549,7 @@ mod tests {
     }
 
     fn load(apps: Vec<AppSource>) -> Workspace {
-        Workspace::load(apps, &["BC27PLUS".to_string()].into())
+        Workspace::load(apps, &al_version::corpus_symbols(27))
     }
 
     fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {

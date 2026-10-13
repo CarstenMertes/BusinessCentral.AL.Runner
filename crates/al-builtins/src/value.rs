@@ -58,6 +58,9 @@ pub enum RtType {
     Interface(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
     Library(String),
+    /// A `DotNet` variable declared through the alias at this index of `Program::dotnet_types`
+    /// (ADR-014). Unassigned, it holds `Value::Null`.
+    DotNet(u32),
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +104,64 @@ pub enum Value {
     TestControl(Rc<ControlRef>),
     /// A query variable: its runtime filters and, once opened, its result set.
     Query(Rc<RefCell<QueryState>>),
+    /// A `DotNet` object (ADR-014). `:=` shares the reference (assumed BC rule, probe pending).
+    DotNet(Rc<DotNetObject>),
+}
+
+/// What a `Value::DotNet` refers to.
+pub enum DotNetKind {
+    /// An object held by the host (the sidecar), by handle, with its CLR type name.
+    Host { handle: u64, clr_type: String },
+    /// A .NET enum value, kept by value with its CLR type so it can go back as an argument.
+    Enum {
+        clr_type: String,
+        name: String,
+        ordinal: i64,
+    },
+    /// An object the runtime provides itself (the registry, ADR-014 section 1).
+    Internal {
+        type_name: String,
+        state: RefCell<Vec<Value>>,
+    },
+}
+
+/// A `DotNet` object. When the last `Rc` drops, a host handle goes onto the session's release
+/// queue; `Drop` never calls the host (ADR-014 section 2).
+pub struct DotNetObject {
+    pub kind: DotNetKind,
+    release: Option<Rc<RefCell<Vec<u64>>>>,
+}
+
+impl DotNetObject {
+    /// A host object; its handle is queued on `release` when the object drops.
+    pub fn host(handle: u64, clr_type: String, release: Rc<RefCell<Vec<u64>>>) -> DotNetObject {
+        DotNetObject {
+            kind: DotNetKind::Host { handle, clr_type },
+            release: Some(release),
+        }
+    }
+
+    pub fn new(kind: DotNetKind) -> DotNetObject {
+        DotNetObject { kind, release: None }
+    }
+}
+
+impl Drop for DotNetObject {
+    fn drop(&mut self) {
+        if let (DotNetKind::Host { handle, .. }, Some(queue)) = (&self.kind, &self.release) {
+            queue.borrow_mut().push(*handle);
+        }
+    }
+}
+
+impl std::fmt::Debug for DotNetObject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.kind {
+            DotNetKind::Host { handle, clr_type } => write!(f, "DotNet({clr_type} #{handle})"),
+            DotNetKind::Enum { clr_type, name, .. } => write!(f, "DotNet({clr_type}.{name})"),
+            DotNetKind::Internal { type_name, .. } => write!(f, "DotNet(internal {type_name})"),
+        }
+    }
 }
 
 /// What a query variable carries (corpus query/). The definition is in the IR; the VM
@@ -151,6 +212,17 @@ pub enum PageMode {
     New,
 }
 
+/// A row a repeater has populated: its primary key, the fields as stored when it was read and as
+/// the page showed them after OnAfterGetRecord (the page keeps that buffer for the row while it
+/// stays in the window, corpus handlers/TestPageActionRunObjectPageStoredRow_Tests.al:
+/// OpenHostOnB reads `CALC`, which only the host's OnAfterGetRecord puts into Rec.Grp).
+#[derive(Debug, Clone)]
+pub struct WindowRow {
+    pub key: Vec<Value>,
+    pub stored: Vec<Value>,
+    pub shown: Vec<Value>,
+}
+
 /// Where the test client's cursor stands on a page (ADR-012).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cursor {
@@ -185,7 +257,7 @@ pub struct PageState {
     /// corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
     pub frozen_visible: Vec<bool>,
     /// Primary keys of the rows a repeater page has populated (its window).
-    pub window: Vec<Vec<Value>>,
+    pub window: Vec<WindowRow>,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -230,6 +302,12 @@ pub struct PageState {
     /// (corpus handlers/TestPageModalNewRowLine_Tests.al:Plain_LookupModeTrue_HasNoNewRowLine
     /// against Plain_RunModalZero_HasTheNewRowLine).
     pub lookup_requested: bool,
+    /// The instances of the page's extensions (extension object, instance): they share the page's
+    /// `Rec`, `xRec` and `CurrPage`, and hold the extension's own variables.
+    pub ext_instances: Vec<(usize, Rc<RefCell<Instance>>)>,
+    /// The session's application areas when the page opened: controls whose area they do not
+    /// enable are not on the page.
+    pub areas: String,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -275,6 +353,8 @@ impl PageState {
             host: None,
             pre_init: false,
             lookup_requested: false,
+            ext_instances: Vec::new(),
+            areas: String::new(),
         }
     }
 }
@@ -500,6 +580,8 @@ impl Value {
             RtType::Record(..) => Value::Null,
             RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),
+            // An unassigned DotNet variable is null (ADR-014 section 4).
+            RtType::DotNet(_) => Value::Null,
         }
     }
 
@@ -537,6 +619,7 @@ impl Value {
             Value::Record(_) => k == "record",
             Value::TestPage(_) | Value::TestControl(_) | Value::Query(_) => false,
             Value::Blob(_) => false,
+            Value::DotNet(_) => k == "dotnet",
         }
     }
 }
@@ -595,6 +678,29 @@ mod tests {
             panic!()
         };
         assert!(!Rc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn a_dropped_host_object_queues_its_handle_and_clones_share_it() {
+        let queue = Rc::new(RefCell::new(Vec::new()));
+        let a = Value::DotNet(Rc::new(DotNetObject::host(
+            7,
+            "System.IO.MemoryStream".into(),
+            queue.clone(),
+        )));
+        let b = a.clone();
+        drop(a);
+        assert!(queue.borrow().is_empty(), "a second reference is alive");
+        drop(b);
+        assert_eq!(*queue.borrow(), vec![7]);
+        // Enum and internal objects have nothing to release.
+        drop(Value::DotNet(Rc::new(DotNetObject::new(DotNetKind::Enum {
+            clr_type: "E".into(),
+            name: "A".into(),
+            ordinal: 0,
+        }))));
+        assert_eq!(queue.borrow().len(), 1);
+        assert!(matches!(Value::default_for(&RtType::DotNet(0)), Value::Null));
     }
 
     #[test]

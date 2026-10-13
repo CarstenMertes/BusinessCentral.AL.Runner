@@ -19,6 +19,26 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "RepeatableRead",
             "UpdLock",
         ]),
+        // The platform's object type option: AL names seven of these members (corpus
+        // session/TestWebServiceActionContext.al:176-190 lists exactly Table, Page, Report,
+        // Codeunit, XmlPort, Query and MenuSuite), the zero value `TableData` is not one of them
+        // (the fresh value of `WebServiceActionContext.GetObjectType`). The ordinals are the C/AL
+        // object type option's (docs/probes-needed.md); blank names are ordinals AL cannot name.
+        "objecttype" => Some(&[
+            "TableData",
+            "Table",
+            "",
+            "Report",
+            "",
+            "Codeunit",
+            "XmlPort",
+            "MenuSuite",
+            "Page",
+            "Query",
+        ]),
+        // Five members over four values: Get and Updated are both 200
+        // (session/TestWebServiceActionContext.al:100-110).
+        "webserviceactionresultcode" => Some(&["None", "Get", "Created", "Updated", "Deleted"]),
         "fieldtype" => Some(&[
             "TableFilter",
             "RecordID",

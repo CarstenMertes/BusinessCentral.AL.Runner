@@ -5,6 +5,7 @@ pub mod signature;
 pub mod stream;
 pub mod textfns;
 pub mod value;
+pub mod wsac;
 pub mod xml;
 
 pub mod catalog;

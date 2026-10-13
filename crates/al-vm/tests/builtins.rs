@@ -262,3 +262,88 @@ fn a_write_opens_a_write_transaction_until_the_commit() {
     );
     assert_eq!(r.unwrap(), "No");
 }
+
+// ---------------------------------------------------------------- WebServiceActionContext
+
+fn wsac(body: &str) -> Result<String, Signal> {
+    text_of("c: WebServiceActionContext; d: WebServiceActionContext; a: Text; b: Boolean; v: Variant;", body)
+}
+
+#[test]
+fn wsac_fresh_instance_and_round_trips() {
+    // session/TestWebServiceActionContext.al:180-250 (defaults) and :256-345 (round trips).
+    let r = wsac(
+        "a := Format(c.GetObjectId()) + '|' + Format(c.GetResultCode());
+         c.SetObjectId(50123); c.SetObjectType(ObjectType::Page); c.SetResultCode(WebServiceActionResultCode::Created);
+         a += '|' + Format(c.GetObjectId()) + ',' + Format(c.GetResultCode());
+         if c.GetObjectType() = ObjectType::Page then a += ',page';
+         c.SetObjectId(-7);
+         exit(a + '|' + Format(c.GetObjectId()));",
+    );
+    assert_eq!(r.unwrap(), "0|None|50123,Created,page|-7");
+}
+
+#[test]
+fn wsac_a_fresh_object_type_is_none_of_the_seven_members() {
+    // session/TestWebServiceActionContext.al:187-200 and :411-428 (Clear returns it to the pristine value).
+    let r = wsac(
+        "if (c.GetObjectType() <> ObjectType::Table) and (c.GetObjectType() <> ObjectType::Page) and (c.GetObjectType() <> ObjectType::Report)
+            and (c.GetObjectType() <> ObjectType::Codeunit) and (c.GetObjectType() <> ObjectType::XmlPort)
+            and (c.GetObjectType() <> ObjectType::Query) and (c.GetObjectType() <> ObjectType::MenuSuite) then a := 'none';
+         c.SetObjectType(ObjectType::Page);
+         Clear(c);
+         if c.GetObjectType() = d.GetObjectType() then a += ',pristine';
+         exit(a);",
+    );
+    assert_eq!(r.unwrap(), "none,pristine");
+}
+
+#[test]
+fn wsac_updated_reads_back_as_get() {
+    // session/TestWebServiceActionContext.al:352-395: Get and Updated share the value 200.
+    let r = wsac(
+        "c.SetResultCode(WebServiceActionResultCode::Updated); a := Format(c.GetResultCode());
+         c.SetResultCode(WebServiceActionResultCode::Get); a += ',' + Format(c.GetResultCode());
+         c.SetResultCode(WebServiceActionResultCode::Deleted); a += ',' + Format(c.GetResultCode());
+         c.SetResultCode(WebServiceActionResultCode::None); a += ',' + Format(c.GetResultCode());
+         exit(a);",
+    );
+    assert_eq!(r.unwrap(), "Get,Get,Deleted,None");
+}
+
+#[test]
+fn wsac_entity_keys_are_a_map_by_field_id() {
+    // session/TestWebServiceActionContext.al:437-520: a duplicate field id returns false when the
+    // result is used and raises (naming the type) when it is not; Clear empties the map.
+    let r = wsac(
+        "a := Format(c.AddEntityKey(1, 'x')) + Format(c.AddEntityKey(2, 42)) + Format(c.AddEntityKey(1, 'y')) + Format(c.AddEntityKey(1, 'x'));
+         asserterror c.AddEntityKey(1, 'z');
+         a += '|' + Format(StrPos(GetLastErrorText(), 'WebServiceActionContext') > 0);
+         Clear(c);
+         exit(a + '|' + Format(c.AddEntityKey(1, 'again')));",
+    );
+    assert_eq!(r.unwrap(), "YesYesNoNo|Yes|Yes");
+}
+
+#[test]
+fn wsac_assignment_shares_the_context_and_clear_replaces_it() {
+    // session/TestWebServiceActionContext.al:552-590: `Copy := Original` shares; the keys too.
+    let r = wsac(
+        "c.SetObjectId(50123); d := c; d.SetObjectId(50124); a := Format(c.GetObjectId());
+         b := c.AddEntityKey(1, 'k');
+         a += ',' + Format(d.AddEntityKey(1, 'k'));
+         Clear(d);
+         exit(a + ',' + Format(c.GetObjectId()) + ',' + Format(d.GetObjectId()));",
+    );
+    assert_eq!(r.unwrap(), "50124,No,50124,0");
+}
+
+#[test]
+fn wsac_in_a_variant_has_an_empty_text() {
+    // session/TestWebServiceActionContext.al:615-650.
+    let r = wsac(
+        "c.SetObjectId(50123); v := c;
+         exit(Format(v.IsInteger()) + Format(v.IsText()) + Format(v.IsRecord()) + '|' + Format(v));",
+    );
+    assert_eq!(r.unwrap(), "NoNoNo|");
+}

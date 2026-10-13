@@ -197,6 +197,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                     .or_else(|| crate::xml::native_for(sig))
                     .or_else(|| crate::stream::native_for(sig))
                     .or_else(|| crate::textfns::native_for(sig))
+                    .or_else(|| crate::wsac::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })
             .collect()
@@ -433,7 +434,12 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     *v = match v {
         Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
         // Clearing a RecordRef/FieldRef/KeyRef closes it: a fresh, unopened handle.
-        Value::Library(name, _) if matches!(name.as_str(), "RecordRef" | "FieldRef" | "KeyRef" | "RecordId") => {
+        Value::Library(name, _)
+            if matches!(
+                name.as_str(),
+                "RecordRef" | "FieldRef" | "KeyRef" | "RecordId" | "WebServiceActionContext"
+            ) =>
+        {
             Value::Library(name.clone(), Default::default())
         }
         Value::Boolean(_) => Value::Boolean(false),

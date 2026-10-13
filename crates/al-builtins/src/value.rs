@@ -255,6 +255,18 @@ pub struct RecordState {
     pub auto_calc: Vec<usize>,
 }
 
+/// What a `WebServiceActionContext` holds: the object an API action points the OData layer at.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebServiceActionState {
+    pub object_id: i32,
+    /// Ordinal in the platform's object type option; 0 is the unnamed default.
+    pub object_type: i32,
+    /// Index into the `WebServiceActionResultCode` members; 0 is `None`.
+    pub result_code: i32,
+    /// Field ids that have an entity key.
+    pub keys: Vec<i32>,
+}
+
 /// The global variables of one codeunit instance.
 #[derive(Debug, Default)]
 pub struct Instance {
@@ -286,6 +298,8 @@ pub enum LibraryValue {
         name: String,
         key: Vec<Value>,
     },
+    /// A `WebServiceActionContext` that has been written to (an untouched one is `Empty`).
+    WebServiceAction(WebServiceActionState),
     /// A JSON node behind a JsonObject / JsonArray / JsonToken / JsonValue handle.
     Json(crate::json::JsonCell),
     /// A node behind an Xml* handle.

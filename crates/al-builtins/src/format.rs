@@ -47,6 +47,8 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
         Value::Time(t) if standard == 2 => format_time_12h(t - 1),
         Value::DateTime(t) if standard == 2 || standard == 9 => format_datetime(t - 1, standard),
         Value::DateFormula(f) => f.clone(),
+        // A WebServiceActionContext has no text form (session/TestWebServiceActionContext.al:615-650).
+        Value::Library(name, _) if name == "WebServiceActionContext" => String::new(),
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs
         // the key values in it; the layout is docs/probes-needed.md).
         Value::Library(name, l) if name == "RecordId" => match &*l.borrow() {

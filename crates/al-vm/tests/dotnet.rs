@@ -113,6 +113,18 @@ const DOTNET: &str = "dotnet { assembly(\"netstandard\") {
   assembly(\"Microsoft.Exchange.WebServices\") { type(\"Microsoft.Exchange.WebServices.Data.ExchangeService\"; \"ExchangeService\") { } }
 }\n";
 
+const TABLE: &str = r#"
+table 60008 "ALT Blob"
+{
+    fields
+    {
+        field(1; "Code"; Code[20]) { }
+        field(3; Data; Blob) { }
+    }
+    keys { key(PK; "Code") { } }
+}
+"#;
+
 struct Ran {
     result: Result<Value, Signal>,
     session: Option<Session>,
@@ -120,7 +132,7 @@ struct Ran {
 
 fn compile(vars: &str, body: &str, ret: &str) -> (al_ir::Program, Vec<Vec<Option<String>>>, usize, usize) {
     let src = format!(
-        "{DOTNET}codeunit 50100 C {{ procedure F(){ret} var {vars} begin {body} end; }}"
+        "{DOTNET}{TABLE}\ncodeunit 50100 C {{ procedure F(){ret} var {vars} begin {body} end; }}"
     );
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
@@ -427,4 +439,257 @@ fn constructing_property_get_and_a_returned_handle_round_trip() {
             Req::Get(DotNetTarget::Instance(1), "Length".into()),
         ]
     );
+}
+
+// ---- marshalling (ADR-014 section 4), one row per AL type --------------------------------
+
+fn arg_of(vars: &str, setup: &str) -> Result<DotNetValue, String> {
+    let host = Fake::new(|_| reply(DotNetValue::Null));
+    let r = run(&host, &format!("C: DotNet Convert; {vars}"), &format!("{setup} C.Take(V);"), "");
+    match r.result {
+        Ok(_) => match host.calls().first() {
+            Some(Req::Invoke(DotNetTarget::Static(t), m, a)) if t.name == "System.Convert" && m == "Take" && a.len() == 1 => {
+                Ok(a[0].value.clone())
+            }
+            other => Err(format!("{other:?}")),
+        },
+        Err(Signal::Unsupported(s)) => Err(s),
+        Err(other) => Err(format!("{other:?}")),
+    }
+}
+
+#[test]
+fn al_values_go_to_dotnet_as_the_marshalling_table_says() {
+    // 2024-01-01 is 638396640000000000 ticks after 0001-01-01 in .NET.
+    let day = 638_396_640_000_000_000_i64;
+    let rows: Vec<(&str, &str, DotNetValue)> = vec![
+        ("V: Text;", "V := 'héllo';", DotNetValue::Str("héllo".into())),
+        ("V: Code[10];", "V := 'abc';", DotNetValue::Str("ABC".into())),
+        ("V: Integer;", "V := -5;", DotNetValue::Int32(-5)),
+        ("V: BigInteger;", "V := 5000000000L;", DotNetValue::Int64(5_000_000_000)),
+        ("V: Byte;", "V := 200;", DotNetValue::Byte(200)),
+        ("V: Char;", "V := 65;", DotNetValue::Char(65)),
+        ("V: Boolean;", "V := true;", DotNetValue::Bool(true)),
+        ("V: Decimal;", "V := 1.5;", DotNetValue::Decimal("1.5".into())),
+        ("V: Date;", "V := 20240101D;", DotNetValue::DateTime(day)),
+        ("V: DateTime;", "Evaluate(V, '2024-01-01T12:00:00Z', 9);", DotNetValue::DateTime(day + 432_000_000_000)),
+        ("V: Duration;", "V := 1500;", DotNetValue::TimeSpan(15_000_000)),
+        (
+            "V: Guid;",
+            "Evaluate(V, '{01234567-89AB-CDEF-0123-456789ABCDEF}');",
+            DotNetValue::Guid([0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]),
+        ),
+        ("V: Option A,B,C;", "V := V::C;", DotNetValue::Int32(2)),
+        ("V: DotNet MemoryStream;", "", DotNetValue::Null),
+    ];
+    for (vars, setup, want) in rows {
+        assert_eq!(arg_of(vars, setup), Ok(want), "{vars} {setup}");
+    }
+}
+
+#[test]
+fn values_with_no_pinned_marshalling_are_refused_with_a_reason() {
+    for (vars, setup, needle) in [
+        ("V: Time;", "V := 120000T;", "Time"),
+        ("V: Date;", "", "undefined Date"),
+        ("V: DateTime;", "", "undefined Date"),
+        ("V: List of [Text];", "", "no marshalling row"),
+        ("V: Record \"ALT Blob\";", "", "no marshalling row"),
+    ] {
+        let why = arg_of(vars, setup).expect_err(vars);
+        assert!(why.contains(needle), "{vars}: {why}");
+    }
+}
+
+fn result_of(reply_value: DotNetValue, var: &str, ret: &str) -> Result<Value, Signal> {
+    let host = Fake::new(move |_| reply(reply_value.clone()));
+    run(&host, &format!("C: DotNet Convert; V: {var};"), "V := C.Make(); exit(V);", ret).result
+}
+
+#[test]
+fn dotnet_results_come_back_as_the_marshalling_table_says() {
+    let day = 638_396_640_000_000_000_i64;
+    assert!(matches!(result_of(DotNetValue::Str("x".into()), "Text", ": Text"), Ok(Value::Text(s)) if s == "x"));
+    assert!(matches!(result_of(DotNetValue::Int32(7), "Integer", ": Integer"), Ok(Value::Integer(7))));
+    assert!(matches!(result_of(DotNetValue::Int64(7), "BigInteger", ": BigInteger"), Ok(Value::BigInteger(7))));
+    assert!(matches!(result_of(DotNetValue::Bool(true), "Boolean", ": Boolean"), Ok(Value::Boolean(true))));
+    assert!(matches!(result_of(DotNetValue::Decimal("2.50".into()), "Decimal", ": Decimal"), Ok(Value::Decimal(d)) if d.to_string() == "2.50"));
+    assert!(matches!(result_of(DotNetValue::Int32(3), "Decimal", ": Decimal"), Ok(Value::Decimal(d)) if d.to_string() == "3"));
+    // 2024-01-01 12:00 is 45_000 s after midnight; AL stores ms since 0001-01-01 plus one.
+    let want_ms = (day + 432_000_000_000) / 10_000 + 1;
+    assert!(matches!(result_of(DotNetValue::DateTime(day + 432_000_000_000), "DateTime", ": DateTime"), Ok(Value::DateTime(ms)) if ms == want_ms));
+    assert!(matches!(result_of(DotNetValue::TimeSpan(15_000_000), "Duration", ": Duration"), Ok(Value::Duration(1500))));
+    assert!(matches!(result_of(DotNetValue::Guid([7; 16]), "Guid", ": Guid"), Ok(Value::Guid(g)) if g == [7; 16]));
+    assert!(matches!(result_of(DotNetValue::Null, "DotNet MemoryStream", ": Integer"), Err(Signal::Unsupported(_)) | Ok(_)));
+}
+
+#[test]
+fn a_result_of_another_kind_is_not_stored_into_a_typed_variable() {
+    // BC's conversion of an Integer result into a Text variable is not pinned.
+    let e = result_of(DotNetValue::Int32(7), "Text", ": Text").expect_err("refused");
+    let Signal::Unsupported(why) = e else { panic!() };
+    assert!(why.contains("Integer") && why.contains("not pinned"), "{why}");
+    // A narrowing result (long into Integer) is refused too.
+    assert!(result_of(DotNetValue::Int64(7), "Integer", ": Integer").is_err());
+}
+
+#[test]
+fn an_enum_result_keeps_its_clr_type_and_goes_back_as_an_enum_argument() {
+    let host = Fake::new(|r| match r {
+        Req::Get(DotNetTarget::Static(t), n) if t.name == "System.Base64FormattingOptions" && n == "InsertLineBreaks" => {
+            reply(DotNetValue::Enum {
+                ty: "System.Base64FormattingOptions".into(),
+                name: "InsertLineBreaks".into(),
+                ordinal: 1,
+            })
+        }
+        Req::Invoke(_, m, a) if m == "ToBase64String" => {
+            assert_eq!(
+                a[1].value,
+                DotNetValue::Enum {
+                    ty: "System.Base64FormattingOptions".into(),
+                    name: "InsertLineBreaks".into(),
+                    ordinal: 1
+                }
+            );
+            reply(DotNetValue::Str("ok".into()))
+        }
+        other => panic!("unexpected {other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; O: DotNet Base64FormattingOptions; V: DotNet Base64FormattingOptions; T: Text;",
+        "V := O.InsertLineBreaks; T := C.ToBase64String('x', V); exit(T);",
+        ": Text",
+    );
+    assert_eq!(text(r), "ok");
+}
+
+// ---- errors and by-reference arguments ----------------------------------------------------
+
+#[test]
+fn a_dotnet_exception_is_unsupported_with_the_clr_type_message_and_inner_exceptions() {
+    let host = Fake::new(|_| {
+        Err(DotNetFailure::Exception(DotNetException {
+            clr_type: "System.FormatException".into(),
+            message: "The input is not a valid Base-64 string".into(),
+            inner: vec![("System.ArgumentException".into(), "inner text".into())],
+        }))
+    });
+    let r = run(&host, "C: DotNet Convert; T: Text;", "T := C.FromBase64String('not base64!');", "");
+    let why = unsupported(&r);
+    assert!(why.contains("System.Convert.FromBase64String"), "{why}");
+    assert!(why.contains("System.FormatException: The input is not a valid Base-64 string"), "{why}");
+    assert!(why.contains("System.ArgumentException: inner text"), "{why}");
+    assert!(why.contains("not pinned"), "{why}");
+}
+
+#[test]
+fn asserterror_around_a_dotnet_exception_is_not_run_until_the_text_is_pinned() {
+    let host = Fake::new(|_| {
+        Err(DotNetFailure::Exception(DotNetException {
+            clr_type: "System.FormatException".into(),
+            message: "bad".into(),
+            inner: vec![],
+        }))
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; T: Text;",
+        "asserterror T := C.FromBase64String('x'); exit(GetLastErrorText());",
+        ": Text",
+    );
+    assert!(unsupported(&r).contains("System.FormatException"), "Unsupported passes through asserterror");
+}
+
+#[test]
+fn a_refusal_from_the_host_names_the_member() {
+    let host = Fake::new(|_| Err(DotNetFailure::Refused("member not found".into())));
+    let r = run(&host, "C: DotNet Convert;", "C.Nope();", "");
+    assert_eq!(unsupported(&r), "DotNet System.Convert.Nope: member not found");
+}
+
+#[test]
+fn by_reference_results_are_written_back_to_the_variable_arguments() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, a) if m == "TryParse" => {
+            assert_eq!(a.iter().map(|x| x.by_ref).collect::<Vec<_>>(), vec![false, true]);
+            Ok(DotNetReply {
+                value: DotNetValue::Bool(true),
+                by_ref: vec![(1, DotNetValue::Int32(42))],
+                streams: Default::default(),
+            })
+        }
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; N: Integer; B: Boolean;",
+        "B := C.TryParse('42', N); exit(Format(N));",
+        ": Text",
+    );
+    assert_eq!(text(r), "42");
+}
+
+// ---- streams (ADR-014 section 4) -----------------------------------------------------------
+
+#[test]
+fn an_instream_argument_sends_the_unread_bytes_and_the_read_position_follows_what_dotnet_consumed() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, a) if m == "ReadSome" => {
+            assert_eq!(a[0].value, DotNetValue::InStream(b"abcdef".to_vec()));
+            Ok(DotNetReply {
+                value: DotNetValue::Null,
+                by_ref: vec![],
+                streams: StreamEffects {
+                    consumed: vec![(0, 4)],
+                    ..Default::default()
+                },
+            })
+        }
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; B: Record \"ALT Blob\"; O: OutStream; I: InStream; T: Text;",
+        "B.Code := 'S'; B.Data.CreateOutStream(O); O.WriteText('abcdef'); B.Insert(); B.Get('S'); B.CalcFields(Data);
+         B.Data.CreateInStream(I); C.ReadSome(I); I.ReadText(T); exit(T);",
+        ": Text",
+    );
+    assert_eq!(text(r), "ef", "AL reads on from the byte after the four .NET consumed");
+}
+
+#[test]
+fn an_outstream_argument_is_bridged_and_the_bytes_dotnet_wrote_are_appended_to_the_blob() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, a) if m == "WriteTo" => {
+            assert_eq!(a[0].value, DotNetValue::OutStream);
+            Ok(DotNetReply {
+                value: DotNetValue::Null,
+                by_ref: vec![],
+                streams: StreamEffects {
+                    bridges: vec![(0, 9)],
+                    written: vec![(9, b"from .net".to_vec())],
+                    ..Default::default()
+                },
+            })
+        }
+        Req::Invoke(_, m, _) if m == "WriteMore" => Ok(DotNetReply {
+            value: DotNetValue::Null,
+            by_ref: vec![],
+            streams: StreamEffects {
+                written: vec![(9, b"!".to_vec())],
+                ..Default::default()
+            },
+        }),
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; B: Record \"ALT Blob\"; O: OutStream; I: InStream; T: Text;",
+        "B.Code := 'S'; B.Data.CreateOutStream(O); C.WriteTo(O); C.WriteMore(); B.Insert(); B.Get('S'); B.CalcFields(Data);
+         B.Data.CreateInStream(I); I.ReadText(T); exit(T);",
+        ": Text",
+    );
+    assert_eq!(text(r), "from .net!", "a later call can still write into the bridge");
 }

@@ -124,6 +124,8 @@ pub enum SyntaxKind {
     NamespaceDecl,
     UsingDecl,
     Object,
+    /// A top-level `dotnet { assembly(...) { type(...) } }` declaration block (no id, no name).
+    DotNetBlock,
     ObjectBody,
     Property,
     PropertyValue,

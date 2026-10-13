@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod corpus;
+pub mod dotnet;
 pub mod drift;
 pub mod host;
 pub mod oracle;

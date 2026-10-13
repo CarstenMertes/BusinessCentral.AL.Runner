@@ -107,7 +107,18 @@ impl CorpusRuntime {
         manifests: &[Manifest],
         symbols: &BTreeSet<String>,
     ) -> CorpusRuntime {
-        Self::run_for(apps, manifests, symbols, None)
+        Self::run_with_dotnet(apps, manifests, symbols, al_vm::dotnet::DotNetConfig::default())
+    }
+
+    /// [`run_with_manifests`](Self::run_with_manifests) with a `DotNet` host (ADR-014); the
+    /// default has none.
+    pub fn run_with_dotnet(
+        apps: Vec<al_sema::workspace::AppSource>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+    ) -> CorpusRuntime {
+        Self::run_for(apps, manifests, symbols, None, dotnet)
     }
 
     /// Runs for a target: builtins newer than the target's runtime are refused and version gates
@@ -117,6 +128,7 @@ impl CorpusRuntime {
         manifests: &[Manifest],
         symbols: &BTreeSet<String>,
         target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
     ) -> CorpusRuntime {
         let (_ws, mut lowered) = match target {
             Some(t) => al_sema::lower::compile_for(apps, symbols, t),
@@ -132,7 +144,7 @@ impl CorpusRuntime {
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
-        let engine = Engine::with_target(lowered.program.clone(), blocked, target.cloned());
+        let engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
         let mut outcomes = std::collections::HashMap::new();
         let mut panics = 0;
         for (oi, o) in lowered.program.objects.iter().enumerate() {

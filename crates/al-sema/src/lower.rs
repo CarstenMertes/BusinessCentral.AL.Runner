@@ -38,7 +38,21 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         })
         .collect();
     let mut out = Lowered {
-        program: ir::Program::default(),
+        program: ir::Program {
+            objects: Vec::new(),
+            apps: ws
+                .apps
+                .iter()
+                .map(|a| ir::AppInfo {
+                    id: a.id.clone(),
+                    name: a.name.clone(),
+                    publisher: String::new(),
+                    version: String::new(),
+                    dependencies: a.dependencies.clone(),
+                    resources: Vec::new(),
+                })
+                .collect(),
+        },
         unsupported: Vec::new(),
         calls: Vec::new(),
     };
@@ -371,6 +385,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             rec_slot,
             xrec_slot,
             page,
+            app: o.app as u32,
             xmlport: xml_irs[oi].clone(),
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
@@ -2137,6 +2152,18 @@ impl Lowerer<'_> {
                     .ok_or_else(|| format!("{id} not in catalog"))?
                     .clone();
                 let receiver = match &receiver_node {
+                    // Enum metadata calls (`"Name".Names()`, `Var.Ordinals()`, `"Name".FromInteger(n)`)
+                    // receive the enum itself: its object index, as an enum constant.
+                    Some(r) if sig.receiver == "Enum" && sig.name != "AsInteger" => {
+                        let Ty::Enum(name) = self.ty_of(r) else {
+                            return Err(format!("{id}: the receiver is not an enum type"));
+                        };
+                        let object = self.resolve_obj(ObjKind::Enum, &name)?;
+                        Some(Box::new(ir::Arg::Value(ir::Expr::Const(ir::Const::Enum(
+                            object as u32,
+                            0,
+                        )))))
+                    }
                     Some(r) if sig.instance => Some(Box::new(match self.place(r) {
                         Ok(p) => ir::Arg::Ref(p),
                         Err(_) => ir::Arg::Value(self.expr(r)?),

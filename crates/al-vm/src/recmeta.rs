@@ -121,7 +121,7 @@ impl Session {
             | Value::Enum(..)
             | Value::Guid(_)
             | Value::Date(..)
-            | Value::DateFormula(_) => Ok(al_builtins::format::format(v, 0, 0, self)),
+            | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
             other => unsupported(format!("a {other:?} value in an error message")),
         }
     }
@@ -271,13 +271,59 @@ impl Session {
             "ModifyAll" => self.modify_all(rec, t, args),
             // Doc (Record.Ascending): with an argument sets the sort direction of the current key,
             // without one reads it (corpus record/TestRecordSort.al:111, TestCopyOntoTemporaryRecord.al).
-            "Ascending" => match args.first() {
-                None => Ok(Value::Boolean(rec.borrow().ascending)),
-                Some(v) => {
-                    rec.borrow_mut().ascending = ops::truthy(v)?;
-                    Ok(Value::Null)
+            "Ascending" => {
+                if rec.borrow().field_descending {
+                    return unsupported("Ascending after a per-field SetAscending (not pinned)");
                 }
+                match args.first() {
+                    None => Ok(Value::Boolean(rec.borrow().ascending)),
+                    Some(v) => {
+                        rec.borrow_mut().ascending = ops::truthy(v)?;
+                        Ok(Value::Null)
+                    }
+                }
+            }
+            // The direction of one key field. A record keeps one direction for its whole key, so
+            // only a key of that single field is covered: record/TestRecordSort.al:184-203
+            // (SetAscending(Amount, false) makes FindFirst return the largest), :158-181
+            // (GetAscending). A field of a longer key, or outside the key, has a direction of its
+            // own that is not pinned.
+            // The session company is the one company this runtime has; any other needs the Company
+            // table, which is outside the workspace (ADR-013). A record on the session company
+            // keeps its rows (record/TestSecurityFilteringContracts.al:108-138,
+            // TestRecordChangeCompanyRows.al:115).
+            "ChangeCompany" => match args.first().and_then(al_builtins::native::text_of) {
+                Some(name) if name == self.cx.company => Ok(Value::Boolean(true)),
+                Some(name) => unsupported(format!(
+                    "ChangeCompany to `{name}`: a company other than the session company needs the Company table"
+                )),
+                None => unsupported("ChangeCompany without a company name (not pinned)"),
             },
+            "SetAscending" | "GetAscending" => {
+                let pos = arg_pos(args, 0)?;
+                if t.keys[rec.borrow().key] != [pos] {
+                    return unsupported(format!(
+                        "{method} on a field that is not the only field of the current key (per-field direction not pinned)"
+                    ));
+                }
+                if method == "GetAscending" {
+                    let r = rec.borrow();
+                    return Ok(Value::Boolean(r.ascending && !r.field_descending));
+                }
+                let ascending = match args.get(1) {
+                    Some(v) => ops::truthy(v)?,
+                    None => return unsupported("SetAscending without a direction"),
+                };
+                // The direction holds for this record until a page hands its view back and forth
+                // (handlers/TestPageViewRoundTripRoutes.al:Action_SetAscending_ReadInTheSameTrigger_IsDescending
+                // against ..._ReadByALaterAction); `Ascending` keeps its own, view-borne flag.
+                let mut r = rec.borrow_mut();
+                if !r.ascending {
+                    return unsupported("SetAscending on a record that also has Ascending(false) (not pinned)");
+                }
+                r.field_descending = !ascending;
+                Ok(Value::Null)
+            }
             // The key's field names (corpus record/TestCopyOntoTemporaryRecord.al:93 `'No.'`,
             // TestBCMetadataContracts.al:196-208 contains the names).
             "CurrentKey" => {
@@ -362,6 +408,9 @@ impl Session {
                     return Ok(Value::Null);
                 }
                 let s = src.borrow().clone();
+                if s.field_descending {
+                    return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
+                }
                 let mut d = rec.borrow_mut();
                 if s.temporary && !d.temporary {
                     return unsupported("Copy from a temporary record onto a normal one (not pinned)");

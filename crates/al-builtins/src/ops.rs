@@ -26,6 +26,14 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::List(_), T::List(_))
         | (v @ Value::Dictionary(_), T::Dictionary(..))
         | (v @ Value::Array(_), T::Array(..)) => v,
+        // A SessionSettings is a value: assignment copies it (session/TestSessionSettings.al:222-262).
+        (Value::Library(n, cell), T::Library(_)) if n == "SessionSettings" => {
+            let copy = match &*cell.borrow() {
+                LibraryValue::SessionSettings(s) => LibraryValue::SessionSettings(s.clone()),
+                _ => LibraryValue::Empty,
+            };
+            Value::Library(n, Rc::new(RefCell::new(copy)))
+        }
         (v @ Value::Codeunit(_), T::Codeunit(_) | T::Interface(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
@@ -95,8 +103,40 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 _ => return unsupported(format!("text of length {} into Char", u.len())),
             }
         }
+        // A Text assigns into a Guid, with or without braces (record/TestRecordGetBySystemId*.al uses
+        // `'00000000-0000-0000-0000-000000000000'`; the system-id tests use the braced form).
+        (Value::Text(s) | Value::Code(s), T::Guid) => match parse_guid(&s) {
+            Some(g) => Value::Guid(g),
+            None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
+        },
         (v, t) => return unsupported(format!("conversion of {v:?} to {t:?}")),
     })
+}
+
+/// `8-4-4-4-12` hexadecimal digits, with or without surrounding braces.
+pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
+    let t = text.trim();
+    let inner = match (t.strip_prefix('{'), t.strip_suffix('}')) {
+        (Some(_), Some(_)) => &t[1..t.len() - 1],
+        (None, None) => t,
+        _ => return None,
+    };
+    let parts: Vec<&str> = inner.split('-').collect();
+    let widths = [8, 4, 4, 4, 12];
+    if parts.len() != 5
+        || !parts
+            .iter()
+            .zip(widths)
+            .all(|(p, w)| p.len() == w && p.bytes().all(|b| b.is_ascii_hexdigit()))
+    {
+        return None;
+    }
+    let hex: String = parts.concat();
+    let mut out = [0u8; 16];
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
 }
 
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
@@ -146,6 +186,23 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
+        // DateTime + Duration is a DateTime and DateTime - DateTime a Duration, in milliseconds
+        // (types/TestDurationContracts.al:44-171, session/TestDateTimeContracts.al:52-90). The undefined
+        // DateTime is not pinned.
+        (V::DateTime(a), V::Duration(d)) | (V::Duration(d), V::DateTime(a))
+            if *a > 0 && (op == Arith::Add || (op == Arith::Sub && matches!(l, V::DateTime(_)))) =>
+        {
+            let moved = if op == Arith::Add {
+                a.checked_add(*d)
+            } else {
+                a.checked_sub(*d)
+            };
+            return moved
+                .filter(|m| *m > 0)
+                .map(V::DateTime)
+                .ok_or_else(|| Signal::Unsupported("DateTime out of range (error text not pinned yet)".into()));
+        }
+        (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {
             let n = int_of(n).expect("int") as i32;
@@ -235,6 +292,16 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => a.cmp(b),
+        // SessionSettings compare by value (session/TestSessionSettings.al:513-545).
+        (V::Library(na, a), V::Library(nb, b)) if na == "SessionSettings" && nb == "SessionSettings" => {
+            use crate::value::LibraryValue as L;
+            let state = |l: &L| match l {
+                L::SessionSettings(s) => s.clone(),
+                _ => Default::default(),
+            };
+            let (a, b) = (state(&a.borrow()), state(&b.borrow()));
+            if a == b { Ordering::Equal } else { Ordering::Less }
+        }
         (V::Library(_, a), V::Library(_, b)) => {
             use crate::value::LibraryValue as L;
             match (&*a.borrow(), &*b.borrow()) {
@@ -439,6 +506,59 @@ mod tests {
         assert!(matches!(
             arith(Arith::Sub, &Value::Date(10, false), &Value::Date(4, false)),
             Ok(Value::Integer(6))
+        ));
+    }
+
+    // types/TestDurationContracts.al:44-171 and session/TestDateTimeContracts.al:52-90.
+    #[test]
+    fn datetime_and_duration_arithmetic() {
+        let dt = |n: i64| Value::DateTime(n);
+        let dur = |n: i64| Value::Duration(n);
+        assert!(matches!(
+            arith(Arith::Add, &dt(1_000), &dur(3_600_000)),
+            Ok(Value::DateTime(3_601_000))
+        ));
+        assert!(matches!(
+            arith(Arith::Add, &dur(3_600_000), &dt(1_000)),
+            Ok(Value::DateTime(3_601_000))
+        ));
+        assert!(matches!(
+            arith(Arith::Sub, &dt(3_601_000), &dur(3_600_000)),
+            Ok(Value::DateTime(1_000))
+        ));
+        assert!(matches!(
+            arith(Arith::Sub, &dt(3_601_000), &dt(1_000)),
+            Ok(Value::Duration(3_600_000))
+        ));
+        // The undefined DateTime and a Duration taken from a DateTime are not pinned.
+        assert!(matches!(
+            arith(Arith::Add, &dt(0), &dur(1)),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(arith(Arith::Sub, &dt(5), &dt(0)), Err(Signal::Unsupported(_))));
+        assert!(matches!(
+            arith(Arith::Sub, &dur(5), &dt(5)),
+            Err(Signal::Unsupported(_))
+        ));
+    }
+
+    // fieldref/..., record/TestRecordGetBySystemId*.al: a Text assigns into a Guid, with or without braces.
+    #[test]
+    fn a_text_converts_to_a_guid() {
+        let g = |s: &str| convert(Value::Text(s.into()), &RtType::Guid);
+        assert!(matches!(g("00000000-0000-0000-0000-000000000000"), Ok(Value::Guid(x)) if x == [0; 16]));
+        let braced = g("{11111111-2222-3333-4444-555555555555}").unwrap();
+        let plain = g("11111111-2222-3333-4444-555555555555").unwrap();
+        assert!(
+            matches!((&braced, &plain), (Value::Guid(a), Value::Guid(b)) if a == b && a[0] == 0x11 && a[15] == 0x55)
+        );
+        assert!(matches!(g("not a guid"), Err(Signal::Unsupported(_))));
+        assert!(matches!(
+            convert(
+                Value::Code("11111111-1111-1111-1111-111111111111".into()),
+                &RtType::Guid
+            ),
+            Ok(Value::Guid(_))
         ));
     }
 

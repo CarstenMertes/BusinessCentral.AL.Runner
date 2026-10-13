@@ -8,7 +8,7 @@ fn digits(s: &str, n: usize) -> Option<u32> {
     (s.len() == n && s.bytes().all(|b| b.is_ascii_digit())).then(|| s.parse().ok())?
 }
 
-fn days_in_month(y: i32, m: u32) -> u32 {
+pub(crate) fn days_in_month(y: i32, m: u32) -> u32 {
     match m {
         1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
         4 | 6 | 9 | 11 => 30,

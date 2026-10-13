@@ -297,6 +297,9 @@ impl Session {
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
+                    if s.field_descending {
+                        return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
+                    }
                     let mut d = dst.borrow_mut();
                     d.fields = s.fields.clone();
                     d.filters = s.filters.clone();

@@ -179,12 +179,11 @@ impl Session {
             )));
         }
         let Some(h) = scope.handlers.iter_mut().find(|h| h.kind == kind) else {
-            // Texts: corpus handlers/TestConfirmNoHandler.al (Unhandled UI, the handler type
-            // and the question), pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al:162
-            // ("Unhandled UI: Message  <text>"). The error code is not pinned.
+            // Text and code: corpus handlers/TestUnhandledUiAndDialogDefaults.al:68-107 (ONE space
+            // after the kind; Confirm quotes the question, StrMenu the options only).
             return Err(Signal::Error(AlError {
-                message: format!("Unhandled UI: {}  {shown}", kind.label()),
-                code: String::new(),
+                message: format!("Unhandled UI: {} {shown}", kind.label()),
+                code: "MissingUIHandler".into(),
                 call_stack: String::new(),
             }));
         };
@@ -195,7 +194,19 @@ impl Session {
         if let Some(scope) = self.ui.as_mut() {
             scope.in_handler = false;
         }
-        result
+        // An error raised inside a Message, Confirm or StrMenu handler comes out of the dialog call
+        // with the test framework's prefix on its code (handlers/TestUnhandledUiAndDialogDefaults.al:
+        // 147-156: text as raised, code TestWrapped:Dialog).
+        match result {
+            Err(Signal::Error(mut e))
+                if matches!(kind, UiKind::Message | UiKind::Confirm | UiKind::StrMenu)
+                    && !e.code.starts_with("TestWrapped") =>
+            {
+                e.code = format!("TestWrapped:{}", e.code);
+                Err(Signal::Error(e))
+            }
+            other => other,
+        }
     }
 
     /// `SessionSettings.RequestSessionUpdate(false)`: the bound `[SessionSettingsHandler]` gets the
@@ -222,6 +233,16 @@ impl Session {
         }
     }
 
+    /// The declared id of the object at index `object`, as BC prints it (0 when it has none).
+    pub(crate) fn object_id_of(&self, object: u32) -> u32 {
+        self.engine
+            .program
+            .objects
+            .get(object as usize)
+            .and_then(|o| o.id)
+            .unwrap_or(0)
+    }
+
     /// Whether a handler function is running right now.
     pub(crate) fn in_ui_handler(&self) -> bool {
         self.page_handler_depth > 0 || self.ui.as_ref().is_some_and(|s| s.in_handler)
@@ -238,6 +259,7 @@ impl Session {
         kind: UiKind,
         page: u32,
     ) -> Result<(usize, usize, Rc<RefCell<Instance>>), Signal> {
+        let shown_id = self.object_id_of(page);
         let Some(scope) = self.ui.as_mut() else {
             return Err(Signal::Unsupported(format!(
                 "{} outside a test method (what the runner does then is not pinned)",
@@ -249,9 +271,11 @@ impl Session {
             .iter_mut()
             .find(|h| h.kind == kind && h.page == Some(page))
         else {
+            // handlers/TestUnhandledUiAndDialogDefaults.al:97-104 ("ModalPage 68124", "Page 68124");
+            // RequestPage names the report's request page id (handlers/TestReportRuntimeContracts.al:425).
             return Err(Signal::Error(AlError {
-                message: format!("Unhandled UI: {}", kind.label()),
-                code: String::new(),
+                message: format!("Unhandled UI: {} {}", kind.label(), shown_id),
+                code: "MissingUIHandler".into(),
                 call_stack: String::new(),
             }));
         };
@@ -260,6 +284,16 @@ impl Session {
     }
 
     /// Whether the test bound a handler of `kind` for `page`.
+    /// The refusal for a page of `kind` that the test bound no handler for. Code and text:
+    /// handlers/TestUnhandledUiAndDialogDefaults.al:97-104, handlers/TestReportRuntimeContracts.al:425-426.
+    pub(crate) fn unhandled_page(&self, kind: UiKind, object: u32) -> Signal {
+        Signal::Error(AlError {
+            message: format!("Unhandled UI: {} {}", kind.label(), self.object_id_of(object)),
+            code: "MissingUIHandler".into(),
+            call_stack: String::new(),
+        })
+    }
+
     pub(crate) fn has_page_handler(&self, kind: UiKind, page: u32) -> bool {
         self.ui
             .as_ref()

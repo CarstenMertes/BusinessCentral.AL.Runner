@@ -33,6 +33,7 @@ name = "al-sema"
 version = "0.1.0"
 dependencies = [
  "al-builtins",
+ "al-ir",
  "al-syntax",
  "rowan",
  "serde",

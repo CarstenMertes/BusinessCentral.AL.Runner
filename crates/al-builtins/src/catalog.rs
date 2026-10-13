@@ -99,6 +99,17 @@ impl Catalog {
             .unwrap_or_default()
     }
 
+    /// The signature with overload id `id` (`Record.Insert#2`).
+    pub fn by_id(&self, id: &str) -> Option<&Signature> {
+        let (qual, n) = id.rsplit_once('#')?;
+        let (recv, name) = qual.rsplit_once('.')?;
+        let n: usize = n.parse().ok()?;
+        self.by_method
+            .get(&(recv.to_lowercase(), name.to_lowercase()))?
+            .get(n.checked_sub(1)?)
+            .map(|&i| &self.signatures[i])
+    }
+
     /// Stable overload id: `Receiver.Method#n`, n counting from 1 in catalog order.
     pub fn id(&self, sig: &Signature) -> String {
         let all = &self.by_method[&(sig.receiver.to_lowercase(), sig.name.to_lowercase())];
@@ -196,6 +207,15 @@ mod tests {
         assert!(!c.global("Commit").is_empty());
         assert!(c.global("Insert").is_empty(), "instance methods are not global");
         assert!(c.global("Open").is_empty(), "Dialog.Open is an instance method");
+    }
+
+    #[test]
+    fn by_id_is_the_inverse_of_id() {
+        let c = Catalog::load();
+        for s in c.overloads("Record", "Insert") {
+            assert_eq!(c.by_id(&c.id(s)), Some(s));
+        }
+        assert!(c.by_id("Record.Insert#9").is_none());
     }
 
     #[test]

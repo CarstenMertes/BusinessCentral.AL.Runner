@@ -11,3 +11,4 @@ serde.workspace = true
 serde_json.workspace = true
 rowan = "0.16"
 al-builtins.workspace = true
+al-ir.workspace = true

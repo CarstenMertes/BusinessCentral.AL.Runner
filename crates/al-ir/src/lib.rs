@@ -19,6 +19,8 @@ pub struct Object {
     pub routines: Vec<Routine>,
     /// `Subtype = Test` and similar, as written.
     pub properties: Vec<(String, String)>,
+    /// For enums: (declared value, name), extensions included.
+    pub enum_values: Vec<(i32, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -186,6 +188,7 @@ mod tests {
                     ty: RtType::Integer,
                 }],
                 properties: vec![("Subtype".into(), "Test".into())],
+                enum_values: vec![],
                 routines: vec![Routine {
                     name: "P".into(),
                     is_trigger: false,

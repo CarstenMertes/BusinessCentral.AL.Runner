@@ -61,6 +61,12 @@ dependencies = [
 [[package]]
 name = "al-vm"
 version = "0.1.0"
+dependencies = [
+ "al-builtins",
+ "al-ir",
+ "al-sema",
+ "rust_decimal",
+]
 
 [[package]]
 name = "arrayvec"

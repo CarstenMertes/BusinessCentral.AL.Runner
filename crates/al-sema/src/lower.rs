@@ -92,6 +92,11 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             globals,
             routines,
             properties: obj.properties().map(|p| (p.name(), p.value_text())).collect(),
+            enum_values: members[oi]
+                .enum_values
+                .iter()
+                .map(|(v, n)| (*v as i32, n.clone()))
+                .collect(),
         });
         out.unsupported.push(unsupported);
         out.calls.push(calls);

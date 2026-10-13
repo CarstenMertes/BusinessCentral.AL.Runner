@@ -235,22 +235,49 @@ fn add_navigation_action(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]
 
 /// `Error(ErrorInfo)`: raises the message as it is for a client error
 /// (errorinfo/TestErrorInfoErrorType.al:50-65). An internal error hides its message behind a text
-/// the corpus does not pin, and a collectible one may be collected instead: both are refused.
-pub fn raise(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let Some(Value::Library(_, cell)) = a.first() else {
+/// the corpus does not pin: refused. A collectible one is collected inside a collecting scope.
+pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let Some(info @ Value::Library(_, cell)) = a.first() else {
         return unsupported(format!("Error with {:?} as an ErrorInfo", a.first()));
     };
-    let LibraryValue::ErrorInfo(s) = &*cell.borrow() else {
-        return unsupported("Error with an ErrorInfo nobody created");
+    let (message, internal, collectible) = match &*cell.borrow() {
+        LibraryValue::ErrorInfo(s) => (s.message.clone(), s.error_type == Some(1), s.collectible),
+        _ => return unsupported("Error with an ErrorInfo nobody created"),
     };
-    if s.error_type == Some(1) {
+    if internal {
         return unsupported("Error with ErrorType::Internal (the masking text is not pinned)");
     }
+    // A collectible error inside a `[ErrorBehavior(Collect)]` scope is kept and execution goes on
+    // (errorinfo/TestErrorInfoType.al:448-459); a non-collectible one unwinds even there (:474-490).
+    if collectible && c.collect_error(info) {
+        return Ok(Value::Null);
+    }
     Err(Signal::Error(crate::native::AlError {
-        message: s.message.clone(),
+        message,
         code: String::new(),
         call_stack: String::new(),
     }))
+}
+
+/// A copy of an `ErrorInfo` value that shares nothing with the original.
+pub fn copy_of(v: &Value) -> Option<Value> {
+    let Value::Library(name, cell) = v else { return None };
+    match &*cell.borrow() {
+        LibraryValue::ErrorInfo(s) => Some(Value::Library(
+            name.clone(),
+            Rc::new(RefCell::new(LibraryValue::ErrorInfo(s.clone()))),
+        )),
+        _ => None,
+    }
+}
+
+/// The message of an `ErrorInfo` value.
+pub fn message_of(v: &Value) -> Option<String> {
+    let Value::Library(_, cell) = v else { return None };
+    match &*cell.borrow() {
+        LibraryValue::ErrorInfo(s) => Some(s.message.clone()),
+        _ => None,
+    }
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {

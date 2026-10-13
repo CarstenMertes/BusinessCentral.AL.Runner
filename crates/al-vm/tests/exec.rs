@@ -214,8 +214,8 @@ fn asserterror_without_an_error_is_an_error() {
 
 #[test]
 fn a_blocked_routine_reports_unsupported() {
-    let src = cu("procedure F() begin LastUsedRowVersion(); end;");
-    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("LastUsedRowVersion")));
+    let src = cu("procedure F() begin MinimumActiveRowVersion(); end;");
+    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("MinimumActiveRowVersion")));
 }
 
 #[test]
@@ -233,6 +233,52 @@ fn runaway_recursion_is_unsupported_not_a_crash() {
         .spawn(|| {
             let src = cu("procedure F(N: Integer): Integer begin exit(F(N + 1)); end;");
             assert!(matches!(run(&src, "F", vec![Value::Integer(0)]), Err(Signal::Unsupported(r)) if r.contains("call depth")));
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[test]
+fn a_character_can_be_assigned_into_a_text_by_position() {
+    // handlers/TestPageFieldFormats_Tests.al:58-66: `Nnbsp[1] := 8239` on an empty Text[1] sets
+    // its one character (the narrow no-break space), which Replace then finds.
+    let src = cu("procedure F(): Text var N: Text[1]; T: Text; begin
+                      N[1] := 8239; T := 'a' + N + 'b';
+                      exit(Format(StrLen(N)) + Format(StrLen(T)) + Format(StrLen(T.Replace(N, ' ')))); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "133");
+    // Past the end of the text, past its declared length, or a value that is no character: refused.
+    for body in [
+        "N[2] := 65;",
+        "N[1] := 65; N[3] := 66;",
+        "N[1] := 65; N[2] := 66;",
+        "N[0] := 65;",
+    ] {
+        let src = cu(&format!(
+            "procedure F(): Text var N: Text[1]; begin {body} exit(N); end;"
+        ));
+        assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))), "{body}");
+    }
+}
+
+#[test]
+fn a_990_deep_chain_completes() {
+    // codeunit/TestCodeunitRecursionDepth.al:57-70 (RecursionDepth_JustInsideTheCeiling_Completes):
+    // the platform's ceiling lies above 990 calls. Past it the run is refused, not guessed (the
+    // text of the platform's refusal is not pinned).
+    std::thread::Builder::new()
+        .stack_size(512 << 20)
+        .spawn(|| {
+            let src = cu(
+                "procedure R(N: Integer): Integer begin if N <= 0 then exit(0); exit(1 + R(N - 1)); end;
+                          procedure F(N: Integer): Integer begin exit(R(N)); end;",
+            );
+            let r = run(&src, "F", vec![Value::Integer(990)]);
+            assert!(matches!(r, Ok(Value::Integer(990))), "{r:?}");
+            assert!(matches!(
+                run(&src, "F", vec![Value::Integer(5000)]),
+                Err(Signal::Unsupported(_))
+            ));
         })
         .unwrap()
         .join()
@@ -306,7 +352,8 @@ fn dictionaries() {
 
 #[test]
 fn collection_errors_are_not_guessed() {
-    let src = cu("procedure F(): Integer var L: List of [Integer]; begin exit(L.Get(1)); end;");
+    // List.Get past the end is pinned (tests/builtins.rs); RemoveAt past the end is not.
+    let src = cu("procedure F(): Integer var L: List of [Integer]; begin L.RemoveAt(1); exit(0); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))));
 }
 
@@ -319,10 +366,10 @@ fn create_guid_gives_distinct_non_null_guids() {
 }
 
 #[test]
-fn error_behavior_and_unpinned_commit_behaviors_are_unsupported() {
-    // [CommitBehavior(Ignore | Error)] is implemented (tests/transactions.rs); [ErrorBehavior]
-    // and any other CommitBehavior value are refused.
-    let src = cu("[ErrorBehavior(ErrorBehavior::Collect)] procedure G() begin end; procedure F() begin G(); end;");
+fn unpinned_error_and_commit_behaviors_are_unsupported() {
+    // [CommitBehavior(Ignore | Error)] is implemented (tests/transactions.rs) and so is
+    // [ErrorBehavior(Collect)] (tests/errorcollect.rs); any other value is refused.
+    let src = cu("[ErrorBehavior(ErrorBehavior::Default)] procedure G() begin end; procedure F() begin G(); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("ErrorBehavior")));
     let src = cu("[CommitBehavior(CommitBehavior::Allow)] procedure G() begin end; procedure F() begin G(); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("CommitBehavior")));

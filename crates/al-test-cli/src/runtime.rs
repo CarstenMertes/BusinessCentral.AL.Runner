@@ -213,15 +213,6 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             .map(|&r| (obj.routines[r].name.clone(), o.clone()))
             .collect::<Vec<_>>()
     };
-    // [ErrorBehavior] is not implemented; tests in such a codeunit depend on each other, so none
-    // of them runs. ([CommitBehavior] and [TransactionModel] are: see al-vm transactions.rs.)
-    if let Some(a) = tests
-        .iter()
-        .flat_map(|&r| &obj.routines[r].attributes)
-        .find(|a| a.name.eq_ignore_ascii_case("ErrorBehavior"))
-    {
-        return all(Outcome::NotRun(format!("[{}] is not implemented yet", a.name)));
-    }
     // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
     let mut models = std::collections::HashMap::new();
     for &r in &tests {
@@ -631,7 +622,7 @@ mod tests {
 
     local procedure Helper()
     begin
-        LastUsedRowVersion();
+        MinimumActiveRowVersion();
     end;
 
     procedure NotATest()
@@ -664,7 +655,7 @@ mod tests {
     fn unreachable_code_does_not_block_but_reachable_unsupported_code_does() {
         let o = outcomes(SRC);
         assert!(
-            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("LastUsedRowVersion")),
+            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("MinimumActiveRowVersion")),
             "{:?}",
             o[2].1
         );
@@ -915,7 +906,7 @@ mod tests {
             table 60901 Co { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
                 trigger OnInstallAppPerDatabase() var R: Record Db; begin R.K := 'DB'; R.Insert(); end;
-                trigger OnInstallAppPerCompany() var R: Record Co; begin LastUsedRowVersion(); R.K := 'CO'; R.Insert(); end; }
+                trigger OnInstallAppPerCompany() var R: Record Co; begin MinimumActiveRowVersion(); R.K := 'CO'; R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure SeededByTheTriggerThatRan() var R: Record Db; begin if not R.Get('DB') then Error('the per-database seed was rolled back'); end;
                 [Test] procedure SeededByTheTriggerThatDidNot() var R: Record Co; begin if R.Count() = 0 then Error('unseeded'); end; }",
@@ -936,7 +927,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnSeed', '', false, false)]
                 local procedure Seed() var R: Record Seed; begin R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin LastUsedRowVersion(); P.OnSeed(); end; }
+                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin MinimumActiveRowVersion(); P.OnSeed(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -954,7 +945,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Table, Database::Src, 'OnAfterInsertEvent', '', false, false)]
                 local procedure Seed(var Rec: Record Src) var R: Record Seed; begin R.K := 'X'; R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var S: Record Src; begin LastUsedRowVersion(); S.K := 'A'; S.Insert(); end; }
+                trigger OnInstallAppPerCompany() var S: Record Src; begin MinimumActiveRowVersion(); S.K := 'A'; S.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -967,7 +958,7 @@ mod tests {
             "table 60900 S { fields { field(1; K; Code[10]) { } } }
             table 60903 Other { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var R: Record S; begin LastUsedRowVersion(); R.Insert(); end; }
+                trigger OnInstallAppPerCompany() var R: Record S; begin MinimumActiveRowVersion(); R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesS() var R: Record S; begin end;
                 [Test] procedure UsesOther() var R: Record Other; begin end; }",
@@ -1102,7 +1093,7 @@ mod tests {
         [MessageHandler] procedure Msg(M: Text[1024]) begin Seen := M; end;
         [MessageHandler] procedure Msg2(M: Text[1024]) begin end;
         [MessageHandler] procedure Boom(M: Text[1024]) begin Error('boom in handler'); end;
-        [MessageHandler] procedure Blocked(M: Text[1024]) begin LastUsedRowVersion(); end;
+        [MessageHandler] procedure Blocked(M: Text[1024]) begin MinimumActiveRowVersion(); end;
         [ConfirmHandler] procedure Yes(Q: Text[1024]; var Reply: Boolean) begin Reply := true; end;
         [ConfirmHandler] procedure No(Q: Text[1024]; var Reply: Boolean) begin Fired += 1; Asked := Q; Reply := false; end;
         [ConfirmHandler] procedure Silent(Q: Text[1024]; var Reply: Boolean) begin end;
@@ -1166,7 +1157,7 @@ mod tests {
         };
         assert!(nr("UnknownHandlerNameIsRefused").contains("Nope"));
         assert!(nr("NamingARoutineThatIsNoHandlerIsRefused").contains("Helper"));
-        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("LastUsedRowVersion"));
+        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("MinimumActiveRowVersion"));
         assert!(nr("TwoHandlersOfOneKindAreRefused").contains("Msg2"));
     }
 

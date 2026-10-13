@@ -103,6 +103,16 @@ pub trait Ctx: FormatCtx {
     fn install_scope(&self) -> bool {
         false
     }
+    /// `Error(ErrorInfo)` of a collectible error: inside a `[ErrorBehavior(Collect)]` scope the
+    /// session keeps a copy and the call returns normally (`true`); outside one it is raised like
+    /// any other error (`false`).
+    fn collect_error(&mut self, _info: &Value) -> bool {
+        false
+    }
+    /// The session's media objects and media sets (`Media` and `MediaSet` fields).
+    fn media_store(&mut self) -> Option<&mut crate::media::MediaStore> {
+        None
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -236,6 +246,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
     ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
     ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
+    ("Record.SetLoadFields#1", |c, r, a| c.record("SetLoadFields", r, a)),
+    ("Record.AddLoadFields#1", |c, r, a| c.record("AddLoadFields", r, a)),
+    ("Record.SetBaseLoadFields#1", |c, r, a| {
+        c.record("SetBaseLoadFields", r, a)
+    }),
+    ("Record.AreFieldsLoaded#1", |c, r, a| c.record("AreFieldsLoaded", r, a)),
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record("SetAutoCalcFields", r, a)
     }),
@@ -282,6 +298,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .chain(crate::datefns::REGISTRY)
         .chain(crate::mathfns::REGISTRY)
         .chain(crate::sessionfns::REGISTRY)
+        .chain(crate::media::REGISTRY)
         .chain(crate::moduleinfo::REGISTRY)
 }
 

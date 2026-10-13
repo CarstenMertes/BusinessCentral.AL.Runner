@@ -13,11 +13,13 @@ use std::sync::Arc;
 mod autoinc;
 mod dispatch;
 pub mod dotnet;
+mod errorcollect;
 pub mod events;
 mod flowfields;
 mod hostvalues;
 mod interfaces;
 mod pages;
+mod partial;
 mod queries;
 mod recmeta;
 mod records;
@@ -179,6 +181,16 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
+    /// (see `errorcollect.rs`).
+    pub(crate) error_scopes: errorcollect::Scopes,
+    /// Records (by handle) whose field a TestPage write is validating, with the field's number:
+    /// what `CurrFieldNo` reads in the field's OnValidate.
+    pub(crate) curr_field_no: Vec<(usize, i32)>,
+    /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
+    pub(crate) lock_timeout: bool,
+    /// Imported media objects and media sets (the platform tables behind Media fields).
+    pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -201,9 +213,10 @@ pub struct Session {
     pub(crate) report_quit: bool,
 }
 
-/// Nested AL calls allowed before the session gives up. BC's own limit and
-/// its error are not pinned by the corpus, so exceeding it is Unsupported.
-pub const MAX_CALL_DEPTH: usize = 400;
+/// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
+/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al); BC's exact limit
+/// and the text of its error are not pinned, so exceeding this is Unsupported.
+pub const MAX_CALL_DEPTH: usize = 1000;
 
 impl Session {
     /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
@@ -252,6 +265,10 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            error_scopes: Default::default(),
+            curr_field_no: Vec::new(),
+            lock_timeout: true,
+            media: Default::default(),
             dotnet: Default::default(),
             application_areas: String::new(),
             report_init_depth: None,
@@ -316,6 +333,7 @@ impl Session {
                     field_descending: false,
                     position: None,
                     auto_calc: Vec::new(),
+                    load: Default::default(),
                 })))
             }
             other => Value::default_for(other),
@@ -399,7 +417,7 @@ impl Session {
         }
         if self.depth >= MAX_CALL_DEPTH {
             return Err(Signal::Unsupported(format!(
-                "call depth over {MAX_CALL_DEPTH} (BC's limit not pinned)"
+                "call depth over {MAX_CALL_DEPTH} (BC's limit and error text are not pinned)"
             )));
         }
         self.depth += 1;
@@ -457,10 +475,17 @@ impl Session {
                 }
             }
         }
+        let collecting = errorcollect::declares_collect(&r.attributes)?;
+        if collecting {
+            self.error_scopes.open();
+        }
         self.try_depth += usize::from(is_try);
         self.frames.push(object);
-        let outcome = self.exec_block(&r.body, &mut frame);
+        let mut outcome = self.exec_block(&r.body, &mut frame);
         self.frames.pop();
+        if collecting {
+            outcome = self.close_error_scope(outcome);
+        }
         self.try_depth -= usize::from(is_try);
         self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
@@ -772,6 +797,17 @@ impl Session {
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
                 }
+                // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
+                // emits this id with the Rec as receiver.
+                if id == "Record.CurrFieldNo#1" {
+                    let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
+                        return Err(Signal::Unsupported("CurrFieldNo without a record".into()));
+                    };
+                    let Value::Record(rec) = self.read(p, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+                    };
+                    return Ok(Value::Integer(self.curr_field_of(&rec)));
+                }
                 if id == "Session.ApplicationArea#1" {
                     // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
                     // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
@@ -842,6 +878,17 @@ impl Session {
                 Ok(ret)
             }
         }
+    }
+
+    /// What `CurrFieldNo` reads on `rec`: the field number a TestPage write is validating on this
+    /// record, 0 anywhere else (handlers/TestPageCurrFieldNo_Tests.al:36-123).
+    fn curr_field_of(&self, rec: &Rc<RefCell<RecordState>>) -> i32 {
+        let handle = Rc::as_ptr(rec) as usize;
+        self.curr_field_no
+            .iter()
+            .rev()
+            .find(|(h, _)| *h == handle)
+            .map_or(0, |(_, n)| *n)
     }
 
     /// Evaluates the arguments of a resolved call and runs it on `inst`, writing back the
@@ -937,7 +984,15 @@ impl Session {
                 Ok(v)
             }
             ir::Place::Field(base, pos) => match self.read(base, f)? {
-                Value::Record(rc) => Ok(rc.borrow().fields[*pos].clone()),
+                Value::Record(rc) => {
+                    let r = rc.borrow();
+                    let v = r.fields[*pos].clone();
+                    if r.load.partial {
+                        drop(r);
+                        rc.borrow_mut().load.touch(*pos);
+                    }
+                    Ok(v)
+                }
                 other => Err(Signal::Unsupported(format!("field of {other:?}"))),
             },
         }
@@ -954,7 +1009,12 @@ impl Session {
                             // Whether a copied record shares or copies its Blob is not pinned.
                             return Err(Signal::Unsupported("record assignment with a Blob field".into()));
                         }
-                        dst.borrow_mut().fields = fields;
+                        let load = src.borrow().load.clone();
+                        let mut d = dst.borrow_mut();
+                        d.fields = fields;
+                        // The copy holds what the source's buffer held, if that is known.
+                        d.load.buffer = load.buffer;
+                        d.load.partial = load.partial;
                     }
                     return Ok(());
                 }
@@ -965,7 +1025,11 @@ impl Session {
             let v = ops::convert(v, &ty)?;
             return match self.read(base, f)? {
                 Value::Record(rc) => {
-                    rc.borrow_mut().fields[*pos] = v;
+                    let mut r = rc.borrow_mut();
+                    r.fields[*pos] = v;
+                    if r.load.partial {
+                        r.load.written(*pos);
+                    }
                     Ok(())
                 }
                 other => Err(Signal::Unsupported(format!("field of {other:?}"))),
@@ -974,6 +1038,9 @@ impl Session {
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
+            ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_)) => {
+                return self.write_char(base, idx, v, f);
+            }
             ir::Place::Index(base, idx) => {
                 let el_ty = self.place_type(p, f);
                 let (arr, flat) = self.element(base, idx, f)?;
@@ -982,6 +1049,45 @@ impl Session {
             ir::Place::Field(..) => unreachable!("handled above"),
         }
         Ok(())
+    }
+
+    /// `Text[i] := c`: sets one character of a text. Pinned only for an empty or growing text at
+    /// the next position within the declared length (handlers/TestPageFieldFormats_Tests.al:58-66);
+    /// a position outside that, a value that is not one UTF-16 character, and a Code are refused.
+    fn write_char(&mut self, base: &ir::Place, idx: &[ir::Expr], v: Value, f: &mut Frame) -> Result<(), Signal> {
+        let max = match self.place_type(base, f) {
+            RtType::Text(m) => m,
+            _ => None,
+        };
+        let [e] = idx else {
+            return Err(Signal::Unsupported("a text indexed with several positions".into()));
+        };
+        let i = int(&self.eval(e, f)?)?;
+        let unit = match int(&v) {
+            Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
+            Err(_) => None,
+        };
+        let Value::Text(s) = self.read(base, f)? else {
+            return Err(Signal::Unsupported(
+                "assigning a character into a value that is no text".into(),
+            ));
+        };
+        let mut units: Vec<u16> = s.encode_utf16().collect();
+        let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
+        let (Some(unit), true) = (unit, in_range) else {
+            return Err(Signal::Unsupported(format!(
+                "assigning {v:?} to character {i} of a text (only the next position within the length is pinned)"
+            )));
+        };
+        let i = i as usize - 1;
+        if i == units.len() {
+            units.push(unit);
+        } else {
+            units[i] = unit;
+        }
+        let text = String::from_utf16(&units)
+            .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
+        self.write(base, Value::Text(text), f)
     }
 
     /// The array behind `base` and the flat position of `idx` (1-based, row-major).
@@ -1087,6 +1193,12 @@ impl al_builtins::native::Ctx for Session {
     }
     fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
+    }
+    fn media_store(&mut self) -> Option<&mut al_builtins::media::MediaStore> {
+        Some(&mut self.media)
+    }
+    fn collect_error(&mut self, info: &Value) -> bool {
+        Session::collect_error(self, info)
     }
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         Some((

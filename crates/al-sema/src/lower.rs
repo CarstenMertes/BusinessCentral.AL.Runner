@@ -1160,7 +1160,17 @@ impl Lowerer<'_> {
                     name: f.name.clone(),
                     ty: self.rt(&f.ty).unwrap_or(RtType::Variant),
                     stored: f.class == crate::members::FieldClass::Normal,
-                    init: f.init_value.as_ref().and_then(|v| init_const(v, &f.ty)),
+                    init: f.init_value.as_ref().and_then(|v| {
+                        init_const(v, &f.ty).or_else(|| match f.ty {
+                            // A member of the field's enum, by name; a blank-named member too
+                            // (types/TestBlankEnumInitTests.Codeunit.al).
+                            Ty::Enum(_) => {
+                                let file = self.ws.objects[f.declared_in.unwrap_or(oi)].file;
+                                self.calc_const(file, v, &f.ty).ok()
+                            }
+                            _ => None,
+                        })
+                    }),
                     auto_increment: f.auto_increment,
                     relation: f.table_relation,
                     init_text: f.init_value.clone(),
@@ -2056,12 +2066,6 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
-        for a in r.attributes() {
-            let n = a.name();
-            if n.eq_ignore_ascii_case("ErrorBehavior") {
-                self.reasons.push(format!("[{n}] is not implemented yet"));
-            }
-        }
         let body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
@@ -2564,6 +2568,18 @@ impl Lowerer<'_> {
                 }
                 Some(Res::Global(name)) if self.global_labels.contains_key(&name) => {
                     Ok(ir::Expr::Const(ir::Const::Text(self.global_labels[&name].clone())))
+                }
+                // `CurrFieldNo` in table code: a property of the implicit `Rec` the VM reads.
+                Some(Res::Global(name)) if name == "currfieldno" && !self.globals.contains_key(&name) => {
+                    let rec = self
+                        .rec_slot
+                        .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
+                    Ok(ir::Expr::Builtin {
+                        id: "Record.CurrFieldNo#1".into(),
+                        receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
+                        args: Vec::new(),
+                        ret_used: true,
+                    })
                 }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },
@@ -3240,13 +3256,14 @@ mod tests {
 
     #[test]
     fn unimplemented_builtin_makes_the_routine_unsupported() {
-        let (_, l) =
-            lower_src("codeunit 50100 C { procedure P() begin LastUsedRowVersion(); end; procedure Ok() begin end; }");
+        let (_, l) = lower_src(
+            "codeunit 50100 C { procedure P() begin MinimumActiveRowVersion(); end; procedure Ok() begin end; }",
+        );
         let (pi, _) = routine(&l, "P");
         let (oi, _) = routine(&l, "Ok");
         assert_eq!(
             l.unsupported[0][pi],
-            vec!["builtin Database.LastUsedRowVersion#1 is not implemented".to_string()]
+            vec!["builtin Database.MinimumActiveRowVersion#1 is not implemented".to_string()]
         );
         assert!(l.unsupported[0][oi].is_empty());
     }

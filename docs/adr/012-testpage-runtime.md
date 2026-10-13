@@ -1,10 +1,7 @@
 # ADR-012: TestPage runtime (headless page objects and the test client)
 
-- Status: Proposed
+- Status: Accepted (project owner, 2026-10-13)
 - Date: 2026-10-13
-
-Number is provisional: other agents may add ADRs at the same time, so the
-number is settled when this one is accepted and merged.
 
 ## Context
 
@@ -95,7 +92,34 @@ inside page objects only): `field` 865, `action` 142, `repeater` 127, `part` 82,
   (`wt-handlers`, `runtime.rs`). Page handlers are the same mechanism with a
   different key, so the two must share one registry.
 
-## Decision (proposed)
+## Decision (owner's answers)
+
+The project owner accepted the design below and answered the open questions:
+
+1. **Core design accepted as written**: IR page object and control tree,
+   `Value::TestPage` / `Value::TestControl`, a `Ctx::page` hook, a client
+   state machine.
+2. **Scope: everything at once**, not only record-bound Card/List pages:
+   control-text formatting (AutoFormat, DecimalPlaces, BlankZero,
+   BlankNumbers), parts / `TestPart`, `[PageHandler]`, `[ModalPageHandler]`,
+   `[RequestPageHandler]` (request pages are part of this model), `Page.Run`,
+   `Page.RunModal` and `RunObject` actions. Still refused explicitly:
+   anything the corpus does not pin, anything that needs another area
+   (table events and `ALTFixtureCleanup` belong to the events agent), Base
+   App pages outside the workspace, and `RunPageBackgroundTask` unless the
+   corpus pins it. The "first increment" lists below are therefore the
+   order of work, not the limit of scope.
+3. **Culture**: fixed en-US in the VM.
+4. **Location**: inside `al-vm` (`al-vm/src/pages.rs` and neighbours).
+5. **Handlers** build on the registry merged in 22a3875
+   (`al-vm/src/ui.rs`: `UiKind`, `UiScope`, `dispatch_ui`;
+   `resolve_handlers` / `bind_handlers` in `al-test-cli/src/runtime.rs`).
+   Events stay refused until the events branch lands. A run-time
+   `Signal::Unsupported` is acceptable for what can only be discovered
+   mid-test (an explicit "not run"); static refusal through the call graph is
+   preferred wherever possible.
+
+## Design
 
 ### 1. Shape: a page is data plus ordinary routines; TestPage is a client over a page instance
 
@@ -294,7 +318,7 @@ Out (refused explicitly, each with a reason naming the feature):
   further builtins), so the pass rate of this area will lag behind those
   merges.
 
-## Open questions for the project owner
+## Open questions (answered, see Decision)
 
 1. **Accept the IR/Value/Ctx growth** in sections 2-3, or prefer the
    `Library("TestPage")` fallback (alternative 2)?

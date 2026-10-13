@@ -28,6 +28,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      # ADR-007: an oracle recorded for an older corpus commit is checked against the pin with
+      # `git diff` over the corpus history, and the submodule checkout is shallow.
+      - name: Fetch the corpus history
+        run: |
+          if [ "$(git -C corpus rev-parse --is-shallow-repository)" = true ]; then
+            git -C corpus fetch --unshallow --quiet
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

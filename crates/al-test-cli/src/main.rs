@@ -5,7 +5,7 @@
 
 use al_host::dotnet::DotNetHost;
 use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
-use al_test_cli::{config, corpus, deps, drift, oracle, output, report, runner::Runner, runtime, target};
+use al_test_cli::{config, corpus, deps, drift, oracle, output, pin, report, runner::Runner, runtime, target};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -193,6 +193,8 @@ fn per_version(p: &Path, major: u16, all: bool) -> PathBuf {
 fn drift_summary(runs: &[(u16, VersionRun)]) -> String {
     let oracle_sets: Vec<_> = runs.iter().map(|(m, r)| (m.to_string(), r.oracle.clone())).collect();
     let passing_sets: Vec<_> = runs.iter().map(|(m, r)| (m.to_string(), r.passing.clone())).collect();
+    // A case one oracle lacks (older corpus commit, ADR-007) cannot show a runtime difference.
+    let passing_sets = drift::restrict(&passing_sets, &drift::common(&oracle_sets));
     let mut out = String::from("\nVersion comparison\n");
     out.push_str(&drift::table("oracle", &oracle_sets));
     out.push_str(&drift::table("runtime", &passing_sets));
@@ -206,6 +208,13 @@ fn run_version(
     cfg: &config::OracleFile,
     version: &config::VersionEntry,
 ) -> Result<VersionRun, String> {
+    // ADR-007: the oracle may be recorded for an older corpus commit when the pin only added files.
+    pin::check(
+        &root.join(&cfg.corpus_repo),
+        version.oracle_commit(&cfg.corpus_commit),
+        &cfg.corpus_commit,
+    )
+    .map_err(|e| format!("BC {}: {e}", version.bc_version))?;
     let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
     let cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;

@@ -1452,6 +1452,7 @@ impl Lowerer<'_> {
             .collect();
         let mut keys = Vec::new();
         let mut unique_keys = Vec::new();
+        let mut key_props: Vec<Vec<(String, String)>> = Vec::new();
         for o in std::iter::once(oi).chain(extensions.iter().copied()) {
             for sec in self
                 .ws
@@ -1479,6 +1480,7 @@ impl Lowerer<'_> {
                         .collect();
                     if pos.len() == names.len() && !pos.is_empty() {
                         keys.push(pos);
+                        key_props.push(k.properties().map(|p| (p.name(), p.value_text())).collect());
                         unique_keys.push(k.properties().any(|p| {
                             p.name().eq_ignore_ascii_case("Unique")
                                 && p.value_text().trim().eq_ignore_ascii_case("true")
@@ -1491,6 +1493,7 @@ impl Lowerer<'_> {
             // Without a keys section the first field is the primary key (doc: Table keys).
             keys.push(vec![0]);
             unique_keys.push(false);
+            key_props.push(Vec::new());
         }
         let per_company = !obj.properties().any(|p| {
             p.name().eq_ignore_ascii_case("DataPerCompany") && p.value_text().trim().eq_ignore_ascii_case("false")
@@ -1499,6 +1502,7 @@ impl Lowerer<'_> {
             fields,
             keys,
             unique_keys,
+            key_props,
             per_company,
             extensions,
         }

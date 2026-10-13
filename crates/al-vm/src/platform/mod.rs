@@ -10,6 +10,7 @@
 //! the corpus line that pins it; a column or a shape nothing pins is refused, not guessed.
 
 mod date;
+mod fields;
 mod identity;
 mod ids;
 mod integer;
@@ -108,6 +109,8 @@ impl Providers {
             Virtual::AllObjWithCaption => objects::all_obj_with_caption_rows(self, t),
             Virtual::CodeunitMetadata => objects::codeunit_metadata_rows(self, t),
             Virtual::TableMetadata => objects::table_metadata_rows(self, t),
+            Virtual::Field => fields::field_rows(self, t),
+            Virtual::Key => fields::key_rows(self, t),
             Virtual::Integer | Virtual::Date => unreachable!("generated, never listed"),
         };
         let m = Rc::new(mat::Mat::new(t, rows));

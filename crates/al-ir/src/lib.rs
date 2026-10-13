@@ -538,6 +538,10 @@ pub struct Table {
     pub keys: Vec<Vec<usize>>,
     /// `Unique = true` per key (parallel to `keys`).
     pub unique_keys: Vec<bool>,
+    /// The properties of each key as written (`Clustered`, `Enabled`, `SumIndexFields`, ...),
+    /// parallel to `keys`; empty for a key the compiler adds.
+    #[serde(default)]
+    pub key_props: Vec<Vec<(String, String)>>,
     pub per_company: bool,
     /// Object index of each table extension (their triggers are not run yet).
     pub extensions: Vec<usize>,

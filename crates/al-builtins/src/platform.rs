@@ -29,6 +29,8 @@ pub enum Virtual {
     AllObjWithCaption,
     CodeunitMetadata,
     TableMetadata,
+    Field,
+    Key,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -41,6 +43,8 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_058, "AllObjWithCaption", Provider::Virtual(Virtual::AllObjWithCaption)),
     (2_000_000_137, "CodeUnit Metadata", Provider::Virtual(Virtual::CodeunitMetadata)),
     (2_000_000_136, "Table Metadata", Provider::Virtual(Virtual::TableMetadata)),
+    (2_000_000_041, "Field", Provider::Virtual(Virtual::Field)),
+    (2_000_000_063, "Key", Provider::Virtual(Virtual::Key)),
     // Stored tables whose rows AL reads as facts about the session; the platform seeds them
     // (al-vm `platform/seed.rs`).
     (2_000_000_006, "Company", Provider::Stored),
@@ -74,6 +78,10 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_137, &[1, 2, 3, 4, 5, 7, 8, 9, 10, 11]),
     // Table Metadata: record/TestTableMetadataVirtualTable.al.
     (2_000_000_136, &[1, 2, 3, 4, 5, 11, 12, 13, 15]),
+    // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al.
+    (2_000_000_041, &[1, 2, 4, 5, 21, 22, 24, 25, 26, 27]),
+    // Key: record/TestKeyVirtualTable.al.
+    (2_000_000_063, &[1, 2, 4, 7, 10, 13]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.
     (2_000_000_009, &[1, 2, 3, 5, 6, 16, 17, 19]),
     // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. The server and client computer names are not read.

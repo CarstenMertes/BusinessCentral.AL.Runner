@@ -101,9 +101,6 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
-        if page_temporary[oi] {
-            page_reasons[oi].push("SourceTableTemporary is not supported by the test client yet".into());
-        }
         if page_extensions.contains_key(&oi) {
             page_reasons[oi].push("page extensions are not supported by the test client yet".into());
         }
@@ -112,6 +109,18 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
     for _ in 0..3 {
         for oi in 0..ws.objects.len() {
             for &p in &page_parts[oi].clone() {
+                // What a part page's close triggers do when the host closes is not pinned.
+                let closes = ws.object_ast(p).triggers().any(|t| {
+                    let n = t.name();
+                    n.eq_ignore_ascii_case("OnClosePage") || n.eq_ignore_ascii_case("OnQueryClosePage")
+                });
+                let reason = format!(
+                    "part page `{}` declares a close trigger (what it does when the host closes is not pinned)",
+                    ws.objects[p].name
+                );
+                if closes && !page_reasons[oi].contains(&reason) {
+                    page_reasons[oi].push(reason);
+                }
                 if let Some(why) = page_reasons[p].first().cloned() {
                     let reason = format!("part page `{}`: {why}", ws.objects[p].name);
                     if !page_reasons[oi].contains(&reason) {
@@ -182,7 +191,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 lw.globals.insert(name.to_lowercase(), globals.len());
                 globals.push(ir::Slot {
                     name: name.into(),
-                    ty: RtType::Record(t as u32, lw.is_temporary_table(t)),
+                    ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
                 });
             }
         }

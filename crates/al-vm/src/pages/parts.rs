@@ -19,23 +19,16 @@ impl Session {
         }
     }
 
-    /// Opens the page of every part control that is in the control tree: a part whose `Visible` is
-    /// false is not (corpus testpart/TestTestPart.al:TestPart_InvisiblePart_IsNotInTheControlTreeAtAll).
-    pub(super) fn open_parts(&mut self, st: &St) -> Result<(), Signal> {
+    /// Creates the page of every part control, before the host's own triggers run: the host's
+    /// OnInit and OnOpenPage reach it through `CurrPage.<Part>.Page` (corpus
+    /// handlers/TestPageTempPart_Host.al: OnOpenPage hands rows to the part page). A part whose
+    /// `Visible` is the literal false is not in the control tree
+    /// (testpart/TestTestPart.al:TestPart_InvisiblePart_IsNotInTheControlTreeAtAll).
+    pub(super) fn create_parts(&mut self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
-        // A part is opened inside its host, so the host's read-only state reaches it (corpus
-        // handlers/TestPageNewRowLine_Tests.al:ReadOnlyHostPart_NextPastLastDataRow_ReturnsFalse).
-        let mode = if self.page_editable(st) {
-            PageMode::Edit
-        } else {
-            PageMode::View
-        };
         for (i, c) in page.controls.iter().enumerate() {
-            if c.kind != ir::ControlKind::Part {
-                continue;
-            }
-            if !self.control_visible(st, i)? {
+            if c.kind != ir::ControlKind::Part || self.control_eliminated(st, i) {
                 continue;
             }
             let Some(part_page) = c.part_page else {
@@ -43,8 +36,57 @@ impl Session {
             };
             let child = Rc::new(RefCell::new(PageState::closed(part_page as u32)));
             child.borrow_mut().host = Some((Rc::downgrade(st), i));
-            st.borrow_mut().parts.push((i, child.clone()));
+            self.page_instance(&child)?;
+            st.borrow_mut().parts.push((i, child));
+        }
+        Ok(())
+    }
+
+    /// Opens the parts right after the host's OnOpenPage: the ones whose `Visible` came out false
+    /// are dropped, the others run their OnInit and OnOpenPage.
+    pub(super) fn open_parts(&mut self, st: &St) -> Result<(), Signal> {
+        // A part is opened inside its host, so the host's read-only state reaches it (corpus
+        // handlers/TestPageNewRowLine_Tests.al:ReadOnlyHostPart_NextPastLastDataRow_ReturnsFalse).
+        let mode = if self.page_editable(st) {
+            PageMode::Edit
+        } else {
+            PageMode::View
+        };
+        let parts = st.borrow().parts.clone();
+        let mut kept = Vec::new();
+        for (i, child) in parts {
+            if self.control_visible(st, i)? {
+                kept.push((i, child));
+            }
+        }
+        st.borrow_mut().parts = kept.clone();
+        for (_, child) in kept {
             self.open_page_as(&child, mode, None, None, true)?;
+        }
+        Ok(())
+    }
+
+    /// Whether the part control that shows `st` says `Editable = false`. What that does to the
+    /// part's rows is not pinned (TestPart.Editable() ignores it, corpus testpart/TestTestPart.al:
+    /// TestPart_Editable_IsNotDrivenByTheHostControlsEditableProperty), so writing through such a
+    /// part is refused.
+    pub(super) fn part_control_read_only(&self, st: &St) -> bool {
+        let Some((host, idx)) = st.borrow().host.clone() else {
+            return false;
+        };
+        let Some(host) = host.upgrade() else { return false };
+        let engine = self.engine();
+        matches!(
+            page_of(&engine, &host).controls[idx].prop("editable"),
+            Some(ir::PropVal::Lit(v)) if v.trim().eq_ignore_ascii_case("false")
+        )
+    }
+
+    pub(super) fn refuse_read_only_part(&self, st: &St, what: &str) -> Result<(), Signal> {
+        if self.part_control_read_only(st) {
+            return unsupported(format!(
+                "{what} through a part whose control says Editable = false (not pinned)"
+            ));
         }
         Ok(())
     }
@@ -116,25 +158,19 @@ impl Session {
         Ok(())
     }
 
-    /// The fields of the row part `control` of `host` reads its link from, `None` while that page
-    /// shows no row.
-    fn link_source(&self, host: &St, control: usize) -> Option<(St, Vec<Value>)> {
+    /// The page part `control` of `host` reads its link from: the Provider part, else the host.
+    fn link_page(&self, host: &St, control: usize) -> Option<St> {
         let engine = self.engine();
         let page = page_of(&engine, host);
-        let source = match page.controls[control].part_link.as_ref().and_then(|l| l.provider) {
+        match page.controls[control].part_link.as_ref().and_then(|l| l.provider) {
             Some(pi) => host
                 .borrow()
                 .parts
                 .iter()
                 .find(|(i, _)| *i == pi)
-                .map(|(_, c)| c.clone())?,
-            None => host.clone(),
-        };
-        if !self.has_source(&source) || source.borrow().cursor == Cursor::None {
-            return None;
+                .map(|(_, c)| c.clone()),
+            None => Some(host.clone()),
         }
-        let fields = self.page_rec(&source).borrow().fields.clone();
-        Some((source, fields))
     }
 
     /// Points part `child` (control `control` of `host`) at the host's current row and loads its
@@ -148,7 +184,12 @@ impl Session {
         let engine = self.engine();
         let page = page_of(&engine, host);
         if let (Some(link), true) = (page.controls[control].part_link.as_ref(), self.has_source(child)) {
-            let source = self.link_source(host, control);
+            let source = self.link_page(host, control).and_then(|p| {
+                self.has_source(&p).then(|| {
+                    let t = self.page_rec(&p).borrow().table as usize;
+                    (p, t)
+                })
+            });
             let rec = self.page_rec(child);
             let table = self.table(&rec)?;
             let mut fresh: Vec<FieldFilter> = Vec::new();
@@ -158,24 +199,21 @@ impl Session {
                     ir::LinkEntry::Field(pf, hf) => {
                         fields.push(*pf);
                         let ty = table.fields[*pf].ty.clone();
-                        let host_ty = {
-                            let src_obj = match &source {
-                                Some((s, _)) => s.borrow().object as usize,
-                                None => host.borrow().object as usize,
-                            };
-                            let tbl = engine.program.objects[src_obj].rec_slot.map(|slot| {
-                                match &engine.program.objects[src_obj].globals[slot].ty {
-                                    RtType::Record(t, _) => *t as usize,
-                                    _ => unreachable!("Rec is a record"),
-                                }
-                            });
-                            tbl.and_then(|t| engine.program.objects[t].table.as_ref())
-                                .map(|t| t.fields[*hf].ty.clone())
+                        let Some((src_page, src_table)) = source.as_ref() else {
+                            return unsupported("a SubPageLink to a page without a source table");
                         };
-                        let value = match (&source, host_ty) {
-                            (Some((_, f)), _) => f[*hf].clone(),
-                            (None, Some(t)) => Value::default_for(&t),
-                            (None, None) => return unsupported("a SubPageLink to a host without a source table"),
+                        // The row the link reads, else the type's blank value: a page that shows
+                        // no row links to nothing (corpus testpart/TestPartProviderMove.al:
+                        // ProviderLinkedPart_HostMovesToAnEmptyProvider_ReadsBlank).
+                        let value = if src_page.borrow().cursor == Cursor::None {
+                            let host_ty = engine.program.objects[*src_table]
+                                .table
+                                .as_ref()
+                                .map(|t| t.fields[*hf].ty.clone())
+                                .ok_or_else(|| Signal::Unsupported("a link to a table without a schema".into()))?;
+                            Value::default_for(&host_ty)
+                        } else {
+                            self.page_rec(src_page).borrow().fields[*hf].clone()
                         };
                         let value = ops::convert(value, &ty)?;
                         fresh.push(FieldFilter {

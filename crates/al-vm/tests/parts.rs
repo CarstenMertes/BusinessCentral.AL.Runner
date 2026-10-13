@@ -132,7 +132,7 @@ page 51030 "PT Doc Card"
     {
         area(Content)
         {
-            field(No; Rec."No.") { }
+            field(DocNo; Rec."No.") { }
             field(Descr; Rec.Descr) { }
             part(Lines; "PT Doc Lines") { SubPageLink = "Doc No." = field("No."); }
         }
@@ -160,6 +160,62 @@ page 51041 "PT Info Host"
         }
     }
     var SelectedMode: Text;
+}
+
+page 51042 "PT Seeding Host"
+{
+    PageType = Card;
+    layout { area(Content) { part(Info; "PT Info Part") { } } }
+    trigger OnOpenPage() begin CurrPage.Info.Page.SetTag('SEEDED'); end;
+}
+
+table 51050 "PT Link Row"
+{
+    fields { field(1; "Header No."; Code[20]) { } field(2; "Line No."; Integer) { } field(3; Info; Text[30]) { } field(4; Tag; Code[10]) { } }
+    keys { key(PK; "Header No.", "Line No.") { } }
+}
+page 51050 "PT Link Part"
+{
+    PageType = ListPart;
+    SourceTable = "PT Link Row";
+    layout { area(Content) { repeater(Rows) { field(HeaderNo; Rec."Header No.") { } field(LineNo; Rec."Line No.") { } field(Info; Rec.Info) { } field(Tag; Rec.Tag) { } } } }
+}
+page 51051 "PT Populate Part"
+{
+    PageType = ListPart;
+    SourceTable = "PT Link Row";
+    PopulateAllFields = true;
+    layout { area(Content) { repeater(Rows) { field(HeaderNo; Rec."Header No.") { } field(Tag; Rec.Tag) { } } } }
+}
+page 51052 "PT Link Card"
+{
+    PageType = Card;
+    SourceTable = "PT Header";
+    layout
+    {
+        area(Content)
+        {
+            field(No; Rec."No.") { }
+            part(Keyed; "PT Link Part") { SubPageLink = "Header No." = field("No."), Tag = const('T1'); }
+            part(Multi; "PT Link Part") { SubPageLink = "Header No." = field("No."), Tag = filter(T1 | T2); }
+            part(Populated; "PT Populate Part") { SubPageLink = Tag = const('T1'); }
+            part(RO; "PT Link Part") { SubPageLink = "Header No." = field("No."); Editable = false; }
+        }
+    }
+}
+page 51053 "PT Provider Card"
+{
+    PageType = Card;
+    SourceTable = "PT Header";
+    layout
+    {
+        area(Content)
+        {
+            field(No; Rec."No.") { }
+            part(Lines; "PT Link Part") { SubPageLink = "Header No." = field("No."); }
+            part(Detail; "PT Link Part") { Provider = Lines; SubPageLink = "Line No." = field("Line No."); }
+        }
+    }
 }
 
 table 51010 "PT Header" { fields { field(1; "No."; Code[20]) { } } keys { key(PK; "No.") { } } }
@@ -552,4 +608,187 @@ fn a_host_calls_the_procedures_of_its_part_page() {
         "F",
     );
     assert_eq!(text(r), "Hello/FROM-HOST");
+}
+
+// testfilter/TestTestFilter.al TestFilter_SetFilter_And_GetFilter_RoundTripAFilterExpression and
+// TestFilter_SetFilter_RestrictsTheRowsetAndNotJustTheReportedFilter, on a part (claim 9: a part has
+// its own Filter, independent of its host's).
+#[test]
+fn a_part_filter_restricts_its_own_rowset_and_reads_back() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PT Rank\"; H: TestPage \"PT View Host\"; T: Text; begin
+                {RANKS}
+                H.OpenView();
+                H.Plain.Filter.SetFilter(Rank, '10..20');
+                T := H.Plain.Filter.GetFilter(Rank) + '[' + H.Plain.Filter.GetFilter(Bucket) + ']';
+                if H.Plain.First() then repeat T += H.Plain.Entry.Value() + ','; until not H.Plain.Next();
+                T += '|';
+                if H.Sorted.First() then repeat T += H.Sorted.Entry.Value() + ','; until not H.Sorted.Next();
+                H.Close();
+                exit(T);
+            end;"
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "10..20[]2,4,|3,1,4,");
+}
+
+// handlers/TestPageTempPart_Host.al: the host's OnOpenPage reaches the part page it shows through
+// CurrPage.<Part>.Page, so the part page exists before the host's own triggers run, and the part's
+// OnOpenPage runs after the host's.
+#[test]
+fn a_hosts_on_open_page_can_reach_its_part_page() {
+    let r = run(
+        "procedure F(): Text var H: TestPage \"PT Seeding Host\"; T: Text; begin
+            H.OpenEdit();
+            T := H.Info.Tag.Value();
+            H.Close();
+            exit(T);
+        end;",
+        "F",
+    );
+    // PT Info Part's OnOpenPage sets 'Hello' after the host's OnOpenPage set 'SEEDED'.
+    assert_eq!(text(r), "Hello");
+}
+
+// testpart/TestPartProviderMove.al ProviderLinkedPart_FollowsTheProviderWhenOnlyTheProviderMoves and
+// ProviderLinkedPart_HostMovesToAnEmptyProvider_ReadsBlank (the provider's own row, not the host's).
+#[test]
+fn a_provider_linked_part_follows_the_provider_part() {
+    let r = run(
+        "procedure F(): Text var H: Record \"PT Header\"; L: Record \"PT Link Row\"; C: TestPage \"PT Provider Card\"; T: Text; begin
+            H.\"No.\" := 'H1'; H.Insert(); H.\"No.\" := 'H2'; H.Insert();
+            L.\"Header No.\" := 'H1'; L.\"Line No.\" := 10; L.Info := 'ten'; L.Insert();
+            L.\"Header No.\" := 'H1'; L.\"Line No.\" := 20; L.Info := 'twenty'; L.Insert();
+            L.\"Header No.\" := 'X'; L.\"Line No.\" := 10; L.Info := 'detail10'; L.Insert();
+            L.\"Header No.\" := 'X'; L.\"Line No.\" := 20; L.Info := 'detail20'; L.Insert();
+            C.OpenView(); C.GoToKey('H1');
+            T := C.Detail.Info.Value();
+            C.Lines.Next();
+            T += ',' + C.Detail.Info.Value();
+            C.GoToKey('H2');
+            T += ',[' + C.Detail.Info.Value() + ']';
+            exit(T);
+        end;",
+        "F",
+    );
+    // Detail is linked on "Line No." only, to the Provider's line number (the host has none): the
+    // first row in key order with that line number is H1's.
+    assert_eq!(text(r), "ten,twenty,[]");
+}
+
+// handlers/TestPageSubpagePartFieldLink.al, TestPageSubpagePartConstFilter.al: New() stamps a
+// single-valued link onto key fields only, a multi-valued filter nowhere, and PopulateAllFields
+// lifts the key gate.
+#[test]
+fn new_stamps_single_valued_links_onto_key_fields_only() {
+    let r = run(
+        "procedure F(): Text var H: Record \"PT Header\"; C: TestPage \"PT Link Card\"; T: Text; begin
+            H.\"No.\" := 'H1'; H.Insert();
+            C.OpenEdit(); C.GoToKey('H1');
+            C.Keyed.New();
+            T := C.Keyed.HeaderNo.Value() + '/' + C.Keyed.Tag.Value();
+            C.Multi.New();
+            T += ',' + C.Multi.HeaderNo.Value() + '/' + C.Multi.Tag.Value();
+            C.Populated.New();
+            T += ',' + C.Populated.Tag.Value();
+            C.Close();
+            exit(T);
+        end;",
+        "F",
+    );
+    // Tag is not part of the key: const('T1') is not stamped by New() on Keyed; the multi-valued
+    // filter stamps nothing on Tag; PopulateAllFields stamps it.
+    assert_eq!(text(r), "H1/,H1/,T1");
+}
+
+// What Editable = false on the part control does to the rows is not pinned: writing through it is
+// refused (the corpus pins only that TestPart.Editable() ignores it).
+#[test]
+fn writing_through_a_read_only_part_control_is_refused() {
+    let r = run(
+        "procedure F() var H: Record \"PT Header\"; C: TestPage \"PT Link Card\"; begin
+            H.\"No.\" := 'H1'; H.Insert();
+            C.OpenEdit(); C.GoToKey('H1');
+            C.RO.New();
+        end;",
+        "F",
+    );
+    assert!(matches!(r, Err(Signal::Unsupported(m)) if m.contains("Editable = false")));
+}
+
+// testpart/TestTestPart.al TestPart_GoToKey_*: a missing key answers false when the result is used;
+// the wrong number of key values and a discarded miss raise errors whose text the corpus does not
+// pin, so they are refused.
+#[test]
+fn part_go_to_key_answers_false_and_refuses_what_the_corpus_leaves_open() {
+    let ok = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PT Row\"; H: TestPage \"PT Host\"; T: Text; begin
+                {SEED}
+                H.OpenEdit();
+                T := Format(H.Lines.GoToKey('A', 20)) + Format(H.Lines.GoToKey('A', 999)) + H.Lines.LineNo.Value();
+                H.Close();
+                exit(T);
+            end;"
+        ),
+        "F",
+    );
+    assert_eq!(text(ok), "YesNo20");
+    let arity = run(
+        "procedure F() var H: TestPage \"PT Host\"; begin H.OpenEdit(); H.Lines.GoToKey('A'); end;",
+        "F",
+    );
+    assert!(matches!(arity, Err(Signal::Unsupported(_))));
+    let discarded = run(
+        "procedure F() var H: TestPage \"PT Host\"; begin H.OpenEdit(); H.Lines.GoToKey('A', 999); end;",
+        "F",
+    );
+    assert!(matches!(discarded, Err(Signal::Unsupported(_))));
+}
+
+// testfilter/TestTestFilter.al: Ascending, CurrentKey and SetCurrentKey change the walk of the page.
+#[test]
+fn test_filter_changes_the_key_and_direction_of_the_page() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PT Rank\"; H: TestPage \"PT View Host\"; T: Text; begin
+                {RANKS}
+                H.OpenView();
+                H.Plain.Filter.SetCurrentKey(Rank);
+                T := H.Plain.Filter.CurrentKey() + ':';
+                if H.Plain.First() then repeat T += H.Plain.Entry.Value() + ','; until not H.Plain.Next();
+                H.Plain.Filter.Ascending(false);
+                T += Format(H.Plain.Filter.Ascending()) + ':';
+                if H.Plain.First() then repeat T += H.Plain.Entry.Value() + ','; until not H.Plain.Next();
+                H.Close();
+                exit(T);
+            end;"
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "Rank:2,4,1,3,No:3,1,4,2,");
+}
+
+// handlers/TestPageOpenNewPartLink.al OpenNew_NumberAssignedOnInsert_PartWriteCarriesTheNumber:
+// the parts of a new host row link to it once it is stored.
+#[test]
+fn a_new_hosts_part_follows_the_header_once_it_is_stored() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var D: Record \"PT Doc\"; L: Record \"PT Doc Line\"; C: TestPage \"PT Doc Card\"; begin
+                C.OpenNew();
+                C.DocNo.SetValue('N1');
+                C.Descr.SetValue('header');
+                C.Lines.Descr.SetValue('line');
+                C.Close();
+                L.SetRange(\"Doc No.\", 'N1');
+                L.FindFirst();
+                exit(L.\"Doc No.\" + '/' + L.\"Seen Doc\" + '/' + Format(L.\"Line No.\"));
+            end;"
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "N1/N1/20000");
 }

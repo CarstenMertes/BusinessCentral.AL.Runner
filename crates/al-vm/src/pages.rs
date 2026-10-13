@@ -64,6 +64,7 @@ fn is_true(s: &str) -> bool {
 
 type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
+mod filter;
 mod parts;
 
 impl Session {
@@ -323,7 +324,10 @@ impl Session {
         let moved = match name {
             "First" | "Last" | "Next" | "Previous" | "GoToKey" | "GoToRecord" | "FindFirstField" | "FindNextField"
             | "FindPreviousField" => !matches!(r, Value::Boolean(false)),
-            "New" | "Update" | "SaveRecord" => true,
+            "New" => true,
+            // CurrPage.Update leaves a host's parts as they are: they are not opened again (corpus
+            // handlers/TestPageNoSrcPart_Tests.al:DirectOpen_NoSrcHost_HostWriteIsVisibleThroughTheSameInstance);
+            // whether they read their rows again is docs/probes-needed.md.
             _ => false,
         };
         if moved && st.borrow().open {
@@ -354,6 +358,10 @@ impl Session {
             }
             // The id is a compiler-generated control id; the corpus pins only that a table field
             // number is not one (testpart/TestTestPart.al:TestPart_GetField_TakesAControlIdNotATableFieldNo).
+            "Filter" => {
+                self.require_open(st)?;
+                Ok(self.filter_handle(st))
+            }
             "GetField" => {
                 self.require_open(st)?;
                 match args.first() {
@@ -452,8 +460,24 @@ impl Session {
                 }
                 None => Ok(Value::Boolean(st.borrow().lookup)),
             },
-            "Run" => self.run_page_ui(st, None, false),
-            "RunModal" => self.run_page_ui(st, None, true),
+            // `P.SetRecord(Rec)` hands the page variable the record it shows when it runs (corpus
+            // handlers/TestPageSetRecord.al).
+            "SetRecord" => match args.first() {
+                Some(Value::Record(r)) => {
+                    let copy = Rc::new(RefCell::new(r.borrow().clone()));
+                    st.borrow_mut().set_record = Some(copy);
+                    Ok(Value::Null)
+                }
+                other => unsupported(format!("Page.SetRecord with {other:?}")),
+            },
+            "Run" => {
+                let record = st.borrow().set_record.clone();
+                self.run_page_ui(st, record, false)
+            }
+            "RunModal" => {
+                let record = st.borrow().set_record.clone();
+                self.run_page_ui(st, record, true)
+            }
             "Close" if method.starts_with("Page.") => {
                 self.require_open(st)?;
                 let a = self.close_action(st, "Close");
@@ -610,6 +634,10 @@ impl Session {
             s.editable_off = false;
             s.opening = true;
             s.parts = Vec::new();
+        }
+        if let Err(e) = self.create_parts(st) {
+            self.mark_closed(st);
+            return Err(e);
         }
         let has_source = self.has_source(st);
         // The rowset a page serves from OnFindRecord / OnNextRecord is not modelled: refused rather
@@ -968,7 +996,7 @@ impl Session {
         // current (corpus handlers/TestPagePartDraftLineLink.al:LinkedPart_DraftLine_*,
         // handlers/TestPagePartOnNewRecordCount.al). A top-level list is not pinned.
         if st.borrow().host.is_some() {
-            self.stamp_from_filters(st)?;
+            self.stamp_from_filters(st, true)?;
             self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
             self.page_event(st, "onnewrecordevent", None, Some(true))?;
         }
@@ -993,8 +1021,8 @@ impl Session {
     /// PopulateAllFields; then the table's OnValidate runs for each (corpus
     /// handlers/TestPageSubpagePartFieldLink.al, TestPageSubpagePartConstFilter.al,
     /// TestPageSubpagePartNewRecordInit.al:New_StampsTheLinkedFieldAndValidatesIt).
-    fn stamp_from_filters(&mut self, st: &St) -> Result<(), Signal> {
-        if st.borrow().host.is_none() || !self.has_source(st) {
+    fn stamp_from_filters(&mut self, st: &St, validate: bool) -> Result<(), Signal> {
+        if !self.has_source(st) {
             return Ok(());
         }
         let engine = self.engine();
@@ -1030,8 +1058,10 @@ impl Session {
         }
         for (pos, v) in stamped {
             rec.borrow_mut().fields[pos] = v.clone();
-            self.ret_used = false;
-            self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), v])?;
+            if validate {
+                self.ret_used = false;
+                self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), v])?;
+            }
         }
         Ok(())
     }
@@ -1357,6 +1387,7 @@ impl Session {
                     } else if st.borrow().new_line {
                         // corpus handlers/TestPageNewRowLine_Tests.al: Next() past the last data
                         // row lands on the blank line and answers true.
+                        self.refuse_read_only_part(st, "Next() onto the new-row line")?;
                         self.land_on_new_line(st)?;
                         return Ok(true);
                     } else {
@@ -1635,6 +1666,7 @@ impl Session {
     /// `TestPage.New()` (corpus handlers/TestPageInsertAllowed_Tests.al:70 New_OnInsertAllowedFalsePage_IsDenied,
     /// handlers/TestPageOpenNewAfterGetCurrRecord.al New_OnAnOpenCard_RunsOnAfterGetCurrRecordForTheNewRecord).
     fn new_record(&mut self, st: &St) -> Result<Value, Signal> {
+        self.refuse_read_only_part(st, "New()")?;
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let insert_denied = engine.program.objects[object]
@@ -1763,7 +1795,7 @@ impl Session {
         let table = rec.borrow().table as usize;
         let fresh = self.initial_fields(table);
         rec.borrow_mut().fields = fresh;
-        self.stamp_from_filters(st)?;
+        self.stamp_from_filters(st, true)?;
         let engine = self.engine();
         let page = page_of(&engine, st);
         let first = page.controls.iter().position(|c| c.kind == ir::ControlKind::Field);
@@ -1913,6 +1945,7 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
+        self.refuse_read_only_part(st, "SetValue")?;
         self.activate(st, idx)?;
         // Only an Update() requested by this call's triggers refreshes at its end.
         st.borrow_mut().refresh = false;
@@ -2079,6 +2112,10 @@ impl Session {
                     }
                     other => unsupported(format!("TestAction.{other}")),
                 };
+            }
+            ControlTarget::Filter => {
+                let m = m.to_string();
+                return self.test_filter_op(&m, st, args);
             }
             ControlTarget::BuiltIn(name) if m == "Invoke" => {
                 // OK and Yes confirm, Cancel and No cancel; a refused save keeps the page open

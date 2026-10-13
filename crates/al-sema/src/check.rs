@@ -625,14 +625,15 @@ impl<'a> Checker<'a> {
                             let r = a.text_range();
                             self.types
                                 .insert((sc.file, r.start().into(), r.end().into()), t.clone());
-                            if let (Some(Ty::Record { table, .. }), Some(ti)) = (
-                                &receiver,
-                                receiver.as_ref().and_then(|r| match r {
-                                    Ty::Record { table, .. } => self.resolve(sc, ObjKind::Table, table),
-                                    _ => None,
-                                }),
-                            ) {
-                                let _ = table;
+                            // A `TestPage.Filter` field is a field of the page's source table
+                            // (corpus testfilter/TestTestFilter.al:1-30).
+                            let table_idx = match &receiver {
+                                Some(Ty::Record { table, .. } | Ty::TestFilter(table)) => {
+                                    self.resolve(sc, ObjKind::Table, table)
+                                }
+                                _ => None,
+                            };
+                            if let Some(ti) = table_idx {
                                 if let Some(f) = self.members[ti].field(&name_of(a)) {
                                     let id = f.id;
                                     self.record(sc, a, Res::Field { table: ti, id });

@@ -170,6 +170,8 @@ pub struct PageState {
     /// Primary key of the stored row the cursor stood on when the current new row was started:
     /// the lower neighbour AutoSplitKey numbers it from (`None`: no such row).
     pub lower_key: Option<Vec<Value>>,
+    /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
+    pub set_record: Option<Rc<RefCell<RecordState>>>,
     /// For a part: the page that hosts it and the index of the part control on that page.
     pub host: Option<(std::rc::Weak<RefCell<PageState>>, usize)>,
 }
@@ -213,6 +215,7 @@ impl PageState {
             editable_off: false,
             parts: Vec::new(),
             lower_key: None,
+            set_record: None,
             host: None,
         }
     }

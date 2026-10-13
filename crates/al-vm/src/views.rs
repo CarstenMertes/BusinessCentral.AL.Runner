@@ -40,7 +40,7 @@ impl Session {
         self.message_value(v)
     }
 
-    fn filter_text(&self, e: &FilterExpr) -> Result<String, Signal> {
+    pub(crate) fn filter_text(&self, e: &FilterExpr) -> Result<String, Signal> {
         Ok(match e {
             FilterExpr::Range(Some(a), Some(b)) => {
                 if al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal) {

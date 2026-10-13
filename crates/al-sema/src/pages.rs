@@ -311,11 +311,13 @@ impl Tree {
             "group" if in_actions => K::ActionGroup,
             "group" => K::Group,
             "repeater" => K::Repeater,
-            "action" => K::Action,
+            // An actionref is a control that delegates to its action (corpus
+            // handlers/TestPageActionRunObject_Tests.al:ActionrefToARunObjectActionOpensTheSameTarget,
+            // handlers/TestPagePromotedActionref_Tests.al).
+            "action" | "actionref" => K::Action,
             "systemaction" => K::SystemAction,
             "part" => K::Part,
-            "actionref" => K::ActionRef,
-            // Separators carry no behaviour of their own.
+            // A separator carries no behaviour of its own.
             "separator" => return,
             other => {
                 self.reasons
@@ -550,6 +552,69 @@ fn unquote_name(s: &str) -> String {
         .to_string()
 }
 
+/// `'H1'|'H3'` → `H1|H3`: the AL string literals of a `filter(...)` or `const(...)` value
+/// without their quotes (`''` is a quote inside a literal); text outside quotes is kept.
+fn unquote_literals(inner: &str) -> String {
+    let mut out = String::new();
+    let mut chars = inner.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\'' {
+            out.push(c);
+            continue;
+        }
+        while let Some(d) = chars.next() {
+            if d == '\'' {
+                if chars.peek() == Some(&'\'') {
+                    chars.next();
+                    out.push('\'');
+                } else {
+                    break;
+                }
+            } else {
+                out.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// `RunPageLink` has the shape of `SubPageLink`; the errors say which one it was.
+pub fn parse_run_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String> {
+    parse_sub_page_link(text).map_err(|e| e.replace("SubPageLink", "RunPageLink"))
+}
+
+/// The value of a `RunObject` property: `Page "My Page"`, `Codeunit 80`, `Report Microsoft.Sales."X"`.
+/// The object kind and the (possibly qualified) name or id, as parts.
+pub fn parse_run_object(text: &str) -> Result<(al_ir::RunKind, Vec<String>), String> {
+    let text = text.trim();
+    let (word, rest) = text
+        .split_once(char::is_whitespace)
+        .ok_or_else(|| format!("RunObject `{text}`"))?;
+    let kind = match word.to_ascii_lowercase().as_str() {
+        "page" => al_ir::RunKind::Page,
+        "codeunit" => al_ir::RunKind::Codeunit,
+        "report" => al_ir::RunKind::Report,
+        "xmlport" => al_ir::RunKind::XmlPort,
+        "query" => al_ir::RunKind::Query,
+        _ => return Err(format!("RunObject `{text}`")),
+    };
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in rest.trim().chars() {
+        match (quoted, c) {
+            (_, '"') => quoted = !quoted,
+            (false, '.') => parts.push(std::mem::take(&mut cur)),
+            (_, c) => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    if parts.iter().any(|p| p.trim().is_empty()) {
+        return Err(format!("RunObject `{text}`"));
+    }
+    Ok((kind, parts.into_iter().map(|p| p.trim().to_string()).collect()))
+}
+
 /// Parses the value of a `SubPageLink` property: `A = field(B), C = const(x), D = filter(y | z)`.
 /// `Err` names the part it does not understand.
 pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String> {
@@ -591,10 +656,8 @@ pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String>
                     .or_else(|| inner.strip_prefix("database::"))
                 {
                     LinkRhs::TableId(unquote_name(t))
-                } else if inner.starts_with('\'') && inner.ends_with('\'') && inner.len() >= 2 {
-                    LinkRhs::Filter(inner[1..inner.len() - 1].replace("''", "'"))
                 } else {
-                    LinkRhs::Filter(inner.to_string())
+                    LinkRhs::Filter(unquote_literals(inner))
                 }
             }
             other => return Err(format!("SubPageLink with {other}(...)")),
@@ -762,7 +825,8 @@ mod tests {
         let base = "page 50100 P { actions { area(Processing) { action(Act) { } } area(Promoted) { actionref(Act_Promoted; Act) { } } } }";
         let l = merged(base, &[]);
         assert_eq!(names(&l), ["Act", "Act_Promoted"]);
-        assert_eq!(l.controls[1].kind, al_ir::ControlKind::ActionRef);
+        assert_eq!(l.controls[1].kind, al_ir::ControlKind::Action);
+        assert!(l.controls[1].section.name().eq_ignore_ascii_case("actionref"));
         assert_eq!(l.controls[1].section.args(), ["Act_Promoted", "Act"]);
     }
 
@@ -796,5 +860,47 @@ mod tests {
             ]
         );
         assert!(parse_sub_page_link("A = bogus(B)").is_err());
+    }
+
+    // Corpus handlers/TestPageActionRunPageLink.al:ActionRunPageLink_Filter_AppliesTheFilterExpression:
+    // `filter('H1' | 'H3')` selects both values.
+    #[test]
+    fn quoted_literals_in_a_filter_lose_their_quotes_one_by_one() {
+        let got = parse_run_page_link("\"Head No.\" = filter('H1' | 'H3'), B = const('it''s')").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                ("Head No.".to_string(), LinkRhs::Filter("H1 | H3".into())),
+                ("B".to_string(), LinkRhs::Filter("it's".into())),
+            ]
+        );
+        assert!(
+            parse_run_page_link("A = bogus(B)")
+                .unwrap_err()
+                .starts_with("RunPageLink")
+        );
+    }
+
+    // Corpus handlers/TestPageActionRunObject_Objects.al: `RunObject = Page "TPARO Card Target"`.
+    #[test]
+    fn run_object_names_a_kind_and_an_object() {
+        use al_ir::RunKind;
+        assert_eq!(
+            parse_run_object("Page \"TPARO Card Target\"").unwrap(),
+            (RunKind::Page, vec!["TPARO Card Target".to_string()])
+        );
+        assert_eq!(
+            parse_run_object("codeunit 80").unwrap(),
+            (RunKind::Codeunit, vec!["80".to_string()])
+        );
+        assert_eq!(
+            parse_run_object("Report Microsoft.Sales.\"Sales. Report\"").unwrap(),
+            (
+                RunKind::Report,
+                vec!["Microsoft".into(), "Sales".into(), "Sales. Report".into()]
+            )
+        );
+        assert!(parse_run_object("Table 18").is_err());
+        assert!(parse_run_object("Page").is_err());
     }
 }

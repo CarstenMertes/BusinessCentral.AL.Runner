@@ -1,0 +1,636 @@
+//! Report objects: the dataset walk, the properties and triggers the runtime understands, and the
+//! IR it is lowered to.
+//!
+//! The runtime runs only processing: no layout, no request page, no output. Every property,
+//! trigger or section it does not understand becomes a reason on the report, so a variable of
+//! that report is refused statically (hard rule 4) instead of running with a guessed behaviour.
+
+use crate::members::Members;
+use crate::workspace::{ObjKind, Resolution, Workspace};
+use al_ir as ir;
+use al_syntax::ast;
+use std::collections::HashMap;
+
+/// Report properties that change nothing a processing run can observe.
+const INERT_OBJECT_PROPERTIES: &[&str] = &[
+    "caption",
+    "captionml",
+    "usagecategory",
+    "applicationarea",
+    "permissions",
+    "tooltip",
+    "tooltipml",
+    "description",
+];
+
+/// Data item properties that change nothing a processing run can observe: they steer the request
+/// page and the layout, which a run without both never reaches.
+const INERT_ITEM_PROPERTIES: &[&str] = &[
+    "requestfilterfields",
+    "requestfilterheading",
+    "requestfilterheadingml",
+    "printonlyifdetail",
+    "newpagepergroup",
+    "newpageperrecord",
+];
+
+/// Sections that only matter to a layout or a request page.
+const LAYOUT_SECTIONS: &[&str] = &["rendering", "labels", "wordlayout", "rdlclayout", "excellayout"];
+
+/// A data item before its names are resolved.
+pub struct RawItem {
+    pub name: String,
+    pub table: String,
+    pub parent: Option<usize>,
+    /// For a top-level item of a reportextension: the name of the item it is added under.
+    pub target: Option<String>,
+    pub section: ast::Section,
+}
+
+pub struct Layout {
+    pub items: Vec<RawItem>,
+    pub processing_only: bool,
+    pub use_request_page: Option<bool>,
+    pub has_request_page: bool,
+    pub transaction_type: Option<String>,
+    pub reasons: Vec<String>,
+}
+
+fn bool_prop(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" => Some(true),
+        "false" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+fn unquote(s: &str) -> String {
+    let t = s.trim();
+    if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+        return inner.to_string();
+    }
+    t.to_string()
+}
+
+/// Walks the `dataset` section of report `obj` and checks the object's own properties.
+pub fn layout(obj: &ast::Object) -> Layout {
+    let mut out = Layout {
+        items: Vec::new(),
+        processing_only: false,
+        use_request_page: None,
+        has_request_page: false,
+        transaction_type: None,
+        reasons: Vec::new(),
+    };
+    for p in obj.properties() {
+        let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
+        match name.as_str() {
+            "processingonly" => match bool_prop(&value) {
+                Some(b) => out.processing_only = b,
+                None => out
+                    .reasons
+                    .push(format!("ProcessingOnly = {} is not understood", value.trim())),
+            },
+            "userequestpage" => match bool_prop(&value) {
+                Some(b) => out.use_request_page = Some(b),
+                None => out
+                    .reasons
+                    .push(format!("UseRequestPage = {} is not understood", value.trim())),
+            },
+            "transactiontype" => out.transaction_type = Some(value.trim().to_ascii_lowercase()),
+            n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
+            "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" => out
+                .reasons
+                .push(format!("report property {name} (a layout) is not supported yet")),
+            other => out
+                .reasons
+                .push(format!("report property {other} is not supported yet")),
+        }
+    }
+    for t in obj.triggers() {
+        let n = t.name().to_ascii_lowercase();
+        if !["oninitreport", "onprereport", "onpostreport"].contains(&n.as_str()) {
+            out.reasons.push(format!("report trigger {n} is not supported yet"));
+        }
+    }
+    for top in obj.sections() {
+        match top.name().to_ascii_lowercase().as_str() {
+            "dataset" => visit(&top, None, None, &mut out.items, &mut out.reasons),
+            "requestpage" => out.has_request_page = true,
+            n if LAYOUT_SECTIONS.contains(&n) => out
+                .reasons
+                .push(format!("report section {n} (a layout) is not supported yet")),
+            other => out.reasons.push(format!("report section {other} is not supported yet")),
+        }
+    }
+    if !out.processing_only {
+        out.reasons
+            .push("the report is not ProcessingOnly, so running it renders output".into());
+    }
+    out
+}
+
+/// The data items under `section` (a `dataset`, a `dataitem` or an extension's `addlast`), nested
+/// ones with `parent` set. `target` names the item a reportextension adds the top-level ones under.
+fn visit(
+    section: &ast::Section,
+    parent: Option<usize>,
+    target: Option<&str>,
+    items: &mut Vec<RawItem>,
+    reasons: &mut Vec<String>,
+) {
+    for s in section.sections() {
+        let section_name = s.name().to_ascii_lowercase();
+        match section_name.as_str() {
+            "dataitem" => {}
+            // Columns only feed the layout and the dataset a SaveAs writes.
+            "column" if parent.is_some() || target.is_some() => continue,
+            other => {
+                reasons.push(format!("dataset element {other} is not supported yet"));
+                continue;
+            }
+        }
+        let args = s.args();
+        let name = args.first().cloned().unwrap_or_default();
+        let table = args.get(1).cloned().unwrap_or_default();
+        for p in s.properties() {
+            let pn = p.name().to_ascii_lowercase();
+            if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
+                && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
+            {
+                reasons.push(format!("property {pn} of dataitem {name} is not supported yet"));
+            }
+        }
+        for t in s.triggers() {
+            let tn = t.name().to_ascii_lowercase();
+            if !["onpredataitem", "onaftergetrecord", "onpostdataitem"].contains(&tn.as_str()) {
+                reasons.push(format!("trigger {tn} of dataitem {name} is not supported yet"));
+            }
+        }
+        if items.iter().any(|i| i.name.eq_ignore_ascii_case(&name)) {
+            reasons.push(format!("dataitem {name} is declared twice"));
+        }
+        let idx = items.len();
+        items.push(RawItem {
+            name,
+            table,
+            parent,
+            target: if parent.is_none() {
+                target.map(String::from)
+            } else {
+                None
+            },
+            section: s.clone(),
+        });
+        visit(&s, Some(idx), None, items, reasons);
+    }
+}
+
+/// The dataset changes and report triggers of a reportextension.
+pub struct ExtLayout {
+    /// `modify(Item)` blocks: the item's name and the block.
+    pub modifies: Vec<(String, ast::Section)>,
+    /// The data items added with `addlast`, with `target` naming the item above them.
+    pub items: Vec<RawItem>,
+    pub reasons: Vec<String>,
+}
+
+/// Walks reportextension `obj`. Only what the corpus pins is understood
+/// (reportextension/TestReportExtensionTriggers.al): `OnPreReport` and `OnPostReport`,
+/// `modify(Item)` with its two triggers, `add(Item)` of columns, and `addlast(Item)` of data items.
+pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
+    let mut out = ExtLayout {
+        modifies: Vec::new(),
+        items: Vec::new(),
+        reasons: Vec::new(),
+    };
+    for p in obj.properties() {
+        let name = p.name().to_ascii_lowercase();
+        if !INERT_OBJECT_PROPERTIES.contains(&name.as_str()) {
+            out.reasons
+                .push(format!("reportextension property {name} is not supported yet"));
+        }
+    }
+    // A procedure could be called through a variable of the base report, which the checker
+    // does not resolve (the extension's procedures are not merged into the report's members).
+    if obj.routines().next().is_some() {
+        out.reasons
+            .push("a reportextension that declares procedures is not supported yet".into());
+    }
+    for t in obj.triggers() {
+        let n = t.name().to_ascii_lowercase();
+        if !["onprereport", "onpostreport"].contains(&n.as_str()) {
+            out.reasons
+                .push(format!("reportextension trigger {n} is not supported yet"));
+        }
+    }
+    for top in obj.sections() {
+        match top.name().to_ascii_lowercase().as_str() {
+            "dataset" => {
+                for s in top.sections() {
+                    let kind = s.name().to_ascii_lowercase();
+                    let target = s.args().first().cloned().unwrap_or_default();
+                    match kind.as_str() {
+                        "modify" => {
+                            for p in s.properties() {
+                                out.reasons.push(format!(
+                                    "property {} of modify({target}) is not supported yet",
+                                    p.name().to_ascii_lowercase()
+                                ));
+                            }
+                            for t in s.triggers() {
+                                let tn = t.name().to_ascii_lowercase();
+                                if !["onbeforeaftergetrecord", "onafteraftergetrecord"].contains(&tn.as_str()) {
+                                    out.reasons
+                                        .push(format!("trigger {tn} of modify({target}) is not supported yet"));
+                                }
+                            }
+                            out.modifies.push((target, s.clone()));
+                        }
+                        // Columns only feed the layout and the dataset a SaveAs writes.
+                        "add" if s.sections().all(|c| c.name().eq_ignore_ascii_case("column")) => {}
+                        "addlast" => {
+                            if s.properties().next().is_some() || s.triggers().next().is_some() {
+                                out.reasons.push(format!(
+                                    "addlast({target}) with properties or triggers is not supported yet"
+                                ));
+                            }
+                            visit(&s, None, Some(&target), &mut out.items, &mut out.reasons);
+                        }
+                        other => out.reasons.push(format!(
+                            "reportextension dataset element {other}({target}) is not supported yet"
+                        )),
+                    }
+                }
+            }
+            "requestpage" => {}
+            other => out
+                .reasons
+                .push(format!("reportextension section {other} is not supported yet")),
+        }
+    }
+    out
+}
+
+fn split_top(text: &str, sep: char) -> Vec<String> {
+    let (mut out, mut cur, mut quoted, mut depth) = (Vec::new(), String::new(), false, 0);
+    for c in text.chars() {
+        match c {
+            '"' => quoted = !quoted,
+            '(' if !quoted => depth += 1,
+            ')' if !quoted => depth -= 1,
+            c if c == sep && !quoted && depth == 0 => {
+                out.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(c);
+    }
+    out.push(cur);
+    out
+}
+
+/// Everything `build` needs to know about the report being lowered.
+pub struct Context<'a> {
+    pub ws: &'a Workspace,
+    pub members: &'a [Members],
+    pub file: usize,
+    pub oi: usize,
+    pub layout: &'a Layout,
+    /// The global slot of each data item's record, by lower-case name.
+    pub slots: &'a HashMap<String, usize>,
+    pub request_flag_slot: usize,
+    /// (object, source offset) to routine index.
+    pub routine_at: &'a HashMap<(usize, usize), usize>,
+    /// Reportextensions that change what a run does: why the report cannot run yet.
+    pub extension_reasons: Vec<String>,
+    /// The one reportextension (object index) that changes what a run does.
+    pub extension: Option<usize>,
+}
+
+fn table_object(ws: &Workspace, file: usize, name: &str) -> Option<usize> {
+    match ws.resolve_ref(file, ObjKind::Table, &crate::types::qualified_parts(name)) {
+        Resolution::Found(t) => Some(t),
+        _ => None,
+    }
+}
+
+/// What lowering needs to know about the object that declares the data items.
+struct Owner<'a> {
+    ws: &'a Workspace,
+    members: &'a [Members],
+    file: usize,
+    oi: usize,
+    routine_at: &'a HashMap<(usize, usize), usize>,
+}
+
+/// The IR of one data item. `parent_table` is the table of the item it is nested under.
+fn item_ir(
+    o: &Owner,
+    raw: &RawItem,
+    slot: Option<usize>,
+    parent: Option<usize>,
+    parent_table: Option<usize>,
+    reasons: &mut Vec<String>,
+) -> ir::ReportItem {
+    let sec = &raw.section;
+    let trigger = |name: &str| {
+        sec.triggers()
+            .find(|t| t.name().eq_ignore_ascii_case(name))
+            .and_then(|t| o.routine_at.get(&(o.oi, usize::from(t.syntax().text_range().start()))))
+            .copied()
+    };
+    let table = table_object(o.ws, o.file, &raw.table);
+    if slot.is_none() || table.is_none() {
+        reasons.push(format!(
+            "dataitem {}: table {} is outside the workspace",
+            raw.name, raw.table
+        ));
+    }
+    let prop = |n: &str| {
+        sec.properties()
+            .find(|p| p.name().eq_ignore_ascii_case(n))
+            .map(|p| p.value_text())
+    };
+    let mut link = Vec::new();
+    if let Some(text) = prop("DataItemLink") {
+        match parent_table.zip(table) {
+            None => reasons.push(format!(
+                "dataitem {}: DataItemLink needs an enclosing data item",
+                raw.name
+            )),
+            Some((parent_table, own_table)) => {
+                for pair in split_top(&text, ',') {
+                    let parts = split_top(&pair, '=');
+                    let own = parts.first().map(|p| unquote(p));
+                    let other = parts.get(1).map(|p| p.trim()).and_then(|p| {
+                        let low = p.to_ascii_lowercase();
+                        (low.starts_with("field(") && p.ends_with(')')).then(|| unquote(&p[6..p.len() - 1]))
+                    });
+                    let own_pos = own.as_ref().and_then(|n| {
+                        o.members[own_table]
+                            .fields
+                            .iter()
+                            .position(|x| x.name.eq_ignore_ascii_case(n))
+                    });
+                    let other_pos = other.as_ref().and_then(|n| {
+                        o.members[parent_table]
+                            .fields
+                            .iter()
+                            .position(|x| x.name.eq_ignore_ascii_case(n))
+                    });
+                    match (own_pos, other_pos) {
+                        (Some(a), Some(b)) => link.push((a, b)),
+                        _ => reasons.push(format!(
+                            "dataitem {}: DataItemLink entry `{}` is not understood",
+                            raw.name,
+                            pair.trim()
+                        )),
+                    }
+                }
+            }
+        }
+    }
+    ir::ReportItem {
+        name: raw.name.clone(),
+        parent,
+        slot,
+        table,
+        view: prop("DataItemTableView"),
+        link,
+        on_pre: trigger("OnPreDataItem"),
+        on_after_get: trigger("OnAfterGetRecord"),
+        on_post: trigger("OnPostDataItem"),
+    }
+}
+
+fn object_trigger(o: &Owner, obj: &ast::Object, name: &str) -> Option<usize> {
+    obj.triggers()
+        .find(|t| t.name().eq_ignore_ascii_case(name))
+        .and_then(|t| o.routine_at.get(&(o.oi, usize::from(t.syntax().text_range().start()))))
+        .copied()
+}
+
+/// The IR of report `cx.oi`. `reasons` are what the lowering of the item variables found.
+pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::Report {
+    let layout = cx.layout;
+    let o = Owner {
+        ws: cx.ws,
+        members: cx.members,
+        file: cx.file,
+        oi: cx.oi,
+        routine_at: cx.routine_at,
+    };
+    let mut items: Vec<ir::ReportItem> = Vec::new();
+    for raw in &layout.items {
+        let slot = cx.slots.get(&raw.name.to_lowercase()).copied();
+        let parent_table = raw.parent.and_then(|p| items.get(p).and_then(|i| i.table));
+        let item = item_ir(&o, raw, slot, raw.parent, parent_table, &mut reasons);
+        items.push(item);
+    }
+    reasons.extend(layout.reasons.iter().cloned());
+    reasons.extend(cx.extension_reasons.iter().cloned());
+    ir::Report {
+        processing_only: layout.processing_only,
+        use_request_page: layout.use_request_page,
+        has_request_page: layout.has_request_page,
+        transaction_type: layout.transaction_type.clone(),
+        items,
+        on_init: object_trigger(&o, obj, "OnInitReport"),
+        on_pre: object_trigger(&o, obj, "OnPreReport"),
+        on_post: object_trigger(&o, obj, "OnPostReport"),
+        extension: cx.extension,
+        request_flag_slot: cx.request_flag_slot,
+        unsupported: reasons,
+    }
+}
+
+/// Everything `build_ext` needs to know about the reportextension being lowered.
+pub struct ExtContext<'a> {
+    pub ws: &'a Workspace,
+    pub members: &'a [Members],
+    pub file: usize,
+    pub oi: usize,
+    pub base: usize,
+    pub base_layout: &'a Layout,
+    /// The extended report's IR (its items' tables).
+    pub base_items: &'a [ir::ReportItem],
+    pub layout: &'a ExtLayout,
+    pub routine_at: &'a HashMap<(usize, usize), usize>,
+}
+
+/// The slot of base item `i` in the extension's globals: the extension names the base items'
+/// records first, then its own items (`ExtContext::base_items.len() + j`).
+pub fn alias_slot(i: usize) -> usize {
+    i
+}
+
+/// The IR of the reportextension `cx.oi`, and why it cannot run if it cannot.
+pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<String>) {
+    let o = Owner {
+        ws: cx.ws,
+        members: cx.members,
+        file: cx.file,
+        oi: cx.oi,
+        routine_at: cx.routine_at,
+    };
+    let mut reasons = cx.layout.reasons.clone();
+    let base_index = |name: &str| {
+        cx.base_layout
+            .items
+            .iter()
+            .position(|i| i.name.eq_ignore_ascii_case(name))
+    };
+    let n = cx.base_items.len();
+    let mut modifies = Vec::new();
+    for (name, sec) in &cx.layout.modifies {
+        let trigger = |t: &str| {
+            sec.triggers()
+                .find(|x| x.name().eq_ignore_ascii_case(t))
+                .and_then(|x| {
+                    cx.routine_at
+                        .get(&(cx.oi, usize::from(x.syntax().text_range().start())))
+                })
+                .copied()
+        };
+        match base_index(name) {
+            Some(item) => modifies.push(ir::ReportExtModify {
+                item,
+                before: trigger("OnBeforeAfterGetRecord"),
+                after: trigger("OnAfterAfterGetRecord"),
+            }),
+            None => reasons.push(format!("modify({name}): the report has no such data item")),
+        }
+    }
+    if modifies
+        .iter()
+        .enumerate()
+        .any(|(i, m)| modifies[..i].iter().any(|x| x.item == m.item))
+    {
+        reasons.push("two modify blocks for one data item (their order is not pinned)".into());
+    }
+    let mut added: Vec<ir::AddedItem> = Vec::new();
+    for (j, raw) in cx.layout.items.iter().enumerate() {
+        let mut base_parent = None;
+        let mut parent = raw.parent;
+        let parent_table = if let Some(target) = &raw.target {
+            if let Some(i) = base_index(target) {
+                base_parent = Some(i);
+                cx.base_items[i].table
+            } else if let Some(k) = cx.layout.items[..j]
+                .iter()
+                .position(|x| x.name.eq_ignore_ascii_case(target))
+            {
+                parent = Some(k);
+                added[k].item.table
+            } else {
+                reasons.push(format!(
+                    "addlast({target}): the report has no such data item (an item added by another extension is not supported)"
+                ));
+                None
+            }
+        } else {
+            raw.parent.and_then(|p| added.get(p).and_then(|a| a.item.table))
+        };
+        let item = item_ir(&o, raw, Some(n + j), parent, parent_table, &mut reasons);
+        added.push(ir::AddedItem { item, base_parent });
+    }
+    let aliases = (0..n)
+        .filter(|&i| cx.base_items[i].slot.is_some())
+        .map(|i| (i, alias_slot(i)))
+        .collect();
+    (
+        ir::ReportExt {
+            base: cx.base,
+            on_pre: object_trigger(&o, obj, "OnPreReport"),
+            on_post: object_trigger(&o, obj, "OnPostReport"),
+            aliases,
+            modifies,
+            added,
+        },
+        reasons,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layout_of(src: &str) -> Layout {
+        let parse = al_syntax::parse(src, &Default::default());
+        let root = ast::SourceFile::cast(parse.syntax()).unwrap();
+        layout(&root.objects().next().unwrap())
+    }
+
+    #[test]
+    fn the_dataset_is_walked_in_source_order_with_parents() {
+        let l = layout_of(
+            "report 1 R { ProcessingOnly = true; UseRequestPage = false; dataset { dataitem(A; Cust) { column(X; No) { } dataitem(B; Ledger) { DataItemLink = No = field(No); } } dataitem(C; Cust) { } } }",
+        );
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        let names: Vec<_> = l.items.iter().map(|i| (i.name.as_str(), i.parent)).collect();
+        assert_eq!(names, vec![("A", None), ("B", Some(0)), ("C", None)]);
+        assert!(l.processing_only);
+        assert_eq!(l.use_request_page, Some(false));
+    }
+
+    #[test]
+    fn what_the_corpus_does_not_pin_becomes_a_reason() {
+        let l = layout_of(
+            "report 1 R { ProcessingOnly = true; DefaultLayout = Word; dataset { dataitem(A; Cust) { CalcFields = Amount; trigger OnFoo() begin end; } } rendering { } }",
+        );
+        let all = l.reasons.join("; ");
+        assert!(all.contains("defaultlayout"), "{all}");
+        assert!(all.contains("property calcfields"), "{all}");
+        assert!(all.contains("trigger onfoo"), "{all}");
+        assert!(all.contains("section rendering"), "{all}");
+    }
+
+    #[test]
+    fn a_report_that_is_not_processing_only_renders_output() {
+        let l = layout_of("report 1 R { dataset { dataitem(A; Cust) { } } }");
+        assert!(l.reasons.join(";").contains("ProcessingOnly"), "{:?}", l.reasons);
+    }
+
+    #[test]
+    fn the_request_page_is_noted_not_walked() {
+        let l = layout_of("report 1 R { ProcessingOnly = true; requestpage { layout { } } }");
+        assert!(l.has_request_page);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+    }
+
+    fn ext_layout_of(src: &str) -> ExtLayout {
+        let parse = al_syntax::parse(src, &Default::default());
+        let root = ast::SourceFile::cast(parse.syntax()).unwrap();
+        ext_layout(&root.objects().next().unwrap())
+    }
+
+    #[test]
+    fn an_extension_walk_finds_modify_blocks_and_added_items_with_their_targets() {
+        let l = ext_layout_of(
+            "reportextension 1 E extends R { dataset { modify(A) { trigger OnBeforeAfterGetRecord() begin end; } add(A) { column(X; No) { } } addlast(A) { dataitem(B; Ledger) { dataitem(C; Ledger) { } } } } trigger OnPreReport() begin end; }",
+        );
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(l.modifies.len(), 1);
+        let items: Vec<_> = l
+            .items
+            .iter()
+            .map(|i| (i.name.as_str(), i.parent, i.target.as_deref()))
+            .collect();
+        assert_eq!(items, vec![("B", None, Some("A")), ("C", Some(0), None)]);
+    }
+
+    #[test]
+    fn what_an_extension_may_not_do_becomes_a_reason() {
+        let l = ext_layout_of(
+            "reportextension 1 E extends R { dataset { addfirst(A) { dataitem(B; Ledger) { } } modify(A) { Caption = 'x'; trigger OnFoo() begin end; } } procedure P() begin end; trigger OnInitReport() begin end; }",
+        );
+        let all = l.reasons.join("; ");
+        assert!(all.contains("addfirst(A)"), "{all}");
+        assert!(all.contains("property caption of modify(A)"), "{all}");
+        assert!(all.contains("trigger onfoo"), "{all}");
+        assert!(all.contains("procedures"), "{all}");
+        assert!(all.contains("trigger oninitreport"), "{all}");
+    }
+}

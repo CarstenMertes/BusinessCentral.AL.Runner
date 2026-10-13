@@ -63,6 +63,12 @@ needs more.
   stream slots, then its declared variables; the schema is `Object::xmlport`.
   A variable is a codeunit-like instance. `Import` and `Export` run in
   `al-vm/src/xmlports.rs` over the document tree of `al-builtins/src/xmlport.rs`.
+- **Reports.** A report lowers to an object whose first globals are its data item
+  records (source order), then a hidden request-page flag, then its declared
+  variables; the dataset is `Object::report`. A variable is a codeunit-like
+  instance and its first use runs `OnInitReport`. `Run`, `RunModal`, `Execute`
+  and `SetTableView` run in `al-vm/src/reports.rs`: processing only, with no
+  request page, layout or output (those are refused).
 - **Culture.** Fixed en-US, which matches the oracle.
 
 ## Budgets (tests, run in CI in release)

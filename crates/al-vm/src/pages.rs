@@ -67,6 +67,7 @@ type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 mod areas;
 mod filter;
 mod parts;
+mod runobject;
 
 impl Session {
     /// `TP.Ctl`: a handle on control `control` of the test page `page`.
@@ -122,17 +123,27 @@ impl Session {
         let object = st.borrow().object as usize;
         let page = page_of(&engine, st);
         let mut answer = None;
+        let mut result = Ok(());
         if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {
             let inst = st.borrow().instance.clone().expect("open page");
-            answer = Some(self.call(object, r, inst, args.clone())?.0);
-        }
-        for (n, e, r) in &page.ext_triggers {
-            if n == name {
-                let inst = self.owner_instance(st, Some(*e));
-                self.call(*e, *r, inst, args.clone())?;
+            match self.call(object, r, inst, args.clone()) {
+                Ok((v, _)) => answer = Some(v),
+                Err(e) => result = Err(e),
             }
         }
-        Ok(answer)
+        if result.is_ok() {
+            for (n, e, r) in &page.ext_triggers {
+                if n == name {
+                    let inst = self.owner_instance(st, Some(*e));
+                    if let Err(err) = self.call(*e, *r, inst, args.clone()) {
+                        result = Err(err);
+                        break;
+                    }
+                }
+            }
+        }
+        self.end_page_call(st);
+        result.map(|()| answer)
     }
 
     /// The instance that runs the code of `owner`: the page itself, or one of its extensions.
@@ -146,6 +157,20 @@ impl Session {
                 .find(|(o, _)| *o == e)
                 .map(|(_, i)| i.clone())
                 .expect("an extension of the page has an instance"),
+        }
+    }
+
+    /// A page-driven call ends: the client takes the page's view back, which carries the key and
+    /// `Ascending` but not a per-field `SetAscending` (corpus handlers/TestPageViewRoundTripRoutes.al,
+    /// Action_SetAscending_ReadInTheSameTrigger_IsDescending against ..._ReadByALaterAction).
+    fn end_page_call(&mut self, st: &St) {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        if engine.program.objects[object].rec_slot.is_none() {
+            return;
+        }
+        if st.borrow().instance.is_some() {
+            self.page_rec(st).borrow_mut().field_descending = false;
         }
     }
 
@@ -262,7 +287,9 @@ impl Session {
     fn owner_routine(&mut self, st: &St, owner: Option<usize>, r: usize) -> Result<Value, Signal> {
         let object = owner.unwrap_or(st.borrow().object as usize);
         let inst = self.owner_instance(st, owner);
-        self.call(object, r, inst, vec![]).map(|(v, _)| v)
+        let result = self.call(object, r, inst, vec![]).map(|(v, _)| v);
+        self.end_page_call(st);
+        result
     }
 
     /// Calls routine `r` written in control `idx`: in the extension that declares the control, else the page.
@@ -1361,8 +1388,14 @@ impl Session {
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
         for i in 0..Self::WINDOW {
-            keys.push(self.row_key(&rec)?);
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
             self.populate_current(st)?;
+            keys.push(al_builtins::value::WindowRow {
+                key,
+                stored,
+                shown: rec.borrow().fields.clone(),
+            });
             if i + 1 == Self::WINDOW {
                 break;
             }
@@ -1377,19 +1410,26 @@ impl Session {
         // Back on the row the cursor is on.
         self.ret_used = true;
         self.record_op("Get", &rec, &mut start.clone())?;
+        // The row buffer the page keeps for the row it stands on is what OnAfterGetRecord left.
+        if let Some(row) = keys.first() {
+            rec.borrow_mut().fields = row.shown.clone();
+            self.set_xrec_fields(st, row.stored.clone());
+        }
         st.borrow_mut().window = keys;
         Ok(())
     }
 
     fn in_window(&self, st: &St, key: &[Value]) -> bool {
-        st.borrow().window.iter().any(|k| {
-            k.len() == key.len()
-                && k.iter().zip(key).all(|(a, b)| {
-                    ops::compare(a, b)
-                        .map(|o| o == std::cmp::Ordering::Equal)
-                        .unwrap_or(false)
-                })
-        })
+        st.borrow().window.iter().any(|k| Self::same_key(&k.key, key))
+    }
+
+    fn same_key(a: &[Value], b: &[Value]) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(a, b)| {
+                ops::compare(a, b)
+                    .map(|o| o == std::cmp::Ordering::Equal)
+                    .unwrap_or(false)
+            })
     }
 
     /// The cursor has landed on a stored row: populate it as the page type does, then
@@ -1402,6 +1442,24 @@ impl Session {
             let key = self.row_key(&self.page_rec(st))?;
             if !self.in_window(st, &key) {
                 self.populate_window(st)?;
+            } else {
+                // A row of the window shows the buffer OnAfterGetRecord left, as long as the stored
+                // row is still the one that buffer was made from.
+                let rec = self.page_rec(st);
+                let row = st
+                    .borrow()
+                    .window
+                    .iter()
+                    .find(|w| Self::same_key(&w.key, &key))
+                    .filter(|w| Self::same_values(&w.stored, &rec.borrow().fields))
+                    .cloned();
+                match row {
+                    Some(w) => {
+                        rec.borrow_mut().fields = w.shown;
+                        self.set_xrec_fields(st, w.stored);
+                    }
+                    None => self.set_xrec(st),
+                }
             }
         } else {
             self.populate_current(st)?;
@@ -1697,10 +1755,21 @@ impl Session {
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         st.borrow_mut().modal = modal && !trapped;
         let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
-        let Some((hobject, hroutine, hinst)) = handler else {
+        let Some(handler) = handler else {
             return Ok(Value::Null);
         };
-        if let Err(e) = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]) {
+        self.answer_page(&st, handler, modal)
+    }
+
+    /// Hands the open page `st` to its handler, closes it if the handler left it open, and for a
+    /// modal page reports how it closed.
+    fn answer_page(&mut self, st: &St, handler: Handler, modal: bool) -> Result<Value, Signal> {
+        let (hobject, hroutine, hinst) = handler;
+        let st = st.clone();
+        self.page_handler_depth += 1;
+        let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
+        self.page_handler_depth -= 1;
+        if let Err(e) = handled {
             self.mark_closed(&st);
             return Err(e);
         }
@@ -1807,11 +1876,19 @@ impl Session {
         if !self.has_source(st) {
             return;
         }
+        let fields = self.page_rec(st).borrow().fields.clone();
+        self.set_xrec_fields(st, fields);
+    }
+
+    /// xRec holds `fields`: the row as it was read.
+    fn set_xrec_fields(&mut self, st: &St, fields: Vec<Value>) {
+        if !self.has_source(st) {
+            return;
+        }
         let object = st.borrow().object as usize;
         let Some(slot) = self.engine.program.objects[object].xrec_slot else {
             return;
         };
-        let fields = self.page_rec(st).borrow().fields.clone();
         let inst = st.borrow().instance.clone().expect("open page");
         if let Value::Record(x) = &inst.borrow().globals[slot] {
             x.borrow_mut().fields = fields;
@@ -1938,7 +2015,10 @@ impl Session {
             return Ok(());
         }
         self.ret_used = false;
-        self.record_op("Modify", &rec, &mut [Value::Boolean(true)])?;
+        self.page_xrec = Some(self.page_xrec_fields(st));
+        let modified = self.record_op("Modify", &rec, &mut [Value::Boolean(true)]);
+        self.page_xrec = None;
+        modified?;
         st.borrow_mut().dirty = false;
         self.set_xrec(st);
         Ok(())
@@ -2065,10 +2145,15 @@ impl Session {
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
-            o.enum_captions
+            // An enum control resolves by caption only; a value without a caption shows its name.
+            // The bare member name of a captioned value is rejected, as on a real service tier
+            // (handlers/TestPageEnumVariableControl_Tests.al:50-56,86-90,137-140).
+            o.enum_values
                 .iter()
-                .chain(o.enum_values.iter())
-                .find(|(_, c)| c.eq_ignore_ascii_case(t))
+                .find(|(v, name)| {
+                    let shown = o.enum_captions.iter().find(|(c, _)| c == v).map_or(name, |(_, c)| c);
+                    shown.eq_ignore_ascii_case(t)
+                })
                 .map(|(v, _)| *v)
         };
         let suffix = if rec_bound {
@@ -2207,7 +2292,11 @@ impl Session {
                     "Enabled" => Ok(Value::Boolean(applies)),
                     "Invoke" => {
                         if applies {
-                            st.borrow_mut().mode = if name == "Edit" { PageMode::Edit } else { PageMode::View };
+                            let mode = if name == "Edit" { PageMode::Edit } else { PageMode::View };
+                            st.borrow_mut().mode = mode;
+                            // The parts follow the host (corpus handlers/TestPageControlEditableRoutes.al:
+                            // Part_HostOpenEdit_ThenViewAction).
+                            self.set_part_modes(st, mode);
                         }
                         Ok(Value::Null)
                     }
@@ -2240,14 +2329,14 @@ impl Session {
             let engine = self.engine();
             let ctl = &page_of(&engine, st).controls[idx];
             let what = match ctl.kind {
-                ir::ControlKind::Action | ir::ControlKind::ActionRef | ir::ControlKind::SystemAction => "action",
+                ir::ControlKind::Action | ir::ControlKind::SystemAction => "action",
                 _ => "field",
             };
             return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
         }
-        // An actionref is only invoked: what its Visible, Enabled or Caption answer is not pinned.
-        if page_of(&self.engine(), st).controls[idx].kind == ir::ControlKind::ActionRef && m != "Invoke" {
-            return unsupported(format!("TestAction.{m} on an actionref"));
+        // Only Invoke of an actionref is pinned: it runs the action it stands for.
+        if m != "Invoke" && page_of(&self.engine(), st).controls[idx].action_ref.is_some() {
+            return unsupported(format!("TestAction.{m} of an actionref"));
         }
         match m {
             "Value" => {
@@ -2353,7 +2442,7 @@ impl Session {
         // handlers/TestPageActionReachability_Tests.al:100-122).
         if matches!(
             page.controls[idx].kind,
-            ir::ControlKind::Action | ir::ControlKind::ActionGroup | ir::ControlKind::ActionRef
+            ir::ControlKind::Action | ir::ControlKind::ActionGroup
         ) {
             return false;
         }
@@ -2366,26 +2455,6 @@ impl Session {
             at = page.controls[i].parent;
         }
         false
-    }
-
-    /// The action an actionref stands for: invoking the ref is invoking its target (corpus
-    /// handlers/TestPagePromotedActionref_Tests.al: PromotedActionrefInvokeRunsItsTargetsTrigger,
-    /// PromotedActionrefInsideAGroupRunsItsTargetsTrigger, PageExtensionPromotedActionrefRunsABasePageActionsTrigger).
-    /// `None` for any other control. What a ref to a conditionally disabled action does is not pinned.
-    fn actionref_target(&mut self, st: &St, idx: usize) -> Result<Option<usize>, Signal> {
-        let engine = self.engine();
-        let page = page_of(&engine, st);
-        let ctl = &page.controls[idx];
-        if ctl.kind != ir::ControlKind::ActionRef {
-            return Ok(None);
-        }
-        let Some(target) = ctl.target else {
-            return unsupported("an actionref without a target action");
-        };
-        if !matches!(page.controls[target].prop("enabled"), None | Some(ir::PropVal::Lit(_))) {
-            return unsupported("an actionref to an action whose Enabled is computed");
-        }
-        Ok(Some(target))
     }
 
     /// `TestField.DrillDown`, `AssistEdit` and `Lookup`: run the control's trigger of that name, the
@@ -2454,9 +2523,12 @@ impl Session {
     /// does nothing and raises nothing (corpus handlers/TestPageActionEnabledSourceField_Tests.al,
     /// TPAE_ActionEnabledBoolField_FalseRow_IsDisabledAndItsTriggerIsSkipped).
     fn action_invoke(&mut self, st: &St, idx: usize) -> Result<Value, Signal> {
-        if let Some(target) = self.actionref_target(st, idx)? {
-            return self.action_invoke(st, target);
-        }
+        // An actionref invokes the action it stands for.
+        let idx = match page_of(&self.engine(), st).controls[idx].action_ref.clone() {
+            None => idx,
+            Some(ir::ActionRef::Target(t)) => t,
+            Some(ir::ActionRef::Unresolved(why)) => return unsupported(why),
+        };
         if !self.control_enabled(st, idx)? {
             return Ok(Value::Null);
         }
@@ -2475,6 +2547,8 @@ impl Session {
             r?;
             self.settle_after_action(st)?;
             self.run_refresh(st)?;
+        } else if page_of(&engine, st).controls[idx].run_object.is_some() {
+            return self.run_object_action(st, idx);
         }
         Ok(Value::Null)
     }
@@ -2593,6 +2667,12 @@ impl Session {
         self.ret_used = true;
         if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
             let fields = probe.borrow().fields.clone();
+            // The probe replaced the view's filters on key fields with the key; the row must still
+            // pass the filters the page has (a Get of a row the view hides shows nothing:
+            // testpart/BnrBlankPart.al NoRow_Action_GetOfARowTheFilterHides_StaysBlank).
+            if !rec.borrow().filters.iter().all(|f| f.expr.matches(&fields[f.field])) {
+                return Ok(());
+            }
             rec.borrow_mut().fields = fields;
             st.borrow_mut().cursor = Cursor::Row;
             let r = self.arrive(st);

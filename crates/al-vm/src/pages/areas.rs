@@ -43,8 +43,8 @@ impl Session {
         if let Some(ir::PropVal::Lit(v)) = ctl.prop("applicationarea") {
             return Some(v.clone());
         }
-        if ctl.kind == ir::ControlKind::ActionRef {
-            return ctl.target.and_then(|t| self.control_area(st, t));
+        if let Some(ir::ActionRef::Target(t)) = ctl.action_ref {
+            return self.control_area(st, t);
         }
         if ctl.owner.is_some() {
             return None;
@@ -68,7 +68,7 @@ impl Session {
         let kind = &page_of(&engine, st).controls[idx].kind;
         if !matches!(
             kind,
-            ir::ControlKind::Field | ir::ControlKind::Action | ir::ControlKind::Part | ir::ControlKind::ActionRef
+            ir::ControlKind::Field | ir::ControlKind::Action | ir::ControlKind::Part
         ) {
             return false;
         }

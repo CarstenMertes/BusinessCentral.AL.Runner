@@ -459,6 +459,16 @@ fn parse(text: &str) -> Result<Option<Handle>, Signal> {
     }
 }
 
+/// A JsonObject value holding `text`, or `None` when the text is not a JSON object.
+pub fn object_from_text(text: &str) -> Result<Option<Value>, Signal> {
+    let Some(h) = parse(text)? else { return Ok(None) };
+    if with_node(&h, |n| matches!(n, JsonNode::Object(_))) {
+        Ok(Some(Value::Library("JsonObject".into(), h)))
+    } else {
+        Ok(None)
+    }
+}
+
 // ---------------------------------------------------------------- writing
 
 fn write_string(out: &mut String, s: &str) {

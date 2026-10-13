@@ -66,6 +66,15 @@ impl Session {
         Ok(())
     }
 
+    /// Sets the mode of the pages `st` shows as parts, and of theirs.
+    pub(super) fn set_part_modes(&mut self, st: &St, mode: PageMode) {
+        let parts = st.borrow().parts.clone();
+        for (_, child) in parts {
+            child.borrow_mut().mode = mode;
+            self.set_part_modes(&child, mode);
+        }
+    }
+
     /// Whether the part control that shows `st` says `Editable = false`. What that does to the
     /// part's rows is not pinned (TestPart.Editable() ignores it, corpus testpart/TestTestPart.al:
     /// TestPart_Editable_IsNotDrivenByTheHostControlsEditableProperty), so writing through such a

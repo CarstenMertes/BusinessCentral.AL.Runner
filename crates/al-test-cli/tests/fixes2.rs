@@ -41,6 +41,13 @@ table 63031 "F2 Closing Init"
     fields { field(1; K; Code[10]) { } field(2; Closing; Date) { InitValue = C20260101D; } }
     keys { key(PK; K) { } }
 }
+page 63040 "F2 Editable Card" { PageType = Card; SourceTable = "F2 Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
+    trigger OnOpenPage() var P: Codeunit "F2 Probe"; begin P.Note('card'); end; }
+page 63041 "F2 RO Card" { PageType = Card; SourceTable = "F2 Row"; Editable = false; layout { area(Content) { field("No."; Rec."No.") { } } }
+    trigger OnOpenPage() var P: Codeunit "F2 Probe"; begin P.Note('rocard'); end; }
+page 63042 "F2 Plain List" { PageType = List; SourceTable = "F2 Row"; layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } } }
+page 63043 "F2 RO List" { PageType = List; SourceTable = "F2 Row"; CardPageId = "F2 RO Card"; layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } } }
+page 63044 "F2 Card List" { PageType = List; SourceTable = "F2 Row"; CardPageId = "F2 Editable Card"; layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } } }
 codeunit 63020 "F2 Noop" { trigger OnRun() begin end; }
 codeunit 63021 "F2 Failing" { trigger OnRun() begin Error('guarded failure'); end; }
 codeunit 63022 "F2 Tx Worker"
@@ -263,5 +270,34 @@ fn start_session_from_a_test_is_refused_under_codeunit_isolation() {
             asserterror StartSession(Id, Codeunit::\"F2 Noop\", '', R);
             if StrPos(GetLastErrorText(), 'can only be started in tests') = 0 then Error('text <%1>', GetLastErrorText());
             Check('0', Format(Id)); end;"
+    ));
+}
+
+const LISTS: &str = "procedure Seed() var R: Record \"F2 Row\"; P: Codeunit \"F2 Probe\"; begin R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert(); Commit(); P.Reset(); end;";
+
+// handlers/TestPageModeSwitchAction_Tests.al: PlainListWithoutCardPageIdOffersBothActionsAndEnablesOnlyView,
+// ListWhoseCardIsReadOnlyLeavesTheEditActionVisibleButNotEnabled, ListWithAnEditableCardPageIdEnablesBothActions.
+#[test]
+fn the_built_in_view_and_edit_actions_of_a_list_are_visible_and_edit_needs_a_card_that_can_be_edited() {
+    passes(&format!(
+        "{HELPERS} {LISTS}
+        [Test]
+        procedure PlainList() var L: TestPage \"F2 Plain List\"; P: Codeunit \"F2 Probe\"; begin
+            Seed(); L.OpenEdit(); L.First(); L.Next();
+            if not (L.View().Visible() and L.View().Enabled() and L.Edit().Visible()) then Error('plain list');
+            if L.Edit().Enabled() then Error('plain list edit enabled');
+            L.View().Invoke(); L.Edit().Invoke();
+            Check('0', Format(P.Count())); L.Close(); end;
+        [Test]
+        procedure ReadOnlyCardList() var L: TestPage \"F2 RO List\"; P: Codeunit \"F2 Probe\"; begin
+            Seed(); L.OpenEdit(); L.First(); L.Next();
+            if not (L.View().Visible() and L.View().Enabled() and L.Edit().Visible()) then Error('ro list');
+            if L.Edit().Enabled() then Error('ro list edit enabled');
+            L.Edit().Invoke();
+            Check('0', Format(P.Count())); L.Close(); end;
+        [Test]
+        procedure EditableCardList() var L: TestPage \"F2 Card List\"; begin
+            Seed(); L.OpenEdit(); L.First(); L.Next();
+            if not (L.View().Visible() and L.View().Enabled() and L.Edit().Visible() and L.Edit().Enabled()) then Error('card list'); L.Close(); end;"
     ));
 }

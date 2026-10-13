@@ -937,26 +937,6 @@ impl Lowerer<'_> {
                 }
                 self.calls.push((object, routine));
                 let attrs = self.routine_attributes(object, offset);
-                // Isolated events run each subscriber in its own transaction and swallow
-                // its error (corpus codeunit/TestIsolatedEventSubscriberError.al); the
-                // flag is the third argument of IntegrationEvent, the second of the others.
-                for (name, args) in &attrs {
-                    let isolated_at = match name.as_str() {
-                        "integrationevent" => 2,
-                        "businessevent" | "internalevent" => 1,
-                        _ => continue,
-                    };
-                    if args.get(isolated_at) == Some(&ir::Const::Boolean(true)) {
-                        return Err(format!(
-                            "event {} is Isolated: not implemented yet",
-                            self.members[object]
-                                .procedures
-                                .iter()
-                                .find(|p| p.offset == offset)
-                                .map_or("", |p| p.name.as_str())
-                        ));
-                    }
-                }
                 let try_call = attrs.iter().any(|(a, _)| a == "tryfunction");
                 Ok(ir::Expr::Call {
                     object,
@@ -1170,7 +1150,7 @@ mod tests {
     }
 
     #[test]
-    fn event_publisher_calls_lower_but_isolated_events_are_refused() {
+    fn event_publisher_calls_lower_including_isolated_ones() {
         let (_, l) = lower_src(
             "codeunit 50100 C {
                 [IntegrationEvent(false, false)] procedure OnA() begin end;
@@ -1179,20 +1159,12 @@ mod tests {
                 [IntegrationEvent(false, false, true)] procedure OnIso() begin end;
                 [BusinessEvent(false, true)] procedure OnIsoB() begin end;
                 procedure Plain() begin OnA(); OnB(); OnC(); end;
-                procedure Iso() begin OnIso(); end;
-                procedure IsoB() begin OnIsoB(); end;
+                procedure Iso() begin OnIso(); OnIsoB(); end;
             }",
         );
         let reasons = |n: &str| l.unsupported[0][routine(&l, n).0].clone();
         assert!(reasons("Plain").is_empty(), "{:?}", reasons("Plain"));
-        assert_eq!(
-            reasons("Iso"),
-            vec!["event OnIso is Isolated: not implemented yet".to_string()]
-        );
-        assert_eq!(
-            reasons("IsoB"),
-            vec!["event OnIsoB is Isolated: not implemented yet".to_string()]
-        );
+        assert!(reasons("Iso").is_empty(), "{:?}", reasons("Iso"));
     }
 
     #[test]

@@ -262,16 +262,13 @@ fn single_instance_codeunits_share_state_across_variables() {
 }
 
 #[test]
-fn calling_an_isolated_event_publisher_is_unsupported() {
-    // Event dispatch exists (tests/events.rs); Isolated events (a subscriber's own
-    // transaction, its error swallowed) do not, and running the empty publisher body
-    // would silently skip every subscriber.
-    let src = cu("[IntegrationEvent(false, false, true)] procedure OnX() begin end; procedure F() begin OnX(); end;");
-    assert!(
-        matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("event")),
-        "{:?}",
-        run(&src, "F", vec![])
+fn an_isolated_event_without_subscribers_does_nothing() {
+    // Event dispatch is tests/events.rs; an empty publisher body must not hide subscribers,
+    // and with none there is nothing to run.
+    let src = cu(
+        "[IntegrationEvent(false, false, true)] procedure OnX() begin end; procedure F(): Integer begin OnX(); exit(7); end;",
     );
+    assert_eq!(int(run(&src, "F", vec![])), 7);
 }
 
 #[test]

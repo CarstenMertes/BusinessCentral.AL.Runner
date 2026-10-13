@@ -243,7 +243,15 @@ impl Session {
         }
         args.push(tail);
         let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
-        self.raise(t.object as usize, event, element, &names, &mut args, None)
+        let call = crate::dispatch::EventCall {
+            object: t.object as usize,
+            event,
+            element,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)
     }
 
     /// The Before event, the field's OnValidate and the After event of a `Validate`.

@@ -18,8 +18,8 @@
 //!   the instance is gone (TestEventManualBinding.al Contract 10,
 //!   TestEventManualBindingByValue.al); a `SingleInstance` codeunit is its
 //!   session-wide instance, so it is never gone.
-//! - Isolated events are refused (codeunit/TestIsolatedEventSubscriberError.al
-//!   describes transaction semantics this runtime does not have yet).
+//! - Isolated events: each subscriber is its own transaction when nothing is
+//!   pending (codeunit/TestIsolatedEventSubscriberError.al).
 
 use crate::Session;
 use al_builtins::native::{AlError, Signal};
@@ -29,6 +29,21 @@ use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 
 type Inst = Rc<RefCell<Instance>>;
+
+/// An event being raised: which one, and what the publisher offers its subscribers.
+pub(crate) struct EventCall<'a> {
+    /// The object subscribers name (the base table for events of a table extension).
+    pub object: usize,
+    /// Lower-case event name.
+    pub event: &'a str,
+    /// Filters field events by field name.
+    pub element: Option<&'a str>,
+    pub isolated: bool,
+    /// The publisher's parameter names, matching `args` of `raise`.
+    pub names: &'a [String],
+    /// The publishing instance, for `IncludeSender` events.
+    pub sender: Option<Value>,
+}
 
 /// One manual subscription: a codeunit instance whose manual subscribers receive events.
 pub(crate) struct Binding {
@@ -52,12 +67,6 @@ impl Session {
         let engine = self.engine.clone();
         let p = &engine.events.publishers[&(object, routine)];
         let r = &engine.program.objects[object].routines[routine];
-        if p.isolated {
-            return unsupported(format!(
-                "{}: Isolated events (a subscriber's transaction and error are separate) are not implemented yet",
-                r.name
-            ));
-        }
         let mut values = Vec::with_capacity(r.params);
         for (i, a) in args.into_iter().enumerate().take(r.params) {
             values.push(match (a, r.by_var.get(i).copied().unwrap_or(false)) {
@@ -76,7 +85,15 @@ impl Session {
             None
         };
         let names: Vec<String> = r.locals[..r.params].iter().map(|s| s.name.clone()).collect();
-        if let Err(e) = self.raise(p.object, &p.event, None, &names, &mut values, sender) {
+        let call = EventCall {
+            object: p.object,
+            event: &p.event,
+            element: None,
+            isolated: p.isolated,
+            names: &names,
+            sender,
+        };
+        if let Err(e) = self.raise(&call, &mut values) {
             // What earlier subscribers wrote back is what the publisher's caller sees.
             if matches!(e, Signal::Error(_)) {
                 self.error_finals = Some(values);
@@ -86,19 +103,18 @@ impl Session {
         Ok((Value::Null, values))
     }
 
-    /// Delivers event `event` of `object` to its subscribers. `names` are the
-    /// publisher's parameter names and `args` their values; `var` parameters
-    /// of subscribers are written back into `args`. `element` filters field
-    /// events by field name.
-    pub(crate) fn raise(
-        &mut self,
-        object: usize,
-        event: &str,
-        element: Option<&str>,
-        names: &[String],
-        args: &mut [Value],
-        sender: Option<Value>,
-    ) -> Result<(), Signal> {
+    /// Delivers the event to its subscribers. `var` parameters of subscribers are written
+    /// back into `args`. Isolated events: see below.
+    pub(crate) fn raise(&mut self, ev: &EventCall, args: &mut [Value]) -> Result<(), Signal> {
+        let EventCall {
+            object,
+            event,
+            element,
+            isolated,
+            names,
+            sender,
+        } = ev;
+        let (object, event, element, isolated) = (*object, *event, *element, *isolated);
         let engine = self.engine.clone();
         for (s, inst) in self.event_targets(object, event, element)? {
             let r = &engine.program.objects[s.object].routines[s.routine];
@@ -124,7 +140,20 @@ impl Session {
                     None => sender.clone().expect("sender checked"),
                 })
                 .collect();
-            let (_, finals) = self.call(s.object, s.routine, inst, call_args)?;
+            // An Isolated event runs each subscriber in its own transaction: with nothing pending
+            // in the caller's, a subscriber's error is swallowed and only its writes are rolled
+            // back; with a write pending the event is not isolated and the error propagates
+            // (codeunit/TestIsolatedEventSubscriberError.al). Whether the error text is kept as
+            // the last error is not pinned.
+            let isolate = isolated && !self.store.has_uncommitted();
+            let before = isolate.then(|| self.store.clone());
+            let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {
+                Err(Signal::Error(_)) if isolate => {
+                    self.store = before.expect("snapshot taken when isolating");
+                    continue;
+                }
+                r => r?,
+            };
             for (i, m) in map.iter().enumerate() {
                 if let (Some(j), true) = (m, r.by_var[i]) {
                     args[*j] = finals[i].clone();

@@ -51,6 +51,11 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 }
 
 impl MemStore {
+    /// Whether any write since the last commit or rollback is pending.
+    pub fn has_uncommitted(&self) -> bool {
+        !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
+    }
+
     /// Whether a write has changed the data since `mark`, a clone of this store taken earlier.
     /// O(1): persistent maps that were not written to share their root.
     pub fn written_since(&self, mark: &MemStore) -> bool {
@@ -217,12 +222,15 @@ mod tests {
             per_company: true,
         };
         let mut s = MemStore::default();
+        assert!(!s.has_uncommitted());
         let mark = s.clone();
         assert!(!s.written_since(&mark));
         s.insert(&cx, &t, vec![Value::Integer(1)]).unwrap();
         assert!(s.written_since(&mark));
+        assert!(s.has_uncommitted());
         let mark = s.clone();
         s.commit();
+        assert!(!s.has_uncommitted());
         assert!(!s.written_since(&mark), "a commit changes no data");
         s.insert(&cx, &t, vec![Value::Integer(2)]).unwrap();
         s.rollback();

@@ -278,17 +278,64 @@ fn include_sender_binds_the_publisher_instance_at_any_position() {
     assert_eq!(text(run(SENDER, "F3")), "110omitted");
 }
 
-// codeunit/TestIsolatedEventSubscriberError.al: not implemented, so refused, not skipped.
-#[test]
-fn isolated_events_are_refused() {
-    let src = r#"
+const ISO: &str = r#"
+table 50300 Row { fields { field(1; "No."; Integer) { } field(2; Source; Text[30]) { } } keys { key(PK; "No.") { } } }
 codeunit 50200 Pub
 {
-    [IntegrationEvent(false, false, true)] procedure OnX() begin end;
-    procedure Go() begin OnX(); end;
+    [IntegrationEvent(false, false, true)] local procedure OnIsolated() begin end;
+    [IntegrationEvent(false, false)] local procedure OnShared() begin end;
+    procedure RaiseIsolated() begin OnIsolated(); end;
+    procedure RaiseShared() begin OnShared(); end;
 }
-codeunit 50100 C { procedure F() var P: Codeunit Pub; begin P.Go(); end; }"#;
-    assert!(matches!(run(src, "F"), Err(Signal::Unsupported(r)) if r.contains("Isolated")));
+codeunit 50201 Subs
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnIsolated', '', false, false)]
+    local procedure FailsAfterWriting() var R: Record Row; begin R."No." := 1; R.Insert(); Error('ISO-SUBSCRIBER-FAILED'); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnIsolated', '', false, false)]
+    local procedure Writes() var R: Record Row; begin R."No." := 2; R.Insert(); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnShared', '', false, false)]
+    local procedure SharedFails() var R: Record Row; begin R."No." := 3; R.Insert(); Error('SHARED-SUBSCRIBER-FAILED'); end;
+}
+codeunit 50100 C
+{
+    procedure Clean() var R: Record Row; begin R.DeleteAll(); Commit(); end;
+    procedure NoPendingWrite(): Text
+    var P: Codeunit Pub; R: Record Row;
+    begin
+        Clean();
+        P.RaiseIsolated();
+        exit(Format(R.Get(1)) + Format(R.Get(2)) + Format(R.Count()));
+    end;
+    procedure PendingWrite(): Text
+    var P: Codeunit Pub; R: Record Row;
+    begin
+        Clean();
+        R."No." := 10; R.Insert();
+        asserterror P.RaiseIsolated();
+        exit(GetLastErrorText());
+    end;
+    procedure Shared(): Text
+    var P: Codeunit Pub;
+    begin
+        Clean();
+        asserterror P.RaiseShared();
+        exit(GetLastErrorText());
+    end;
+}"#;
+
+// codeunit/TestIsolatedEventSubscriberError.al: with nothing pending, an isolated subscriber's
+// error is swallowed and its writes are rolled back, the other subscribers still run and
+// keep theirs.
+#[test]
+fn an_isolated_subscriber_error_is_swallowed_and_only_its_writes_are_rolled_back() {
+    assert_eq!(text(run(ISO, "NoPendingWrite")), "NoYes1");
+}
+
+// IsolatedEvent_WithCallerWritePending_SubscriberErrorPropagates, and SharedEvent_... (control).
+#[test]
+fn with_a_write_pending_or_without_isolation_the_subscriber_error_propagates() {
+    assert_eq!(text(run(ISO, "PendingWrite")), "ISO-SUBSCRIBER-FAILED");
+    assert_eq!(text(run(ISO, "Shared")), "SHARED-SUBSCRIBER-FAILED");
 }
 
 const MANUAL: &str = r#"

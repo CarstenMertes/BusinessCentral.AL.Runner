@@ -15,6 +15,7 @@ mod dispatch;
 pub mod events;
 mod flowfields;
 mod pages;
+mod queries;
 mod recmeta;
 mod records;
 mod refs;
@@ -577,6 +578,10 @@ impl Session {
                 let p = self.eval(page, f)?;
                 self.page_control(p, *control)
             }
+            E::QueryColumn { query, column } => {
+                let q = self.eval(query, f)?;
+                self.query_column(q, *column)
+            }
             E::Builtin {
                 id,
                 receiver,
@@ -808,6 +813,10 @@ impl al_builtins::native::Ctx for Session {
     }
     fn page(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         self.page_op(method, recv, args)
+    }
+
+    fn query(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        self.query_op(method, recv, args)
     }
 
     fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {

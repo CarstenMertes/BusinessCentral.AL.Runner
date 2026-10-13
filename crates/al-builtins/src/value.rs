@@ -50,6 +50,8 @@ pub enum RtType {
     /// A `Page` variable of the page with this object index: a page instance that exists before
     /// it is run (ADR-012).
     Page(u32),
+    /// A `Query` variable of the query with this object index.
+    Query(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
     Library(String),
 }
@@ -93,6 +95,48 @@ pub enum Value {
     TestPage(Rc<RefCell<PageState>>),
     /// A control of a test page (`TestField`, `TestAction`, `TestFilter`).
     TestControl(Rc<ControlRef>),
+    /// A query variable: its runtime filters and, once opened, its result set.
+    Query(Rc<RefCell<QueryState>>),
+}
+
+/// What a query variable carries (corpus query/). The definition is in the IR; the VM
+/// (`al-vm/src/queries.rs`) executes it.
+#[derive(Debug, Clone)]
+pub struct QueryState {
+    /// Object index of the query.
+    pub object: u32,
+    /// `SetRange` / `SetFilter` per column (position in `ir::Query::columns`); a later call on the
+    /// same column replaces the earlier one.
+    pub filters: Vec<(usize, crate::filter::FilterExpr)>,
+    /// `TopNumberOfRows(n)`; `None` leaves the property in force.
+    pub top: Option<i32>,
+    /// `SecurityFiltering(x)` as a member index of the platform option; `None` before any call.
+    pub security_filtering: Option<i32>,
+    /// The result set between `Open` and `Close`.
+    pub run: Option<QueryRun>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryRun {
+    /// The rows still to read, in the query's order.
+    pub rows: Vec<QueryRow>,
+    pub next: usize,
+    /// The column values of the row `Read` returned last (`None` before the first and after the last).
+    pub current: Option<Vec<Value>>,
+    /// Sort key of the last row returned: after a write the result is read again from there.
+    pub last_key: Option<Vec<Value>>,
+    /// Rows returned since `Open`, against `TopNumberOfRows`.
+    pub returned: usize,
+    /// Version of each table the query reads (table object, stamp) when `rows` were read.
+    pub stamps: Vec<(u32, u64)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryRow {
+    /// One value per query column (`Null` for filter elements).
+    pub columns: Vec<Value>,
+    /// The sort key: the `OrderBy` columns, then the primary key of each dataitem.
+    pub key: Vec<Value>,
 }
 
 /// How a page was opened by the test client.
@@ -330,6 +374,13 @@ impl Value {
                 ..Default::default()
             }))),
             RtType::TestPage(id) | RtType::Page(id) => Value::TestPage(Rc::new(RefCell::new(PageState::closed(*id)))),
+            RtType::Query(id) => Value::Query(Rc::new(RefCell::new(QueryState {
+                object: *id,
+                filters: Vec::new(),
+                top: None,
+                security_filtering: None,
+                run: None,
+            }))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
             RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
@@ -369,7 +420,7 @@ impl Value {
             Value::Codeunit(_) => k == "codeunit",
             Value::Library(n, _) => n.eq_ignore_ascii_case(&k),
             Value::Record(_) => k == "record",
-            Value::TestPage(_) | Value::TestControl(_) => false,
+            Value::TestPage(_) | Value::TestControl(_) | Value::Query(_) => false,
             Value::Blob(_) => false,
         }
     }

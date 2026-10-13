@@ -212,6 +212,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             rec_slot,
             xrec_slot,
             page,
+            query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.unsupported.push(unsupported);
         out.calls.push(calls);
@@ -223,7 +224,7 @@ type L<T> = Result<T, String>;
 
 /// An `InitValue` property as a constant of the field's type; `None` for
 /// forms not handled yet (the field then starts at its type's default).
-fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
+pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
     let t = text.trim();
     Some(match ty {
         Ty::Integer => ir::Const::Integer(t.parse().ok()?),
@@ -245,6 +246,97 @@ fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
         Ty::Time => ir::Const::Time(time_literal(t)?),
         _ => return None,
     })
+}
+
+/// A `const(..)` value as a constant of the source field's type.
+pub(crate) fn calc_const(
+    ws: &Workspace,
+    members: &[Members],
+    file: usize,
+    raw: &str,
+    ty: &Ty,
+) -> Result<ir::Const, String> {
+    let raw = raw.trim();
+    // `Database::"X"` / `Report::"X"`: the object's id (corpus
+    // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
+    if let Some((kind, name)) = raw.split_once("::") {
+        let kind = match kind.trim().to_ascii_lowercase().as_str() {
+            "database" => Some(ObjKind::Table),
+            other => ObjKind::from_type_name(other),
+        };
+        let name = name.trim().trim_matches('"').to_string();
+        let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
+            return Err(format!("CalcFormula const({raw}) is not understood yet"));
+        };
+        let Resolution::Found(o) = ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
+            return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
+        };
+        let id = ws.objects[o]
+            .id
+            .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
+        return match ty {
+            Ty::Integer => Ok(ir::Const::Integer(id as i32)),
+            Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
+            Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
+            _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
+        };
+    }
+    let unquoted = raw.trim_matches('"');
+    if let Ty::Enum(name) = ty {
+        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
+            return Err(format!(
+                "CalcFormula const({raw}): enum `{name}` is outside the workspace"
+            ));
+        };
+        let values = &members[e].enum_values;
+        let ordinal = values
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
+            .map(|(v, _)| *v as i32)
+            .or_else(|| unquoted.parse().ok())
+            .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
+        return Ok(ir::Const::Enum(e as u32, ordinal));
+    }
+    if let Ty::Option(members) = ty {
+        if let Ok(n) = unquoted.parse::<i32>() {
+            return Ok(ir::Const::Option(n, members.clone()));
+        }
+    }
+    init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
+}
+
+/// The runtime type of a scalar type (numbers, text, dates, options, enums); `None` for the rest.
+pub(crate) fn scalar_rt(ws: &Workspace, file: usize, t: &Ty) -> Option<L<RtType>> {
+    Some(Ok(match t {
+        Ty::Integer => RtType::Integer,
+        Ty::BigInteger => RtType::BigInteger,
+        Ty::Decimal => RtType::Decimal,
+        Ty::Boolean => RtType::Boolean,
+        Ty::Char => RtType::Char,
+        Ty::Byte => RtType::Byte,
+        Ty::Text(n) => RtType::Text(*n),
+        Ty::Code(n) => RtType::Code(*n),
+        Ty::Label => RtType::Text(None),
+        Ty::Date => RtType::Date,
+        Ty::Time => RtType::Time,
+        Ty::DateTime => RtType::DateTime,
+        Ty::Duration => RtType::Duration,
+        Ty::DateFormula => RtType::DateFormula,
+        Ty::Guid => RtType::Guid,
+        Ty::Variant => RtType::Variant,
+        Ty::Option(m) => RtType::Option(m.clone()),
+        Ty::Enum(n) => match ws.resolve_ref(file, ObjKind::Enum, &crate::types::qualified_parts(n)) {
+            Resolution::Found(i) => RtType::Enum(i as u32),
+            _ => {
+                return Some(Err(format!(
+                    "{} `{}` is outside the workspace",
+                    ObjKind::Enum.label(),
+                    crate::types::display_name(n)
+                )));
+            }
+        },
+        _ => return None,
+    }))
 }
 
 /// `20240115D` / `0D` as a day number.
@@ -298,7 +390,7 @@ fn label_text(t: &ast::TypeRef) -> Option<String> {
 /// the single-quoted literals the filter grammar understands. AL quotes an
 /// identifier with `"`; the filter grammar treats `"` as an ordinary
 /// character (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9).
-fn rewrite_quotes(raw: &str) -> String {
+pub(crate) fn rewrite_quotes(raw: &str) -> String {
     let mut out = String::new();
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
@@ -810,53 +902,7 @@ impl Lowerer<'_> {
 
     /// A `const(..)` value as a constant of the source field's type.
     fn calc_const(&self, file: usize, raw: &str, ty: &Ty) -> Result<ir::Const, String> {
-        let raw = raw.trim();
-        // `Database::"X"` / `Report::"X"`: the object's id (corpus
-        // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
-        if let Some((kind, name)) = raw.split_once("::") {
-            let kind = match kind.trim().to_ascii_lowercase().as_str() {
-                "database" => Some(ObjKind::Table),
-                other => ObjKind::from_type_name(other),
-            };
-            let name = name.trim().trim_matches('"').to_string();
-            let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
-                return Err(format!("CalcFormula const({raw}) is not understood yet"));
-            };
-            let Resolution::Found(o) = self.ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
-                return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
-            };
-            let id = self.ws.objects[o]
-                .id
-                .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
-            return match ty {
-                Ty::Integer => Ok(ir::Const::Integer(id as i32)),
-                Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
-                Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
-                _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
-            };
-        }
-        let unquoted = raw.trim_matches('"');
-        if let Ty::Enum(name) = ty {
-            let Resolution::Found(e) = self.ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
-                return Err(format!(
-                    "CalcFormula const({raw}): enum `{name}` is outside the workspace"
-                ));
-            };
-            let values = &self.members[e].enum_values;
-            let ordinal = values
-                .iter()
-                .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
-                .map(|(v, _)| *v as i32)
-                .or_else(|| unquoted.parse().ok())
-                .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
-            return Ok(ir::Const::Enum(e as u32, ordinal));
-        }
-        if let Ty::Option(members) = ty {
-            if let Ok(n) = unquoted.parse::<i32>() {
-                return Ok(ir::Const::Option(n, members.clone()));
-            }
-        }
-        init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
+        calc_const(self.ws, self.members, file, raw, ty)
     }
 
     fn res(&self, n: &SyntaxNode) -> Option<&Res> {
@@ -892,31 +938,23 @@ impl Lowerer<'_> {
     }
 
     fn rt(&self, t: &Ty) -> L<RtType> {
+        if let Some(r) = scalar_rt(self.ws, self.file, t) {
+            return r;
+        }
         Ok(match t {
-            Ty::Integer => RtType::Integer,
-            Ty::BigInteger => RtType::BigInteger,
-            Ty::Decimal => RtType::Decimal,
-            Ty::Boolean => RtType::Boolean,
-            Ty::Char => RtType::Char,
-            Ty::Byte => RtType::Byte,
-            Ty::Text(n) => RtType::Text(*n),
-            Ty::Code(n) => RtType::Code(*n),
-            Ty::Label => RtType::Text(None),
-            Ty::Date => RtType::Date,
-            Ty::Time => RtType::Time,
-            Ty::DateTime => RtType::DateTime,
-            Ty::Duration => RtType::Duration,
-            Ty::DateFormula => RtType::DateFormula,
-            Ty::Guid => RtType::Guid,
-            Ty::Variant => RtType::Variant,
-            Ty::Option(m) => RtType::Option(m.clone()),
-            Ty::Enum(n) => RtType::Enum(self.resolve_obj(ObjKind::Enum, n)? as u32),
             Ty::Object(ObjKind::Codeunit, n) => RtType::Codeunit(self.resolve_obj(ObjKind::Codeunit, n)? as u32),
             Ty::Object(ObjKind::Page, n) => {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
                 match self.page_reasons[p].first() {
                     None => RtType::Page(p as u32),
                     Some(why) => return Err(format!("Page \"{n}\": {why}")),
+                }
+            }
+            Ty::Object(ObjKind::Query, n) => {
+                let q = self.resolve_obj(ObjKind::Query, n)?;
+                match self.checked.queries[q].as_ref().and_then(|l| l.reasons.first()) {
+                    None => RtType::Query(q as u32),
+                    Some(why) => return Err(format!("Query \"{}\": {why}", crate::types::display_name(n))),
                 }
             }
             Ty::TestPage(n) => {
@@ -1432,6 +1470,17 @@ impl Lowerer<'_> {
             MemberExpr if self.is_control_access(n) => self.control(n),
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
+                // `Q.Amount`: the current row's value of a query column.
+                Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
+                    let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
+                    if layout.query.columns[column].filter_element {
+                        return Err("reading a filter element of a query (not pinned)".into());
+                    }
+                    Ok(ir::Expr::QueryColumn {
+                        query: Box::new(self.expr(&kids[0])?),
+                        column,
+                    })
+                }
                 // `Database::A.B."Name"`: a namespace-qualified object id.
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
@@ -1628,12 +1677,21 @@ impl Lowerer<'_> {
                         .get(i)
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
-                    let field_param =
-                        p.name.to_ascii_lowercase().starts_with("field") || p.name.eq_ignore_ascii_case("FromField");
-                    if let (true, Some(Res::Field { table, id })) = (field_param, self.res(a).cloned()) {
-                        let pos = self.readable_field_pos(table, id)?;
-                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
-                        continue;
+                    let field_param = p.name.to_ascii_lowercase().starts_with("field")
+                        || p.name.eq_ignore_ascii_case("FromField")
+                        || p.name.to_ascii_lowercase().starts_with("column");
+                    match (field_param, self.res(a).cloned()) {
+                        (true, Some(Res::Field { table, id })) => {
+                            let pos = self.readable_field_pos(table, id)?;
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
+                            continue;
+                        }
+                        // A query column is named by its position in the query's column list.
+                        (true, Some(Res::QueryColumn { column, .. })) => {
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(column as u32))));
+                            continue;
+                        }
+                        _ => {}
                     }
                     // Generic parameters convert to the collection's element types.
                     let elem = match (p.ty.as_str(), receiver_node.as_ref().map(|r| self.ty_of(r))) {

@@ -534,6 +534,14 @@ impl Session {
                 return Ok(());
             }
         }
+        // A report that renders output runs up to its request page and no further: there is no
+        // renderer (docs/probes-needed.md).
+        if let Some(why) = report.output.first() {
+            return unsupported(format!(
+                "report \"{}\" renders output, which the runtime does not produce: {why}",
+                schema.name()
+            ));
+        }
         // How a filter on a field a DataItemLink joins combines with the link is not pinned.
         for r in run.all_items() {
             let item = run.item(r);

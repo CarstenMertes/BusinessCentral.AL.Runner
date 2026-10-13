@@ -54,6 +54,9 @@ pub struct Layout {
     pub has_request_page: bool,
     pub transaction_type: Option<String>,
     pub reasons: Vec<String>,
+    /// Why running the report renders output: the layouts it declares, and `ProcessingOnly` not
+    /// being true. A run refuses these after its request page, not before.
+    pub output: Vec<String>,
 }
 
 fn bool_prop(value: &str) -> Option<bool> {
@@ -81,6 +84,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         has_request_page: false,
         transaction_type: None,
         reasons: Vec::new(),
+        output: Vec::new(),
     };
     for p in obj.properties() {
         let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
@@ -100,7 +104,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "transactiontype" => out.transaction_type = Some(value.trim().to_ascii_lowercase()),
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" => out
-                .reasons
+                .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
             other => out
                 .reasons
@@ -118,13 +122,13 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "dataset" => visit(&top, None, None, &mut out.items, &mut out.reasons),
             "requestpage" => out.has_request_page = true,
             n if LAYOUT_SECTIONS.contains(&n) => out
-                .reasons
+                .output
                 .push(format!("report section {n} (a layout) is not supported yet")),
             other => out.reasons.push(format!("report section {other} is not supported yet")),
         }
     }
     if !out.processing_only {
-        out.reasons
+        out.output
             .push("the report is not ProcessingOnly, so running it renders output".into());
     }
     out
@@ -582,6 +586,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         on_post: object_trigger(&o, obj, "OnPostReport"),
         extension: cx.extension,
         request_flag_slot: cx.request_flag_slot,
+        output: layout.output.clone(),
         unsupported: reasons,
     }
 }
@@ -721,16 +726,19 @@ mod tests {
             "report 1 R { ProcessingOnly = true; DefaultLayout = Word; dataset { dataitem(A; Cust) { CalcFields = Amount; trigger OnFoo() begin end; } } rendering { } }",
         );
         let all = l.reasons.join("; ");
-        assert!(all.contains("defaultlayout"), "{all}");
         assert!(all.contains("property calcfields"), "{all}");
         assert!(all.contains("trigger onfoo"), "{all}");
-        assert!(all.contains("section rendering"), "{all}");
+        // A layout means the run renders: it is refused when it gets that far, not at declaration.
+        let output = l.output.join("; ");
+        assert!(output.contains("defaultlayout"), "{output}");
+        assert!(output.contains("section rendering"), "{output}");
     }
 
     #[test]
     fn a_report_that_is_not_processing_only_renders_output() {
         let l = layout_of("report 1 R { dataset { dataitem(A; Cust) { } } }");
-        assert!(l.reasons.join(";").contains("ProcessingOnly"), "{:?}", l.reasons);
+        assert!(l.output.join(";").contains("ProcessingOnly"), "{:?}", l.output);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
     }
 
     #[test]

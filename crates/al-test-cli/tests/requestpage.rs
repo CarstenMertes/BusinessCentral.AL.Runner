@@ -208,6 +208,59 @@ report 61220 "RQ Default Page"
     ProcessingOnly = true;
     dataset { dataitem(Rows; "RQ Row") { trigger OnAfterGetRecord() var LogRec: Record "RQ Log"; begin LogRec.Log('default-row'); end; } }
 }
+// handlers/TestRequestPageControlErrorName.al: report 68660 and its reportextension
+report 61223 "RQ Ext Base"
+{
+    ProcessingOnly = true;
+    requestpage
+    {
+        layout { area(Content) { group(Options) {
+            field(RpnTextCtl; RpnText) { ApplicationArea = All; Caption = 'Rpn Text Caption'; }
+            field(OptCtl; Opt) { ApplicationArea = All; Caption = 'Request Option'; OptionCaption = 'Small,Large'; }
+        } } }
+        trigger OnOpenPage() var T: Codeunit "RQ Trace"; begin T.Add('base-open'); end;
+    }
+    trigger OnInitReport() begin RpnText := 'Delta'; end;
+    var RpnText: Text[30]; Opt: Option Small,Large;
+}
+reportextension 61223 "RQ Ext Base Ext" extends "RQ Ext Base"
+{
+    requestpage
+    {
+        layout
+        {
+            addlast(Options)
+            {
+                field(RpnExtCtl; RpnExtVar) { ApplicationArea = All; Caption = 'Rpn Ext Caption'; }
+                field(ExtValidatedCtl; ExtValidatedValue)
+                {
+                    ApplicationArea = All;
+                    trigger OnValidate() begin ExtDerivedValue := 'D-' + ExtValidatedValue; end;
+                }
+                field(ExtDerivedCtl; ExtDerivedValue) { ApplicationArea = All; }
+            }
+            modify(OptCtl) { Caption = 'Ext Request Option'; OptionCaption = 'Smaller,Larger'; }
+        }
+        trigger OnOpenPage() var T: Codeunit "RQ Trace"; begin T.Add('ext-open'); end;
+    }
+    var RpnExtVar: Text[30]; ExtValidatedValue: Text[30]; ExtDerivedValue: Text[30];
+}
+// handlers/TestReportRunRequestPageDatasetReport.al: not ProcessingOnly, with a rendering layout
+report 61224 "RQ Dataset"
+{
+    DefaultRenderingLayout = RqLayout;
+    dataset { dataitem(Rows; "RQ Row") { column(EntryNo; "Entry No.") { } } }
+    requestpage { layout { area(Content) { field(EchoText; EchoText) { ApplicationArea = All; } } } }
+    rendering { layout(RqLayout) { Type = RDLC; LayoutFile = './x.rdl'; } }
+    var EchoText: Text[50];
+}
+report 61225 "RQ Dataset No Page"
+{
+    DefaultRenderingLayout = RqLayout;
+    UseRequestPage = false;
+    dataset { dataitem(Rows; "RQ Row") { column(EntryNo; "Entry No.") { } } }
+    rendering { layout(RqLayout) { Type = RDLC; LayoutFile = './x.rdl'; } }
+}
 report 61221 "RQ No Page"
 {
     ProcessingOnly = true;
@@ -601,4 +654,61 @@ fn a_foreign_seed_is_refused() {
         [RequestPageHandler] procedure Cancel(var RP: TestRequestPage \"RQ Report\") begin RP.Cancel().Invoke(); end;"
     ));
     assert!(why.contains("did not produce"), "{why}");
+}
+
+// handlers/TestRequestPageControlErrorName.al:SourceReportExtension_Control_AssertEquals_*,
+// pageapplicationarea/TestReqPageApplicationAreaReportExtension.al:ExtField_SetValue_RunsItsOnValidate,
+// handlers/TestPageExtensionModifyCaption_Tests.al:SameAppReport_ModifiedRequestPageCaptions
+#[test]
+fn a_reportextension_adds_controls_and_modifies_captions_of_the_request_page() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('ExtHandler')]
+        procedure ExtensionControls() var T: Codeunit \"RQ Trace\"; begin
+            Seed();
+            Param := Report.RunRequestPage(Report::\"RQ Ext Base\");
+            Check('AssertEquals for Field: RpnExtCtl Expected = ''Wrong'', Actual = ''''', Seen);
+            Check('base-open,ext-open,', T.Text());
+            if StrPos(Param, '<Field name=\"RpnExtCtl\">Eps</Field>') = 0 then Error(Param);
+            if StrPos(Param, '<Field name=\"ExtDerivedCtl\">D-X</Field>') = 0 then Error(Param); end;
+        [RequestPageHandler] procedure ExtHandler(var RP: TestRequestPage \"RQ Ext Base\") begin
+            asserterror RP.RpnExtCtl.AssertEquals('Wrong'); Seen := GetLastErrorText();
+            RP.RpnExtCtl.SetValue('Eps'); RP.RpnExtCtl.AssertEquals('Eps');
+            RP.ExtValidatedCtl.SetValue('X'); RP.ExtDerivedCtl.AssertEquals('D-X');
+            if RP.OptCtl.Caption() <> 'Ext Request Option' then Error(RP.OptCtl.Caption());
+            RP.OptCtl.SetValue('Larger');
+            if RP.OptCtl.Value() <> 'Larger' then Error(RP.OptCtl.Value());
+            RP.OK().Invoke(); end;"
+    ));
+}
+
+// handlers/TestReportRunWithRequestPage.al:Report_Run_NonProcessingOnlyRequestPageHasNoOKAction:
+// a report that is not ProcessingOnly offers no plain OK, and Cancel stops its run
+#[test]
+fn the_request_page_of_a_report_that_renders_has_no_ok_action() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('PlainOk')]
+        procedure NoOk() var Probe: Report \"RQ Dataset\"; begin
+            Seed(); Clear(Probe);
+            asserterror Probe.Run();
+            if not HandlerRan then Error('handler');
+            if StrPos(GetLastErrorText(), 'built-in action = OK is not found') = 0 then Error(GetLastErrorText()); end;
+        [Test] [HandlerFunctions('CancelDataset')]
+        procedure CancelRuns() var Probe: Report \"RQ Dataset\"; begin
+            Seed(); Probe.Run(); if not HandlerRan then Error('handler'); end;
+        [RequestPageHandler] procedure PlainOk(var RP: TestRequestPage \"RQ Dataset\") begin HandlerRan := true; RP.OK().Invoke(); end;
+        [RequestPageHandler] procedure CancelDataset(var RP: TestRequestPage \"RQ Dataset\") begin HandlerRan := true; RP.Cancel().Invoke(); end;"
+    ));
+}
+
+// A run of a report that renders gets as far as its output and is refused there (docs/probes-needed.md)
+#[test]
+fn a_run_that_would_render_is_refused() {
+    let why = refused(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Renders() begin Seed(); Report.Run(Report::\"RQ Dataset No Page\"); end;"
+    ));
+    assert!(why.contains("renders output"), "{why}");
 }

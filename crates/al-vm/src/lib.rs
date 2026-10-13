@@ -1351,6 +1351,9 @@ impl al_builtins::native::Ctx for Session {
     fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
         Session::ui_str_menu(self, options, default, instruction)
     }
+    fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+        Session::ui_session_settings(self, settings)
+    }
     fn new_guid(&mut self) -> [u8; 16] {
         // Deterministic ids (ADR-006: no OS randomness in the core).
         self.next_guid += 1;

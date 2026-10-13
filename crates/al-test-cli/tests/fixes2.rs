@@ -164,3 +164,38 @@ fn an_unguarded_codeunit_run_in_a_worker_is_refused() {
         "{o:?}"
     );
 }
+
+// session/TestSessionSettings.al:464-545: RequestSessionUpdate(false) is a UI call routed to the
+// [SessionSettingsHandler]; the handler gets the assigned settings, the instance and the running
+// session's language stay as they were.
+#[test]
+fn request_session_update_goes_to_the_session_settings_handler() {
+    passes(&format!(
+        "{HELPERS}
+        var Calls: Integer; Saw: Text;
+        [Test] [HandlerFunctions('SettingsHandler')]
+        procedure Routed() var S: SessionSettings; Before: Integer; begin
+            Calls := 0; Before := GlobalLanguage();
+            S.TimeZone('Pacific Standard Time'); S.LanguageId(1030);
+            S.RequestSessionUpdate(false);
+            Check('1', Format(Calls)); Check('Pacific Standard Time', Saw);
+            Check('1030', Format(S.LanguageId())); Check(Format(Before), Format(GlobalLanguage())); end;
+        [SessionSettingsHandler] procedure SettingsHandler(var TheSettings: SessionSettings): Boolean begin
+            Calls += 1; Saw := TheSettings.TimeZone(); exit(true); end;"
+    ));
+}
+
+// RequestSessionUpdate(true) writes User Personalization (the corpus does not test it): refused.
+#[test]
+fn request_session_update_that_persists_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('SettingsHandler')]
+        procedure Persist() var S: SessionSettings; begin S.RequestSessionUpdate(true); end;
+        [SessionSettingsHandler] procedure SettingsHandler(var TheSettings: SessionSettings): Boolean begin exit(true); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("RequestSessionUpdate(true)")),
+        "{o:?}"
+    );
+}

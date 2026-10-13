@@ -133,6 +133,13 @@ pub trait Ctx: FormatCtx {
     fn ui_confirm(&mut self, _question: String, _default: bool) -> Result<bool, Signal> {
         Err(Signal::Unsupported("Confirm: this context has no UI".into()))
     }
+    /// `SessionSettings.RequestSessionUpdate(false)`: hands a copy of the settings to the bound
+    /// `[SessionSettingsHandler]`.
+    fn ui_session_settings(&mut self, _settings: Value) -> Result<(), Signal> {
+        Err(Signal::Unsupported(
+            "SessionSettings.RequestSessionUpdate: this context has no UI".into(),
+        ))
+    }
     /// `StrMenu(options, default, instruction)`: the chosen option, 1-based, 0 for none.
     fn ui_str_menu(&mut self, _options: String, _default: i32, _instruction: String) -> Result<i32, Signal> {
         Err(Signal::Unsupported("StrMenu: this context has no UI".into()))

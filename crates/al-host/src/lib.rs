@@ -1,1 +1,226 @@
-//! al-host — see docs/architecture.md
+//! al-host: capability traits the host provides to the core crates (ADR-006).
+//!
+//! The core crates do no OS access. Whatever is environmental (the time, the user, the session)
+//! comes from here, through a [`Host`] the session owns. This crate does no OS access either: the
+//! real clock is a [`Clock`] the front end (`al-test-cli`) supplies.
+//!
+//! The defaults mirror AL Runner v2 (ADR-013, decision 9): one fixed test user, tenant and
+//! session, and a frozen clock for a run that wants to be deterministic.
+//!
+//! # Time model
+//!
+//! A [`Clock`] answers one instant per call, in milliseconds since the Unix epoch, UTC. The
+//! session time zone of the runtime is UTC (docs/probes-needed.md, row "Dates"): `Today`, `Time`
+//! and `CurrentDateTime` are three views of one reading each, and `DT2Date`, `DT2Time`,
+//! `CreateDateTime` and `Format` read a `DateTime` in UTC too. There is no zone offset to
+//! configure, so the date part of `CurrentDateTime` always equals `Today`.
+
+/// The wall clock.
+pub trait Clock {
+    /// The current instant: milliseconds since 1970-01-01T00:00:00Z.
+    fn now_utc_millis(&self) -> i64;
+}
+
+/// A clock that always answers the same instant. The default for a run that must be reproducible;
+/// the session adds the time `Sleep` has waited and keeps system stamps strictly increasing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedClock(pub i64);
+
+/// 2024-01-15T12:00:00.000Z, midday so a zone shift of up to 12 hours cannot move the date.
+pub const DEFAULT_INSTANT_MILLIS: i64 = 1_705_320_000_000;
+
+impl FixedClock {
+    pub const fn new(millis_since_unix_epoch: i64) -> FixedClock {
+        FixedClock(millis_since_unix_epoch)
+    }
+}
+
+impl Default for FixedClock {
+    fn default() -> FixedClock {
+        FixedClock(DEFAULT_INSTANT_MILLIS)
+    }
+}
+
+impl Clock for FixedClock {
+    fn now_utc_millis(&self) -> i64 {
+        self.0
+    }
+}
+
+/// The members of the platform's `ClientType` option that a host answers with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientType {
+    Background,
+    Web,
+}
+
+impl ClientType {
+    /// The member name as AL writes it (`ClientType::Background`).
+    pub fn name(self) -> &'static str {
+        match self {
+            ClientType::Background => "Background",
+            ClientType::Web => "Web",
+        }
+    }
+}
+
+/// Who runs the code, and on what kind of server.
+pub trait Identity {
+    /// `UserId()`.
+    fn user_id(&self) -> String;
+    /// `UserSecurityId()`, as the 16 bytes of the Guid in text order.
+    fn user_security_id(&self) -> [u8; 16];
+    /// `CompanyName()`: the company the session runs in (`BcRuntime.cs:1309`).
+    fn company_name(&self) -> String;
+    /// `SessionId()`; positive for a live session (session/TestSessionIdentityValues.al:43-59).
+    fn session_id(&self) -> i32;
+    /// `ServiceInstanceId()`; positive (session/TestSessionIdentityValues.al:24-40).
+    fn service_instance_id(&self) -> i32;
+    /// `TenantId()`; not empty (session/TestDatabaseExtended.al:63-70).
+    fn tenant_id(&self) -> String;
+    /// `GuiAllowed()` (session/TestBCPlatformContracts.al:27-32).
+    fn gui_allowed(&self) -> bool;
+    /// `IsServiceTier()` (session/TestBCPlatformContracts.al:37-42).
+    fn is_service_tier(&self) -> bool;
+    /// `WindowsLanguage()`: the language id of the Windows user (a positive LCID).
+    fn windows_language(&self) -> i32;
+    /// The language id `GlobalLanguage()` answers until AL sets it.
+    fn global_language(&self) -> i32;
+    /// The locale (regional settings) id of the session, which `SessionSettings.Init` reads.
+    fn locale_id(&self) -> i32;
+    /// The Windows name of the session's time zone, which `SessionSettings.Init` reads. The
+    /// runtime's time model is UTC (see the crate docs), so a host answers `UTC`.
+    fn time_zone(&self) -> String;
+    /// `Session.CurrentClientType()`.
+    fn current_client_type(&self) -> ClientType;
+    /// `Session.DefaultClientType()`.
+    fn default_client_type(&self) -> ClientType;
+}
+
+/// The identity AL Runner v2 gives the code it runs (ADR-013, decision 9; `BcRuntime.cs`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AlRunnerIdentity;
+
+/// `{C0A1BDFA-0000-0000-0000-545553545553}`, the user's security id (`BcRuntime.cs:1441`).
+pub const USER_SECURITY_ID: [u8; 16] = [
+    0xC0, 0xA1, 0xBD, 0xFA, 0, 0, 0, 0, 0, 0, 0x54, 0x55, 0x53, 0x54, 0x55, 0x53,
+];
+
+/// The LCID of en-US, the culture of the runtime (ADR-013, decision 3).
+pub const LCID_EN_US: i32 = 1033;
+
+impl Identity for AlRunnerIdentity {
+    fn user_id(&self) -> String {
+        "TESTUSER".into()
+    }
+    fn user_security_id(&self) -> [u8; 16] {
+        USER_SECURITY_ID
+    }
+    fn company_name(&self) -> String {
+        "My Company".into()
+    }
+    /// AL Runner draws the session id from a counter that starts at 1 (`SessionPatches.cs`), and
+    /// the corpus asks for a positive id. ADR-013 listed 0 before codeunit 60023 pinned this.
+    fn session_id(&self) -> i32 {
+        1
+    }
+    /// `EnvironmentPatches.SkeletonServiceInstanceId`.
+    fn service_instance_id(&self) -> i32 {
+        1
+    }
+    /// The tenant id of a standalone run (ADR-013, decision 3).
+    fn tenant_id(&self) -> String {
+        "default".into()
+    }
+    fn gui_allowed(&self) -> bool {
+        true
+    }
+    fn is_service_tier(&self) -> bool {
+        true
+    }
+    fn windows_language(&self) -> i32 {
+        LCID_EN_US
+    }
+    fn global_language(&self) -> i32 {
+        LCID_EN_US
+    }
+    fn locale_id(&self) -> i32 {
+        LCID_EN_US
+    }
+    fn time_zone(&self) -> String {
+        "UTC".into()
+    }
+    /// `MiscPatches.ALSession_GetALCurrentClientType`.
+    fn current_client_type(&self) -> ClientType {
+        ClientType::Background
+    }
+    /// Not set by AL Runner; the service tier's default client is the web client.
+    fn default_client_type(&self) -> ClientType {
+        ClientType::Web
+    }
+}
+
+/// Everything environmental a session needs.
+pub struct Host {
+    pub clock: Box<dyn Clock>,
+    pub identity: Box<dyn Identity>,
+}
+
+impl Host {
+    pub fn new(clock: impl Clock + 'static, identity: impl Identity + 'static) -> Host {
+        Host {
+            clock: Box::new(clock),
+            identity: Box::new(identity),
+        }
+    }
+
+    /// The deterministic test host: a frozen clock and AL Runner's identity.
+    pub fn deterministic() -> Host {
+        Host::new(FixedClock::default(), AlRunnerIdentity)
+    }
+
+    /// AL Runner's identity on the clock given.
+    pub fn with_clock(clock: impl Clock + 'static) -> Host {
+        Host::new(clock, AlRunnerIdentity)
+    }
+}
+
+impl Default for Host {
+    fn default() -> Host {
+        Host::deterministic()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_clock_is_fixed_and_at_midday() {
+        let c = FixedClock::default();
+        assert_eq!(c.now_utc_millis(), c.now_utc_millis());
+        assert_eq!(c.now_utc_millis().rem_euclid(86_400_000), 43_200_000);
+    }
+
+    #[test]
+    fn default_identity_mirrors_al_runner() {
+        let i = AlRunnerIdentity;
+        assert_eq!(i.user_id(), "TESTUSER");
+        assert_eq!(i.company_name(), "My Company");
+        // {C0A1BDFA-0000-0000-0000-545553545553}
+        let text: String = USER_SECURITY_ID.iter().map(|b| format!("{b:02X}")).collect();
+        assert_eq!(text, "C0A1BDFA000000000000545553545553");
+        assert!(i.session_id() > 0 && i.service_instance_id() > 0);
+        assert!(!i.tenant_id().is_empty());
+        assert!(i.gui_allowed() && i.is_service_tier());
+        assert_eq!(i.windows_language(), 1033);
+        assert_eq!((i.locale_id(), i.time_zone().as_str()), (1033, "UTC"));
+    }
+
+    #[test]
+    fn host_is_deterministic_by_default() {
+        let h = Host::default();
+        assert_eq!(h.clock.now_utc_millis(), DEFAULT_INSTANT_MILLIS);
+        assert_eq!(h.identity.current_client_type(), ClientType::Background);
+    }
+}

@@ -12,6 +12,7 @@ al-vm.workspace = true
 al-builtins.workspace = true
 al-ir.workspace = true
 al-version.workspace = true
+al-host.workspace = true
 quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true

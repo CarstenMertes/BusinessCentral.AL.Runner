@@ -185,7 +185,7 @@ impl crate::runner::Runner for CorpusRuntime {
 /// Outcomes of every `[Test]` procedure of test codeunit `object`, in order.
 pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
-    let mut session = Session::new(engine.clone());
+    let mut session = Session::with_host(engine.clone(), crate::host::system_host());
     let instance = session.instance(object);
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
@@ -271,6 +271,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
+                    // The AL test runner enables every application area before each test method
+                    // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
+                    session.application_areas.clear();
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -616,7 +619,7 @@ mod tests {
 
     local procedure Helper()
     begin
-        Sleep(1);
+        LastUsedRowVersion();
     end;
 
     procedure NotATest()
@@ -649,7 +652,7 @@ mod tests {
     fn unreachable_code_does_not_block_but_reachable_unsupported_code_does() {
         let o = outcomes(SRC);
         assert!(
-            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("Sleep")),
+            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("LastUsedRowVersion")),
             "{:?}",
             o[2].1
         );
@@ -900,7 +903,7 @@ mod tests {
             table 60901 Co { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
                 trigger OnInstallAppPerDatabase() var R: Record Db; begin R.K := 'DB'; R.Insert(); end;
-                trigger OnInstallAppPerCompany() var R: Record Co; begin Sleep(1); R.K := 'CO'; R.Insert(); end; }
+                trigger OnInstallAppPerCompany() var R: Record Co; begin LastUsedRowVersion(); R.K := 'CO'; R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure SeededByTheTriggerThatRan() var R: Record Db; begin if not R.Get('DB') then Error('the per-database seed was rolled back'); end;
                 [Test] procedure SeededByTheTriggerThatDidNot() var R: Record Co; begin if R.Count() = 0 then Error('unseeded'); end; }",
@@ -921,7 +924,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnSeed', '', false, false)]
                 local procedure Seed() var R: Record Seed; begin R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin Sleep(1); P.OnSeed(); end; }
+                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin LastUsedRowVersion(); P.OnSeed(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -939,7 +942,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Table, Database::Src, 'OnAfterInsertEvent', '', false, false)]
                 local procedure Seed(var Rec: Record Src) var R: Record Seed; begin R.K := 'X'; R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var S: Record Src; begin Sleep(1); S.K := 'A'; S.Insert(); end; }
+                trigger OnInstallAppPerCompany() var S: Record Src; begin LastUsedRowVersion(); S.K := 'A'; S.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -952,7 +955,7 @@ mod tests {
             "table 60900 S { fields { field(1; K; Code[10]) { } } }
             table 60903 Other { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var R: Record S; begin Sleep(1); R.Insert(); end; }
+                trigger OnInstallAppPerCompany() var R: Record S; begin LastUsedRowVersion(); R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesS() var R: Record S; begin end;
                 [Test] procedure UsesOther() var R: Record Other; begin end; }",
@@ -1087,7 +1090,7 @@ mod tests {
         [MessageHandler] procedure Msg(M: Text[1024]) begin Seen := M; end;
         [MessageHandler] procedure Msg2(M: Text[1024]) begin end;
         [MessageHandler] procedure Boom(M: Text[1024]) begin Error('boom in handler'); end;
-        [MessageHandler] procedure Blocked(M: Text[1024]) begin Sleep(1); end;
+        [MessageHandler] procedure Blocked(M: Text[1024]) begin LastUsedRowVersion(); end;
         [ConfirmHandler] procedure Yes(Q: Text[1024]; var Reply: Boolean) begin Reply := true; end;
         [ConfirmHandler] procedure No(Q: Text[1024]; var Reply: Boolean) begin Fired += 1; Asked := Q; Reply := false; end;
         [ConfirmHandler] procedure Silent(Q: Text[1024]; var Reply: Boolean) begin end;
@@ -1151,7 +1154,7 @@ mod tests {
         };
         assert!(nr("UnknownHandlerNameIsRefused").contains("Nope"));
         assert!(nr("NamingARoutineThatIsNoHandlerIsRefused").contains("Helper"));
-        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("Sleep"));
+        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("LastUsedRowVersion"));
         assert!(nr("TwoHandlersOfOneKindAreRefused").contains("Msg2"));
     }
 
@@ -1394,5 +1397,40 @@ codeunit 60703 PhT
         ] {
             assert_eq!(ph(n), Outcome::Pass, "{n}");
         }
+    }
+
+    // session/TestSessionApplicationAreaTestBoundary.al:67552 (A_FirstTest_StartsWithEveryAreaEnabled_EvenAfterOnRunSetOne,
+    // C_NextTest_StartsWithEveryAreaEnabled): every test method starts with every application area enabled.
+    #[test]
+    fn every_test_starts_with_every_application_area_enabled() {
+        let src = "codeunit 60110 T
+{
+    Subtype = Test;
+    trigger OnRun() begin ApplicationArea('#Basic,#FromOnRun'); end;
+
+    [Test]
+    procedure A_StartsEmptyEvenAfterOnRunSetOne()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure B_SetsAreasForTheRestOfTheTest()
+    begin
+        ApplicationArea('#Basic,#Probe');
+        if ApplicationArea() <> '#Basic,#Probe' then Error('areas: %1', ApplicationArea());
+    end;
+
+    [Test]
+    procedure C_StartsEmptyAgain()
+    begin
+        if ApplicationArea() <> '' then Error('areas: %1', ApplicationArea());
+    end;
+}";
+        let o = outcomes_of(src, "T");
+        for (n, r) in &o {
+            assert_eq!(*r, Outcome::Pass, "{n}");
+        }
+        assert_eq!(o.len(), 3);
     }
 }

@@ -1184,3 +1184,32 @@ fn a_nested_validate_sees_the_record_as_it_was_before_the_outer_one() {
     );
     assert_eq!(text(nested), "First|X|");
 }
+
+// corpus record/TestCalcFormulaValidationTests.Codeunit.al:129 (sum of a Duration source into a Duration
+// FlowField: 1 + 2 + 3 + 4 hours) and :154 (average of a Duration source into a Decimal one is refused).
+#[test]
+fn duration_sources_sum_into_duration_flow_fields() {
+    let r = run_lines(
+        "procedure Hour(N: Integer): Duration
+        begin
+            exit(N * 60 * 60 * 1000);
+        end;
+        procedure F(): Text
+        var H: Record \"FF Head\"; L: Record \"FF Line\"; Ten: Duration; None: Duration; Seen: Text;
+        begin
+            SeedLines();
+            L.Get(1); L.Elapsed := Hour(1); L.Modify();
+            L.Get(2); L.Elapsed := 2 * Hour(1); L.Modify();
+            L.Get(3); L.Elapsed := 3 * Hour(1); L.Modify();
+            L.Get(4); L.Elapsed := 4 * Hour(1); L.Modify();
+            H.Get('D1');
+            H.CalcFields(Hours);
+            Ten := 10 * Hour(1);
+            Seen := Format(H.Hours = Ten);
+            H.Get('D3');
+            H.CalcFields(Hours);
+            exit(Seen + Format(H.Hours = None));
+        end;",
+    );
+    assert_eq!(text(r), "YesYes");
+}

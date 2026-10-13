@@ -126,6 +126,13 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         }
     }
     match (l, r) {
+        // A whole number of Durations (milliseconds); other Duration arithmetic is not pinned.
+        (V::Duration(ms), n) | (n, V::Duration(ms)) if op == Arith::Mul && int_of(n).is_some() => {
+            return int_of(n)
+                .and_then(|n| n.checked_mul(*ms))
+                .map(V::Duration)
+                .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
+        }
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {
             let n = int_of(n).expect("int") as i32;
@@ -264,6 +271,28 @@ mod tests {
             convert(d("1.5"), &RtType::Duration),
             Err(Signal::Unsupported(_))
         ));
+    }
+
+    // corpus record/TestCalcFormulaValidationTests.Codeunit.al:60,129: `1 * OneHour()` and
+    // `10 * OneHour()` with a Duration in milliseconds.
+    #[test]
+    fn a_whole_number_times_a_duration_is_a_duration() {
+        let hour = Value::Duration(3_600_000);
+        assert!(matches!(
+            arith(Arith::Mul, &Value::Integer(10), &hour),
+            Ok(Value::Duration(36_000_000))
+        ));
+        assert!(matches!(
+            arith(Arith::Mul, &hour, &Value::Integer(2)),
+            Ok(Value::Duration(7_200_000))
+        ));
+        assert!(
+            matches!(
+                arith(Arith::Div, &hour, &Value::Integer(2)),
+                Err(Signal::Unsupported(_))
+            ),
+            "other Duration arithmetic is not pinned"
+        );
     }
 
     #[test]

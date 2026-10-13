@@ -1,8 +1,8 @@
 # ADR-013: Dependency apps and platform objects (objects outside the workspace)
 
-- Status: Proposed (the project owner accepts it after reading this revision)
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
-- Revised: 2026-10-13, to record the owner's answers to the five open questions
+- Revised: 2026-10-13, to record the owner's answers to the five open questions and the acceptance
 
 ## Context
 
@@ -330,7 +330,7 @@ Two findings drive the decision:
    `blocked_reason` call-graph check (`al-test-cli/src/runtime.rs`) already does
    for execution; the compile cost needs the same treatment.
 
-## Decision (proposed, revised 2026-10-13 after the owner's answers)
+## Decision (revised 2026-10-13 after the owner's answers; accepted)
 
 1. **Dependency apps are Microsoft's source, downloaded into a cache and
    compiled by our front end.** Licensing is settled by the owner's answer: the
@@ -727,9 +727,32 @@ through the same path.
    speak for themselves". (Decision 6.)
 5. **Install triggers.** Mirror AL Runner. (Decision 5.)
 
+## Acceptance and further answers (2026-10-13)
+
+The project owner accepted this ADR and gave three further answers.
+
+1. **Status.** The ADR is Accepted. Building on it is allowed.
+2. **Where dependency apps are looked up first.** "The project's own
+   `.alpackages` folder is the first place dependency apps are looked up, the way
+   the AL compiler does it." The corpus ships System Application, Base
+   Application, Business Foundation and Application 27.5.46862.48827, with full
+   source, in `corpus/tests/al-language/.alpackages`. Downloading from the
+   artifact feed (decision 1) comes later, as a fallback behind `.alpackages`
+   and `--deps`. In the pool order of decision 2, Layer B, the project's
+   `.alpackages` stays first.
+3. **`DotNet`.** Still open. The owner asked for a generic approach, not
+   per-class Rust stand-ins, because on-prem apps can declare any .NET class.
+   A separate investigation is researching it. Until it is decided, decision 8
+   applies: every `DotNet` use is refused, with `Signal::Unsupported` or a static
+   reason that names the type.
+4. **Hard rule 7 stands.** Microsoft source is never committed to this
+   repository.
+
 ## Open question for the project owner
 
-1. **`DotNet` types in Microsoft's AL.** May the runtime contain Rust code that
+1. **`DotNet` types in Microsoft's AL.** The owner asked for a generic approach
+   instead of per-class stand-ins (see above). The list below is the earlier
+   framing. May the runtime contain Rust code that
    stands in for a .NET class declared in Microsoft's AL, and for which classes?
    The options, with real cases, are in `docs/dotnet-examples.md`:
    - No. Refuse every `DotNet` use. At most 20 to 28 corpus tests stay not run.

@@ -35,6 +35,8 @@ pub enum Virtual {
     PageControlField,
     TimeZone,
     WindowsLanguage,
+    NavAppInstalledApp,
+    PublishedApplication,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -53,6 +55,8 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_192, "Page Control Field", Provider::Virtual(Virtual::PageControlField)),
     (2_000_000_164, "Time Zone", Provider::Virtual(Virtual::TimeZone)),
     (2_000_000_045, "Windows Language", Provider::Virtual(Virtual::WindowsLanguage)),
+    (2_000_000_153, "NAV App Installed App", Provider::Virtual(Virtual::NavAppInstalledApp)),
+    (2_000_000_206, "Published Application", Provider::Virtual(Virtual::PublishedApplication)),
     // Stored tables whose rows AL reads as facts about the session; the platform seeds them
     // (al-vm `platform/seed.rs`).
     (2_000_000_006, "Company", Provider::Stored),
@@ -99,6 +103,11 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     ),
     // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
     (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10]),
+    // NAV App Installed App: record/TestNavAppInstalledAppSysTable.al. The compatibility, hash and extension columns are not read.
+    (2_000_000_153, &[1, 2, 3, 4, 5, 6, 7, 8]),
+    // Published Application: install/TestRetenPolAllowedTables_Tests.al reads the package ids through System Application code;
+    // the identity and version columns mirror NAV App Installed App.
+    (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9]),
     // Windows Language: record/TestWindowsLanguageTable.al.
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.

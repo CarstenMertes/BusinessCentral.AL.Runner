@@ -9,6 +9,7 @@
 //! A provider reads the compiled program, never the OS (ADR-006). Every observable rule carries
 //! the corpus line that pins it; a column or a shape nothing pins is refused, not guessed.
 
+mod apps;
 mod date;
 mod fields;
 mod host_tables;
@@ -109,6 +110,8 @@ impl Providers {
             return Ok(m.clone());
         }
         let rows = match kind {
+            Virtual::NavAppInstalledApp => apps::nav_app_installed_app_rows(self, t),
+            Virtual::PublishedApplication => apps::published_application_rows(self, t),
             Virtual::TimeZone => host_tables::time_zone_rows(t, &self.ident),
             Virtual::Session => vec![mat::Entry::ok(identity::session_row(t, &self.ident))],
             Virtual::ActiveSession => vec![mat::Entry::ok(identity::active_session_row(t, &self.ident))],

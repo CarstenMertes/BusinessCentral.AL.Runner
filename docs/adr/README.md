@@ -20,4 +20,4 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [008](008-builtins-catalog.md) | Builtin signatures generated from the docs; implementations registered by overload id; value model in al-builtins | Accepted |
 | [010](010-value-model.md) | One Value enum in al-builtins; value types copy, reference types share; records are handles | Accepted |
 | [011](011-ir-and-execution.md) | Fully resolved typed IR; tree-walking interpreter first, bytecode only if budgets need it; Result-based control flow; BC test-runner semantics from the corpus | Accepted |
-| [013](013-external-objects.md) | Platform objects (System/Base App) outside the workspace: bundled AL shims as the mechanism, native-backed members behind them, symbols as verifier only | Proposed |
+| [013](013-external-objects.md) | Dependency apps compiled from Microsoft's own artifacts (source, cached outside the repo); native providers only for platform objects with no AL body; AL Runner's identity values | Proposed |

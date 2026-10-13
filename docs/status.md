@@ -128,3 +128,16 @@ Answered on 2026-10-13 and recorded in ADR-013:
   formatting, and the `Format` of Time and DateTime.
 - `al-host` is still a placeholder. Clock, identity and network go through it
   once ADR-013 lands.
+
+## Next targets after the corpus (owner, 2026-10-13)
+
+Start these when the corpus is green or nearly green and nothing big is left:
+
+1. **Microsoft's own Base App test buckets.** AL Runner has a skill for this:
+   `BusinessCentral.AL.Runner/.claude/skills/running-ms-test-buckets/SKILL.md`.
+   It measures how many of Microsoft's own test cases this runtime can run.
+   The tests need CRONUS demo data (`--test-data`), not an empty database.
+2. **CRONUS demo data in native Rust.** `bcdb` (repo `BusinessCentral.BakReader`, C#) reads BC
+   data straight from a `.bak` or `.bacpac` file, with no SQL Server. AL Runner uses it
+   for `--test-data`. Port it to Rust: here at first, possibly in that repo later.
+   This gives speed and native support for loading CRONUS into the store.

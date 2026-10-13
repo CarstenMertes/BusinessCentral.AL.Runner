@@ -22,6 +22,13 @@ reviewed it.
 
   Nothing is built on ADR-016 until it is accepted.
 
+## Decided by the owner (recorded)
+
+- 2026-10-13, ADR-016: server mode, watch mode and `--affected` are deferred
+  while start-up is not a concern. Revisit after dependency loading is
+  measured, or when ALchemist or LethAL support is wanted. Those two use the
+  server as their interface.
+
 ## Decided without owner review
 
 - 2026-10-13, orchestrator, hard rule 3: when a guarded XmlPort import fails,

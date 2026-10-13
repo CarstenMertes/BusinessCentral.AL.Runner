@@ -72,3 +72,9 @@ comment as a corpus citation and is deleted here.
 | TestPage | SetValue of the value a field already holds runs no OnValidate trigger | corpus handlers/TestPageSameValueSetValue_Tests.al pins only that OnModify does not run | `control_set_value` |
 | TestPage | a page that showed no row shows one when page code left Rec on a stored row that the view admits and that was not stored before the action; the same for any action | corpus testpart/BnrBlankPart.al NoRow_Action_* | `show_row_page_code_positioned` |
 
+| TestPage | numeric ordinals of the Action option members (None, OK, Cancel, LookupOK, LookupCancel, Yes, No, RunObject, RunSystem) | docs only (page-action-enum); corpus compares by Format | `ACTION_MEMBERS` |
+| TestPage | OnInit runs before the UI handler is looked up (an OnInit error surfaces as itself with no handler declared) | corpus handlers/TestPageOnInit_Tests.al pins the error text only | `open_page` |
+| TestPage | a non-modal [PageHandler] page is closed by the platform when the handler returns (OnQueryClosePage/OnClosePage run, SaveValues stores) | corpus handlers/TestPageSaveValues.al:NonModal_* pins only the stored value | `run_page_ui` |
+| TestPage | SaveValues restores stored variable values after OnInit and before OnOpenPage; TestPage.Close() on a non-dialog and a platform close store them | corpus pins reopen value only | `restore_page_values` |
+| TestPage | a handler that tears its page down leaves a non-lookup RunModal reporting Cancel | corpus testpageteardown pins lookup (LookupCancel) only | `run_page_ui` |
+| TestPage | Page.RunModal(id, Record) runs in lookup mode (OK reads LookupOK) | corpus handlers/TestPageModalHandlerStatic_Tests.al pins the result values | `page_op` |

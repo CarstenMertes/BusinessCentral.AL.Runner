@@ -26,7 +26,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         | (v @ Value::Array(_), T::Array(..)) => v,
         (v @ Value::Codeunit(_), T::Codeunit(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
-        (v @ Value::TestPage(_), T::TestPage(_)) => v,
+        (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
         (v @ Value::Enum(..), T::Enum(_)) => v,
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
         (Value::Integer(i), T::Option(m)) => Value::Option(i, m.clone().into()),

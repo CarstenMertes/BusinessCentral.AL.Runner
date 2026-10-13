@@ -6,7 +6,7 @@
 //! Every rule below cites the corpus test that pins it; behaviour no test
 //! pins raises `Signal::Unsupported`.
 
-use crate::{Engine, Session};
+use crate::{Engine, Session, UiKind};
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::pagefmt::{self, Blank, ControlFormat};
@@ -61,6 +61,8 @@ fn unquote(s: &str) -> String {
 fn is_true(s: &str) -> bool {
     s.trim().eq_ignore_ascii_case("true")
 }
+
+type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
 impl Session {
     /// `TP.Ctl`: a handle on control `control` of the test page `page`.
@@ -215,6 +217,59 @@ impl Session {
         args: &mut [Value],
     ) -> Result<Value, Signal> {
         match recv {
+            None if method == "Page.RunStatic" || method == "Page.RunModalStatic" => {
+                let n = match args.first() {
+                    Some(Value::Integer(n)) => *n,
+                    other => return unsupported(format!("Page.Run with {other:?} as the page")),
+                };
+                let engine = self.engine();
+                let record = match args.get(1) {
+                    Some(Value::Record(r)) => Some(r.clone()),
+                    None => None,
+                    other => return unsupported(format!("Page.Run with {other:?} as the record")),
+                };
+                if args.len() > 2 {
+                    return unsupported("Page.Run with a field argument");
+                }
+                // Id 0 with a record resolves the page from the record's table LookupPageId; a
+                // table without one refuses like any unknown id (corpus
+                // handlers/TestPageRunModalLookupPageId_Tests.al).
+                let mut id = n as u32;
+                if n == 0 {
+                    if let Some(r) = &record {
+                        let table = r.borrow().table as usize;
+                        let lookup = engine.program.objects[table]
+                            .properties
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case("LookupPageId"))
+                            .map(|(_, v)| v.trim().trim_matches('"').to_string());
+                        if let Some(l) = lookup {
+                            let found = engine.program.objects.iter().find(|o| {
+                                o.kind == "page"
+                                    && (o.name.eq_ignore_ascii_case(&l) || o.id.is_some_and(|i| i.to_string() == l))
+                            });
+                            if let Some(i) = found.and_then(|o| o.id) {
+                                id = i;
+                            }
+                        }
+                    }
+                }
+                let Some(object) = engine
+                    .program
+                    .objects
+                    .iter()
+                    .position(|o| o.kind == "page" && o.id == Some(id))
+                else {
+                    return Err(error(format!("You tried to invoke the Page object with the ID {n}")));
+                };
+                let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
+                // RunModal(id, Record) is the lookup overload: OK reads LookupOK, Cancel LookupCancel
+                // (corpus handlers/TestPageModalHandlerStatic_Tests.al:48-72).
+                if method == "Page.RunModalStatic" && record.is_some() {
+                    st.borrow_mut().lookup = true;
+                }
+                self.run_page_ui(&st, record, method == "Page.RunModalStatic")
+            }
             Some(Value::TestPage(st)) => {
                 let st = st.clone();
                 self.test_page_op(method, &st, args)
@@ -232,7 +287,7 @@ impl Session {
             "OpenEdit" => self.page_open(st, PageMode::Edit),
             "OpenView" => self.page_open(st, PageMode::View),
             "OpenNew" => self.page_open(st, PageMode::New),
-            "Close" => self.page_close(st),
+            "Close" if !method.starts_with("Page.") => self.page_close(st),
             m @ ("First" | "Last" | "Next" | "Previous") => {
                 self.require_open(st)?;
                 self.page_move(st, m)
@@ -274,6 +329,27 @@ impl Session {
             "Editable" => {
                 self.require_open(st)?;
                 Ok(Value::Boolean(self.page_editable(st)))
+            }
+            "Trap" => {
+                // The next plain Page.Run of this page type opens into this variable
+                // (corpus handlers/TestPageRunHandler_Tests.al:TrapReceivesTheNonModalPageAndItStaysOpen).
+                st.borrow_mut().trapping = true;
+                self.trap = Some(st.clone());
+                Ok(Value::Null)
+            }
+            "LookupMode" => match args.first() {
+                Some(v) => {
+                    st.borrow_mut().lookup = ops::truthy(v)?;
+                    Ok(Value::Null)
+                }
+                None => Ok(Value::Boolean(st.borrow().lookup)),
+            },
+            "Run" => self.run_page_ui(st, None, false),
+            "RunModal" => self.run_page_ui(st, None, true),
+            "Close" if method.starts_with("Page.") => {
+                self.require_open(st)?;
+                let a = self.close_action(st, "Close");
+                self.close_with(st, &a, false, false)
             }
             "New" => {
                 self.require_open(st)?;
@@ -329,6 +405,23 @@ impl Session {
         if st.borrow().open {
             return Err(error(ALREADY_OPEN));
         }
+        // A reopened variable shows a fresh page.
+        st.borrow_mut().instance = None;
+        st.borrow_mut().modal = false;
+        self.open_page(st, mode, None, None).map(|_| Value::Null)
+    }
+
+    /// Whether the page has a source table (and so a `Rec`).
+    fn has_source(&self, st: &St) -> bool {
+        let object = st.borrow().object as usize;
+        self.engine.program.objects[object].rec_slot.is_some()
+    }
+
+    /// The page instance of `st`, created on first use (a `Page` variable has one before it runs).
+    pub(crate) fn page_instance(&mut self, st: &St) -> Result<Rc<RefCell<al_builtins::value::Instance>>, Signal> {
+        if let Some(i) = st.borrow().instance.clone() {
+            return Ok(i);
+        }
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let page = page_of(&engine, st);
@@ -337,11 +430,32 @@ impl Session {
         }
         let inst = self.instance(object);
         inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(st.clone());
+        st.borrow_mut().instance = Some(inst.clone());
+        Ok(inst)
+    }
+
+    /// Opens the page: OnInit, OnOpenPage, the control expressions and the first row. `record`
+    /// is the record AL code handed to `Page.Run`/`SetRecord`: its filters and position become the
+    /// page's view.
+    ///
+    /// With `bind`, the UI handler for the page is looked up after OnInit and before OnOpenPage
+    /// (corpus handlers/TestPageOnInit_Tests.al: an OnInit error surfaces as itself even where no
+    /// handler is declared).
+    fn open_page(
+        &mut self,
+        st: &St,
+        mode: PageMode,
+        record: Option<Rec>,
+        bind: Option<UiKind>,
+    ) -> Result<Option<Handler>, Signal> {
+        let mut handler = None;
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        self.page_instance(st)?;
         {
             let mut s = st.borrow_mut();
             s.open = true;
             s.mode = mode;
-            s.instance = Some(inst);
             s.cursor = Cursor::None;
             s.draft = false;
             s.dirty = false;
@@ -350,13 +464,30 @@ impl Session {
             s.focus = None;
             s.focus_in_row = false;
             s.errors = Vec::new();
+            s.refused = false;
+            s.pending = None;
+            s.result = None;
+        }
+        let has_source = self.has_source(st);
+        if let (Some(r), true) = (&record, has_source) {
+            let rec = self.page_rec(st);
+            let src = r.borrow();
+            let mut dst = rec.borrow_mut();
+            dst.fields = src.fields.clone();
+            dst.filters = src.filters.clone();
+            dst.key = src.key;
+            dst.ascending = src.ascending;
         }
         let result = (|| {
             self.page_trigger(st, "oninit", vec![])?;
+            if let Some(kind) = bind {
+                handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
+            }
+            self.restore_page_values(st);
             self.check_page_events(st)?;
             self.page_trigger(st, "onopenpage", vec![])?;
             self.page_event(st, "onopenpageevent", None, None)?;
-            let new_line = self.offers_new_line(st)?;
+            let new_line = has_source && self.offers_new_line(st)?;
             st.borrow_mut().new_line = new_line;
             // Visible is evaluated once, at open.
             let mut frozen = Vec::new();
@@ -364,6 +495,15 @@ impl Session {
                 frozen.push(self.prop_bool_now(st, i, "visible", true)?);
             }
             st.borrow_mut().frozen_visible = frozen;
+            if !has_source {
+                // A page over no table shows its one implicit row: the expressions, then OnAfterGetRecord.
+                st.borrow_mut().cursor = Cursor::Row;
+                self.populate_expressions(st)?;
+                self.page_trigger(st, "onaftergetrecord", vec![])?;
+                self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+                return Ok(());
+            }
             if mode == PageMode::New {
                 // corpus handlers/TestPageCreateModeNewRecordArgs.al:243-270: OnOpenPage, then
                 // OnNewRecord with BelowxRec true and xRec on the last row.
@@ -371,6 +511,19 @@ impl Session {
                 let rec = self.page_rec(st);
                 self.record_op("FindLast", &rec, &mut [])?;
                 return self.start_draft(st, false);
+            }
+            if record.is_some() {
+                // The page opens on the record the caller handed it, when that row exists
+                // (corpus handlers/TestPageRunHandler_Tests.al:PageHandlerReceivesTheRecordPassedToPageRun).
+                let rec = self.page_rec(st);
+                if self.stored_row(&rec)?.is_some() {
+                    self.ret_used = true;
+                    let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+                    if matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true)) {
+                        st.borrow_mut().cursor = Cursor::Row;
+                        return self.arrive(st);
+                    }
+                }
             }
             self.page_first_row(st)
         })();
@@ -380,13 +533,74 @@ impl Session {
             st.borrow_mut().open = false;
             return Err(e);
         }
-        Ok(Value::Null)
+        Ok(handler)
+    }
+
+    fn save_values(&self, st: &St) -> bool {
+        let object = st.borrow().object as usize;
+        self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("SaveValues") && v.trim().eq_ignore_ascii_case("true"))
+    }
+
+    fn var_slots(&self, st: &St) -> Vec<usize> {
+        let engine = self.engine();
+        let mut slots: Vec<usize> = page_of(&engine, st)
+            .controls
+            .iter()
+            .filter_map(|c| {
+                if let ir::Binding::Var(slot) = c.binding {
+                    Some(slot)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+
+    fn store_page_values(&mut self, st: &St) {
+        if !self.save_values(st) {
+            return;
+        }
+        let Some(inst) = st.borrow().instance.clone() else {
+            return;
+        };
+        let saved: Vec<(usize, Value)> = self
+            .var_slots(st)
+            .into_iter()
+            .map(|slot| (slot, inst.borrow().globals[slot].clone()))
+            .collect();
+        let object = st.borrow().object;
+        self.saved_values.insert(object, saved);
+    }
+
+    fn restore_page_values(&mut self, st: &St) {
+        let object = st.borrow().object;
+        let Some(saved) = self.saved_values.get(&object).cloned() else {
+            return;
+        };
+        let Some(inst) = st.borrow().instance.clone() else {
+            return;
+        };
+        for (slot, v) in saved {
+            inst.borrow_mut().globals[slot] = v;
+        }
     }
 
     /// `TestPage.Close()`: the page closes the way a Cancel does (corpus
     /// testpageclose/TestPageClosingActions.al:Dialog arms, `qcp:Cancel` after Close()).
     fn page_close(&mut self, st: &St) -> Result<Value, Signal> {
-        self.close_with(st, "Cancel", false)
+        let r = self.close_with(st, "Cancel", false, false);
+        // A refused TestPage.Close() leaves the variable not open all the same (corpus
+        // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen).
+        if r.is_ok() {
+            st.borrow_mut().open = false;
+        }
+        r
     }
 
     /// Closes the page with `action`. The client first saves what was typed; a save the table
@@ -394,8 +608,16 @@ impl Session {
     /// page open (corpus testpageclose/TestPageClosingActions.al, Card_OK_AfterATableRefusedDuplicateKey_*,
     /// handlers/TestPageFailedInsert_Tests.al). Then OnQueryClosePage(action) decides, then
     /// OnClosePage runs (TestPageClosingActions.al:Card_OK_RaisesTheCloseTriggersOnce).
-    fn close_with(&mut self, st: &St, action: &str, swallow_save_errors: bool) -> Result<Value, Signal> {
+    fn close_with(
+        &mut self,
+        st: &St,
+        action: &str,
+        swallow_save_errors: bool,
+        via_action: bool,
+    ) -> Result<Value, Signal> {
         self.require_open(st)?;
+        let mapped = self.close_action(st, action);
+        let action = mapped.as_str();
         if st.borrow().refused {
             // The refused line was reported when it was left; closing drops it.
             let mut s = st.borrow_mut();
@@ -426,7 +648,15 @@ impl Session {
             .iter()
             .position(|m| *m == action)
             .unwrap_or(0) as i32;
-        let veto = self.page_trigger(st, "onqueryclosepage", vec![Value::Option(ordinal, members)])?;
+        // An AL error raised in OnQueryClosePage is shown as a message and refuses the close
+        // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
+        let veto = match self.page_trigger(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
+            Err(Signal::Error(e)) => {
+                self.ui_message(e.message)?;
+                return Ok(Value::Null);
+            }
+            other => other?,
+        };
         if matches!(veto, Some(Value::Boolean(false))) {
             return Ok(Value::Null);
         }
@@ -435,7 +665,15 @@ impl Session {
         }
         self.page_trigger(st, "onclosepage", vec![])?;
         self.page_event(st, "onclosepageevent", None, None)?;
-        st.borrow_mut().open = false;
+        // SaveValues: what the page's variable-bound controls hold is stored unless the Cancel
+        // action closed it (corpus handlers/TestPageSaveValues.al, testpageclose/TestPageClosingActions.al:937-977;
+        // Close() and a platform close store too, docs/probes-needed.md).
+        if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
+            self.store_page_values(st);
+        }
+        let mut s = st.borrow_mut();
+        s.open = false;
+        s.result = Some(action.to_string());
         Ok(Value::Null)
     }
 
@@ -452,6 +690,15 @@ impl Session {
             .find(|(k, _)| k.eq_ignore_ascii_case("PageType"))
             .map(|(_, v)| v.trim().to_ascii_lowercase())
             .unwrap_or_default();
+        let dialog = matches!(
+            page_type.as_str(),
+            "confirmationdialog" | "standarddialog" | "promptdialog" | "navigatepage"
+        );
+        // A lookup-mode modal offers OK and Cancel whatever its type (corpus
+        // handlers/TestPageModalQueryClose_Tests.al (b2) and (d)).
+        if !dialog && matches!(which, "OK" | "Cancel") && st.borrow().modal && st.borrow().lookup {
+            return true;
+        }
         match (page_type.as_str(), which) {
             ("confirmationdialog", "Yes" | "No") => true,
             ("confirmationdialog", _) => false,
@@ -559,6 +806,16 @@ impl Session {
         Ok(())
     }
 
+    /// PageType = List (a worksheet or ListPlus page with a repeater is not one; corpus
+    /// handlers/TestPageControlEditableRoutes.al:Worksheet_RunModal_LookupMode).
+    fn is_list_page(&self, st: &St) -> bool {
+        let object = st.borrow().object as usize;
+        self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("PageType") && v.trim().eq_ignore_ascii_case("list"))
+    }
+
     fn is_list(&self, st: &St) -> bool {
         let engine = self.engine();
         page_of(&engine, st)
@@ -632,6 +889,9 @@ impl Session {
 
     /// Moves the cursor; the Boolean the move methods return.
     fn page_move(&mut self, st: &St, how: &str) -> Result<Value, Signal> {
+        if !self.has_source(st) {
+            return unsupported(format!("{how}() on a page without a source table"));
+        }
         // Leaving a row saves it.
         if let Left::Stay = self.leave_row(st, how)? {
             return Ok(Value::Boolean(false));
@@ -704,6 +964,9 @@ impl Session {
     /// A key no row has leaves the page on the row it stood on
     /// (corpus handlers/TestPageGoToRecordNonKeyRefresh_Tests.al:1-15).
     fn page_go_to_key(&mut self, st: &St, key: &mut [Value]) -> Result<Value, Signal> {
+        if !self.has_source(st) {
+            return unsupported("GoToKey on a page without a source table");
+        }
         self.save_row(st)?;
         let rec = self.page_rec(st);
         let table = self.table(&rec)?;
@@ -745,6 +1008,139 @@ impl Session {
             s.draft = before_draft;
         }
         Ok(Value::Boolean(found))
+    }
+
+    /// A `Trap()` set on a TestPage that belongs to a routine ends with the routine; one set through
+    /// a `var` parameter belongs to the caller (corpus handlers/TestPageTrapScope_Tests.al:1-15).
+    pub(crate) fn end_trap_scope(&mut self, frame: &crate::Frame, params: usize, by_var: &[bool]) {
+        let Some(trap) = &self.trap else { return };
+        // The trap ends with the last variable holding the page. A by-var parameter hands its page
+        // back to the caller, and a page another variable still holds keeps the trap alive (corpus
+        // handlers/TestPageTrapSharedScope_Tests.al:87 TrapSharedByTwoLocalsSurvivesWhenOneIsAssignedOut,
+        // handlers/TestPageTrapScope_Tests.al TrapAssignedOutOfALocalVariableSurvives).
+        let mut local_holders = 0;
+        let mut handed_back = false;
+        for (i, v) in frame.locals.iter().enumerate() {
+            if let Value::TestPage(st) = v {
+                if Rc::ptr_eq(st, trap) {
+                    local_holders += 1;
+                    if i < params && by_var.get(i).copied().unwrap_or(false) {
+                        handed_back = true;
+                    }
+                }
+            }
+        }
+        if local_holders == 0 || handed_back {
+            return;
+        }
+        let outside = Rc::strong_count(trap).saturating_sub(1 + local_holders);
+        if outside == 0 {
+            trap.borrow_mut().trapping = false;
+            self.trap = None;
+        }
+    }
+
+    // ---- pages opened by AL code ----------------------------------------------------------
+
+    /// The built-in action name `close_with` is asked for, as the `Action` the page reports. A
+    /// lookup-mode modal reads OK and Cancel as LookupOK and LookupCancel; a page closing itself
+    /// (`CurrPage.Close()`) reads as OK in a plain modal and as LookupCancel in lookup mode (corpus
+    /// handlers/TestPageModalQueryClose_Tests.al, TestPageModalSelfClose_Tests.al).
+    fn close_action(&self, st: &St, requested: &str) -> String {
+        let (modal, lookup) = {
+            let s = st.borrow();
+            (s.modal, s.lookup)
+        };
+        match (requested, modal, lookup) {
+            ("OK", true, true) => "LookupOK".into(),
+            ("Cancel", true, true) => "LookupCancel".into(),
+            ("Close", true, true) => "LookupCancel".into(),
+            ("Close", true, false) => "OK".into(),
+            ("Close", false, _) => "Cancel".into(),
+            (other, _, _) => other.into(),
+        }
+    }
+
+    /// What a modal page reports when its handler invoked nothing: the page type decides (corpus
+    /// handlers/TestPageBuiltInActions_Tests.al (i)-(k), TestPageModalQueryClose_Tests.al (b) and (e)).
+    fn unattended_action(&self, st: &St) -> &'static str {
+        let (lookup, object) = {
+            let s = st.borrow();
+            (s.lookup, s.object as usize)
+        };
+        let page_type = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("PageType"))
+            .map(|(_, v)| v.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+        match page_type.as_str() {
+            "standarddialog" | "promptdialog" | "confirmationdialog" => "Cancel",
+            _ if lookup => "LookupCancel",
+            _ => "OK",
+        }
+    }
+
+    /// `Page.Run` / `Page.RunModal` (static and on a `Page` variable): opens the page for the
+    /// calling AL, hands it to the bound handler (or to the `TestPage.Trap()` variable for a plain
+    /// run), and for a modal run reports how it closed.
+    pub(crate) fn run_page_ui(&mut self, st: &St, record: Option<Rec>, modal: bool) -> Result<Value, Signal> {
+        let object = st.borrow().object;
+        let mut st = st.clone();
+        let mut trapped = false;
+        if !modal {
+            if let Some(trap) = self.trap.take() {
+                if trap.borrow().object != object {
+                    return unsupported("a Trap() for another page than the one Page.Run opens");
+                }
+                trap.borrow_mut().trapping = false;
+                // The trapped variable receives the page and keeps it open for the test.
+                trap.borrow_mut().instance = None;
+                st = trap;
+                trapped = true;
+            }
+        }
+        if st.borrow().open {
+            return unsupported("running a page that is already open");
+        }
+        let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
+        st.borrow_mut().modal = modal && !trapped;
+        let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
+        let Some((hobject, hroutine, hinst)) = handler else {
+            return Ok(Value::Null);
+        };
+        if let Err(e) = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]) {
+            st.borrow_mut().open = false;
+            return Err(e);
+        }
+        if st.borrow().open {
+            let a = self.unattended_action(&st);
+            self.close_with(&st, a, true, false)?;
+            if st.borrow().open {
+                return unsupported("a page whose OnQueryClosePage refused the platform's close");
+            }
+        }
+        // A handler that left its page torn down closed it without OK (corpus
+        // testpageteardown/TestPageTeardown.al:1930; the non-lookup reading is docs-only).
+        if modal && !st.borrow().open && st.borrow().result.is_none() {
+            let a = self.close_action(&st, "Cancel");
+            st.borrow_mut().result = Some(a);
+        }
+        let result = st.borrow().result.clone();
+        st.borrow_mut().modal = false;
+        if !modal {
+            return Ok(Value::Null);
+        }
+        let name = result.unwrap_or_else(|| "None".into());
+        let members: std::rc::Rc<[String]> = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        let ordinal = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == name)
+            .unwrap_or(0) as i32;
+        Ok(Value::Option(ordinal, members))
     }
 
     // ---- writing ------------------------------------------------------------------------
@@ -801,6 +1197,9 @@ impl Session {
 
     /// The control bound to the first field of the primary key.
     fn key_control(&self, st: &St) -> usize {
+        if !self.has_source(st) {
+            return 0;
+        }
         let engine = self.engine();
         let page = page_of(&engine, st);
         let table = self.page_rec(st).borrow().table as usize;
@@ -813,6 +1212,9 @@ impl Session {
 
     /// xRec := Rec, the row as the client read it.
     fn set_xrec(&mut self, st: &St) {
+        if !self.has_source(st) {
+            return;
+        }
         let object = st.borrow().object as usize;
         let Some(slot) = self.engine.program.objects[object].xrec_slot else {
             return;
@@ -825,6 +1227,9 @@ impl Session {
     }
 
     fn page_xrec_fields(&self, st: &St) -> Vec<Value> {
+        if !self.has_source(st) {
+            return Vec::new();
+        }
         let object = st.borrow().object as usize;
         let slot = self.engine.program.objects[object]
             .xrec_slot
@@ -862,6 +1267,9 @@ impl Session {
     /// handlers/TestPageCreateModeNewRecordArgs.al:243-270), then the row is populated
     /// (handlers/TestPageOpenNewAfterGetCurrRecord.al:1-12: OnAfterGetCurrRecord runs after OnNewRecord).
     fn start_draft(&mut self, st: &St, keep_focus: bool) -> Result<(), Signal> {
+        if !self.has_source(st) {
+            return unsupported("a new record on a page without a source table");
+        }
         let rec = self.page_rec(st);
         self.set_xrec(st);
         let table = rec.borrow().table as usize;
@@ -914,7 +1322,7 @@ impl Session {
             let s = st.borrow();
             (s.cursor, s.draft, s.dirty)
         };
-        if cursor == Cursor::None || !dirty {
+        if cursor == Cursor::None || !dirty || !self.has_source(st) {
             return Ok(());
         }
         if draft {
@@ -1167,7 +1575,7 @@ impl Session {
             ControlTarget::BuiltIn(name) if m == "Invoke" => {
                 // OK and Yes confirm, Cancel and No cancel; a refused save keeps the page open
                 // (corpus testpageclose/TestPageClosingActions.al).
-                return self.close_with(st, name, true);
+                return self.close_with(st, name, true, true);
             }
             _ => return unsupported(format!("{method} on a built-in control")),
         };
@@ -1268,6 +1676,9 @@ impl Session {
     /// action inserted; a row the action deleted closes a card, and moves a list to the next row,
     /// else the previous one, else none (corpus pageupdate/TestPageUpdateGoneRow.al:1-30).
     fn settle_after_action(&mut self, st: &St) -> Result<(), Signal> {
+        if !self.has_source(st) {
+            return Ok(());
+        }
         self.show_row_page_code_positioned(st)?;
         if !st.borrow().open || st.borrow().cursor != Cursor::Row || st.borrow().draft {
             return Ok(());
@@ -1370,6 +1781,9 @@ impl Session {
     /// The source field of a control bound to a record field.
     fn control_field(&self, st: &St, idx: usize) -> Option<ir::Field> {
         let engine = self.engine();
+        if !self.has_source(st) {
+            return None;
+        }
         let page = page_of(&engine, st);
         let ir::Binding::Field(pos) = page.controls[idx].binding else {
             return None;
@@ -1542,7 +1956,10 @@ impl Session {
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let props = &engine.program.objects[object].properties;
+        // A list handed over in lookup mode is read-only, page-variable controls included
+        // (corpus handlers/TestPageControlEditableRoutes.al:446 List_RunModal_LookupMode).
         st.borrow().mode != PageMode::View
+            && !(st.borrow().lookup && self.is_list_page(st))
             && !props
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case("Editable") && v.trim().eq_ignore_ascii_case("false"))
@@ -1554,7 +1971,8 @@ impl Session {
         // A control bound to a page variable stays editable on a read-only page (corpus
         // handlers/TestPageReadOnlySetValue.al:365 OpenView_PageVariableControl_StaysEditable).
         let engine = self.engine();
-        let rec_bound = !matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Var(_));
+        let rec_bound = !matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Var(_))
+            || (st.borrow().lookup && self.is_list_page(st));
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }
 

@@ -19,6 +19,10 @@ pub enum UiKind {
     Message,
     Confirm,
     StrMenu,
+    /// `[PageHandler]`: answers `Page.Run` (ADR-012). Bound by the page of its TestPage parameter.
+    Page,
+    /// `[ModalPageHandler]`: answers `Page.RunModal`.
+    ModalPage,
 }
 
 impl UiKind {
@@ -28,6 +32,8 @@ impl UiKind {
             "messagehandler" => Some(UiKind::Message),
             "confirmhandler" => Some(UiKind::Confirm),
             "strmenuhandler" => Some(UiKind::StrMenu),
+            "pagehandler" => Some(UiKind::Page),
+            "modalpagehandler" => Some(UiKind::ModalPage),
             _ => None,
         }
     }
@@ -37,6 +43,8 @@ impl UiKind {
             UiKind::Message => "Message",
             UiKind::Confirm => "Confirm",
             UiKind::StrMenu => "StrMenu",
+            UiKind::Page => "Page",
+            UiKind::ModalPage => "ModalPage",
         }
     }
 }
@@ -44,6 +52,8 @@ impl UiKind {
 /// A handler function bound to the running test method.
 pub struct UiHandler {
     kind: UiKind,
+    /// For page handlers: the page object of the `TestPage` parameter.
+    pub page: Option<u32>,
     name: String,
     object: usize,
     routine: usize,
@@ -77,6 +87,13 @@ impl Session {
             UiKind::StrMenu => {
                 r.params == 3 && r.by_var == [false, true, false] && matches!(ty(1), Some(RtType::Integer))
             }
+            UiKind::Page | UiKind::ModalPage => {
+                r.params == 1 && r.by_var == [true] && matches!(ty(0), Some(RtType::TestPage(_)))
+            }
+        };
+        let page = match ty(0) {
+            Some(RtType::TestPage(p)) if matches!(kind, UiKind::Page | UiKind::ModalPage) => Some(*p),
+            _ => None,
         };
         if !ok {
             return Err(format!(
@@ -87,6 +104,7 @@ impl Session {
         }
         Ok(UiHandler {
             kind,
+            page,
             name: r.name.clone(),
             object,
             routine,
@@ -146,6 +164,38 @@ impl Session {
             scope.in_handler = false;
         }
         result.map(|(_, finals)| finals)
+    }
+
+    /// The bound handler of `kind` for `page`, marked as used: `Unhandled UI` when there is none
+    /// (corpus handlers/TestPageModalHandler_Tests.al:105, TestPageRunHandler_Tests.al:
+    /// NonModalPageRunWithoutAHandlerIsRefused). BC looks the handler up before the page opens, so
+    /// a refused page never ran its OnOpenPage (handlers/TestPageActionRunObjectNoHandler_Tests.al) and a
+    /// handler whose page then fails to open still counts as executed
+    /// (autoformat/TestAutoFormatExpressionTiming.al, FailingFormat_RunModal_RaisesBeforeAnyHandler).
+    pub(crate) fn bind_page_handler(
+        &mut self,
+        kind: UiKind,
+        page: u32,
+    ) -> Result<(usize, usize, Rc<RefCell<Instance>>), Signal> {
+        let Some(scope) = self.ui.as_mut() else {
+            return Err(Signal::Unsupported(format!(
+                "{} outside a test method (what the runner does then is not pinned)",
+                kind.label()
+            )));
+        };
+        let Some(h) = scope
+            .handlers
+            .iter_mut()
+            .find(|h| h.kind == kind && h.page == Some(page))
+        else {
+            return Err(Signal::Error(AlError {
+                message: format!("Unhandled UI: {}", kind.label()),
+                code: String::new(),
+                call_stack: String::new(),
+            }));
+        };
+        h.fired = true;
+        Ok((h.object, h.routine, h.instance.clone()))
     }
 
     pub(crate) fn ui_message(&mut self, text: String) -> Result<(), Signal> {

@@ -246,8 +246,8 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
             };
             let Some(kind) = UiKind::from_attribute(kind_attr) else {
                 let why = match kind_attr.to_ascii_lowercase().as_str() {
-                    "pagehandler" | "modalpagehandler" | "requestpagehandler" | "filterpagehandler" => {
-                        "page handlers need TestPage support"
+                    "requestpagehandler" | "filterpagehandler" => {
+                        "it needs request and filter pages (docs/adr/012-testpage-runtime.md)"
                     }
                     "sendnotificationhandler" | "recallnotificationhandler" => "it needs the Notification type",
                     "sessionsettingshandler" => "it needs the SessionSettings type",
@@ -258,7 +258,15 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                     routine.name
                 ));
             };
-            if let Some((_, other)) = out.iter().find(|(k, _)| *k == kind) {
+            let page_of = |r: &al_ir::Routine| match r.locals.first().map(|l| &l.ty) {
+                Some(al_builtins::value::RtType::TestPage(p)) => Some(*p),
+                _ => None,
+            };
+            let is_page = matches!(kind, UiKind::Page | UiKind::ModalPage);
+            if let Some((_, other)) = out
+                .iter()
+                .find(|(k, r)| *k == kind && (!is_page || page_of(&obj.routines[*r]) == page_of(routine)))
+            {
                 return Err(format!(
                     "{} and {} are both {kind:?} handlers; which one BC would bind is not pinned",
                     obj.routines[*other].name, routine.name
@@ -832,8 +840,9 @@ mod tests {
                 [ModalPageHandler] procedure Modal(var P: TestPage Pg) begin end;
                 [RequestPageHandler] procedure Req(var P: TestRequestPage Rp) begin end; }",
         );
+        // A modal handler is supported now; one the test never triggers is reported as BC does.
         assert!(
-            matches!(&o[0].1, Outcome::NotRun(r) if r.contains("ModalPageHandler")),
+            matches!(&o[0].1, Outcome::Fail(r) if r.contains("not executed")),
             "{o:?}"
         );
         assert!(
@@ -854,5 +863,154 @@ mod tests {
             matches!(&o[0].1, Outcome::NotRun(r) if r.contains("OnRun") && r.contains("outside a test method")),
             "{o:?}"
         );
+    }
+
+    // ---- page handlers (ADR-012) ----
+
+    const PAGES: &str = r#"
+table 60700 "PH Row" { fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
+page 60701 "PH Card" { PageType = Card; SourceTable = "PH Row"; layout { area(Content) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } }
+page 60702 "PH Host"
+{
+    PageType = Card; SourceTable = "PH Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    actions { area(Processing) { action(Pick) { trigger OnAction() var M: Page "PH Card"; R: Record "PH Row"; Res: Action; begin
+        R.Init(); R."No." := 'RESULT'; Res := M.RunModal(); R.Descr := Format(Res); R.Insert(); end; } } }
+}
+table 60704 "PH Lk" { LookupPageId = "PH Card"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
+page 60705 "PH Saved" { PageType = StandardDialog; SaveValues = true; layout { area(Content) { field(Rem; RemTxt) { } } } var RemTxt: Text[30]; }
+codeunit 60703 PhT
+{
+    Subtype = Test;
+    var Seen: Text;
+
+    // handlers/TestPageModalHandler_Tests.al:43,83 ModalPageHandlerOkReachesTheCallingAl / CancelReaches (lookup)
+    [Test] [HandlerFunctions('OkModal')]
+    procedure OkReachesTheCaller()
+    var R: Record "PH Row"; H: TestPage "PH Host";
+    begin
+        R."No." := 'A'; R.Insert(); H.OpenEdit(); H.First(); H.Pick.Invoke(); H.Close();
+        R.Get('RESULT'); if R.Descr <> 'OK' then Error('got %1', R.Descr);
+    end;
+
+    // handlers/TestPageModalHandler_Tests.al:105 ModalPageWithoutAHandlerIsRefused
+    [Test]
+    procedure NoHandlerIsRefused()
+    var R: Record "PH Row"; H: TestPage "PH Host";
+    begin
+        R."No." := 'N1'; R.Insert(); Commit(); H.OpenEdit(); H.First();
+        asserterror H.Pick.Invoke();
+        if StrPos(GetLastErrorText(), 'Unhandled UI: ModalPage') = 0 then Error('got %1', GetLastErrorText());
+    end;
+
+    // handlers/TestPageRunHandler_Tests.al:60-90: the handler is handed the record Page.Run was given
+    [Test] [HandlerFunctions('SeePage')]
+    procedure PageRunHandsTheRecord()
+    var R: Record "PH Row";
+    begin
+        R."No." := 'P1'; R.Descr := 'Alpha'; R.Insert(); R."No." := 'P2'; R.Descr := 'Beta'; R.Insert();
+        R.Get('P2');
+        Page.Run(Page::"PH Card", R);
+        if Seen <> 'Beta' then Error('got %1', Seen);
+    end;
+
+    // testpageclose + handlers/TestPageModalQueryClose_Tests.al (b): a handler that invokes nothing leaves a plain modal reporting OK
+    [Test] [HandlerFunctions('Nothing')]
+    procedure UnattendedPlainModalReportsOk()
+    var M: Page "PH Card"; Res: Action;
+    begin
+        Res := M.RunModal();
+        if Format(Res) <> 'OK' then Error('got %1', Format(Res));
+    end;
+
+    // TestPageModalQueryClose_Tests.al (d)/(e): lookup mode cancels
+    [Test] [HandlerFunctions('CancelIt')]
+    procedure LookupCancelReportsLookupCancel()
+    var M: Page "PH Card"; Res: Action;
+    begin
+        M.LookupMode(true);
+        Res := M.RunModal();
+        if Format(Res) <> 'LookupCancel' then Error('got %1', Format(Res));
+    end;
+
+    // TestPageModalQueryClose_Tests.al (b2): a plain modal has no built-in Cancel
+    [Test] [HandlerFunctions('CancelIt')]
+    procedure PlainModalHasNoCancel()
+    var M: Page "PH Card"; Res: Action;
+    begin
+        asserterror Res := M.RunModal();
+        if StrPos(GetLastErrorText(), 'The built-in action = Cancel is not found on the page') = 0 then Error('got %1', GetLastErrorText());
+    end;
+
+    // handlers/TestPageRunModalLookupPageId_Tests.al: id 0 with a record resolves LookupPageId
+    [Test] [HandlerFunctions('OkModal')]
+    procedure IdZeroUsesLookupPageId()
+    var K: Record "PH Lk"; R: Record "PH Row"; Res: Action;
+    begin
+        Res := Page.RunModal(0, K);
+        if Format(Res) <> 'LookupOK' then Error('got %1', Format(Res));
+        asserterror Page.RunModal(0, R);
+        if StrPos(GetLastErrorText(), 'You tried to invoke the Page object with the ID 0') = 0 then Error('got %1', GetLastErrorText());
+    end;
+
+    // handlers/TestPageSaveValues.al: OK stores, the next open shows it; Cancel stores nothing
+    [Test] [HandlerFunctions('SaveRem')]
+    procedure SaveValuesKeepsWhatOkStored()
+    begin
+        Seen := 'x'; Page.RunModal(Page::"PH Saved");
+        Seen := ''; Page.RunModal(Page::"PH Saved");
+        if Seen <> 'kept' then Error('got %1', Seen);
+    end;
+
+    // handlers/TestPageTrapSharedScope_Tests.al:87: a page still held by the caller keeps the trap
+    [Test]
+    procedure TrapSurvivesWhileAnotherVariableHoldsThePage()
+    var T: TestPage "PH Card"; R: Record "PH Row";
+    begin
+        R."No." := 'TS'; R.Insert();
+        TrapAndAssign(T);
+        R.Get('TS');
+        Page.Run(Page::"PH Card", R);
+        if T.NoCtl.Value() <> 'TS' then Error('got %1', T.NoCtl.Value());
+        T.Close();
+    end;
+
+    local procedure TrapAndAssign(var Out: TestPage "PH Card")
+    var A: TestPage "PH Card"; B: TestPage "PH Card";
+    begin
+        A.Trap(); B := A; Out := B;
+    end;
+
+    [ModalPageHandler] procedure SaveRem(var P: TestPage "PH Saved")
+    begin
+        if Seen = 'x' then begin P.Rem.SetValue('kept'); P.OK().Invoke(); end
+        else begin Seen := P.Rem.Value(); P.Cancel().Invoke(); end;
+    end;
+    [ModalPageHandler] procedure OkModal(var P: TestPage "PH Card") begin P.OK().Invoke(); end;
+    [ModalPageHandler] procedure Nothing(var P: TestPage "PH Card") begin end;
+    [ModalPageHandler] procedure CancelIt(var P: TestPage "PH Card") begin P.Cancel().Invoke(); end;
+    [PageHandler] procedure SeePage(var P: TestPage "PH Card") begin Seen := P.DescrCtl.Value(); end;
+}
+"#;
+
+    fn ph(name: &str) -> Outcome {
+        outcome_of(&outcomes(PAGES), name)
+    }
+
+    #[test]
+    fn modal_and_page_handlers_answer_page_opens() {
+        for n in [
+            "OkReachesTheCaller",
+            "NoHandlerIsRefused",
+            "PageRunHandsTheRecord",
+            "UnattendedPlainModalReportsOk",
+            "LookupCancelReportsLookupCancel",
+            "PlainModalHasNoCancel",
+            "IdZeroUsesLookupPageId",
+            "SaveValuesKeepsWhatOkStored",
+            "TrapSurvivesWhileAnotherVariableHoldsThePage",
+        ] {
+            assert_eq!(ph(n), Outcome::Pass, "{n}");
+        }
     }
 }

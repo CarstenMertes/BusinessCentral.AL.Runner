@@ -101,6 +101,10 @@ pub struct Session {
     pub(crate) committed_row_version: i64,
     /// Handler functions bound to the running test method (None outside one).
     pub(crate) ui: Option<ui::UiScope>,
+    /// The TestPage variable whose `Trap()` waits for the next plain `Page.Run` (ADR-012).
+    /// The variable-bound control values each SaveValues page stored when it closed.
+    pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
+    pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -132,6 +136,8 @@ impl Session {
             error_finals: None,
             committed_row_version: 0,
             ui: None,
+            saved_values: std::collections::HashMap::new(),
+            trap: None,
         }
     }
 
@@ -278,6 +284,7 @@ impl Session {
         self.try_depth += usize::from(is_try);
         let outcome = self.exec_block(&r.body, &mut frame);
         self.try_depth -= usize::from(is_try);
+        self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
             Ok(()) => None,
             Err(Signal::Exit(v)) => v,

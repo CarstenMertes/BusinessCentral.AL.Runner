@@ -91,9 +91,6 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 _ => page_reasons[oi].push(format!("source table {t} is outside the workspace")),
             }
         }
-        if prop("SourceTable").is_none() {
-            page_reasons[oi].push("a page without a source table is not supported by the test client yet".into());
-        }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
         if page_temporary[oi] {
             page_reasons[oi].push("SourceTableTemporary is not supported by the test client yet".into());
@@ -183,7 +180,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             let routine = lw.routine(r);
             // A TestPage drives page routines the call graph cannot see (ADR-012).
             for s in routine.locals.iter().chain(&globals) {
-                if let RtType::TestPage(p) = s.ty {
+                if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
                     let p = p as usize;
                     lw.calls.extend((0..routine_nodes[p].len()).map(|ri| (p, ri)));
                 }
@@ -800,6 +797,13 @@ impl Lowerer<'_> {
             Ty::Option(m) => RtType::Option(m.clone()),
             Ty::Enum(n) => RtType::Enum(self.resolve_obj(ObjKind::Enum, n)? as u32),
             Ty::Object(ObjKind::Codeunit, n) => RtType::Codeunit(self.resolve_obj(ObjKind::Codeunit, n)? as u32),
+            Ty::Object(ObjKind::Page, n) => {
+                let p = self.resolve_obj(ObjKind::Page, n)?;
+                match self.page_reasons[p].first() {
+                    None => RtType::Page(p as u32),
+                    Some(why) => return Err(format!("Page \"{n}\": {why}")),
+                }
+            }
             Ty::TestPage(n) => {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
                 match self.page_reasons[p].first() {
@@ -1356,7 +1360,12 @@ impl Lowerer<'_> {
                     .ok_or("procedure signature")?
                     .clone();
                 let instance = match &receiver_node {
-                    Some(r) if matches!(self.ty_of(r), Ty::Object(ObjKind::Codeunit, _) | Ty::Record { .. }) => {
+                    Some(r)
+                        if matches!(
+                            self.ty_of(r),
+                            Ty::Object(ObjKind::Codeunit | ObjKind::Page, _) | Ty::Record { .. }
+                        ) =>
+                    {
                         Some(Box::new(self.expr(r)?))
                     }
                     Some(_) => return Err("procedure calls on this receiver are not lowered yet".into()),

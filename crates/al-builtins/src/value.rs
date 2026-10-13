@@ -47,6 +47,9 @@ pub enum RtType {
     Codeunit(u32),
     /// `TestPage` of the page with this object index (ADR-012).
     TestPage(u32),
+    /// A `Page` variable of the page with this object index: a page instance that exists before
+    /// it is run (ADR-012).
+    Page(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
     Library(String),
 }
@@ -145,6 +148,13 @@ pub struct PageState {
     /// is the line left behind by Previous()/First(), whose insert fails again at Close().
     pub refused: bool,
     pub pending: Option<Vec<Value>>,
+    /// Opened by AL code (`Page.RunModal`, `Page.Run`) and answered by a handler, not by the test.
+    pub modal: bool,
+    pub lookup: bool,
+    /// The `Action` the page closed with, once it has.
+    pub result: Option<String>,
+    /// `TestPage.Trap()` was called on this variable and no page has been caught yet.
+    pub trapping: bool,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -176,6 +186,10 @@ impl PageState {
             errors: Vec::new(),
             refused: false,
             pending: None,
+            modal: false,
+            lookup: false,
+            result: None,
+            trapping: false,
         }
     }
 }
@@ -263,7 +277,7 @@ impl Value {
                 object: *id,
                 ..Default::default()
             }))),
-            RtType::TestPage(id) => Value::TestPage(Rc::new(RefCell::new(PageState::closed(*id)))),
+            RtType::TestPage(id) | RtType::Page(id) => Value::TestPage(Rc::new(RefCell::new(PageState::closed(*id)))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),

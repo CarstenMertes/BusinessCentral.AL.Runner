@@ -32,6 +32,67 @@ pub struct Object {
     pub xrec_slot: Option<usize>,
     /// For pages: the control tree and page triggers (ADR-012).
     pub page: Option<Page>,
+    /// For queries: dataitems, columns and the query-level properties.
+    #[serde(default)]
+    pub query: Option<Query>,
+}
+
+/// A query object (corpus query/): a chain of dataitems joined by `DataItemLink`, and the
+/// columns they project. Execution is the VM's (`al-vm/src/queries.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Query {
+    /// Dataitems in source order; each nests in `parent`.
+    pub items: Vec<QueryItem>,
+    /// `column(...)` and `filter(...)` elements in source order. A query column is identified by
+    /// its position here.
+    pub columns: Vec<QueryColumn>,
+    /// `OrderBy` as (column, ascending).
+    pub order_by: Vec<(usize, bool)>,
+    /// The `TopNumberOfRows` property; 0 = all rows.
+    pub top: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueryItem {
+    pub name: String,
+    /// Object index of the source table.
+    pub table: usize,
+    /// The enclosing dataitem (index into `Query::items`); `None` for the root.
+    pub parent: Option<usize>,
+    /// `SqlJoinType = LeftOuterJoin`, which is also the default of a nested dataitem.
+    pub left_outer: bool,
+    /// `DataItemLink`: (field position in this table, field position in the parent's table).
+    pub link: Vec<(usize, usize)>,
+    /// `DataItemTableFilter`: conditions on fields of this table.
+    pub table_filter: Vec<CalcCond>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueryMethod {
+    Sum,
+    Count,
+    Average,
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueryColumn {
+    pub name: String,
+    /// The `Caption` property when it is a plain text literal.
+    pub caption: Option<String>,
+    /// Index into `Query::items`.
+    pub item: usize,
+    /// Position of the source field in the dataitem's table; `None` for a `Count` column.
+    pub field: Option<usize>,
+    /// A `filter(...)` element: it filters its dataitem and is not part of the dataset.
+    pub filter_element: bool,
+    pub method: Option<QueryMethod>,
+    pub reverse_sign: bool,
+    /// Type of the value the column reads.
+    pub ty: RtType,
+    /// `ColumnFilter`: a `const` or `filter` condition on this column.
+    pub static_filter: Option<CalcValue>,
 }
 
 /// A page object as the test client sees it (ADR-012). The AL code of a page
@@ -350,6 +411,11 @@ pub enum Expr {
         page: Box<Expr>,
         control: usize,
     },
+    /// The current row's value of column `column` of a query variable (`Q.Amount`).
+    QueryColumn {
+        query: Box<Expr>,
+        column: usize,
+    },
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
     /// result report failure as `false` instead of raising an error.
@@ -418,6 +484,7 @@ mod tests {
                 rec_slot: None,
                 xrec_slot: None,
                 page: None,
+                query: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

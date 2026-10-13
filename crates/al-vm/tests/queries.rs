@@ -1,0 +1,1137 @@
+//! Query objects end to end: AL source → compile → run on the in-memory store.
+//! Each test cites the corpus file that pins the behaviour
+//! (corpus/tests/al-language/query/...).
+
+use al_builtins::native::Signal;
+use al_builtins::value::Value;
+use al_sema::workspace::AppSource;
+use al_vm::{Engine, Session};
+
+/// corpus _fixtures/tables ALT Universal (the fields the query fixtures read).
+const TABLES: &str = r#"
+table 60000 "ALT Universal"
+{
+    fields
+    {
+        field(1; "Entry No."; Integer) { }
+        field(2; "Integer Field"; Integer) { }
+        field(3; "Text Field"; Text[100]) { }
+    }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+table 60861 "QJ Customer"
+{
+    fields { field(1; "No."; Code[20]) { } field(2; Name; Text[50]) { } }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+table 60862 "QJ Order"
+{
+    fields
+    {
+        field(1; "Entry No."; Integer) { }
+        field(2; "Customer No."; Code[20]) { }
+        field(3; Amount; Decimal) { }
+    }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+query 60022 "ALT Universal Query"
+{
+    QueryType = Normal;
+    OrderBy = ascending(EntryNo);
+    elements
+    {
+        dataitem(Universal; "ALT Universal")
+        {
+            column(EntryNo; "Entry No.") { Caption = 'Entry No.'; }
+            column(IntegerValue; "Integer Field") { Caption = 'Integer Value'; }
+            column(TextValue; "Text Field") { Caption = 'Text Value'; }
+        }
+    }
+}
+query 60863 "QJ Cust Orders Inner"
+{
+    QueryType = Normal;
+    OrderBy = ascending(EntryNo);
+    elements
+    {
+        dataitem(Customer; "QJ Customer")
+        {
+            column(CustNo; "No.") { }
+            column(CustName; "Name") { }
+            dataitem(Ord; "QJ Order")
+            {
+                DataItemLink = "Customer No." = Customer."No.";
+                SqlJoinType = InnerJoin;
+                column(EntryNo; "Entry No.") { }
+                column(Amount; "Amount") { }
+            }
+        }
+    }
+}
+query 60864 "QJ Cust Orders Left"
+{
+    QueryType = Normal;
+    OrderBy = ascending(CustNo);
+    elements
+    {
+        dataitem(Customer; "QJ Customer")
+        {
+            column(CustNo; "No.") { }
+            column(CustName; "Name") { }
+            dataitem(Ord; "QJ Order")
+            {
+                DataItemLink = "Customer No." = Customer."No.";
+                SqlJoinType = LeftOuterJoin;
+                column(EntryNo; "Entry No.") { }
+                column(Amount; "Amount") { }
+            }
+        }
+    }
+}
+query 60601 "QJ Cust Orders Implicit"
+{
+    QueryType = Normal;
+    OrderBy = ascending(CustNo);
+    elements
+    {
+        dataitem(Customer; "QJ Customer")
+        {
+            column(CustNo; "No.") { }
+            dataitem(Ord; "QJ Order")
+            {
+                DataItemLink = "Customer No." = Customer."No.";
+                column(EntryNo; "Entry No.") { }
+            }
+        }
+    }
+}
+query 60760 "QJ Order Sum"
+{
+    QueryType = Normal;
+    OrderBy = ascending(CustNo);
+    elements
+    {
+        dataitem(Order; "QJ Order")
+        {
+            column(CustNo; "Customer No.") { }
+            column(TotalAmount; Amount) { Method = Sum; }
+            column(CountAmount) { Method = Count; }
+            column(AverageAmount; Amount) { Method = Average; }
+            column(MinAmount; Amount) { Method = Min; }
+            column(MaxAmount; Amount) { Method = Max; }
+        }
+    }
+}
+query 60761 "QJ Order Scalar Sum"
+{
+    QueryType = Normal;
+    elements
+    {
+        dataitem(Order; "QJ Order")
+        {
+            column(TotalAmount; Amount) { Method = Sum; }
+            column(CountAmount) { Method = Count; }
+        }
+    }
+}
+query 60768 "QJ Order Sum Filtered"
+{
+    QueryType = Normal;
+    OrderBy = ascending(CustNo);
+    elements
+    {
+        dataitem(Order; "QJ Order")
+        {
+            column(CustNo; "Customer No.") { }
+            column(TotalAmount; Amount)
+            {
+                ColumnFilter = TotalAmount = filter(> 0);
+                Method = Sum;
+            }
+        }
+    }
+}
+query 60769 "QJ Order Filtered"
+{
+    QueryType = Normal;
+    OrderBy = ascending(EntryNo);
+    elements
+    {
+        dataitem(Order; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+            column(CustNo; "Customer No.")
+            {
+                ColumnFilter = CustNo = const('C1');
+            }
+            column(Amount; Amount) { }
+        }
+    }
+}
+query 60935 "QJ Order Reverse Sign"
+{
+    QueryType = Normal;
+    OrderBy = ascending(EntryNo);
+    elements
+    {
+        dataitem(Order; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+            column(Amount; Amount) { }
+            column(ReversedAmount; Amount) { ReverseSign = true; }
+        }
+    }
+}
+query 68534 "QRO Descending"
+{
+    QueryType = Normal;
+    OrderBy = descending(EntryNo);
+    elements
+    {
+        dataitem(Entry; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+            column(Amount; Amount) { }
+        }
+    }
+}
+query 68537 "QRO Descending Amount"
+{
+    QueryType = Normal;
+    OrderBy = descending(Amount);
+    elements
+    {
+        dataitem(Entry; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+            column(Amount; Amount) { }
+        }
+    }
+}
+query 68535 "QRO By Amount"
+{
+    QueryType = Normal;
+    OrderBy = ascending(Amount);
+    elements
+    {
+        dataitem(Entry; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+            column(Amount; Amount) { }
+        }
+    }
+}
+query 68650 "QTP Top Two"
+{
+    QueryType = Normal;
+    OrderBy = descending(EntryNo);
+    TopNumberOfRows = 2;
+    elements
+    {
+        dataitem(Entry; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+        }
+    }
+}
+query 68651 "QTP Top Two Unordered"
+{
+    QueryType = Normal;
+    TopNumberOfRows = 2;
+    elements
+    {
+        dataitem(Entry; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+        }
+    }
+}
+query 68531 "QRW Entries Unordered"
+{
+    QueryType = Normal;
+    elements
+    {
+        dataitem(Entry; "QJ Order")
+        {
+            column(EntryNo; "Entry No.") { }
+            column(Amount; Amount) { }
+        }
+    }
+}
+table 60497 "QDTF Row"
+{
+    fields
+    {
+        field(1; "Code"; Code[20]) { }
+        field(2; Status; Option) { OptionMembers = Open,Closed,Held; }
+        field(3; Amount; Decimal) { }
+        field(4; Kind; Integer) { }
+    }
+    keys { key(PK; "Code") { Clustered = true; } }
+}
+query 60500 "QDTF Open Rows"
+{
+    QueryType = Normal;
+    OrderBy = ascending(RowCode);
+    elements
+    {
+        dataitem(Row; "QDTF Row")
+        {
+            DataItemTableFilter = Status = const(Open);
+            column(RowCode; "Code") { }
+            column(RowAmount; Amount) { }
+        }
+    }
+}
+query 60501 "QDTF Two Field Filter"
+{
+    QueryType = Normal;
+    OrderBy = ascending(RowCode);
+    elements
+    {
+        dataitem(Row; "QDTF Row")
+        {
+            DataItemTableFilter = Status = const(Open), Amount = filter(> 100);
+            column(RowCode; "Code") { }
+        }
+    }
+}
+query 60507 "QDTF Status Filtered"
+{
+    QueryType = Normal;
+    OrderBy = ascending(RowCode);
+    elements
+    {
+        dataitem(Row; "QDTF Row")
+        {
+            DataItemTableFilter = Status = const(Open);
+            column(RowCode; "Code") { }
+            filter(RowStatus; Status) { }
+        }
+    }
+}
+query 69980 "QDB Kind Filtered"
+{
+    QueryType = Normal;
+    elements
+    {
+        dataitem(Row; "QDTF Row")
+        {
+            DataItemTableFilter = Kind = const(Database::"QDTF Row");
+            column(RowCode; Code) { }
+        }
+    }
+}
+table 68600 "QFG Header"
+{
+    fields { field(1; "No."; Code[20]) { } }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+table 68601 "QFG Entry"
+{
+    fields
+    {
+        field(1; "Entry No."; Integer) { }
+        field(2; "Header No."; Code[20]) { }
+        field(3; "Posting Date"; Date) { }
+        field(4; Amount; Decimal) { }
+    }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+query 68600 "QFG Join Totals"
+{
+    QueryType = Normal;
+    OrderBy = ascending(HeaderNo);
+    elements
+    {
+        dataitem(Header; "QFG Header")
+        {
+            column(HeaderNo; "No.") { }
+            dataitem(Entry; "QFG Entry")
+            {
+                DataItemLink = "Header No." = Header."No.";
+                SqlJoinType = InnerJoin;
+                column(TotalAmount; Amount) { Method = Sum; }
+                column(EntryCount) { Method = Count; }
+                filter(DateFilter; "Posting Date") { }
+            }
+        }
+    }
+}
+table 60498 "QDTF Header"
+{
+    fields { field(1; "No."; Code[20]) { } field(2; "Variant Code"; Code[20]) { } field(3; Descr; Text[50]) { } }
+    keys { key(PK; "No.", "Variant Code") { Clustered = true; } }
+}
+table 60499 "QDTF Line"
+{
+    fields
+    {
+        field(1; "Header No."; Code[20]) { }
+        field(2; "Variant Code"; Code[20]) { }
+        field(3; "Line No."; Integer) { }
+        field(4; Tag; Text[50]) { }
+    }
+    keys { key(PK; "Header No.", "Variant Code", "Line No.") { Clustered = true; } }
+}
+query 60502 "QDTF Composite Link"
+{
+    QueryType = Normal;
+    OrderBy = ascending(HdrDescr);
+    elements
+    {
+        dataitem(Hdr; "QDTF Header")
+        {
+            column(HdrDescr; Descr) { }
+            dataitem(Ln; "QDTF Line")
+            {
+                DataItemLink = "Header No." = Hdr."No.", "Variant Code" = Hdr."Variant Code";
+                SqlJoinType = InnerJoin;
+                column(LineTag; Tag) { }
+            }
+        }
+    }
+}
+table 60974 "QFF Line"
+{
+    fields
+    {
+        field(1; "Entry No."; Integer) { }
+        field(2; "Header No."; Code[20]) { }
+        field(3; "Posting Date"; Date) { }
+        field(4; Amount; Decimal) { }
+    }
+    keys { key(PK; "Entry No.") { Clustered = true; } }
+}
+table 60975 "QFF Header"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(2; "Date Filter"; Date) { FieldClass = FlowFilter; }
+        field(3; "Total Amount"; Decimal)
+        {
+            FieldClass = FlowField;
+            CalcFormula = sum("QFF Line".Amount where("Header No." = field("No.")));
+        }
+        field(4; "Dated Amount"; Decimal)
+        {
+            FieldClass = FlowField;
+            CalcFormula = sum("QFF Line".Amount where("Header No." = field("No."), "Posting Date" = field("Date Filter")));
+        }
+    }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+query 60271 "QFF Header Dated"
+{
+    QueryType = Normal;
+    elements
+    {
+        dataitem(QffHeader; "QFF Header")
+        {
+            column(No; "No.") { }
+            filter(DateFilter; "Date Filter") { }
+            column(DatedAmount; "Dated Amount") { }
+        }
+    }
+}
+query 68532 "QRW Amounts"
+{
+    QueryType = Normal;
+    elements
+    {
+        dataitem(Entry; "QJ Order")
+        {
+            column(Amount; Amount) { }
+        }
+    }
+}
+"#;
+
+fn run(body: &str) -> Result<Value, Signal> {
+    let src = format!("{TABLES}\ncodeunit 50100 C {{ {body} }}");
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
+    if let Some(Some(r)) = blocked.get(oi).and_then(|o| o.get(ri)) {
+        panic!("F is blocked: {r}");
+    }
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
+}
+
+fn text(r: Result<Value, Signal>) -> String {
+    match r {
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+fn unsupported(r: Result<Value, Signal>) -> String {
+    match r {
+        Err(Signal::Unsupported(s)) => s,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// Entries 1 and 2 of the ALT Universal table, as TestQueryObject.al:InsertQueryRows.
+const SEED_UNIVERSAL: &str = "
+    procedure SeedU()
+    var R: Record \"ALT Universal\";
+    begin
+        R.\"Entry No.\" := 1; R.\"Integer Field\" := 10; R.\"Text Field\" := 'First'; R.Insert();
+        R.\"Entry No.\" := 2; R.\"Integer Field\" := 20; R.\"Text Field\" := 'Second'; R.Insert();
+    end;
+";
+
+/// Customers C1 Alice, C2 Bob, C3 Carol; orders 1 C1 100, 2 C1 200, 3 C2 300
+/// (query/TestQueryJoin.al:44-53).
+const SEED_JOIN: &str = "
+    procedure SeedJ()
+    var C: Record \"QJ Customer\"; O: Record \"QJ Order\";
+    begin
+        C.\"No.\" := 'C1'; C.Name := 'Alice'; C.Insert();
+        C.\"No.\" := 'C2'; C.Name := 'Bob'; C.Insert();
+        C.\"No.\" := 'C3'; C.Name := 'Carol'; C.Insert();
+        O.\"Entry No.\" := 1; O.\"Customer No.\" := 'C1'; O.Amount := 100; O.Insert();
+        O.\"Entry No.\" := 2; O.\"Customer No.\" := 'C1'; O.Amount := 200; O.Insert();
+        O.\"Entry No.\" := 3; O.\"Customer No.\" := 'C2'; O.Amount := 300; O.Insert();
+    end;
+";
+
+fn with(seed: &str, body: &str) -> String {
+    format!("{SEED_UNIVERSAL}{SEED_JOIN}{seed}{body}")
+}
+
+// query/TestQueryObject.al:15-40 Query_Open_Read_ReturnsInsertedRows.
+#[test]
+fn open_read_returns_the_rows_in_order_by_order() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"ALT Universal Query\"; Seen: Text;
+        begin
+            SeedU();
+            Q.Open();
+            while Q.Read() do
+                Seen += StrSubstNo('%1/%2/%3;', Q.EntryNo, Q.IntegerValue, Q.TextValue);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "1/10/First;2/20/Second;");
+}
+
+// query/TestQueryObject.al:42-60 Query_Close_Reopen_RestartsDatasetFromFirstRow.
+#[test]
+fn close_and_reopen_restarts_from_the_first_row() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"ALT Universal Query\"; Seen: Text;
+        begin
+            SeedU();
+            Q.Open();
+            if Q.Read() then Seen += Format(Q.EntryNo);
+            Q.Close();
+            Q.Open();
+            if Q.Read() then Seen += Format(Q.EntryNo);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "11");
+}
+
+// query/TestQueryObject.al:62-80 SetRange, :82-100 SetFilter with a placeholder, :102-120 wildcard.
+#[test]
+fn runtime_filters_on_columns() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"ALT Universal Query\"; Seen: Text;
+        begin
+            SeedU();
+            Q.SetRange(EntryNo, 2);
+            Q.Open(); while Q.Read() do Seen += 'R' + Format(Q.EntryNo); Q.Close();
+            Q.SetRange(EntryNo);
+            Q.SetFilter(IntegerValue, '>%1', 10);
+            Q.Open(); while Q.Read() do Seen += 'P' + Format(Q.EntryNo); Q.Close();
+            Q.SetRange(IntegerValue);
+            Q.SetFilter(TextValue, 'S*');
+            Q.Open(); while Q.Read() do Seen += 'W' + Format(Q.EntryNo); Q.Close();
+            Q.SetFilter(TextValue, 'Z*');
+            Q.Open(); while Q.Read() do Seen += 'Z' + Format(Q.EntryNo); Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "R2P2W2");
+}
+
+// query/TestQueryObject.al:200-225 inclusive ranges and :270-300 alternated ranges.
+#[test]
+fn range_filters_include_both_ends() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"ALT Universal Query\"; Seen: Text;
+        begin
+            SeedU();
+            Q.SetFilter(IntegerValue, '%1..%2', 10, 20);
+            Q.Open(); while Q.Read() do Seen += Format(Q.EntryNo); Q.Close();
+            Q.SetFilter(IntegerValue, '%1..%2|%3..%4', 5, 12, 30, 40);
+            Q.Open(); while Q.Read() do Seen += '/' + Format(Q.EntryNo); Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "12/1");
+}
+
+// query/TestQueryObject.al:313-335 GetFilter after SetRange; :337-345 GetFilters.
+#[test]
+fn get_filter_reads_back_the_filter() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"ALT Universal Query\";
+        begin
+            Q.SetRange(EntryNo, 2);
+            exit(Q.GetFilter(EntryNo));
+        end;",
+    ));
+    assert_eq!(text(r), "2");
+}
+
+// query/TestQueryObject.al:347-365 ColumnName, ColumnCaption, ColumnNo.
+#[test]
+fn column_metadata() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"ALT Universal Query\";
+        begin
+            exit(Q.ColumnName(EntryNo) + '|' + Q.ColumnCaption(TextValue) + '|' +
+                Format(Q.ColumnNo(EntryNo) > 0) + Format(Q.ColumnNo(EntryNo) <> Q.ColumnNo(IntegerValue)));
+        end;",
+    ));
+    assert_eq!(text(r), "EntryNo|Text Value|YesYes");
+}
+
+// query/TestQueryJoin.al:79-115 InnerJoin drops the unmatched parent.
+#[test]
+fn inner_join_pairs_parent_with_child_and_drops_the_unmatched_parent() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QJ Cust Orders Inner\"; Seen: Text;
+        begin
+            SeedJ();
+            Q.Open();
+            while Q.Read() do
+                Seen += StrSubstNo('%1/%2/%3/%4;', Q.CustNo, Q.CustName, Q.EntryNo, Q.Amount);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "C1/Alice/1/100;C1/Alice/2/200;C2/Bob/3/300;");
+}
+
+// query/TestQueryJoin.al:117-145 LeftOuterJoin keeps the unmatched parent with default child columns;
+// query/TestQueryJoinDefaultType.al:69-95 an omitted SqlJoinType joins as LeftOuterJoin.
+#[test]
+fn left_outer_join_keeps_the_unmatched_parent_and_is_the_default() {
+    let body = |q: &str| {
+        with(
+            "",
+            &format!(
+                "procedure F(): Text
+                var Q: Query \"{q}\"; Seen: Text;
+                begin
+                    SeedJ();
+                    Q.Open();
+                    while Q.Read() do
+                        Seen += StrSubstNo('%1/%2;', Q.CustNo, Q.EntryNo);
+                    Q.Close();
+                    exit(Seen);
+                end;"
+            ),
+        )
+    };
+    assert_eq!(text(run(&body("QJ Cust Orders Left"))), "C1/1;C1/2;C2/3;C3/0;");
+    assert_eq!(text(run(&body("QJ Cust Orders Implicit"))), "C1/1;C1/2;C2/3;C3/0;");
+}
+
+// query/TestQueryJoin.al:147-175 runtime filter on a parent column, :177-205 on a child column.
+#[test]
+fn runtime_filters_reach_parent_and_child_columns_of_a_join() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QJ Cust Orders Inner\"; Seen: Text;
+        begin
+            SeedJ();
+            Q.SetRange(CustNo, 'C2');
+            Q.Open(); while Q.Read() do Seen += Format(Q.EntryNo); Q.Close();
+            Q.SetRange(CustNo);
+            Q.SetFilter(Amount, '>%1', 150);
+            Q.Open(); while Q.Read() do Seen += '/' + Format(Q.EntryNo); Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "3/2/3");
+}
+
+// query/TestQueryAggregation.al:36-80 each Method per group; :82-100 one row per group.
+#[test]
+fn aggregates_group_by_the_other_columns() {
+    let r = run(&with(
+        "procedure SeedO()
+         var O: Record \"QJ Order\";
+         begin
+            O.\"Entry No.\" := 1; O.\"Customer No.\" := 'C1'; O.Amount := 100; O.Insert();
+            O.\"Entry No.\" := 2; O.\"Customer No.\" := 'C1'; O.Amount := 200; O.Insert();
+            O.\"Entry No.\" := 3; O.\"Customer No.\" := 'C2'; O.Amount := 50; O.Insert();
+         end;",
+        "procedure F(): Text
+        var Q: Query \"QJ Order Sum\"; Seen: Text;
+        begin
+            SeedO();
+            Q.Open();
+            while Q.Read() do
+                Seen += StrSubstNo('%1:%2,%3,%4,%5,%6;', Q.CustNo, Q.TotalAmount, Q.CountAmount, Q.AverageAmount, Q.MinAmount, Q.MaxAmount);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "C1:300,2,150,100,200;C2:50,1,50,50,50;");
+}
+
+// query/TestQueryAggregation.al:102-135 a scalar aggregate is one row; :137-160 even over an empty
+// table; :162-180 a grouped query over an empty table is empty.
+#[test]
+fn scalar_aggregate_is_always_one_row() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QJ Order Scalar Sum\"; G: Query \"QJ Order Sum\"; Seen: Text;
+        begin
+            Q.Open();
+            while Q.Read() do Seen += StrSubstNo('%1,%2;', Q.TotalAmount, Q.CountAmount);
+            Q.Close();
+            G.Open();
+            while G.Read() do Seen += 'G';
+            G.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "0,0;");
+}
+
+// query/TestQueryAggregation.al:182-215 a filter on an aggregated column is evaluated per group.
+#[test]
+fn filter_on_an_aggregated_column_is_a_having_filter() {
+    let r = run(&with(
+        "procedure SeedO()
+         var O: Record \"QJ Order\";
+         begin
+            O.\"Entry No.\" := 1; O.\"Customer No.\" := 'C1'; O.Amount := 60; O.Insert();
+            O.\"Entry No.\" := 2; O.\"Customer No.\" := 'C1'; O.Amount := 60; O.Insert();
+            O.\"Entry No.\" := 3; O.\"Customer No.\" := 'C2'; O.Amount := 100; O.Insert();
+         end;",
+        "procedure F(): Text
+        var Q: Query \"QJ Order Sum\"; Seen: Text;
+        begin
+            SeedO();
+            Q.SetFilter(TotalAmount, '>%1', 100);
+            Q.Open();
+            while Q.Read() do Seen += Q.CustNo + Format(Q.TotalAmount);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "C1120");
+}
+
+// query/TestQueryColumnFilter.al:36-60 a static ColumnFilter on a Sum column drops groups;
+// :62-100 a runtime filter on the same column replaces it; :102-148 on a plain column it drops rows.
+#[test]
+fn static_column_filters() {
+    let r = run(&with(
+        "procedure SeedO()
+         var O: Record \"QJ Order\";
+         begin
+            O.\"Entry No.\" := 1; O.\"Customer No.\" := 'C1'; O.Amount := 100; O.Insert();
+            O.\"Entry No.\" := 2; O.\"Customer No.\" := 'C1'; O.Amount := -100; O.Insert();
+            O.\"Entry No.\" := 3; O.\"Customer No.\" := 'C2'; O.Amount := 50; O.Insert();
+         end;",
+        "procedure F(): Text
+        var S: Query \"QJ Order Sum Filtered\"; P: Query \"QJ Order Filtered\"; Seen: Text;
+        begin
+            SeedO();
+            S.Open(); while S.Read() do Seen += S.CustNo + ':' + Format(S.TotalAmount) + ';'; S.Close();
+            S.SetFilter(TotalAmount, '<%1', 10);
+            S.Open(); while S.Read() do Seen += S.CustNo + ':' + Format(S.TotalAmount) + ';'; S.Close();
+            P.Open(); while P.Read() do Seen += Format(P.EntryNo) + P.CustNo + ';'; P.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "C2:50;C1:0;1C1;2C1;");
+}
+
+// query/TestQueryReverseSign.al:36-125.
+#[test]
+fn reverse_sign_negates_one_column_only() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QJ Order Reverse Sign\"; O: Record \"QJ Order\"; Seen: Text;
+        begin
+            O.\"Entry No.\" := 1; O.\"Customer No.\" := 'C1'; O.Amount := 100; O.Insert();
+            Q.Open(); while Q.Read() do Seen += Format(Q.Amount) + '/' + Format(Q.ReversedAmount); Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "100/-100");
+}
+
+// query/TestQueryOrderAfterWrite.al:60-110 descending and non-key OrderBy, ties by the primary key.
+#[test]
+fn order_by_descending_and_by_a_non_key_column() {
+    let seed = "procedure SeedO()
+         var O: Record \"QJ Order\";
+         begin
+            O.\"Entry No.\" := 1; O.Amount := 10; O.Insert();
+            O.\"Entry No.\" := 2; O.Amount := 10; O.Insert();
+            O.\"Entry No.\" := 3; O.Amount := 30; O.Insert();
+            O.\"Entry No.\" := 4; O.Amount := 10; O.Insert();
+         end;";
+    let r = run(&with(
+        seed,
+        "procedure F(): Text
+        var D: Query \"QRO Descending\"; A: Query \"QRO By Amount\"; Seen: Text;
+        begin
+            SeedO();
+            D.Open(); while D.Read() do Seen += Format(D.EntryNo) + ';'; D.Close();
+            Seen += '|';
+            A.Open(); while A.Read() do Seen += Format(A.EntryNo) + ';'; A.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "4;3;2;1;|1;2;4;3;");
+}
+
+// query/TestQueryTopProperty.al:56-181 the property is the initial cap, the method replaces it.
+#[test]
+fn top_number_of_rows_property_and_method() {
+    let seed = "procedure SeedO()
+         var O: Record \"QJ Order\";
+         begin
+            O.\"Entry No.\" := 1; O.Insert();
+            O.\"Entry No.\" := 2; O.Insert();
+            O.\"Entry No.\" := 3; O.Insert();
+            O.\"Entry No.\" := 4; O.Insert();
+         end;";
+    let r = run(&with(
+        seed,
+        "procedure F(): Text
+        var Q: Query \"QTP Top Two\"; U: Query \"QTP Top Two Unordered\"; Seen: Text;
+        begin
+            SeedO();
+            Seen += Format(Q.TopNumberOfRows()) + ':';
+            Q.Open(); while Q.Read() do Seen += Format(Q.EntryNo) + ';'; Q.Close();
+            Q.TopNumberOfRows(3);
+            Q.Open(); while Q.Read() do Seen += Format(Q.EntryNo) + ';'; Q.Close();
+            Q.TopNumberOfRows(0);
+            Q.Open(); while Q.Read() do Seen += Format(Q.EntryNo) + ';'; Q.Close();
+            U.Open(); while U.Read() do Seen += 'u'; U.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "2:4;3;4;3;2;4;3;2;1;uu");
+}
+
+// query/TestQueryTopProperty.al:173-181 a negative cap is an error and leaves the property in place.
+#[test]
+fn negative_top_number_of_rows_is_an_error() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QTP Top Two\";
+        begin
+            asserterror Q.TopNumberOfRows(-1);
+            exit(GetLastErrorText() + '|' + Format(Q.TopNumberOfRows()));
+        end;",
+    ));
+    assert_eq!(text(r), "Top number of rows cannot be negative|2");
+}
+
+// query/TestQueryReadAfterWrite.al:102-118 a Modify in the loop resumes after the last row,
+// :120-141 an insert after the position is read and one before it is not, :143-162 a deleted row is skipped.
+#[test]
+fn read_resumes_after_the_last_row_when_the_table_changes() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QRW Entries Unordered\"; O: Record \"QJ Order\"; Seen: Text;
+        begin
+            O.\"Entry No.\" := 2; O.Insert();
+            O.\"Entry No.\" := 3; O.Insert();
+            Q.Open();
+            while Q.Read() do begin
+                Seen += Format(Q.EntryNo) + ',';
+                if Q.EntryNo = 2 then begin
+                    O.\"Entry No.\" := 1; O.Insert();
+                    O.\"Entry No.\" := 4; O.Insert();
+                    O.Get(3); O.Delete();
+                end;
+            end;
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "2,4,");
+}
+
+// query/TestQueryOrderAfterWrite.al:115-135 a write in the loop must not extend a TopNumberOfRows cap.
+#[test]
+fn a_write_in_the_loop_keeps_the_cap_for_the_whole_read() {
+    let seed = "procedure SeedO()
+         var O: Record \"QJ Order\";
+         begin
+            O.\"Entry No.\" := 1; O.Insert();
+            O.\"Entry No.\" := 2; O.Insert();
+            O.\"Entry No.\" := 3; O.Insert();
+            O.\"Entry No.\" := 4; O.Insert();
+         end;";
+    let r = run(&with(
+        seed,
+        "procedure F(): Text
+        var Q: Query \"QTP Top Two\"; O: Record \"QJ Order\"; Seen: Text;
+        begin
+            SeedO();
+            Q.Open();
+            while Q.Read() do begin
+                Seen += Format(Q.EntryNo) + ';';
+                O.Get(Q.EntryNo); O.Amount := 1; O.Modify();
+            end;
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "4;3;");
+}
+
+// query/TestQueryReadAfterWrite.al:181-200 a write to a temporary record is not a write to the table.
+#[test]
+fn a_temporary_record_write_does_not_invalidate_the_result() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QRW Entries Unordered\"; T: Record \"QJ Order\" temporary; O: Record \"QJ Order\"; N: Integer;
+        begin
+            O.\"Entry No.\" := 1; O.Insert();
+            O.\"Entry No.\" := 2; O.Insert();
+            Q.Open();
+            while Q.Read() do begin
+                N += 1;
+                T.\"Entry No.\" := 100 + N; T.Insert();
+            end;
+            Q.Close();
+            exit(Format(N));
+        end;",
+    ));
+    assert_eq!(text(r), "2");
+}
+
+// Unpinned shapes are refused, never guessed: a Read before Open has no pinned behaviour.
+#[test]
+fn read_before_open_is_refused() {
+    let r = run(&with(
+        "",
+        "procedure F(): Boolean
+        var Q: Query \"ALT Universal Query\";
+        begin
+            exit(Q.Read());
+        end;",
+    ));
+    assert!(unsupported(r).contains("Read"));
+}
+
+const SEED_ROWS: &str = "
+    procedure SeedRows()
+    var R: Record \"QDTF Row\";
+    begin
+        R.Code := 'A-CLOSED'; R.Status := R.Status::Closed; R.Amount := 500; R.Kind := 1; R.Insert();
+        R.Code := 'B-OPEN'; R.Status := R.Status::Open; R.Amount := 150; R.Kind := 69980; R.Insert();
+        R.Code := 'C-HELD'; R.Status := R.Status::Held; R.Amount := 500; R.Kind := 0; R.Insert();
+        R.Code := 'D-OPEN'; R.Status := R.Status::Open; R.Amount := 50; R.Kind := 60497; R.Insert();
+    end;
+";
+
+// query/TestQueryDataItemTableFilter.al:69-135 DataItemTableFilter selects rows on a field the query
+// does not project; two conditions on different fields both apply.
+#[test]
+fn data_item_table_filter_selects_rows_and_combines_conditions() {
+    let r = run(&with(
+        SEED_ROWS,
+        "procedure F(): Text
+        var Q: Query \"QDTF Open Rows\"; T: Query \"QDTF Two Field Filter\"; Seen: Text; Total: Decimal;
+        begin
+            SeedRows();
+            Q.Open(); while Q.Read() do begin Seen += Q.RowCode + ';'; Total += Q.RowAmount; end; Q.Close();
+            T.Open(); while T.Read() do Seen += '/' + T.RowCode; T.Close();
+            exit(Seen + Format(Total));
+        end;",
+    ));
+    assert_eq!(text(r), "B-OPEN;D-OPEN;/B-OPEN200");
+}
+
+// query/TestQueryDataItemTableFilter.al:137-179 a runtime filter on a column narrows the table filter;
+// :202-251 a filter() element over the very field the table filter names combines with it.
+#[test]
+fn runtime_filters_combine_with_the_table_filter() {
+    let r = run(&with(
+        SEED_ROWS,
+        "procedure F(): Text
+        var Q: Query \"QDTF Open Rows\"; S: Query \"QDTF Status Filtered\"; R: Record \"QDTF Row\"; Seen: Text;
+        begin
+            SeedRows();
+            Q.SetRange(RowCode, 'A-CLOSED');
+            Q.Open(); while Q.Read() do Seen += 'a'; Q.Close();
+            Q.SetRange(RowCode, 'B-OPEN');
+            Q.Open(); while Q.Read() do Seen += Q.RowCode; Q.Close();
+            S.SetRange(RowStatus, R.Status::Open);
+            S.Open(); while S.Read() do Seen += '/' + S.RowCode; S.Close();
+            S.SetRange(RowStatus, R.Status::Closed);
+            S.Open(); while S.Read() do Seen += '/x'; S.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "B-OPEN/B-OPEN/D-OPEN");
+}
+
+// query/TestQueryDataItemTableFilterDatabaseConst.al:158-190: Database::"T" in a table filter is T's id.
+#[test]
+fn database_const_in_a_table_filter_is_the_object_id() {
+    let r = run(&with(
+        SEED_ROWS,
+        "procedure F(): Text
+        var Q: Query \"QDB Kind Filtered\"; Seen: Text;
+        begin
+            SeedRows();
+            Q.Open(); while Q.Read() do Seen += Q.RowCode + ';'; Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "D-OPEN;");
+}
+
+// query/TestQueryFilterElementGroupBy.al:67-107 a filter() element is not a grouping column, and a
+// filter set on it restricts the rows before they are aggregated.
+#[test]
+fn filter_element_is_a_where_condition_and_not_a_group_key() {
+    let seed = "procedure SeedE()
+        var H: Record \"QFG Header\"; E: Record \"QFG Entry\";
+        begin
+            H.\"No.\" := 'A'; H.Insert(); H.\"No.\" := 'B'; H.Insert();
+            E.\"Entry No.\" := 1; E.\"Header No.\" := 'A'; E.\"Posting Date\" := 20260705D; E.Amount := 1000; E.Insert();
+            E.\"Entry No.\" := 2; E.\"Header No.\" := 'A'; E.\"Posting Date\" := 20260610D; E.Amount := 100; E.Insert();
+            E.\"Entry No.\" := 3; E.\"Header No.\" := 'A'; E.\"Posting Date\" := 20260620D; E.Amount := 50; E.Insert();
+            E.\"Entry No.\" := 4; E.\"Header No.\" := 'B'; E.\"Posting Date\" := 20260705D; E.Amount := 9; E.Insert();
+        end;";
+    let r = run(&with(
+        seed,
+        "procedure F(): Text
+        var Q: Query \"QFG Join Totals\"; Seen: Text;
+        begin
+            SeedE();
+            Q.Open();
+            while Q.Read() do Seen += StrSubstNo('%1:%2:%3;', Q.HeaderNo, Format(Q.TotalAmount, 0, 9), Q.EntryCount);
+            Q.Close();
+            Q.SetRange(DateFilter, 20260601D, 20260630D);
+            Q.Open();
+            while Q.Read() do Seen += StrSubstNo('%1:%2:%3;', Q.HeaderNo, Format(Q.TotalAmount, 0, 9), Q.EntryCount);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "A:1150:3;B:9:1;A:150:2;");
+}
+
+// query/TestQueryDataItemLinkMultiField.al:58-90 both equalities of a DataItemLink constrain the join.
+#[test]
+fn every_equality_of_a_data_item_link_constrains_the_join() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QDTF Composite Link\"; H: Record \"QDTF Header\"; L: Record \"QDTF Line\"; Seen: Text;
+        begin
+            H.\"No.\" := 'H1'; H.\"Variant Code\" := 'BLUE'; H.Descr := 'H1-BLUE'; H.Insert();
+            H.\"No.\" := 'H1'; H.\"Variant Code\" := 'RED'; H.Descr := 'H1-RED'; H.Insert();
+            L.\"Header No.\" := 'H1'; L.\"Variant Code\" := 'RED'; L.\"Line No.\" := 10000; L.Tag := 'RED-LINE'; L.Insert();
+            Q.Open(); while Q.Read() do Seen += Q.HdrDescr + '/' + Q.LineTag + ';'; Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "H1-RED/RED-LINE;");
+}
+
+// query/TestQueryFlowFieldColumn.al:125-175 a FlowField column is calculated per row; an unset flow
+// filter constrains nothing and one set through a filter() element narrows the aggregate.
+#[test]
+fn flow_field_column_is_calculated_with_the_flow_filter_of_the_query() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QFF Header Dated\"; H: Record \"QFF Header\"; L: Record \"QFF Line\"; Seen: Text;
+        begin
+            H.\"No.\" := 'H5'; H.Insert();
+            L.\"Entry No.\" := 1; L.\"Header No.\" := 'H5'; L.\"Posting Date\" := 20240110D; L.Amount := 10; L.Insert();
+            L.\"Entry No.\" := 2; L.\"Header No.\" := 'H5'; L.\"Posting Date\" := 20240210D; L.Amount := 4; L.Insert();
+            L.\"Entry No.\" := 3; L.\"Header No.\" := 'H5'; L.\"Posting Date\" := 20240310D; L.Amount := 1; L.Insert();
+            Q.SetRange(No, 'H5');
+            Q.Open(); while Q.Read() do Seen += Format(Q.DatedAmount) + ';'; Q.Close();
+            Q.SetFilter(DateFilter, '%1..%2', 20240101D, 20240215D);
+            Q.Open(); while Q.Read() do Seen += Format(Q.DatedAmount) + ';'; Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "15;14;");
+}
+
+// An unpinned corner stays a refusal, not a guess: rows that tie under a descending OrderBy.
+#[test]
+fn ties_under_a_descending_order_by_are_refused() {
+    let r = run(&with(
+        "",
+        "procedure F(): Boolean
+        var Q: Query \"QRO Descending Amount\"; O: Record \"QJ Order\";
+        begin
+            O.\"Entry No.\" := 1; O.Amount := 10; O.Insert();
+            O.\"Entry No.\" := 2; O.Amount := 10; O.Insert();
+            Q.Open();
+            exit(Q.Read());
+        end;",
+    ));
+    assert!(unsupported(r).contains("tie"));
+}

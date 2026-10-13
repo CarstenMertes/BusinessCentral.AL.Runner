@@ -53,6 +53,26 @@ pub fn parse(text: &str) -> Result<Formula, String> {
     p.formula().map_err(|e| format!("CalcFormula `{}`: {e}", text.trim()))
 }
 
+/// A comma-separated list of `field = const(..) | filter(..) | field(..)` conditions, as written
+/// in a query's `DataItemTableFilter` and `ColumnFilter` properties.
+pub fn parse_conditions(text: &str) -> Result<Vec<Cond>, String> {
+    let mut p = Cursor {
+        c: text.chars().collect(),
+        i: 0,
+    };
+    let mut conds = Vec::new();
+    loop {
+        conds.push(p.cond().map_err(|e| format!("`{}`: {e}", text.trim()))?);
+        if !p.eat(',') {
+            break;
+        }
+    }
+    if p.peek().is_some() {
+        return Err(format!("`{}`: unexpected text after the conditions", text.trim()));
+    }
+    Ok(conds)
+}
+
 struct Cursor {
     c: Vec<char>,
     i: usize,
@@ -380,6 +400,21 @@ mod tests {
                 c("K", CondValue::Const("'a)b'".into())),
             ]
         );
+    }
+
+    #[test]
+    fn a_condition_list_as_in_a_query_table_filter() {
+        // query/TestQueryDataItemTableFilter.al: `Status = const(Open), Amount = filter(> 100)`.
+        let conds = parse_conditions("Status = const(Open), Amount = filter(> 100)").unwrap();
+        assert_eq!(
+            conds,
+            vec![
+                c("Status", CondValue::Const("Open".into())),
+                c("Amount", CondValue::Filter("> 100".into())),
+            ]
+        );
+        assert!(parse_conditions("Status = const(Open),").is_err());
+        assert!(parse_conditions("Status = const(Open) extra").is_err());
     }
 
     #[test]

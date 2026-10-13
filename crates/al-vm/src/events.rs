@@ -229,7 +229,9 @@ fn int_consts_expr(e: &ir::Expr, out: &mut Vec<i64>) {
         E::Const(ir::Const::Integer(i)) => out.push(i64::from(*i)),
         E::Const(ir::Const::BigInteger(i)) => out.push(*i),
         E::Const(_) | E::Load(_) => {}
-        E::Unary(_, e) | E::Convert(_, e) | E::Control { page: e, .. } => int_consts_expr(e, out),
+        E::Unary(_, e) | E::Convert(_, e) | E::Control { page: e, .. } | E::QueryColumn { query: e, .. } => {
+            int_consts_expr(e, out)
+        }
         E::Binary(_, a, b) => {
             int_consts_expr(a, out);
             int_consts_expr(b, out);

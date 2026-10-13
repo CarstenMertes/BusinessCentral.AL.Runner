@@ -502,6 +502,17 @@ impl Session {
                     .unwrap_or_else(|| o.name.clone());
                 Ok(Value::Text(cap))
             }
+            // `CurrPage.PromptMode := PromptMode::Prompt` states what a PromptDialog already starts in:
+            // the pages of handlers/TbaPromptDeclared.Page.al and TbaPromptBare.Page.al do it in OnOpenPage
+            // and the tests around them (TestPageBuiltInActions_Tests.al (a)-(j)) see an ordinary dialog.
+            // The other modes are not pinned.
+            "PromptMode" => match args.first() {
+                Some(Value::Option(n, members)) if members.get(*n as usize).is_some_and(|m| m == "Prompt") => {
+                    Ok(Value::Null)
+                }
+                Some(Value::Enum(..)) | Some(Value::Option(..)) => unsupported("CurrPage.PromptMode other than Prompt (not pinned)"),
+                other => unsupported(format!("CurrPage.PromptMode with {other:?}")),
+            },
             "Editable" if method.starts_with("Page.") => {
                 self.require_open(st)?;
                 match args.first() {

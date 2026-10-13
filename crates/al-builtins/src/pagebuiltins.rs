@@ -58,6 +58,7 @@ page_methods! {
     "TestPage.New#1" => "TestPage.New",
     "Page.Update#1" => "Page.Update",
     "Page.Editable#1" => "Page.Editable",
+    "Page.PromptMode#1" => "Page.PromptMode",
     "Page.SaveRecord#1" => "Page.SaveRecord",
     "TestPage.OK#1" => "TestPage.OK",
     "TestPage.Cancel#1" => "TestPage.Cancel",

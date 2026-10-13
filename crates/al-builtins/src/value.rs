@@ -18,6 +18,9 @@ pub const ACTION_MEMBERS: [&str; 9] = [
     "RunSystem",
 ];
 
+/// The members of the system option `PromptMode` of a PromptDialog page, in docs order.
+pub const PROMPT_MODE_MEMBERS: [&str; 3] = ["Prompt", "Content", "Generate"];
+
 /// Runtime type of a slot: what a variable, field or parameter holds.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RtType {

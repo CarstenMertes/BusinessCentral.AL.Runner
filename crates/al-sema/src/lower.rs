@@ -2202,7 +2202,7 @@ impl Lowerer<'_> {
                     (s.receiver == "FieldRef" && s.name == "Value")
                         // `CurrPage.Editable := true` is the setter form of `CurrPage.Editable(true)`
                         // (corpus handlers/TestPageModalNewRowLine_Objects.al:69).
-                        || (s.receiver == "Page" && s.name == "Editable")
+                        || (s.receiver == "Page" && matches!(s.name.as_str(), "Editable" | "PromptMode"))
                 });
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {

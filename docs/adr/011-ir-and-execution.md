@@ -44,3 +44,34 @@ internal execution strategy be whatever is simplest and fast enough.
 ## Conformance
 `al-ir` round-trips through serde; the interpreter has unit tests per IR
 node; the corpus pass rate is the integration test.
+
+## Source positions and error call stacks (added 2026-10-13/14)
+
+An additive change to the IR; no seam moved. Details are in `docs/architecture.md`
+("Source positions").
+
+- `Program::positions` and `Program::sources` hold source positions. `Stmt::Pos(id)`
+  precedes every lowered statement. `Routine::pos` is the position of its `procedure` or
+  `trigger` keyword.
+- The VM tracks the routine and current position of every frame, and builds the AL call
+  stack of an error as it unwinds (`al-vm/src/callstack.rs`).
+
+### Decided without owner review (2026-10-13/14)
+
+1. **Marker statements, not a wrapper around `Stmt`.** Options: (a) change `Stmt` into a struct
+   with a position and a kind; (b) wrap every statement in `Stmt::At(id, Box<Stmt>)`;
+   (c) a `Stmt::Pos(id)` marker before the statement. Chosen: (c). It adds no boxes, leaves
+   every other `Stmt` match untouched (one new arm each), and keeps this change mergeable
+   with the other agents' work in `lower.rs`. The cost is one extra list entry and one
+   cheap VM step per statement (measured in the report that came with this change).
+2. **No positions on call expressions.** Options: add a position field to `Expr::Call`,
+   `Expr::InterfaceCall` and `Expr::Builtin`, or find a call through its statement. Chosen:
+   the statement. A required field on those variants breaks every construction site other
+   agents are adding. The field can be added later as an optional one.
+3. **The call stack format and line counting follow AL Runner v2.** The corpus pins only
+   the substrings listed in `docs/probes-needed.md`. v2 measured the full format on real BC
+   (`line` counts from the `procedure` line; the quoted object name; the app tail).
+   Options: refuse every stack read (no behaviour), or implement v2's format and record
+   the assumption. Chosen: v2's format, for codeunits and tables only. Any other object
+   type, field trigger or routine without source is refused through the unreadable marker.
+   The probe that would settle it is listed in `docs/probes-needed.md`.

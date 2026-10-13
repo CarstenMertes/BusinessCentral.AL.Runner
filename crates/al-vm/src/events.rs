@@ -59,11 +59,15 @@ fn flag(args: &[String], i: usize) -> bool {
     args.get(i).is_some_and(|a| a.eq_ignore_ascii_case("true"))
 }
 
+/// The object key under which subscribers to the Caption Class codeunit's OnResolveCaptionClass
+/// are registered (the codeunit itself is not in the workspace).
+pub const CAPTION_CLASS: usize = usize::MAX;
+
 impl Registry {
     pub fn build(program: &ir::Program) -> Registry {
         let mut reg = Registry::default();
-        // Events declared in a table or report extension are subscribed to on the base object
-        // (corpus extensionevents/TestExtensionDeclaredEvents.al:105-117 for a reportextension).
+        // Events declared in a table or page extension are subscribed to on the base object
+        // (corpus extensionevents/TestExtensionDeclaredEvents.al:92 PageExtEvent_SubscriberBoundToBasePage_...).
         let mut base_of: HashMap<usize, usize> = HashMap::new();
         for (oi, o) in program.objects.iter().enumerate() {
             if let Some(x) = &o.report_ext {
@@ -74,7 +78,6 @@ impl Registry {
                     base_of.insert(e, oi);
                 }
             }
-            // Likewise for a pageextension (corpus extensionevents/TestExtensionDeclaredEvents.al:93-103).
             if let Some(p) = &o.page {
                 for &e in &p.extensions {
                     base_of.insert(e, oi);
@@ -141,6 +144,22 @@ impl Registry {
                                     manual: is_manual(o),
                                     element: args.get(3).map(|e| unquote(e)).unwrap_or_default(),
                                 }),
+                                // The System Application's Caption Class codeunit is not in the workspace:
+                                // its subscribers are kept under a key of their own for the page client.
+                                None if kind == "codeunit"
+                                    && (target.eq_ignore_ascii_case("Caption Class") || target == "42")
+                                    && event == "onresolvecaptionclass" =>
+                                {
+                                    reg.subscribers
+                                        .entry((CAPTION_CLASS, event))
+                                        .or_default()
+                                        .push(Subscriber {
+                                            object: oi,
+                                            routine: ri,
+                                            manual: is_manual(o),
+                                            element: String::new(),
+                                        })
+                                }
                                 None if kind == "codeunit" && target.eq_ignore_ascii_case("Global Triggers") => {
                                     reg.has_global_triggers = true;
                                     if matches!(
@@ -227,7 +246,7 @@ fn int_consts(stmts: &[ir::Stmt], out: &mut Vec<i64>) {
                 int_consts(otherwise, out);
             }
             S::Exit(e) => e.iter().for_each(|e| int_consts_expr(e, out)),
-            S::Break => {}
+            S::Break | S::Pos(_) => {}
             S::AssertError(b) => int_consts(b, out),
         }
     }

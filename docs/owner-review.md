@@ -47,6 +47,11 @@ reviewed it.
   `probes-needed.md`. The probe agent pins these first. Examples: the
   "transaction is stopped" error, nested test codeunits, CommitBehavior Error,
   and "part not found" (the runtime uses ID 0).
+- 2026-10-13, ADR-011: source positions in the IR are `Stmt::Pos` marker statements and a
+  `SrcPos` table; call expressions use their statement's position.
+- 2026-10-13, ADR-011: `GetLastErrorCallStack` uses AL Runner v2's measured frame format
+  (relative line, quoted object name, app tail) for codeunits and tables. Other object types
+  stay refused. Only substrings of it are pinned by the corpus.
 - 2026-10-13, ADR-012 (page extensions): several page extensions that declare one
   page trigger both run, in application order (dependency app first, then
   object id); the page's own trigger runs first. Both are assumptions listed in
@@ -74,3 +79,34 @@ reviewed it.
   placeholder `CRONUS`.
 - 2026-10-13, ADR-013, host values: temporary records are not stamped with the system
   created and modified fields.
+- 2026-10-14, ADR-012, pages-misc: a `Page` variable is constructed (OnInit once) at its first procedure call.
+- 2026-10-14, ADR-012, pages-misc: lists with OnFindRecord/OnNextRecord are walked through the triggers; `Which` is `-`/`+`
+  for First/Last (BC passes `=`-forms the corpus does not pin).
+- 2026-10-14, ADR-012, pages-misc: the deleted-row sequence on such lists is inferred from four tests and refused elsewhere.
+- 2026-10-14, ADR-012, pages-misc: `TestField.Lookup` order is control trigger, table field trigger, TableRelation page; a
+  table-field OnLookup marks the row edited.
+- 2026-10-14, ADR-012, pages-misc: page background tasks run synchronously in a read-only session; tasks queued for
+  other rows are not cancelled.
+- 2026-10-14, ADR-012, pages-misc: `asserterror` rollback extent around a failing TestPage lookup is left as is and the case is refused
+  while writes are pending.
+- 2026-10-14, ADR-017, error collection: closing a collecting scope that holds several errors raises
+  `Multiple errors occurred. <first message>`; the corpus pins only the leading words and the first message.
+- 2026-10-14, ADR-017, error collection: `HasCollectedErrors()` is true outside a scope, as the platform
+  computes it.
+- 2026-10-14, ADR-017, media: Media and MediaSet fields hold a Guid and the objects live in a session store, a
+  stand-in for the Tenant Media tables until ADR-013 lands.
+- 2026-10-14, ADR-017, partial records: `AddLoadFields` and `SetBaseLoadFields` on a full load answer false.
+- 2026-10-14, ADR-017, call depth: the ceiling is 1000 nested calls; beyond it the run is refused.
+- 2026-10-13, ADR-012 (request pages): a report without a `requestpage` section opens a request page of
+  its data items' filters unless `UseRequestPage` is switched off; a run that opens a request page where the
+  test declares no `[RequestPageHandler]` is refused, not answered with `Unhandled UI`.
+- 2026-10-13, ADR-012 (request pages): `RunRequestPage` returns an XML text of this runtime's own layout and
+  accepts only that text back as a seed; `RunRequestPage` commits its transaction world like `Run`.
+- 2026-10-13, ADR-012 (request pages): the id in "The action with ID = N is not found on the page." is
+  FNV-1a over the UTF-16 text of the report id and the action name, fitted to three corpus ids.
+- 2026-10-13, ADR-012 (request pages): a report that renders output (not `ProcessingOnly`, or a layout) is
+  refused when its run reaches the output, so its request page can still be tested.
+- 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
+  caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
+  around the control name (the corpus pins only the name).
+

@@ -614,6 +614,19 @@ impl Session {
                 }
             }
         }
+        // A full load (the default) needs no bookkeeping beyond the flag; a partial one is worked
+        // out in partial.rs.
+        if rec.borrow().load.request.is_some() {
+            self.note_partial_fetch(rec, &row)?;
+        } else {
+            let mut r = rec.borrow_mut();
+            r.load.buffer = Some(al_builtins::value::Buffer {
+                have: al_builtins::value::FieldSet::All,
+                unsure: al_builtins::value::FieldSet::Of(Vec::new()),
+                row: None,
+            });
+            r.load.partial = false;
+        }
         rec.borrow_mut().fields = row;
         self.auto_calculate(rec)
     }
@@ -680,6 +693,7 @@ impl Session {
             "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate"
         ) && !rec.borrow().temporary
         {
+            self.bg_refuse_write(t.object as usize, method)?;
             self.gate_write(method)?;
         }
         match method {
@@ -712,6 +726,7 @@ impl Session {
                 r.ascending = true;
                 r.field_descending = false;
                 r.position = None;
+                r.load = Default::default();
                 Ok(Value::Null)
             }
             "Insert" => {
@@ -1024,6 +1039,45 @@ impl Session {
                             .get(&cx, &t, &pk)
                             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
                     }
+                    // `=>`, `=<` and `=><`: the row itself, else its neighbour. Pinned for a row that is gone
+                    // from a table nothing filters, by the page client asking an OnFindRecord trigger
+                    // (corpus pageupdate/TestPageUpdateGoneRow.al:423 List_DeletedByAction_PassThroughFind_*);
+                    // with filters, or another current key, how they combine is not pinned.
+                    w @ ("=>" | "=<" | "=><") => {
+                        if !rec.borrow().filters.is_empty() || rec.borrow().key != 0 {
+                            return unsupported(format!("Find('{w}') with active filters or another current key"));
+                        }
+                        let pk = t.primary_key(&rec.borrow().fields);
+                        let exact = self
+                            .store_for(rec)
+                            .get(&cx, &t, &pk)
+                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                        match exact {
+                            Some(row) => Some(row),
+                            None => {
+                                let pos = position(&t, 0, &rec.borrow().fields);
+                                let next = if w == "=<" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, asc, Some(pos.clone()))?
+                                };
+                                let prev = if w == "=>" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, !asc, Some(pos))?
+                                };
+                                match (next, prev) {
+                                    (Some(n), Some(_)) if w == "=><" => {
+                                        let _ = n;
+                                        return unsupported(
+                                            "Find('=><') with a row on either side (which one BC picks is not pinned)",
+                                        );
+                                    }
+                                    (n, p) => n.or(p),
+                                }
+                            }
+                        }
+                    }
                     other => return unsupported(format!("Find('{other}')")),
                 };
                 match found {
@@ -1282,6 +1336,9 @@ impl Session {
             }
             "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
             "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
+            "SetLoadFields" | "AddLoadFields" | "AreFieldsLoaded" | "SetBaseLoadFields" => {
+                self.load_fields_op(method, rec, &t, args)
+            }
             other => self.record_meta_op(other, rec, &t, args),
         }
     }

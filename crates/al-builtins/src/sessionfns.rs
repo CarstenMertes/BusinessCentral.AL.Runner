@@ -54,4 +54,10 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "System.GlobalLanguage#1",
     "Session.CurrentClientType#1",
     "Session.DefaultClientType#1",
+    "Database.LastUsedRowVersion#1",
+    "Database.LockTimeout#1",
+    "System.ClearCollectedErrors#1",
+    "System.HasCollectedErrors#1",
+    "System.IsCollectingErrors#1",
+    "System.GetCollectedErrors#1",
 ];

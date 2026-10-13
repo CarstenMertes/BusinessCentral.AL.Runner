@@ -28,21 +28,14 @@ table 50900 "ALT T"
     }
     keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } }
 }
-
-table 50902 "ALT CF Line"
-{
-    fields { field(1; "No."; Code[20]) { } field(2; Seq; Integer) { } }
-    keys { key(PK; "No.", Seq) { } }
-}
-table 50903 "ALT CF Head"
+table 50902 "ALT Counter"
 {
     fields
     {
-        field(1; "No."; Code[20]) { }
-        field(2; Lines; Integer) { FieldClass = FlowField; CalcFormula = count("ALT CF Line" where("No." = field("No."))); }
-        field(3; Plain; Integer) { }
+        field(1; Id; Code[20]) { }
+        field(3; Cnt; Integer) { FieldClass = FlowField; CalcFormula = count("ALT T"); }
     }
-    keys { key(PK; "No.") { } }
+    keys { key(PK; Id) { } }
 }
 "#;
 
@@ -242,6 +235,22 @@ fn keyref_counts_and_names_key_fields() {
         "F",
     );
     assert_eq!(text(r), "22Grp1Yes");
+}
+
+#[test]
+fn keyref_field_index_past_the_key_raises_index_out_of_bounds() {
+    // types/TestTypeSystemContracts.al:240-262 pins the fragment (both operands of `and` run, so
+    // FieldIndex(2) on a one-field key raises); recordref/TestBCSumIndexFieldContracts.al:188-198.
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; KR: KeyRef; m: Boolean; begin
+            RR.Open(50900);
+            KR := RR.KeyIndex(1);
+            asserterror m := (KR.FieldCount() = 2) and (KR.FieldIndex(2).Name() = 'x');
+            exit(GetLastErrorText() + Format(m));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Index out of boundsNo");
 }
 
 #[test]
@@ -496,39 +505,30 @@ fn gettable_works_on_a_ref_that_was_never_opened_even_through_a_variant() {
 }
 
 #[test]
-fn fieldref_calcfield_calculates_a_flowfield() {
-    // corpus fieldref/TestRelationTargetNamespaceScope.al:61-75: `RecRef.Field(3).CalcField()`, then
-    // `.Value` reads the calculated count.
+fn field_ref_calc_field_calculates_a_flow_field() {
+    // fieldref/TestRelationTargetNamespaceScope.al:63-75: `RecRef.Field(3).CalcField()` makes the
+    // FlowField read its count.
     let r = run(
-        "procedure F(): Text var L: Record \"ALT CF Line\"; RR: RecordRef; s: Text; begin
-            L.\"No.\" := 'X'; L.Seq := 1; L.Insert();
-            L.Seq := 2; L.Insert();
-            L.\"No.\" := 'Y'; L.Seq := 1; L.Insert();
-            RR.Open(50903);
-            RR.Init();
-            RR.Field(1).Value := 'X';
-            RR.Field(2).CalcField();
-            exit(Format(RR.Field(2).Value));
+        "procedure F(): Text var T: Record \"ALT T\"; RR: RecordRef; a: Text; begin
+            T.\"No.\" := 'A'; T.Insert(); T.\"No.\" := 'B'; T.Insert();
+            RR.Open(50902); RR.Init(); RR.Field(1).Value := 'X';
+            a := Format(RR.Field(3).Value);
+            RR.Field(3).CalcField();
+            exit(a + '|' + Format(RR.Field(3).Value));
         end;",
         "F",
     );
-    assert_eq!(text(r), "2");
+    assert_eq!(text(r), "0|2");
 }
 
 #[test]
-fn fieldref_calcfield_on_a_normal_field_is_refused() {
-    // Record.CalcFields names the field and table (record/TestCalcFieldsFieldClass.Codeunit.al:106);
-    // that FieldRef.CalcField raises the same text is not pinned, so it is refused.
+fn field_ref_calc_field_of_a_stored_field_is_refused() {
     let r = run(
-        "procedure F(): Text var RR: RecordRef; begin
-            RR.Open(50903);
-            RR.Field(3).CalcField();
-            exit('ran');
-        end;",
+        "procedure F(): Text var RR: RecordRef; begin RR.Open(50900); RR.Field(2).CalcField(); exit(''); end;",
         "F",
     );
-    match r {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("FieldRef.CalcField"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not a FlowField")),
+        "{r:?}"
+    );
 }

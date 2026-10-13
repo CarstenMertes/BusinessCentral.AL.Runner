@@ -213,15 +213,6 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             .map(|&r| (obj.routines[r].name.clone(), o.clone()))
             .collect::<Vec<_>>()
     };
-    // [ErrorBehavior] is not implemented; tests in such a codeunit depend on each other, so none
-    // of them runs. ([CommitBehavior] and [TransactionModel] are: see al-vm transactions.rs.)
-    if let Some(a) = tests
-        .iter()
-        .flat_map(|&r| &obj.routines[r].attributes)
-        .find(|a| a.name.eq_ignore_ascii_case("ErrorBehavior"))
-    {
-        return all(Outcome::NotRun(format!("[{}] is not implemented yet", a.name)));
-    }
     // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
     let mut models = std::collections::HashMap::new();
     for &r in &tests {
@@ -372,8 +363,8 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
             };
             let Some(kind) = UiKind::from_attribute(kind_attr) else {
                 let why = match kind_attr.to_ascii_lowercase().as_str() {
-                    "requestpagehandler" | "filterpagehandler" => {
-                        "it needs request and filter pages (docs/adr/012-testpage-runtime.md)"
+                    "filterpagehandler" => {
+                        "no corpus test pins how FilterPageBuilder.RunModal reaches a filter page handler"
                     }
                     "sendnotificationhandler" | "recallnotificationhandler" => "it needs the Notification type",
                     "sessionsettingshandler" => "it needs the SessionSettings type",
@@ -388,7 +379,7 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                 Some(al_builtins::value::RtType::TestPage(p)) => Some(*p),
                 _ => None,
             };
-            let is_page = matches!(kind, UiKind::Page | UiKind::ModalPage);
+            let is_page = matches!(kind, UiKind::Page | UiKind::ModalPage | UiKind::RequestPage);
             if let Some((_, other)) = out
                 .iter()
                 .find(|(k, r)| *k == kind && (!is_page || page_of(&obj.routines[*r]) == page_of(routine)))
@@ -631,7 +622,7 @@ mod tests {
 
     local procedure Helper()
     begin
-        LastUsedRowVersion();
+        MinimumActiveRowVersion();
     end;
 
     procedure NotATest()
@@ -664,7 +655,7 @@ mod tests {
     fn unreachable_code_does_not_block_but_reachable_unsupported_code_does() {
         let o = outcomes(SRC);
         assert!(
-            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("LastUsedRowVersion")),
+            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("MinimumActiveRowVersion")),
             "{:?}",
             o[2].1
         );
@@ -915,7 +906,7 @@ mod tests {
             table 60901 Co { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
                 trigger OnInstallAppPerDatabase() var R: Record Db; begin R.K := 'DB'; R.Insert(); end;
-                trigger OnInstallAppPerCompany() var R: Record Co; begin LastUsedRowVersion(); R.K := 'CO'; R.Insert(); end; }
+                trigger OnInstallAppPerCompany() var R: Record Co; begin MinimumActiveRowVersion(); R.K := 'CO'; R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure SeededByTheTriggerThatRan() var R: Record Db; begin if not R.Get('DB') then Error('the per-database seed was rolled back'); end;
                 [Test] procedure SeededByTheTriggerThatDidNot() var R: Record Co; begin if R.Count() = 0 then Error('unseeded'); end; }",
@@ -936,7 +927,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnSeed', '', false, false)]
                 local procedure Seed() var R: Record Seed; begin R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin LastUsedRowVersion(); P.OnSeed(); end; }
+                trigger OnInstallAppPerCompany() var P: Codeunit Pub; begin MinimumActiveRowVersion(); P.OnSeed(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -954,7 +945,7 @@ mod tests {
                 [EventSubscriber(ObjectType::Table, Database::Src, 'OnAfterInsertEvent', '', false, false)]
                 local procedure Seed(var Rec: Record Src) var R: Record Seed; begin R.K := 'X'; R.Insert(); end; }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var S: Record Src; begin LastUsedRowVersion(); S.K := 'A'; S.Insert(); end; }
+                trigger OnInstallAppPerCompany() var S: Record Src; begin MinimumActiveRowVersion(); S.K := 'A'; S.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesSeed() var R: Record Seed; begin end; }",
         );
@@ -967,7 +958,7 @@ mod tests {
             "table 60900 S { fields { field(1; K; Code[10]) { } } }
             table 60903 Other { fields { field(1; K; Code[10]) { } } }
             codeunit 60901 Inst { Subtype = Install;
-                trigger OnInstallAppPerCompany() var R: Record S; begin LastUsedRowVersion(); R.Insert(); end; }
+                trigger OnInstallAppPerCompany() var R: Record S; begin MinimumActiveRowVersion(); R.Insert(); end; }
             codeunit 60102 T { Subtype = Test;
                 [Test] procedure UsesS() var R: Record S; begin end;
                 [Test] procedure UsesOther() var R: Record Other; begin end; }",
@@ -1102,7 +1093,7 @@ mod tests {
         [MessageHandler] procedure Msg(M: Text[1024]) begin Seen := M; end;
         [MessageHandler] procedure Msg2(M: Text[1024]) begin end;
         [MessageHandler] procedure Boom(M: Text[1024]) begin Error('boom in handler'); end;
-        [MessageHandler] procedure Blocked(M: Text[1024]) begin LastUsedRowVersion(); end;
+        [MessageHandler] procedure Blocked(M: Text[1024]) begin MinimumActiveRowVersion(); end;
         [ConfirmHandler] procedure Yes(Q: Text[1024]; var Reply: Boolean) begin Reply := true; end;
         [ConfirmHandler] procedure No(Q: Text[1024]; var Reply: Boolean) begin Fired += 1; Asked := Q; Reply := false; end;
         [ConfirmHandler] procedure Silent(Q: Text[1024]; var Reply: Boolean) begin end;
@@ -1166,7 +1157,7 @@ mod tests {
         };
         assert!(nr("UnknownHandlerNameIsRefused").contains("Nope"));
         assert!(nr("NamingARoutineThatIsNoHandlerIsRefused").contains("Helper"));
-        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("LastUsedRowVersion"));
+        assert!(nr("HandlerWithUnsupportedCodeIsRefused").contains("MinimumActiveRowVersion"));
         assert!(nr("TwoHandlersOfOneKindAreRefused").contains("Msg2"));
     }
 
@@ -1178,16 +1169,23 @@ mod tests {
             codeunit 60121 T { Subtype = Test;
                 [Test] [HandlerFunctions('Modal')] procedure A() begin end;
                 [Test] [HandlerFunctions('Req')] procedure B() begin end;
+                [Test] [HandlerFunctions('Fil')] procedure C() begin end;
                 [ModalPageHandler] procedure Modal(var P: TestPage Pg) begin end;
-                [RequestPageHandler] procedure Req(var P: TestRequestPage Rp) begin end; }",
+                [RequestPageHandler] procedure Req(var P: TestRequestPage Rp) begin end;
+                [FilterPageHandler] procedure Fil(var F: FilterPageBuilder) begin end; }",
         );
-        // A modal handler is supported now; one the test never triggers is reported as BC does.
+        // Modal and request page handlers are supported; one the test never triggers is reported
+        // as BC does.
         assert!(
             matches!(&o[0].1, Outcome::Fail(r) if r.contains("not executed")),
             "{o:?}"
         );
         assert!(
-            matches!(&o[1].1, Outcome::NotRun(r) if r.contains("RequestPageHandler")),
+            matches!(&o[1].1, Outcome::Fail(r) if r.contains("not executed")),
+            "{o:?}"
+        );
+        assert!(
+            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("FilterPageHandler")),
             "{o:?}"
         );
     }

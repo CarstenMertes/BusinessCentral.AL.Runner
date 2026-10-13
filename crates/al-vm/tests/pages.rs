@@ -72,37 +72,6 @@ page 50003 "PG Format"
     }
 }
 
-// corpus handlers/TestPageOnInit_Objects.al: OnInit appends 'I', a procedure 'S'.
-page 50999 "PG Wizard"
-{
-    PageType = Card;
-    SourceTable = "PG Row";
-    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
-    var
-        Trace: Text;
-        Step: Integer;
-    trigger OnInit() begin Trace += 'I'; Step := 0; end;
-    trigger OnOpenPage() begin Trace += 'O'; end;
-    procedure SetStep(NewStep: Integer) begin Trace += 'S'; Step := NewStep; end;
-    procedure GetTrace(): Text begin exit(Trace + ':' + Format(Step)); end;
-}
-
-page 50997 "PG EditAssign"
-{
-    PageType = Card;
-    SourceTable = "PG Row";
-    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
-    trigger OnOpenPage() begin CurrPage.Editable := false; end;
-}
-
-page 50996 "PG EditCall"
-{
-    PageType = Card;
-    SourceTable = "PG Row";
-    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
-    trigger OnOpenPage() begin CurrPage.Editable(false); end;
-}
-
 page 50005 "PG Maker"
 {
     PageType = List;
@@ -250,6 +219,27 @@ page 50002 "PG List"
             }
         }
     }
+}
+
+// corpus handlers/TestPageCurrFieldNo_Row.al and _Card.al
+table 50020 "PG CFN"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(10; Amount; Decimal) { trigger OnValidate() begin Rec.ValidateFieldNo := CurrFieldNo; end; }
+        field(11; ValidateFieldNo; Integer) { }
+        field(12; ModifyFieldNo; Integer) { }
+    }
+    keys { key(PK; "No.") { } }
+    trigger OnModify() begin Rec.ModifyFieldNo := CurrFieldNo; end;
+}
+
+page 50021 "PG CFN Card"
+{
+    PageType = Card;
+    SourceTable = "PG CFN";
+    layout { area(Content) { field("No."; Rec."No.") { } field(Amount; Rec.Amount) { } field(ValidateFieldNo; Rec.ValidateFieldNo) { } } }
 }
 "#;
 
@@ -926,127 +916,23 @@ fn a_get_of_a_row_the_view_hides_shows_nothing() {
     assert_eq!(text(r), "[][]");
 }
 
-// handlers/TestPageOnInit_Tests.al:POI_SetterBeforeRun_RunsAfterOnInitAndSurvives (:204-217): OnInit
-// runs when the Page variable's instance is constructed, before the first procedure call on it.
+// handlers/TestPageCurrFieldNo_Tests.al:36-60 (SetValue_OwnTableField_OnValidateSeesCurrFieldNo),
+// :65-76 (Validate_FromCode_OnValidateSeesZero), :105-123 (SetValue_ThenClose_OnModifySeesZero).
 #[test]
-fn a_procedure_call_on_a_page_variable_runs_oninit_first_and_keeps_the_instance() {
+fn a_page_write_validates_with_the_field_number_and_code_with_zero() {
     let r = run(
-        "procedure F(): Text var W: Page \"PG Wizard\"; begin
-            W.SetStep(2);
-            W.SetStep(3);
-            exit(W.GetTrace());
-        end;",
-        "F",
-    );
-    assert_eq!(text(r), "ISS:3");
-}
-
-// handlers/TestPageEditable_Tests.al:EditableBoundToPageVariable_FollowsTheRow (:92-109): a closed
-// TestPage variable that is cleared opens a fresh page.
-#[test]
-fn clear_of_a_closed_testpage_variable_leaves_a_fresh_closed_one() {
-    let r = run(
-        "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Card\"; T: Text; begin
-            R.\"No.\" := 'A'; R.Qty := 1; R.Insert();
-            R.\"No.\" := 'B'; R.Qty := 2; R.Insert();
-            TP.OpenView();
-            T := TP.NoCtl.Value();
+        "procedure F(): Text var R: Record \"PG CFN\"; C: Record \"PG CFN\"; TP: TestPage \"PG CFN Card\"; a: Text; begin
+            R.\"No.\" := 'A'; R.Insert();
+            TP.OpenEdit(); TP.GoToRecord(R);
+            TP.Amount.SetValue(50);
+            a := TP.ValidateFieldNo.Value();
             TP.Close();
-            Clear(TP);
-            TP.OpenView();
-            TP.Last();
-            exit(T + TP.NoCtl.Value());
+            R.Get('A');
+            a += '|' + Format(R.ValidateFieldNo) + '|' + Format(R.ModifyFieldNo);
+            C.\"No.\" := 'B'; C.Insert(); C.Validate(Amount, 50);
+            exit(a + '|' + Format(C.ValidateFieldNo));
         end;",
         "F",
     );
-    assert_eq!(text(r), "AB");
-}
-
-// Clearing a page that is open is not pinned: refused.
-#[test]
-fn clear_of_an_open_testpage_variable_is_refused() {
-    let r = run(
-        "procedure F(): Text var TP: TestPage \"PG Card\"; begin
-            TP.OpenNew();
-            Clear(TP);
-            exit('x');
-        end;",
-        "F",
-    );
-    match r {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("Clear of a TestPage that is open"), "{why}"),
-        other => panic!("{other:?}"),
-    }
-}
-
-// handlers/TestPageModalNewRowLine_Objects.al:69: `CurrPage.Editable := x` is the setter form of
-// `CurrPage.Editable(x)`; the outcome of the method form is pinned by
-// handlers/TestPageEditable_Tests.al:150-180.
-#[test]
-fn assigning_currpage_editable_is_the_same_as_calling_it() {
-    let r = run(
-        &format!(
-            "procedure F(): Text var R: Record \"PG Row\"; A: TestPage \"PG EditAssign\"; B: TestPage \"PG EditCall\"; X: Text; begin
-                {}
-                A.OpenEdit(); B.OpenEdit();
-                X := Format(A.Editable()) + Format(A.NoCtl.Editable()) + '|' + Format(B.Editable()) + Format(B.NoCtl.Editable());
-                exit(X);
-            end;",
-            rows(&[("A", 1)])
-        ),
-        "F",
-    );
-    assert_eq!(text(r), "NoNo|NoNo");
-}
-
-// handlers/TestPageModalNewRowLine_Tests.al:ReEditable_LookupModeTrue_HasNoNewRowLine (:100-114):
-// `P.SetTableView(Row)` gives the page the filters of Row as its view when it runs; a trailing
-// new-row line follows the filtered rows of an editable list (the `Yes` of the last Next).
-#[test]
-fn page_settableview_filters_the_rows_the_page_shows() {
-    let r = run(
-        &format!(
-            "procedure F(): Text var R: Record \"PG Row\"; V: Record \"PG Row\"; P: Page \"PG List\"; TP: TestPage \"PG List\"; X: Text; begin
-                {}
-                V.SetRange(Qty, 2, 3);
-                P.SetTableView(V);
-                TP.Trap();
-                P.Run();
-                X := TP.\"NoCtl\".Value();
-                if TP.Next() then X += TP.\"NoCtl\".Value();
-                X += Format(TP.Next());
-                TP.Close();
-                exit(X);
-            end;",
-            rows(&[("A", 1), ("B", 2), ("C", 3), ("D", 4)])
-        ),
-        "F",
-    );
-    assert_eq!(text(r), "BCYes");
-}
-
-// handlers/TestPageModalNewRowLine_Tests.al:Plain_LookupModeTrue_HasNoNewRowLine (:208-221) against
-// Plain_LookupModeFalse_HasTheNewRowLine (:190-205): LookupMode(true) takes the new-row line away.
-#[test]
-fn lookupmode_true_takes_the_new_row_line_away_from_a_list() {
-    let body = |mode: &str| {
-        format!(
-            "procedure F(): Text var R: Record \"PG Row\"; V: Record \"PG Row\"; P: Page \"PG List\"; TP: TestPage \"PG List\"; X: Text; begin
-                {}
-                V.SetRange(Qty, 2, 3);
-                P.SetTableView(V);
-                P.LookupMode({mode});
-                TP.Trap();
-                P.Run();
-                X := TP.\"NoCtl\".Value();
-                if TP.Next() then X += TP.\"NoCtl\".Value();
-                X += Format(TP.Next());
-                TP.Close();
-                exit(X);
-            end;",
-            rows(&[("A", 1), ("B", 2), ("C", 3), ("D", 4)])
-        )
-    };
-    assert_eq!(text(run(&body("true"), "F")), "BCNo");
-    assert_eq!(text(run(&body("false"), "F")), "BCYes");
+    assert_eq!(text(r), "10|10|0|0");
 }

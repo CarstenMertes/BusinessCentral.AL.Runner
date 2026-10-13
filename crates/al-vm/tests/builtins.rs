@@ -978,15 +978,104 @@ fn the_execution_context_is_normal_in_a_test() {
     assert_eq!(r.unwrap(), "NormalYesYesYes");
 }
 
+// ---------------------------------------------------------------- collection errors
+
 #[test]
-fn guiallowed_is_true_in_a_test_session_with_or_without_the_system_prefix() {
-    // session/TestBCPlatformContracts.al:26-32 pins true in the test context;
-    // session/TestFinalCoverage.al:17-33 calls both spellings; handlers/TestConfirmNoHandler.al:28
-    // pins true inside a page trigger reached from a test.
-    let r = text_of("", "exit(Format(GuiAllowed()) + Format(System.GuiAllowed()));");
-    assert_eq!(r.unwrap(), "YesYes");
+fn list_get_outside_the_list_raises_the_invalid_argument_error() {
+    // collections/TestListTrappableError.al:21-45: both forms of Get raise it.
+    let r = text_of(
+        "l: List of [Integer]; v: Integer; a: Text;",
+        "asserterror l.Get(5, v); a := GetLastErrorText(); asserterror v := l.Get(5); exit(a + '|' + GetLastErrorText());",
+    );
+    let want = "An invalid argument was passed to a 'List' data type method.";
+    assert_eq!(r.unwrap(), format!("{want}|{want}"));
 }
 
+#[test]
+fn list_get_outside_the_list_with_the_result_used_still_answers_false() {
+    let r = text_of("l: List of [Integer]; v: Integer;", "exit(Format(l.Get(5, v)));");
+    assert_eq!(r.unwrap(), "No");
+}
+
+#[test]
+fn dictionary_get_of_a_missing_key_raises_the_key_not_found_error() {
+    // collections/TestCollectionsDictionary.al:42-55 pins the statement form; the value form
+    // (collections/TestCollectionContracts.al:188) is pinned as an error with a text (probes-needed).
+    let r = text_of(
+        "d: Dictionary of [Text, Integer]; v: Integer; a: Text;",
+        "d.Add('alpha', 11); asserterror d.Get('missing', v); a := GetLastErrorText(); asserterror v := d.Get('missing'); exit(a + '|' + GetLastErrorText());",
+    );
+    let want = "The given key was not present in the dictionary.";
+    assert_eq!(r.unwrap(), format!("{want}|{want}"));
+}
+
+#[test]
+fn other_list_index_errors_are_still_refused() {
+    // Only Get is pinned: RemoveAt, Set, Insert and GetRange outside the list stay refused.
+    for body in ["l.RemoveAt(3);", "l.Set(3, 1);", "l.Insert(4, 1);", "l.Get(0);"] {
+        let r = text_of("l: List of [Integer];", &format!("{body} exit('');"));
+        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
+    }
+}
+
+// ---------------------------------------------------------------- platform context
+
+#[test]
+fn a_test_runs_with_a_gui_on_a_service_tier() {
+    // session/TestBCPlatformContracts.al:26-43 (GuiAllowed and IsServiceTier are true in a test);
+    // handlers/TestConfirmNoHandler.al:28 (GuiAllowed is Yes inside a page trigger).
+    let r = text_of(
+        "",
+        "exit(Format(GuiAllowed()) + Format(System.GuiAllowed()) + Format(IsServiceTier()));",
+    );
+    assert_eq!(r.unwrap(), "YesYesYes");
+}
+
+#[test]
+fn the_last_used_row_version_is_positive_and_does_not_fall_after_an_insert() {
+    // session/TestSystemExtended.al:635-659, session/TestBCDatabaseContracts.al:100-117.
+    let src = "table 50902 \"RV Row\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var r: Record \"RV Row\"; a: BigInteger; b: BigInteger;
+        begin a := Database.LastUsedRowVersion(); r.Id := 1; r.Insert(); b := Database.LastUsedRowVersion();
+              exit(Format(a > 0) + Format(b >= a) + Format(b = r.\"SystemRowVersion\")); end; }";
+    match run(src, "F") {
+        Ok(Value::Text(t)) => assert_eq!(t, "YesYesYes"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_lock_timeout_can_be_read_and_set() {
+    // session/TestSystemExtended.al:608-630: callable in every form. The default is the documented one.
+    let r = text_of(
+        "a: Text;",
+        "a := Format(Database.LockTimeout()); Database.LockTimeout(false); a += Format(Database.LockTimeout());
+         Database.LockTimeout(true); exit(a + Format(Database.LockTimeout()));",
+    );
+    assert_eq!(r.unwrap(), "YesNoYes");
+}
+
+// ---------------------------------------------------------------- enum InitValue
+
+#[test]
+fn an_enum_field_starts_at_its_init_value_blank_or_named() {
+    // types/TestBlankEnumInitTests.Codeunit.al:52-86 (InTestInsertInitializesBlankEnumToOrdinalZero,
+    // MixedEnumInitValue...): a blank member as InitValue is ordinal 0, a named one its true ordinal.
+    let src = "enum 50910 \"IV Level\" { value(0; \" \") { } value(5; Verbose) { } value(9; Quiet) { } }
+        table 50911 \"IV Row\" { fields {
+            field(1; K; Code[10]) { }
+            field(2; Blank; Enum \"IV Level\") { InitValue = \" \"; }
+            field(3; Named; Enum \"IV Level\") { InitValue = Verbose; }
+            field(4; Opt; Option) { OptionMembers = \" \",Alpha; InitValue = \" \"; }
+        } keys { key(PK; K) { } } }
+        codeunit 50100 C { procedure F(): Text var r: Record \"IV Row\"; a: Text; begin
+            r.Init(); r.K := 'M1'; r.Insert(false); r.Get('M1');
+            exit(Format(r.Blank.AsInteger()) + '|' + Format(r.Named.AsInteger()) + '|' + Format(r.Opt = r.Opt::\" \")); end; }";
+    match run(src, "F") {
+        Ok(Value::Text(t)) => assert_eq!(t, "0|5|Yes"),
+        other => panic!("{other:?}"),
+    }
+}
 #[test]
 fn table_connections_are_registered_found_by_any_case_and_unregistered() {
     // session/TestDatabaseTableConnectionCrm.al:34-117.

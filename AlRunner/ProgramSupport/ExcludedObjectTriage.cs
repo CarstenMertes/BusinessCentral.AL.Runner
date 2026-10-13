@@ -40,16 +40,6 @@ internal static partial class ProgramSupport
 
     internal static class ExcludedObjectTriage
     {
-        // An AL object declaration's header line: `codeunit 135209 "Azure Key Vault Module Test"`.
-        private static readonly Regex ObjectDecl = new(
-            @"^\s*(?<kind>table|codeunit|page|report|query|enum|xmlport|profile|tableextension|pageextension|enumextension|reportextension|permissionset|permissionsetextension|interface|controladdin|entitlement|dotnet)\s+(?<id>\d+)\s+(""(?<qname>[^""\r\n]+)""|(?<name>[A-Za-z_][A-Za-z0-9_]*))",
-            RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        private static readonly Regex SubtypeTest = new(
-            @"^\s*Subtype\s*=\s*Test\s*;", RegexOptions.Multiline | RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        private sealed record DeclaredObject(string Kind, int Id, string Name);
-
         /// <summary>
         /// The question the CLI's bundled loop and --server's request path both ask of a recovered
         /// module (#5118): the verdicts for <paramref name="excludedObjects"/> against every .al file the
@@ -89,8 +79,10 @@ internal static partial class ProgramSupport
         /// subtly wrong.</param>
         internal static IReadOnlyList<ExcludedObjectVerdict> Triage(
             IReadOnlyList<TddExcludedObjectDetail> excluded,
-            IReadOnlyList<string> moduleAlFiles)
+            IReadOnlyList<string> moduleAlFiles,
+            Func<string, string, string?, IReadOnlyList<AlRunner.Infrastructure.AlDeclaredObject>?>? parse = null)
         {
+            parse ??= AlRunner.Infrastructure.AlMemberSyntaxIndex.DeclaredObjects;
             var excludedPaths = new HashSet<string>(
                 excluded.Select(e => NormalizePath(e.FilePath)), StringComparer.Ordinal);
             var survivors = moduleAlFiles
@@ -113,6 +105,7 @@ internal static partial class ProgramSupport
             }
 
             var verdicts = new List<ExcludedObjectVerdict>();
+            var profileVerdicts = new List<int>();
             foreach (var e in excluded)
             {
                 string src;
@@ -126,12 +119,17 @@ internal static partial class ProgramSupport
                     continue;
                 }
 
-                var declared = ObjectDecl.Matches(src)
-                    .Select(m => new DeclaredObject(
-                        m.Groups["kind"].Value.ToLowerInvariant(),
-                        int.TryParse(m.Groups["id"].Value, out var id) ? id : -1,
-                        m.Groups["qname"].Success ? m.Groups["qname"].Value : m.Groups["name"].Value))
-                    .ToList();
+                // #5557: from BC's syntax tree, so a header or a `Subtype = Test;` in a comment is not
+                // one. A file the parser cannot read is refused, never read as droppable.
+                var declared = parse(src, e.FilePath, e.ManifestAppJsonPath);
+                if (declared is null)
+                {
+                    verdicts.Add(new ExcludedObjectVerdict(
+                        e.ObjectDisplayName, e.FilePath, false,
+                        "BC's parser could not read its source file, so what was dropped cannot be identified",
+                        Array.Empty<string>()));
+                    continue;
+                }
                 if (declared.Count == 0)
                 {
                     verdicts.Add(new ExcludedObjectVerdict(
@@ -146,6 +144,7 @@ internal static partial class ProgramSupport
                 // unchanged and still the only one that needs no reference scan at all.
                 if (declared.All(d => d.Kind == "profile"))
                 {
+                    profileVerdicts.Add(verdicts.Count);
                     verdicts.Add(new ExcludedObjectVerdict(
                         e.ObjectDisplayName, e.FilePath, true,
                         "a profile declares no executable AL and no [Test] procedures",
@@ -166,7 +165,7 @@ internal static partial class ProgramSupport
                         Array.Empty<string>()));
                     continue;
                 }
-                if (!SubtypeTest.IsMatch(src))
+                if (!declared.Any(d => d.IsTestCodeunit))
                 {
                     verdicts.Add(new ExcludedObjectVerdict(
                         e.ObjectDisplayName, e.FilePath, false,
@@ -186,6 +185,19 @@ internal static partial class ProgramSupport
                         "a test codeunit no surviving source in this module names, by name or by object id",
                         Array.Empty<string>()));
             }
+            // The profile carve-out (#2238) holds only when EVERY dropped object is a profile. A profile
+            // beside a dropped test codeunit must not let that codeunit's tests vanish from a green
+            // run, so the profile's verdict is withdrawn when anything else is dropped with it. The
+            // old text scan could not see a real `profile "X"` at all, which refused this shape by
+            // accident; seeing it (#5557) makes the rule explicit (ServerEmitExcludedSurvivorsTests).
+            if (profileVerdicts.Count > 0 && profileVerdicts.Count < verdicts.Count)
+                foreach (var i in profileVerdicts)
+                    verdicts[i] = verdicts[i] with
+                    {
+                        Droppable = false,
+                        Reason = "a profile is droppable only when every dropped object is a profile, and this module "
+                            + "also dropped other objects whose tests would go missing from the run",
+                    };
             return verdicts;
         }
 
@@ -197,7 +209,7 @@ internal static partial class ProgramSupport
         /// path exists to prevent.
         /// </summary>
         private static IReadOnlyList<string> ReferencesTo(
-            IReadOnlyList<DeclaredObject> declared, IReadOnlyList<(string Path, string Text)> survivors)
+            IReadOnlyList<AlRunner.Infrastructure.AlDeclaredObject> declared, IReadOnlyList<(string Path, string Text)> survivors)
         {
             var patterns = new List<Regex>();
             foreach (var d in declared)

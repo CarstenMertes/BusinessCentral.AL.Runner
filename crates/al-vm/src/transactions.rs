@@ -105,8 +105,13 @@ fn record_snapshot(r: &RecordState) -> String {
 impl Session {
     /// Whether the session holds an open write transaction
     /// (codeunit/TestWriteTxTestBoundary.al:Test02/Test03, `Database.IsInWriteTransaction`).
+    ///
+    /// A page background worker runs in a session of its own, outside the caller's write
+    /// transaction, and cannot write to a table (`bg_refuse_write`): its transaction never holds
+    /// a change, whatever the caller has pending (handlers/TestPageBgTaskTx_Tests.al:
+    /// RunPageBackgroundTask_WorkerIsOutsideCallersWriteTransaction).
     pub(crate) fn in_write_transaction(&self) -> bool {
-        self.store.has_uncommitted()
+        self.bg_worker.is_none() && self.store.has_uncommitted()
     }
 
     /// Whether the running test method has no transaction: `TransactionModel::None` outside
@@ -142,7 +147,11 @@ impl Session {
         args: &[Value],
         guarded: bool,
     ) -> Result<Value, Signal> {
-        self.bg_refuse_transaction_call("Codeunit.Run")?;
+        // Only the guarded form is pinned inside a page background worker
+        // (handlers/TestPageBgTaskTx_Tests.al:RunPageBackgroundTask_WorkerIsOutsideCallersWriteTransaction).
+        if !guarded {
+            self.bg_refuse_transaction_call("Codeunit.Run")?;
+        }
         let (inst, record_arg) = match (id, receiver) {
             ("Codeunit.Run#1", Some(Value::Codeunit(rc))) => (self.shared_instance(rc), args.first()),
             ("Codeunit.Run#3", None) => {
@@ -223,6 +232,7 @@ impl Session {
             // The guarded form needs a transaction world of its own, which BC refuses to open
             // while the caller holds an uncommitted write
             // (codeunit/TestCodeunitRunWriteTransaction.al:GuardedRun_WithUncommittedWrite_IsRefused_AndCodeunitNeverRuns).
+            // (in_write_transaction is false in a page background worker.)
             if self.in_write_transaction() {
                 if self.tx_model == TxModel::AutoRollback {
                     return unsupported(
@@ -268,7 +278,11 @@ impl Session {
                 // (TestCodeunitRunWriteTransaction.al:GuardedRun_LeavingUncommittedWrite_CommitsItWithTheRunsOwnTransaction).
                 // Under AutoRollback nothing may become durable; whether BC commits here is not
                 // pinned (docs/probes-needed.md), so the run joins the test's transaction.
-                if self.tx_model != TxModel::AutoRollback {
+                //
+                // In a page background worker the run's transaction is the worker's own and holds
+                // no change, so there is nothing to commit: the caller's pending rows stay pending
+                // (handlers/TestPageBgTaskTx_Tests.al:RunPageBackgroundTask_WorkerCommitLeavesCallersRowsUncommitted).
+                if self.tx_model != TxModel::AutoRollback && self.bg_worker.is_none() {
                     self.commit_transaction();
                 }
                 Ok(Value::Boolean(true))
@@ -284,7 +298,10 @@ impl Session {
                 // The run's writes since its last Commit are undone, the error becomes the last
                 // error and the call returns false (TestCodeunitRunGuard.al:GuardedRun_TrapsInnerError_ReturnsFalse,
                 // :GuardedRun_InstanceForm_CommitThenError_KeepsCommittedRowOnly).
-                self.rollback_transaction();
+                // (Nothing to undo in a page background worker: the caller's rows are not its own.)
+                if self.bg_worker.is_none() {
+                    self.rollback_transaction();
+                }
                 self.error_finals = None;
                 self.last_error = e;
                 Ok(Value::Boolean(false))

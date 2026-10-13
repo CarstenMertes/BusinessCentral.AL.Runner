@@ -965,9 +965,10 @@ pub(crate) fn calc_const(
     }
     let unquoted = raw.trim_matches('"');
     if let Ty::Enum(name) = ty {
-        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
+        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, &crate::types::qualified_parts(name)) else {
             return Err(format!(
-                "CalcFormula const({raw}): enum `{name}` is outside the workspace"
+                "CalcFormula const({raw}): enum `{}` is outside the workspace",
+                crate::types::display_name(name)
             ));
         };
         let values = &members[e].enum_values;
@@ -1291,7 +1292,7 @@ impl Lowerer<'_> {
                 conditions.push(ir::RelationCond { field: pos, value });
             }
             // The whole path names a table, or all but the last part do and the last is a field.
-            let resolve = |parts: &[String]| match self.ws.resolve_ref_certain(file, ObjKind::Table, parts) {
+            let resolve = |parts: &[String]| match self.ws.resolve_relation_target(file, ObjKind::Table, parts) {
                 Resolution::Found(t) => Some(t),
                 _ => None,
             };
@@ -1355,9 +1356,9 @@ impl Lowerer<'_> {
     /// The constant of a `Field = const(x)` condition, typed by the field.
     fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
         if let Ty::Enum(name) = ty {
-            let Resolution::Found(e) = self
-                .ws
-                .resolve_ref_certain(file, ObjKind::Enum, std::slice::from_ref(name))
+            let Resolution::Found(e) =
+                self.ws
+                    .resolve_ref_certain(file, ObjKind::Enum, &crate::types::qualified_parts(name))
             else {
                 return None;
             };
@@ -3928,6 +3929,106 @@ codeunit 50101 C2
     procedure Double(X: Integer): Integer begin exit(X * 2); end;
     procedure SetAmount() begin Amount := 1; end;
 }";
+
+    /// An enum field's InitValue by name when the enum is in another namespace, named by a
+    /// qualified path: Base App's `Item Journal Line.Type` is
+    /// `Enum Microsoft.Manufacturing.Capacity."Capacity Type Journal"` with `InitValue = " "`
+    /// (corpus record/TestRenamePropagationBaseApp.al, Codeunit 60975).
+    #[test]
+    fn enum_init_value_with_namespaced_enum() {
+        let (_, l) = lower_files(
+            &[
+                (
+                    "e.al",
+                    "namespace A.B; enum 50920 \"ALT Cap\" { value(0; \" \") { } value(1; \"Machine Center\") { } value(2; Work) { } }",
+                ),
+                (
+                    "t.al",
+                    "namespace C.D; table 50921 \"ALT Tab\" { fields { field(1; K; Code[10]) { } \
+                     field(2; T; Enum A.B.\"ALT Cap\") { InitValue = \" \"; } \
+                     field(3; U; Enum A.B.\"ALT Cap\") { InitValue = Work; } } keys { key(PK; K) { } } }",
+                ),
+            ],
+            false,
+        );
+        let t = l
+            .program
+            .objects
+            .iter()
+            .find_map(|o| o.table.as_ref().filter(|t| t.fields.iter().any(|f| f.name == "T")))
+            .expect("table schema");
+        let f = |n: &str| t.fields.iter().find(|f| f.name == n).unwrap();
+        assert!(matches!(f("T").init, Some(ir::Const::Enum(_, 0))), "{:?}", f("T").init);
+        assert!(matches!(f("U").init, Some(ir::Const::Enum(_, 2))), "{:?}", f("U").init);
+    }
+
+    /// A dependency app's TableRelation is fixed when that app compiled, against the apps it saw:
+    /// a same-named table of a dependent app does not take it over (corpus
+    /// fieldref/TestRelationTargetNameCollision.al: Customer."Shipping Agent Code" relates to the
+    /// Base Application table 291, not to the dependent app's table 60990).
+    #[test]
+    fn a_dependency_apps_relation_resolves_among_the_apps_it_saw() {
+        use crate::workspace::AppKind;
+        let src = |id: &str, deps: &[&str], files: &[(&str, &str)]| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files: files.iter().map(|(p, s)| (p.to_string(), s.to_string())).collect(),
+        };
+        let dep = src(
+            "dep",
+            &[],
+            &[
+                (
+                    "cust.al",
+                    "namespace D.Sales; using D.Ship; table 18 Cust { fields { field(1; K; Code[10]) { } \
+                     field(2; Agent; Code[10]) { TableRelation = \"Ship Agent\"; } } keys { key(PK; K) { } } }",
+                ),
+                (
+                    "ship.al",
+                    "namespace D.Ship; table 291 \"Ship Agent\" { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }",
+                ),
+            ],
+        );
+        let main = src(
+            "main",
+            &["dep"],
+            &[
+                (
+                    "m.al",
+                    "namespace M; using D.Sales; codeunit 1 C { var X: Record Cust; }",
+                ),
+                (
+                    "local.al",
+                    "namespace M; table 60990 \"Ship Agent\" { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }",
+                ),
+            ],
+        );
+        let ws = Workspace::load_apps(
+            vec![main, dep],
+            vec![AppKind::Workspace, AppKind::Dependency],
+            &Default::default(),
+        );
+        let members = crate::members::build(&ws);
+        let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+        let l = lower_with_positions(&ws, &members, &checked, false);
+        let cust = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.name == "Cust")
+            .expect("Cust is compiled");
+        let agent = cust
+            .table
+            .as_ref()
+            .unwrap()
+            .fields
+            .iter()
+            .find(|f| f.name == "Agent")
+            .unwrap();
+        let target = agent.relation_arms[0].table.map(|t| l.program.objects[t].id);
+        assert_eq!(target, Some(Some(291)), "{:?}", agent.relation_arms);
+    }
 
     fn table_ir(l: &Lowered) -> &ir::Table {
         l.program.objects[0].table.as_ref().expect("table schema")

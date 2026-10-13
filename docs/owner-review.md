@@ -157,11 +157,13 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
-
-
-
 - 2026-10-14, ADR-007: an oracle may be recorded for an older corpus commit when the corpus diff since then
   only adds files under `tests/` (checked by the CLI). BC 29 stays on `cf6e546` for that reason; 27 and 28 are
   on `cdf315a`.
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
-  passing does. The 70 failing and 121 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
+  passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
+- 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
+- 2026-10-14, ADR-018, telemetry: `Session.LogMessage` is a no-op in every overload.
+- 2026-10-14, ADR-018, SessionSettings: `RequestSessionUpdate(false)` hands a copy to the handler and needs true back; `(true)` and a missing handler are refused.
+- 2026-10-14, ADR-018, InitValue: `0DT` and closing-date literals raise in `Init()` of a written record and on the first read of an untouched one.
+- 2026-10-14, ADR-018, held branch: the narrower static-subscriber global check is not merged (net zero) until the `DeleteAll(false)` probe is in.

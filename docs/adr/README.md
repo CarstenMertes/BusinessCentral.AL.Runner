@@ -26,3 +26,4 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [015](015-version-independent-runtime.md) | One codebase for BC 27 and every later major: a `Target` value, version-tagged builtin catalog, named behaviour gates, one oracle and one ratchet per version | Proposed |
 | [016](016-release-al-runner-v3.md) | Release: the runtime ships as AL Runner v3 with its own user command line (`alrunner`), a plain GitHub Actions release matrix, an optional .NET helper asset, WebAssembly hosts, and readiness gates; v2 feature parity tracked in `docs/al-runner-v2-parity.md` | Proposed |
 | [017](017-builtins-round-2-defaults.md) | Defaults for error collection, partial records, media and the call depth ceiling, chosen without owner review | Accepted |
+| [018](018-fixes-2-defaults.md) | Defaults chosen in the second round of corpus fixes (background worker transaction, LogMessage, SessionSettings handler, unevaluable InitValue), without owner review | Accepted |

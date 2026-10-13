@@ -192,6 +192,31 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
         Value::Guid(_) => guid(&text)?,
         Value::Date(..) => date(&text, number)?,
         Value::DateTime(_) => datetime(&text, number)?,
+        // The text is kept as written once it is a form the runtime can calculate with
+        // (types/TestDateFormulaContracts.al:21-139); what Format prints is docs/probes-needed.md.
+        // `Evaluate(V, '1.2.3.4')`: the four-part form (session/TestMiscTypes.al:44-80).
+        Value::Library(n, cell) if n == "Version" => {
+            let parts: Vec<&str> = text.split('.').collect();
+            let nums: Option<Vec<i32>> = parts
+                .iter()
+                .map(|p| {
+                    (!p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+                        .then(|| p.parse().ok())
+                        .flatten()
+                })
+                .collect();
+            match nums.filter(|n| n.len() == 4) {
+                Some(n) => {
+                    *cell.borrow_mut() = crate::value::LibraryValue::Version([n[0], n[1], n[2], n[3]]);
+                    return Ok(Value::Boolean(true));
+                }
+                None => return unsupported(format!("Evaluate of `{text}` into Version (only a.b.c.d is pinned)")),
+            }
+        }
+        Value::DateFormula(_) => {
+            crate::datefns::check_formula(&text)?;
+            Parsed::Value(Value::DateFormula(text.clone()))
+        }
         other => return unsupported(format!("Evaluate into {other:?} (not pinned by the corpus)")),
     };
     match parsed {

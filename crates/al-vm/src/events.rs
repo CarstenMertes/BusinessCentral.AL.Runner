@@ -59,6 +59,10 @@ fn flag(args: &[String], i: usize) -> bool {
     args.get(i).is_some_and(|a| a.eq_ignore_ascii_case("true"))
 }
 
+/// The object key under which subscribers to the Caption Class codeunit's OnResolveCaptionClass
+/// are registered (the codeunit itself is not in the workspace).
+pub const CAPTION_CLASS: usize = usize::MAX;
+
 impl Registry {
     pub fn build(program: &ir::Program) -> Registry {
         let mut reg = Registry::default();
@@ -137,6 +141,19 @@ impl Registry {
                                     manual: is_manual(o),
                                     element: args.get(3).map(|e| unquote(e)).unwrap_or_default(),
                                 }),
+                                // The System Application's Caption Class codeunit is not in the workspace:
+                                // its subscribers are kept under a key of their own for the page client.
+                                None if kind == "codeunit"
+                                    && (target.eq_ignore_ascii_case("Caption Class") || target == "42")
+                                    && event == "onresolvecaptionclass" =>
+                                {
+                                    reg.subscribers.entry((CAPTION_CLASS, event)).or_default().push(Subscriber {
+                                        object: oi,
+                                        routine: ri,
+                                        manual: is_manual(o),
+                                        element: String::new(),
+                                    })
+                                }
                                 None if kind == "codeunit" && target.eq_ignore_ascii_case("Global Triggers") => {
                                     reg.has_global_triggers = true;
                                     if matches!(

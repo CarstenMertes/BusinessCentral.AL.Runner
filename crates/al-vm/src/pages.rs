@@ -1368,6 +1368,53 @@ impl Session {
         Ok(())
     }
 
+    /// The caption a CaptionClass text stands for. Area 3 is the literal text. Other numeric areas
+    /// are the platform's resolvers, which are not modelled. An area that is not a number, or no
+    /// area at all, goes to no built-in resolver: the System Application's Caption Class codeunit
+    /// raises OnResolveCaptionClass for it, and when no subscriber claims it the text stays as
+    /// written (corpus handlers/TestPageCaptionClass.al:90
+    /// TestPageField_Caption_UnresolvedCaptionClass_ReturnsExpressionUnchanged;
+    /// autoformat/TestCaptionClassResolverFailure.al: an error the subscriber raises reaches the
+    /// open, and a subscriber that claims nothing changes nothing). The language handed to the
+    /// event is assumed to be 1033 (docs/probes-needed.md).
+    fn caption_class_text(&mut self, st: &St, text: &str) -> Result<String, Signal> {
+        if let Some(rest) = text.strip_prefix("3,") {
+            return Ok(rest.to_string());
+        }
+        let (area, expr) = text.split_once(',').unwrap_or(("", text));
+        if text.contains(',') && area.trim().parse::<u32>().is_ok() {
+            return unsupported(format!("CaptionClass `{text}` is resolved by the platform"));
+        }
+        if !self.engine.events.is_subscribed(crate::events::CAPTION_CLASS, "onresolvecaptionclass") {
+            return Ok(text.to_string());
+        }
+        let _ = st;
+        let names: Vec<String> = ["CaptionArea", "CaptionExpr", "Language", "Caption", "Resolved"]
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        let mut args = vec![
+            Value::Text(area.to_string()),
+            Value::Text(expr.to_string()),
+            Value::Integer(1033),
+            Value::Text(String::new()),
+            Value::Boolean(false),
+        ];
+        let call = crate::dispatch::EventCall {
+            object: crate::events::CAPTION_CLASS,
+            event: "onresolvecaptionclass",
+            element: None,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)?;
+        Ok(match (&args[4], &args[3]) {
+            (Value::Boolean(true), Value::Text(t) | Value::Code(t)) => t.clone(),
+            _ => text.to_string(),
+        })
+    }
+
     /// The expressions every row population evaluates, whatever the control's Visible
     /// (corpus autoformat/TestAutoFormatExpressionTiming.al:5-12): AutoFormatExpression and
     /// CaptionClass. They run after OnOpenPage and before OnAfterGetRecord.
@@ -1383,16 +1430,14 @@ impl Session {
                             .expect("a routine-valued property");
                         if name == "captionclass" {
                             if let Value::Text(t) | Value::Code(t) = &v {
-                                if !t.starts_with("3,") {
-                                    return unsupported(format!("CaptionClass `{t}` is resolved by the platform"));
-                                }
+                                self.caption_class_text(st, t)?;
                             }
                         }
                     }
                     // An area no built-in resolver claims goes to the Caption Class codeunit's
                     // OnResolveCaptionClass event (corpus autoformat/TestCaptionClassResolverFailure.al:1-12).
-                    Some(ir::PropVal::Lit(l)) if name == "captionclass" && !unquote(l).starts_with("3,") => {
-                        return unsupported(format!("CaptionClass `{}` is resolved by the platform", unquote(l)));
+                    Some(ir::PropVal::Lit(l)) if name == "captionclass" => {
+                        self.caption_class_text(st, &unquote(l))?;
                     }
                     _ => {}
                 }
@@ -3137,10 +3182,7 @@ impl Session {
             None => None,
         };
         if let Some(c) = class {
-            return match c.split_once(',') {
-                Some(("3", text)) => Ok(text.to_string()),
-                _ => unsupported(format!("CaptionClass `{c}`")),
-            };
+            return self.caption_class_text(st, &c);
         }
         if let Some(ir::PropVal::Lit(c)) = ctl.prop("caption") {
             return Ok(unquote(c));

@@ -31,6 +31,16 @@ page 63010 "F2 Veto Modal"
     trigger OnQueryClosePage(CloseAction: Action): Boolean begin Error('close refused'); end;
 }
 
+table 63030 "F2 DT Init"
+{
+    fields { field(1; K; Code[10]) { } field(2; Zero; DateTime) { InitValue = 0DT; } field(3; Plain; Integer) { } }
+    keys { key(PK; K) { } }
+}
+table 63031 "F2 Closing Init"
+{
+    fields { field(1; K; Code[10]) { } field(2; Closing; Date) { InitValue = C20260101D; } }
+    keys { key(PK; K) { } }
+}
 codeunit 63020 "F2 Noop" { trigger OnRun() begin end; }
 codeunit 63021 "F2 Failing" { trigger OnRun() begin Error('guarded failure'); end; }
 codeunit 63022 "F2 Tx Worker"
@@ -198,4 +208,41 @@ fn request_session_update_that_persists_is_refused() {
         matches!(&o[0].1, Outcome::NotRun(why) if why.contains("RequestSessionUpdate(true)")),
         "{o:?}"
     );
+}
+
+// record/TestDateTimeInitValue.Codeunit.al:29-77: the compiler accepts InitValue = 0DT and a
+// closing-date literal, but Init() on a record that has been written raises, with the text below;
+// Init() on a record nothing has written raises nothing, and reading the field then does.
+#[test]
+fn an_init_value_the_service_tier_cannot_evaluate_fails_init_of_a_written_record() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure ZeroDateTime() var R: Record \"F2 DT Init\"; begin
+            R.Zero := CreateDateTime(20300615D, 120000T);
+            asserterror R.Init();
+            Check('The value \"01/01/0001 00:00:00\" can''t be evaluated into type DateTime.', GetLastErrorText()); end;
+        [Test]
+        procedure ClosingDate() var R: Record \"F2 Closing Init\"; begin
+            R.Closing := 20300615D;
+            asserterror R.Init();
+            Check('The format of the Date ''C20260101D'' does not match your device''s date settings.', GetLastErrorText()); end;
+        [Test]
+        procedure UntouchedRaisesOnReadNotOnInit() var R: Record \"F2 DT Init\"; V: DateTime; begin
+            R.Init();
+            asserterror V := R.Zero;
+            Check('The value \"01/01/0001 00:00:00\" can''t be evaluated into type DateTime.', GetLastErrorText()); end;"
+    ));
+}
+
+// Writing another field is a write too, but what a read of the unwritten poisoned field then
+// answers is not pinned: refused.
+#[test]
+fn reading_the_unevaluable_field_of_a_record_with_another_field_written_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Other() var R: Record \"F2 DT Init\"; V: DateTime; begin R.Plain := 1; V := R.Zero; end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(_)), "{o:?}");
 }

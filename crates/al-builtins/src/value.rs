@@ -422,6 +422,9 @@ pub struct RecordState {
     pub auto_calc: Vec<usize>,
     /// Partial records: `SetLoadFields` and which fields the buffer holds.
     pub load: LoadState,
+    /// AL code has written a field of the buffer. BC builds the buffer of a record variable on
+    /// the first write, and evaluates the `InitValue`s only then (record/TestDateTimeInitValue.Codeunit.al).
+    pub touched: bool,
 }
 
 /// A set of field positions.

@@ -97,7 +97,7 @@ Each test is counted under the first thing that stops it.
 | 121 | Query objects | Not started |
 | 80 | Request pages and filter pages, done except what waits on others: Base App reports and pages, enums and the Temp Blob codeunit (53, ADR-013); the Integer system table (27, `deps`) | ADR-012 follow-up, built on branch `requestpages` |
 | 94 | Page extensions | ADR-012 follow-up |
-| 31 | Global Triggers events are raised now (42 of the 73 pass); these 31 wait on table extension field triggers (`modify(Field) { trigger OnBeforeValidate }` on a table extension) | Branch `baseline`; ADR-013 as built |
+| 0 | Global Triggers events: raised by the runtime now; all 73 tests that waited on them pass (with table extension field triggers, `modify(Field) { trigger OnBeforeValidate }`) | Branch `baseline`; ADR-013 as built |
 | 73 | RunObject actions | ADR-012 follow-up |
 | 58 | `[TransactionModel]` | Not started; corpus pins it (record/TestTransactionModelAutoRollback.al) |
 | 43 | Guarded `Codeunit.Run` (`if Codeunit.Run(...)`) | Not started |

@@ -1030,4 +1030,6 @@ synthetic dependency apps (`al-test-cli/src/runtime.rs` tests).
 17. **Two network tests, not one.** `al-deps/tests/network.rs` checks the CDN protocol and the real
     archives; `al-test-cli/tests/network_deps.rs` checks the corpus flow, cold and warm. Both
     are `#[ignore]`d and take under a second; CI runs them.
-
+7. **Table extension field triggers.** `modify(Field) { trigger OnBeforeValidate/OnAfterValidate }` run around the field's
+   own OnValidate (corpus order); they are needed by the 31 Global Triggers tests that were next in line, and the old refusal
+   is gone. Dependency extensions' such triggers are reached by the demand-driven check when the field is validated.

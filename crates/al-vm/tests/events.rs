@@ -1251,17 +1251,62 @@ codeunit 50100 C
     assert!(matches!(run(&src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
 }
 
-// Field triggers an extension attaches (modify(Field) { trigger OnBeforeValidate }) are still refused.
+// record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable (:21-37): the
+// triggers a table extension attaches to a field (`modify(Field) { trigger OnBeforeValidate }`)
+// bracket the field's own OnValidate, inside the Before and After events. A field of another
+// name runs none of them, and neither does the extension's own added field.
 #[test]
-fn table_extension_validate_triggers_are_still_refused() {
+fn table_extension_field_validate_triggers_bracket_the_fields_own_on_validate() {
     let src = r#"
-table 50301 ET { fields { field(1; "No."; Integer) { } field(2; Name; Text[30]) { } } keys { key(PK; "No.") { } } }
+codeunit 50300 Trace
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(S: Text) begin if Log <> '' then Log += ','; Log += S; end;
+    procedure Get(): Text begin exit(Log); end;
+    procedure Clear() begin Log := ''; end;
+}
+table 50301 ET
+{
+    fields
+    {
+        field(1; "No."; Integer) { }
+        field(2; Name; Text[30]) { trigger OnValidate() var T: Codeunit Trace; begin T.Add('ONVALIDATE:' + xRec.Name + '>' + Rec.Name); end; }
+        field(3; Other; Text[30]) { }
+    }
+    keys { key(PK; "No.") { } }
+}
 tableextension 50302 ETExt extends ET
 {
-    fields { modify(Name) { trigger OnBeforeValidate() begin end; } }
+    fields
+    {
+        field(50; Extra; Text[30]) { trigger OnValidate() var T: Codeunit Trace; begin T.Add('EXTFIELD'); end; }
+        modify(Name)
+        {
+            trigger OnBeforeValidate() var T: Codeunit Trace; begin T.Add('EXTBEFORE:' + xRec.Name + '>' + Rec.Name); end;
+            trigger OnAfterValidate() var T: Codeunit Trace; begin T.Add('EXTAFTER'); end;
+        }
+    }
 }
-codeunit 50100 C { procedure F() var R: Record ET; begin R.Validate(Name, 'x'); end; }"#;
-    assert!(matches!(run(src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
+codeunit 50310 Subs
+{
+    [EventSubscriber(ObjectType::Table, Database::ET, 'OnBeforeValidateEvent', 'Name', false, false)]
+    local procedure B() var T: Codeunit Trace; begin T.Add('BEFOREEVENT'); end;
+    [EventSubscriber(ObjectType::Table, Database::ET, 'OnAfterValidateEvent', 'Name', false, false)]
+    local procedure A() var T: Codeunit Trace; begin T.Add('AFTEREVENT'); end;
+}
+codeunit 50100 C
+{
+    procedure Name(): Text var R: Record ET; T: Codeunit Trace; begin T.Clear(); R.Validate(Name, 'x'); exit(T.Get()); end;
+    procedure Other(): Text var R: Record ET; T: Codeunit Trace; begin T.Clear(); R.Validate(Other, 'x'); exit(T.Get()); end;
+    procedure Extra(): Text var R: Record ET; T: Codeunit Trace; begin T.Clear(); R.Validate(Extra, 'x'); exit(T.Get()); end;
+}"#;
+    assert_eq!(
+        text(run(src, "Name")),
+        "BEFOREEVENT,EXTBEFORE:>x,ONVALIDATE:>x,EXTAFTER,AFTEREVENT"
+    );
+    assert_eq!(text(run(src, "Other")), "");
+    assert_eq!(text(run(src, "Extra")), "EXTFIELD");
 }
 
 // record/TestXRecContracts.al:OnValidate_Nested_InnerTrigger_SeesPreOuterValidateBeforeImage -- a

@@ -135,32 +135,6 @@ impl Session {
         }))
     }
 
-    /// Hooks around `op` that this runtime cannot run are refused rather than
-    /// silently skipped (hard rule 4): the triggers a table extension attaches to a
-    /// field (`modify(Field) { trigger OnBeforeValidate }`).
-    fn check_hooks(&self, t: &TableDef, op: &str) -> Result<(), Signal> {
-        if op == "Validate" {
-            if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
-                for &e in &schema.extensions {
-                    let hit = self.engine.program.objects[e].routines.iter().any(|r| {
-                        r.is_trigger
-                            && r.field.is_none()
-                            && ["OnBeforeValidate", "OnAfterValidate"]
-                                .iter()
-                                .any(|n| r.name.eq_ignore_ascii_case(n))
-                    });
-                    if hit {
-                        return unsupported(format!(
-                            "{op} on {}: table extension triggers on fields are not implemented yet",
-                            t.name
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) a table extension
     /// declares. The order of several extensions' triggers is not pinned, so two
     /// declaring the same one are refused.
@@ -275,6 +249,18 @@ impl Session {
         // After event: record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable.
         // That the Before event sees the new value is docs/probes-needed.md.
         self.table_event(t, "onbeforevalidateevent", rec, Some(xrec), false, Some(&field.name))?;
+        // The triggers table extensions attach to the field bracket its own OnValidate
+        // (record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable). The
+        // order of two extensions' triggers on one field is not pinned.
+        if field.ext_before_validate.len() > 1 || field.ext_after_validate.len() > 1 {
+            return unsupported(format!(
+                "Validate of {}.{}: more than one table extension declares OnBeforeValidate or OnAfterValidate for it (their order is not pinned)",
+                t.name, field.name
+            ));
+        }
+        for &(object, routine) in &field.ext_before_validate {
+            self.run_trigger(object, routine, rec, Some(xrec))?;
+        }
         if let Some((object, routine)) = field.on_validate {
             if let Err(e) = self.run_trigger(object, routine, rec, Some(xrec)) {
                 // The field is back at its old value when its OnValidate raises
@@ -285,6 +271,9 @@ impl Session {
                 }
                 return Err(e);
             }
+        }
+        for &(object, routine) in &field.ext_after_validate {
+            self.run_trigger(object, routine, rec, Some(xrec))?;
         }
         self.table_event(t, "onaftervalidateevent", rec, Some(xrec), false, Some(&field.name))
     }
@@ -773,7 +762,6 @@ impl Session {
                 Ok(Value::Null)
             }
             "Insert" => {
-                self.check_hooks(&t, "Insert")?;
                 // A temporary record has no sequence: the key stays as it is (corpus
                 // record/TestTempTableContracts.al:52).
                 let auto = if rec.borrow().temporary {
@@ -889,7 +877,6 @@ impl Session {
                 }
             }
             "Modify" => {
-                self.check_hooks(&t, "Modify")?;
                 self.check_unique_keys(&t)?;
                 let run = arg_bool(args, 0)?;
                 let pk = t.primary_key(&rec.borrow().fields);
@@ -984,7 +971,6 @@ impl Session {
                 }
             }
             "Delete" => {
-                self.check_hooks(&t, "Delete")?;
                 let run = arg_bool(args, 0)?;
                 self.delete_row(&t, rec, run)
             }
@@ -1002,7 +988,6 @@ impl Session {
                 if n == 0 {
                     return Ok(Value::Null);
                 }
-                self.check_hooks(&t, "DeleteAll")?;
                 let events =
                     self.listened(&t, "onbeforedeleteevent", None)? || self.listened(&t, "onafterdeleteevent", None)?;
                 let mut trigger = self.table_trigger(&t, "OnDelete").is_some();
@@ -1259,7 +1244,6 @@ impl Session {
                     .clone()
                     .expect("table");
                 let field = schema.fields[pos].clone();
-                self.check_hooks(&t, "Validate")?;
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
                 let handle = Rc::as_ptr(rec) as usize;
@@ -1292,7 +1276,6 @@ impl Session {
                 Ok(Value::Null)
             }
             "Rename" => {
-                self.check_hooks(&t, "Rename")?;
                 if rec.borrow().temp_id.is_some() && rec.borrow().fields.iter().any(|f| matches!(f, Value::Blob(_))) {
                     // streams/TestBlobRenameIsolation.al: BC keeps an unpersisted Blob write across a
                     // temporary Rename but loses one persisted with Modify; no model here does both.

@@ -1375,6 +1375,36 @@ impl Lowerer<'_> {
         self.field_pos(table, id).ok_or_else(|| "field position".to_string())
     }
 
+    /// The triggers named `trigger` that `modify(field)` blocks of the table's `extensions` declare.
+    fn ext_field_triggers(
+        &self,
+        extensions: &[usize],
+        field: &str,
+        trigger: &str,
+        routine_at: &HashMap<(usize, usize), usize>,
+    ) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for &e in extensions {
+            if !self.ws.usable(e) {
+                continue;
+            }
+            for sec in ast::sections_in(self.ws.object_ast(e).syntax()) {
+                if !sec.name().eq_ignore_ascii_case("modify")
+                    || !sec.args().first().is_some_and(|a| a.eq_ignore_ascii_case(field))
+                {
+                    continue;
+                }
+                for t in sec.triggers().filter(|t| t.name().eq_ignore_ascii_case(trigger)) {
+                    let offset: usize = t.syntax().text_range().start().into();
+                    if let Some(&r) = routine_at.get(&(e, offset)) {
+                        out.push((e, r));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn table_schema(
         &self,
         oi: usize,
@@ -1423,6 +1453,8 @@ impl Lowerer<'_> {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,
                     },
+                    ext_before_validate: self.ext_field_triggers(&extensions, &f.name, "OnBeforeValidate", routine_at),
+                    ext_after_validate: self.ext_field_triggers(&extensions, &f.name, "OnAfterValidate", routine_at),
                     on_lookup: match (f.declared_in, f.on_lookup) {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,

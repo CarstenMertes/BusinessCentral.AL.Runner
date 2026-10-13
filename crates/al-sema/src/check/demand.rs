@@ -447,7 +447,11 @@ impl Checker<'_> {
                 }
                 self.touch_ops_object(o);
                 for r in self.routines_of(o).iter() {
-                    if r.is_trigger() && r.name().eq_ignore_ascii_case(trigger) {
+                    // A table extension's `modify(Field)` triggers bracket a field's OnValidate.
+                    let ext_field_trigger = op == VALIDATE
+                        && (r.name().eq_ignore_ascii_case("OnBeforeValidate")
+                            || r.name().eq_ignore_ascii_case("OnAfterValidate"));
+                    if r.is_trigger() && (r.name().eq_ignore_ascii_case(trigger) || ext_field_trigger) {
                         self.reach(o, usize::from(r.syntax().text_range().start()));
                     }
                 }

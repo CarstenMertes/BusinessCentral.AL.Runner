@@ -44,6 +44,12 @@ pub enum Ty {
     Unknown,
 }
 
+/// The members of the platform's `TextEncoding` option, in ordinal order (docs: MSDos, UTF8, UTF16,
+/// Windows); the corpus uses `TextEncoding::Windows` and `::UTF8` (text/TestTextEncodingWindows.al).
+pub fn text_encoding_members() -> Vec<String> {
+    ["MSDos", "UTF8", "UTF16", "Windows"].map(String::from).to_vec()
+}
+
 impl Ty {
     pub fn from_type_ref(t: &TypeRef) -> Ty {
         let name = t.type_name();
@@ -70,6 +76,7 @@ impl Ty {
             "label" | "textconst" => Ty::Label,
             "variant" => Ty::Variant,
             "option" => Ty::Option(t.option_members()),
+            "textencoding" => Ty::Option(text_encoding_members()),
             "enum" => Ty::Enum(obj()),
             "record" => Ty::Record {
                 table: obj(),

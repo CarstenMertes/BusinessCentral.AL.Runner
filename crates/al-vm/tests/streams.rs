@@ -248,8 +248,15 @@ fn array_helpers() {
     assert_eq!(t, "203040");
     let t = text("A: array[7] of Integer;", "exit(Format(ArrayLen(A)));");
     assert_eq!(t, "7");
-    // The dimensions of a multi-dimensional array are not kept in the value yet.
-    assert!(refused("A: array[3, 4] of Integer;", "exit(Format(ArrayLen(A, 1)));"));
+    // streams/TestArrayStreamContracts.al ArrayLen_2D_FirstDimension / _SecondDimension.
+    let t = text(
+        "A: array[3, 4] of Integer;",
+        "exit(Format(ArrayLen(A, 1)) + Format(ArrayLen(A, 2)));",
+    );
+    assert_eq!(t, "34");
+    // Without a dimension the answer for a multi-dimensional array is not pinned.
+    assert!(refused("A: array[3, 4] of Integer;", "exit(Format(ArrayLen(A)));"));
+    assert!(refused("A: array[3, 4] of Integer;", "exit(Format(ArrayLen(A, 3)));"));
 }
 
 #[test]
@@ -285,4 +292,25 @@ fn renaming_a_temporary_record_with_a_blob_is_refused() {
          R.Get('RNL2'); R.CalcFields(Data); R.Data.CreateInStream(RI); RI.ReadText(RT); exit(RT);",
     );
     assert_eq!(t, "RENAME-LEAKED-BYTES");
+}
+
+#[test]
+fn text_encodings_decide_the_bytes_per_character() {
+    // text/TestTextEncodingWindows.al: TextEncoding::Windows writes one byte per representable character
+    // (cp1252: em dash, euro, e acute, no-break space) and round-trips them; UTF8 writes more bytes for the
+    // same text and round-trips; ASCII costs one byte either way.
+    let sample = "A' + Format(E1) + Format(E2) + Format(E3) + Format(E4) + 'Z";
+    let vars = base!("E1: Char; E2: Char; E3: Char; E4: Char; WI: InStream; Len: Integer; Back: Text;");
+    let prologue = "E1 := 8212; E2 := 8364; E3 := 233; E4 := 160;";
+    let write = |enc: &str| {
+        format!(
+            "{prologue} B.Init(); B.Code := 'ROW'; B.Insert(); B.Data.CreateOutStream(O, TextEncoding::{enc}); O.WriteText('{sample}'); B.Modify();
+             B.Get('ROW'); B.CalcFields(Data); Len := B.Data.Length(); B.Data.CreateInStream(WI, TextEncoding::{enc}); WI.ReadText(Back);
+             exit(Format(Len) + '|' + Format(Back = '{sample}'));"
+        )
+    };
+    assert_eq!(text(vars, &write("Windows")), "6|Yes");
+    assert_eq!(text(vars, &write("UTF8")), "12|Yes");
+    // Encodings other than these two are not pinned.
+    assert!(refused(vars, &write("UTF16")));
 }

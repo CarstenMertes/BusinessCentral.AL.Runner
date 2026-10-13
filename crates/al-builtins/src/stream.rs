@@ -44,11 +44,74 @@ pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
     }))
 }
 
+/// How text becomes bytes in a stream. The corpus pins UTF-8 and Windows (cp1252: one byte per
+/// representable character, text/TestTextEncodingWindows.al); the others are refused.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Encoding {
+    #[default]
+    Utf8,
+    Windows,
+}
+
+/// Unicode of cp1252 bytes 0x80..=0x9F (the undefined ones map to themselves, as .NET does).
+const CP1252_HIGH: [u16; 32] = [
+    0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D,
+    0x017D, 0x008F, 0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A,
+    0x0153, 0x009D, 0x017E, 0x0178,
+];
+
+impl Encoding {
+    pub fn encode(self, s: &str) -> Vec<u8> {
+        match self {
+            Encoding::Utf8 => s.as_bytes().to_vec(),
+            Encoding::Windows => s
+                .chars()
+                .map(|c| {
+                    let cp = c as u32;
+                    if cp < 0x80 || (0xA0..=0xFF).contains(&cp) {
+                        cp as u8
+                    } else {
+                        CP1252_HIGH
+                            .iter()
+                            .position(|u| u32::from(*u) == cp)
+                            .map_or(b'?', |i| 0x80 + i as u8)
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    pub fn decode(self, b: &[u8]) -> String {
+        match self {
+            Encoding::Utf8 => String::from_utf8_lossy(b).into_owned(),
+            Encoding::Windows => b
+                .iter()
+                .map(|&x| match x {
+                    0x80..=0x9F => char::from_u32(u32::from(CP1252_HIGH[usize::from(x - 0x80)])).unwrap_or('?'),
+                    x => char::from(x),
+                })
+                .collect(),
+        }
+    }
+
+    /// From the `Encoding` argument of `CreateOutStream` / `CreateInStream` (an option value).
+    fn from_arg(a: &[Value]) -> Result<Encoding, Signal> {
+        match a.get(1) {
+            None => Ok(Encoding::Utf8),
+            // Ordinals as documented: MSDos 0, UTF8 1, UTF16 2, Windows 3.
+            Some(Value::Option(1, _)) => Ok(Encoding::Utf8),
+            Some(Value::Option(3, _)) => Ok(Encoding::Windows),
+            Some(other) => unsupported(format!("text encoding {other:?} (only UTF8 and Windows are pinned)")),
+        }
+    }
+}
+
 /// Read position over a snapshot.
 #[derive(Debug, Default)]
 pub struct InState {
     pub data: Vec<u8>,
     pub pos: usize,
+    pub enc: Encoding,
 }
 
 type NResult = Result<Value, Signal>;
@@ -75,29 +138,25 @@ fn set_stream(slot: &Value, content: LibraryValue) -> Result<(), Signal> {
 }
 
 fn blob_create_out(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("CreateOutStream with a text encoding (not pinned)");
-    }
+    let enc = Encoding::from_arg(a)?;
     let b = blob_of(r)?;
     {
         let mut buf = b.borrow_mut();
         buf.bytes.clear();
         buf.loaded = true;
     }
-    set_stream(&a[0], LibraryValue::OutStream(b))?;
+    set_stream(&a[0], LibraryValue::OutStream(b, enc))?;
     Ok(Value::Null)
 }
 
 fn blob_create_in(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("CreateInStream with a text encoding (not pinned)");
-    }
+    let enc = Encoding::from_arg(a)?;
     let b = blob_of(r)?;
     let data = {
         let buf = b.borrow();
         if buf.loaded { buf.bytes.clone() } else { Vec::new() }
     };
-    set_stream(&a[0], LibraryValue::InStream(InState { data, pos: 0 }))?;
+    set_stream(&a[0], LibraryValue::InStream(InState { data, pos: 0, enc }))?;
     Ok(Value::Null)
 }
 
@@ -165,7 +224,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             .iter()
             .position(|&b| b == b'\r' || b == b'\n')
             .unwrap_or(rest.len());
-        let text = String::from_utf8_lossy(&rest[..end]).into_owned();
+        let text = s.enc.decode(&rest[..end]);
         let mut consumed = end;
         if consumed < rest.len() {
             consumed += if rest[consumed] == b'\r' && rest.get(consumed + 1) == Some(&b'\n') {
@@ -204,10 +263,10 @@ fn in_read(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     Ok(Value::Integer(4))
 }
 
-fn out_buf(r: Option<&mut Value>) -> Result<BlobRef, Signal> {
+fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
     match r {
         Some(Value::Library(_, h)) => match &*h.borrow() {
-            LibraryValue::OutStream(b) => Ok(b.clone()),
+            LibraryValue::OutStream(b, e) => Ok((b.clone(), *e)),
             _ => unsupported("use of an OutStream that was never created"),
         },
         other => unsupported(format!("OutStream method on {other:?}")),
@@ -221,9 +280,10 @@ fn out_write_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
     let Some(text) = crate::native::text_of(&a[0]) else {
         return unsupported("OutStream.WriteText of a value that is not text");
     };
-    let b = out_buf(r)?;
-    b.borrow_mut().bytes.extend_from_slice(text.as_bytes());
-    Ok(Value::Integer(text.len() as i32))
+    let (b, enc) = out_buf(r)?;
+    let bytes = enc.encode(&text);
+    b.borrow_mut().bytes.extend_from_slice(&bytes);
+    Ok(Value::Integer(bytes.len() as i32))
 }
 
 fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -233,7 +293,7 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     let Value::Integer(n) = a[0] else {
         return unsupported(format!("OutStream.Write of {:?} (only Integer is pinned)", a[0]));
     };
-    out_buf(r)?.borrow_mut().bytes.extend_from_slice(&n.to_le_bytes());
+    out_buf(r)?.0.borrow_mut().bytes.extend_from_slice(&n.to_le_bytes());
     Ok(Value::Integer(4))
 }
 
@@ -242,7 +302,7 @@ fn copy_stream(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
     if a.len() > 2 {
         return unsupported("CopyStream with a byte count (not pinned)");
     }
-    let out = out_buf(Some(&mut a[0]))?;
+    let (out, _) = out_buf(Some(&mut a[0]))?;
     let bytes = with_in(Some(&mut a[1]), |s| {
         let rest = s.data[s.pos..].to_vec();
         s.pos = s.data.len();
@@ -259,14 +319,6 @@ fn array_of(v: &Value) -> Result<Rc<RefCell<Vec<Value>>>, Signal> {
         Value::Array(a) => Ok(a.clone()),
         other => unsupported(format!("{other:?} used as an array")),
     }
-}
-
-/// `ArrayLen(Array)`; a dimension argument needs the array's shape, which the value does not keep.
-fn array_len(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("ArrayLen with a dimension (the array value does not keep its shape yet)");
-    }
-    Ok(Value::Integer(array_of(&a[0])?.borrow().len() as i32))
 }
 
 /// `CompressArray(StringArray)`: empty strings are removed, the rest shifts left, and the tail is
@@ -335,7 +387,6 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("OutStream", "WriteText", _) => out_write_text,
         ("OutStream", "Write", _) => out_write,
         ("System", "CopyStream", _) => copy_stream,
-        ("System", "ArrayLen", _) => array_len,
         ("System", "CompressArray", _) => compress_array,
         ("System", "CopyArray", _) => copy_array,
         _ => return None,

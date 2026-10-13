@@ -932,6 +932,26 @@ impl Lowerer<'_> {
                     other => Err(format!("MaxStrLen of a value of type {other}")),
                 }
             }
+            // ArrayLen reads the shape of its argument's type, which array values do not keep
+            // (streams/TestArrayStreamContracts.al ArrayLen_*).
+            Some(Res::Builtin(id)) if id.starts_with("System.ArrayLen#") => {
+                let arg = args.first().ok_or("ArrayLen without an argument")?;
+                let Ty::Array(dims, _) = self.ty_of(arg) else {
+                    return Err("ArrayLen of something that is not an array variable".into());
+                };
+                let dim = match args.get(1) {
+                    Some(d) => match self.expr(d)? {
+                        ir::Expr::Const(ir::Const::Integer(k)) => Some(k),
+                        _ => return Err("ArrayLen with a dimension that is not a constant".into()),
+                    },
+                    None if dims.len() == 1 => Some(1),
+                    None => return Err("ArrayLen without a dimension on a multi-dimensional array (not pinned)".into()),
+                };
+                match dim.and_then(|k| usize::try_from(k - 1).ok()).and_then(|k| dims.get(k)) {
+                    Some(n) => Ok(ir::Expr::Const(ir::Const::Integer(*n as i32))),
+                    None => Err("ArrayLen with a dimension outside the array (error text not pinned)".into()),
+                }
+            }
             Some(Res::Builtin(id)) => {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));

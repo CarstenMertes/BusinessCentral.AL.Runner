@@ -116,7 +116,7 @@ pub enum LibraryValue {
     /// An InStream: a snapshot being read.
     InStream(crate::stream::InState),
     /// An OutStream: appends to a Blob buffer.
-    OutStream(crate::stream::BlobRef),
+    OutStream(crate::stream::BlobRef, crate::stream::Encoding),
 }
 
 impl Value {

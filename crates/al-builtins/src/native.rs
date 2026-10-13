@@ -161,6 +161,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .chain(crate::pagebuiltins::REGISTRY)
         .chain(crate::refs::REGISTRY)
         .chain(crate::refs::RECORD_REGISTRY)
+        .chain(crate::datefns::REGISTRY)
 }
 
 /// Implementations chosen per catalog signature instead of being listed by id
@@ -433,12 +434,12 @@ fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::rc::Rc;
 
     #[derive(Default)]
-    struct TestCtx {
+    pub(crate) struct TestCtx {
         err: AlError,
     }
     impl FormatCtx for TestCtx {
@@ -464,12 +465,12 @@ mod tests {
         }
     }
 
-    fn call(id: &str, args: Vec<Value>) -> Result<Value, Signal> {
+    pub(crate) fn call(id: &str, args: Vec<Value>) -> Result<Value, Signal> {
         let f = lookup(id).unwrap_or_else(|| panic!("{id} not registered"));
         let mut args = args;
         f(&mut TestCtx::default(), None, &mut args)
     }
-    fn t(s: &str) -> Value {
+    pub(crate) fn t(s: &str) -> Value {
         Value::Text(s.into())
     }
     fn text(r: Result<Value, Signal>) -> String {

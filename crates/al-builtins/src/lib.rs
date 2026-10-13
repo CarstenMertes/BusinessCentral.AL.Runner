@@ -9,6 +9,7 @@ pub mod xml;
 
 pub mod catalog;
 pub mod collections;
+pub mod datefns;
 pub mod evaluate;
 pub mod filter;
 pub mod format;

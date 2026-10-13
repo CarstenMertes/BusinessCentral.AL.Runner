@@ -192,6 +192,12 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
         Value::Guid(_) => guid(&text)?,
         Value::Date(..) => date(&text, number)?,
         Value::DateTime(_) => datetime(&text, number)?,
+        // The text is kept as written once it is a form the runtime can calculate with
+        // (types/TestDateFormulaContracts.al:21-139); what Format prints is docs/probes-needed.md.
+        Value::DateFormula(_) => {
+            crate::datefns::check_formula(&text)?;
+            Parsed::Value(Value::DateFormula(text.clone()))
+        }
         other => return unsupported(format!("Evaluate into {other:?} (not pinned by the corpus)")),
     };
     match parsed {

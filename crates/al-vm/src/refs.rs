@@ -18,6 +18,8 @@ use std::sync::OnceLock;
 
 type Rec = Rc<RefCell<RecordState>>;
 type Lib = Rc<RefCell<LibraryValue>>;
+/// Whether a field is an Enum (not an Option) and its members as (ordinal, name, caption).
+type FieldMembers = (bool, Vec<(i32, String, String)>);
 
 /// First number of the platform's system fields (`SystemId`, ...); they are
 /// not counted by `FieldCount` (docs/probes-needed.md).
@@ -165,6 +167,41 @@ impl Session {
                 self.engine.program.objects[t.object as usize].id.unwrap_or(0) as i32,
             )),
             "Name" => Ok(Value::Text(t.name.clone())),
+            "Caption" => Ok(Value::Text(self.caption(&t))),
+            // corpus recordref/TestRecordRefGetSet.al:16-30 pins only that it is not empty.
+            "CurrentCompany" => Ok(Value::Text(self.cx.company.clone())),
+            "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
+            "HasFilter" => Ok(Value::Boolean(!rec.borrow().filters.is_empty())),
+            "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
+            "GetView" => {
+                let use_names = match args.first() {
+                    Some(v) => ops::truthy(v)?,
+                    None => true,
+                };
+                self.get_view(&rec, &t, use_names).map(Value::Text)
+            }
+            "SetView" => {
+                let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
+                self.set_view(&rec, &t, &view).map(|()| Value::Null)
+            }
+            // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
+            "Duplicate" => {
+                if rec.borrow().temporary {
+                    return unsupported("Duplicate of a temporary RecordRef (shared table not pinned)");
+                }
+                let copy = rec.borrow().clone();
+                Ok(handle(
+                    "RecordRef",
+                    LibraryValue::RecordRef(Rc::new(RefCell::new(copy))),
+                ))
+            }
+            "SystemIdNo" | "SystemCreatedAtNo" | "SystemCreatedByNo" | "SystemModifiedAtNo" | "SystemModifiedByNo" => {
+                let field = method.trim_end_matches("No").replace("SystemIdNo", "SystemId");
+                match t.fields.iter().find(|f| f.name == field) {
+                    Some(f) => Ok(Value::Integer(f.id as i32)),
+                    None => unsupported(format!("RecordRef.{method} on a table without {field}")),
+                }
+            }
             "IsEmpty" | "Count" | "Init" | "Insert" | "Modify" | "Delete" | "DeleteAll" | "Find" | "FindFirst"
             | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => {
                 if method == "Insert" && args.len() > 1 {
@@ -260,6 +297,7 @@ impl Session {
             // properties, and no corpus key sets Enabled = false.
             "Active" => Ok(Value::Boolean(true)),
             "FieldCount" => Ok(Value::Integer(t.keys[k].len() as i32)),
+            "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
             "FieldIndex" => {
                 let i = int_arg(args, 0)?;
                 match usize::try_from(i - 1).ok().and_then(|i| t.keys[k].get(i).copied()) {
@@ -295,6 +333,33 @@ impl Session {
             },
             "Number" => Ok(Value::Integer(field.id as i32)),
             "Name" => Ok(Value::Text(field.name.clone())),
+            "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
+            "GetFilter" => self.field_filter_text(&rec, pos).map(Value::Text),
+            "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
+            "Validate" => {
+                let mut a = vec![Value::Integer(pos as i32)];
+                a.extend(args.iter().cloned());
+                self.record_op("Validate", &rec, &mut a)
+            }
+            "TestField" | "FieldError" => {
+                let mut a = vec![Value::Integer(pos as i32)];
+                a.extend(args.iter().cloned());
+                self.record_meta_op(method, &rec, &t, &mut a)
+            }
+            "IsOptimizedForTextSearch" => Ok(Value::Boolean(
+                self.field_property(&t, pos, "OptimizeForTextSearch")
+                    .is_some_and(|v| v.trim().eq_ignore_ascii_case("true")),
+            )),
+            "IsEnum"
+            | "EnumValueCount"
+            | "GetEnumValueName"
+            | "GetEnumValueCaption"
+            | "GetEnumValueOrdinal"
+            | "GetEnumValueNameFromOrdinalValue"
+            | "GetEnumValueCaptionFromOrdinalValue"
+            | "OptionCaption"
+            | "OptionMembers"
+            | "OptionString" => self.enum_metadata(method, &t, pos, args),
             "Active" => Ok(Value::Boolean(true)),
             "Length" => match &field.ty {
                 RtType::Text(Some(n)) | RtType::Code(Some(n)) => Ok(Value::Integer(*n as i32)),
@@ -305,6 +370,109 @@ impl Session {
                 a.extend(args.iter().cloned());
                 self.record_op(method, &rec, &mut a)
             }
+            other => unsupported(format!("FieldRef.{other}")),
+        }
+    }
+}
+
+impl Session {
+    /// A field property as written (`OptionCaption`, ...), if declared.
+    pub(crate) fn field_property(&self, t: &TableDef, pos: usize, name: &str) -> Option<String> {
+        self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()?
+            .fields
+            .get(pos)?
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.clone())
+    }
+
+    /// The members of an Option or Enum field as (ordinal, name, caption), in declared order.
+    fn members_of_field(&self, t: &TableDef, pos: usize) -> Result<Option<FieldMembers>, Signal> {
+        match &t.fields[pos].ty {
+            RtType::Enum(id) => {
+                let o = &self.engine.program.objects[*id as usize];
+                let members = o
+                    .enum_values
+                    .iter()
+                    .zip(&o.enum_value_props)
+                    .map(|((ord, name), props)| {
+                        let caption = props
+                            .iter()
+                            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                            .and_then(|(_, v)| crate::recmeta::string_literal(v))
+                            .unwrap_or_else(|| name.clone());
+                        (*ord, name.clone(), caption)
+                    })
+                    .collect();
+                Ok(Some((true, members)))
+            }
+            RtType::Option(names) => {
+                let captions: Vec<String> = match self.field_property(t, pos, "OptionCaption") {
+                    Some(v) => match crate::recmeta::string_literal(&v) {
+                        Some(list) => list.split(',').map(str::to_string).collect(),
+                        None => return unsupported(format!("OptionCaption `{v}`")),
+                    },
+                    None => names.clone(),
+                };
+                if captions.len() != names.len() {
+                    return unsupported(
+                        "an OptionCaption list as long as the OptionMembers list is not what this field has",
+                    );
+                }
+                let members = names
+                    .iter()
+                    .zip(captions)
+                    .enumerate()
+                    .map(|(i, (n, c))| (i as i32, n.clone(), c))
+                    .collect();
+                Ok(Some((false, members)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// `IsEnum`, `EnumValueCount`, `GetEnumValue*`, `OptionCaption/Members/String` of a FieldRef.
+    /// Corpus: fieldref/TestFieldRefEnumOrdinalByIndex.al (index is a 1-based position, out of range
+    /// answers -1 / ''), TestFieldRefEnum.al, TestPrecompiledFieldOptionCaption.al:34-48.
+    fn enum_metadata(&self, method: &str, t: &TableDef, pos: usize, args: &[Value]) -> Result<Value, Signal> {
+        let Some((is_enum, members)) = self.members_of_field(t, pos)? else {
+            return match method {
+                "IsEnum" => Ok(Value::Boolean(false)),
+                "EnumValueCount" => Ok(Value::Integer(0)),
+                other => unsupported(format!("FieldRef.{other} on a field that is neither Option nor Enum")),
+            };
+        };
+        let at = |args: &[Value]| -> Result<Option<&(i32, String, String)>, Signal> {
+            let i = int_arg(args, 0)?;
+            Ok(usize::try_from(i - 1).ok().and_then(|i| members.get(i)))
+        };
+        let by_ordinal = |args: &[Value]| -> Result<&(i32, String, String), Signal> {
+            let o = int_arg(args, 0)?;
+            members.iter().find(|m| i64::from(m.0) == o).map_or_else(
+                || unsupported(format!("{method}({o}) for an ordinal the field does not have")),
+                Ok,
+            )
+        };
+        match method {
+            "IsEnum" => Ok(Value::Boolean(is_enum)),
+            "EnumValueCount" => Ok(Value::Integer(members.len() as i32)),
+            "GetEnumValueOrdinal" => Ok(Value::Integer(at(args)?.map_or(-1, |m| m.0))),
+            "GetEnumValueName" => Ok(Value::Text(at(args)?.map(|m| m.1.clone()).unwrap_or_default())),
+            "GetEnumValueCaption" => Ok(Value::Text(at(args)?.map(|m| m.2.clone()).unwrap_or_default())),
+            "GetEnumValueNameFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.1.clone())),
+            "GetEnumValueCaptionFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.2.clone())),
+            "OptionMembers" | "OptionString" | "OptionCaption" if is_enum => {
+                unsupported(format!("FieldRef.{method} on an Enum field"))
+            }
+            "OptionMembers" | "OptionString" => Ok(Value::Text(
+                members.iter().map(|m| m.1.as_str()).collect::<Vec<_>>().join(","),
+            )),
+            "OptionCaption" => Ok(Value::Text(
+                members.iter().map(|m| m.2.as_str()).collect::<Vec<_>>().join(","),
+            )),
             other => unsupported(format!("FieldRef.{other}")),
         }
     }

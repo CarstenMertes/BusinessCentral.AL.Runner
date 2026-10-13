@@ -123,6 +123,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .iter()
         .chain(crate::collections::REGISTRY)
         .chain(crate::refs::REGISTRY)
+        .chain(crate::refs::RECORD_REGISTRY)
 }
 
 /// The implementation registered for overload `id`, if any.

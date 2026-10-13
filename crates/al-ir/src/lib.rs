@@ -21,6 +21,8 @@ pub struct Object {
     pub properties: Vec<(String, String)>,
     /// For enums: (declared value, name), extensions included.
     pub enum_values: Vec<(i32, String)>,
+    /// For enums: the properties of each value (`Caption`, ...), parallel to `enum_values`.
+    pub enum_value_props: Vec<Vec<(String, String)>>,
     /// For tables: fields (extensions and system fields included), keys as
     /// field positions (`keys[0]` primary), `DataPerCompany`.
     pub table: Option<Table>,
@@ -56,6 +58,8 @@ pub struct Field {
     pub relation: bool,
     /// (object, routine) of the field's OnValidate trigger, if any.
     pub on_validate: Option<(usize, usize)>,
+    /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
+    pub properties: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -238,6 +242,7 @@ mod tests {
                 }],
                 properties: vec![("Subtype".into(), "Test".into())],
                 enum_values: vec![],
+                enum_value_props: vec![],
                 table: None,
                 rec_slot: None,
                 xrec_slot: None,

@@ -54,7 +54,7 @@ impl Session {
             .collect()
     }
 
-    fn store_for(&mut self, rec: &Rec) -> &mut MemStore {
+    pub(crate) fn store_for(&mut self, rec: &Rec) -> &mut MemStore {
         match rec.borrow().temp_id {
             Some(id) => self.temps.entry(id).or_default(),
             None => &mut self.store,
@@ -66,7 +66,7 @@ impl Session {
             .properties
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
-            .map(|(_, v)| v.trim().trim_matches('\'').to_string())
+            .map(|(_, v)| crate::recmeta::string_literal(v).unwrap_or_else(|| v.trim().trim_matches('\'').to_string()))
             .unwrap_or_else(|| t.name.clone())
     }
 
@@ -119,7 +119,7 @@ impl Session {
     }
 
     /// Writes into tables whose behaviour we do not reproduce yet are refused.
-    fn check_writable(&self, t: &TableDef, op: &str) -> Result<(), Signal> {
+    pub(crate) fn check_writable(&self, t: &TableDef, op: &str) -> Result<(), Signal> {
         if self.engine.tables_with_subscribers.contains(&t.name.to_lowercase()) {
             return unsupported(format!(
                 "{op} on {}: table event subscribers are not implemented yet",
@@ -542,7 +542,14 @@ impl Session {
                     .iter()
                     .filter_map(|o| o.table.as_ref())
                     .flat_map(|tb| &tb.fields)
-                    .any(|f| f.relation_table.as_deref() == Some(name.as_str()));
+                    .any(|f| {
+                        f.relation_table.as_deref() == Some(name.as_str())
+                            // Any arm of a conditional relation counts, not only the first
+                            // (corpus record/TestRenamePropagationConditional.al:71-111).
+                            || f.properties.iter().any(|(k, v)| {
+                                k.eq_ignore_ascii_case("TableRelation") && crate::recmeta::mentions_table(v, &name)
+                            })
+                    });
                 if related {
                     return unsupported(format!(
                         "Rename of {}: other tables relate to it (re-keying related rows is not implemented yet)",
@@ -580,7 +587,7 @@ impl Session {
                     }
                 }
             }
-            other => unsupported(format!("Record.{other}")),
+            other => self.record_meta_op(other, rec, &t, args),
         }
     }
 }

@@ -42,6 +42,19 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.SetTable#1",
     "RecordRef.KeyCount#1",
     "RecordRef.KeyIndex#1",
+    "RecordRef.Caption#1",
+    "RecordRef.CurrentCompany#1",
+    "RecordRef.IsTemporary#1",
+    "RecordRef.HasFilter#1",
+    "RecordRef.GetFilters#1",
+    "RecordRef.GetView#1",
+    "RecordRef.SetView#1",
+    "RecordRef.Duplicate#1",
+    "RecordRef.SystemIdNo#1",
+    "RecordRef.SystemCreatedAtNo#1",
+    "RecordRef.SystemCreatedByNo#1",
+    "RecordRef.SystemModifiedAtNo#1",
+    "RecordRef.SystemModifiedByNo#1",
     // KeyRef
     "KeyRef.Active#1",
     "KeyRef.FieldCount#1",
@@ -54,6 +67,73 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "FieldRef.SetRange#1",
     "FieldRef.SetFilter#1",
     "FieldRef.Value#1",
+    "FieldRef.Caption#1",
+    "FieldRef.GetFilter#1",
+    "FieldRef.Record#1",
+    "FieldRef.Validate#1",
+    "FieldRef.IsOptimizedForTextSearch#1",
+    "FieldRef.IsEnum#1",
+    "FieldRef.EnumValueCount#1",
+    "FieldRef.GetEnumValueName#1",
+    "FieldRef.GetEnumValueCaption#1",
+    "FieldRef.GetEnumValueOrdinal#1",
+    "FieldRef.GetEnumValueNameFromOrdinalValue#1",
+    "FieldRef.GetEnumValueCaptionFromOrdinalValue#1",
+    "FieldRef.OptionCaption#1",
+    "FieldRef.OptionMembers#1",
+    "FieldRef.OptionString#1",
+    // FieldRef.TestField: the untyped, `Any` and typed Value overloads (not the ErrorInfo ones).
+    "FieldRef.TestField#1",
+    "FieldRef.TestField#3",
+    "FieldRef.TestField#5",
+    "FieldRef.TestField#7",
+    "FieldRef.TestField#9",
+    "FieldRef.TestField#11",
+    "FieldRef.TestField#13",
+    "FieldRef.TestField#15",
+    "FieldRef.TestField#17",
+    "FieldRef.TestField#19",
+    "FieldRef.TestField#21",
+    "FieldRef.TestField#23",
+    "FieldRef.TestField#25",
+    "FieldRef.TestField#27",
+    "FieldRef.TestField#29",
+    "FieldRef.TestField#31",
+    "FieldRef.TestField#33",
+    "FieldRef.TestField#35",
+    "FieldRef.FieldError#1",
+    "FieldRef.FieldError#2",
+    "KeyRef.Record#1",
+];
+
+macro_rules! record_methods {
+    ($($id:literal => $m:literal),* $(,)?) => {
+        &[$(($id, (|c: &mut dyn Ctx, r, a| c.record($m, r, a)) as NativeFn)),*]
+    };
+}
+
+/// Record builtins that read table metadata or guard on session state.
+pub const RECORD_REGISTRY: &[(&str, NativeFn)] = record_methods![
+    "Record.TestField#1" => "TestField",
+    "Record.TestField#3" => "TestField",
+    "Record.TestField#5" => "TestField",
+    "Record.TestField#7" => "TestField",
+    "Record.TestField#9" => "TestField",
+    "Record.TestField#11" => "TestField",
+    "Record.TestField#13" => "TestField",
+    "Record.TestField#15" => "TestField",
+    "Record.TestField#17" => "TestField",
+    "Record.TestField#19" => "TestField",
+    "Record.TestField#21" => "TestField",
+    "Record.TestField#23" => "TestField",
+    "Record.Truncate#1" => "Truncate",
+    "Record.FieldCaption#1" => "FieldCaption",
+    "Record.FieldName#1" => "FieldName",
+    "Record.FieldNo#1" => "FieldNo",
+    "Record.TableCaption#1" => "TableCaption",
+    "Record.TableName#1" => "TableName",
+    "Record.FieldError#1" => "FieldError",
+    "Record.FieldError#2" => "FieldError",
 ];
 
 #[cfg(test)]
@@ -86,8 +166,32 @@ mod tests {
         assert!(params("RecordRef.FindSet#1").len() == 1 && params("RecordRef.FindSet#2").len() == 2);
         assert_eq!(params("RecordRef.GetTable#1"), ["Record"]);
         assert_eq!(params("RecordRef.SetTable#1"), ["Record"]);
-        for (id, _) in REGISTRY {
+        for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
             params(id);
+        }
+        // The Record overloads forward to a method name: it must be the id's own method.
+        for (id, _) in RECORD_REGISTRY {
+            let name = &cat.by_id(id).unwrap().name;
+            assert!(
+                [
+                    "TestField",
+                    "Truncate",
+                    "FieldCaption",
+                    "FieldName",
+                    "FieldNo",
+                    "TableCaption",
+                    "TableName",
+                    "FieldError"
+                ]
+                .contains(&name.as_str())
+            );
+        }
+        // No ErrorInfo overload of TestField or FieldError is registered.
+        for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
+            assert!(
+                !cat.by_id(id).unwrap().params.iter().any(|p| p.ty == "ErrorInfo"),
+                "{id}"
+            );
         }
     }
 }

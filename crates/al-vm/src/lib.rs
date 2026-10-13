@@ -10,8 +10,10 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod recmeta;
 mod records;
 mod refs;
+mod views;
 
 pub struct Engine {
     pub program: ir::Program,
@@ -103,6 +105,8 @@ pub struct Session {
     pub(crate) cx: al_data::AccessContext,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
+    /// Depth of [TryFunction] calls on the stack (Truncate is refused inside one).
+    pub(crate) try_depth: usize,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -126,6 +130,7 @@ impl Session {
                 user: "USER".into(),
             },
             ret_used: true,
+            try_depth: 0,
         }
     }
 
@@ -470,7 +475,9 @@ impl Session {
                         ir::Arg::Ref(p) => self.read(p, f)?,
                     });
                 }
+                self.try_depth += usize::from(*try_call);
                 let result = self.call(*object, *routine, inst, values);
+                self.try_depth -= usize::from(*try_call);
                 let (ret, finals) = match (result, try_call) {
                     (Err(Signal::Error(e)), true) => {
                         self.last_error = e;

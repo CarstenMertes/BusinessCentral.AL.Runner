@@ -6,14 +6,24 @@ use al_sema::workspace::AppSource;
 use al_vm::{Engine, Session};
 
 const TABLE: &str = r#"
+enum 50901 "ALT E"
+{
+    value(0; Zero) { Caption = 'Nothing'; }
+    value(5; Five) { }
+    value(10; Ten) { Caption = 'Tenner'; }
+}
 table 50900 "ALT T"
 {
+    Caption = 'The Table';
     fields
     {
         field(1; "No."; Code[20]) { }
-        field(2; Amount; Decimal) { }
-        field(3; Grp; Integer) { }
+        field(2; Amount; Decimal) { Caption = 'The Amount'; }
+        field(3; Grp; Integer) { trigger OnValidate() begin Descr := 'validated ' + Format(Grp); end; }
         field(4; Descr; Text[50]) { }
+        field(5; Kind; Enum "ALT E") { }
+        field(6; Opt; Option) { OptionMembers = A,B,C; OptionCaption = 'Alpha,Beta,Gamma'; }
+        field(7; Flag; Boolean) { }
     }
     keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } }
 }
@@ -258,4 +268,135 @@ fn a_ref_that_is_not_open_is_refused_not_guessed() {
         "F",
     ));
     assert!(m.contains("not open"), "{m}");
+}
+
+#[test]
+fn recordref_metadata_caption_company_duplicate_system_field_numbers() {
+    // corpus recordref/TestRecordRefGetSet.al:16-30,53-72; TestRecordRefExtended.al; TestRecordVsRecordRef.al:333-352
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; D: RecordRef; R: Record \"ALT T\"; begin
+            R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert();
+            RR.Open(50900);
+            D := RR.Duplicate();
+            D.Field(1).SetRange('A');
+            exit(RR.Caption + '|' + Format(RR.CurrentCompany() <> '') + '|' + Format(RR.Count()) + Format(D.Count()) + '|' + Format(RR.SystemIdNo()) + '|' + Format(RR.SystemModifiedAtNo()) + '|' + Format(RR.IsTemporary()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "The Table|Yes|21|2000000000|2000000003|No");
+}
+
+#[test]
+fn views_filters_and_has_filter_on_a_recordref() {
+    // corpus recordref/TestRecordRefFilter.al:14-60, 98-121; TestRecordVsRecordRef.al:150-180
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; D: RecordRef; R: Record \"ALT T\"; i: Integer; s: Text; begin
+            for i := 1 to 5 do begin R.\"No.\" := Format(i); R.Grp := i; R.Insert(); end;
+            RR.Open(50900);
+            s += Format(RR.HasFilter());
+            RR.SetView('SORTING(Grp) WHERE(Grp=FILTER(1..3))');
+            s += Format(RR.HasFilter()) + Format(RR.Count()) + Format(RR.GetFilters() <> '') + Format(RR.GetView() <> '');
+            D.Open(50900);
+            D.SetView(RR.GetView());
+            s += Format(D.Count());
+            RR.Reset();
+            s += Format(RR.Count()) + Format(RR.HasFilter());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "NoYes3YesYes3".to_string() + "5No");
+}
+
+#[test]
+fn setview_sorting_picks_the_key() {
+    // docs: SORTING(...) is SetCurrentKey; corpus recordref/TestRecordRefFilter.al:14-30 uses it with the primary key
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; R: Record \"ALT T\"; s: Text; begin
+            R.\"No.\" := 'A'; R.Grp := 2; R.Insert(); R.\"No.\" := 'B'; R.Grp := 1; R.Insert();
+            RR.Open(50900);
+            RR.SetView('SORTING(Grp,No.)');
+            RR.FindFirst();
+            exit(Format(RR.Field(1).Value()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "B");
+}
+
+#[test]
+fn fieldref_caption_validate_and_getfilter() {
+    // corpus fieldref/TestFieldRefMetadata.al:36-54, TestFieldRefValidate.al:10-30,70-90, TestFieldRefFilter.al:127-145
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; FR: FieldRef; s: Text; begin
+            RR.Open(50900);
+            s := RR.Field(2).Caption() + '|' + RR.Field(3).Caption() + '|';
+            FR := RR.Field(3);
+            FR.Validate(4);
+            s += Format(FR.Value()) + RR.Field(4).Value() + '|';
+            FR.SetRange(1, 3);
+            s += FR.GetFilter();
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "The Amount|Grp|4validated 4|1..3");
+}
+
+#[test]
+fn fieldref_enum_and_option_metadata() {
+    // corpus fieldref/TestFieldRefEnumOrdinalByIndex.al (index/ordinal/caption/name, out of range),
+    // TestFieldRefEnum.al:112-124, TestPrecompiledFieldOptionCaption.al:34-48
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; E: FieldRef; O: FieldRef; s: Text; begin
+            RR.Open(50900);
+            E := RR.Field(5);
+            O := RR.Field(6);
+            s := Format(E.IsEnum()) + Format(O.IsEnum()) + Format(RR.Field(3).IsEnum()) + '|' + Format(E.EnumValueCount()) + '|';
+            s += Format(E.GetEnumValueOrdinal(2)) + E.GetEnumValueName(3) + E.GetEnumValueCaption(1) + E.GetEnumValueCaption(2) + '|';
+            s += Format(E.GetEnumValueOrdinal(0)) + Format(E.GetEnumValueOrdinal(4)) + '[' + E.GetEnumValueCaption(4) + ']|';
+            s += E.GetEnumValueNameFromOrdinalValue(10) + E.GetEnumValueCaptionFromOrdinalValue(10) + '|';
+            s += O.OptionCaption() + '/' + O.OptionMembers() + '/' + O.OptionString() + '|' + Format(O.GetEnumValueOrdinal(3)) + O.GetEnumValueCaption(3);
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "YesNoNo|3|5TenNothingFive|-1-1[]|TenTenner|Alpha,Beta,Gamma/A,B,C/A,B,C|2Gamma"
+    );
+}
+
+#[test]
+fn fieldref_testfield_and_fielderror() {
+    // corpus fieldref/TestFieldRefFieldError.al:10-100
+    let m = err(run(
+        "procedure F() var RR: RecordRef; begin RR.Open(50900); RR.Field(3).TestField(); end;",
+        "F",
+    ));
+    assert!(m.starts_with("Grp must have a value in The Table"), "{m}");
+    let m = err(run(
+        "procedure F() var RR: RecordRef; begin RR.Open(50900); RR.Field(3).Value := 1; RR.Field(3).TestField(2); end;",
+        "F",
+    ));
+    assert!(m.starts_with("Grp must be 2 in The Table"), "{m}");
+    let m = err(run(
+        "procedure F() var RR: RecordRef; begin RR.Open(50900); RR.Field(3).FieldError('Custom msg'); end;",
+        "F",
+    ));
+    assert!(m.contains("Grp") && m.contains("Custom msg"), "{m}");
+}
+
+#[test]
+fn fieldref_record_gives_the_same_buffer_back() {
+    let r = run(
+        "procedure F(): Integer var RR: RecordRef; B: RecordRef; begin
+            RR.Open(50900);
+            RR.Field(3).Value := 9;
+            B := RR.Field(3).Record();
+            exit(B.Field(3).Value());
+        end;",
+        "F",
+    );
+    assert_eq!(int(r), 9);
 }

@@ -27,6 +27,8 @@ pub struct FieldInfo {
     pub relation_table: Option<String>,
     /// Offset of the field's OnValidate trigger node (in `declared_in`'s file).
     pub on_validate: Option<usize>,
+    /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
+    pub properties: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +55,8 @@ pub struct ProcSig {
 pub struct Members {
     pub fields: Vec<FieldInfo>,
     pub enum_values: Vec<(u32, String)>,
+    /// The properties of each enum value (`Caption`, ...), parallel to `enum_values`.
+    pub enum_value_props: Vec<Vec<(String, String)>>,
     pub procedures: Vec<ProcSig>,
 }
 
@@ -82,7 +86,33 @@ pub fn build(ws: &Workspace) -> Vec<Members> {
             let target = &mut out[t];
             target.fields.extend(ext.fields);
             target.enum_values.extend(ext.enum_values);
+            target.enum_value_props.extend(ext.enum_value_props);
             target.procedures.extend(ext.procedures);
+            // `modify(Field) { Caption = ...; }` changes properties of an existing field
+            // (corpus tableextension/TestTableExtFieldModify.al:40-67, record/TestRecordCaptionSeparators.al:79-85).
+            if o.kind == ObjKind::TableExtension {
+                for sec in ws
+                    .object_ast(i)
+                    .sections()
+                    .filter(|s| s.name().eq_ignore_ascii_case("fields"))
+                {
+                    for m in sec.sections().filter(|m| m.name().eq_ignore_ascii_case("modify")) {
+                        let Some(name) = m.args().first().cloned() else {
+                            continue;
+                        };
+                        let Some(field) = out[t].fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&name)) else {
+                            continue;
+                        };
+                        for p in m.properties() {
+                            let (k, v) = (p.name(), p.value_text());
+                            match field.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(&k)) {
+                                Some(slot) => slot.1 = v,
+                                None => field.properties.push((k, v)),
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     out
@@ -114,6 +144,18 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     .and_then(|t| al_syntax::parse_type(t))
                     .map(|t| Ty::from_type_ref(&t))
                     .unwrap_or(Ty::Unknown);
+                // An Option field lists its members in the OptionMembers property
+                // (corpus _fixtures/tables/ALTUniversal.al:59), not in the type.
+                let ty = match ty {
+                    Ty::Option(m) if m.iter().all(|x| x.is_empty()) && m.len() <= 1 => {
+                        let listed = f
+                            .properties()
+                            .find(|p| p.name().eq_ignore_ascii_case("OptionMembers"))
+                            .map(|p| split_members(&p.value_text()));
+                        Ty::Option(listed.unwrap_or(m))
+                    }
+                    other => other,
+                };
                 let class = match f
                     .properties()
                     .find(|p| p.name().eq_ignore_ascii_case("FieldClass"))
@@ -145,12 +187,15 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     table_relation: prop("TableRelation").is_some(),
                     relation_table: prop("TableRelation").map(|v| relation_target(&v)),
                     on_validate,
+                    properties: f.properties().map(|p| (p.name(), p.value_text())).collect(),
                 });
             }
         } else if name == "value" {
             let args = sec.args();
             if let (Some(id), Some(v)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) {
                 m.enum_values.push((id, v.clone()));
+                m.enum_value_props
+                    .push(sec.properties().map(|p| (p.name(), p.value_text())).collect());
             }
         }
     }
@@ -167,6 +212,12 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 table_relation: false,
                 relation_table: None,
                 on_validate: None,
+                // Only SystemId's caption is pinned (corpus record/TestRecordSystemId.al:178).
+                properties: if *id == 2000000000 {
+                    vec![("Caption".into(), "'System ID'".into())]
+                } else {
+                    Vec::new()
+                },
             });
         }
     }
@@ -188,6 +239,32 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
         });
     }
     m
+}
+
+/// The members of an `OptionMembers` list: comma separated, a member may be
+/// quoted, and an empty member (`,A`) is the blank first option.
+fn split_members(v: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut was_quoted = false;
+    let mut flush = |cur: &mut String, was_quoted: &mut bool| {
+        let m = std::mem::take(cur);
+        out.push(if *was_quoted { m } else { m.trim().to_string() });
+        *was_quoted = false;
+    };
+    for c in v.trim().chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                was_quoted = true;
+            }
+            ',' if !quoted => flush(&mut cur, &mut was_quoted),
+            c => cur.push(c),
+        }
+    }
+    flush(&mut cur, &mut was_quoted);
+    out
 }
 
 /// The table a `TableRelation` value names first: `"Cust".No.` → `cust`.
@@ -271,6 +348,46 @@ tableextension 50901 "ALT Ext" extends "ALT Universal"
         let m = members_of(&w, ObjKind::Table, "ALT Universal");
         assert_eq!(m.field("Ext Field").unwrap().ty, Ty::Text(Some(50)));
         assert_eq!(m.procedures_named("FromExt").len(), 1);
+    }
+
+    #[test]
+    fn option_fields_take_their_members_from_the_optionmembers_property() {
+        // corpus _fixtures/tables/ALTUniversal.al:59: `OptionMembers = " ",Draft,Active,Closed;`
+        let w = ws(&[(
+            "t.al",
+            "table 50910 O { fields { field(1; K; Integer) { } field(2; S; Option) { OptionMembers = \" \",Draft,\"In Work\"; } field(3; B; Option) { OptionMembers = ,X; } } keys { key(PK; K) { } } }",
+        )]);
+        let m = members_of(&w, ObjKind::Table, "O");
+        assert_eq!(
+            m.field("S").unwrap().ty,
+            Ty::Option(vec![" ".into(), "Draft".into(), "In Work".into()])
+        );
+        assert_eq!(m.field("B").unwrap().ty, Ty::Option(vec!["".into(), "X".into()]));
+    }
+
+    #[test]
+    fn a_tableextension_modify_block_overrides_field_properties() {
+        // corpus tableextension/TestTableExtFieldModify.al:40-67
+        let w = ws(&[(
+            "t.al",
+            "table 50920 T { fields { field(1; A; Integer) { Caption = 'Orig A'; } field(2; B; Integer) { Caption = 'Orig B'; } } keys { key(PK; A) { } } }
+             tableextension 50921 X extends T { fields { modify(A) { Caption = 'New A'; } } }",
+        )]);
+        let m = members_of(&w, ObjKind::Table, "T");
+        let caption = |n: &str| {
+            m.field(n)
+                .unwrap()
+                .properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                .map(|(_, v)| v.clone())
+        };
+        assert_eq!(caption("A").as_deref(), Some("'New A'"));
+        assert_eq!(
+            caption("B").as_deref(),
+            Some("'Orig B'"),
+            "an unmodified field keeps its caption"
+        );
     }
 
     #[test]

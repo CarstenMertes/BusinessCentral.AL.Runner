@@ -129,6 +129,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             globals,
             routines,
             properties: obj.properties().map(|p| (p.name(), p.value_text())).collect(),
+            enum_value_props: members[oi].enum_value_props.clone(),
             enum_values: members[oi]
                 .enum_values
                 .iter()
@@ -298,6 +299,7 @@ impl Lowerer<'_> {
                 auto_increment: f.auto_increment,
                 relation: f.table_relation,
                 init_text: f.init_value.clone(),
+                properties: f.properties.clone(),
                 relation_table: f.relation_table.clone(),
                 on_validate: match (f.declared_in, f.on_validate) {
                     (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),

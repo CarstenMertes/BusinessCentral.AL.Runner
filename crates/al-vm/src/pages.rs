@@ -2354,9 +2354,15 @@ impl Session {
                 // On a card the built-in Edit and View switch the open page's mode in place; both stay
                 // visible, and only the one the current mode does not already have is enabled (corpus
                 // handlers/TestPageModeSwitchAction_Tests.al:Claim 1 and 2). A list opens its card
-                // instead (a page handler): not modelled yet.
+                // instead, like a RunObject action with RunPageOnRec, answered by a page handler (corpus
+                // handlers/TestPageListViewEditAction_Tests.al:ListViewActionOpensTheCardOnTheListsCurrentRowReadOnly,
+                // ListEditActionOpensTheCardOnTheListsCurrentRowEditable). Whether the action is visible or
+                // enabled on a list is not pinned.
                 if self.is_list(st) {
-                    return unsupported(format!("the built-in {name} action of a list page"));
+                    if m != "Invoke" {
+                        return unsupported(format!("TestAction.{m} of the built-in {name} action of a list page"));
+                    }
+                    return self.list_card_action(st, name == "Edit");
                 }
                 let editable = st.borrow().mode != PageMode::View;
                 let applies = (name == "Edit") == !editable;
@@ -2700,6 +2706,40 @@ impl Session {
         let value = picked.borrow().fields[pos].clone();
         st.borrow_mut().refresh = false;
         self.control_set_value(st, idx, &mut [value])?;
+        Ok(Value::Null)
+    }
+
+    /// The built-in Edit or View action of a list page: opens the page named by the list's
+    /// `CardPageId` on the current row, editable or read-only, as a `RunObject` action would.
+    fn list_card_action(&mut self, st: &St, edit: bool) -> Result<Value, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let Some(card) = engine.program.objects[object]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("CardPageId"))
+            .map(|(_, v)| v.trim().trim_matches('"').to_string())
+        else {
+            return unsupported("the built-in Edit/View action of a list page with no CardPageId (not pinned)");
+        };
+        let Some(target) = engine.program.objects.iter().position(|o| {
+            o.kind == "page" && (o.name.eq_ignore_ascii_case(&card) || o.id.is_some_and(|i| i.to_string() == card))
+        }) else {
+            return unsupported("CardPageId names a page outside the workspace");
+        };
+        if st.borrow().cursor != Cursor::Row {
+            return unsupported("the built-in Edit/View action of a list that stands on no stored row (not pinned)");
+        }
+        let ro = ir::RunObject {
+            kind: ir::RunKind::Page,
+            object: Some(target),
+            on_rec: true,
+            mode: if edit { ir::RunMode::Edit } else { ir::RunMode::View },
+            link: None,
+            unsupported: None,
+        };
+        st.borrow_mut().refresh = false;
+        self.run_object_page(st, &ro)?;
         Ok(Value::Null)
     }
 

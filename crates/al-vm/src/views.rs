@@ -130,6 +130,11 @@ impl Session {
         };
         let (key, ascending) = {
             let r = rec.borrow();
+            if r.field_descending {
+                return Err(Signal::Unsupported(
+                    "GetView after a per-field SetAscending (not pinned)".into(),
+                ));
+            }
             (r.key, r.ascending)
         };
         let mut out = format!(
@@ -152,10 +157,28 @@ impl Session {
 
     /// `SetView`: replaces the key, the order and all filters by those of the view.
     pub(crate) fn set_view(&mut self, rec: &Rec, t: &TableDef, view: &str) -> Result<(), Signal> {
+        self.set_view_in(rec, t, view, None, false, false)
+    }
+
+    /// `set_view`, writing the filters of the view to filter group `group` (default: the current
+    /// one). With `keep_unnamed`, a view that names no SORTING keeps the record's key and one that
+    /// names no ORDER keeps its direction (a part page's SourceTableView after the part control's
+    /// SubPageView, corpus handlers/TestPartOwnSortVsSubPageView.al:1-45). With `order_needs_key`,
+    /// an ORDER without a SORTING is ignored (a part's SubPageView, corpus
+    /// handlers/TestPartSubPageViewSorting.al:SubPageViewOrderOnly_KeepsPrimaryKeyOrder).
+    pub(crate) fn set_view_in(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        view: &str,
+        group: Option<i32>,
+        keep_unnamed: bool,
+        order_needs_key: bool,
+    ) -> Result<(), Signal> {
         let mut key = None;
-        let mut ascending = true;
+        let mut ascending = None;
         let mut filters: Vec<FieldFilter> = Vec::new();
-        let group = rec.borrow().filter_group;
+        let group = group.unwrap_or(rec.borrow().filter_group);
         let mut rest = view.trim();
         while !rest.is_empty() {
             let open = rest
@@ -179,8 +202,8 @@ impl Session {
                     );
                 }
                 "ORDER" => match inner.trim().to_ascii_lowercase().as_str() {
-                    "ascending" => ascending = true,
-                    "descending" => ascending = false,
+                    "ascending" => ascending = Some(true),
+                    "descending" => ascending = Some(false),
                     other => return unsupported(format!("view ORDER({other})")),
                 },
                 "WHERE" => {
@@ -219,8 +242,15 @@ impl Session {
         // The view replaces the filters of the current group; other groups stay.
         r.filters.retain(|f| f.group != group);
         r.filters.extend(filters);
-        r.key = key.unwrap_or(0);
-        r.ascending = ascending;
+        if order_needs_key && key.is_none() {
+            ascending = None;
+        }
+        if key.is_some() || !keep_unnamed {
+            r.key = key.unwrap_or(0);
+        }
+        if ascending.is_some() || !keep_unnamed {
+            r.ascending = ascending.unwrap_or(true);
+        }
         Ok(())
     }
 }

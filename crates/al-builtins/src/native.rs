@@ -2,6 +2,7 @@
 
 use crate::format::{FormatCtx, try_format};
 use crate::value::Value;
+use std::rc::Rc;
 
 /// The error state AL code can read back (`GetLastErrorText`, ...).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -20,6 +21,18 @@ pub enum Signal {
     /// Behaviour the runtime does not implement yet, met at run time (an edge
     /// case no corpus test pins). The runner reports the test as not run.
     Unsupported(String),
+}
+
+/// An app's name and its packaged resources (name relative to the resource folder, content).
+pub type AppResources = (String, Vec<(String, Vec<u8>)>);
+
+/// What `NavApp.GetModuleInfo` finds.
+pub enum ModuleLookup {
+    Found(crate::value::ModuleInfoState),
+    /// No app of the workspace has this id and none of its manifests names it.
+    NotInstalled,
+    /// An app a manifest names as a dependency, which is not part of the workspace.
+    OutsideWorkspace,
 }
 
 /// What builtins need from the running session.
@@ -46,6 +59,44 @@ pub trait Ctx: FormatCtx {
     /// (`RecordRef.Open#2`); the VM resolves it to the method.
     fn ref_op(&mut self, id: &str, _receiver: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id}")))
+    }
+    /// The declared values of enum object `id` as (ordinal, name), in declaration order with
+    /// extension values after them. `None` when the context has no program.
+    fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
+        None
+    }
+    /// Builtins that read or change session state (number sequences, the transaction state): the
+    /// VM implements them. `id` is the catalog overload id (`NumberSequence.Next#1`); `args` holds
+    /// the call's arguments, with `var` parameters written back in place.
+    fn session_op(&mut self, id: &str, _args: &mut [Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported(format!("builtin {id} needs a session")))
+    }
+    /// The app of the routine `depth` frames out on the call stack: 0 is the routine that runs the
+    /// builtin, 1 its caller. `None` when there is no such frame (the caller of a test is the test
+    /// runner) or the app's manifest has no readable id.
+    fn module_at_frame(&self, _depth: usize) -> Option<crate::value::ModuleInfoState> {
+        None
+    }
+    /// The distinct apps of the frames on the call stack, innermost first, leaving out the
+    /// `skip` innermost frames.
+    fn module_callstack(&self, _skip: usize) -> Vec<crate::value::ModuleInfoState> {
+        Vec::new()
+    }
+    /// The name and packaged resources of the app that owns the running code.
+    fn app_resources(&self) -> Option<AppResources> {
+        None
+    }
+    /// The installed app with this id.
+    fn module_by_id(&self, _id: &[u8; 16]) -> ModuleLookup {
+        ModuleLookup::NotInstalled
+    }
+    /// Whether table `number` (`Database::"Name"`) is declared in the workspace.
+    fn workspace_table(&self, _number: i32) -> bool {
+        false
+    }
+    /// Whether an install codeunit is running (DataTransfer works there and only there).
+    fn install_scope(&self) -> bool {
+        false
     }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
@@ -77,6 +128,7 @@ pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result
 
 const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
+    ("System.Format#2", format_2),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
@@ -84,6 +136,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
     ("Dialog.Error#2", error_text),
+    ("Dialog.Error#1", crate::errorinfo::raise),
+    ("Session.GetExecutionContext#1", execution_context),
+    ("Session.GetCurrentModuleExecutionContext#1", execution_context),
+    ("Session.GetModuleExecutionContext#1", module_execution_context),
     ("Dialog.Message#1", message),
     ("Dialog.Confirm#1", confirm),
     ("Dialog.StrMenu#1", str_menu),
@@ -95,6 +151,22 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.LowerCase#1", lowercase),
     ("Database.Commit#1", |c, _, _| c.commit().map(|_| Value::Null)),
     ("System.Clear#1", clear),
+    // A progress dialog is a headless no-op in a test (handlers/TestHandlersDialogProgressNoOp.al:24-110).
+    ("Dialog.Open#1", |_, _, _| Ok(Value::Null)),
+    ("Dialog.Update#1", |_, _, _| Ok(Value::Null)),
+    ("Dialog.Close#1", |_, _, _| Ok(Value::Null)),
+    // Reading the latest committed data is what this runtime always does (session/TestBCDatabaseContracts.al:170-187).
+    ("Database.SelectLatestVersion#1", |_, _, _| Ok(Value::Null)),
+    ("Database.SelectLatestVersion#2", |_, _, _| Ok(Value::Null)),
+    // Unique and not null is all the corpus asks (session/TestSystemExtended.al:306-328).
+    ("Guid.CreateSequentialGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    // A TextBuilder is bounded by the Integer range; the corpus needs at least a million
+    // (session/TestSystemExtended.al:450-473).
+    ("TextBuilder.MaxCapacity#1", |_, _, _| Ok(Value::Integer(i32::MAX))),
+    ("Enum.AsInteger#1", enum_as_integer),
+    ("Enum.Names#1", enum_names),
+    ("Enum.Ordinals#1", enum_ordinals),
+    ("Enum.FromInteger#1", enum_from_integer),
     ("Record.Init#1", |c, r, a| c.record("Init", r, a)),
     ("Record.Insert#1", |c, r, a| c.record("Insert", r, a)),
     ("Record.Insert#2", |c, r, a| c.record("Insert", r, a)),
@@ -180,6 +252,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsDictionary#1", |_, r, _| is(r, "Dictionary")),
     ("Variant.IsCodeunit#1", |_, r, _| is(r, "Codeunit")),
     // RecordId, RecordRef and FieldRef variables are library handles named after their type.
+    ("Variant.IsNotification#1", |_, r, _| is(r, "Notification")),
+    ("Variant.IsTextBuilder#1", |_, r, _| is(r, "TextBuilder")),
     ("Variant.IsRecordId#1", |_, r, _| is(r, "RecordId")),
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
     ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
@@ -199,6 +273,10 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
         .chain(crate::querybuiltins::REGISTRY)
         .chain(crate::refs::REGISTRY)
         .chain(crate::refs::RECORD_REGISTRY)
+        .chain(crate::datefns::REGISTRY)
+        .chain(crate::mathfns::REGISTRY)
+        .chain(crate::sessionfns::REGISTRY)
+        .chain(crate::moduleinfo::REGISTRY)
 }
 
 /// Implementations chosen per catalog signature instead of being listed by id
@@ -215,6 +293,12 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                     .or_else(|| crate::xml::native_for(sig))
                     .or_else(|| crate::stream::native_for(sig))
                     .or_else(|| crate::textfns::native_for(sig))
+                    .or_else(|| crate::wsac::native_for(sig))
+                    .or_else(|| crate::errorinfo::native_for(sig))
+                    .or_else(|| crate::version::native_for(sig))
+                    .or_else(|| crate::datatransfer::native_for(sig))
+                    .or_else(|| crate::moduleinfo::native_for(sig))
+                    .or_else(|| crate::sessiontypes::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })
             .collect()
@@ -294,6 +378,15 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
     try_format(&args[0], len, std, ctx)
+        .map(Value::Text)
+        .map_err(Signal::Unsupported)
+}
+
+/// `Format(Value, Length, FormatString)`: see [`crate::formatstr`].
+fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let len = int_arg(args, 1).unwrap_or(0) as i32;
+    let template = text_arg(args, 2)?;
+    crate::formatstr::format_with_string(&args[0], len, &template, ctx)
         .map(Value::Text)
         .map_err(Signal::Unsupported)
 }
@@ -464,7 +557,18 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     *v = match v {
         Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
         // Clearing a RecordRef/FieldRef/KeyRef closes it: a fresh, unopened handle.
-        Value::Library(name, _) if matches!(name.as_str(), "RecordRef" | "FieldRef" | "KeyRef" | "RecordId") => {
+        Value::Library(name, _)
+            if matches!(
+                name.as_str(),
+                "RecordRef"
+                    | "FieldRef"
+                    | "KeyRef"
+                    | "RecordId"
+                    | "WebServiceActionContext"
+                    | "SessionSettings"
+                    | "Notification"
+            ) =>
+        {
             Value::Library(name.clone(), Default::default())
         }
         Value::Boolean(_) => Value::Boolean(false),
@@ -481,6 +585,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Duration(_) => Value::Duration(0),
         Value::Guid(_) => Value::Guid([0; 16]),
         Value::Option(_, m) => Value::Option(0, m.clone()),
+        // A cleared List or Dictionary is a new, empty one (types/TestClearContracts.al:130-150,
+        // collections/TestListByRefContracts.al:155 through a `var` parameter).
+        Value::List(_) => Value::List(Default::default()),
+        Value::Dictionary(_) => Value::Dictionary(Default::default()),
         // A cleared Blob is a new, empty buffer (streams/TestBlobCalcFieldsUncommittedWrite.al).
         Value::Blob(_) => Value::Blob(crate::stream::new_blob()),
         other => return unsupported(&format!("Clear of {other:?}")),
@@ -488,17 +596,95 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     Ok(Value::Null)
 }
 
+fn context_value(c: &dyn Ctx) -> Value {
+    let members: Rc<[String]> = crate::sysenum::option_members("ExecutionContext")
+        .expect("a system option")
+        .into();
+    // Install inside an install codeunit, Normal anywhere else (install/TestInstallEnvVisible_Tests.al:90-127).
+    Value::Option(i32::from(c.install_scope()), members)
+}
+
+fn execution_context(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    Ok(context_value(c))
+}
+
+/// Of this app (no argument) or of an app of the workspace; another app's context while an
+/// installer runs is not pinned.
+fn module_execution_context(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    if let Some(id) = a.first() {
+        if c.install_scope() {
+            return unsupported("GetModuleExecutionContext(AppId) inside install code (not pinned)");
+        }
+        let Value::Guid(g) = id else {
+            return unsupported(&format!("GetModuleExecutionContext with {id:?}"));
+        };
+        if !matches!(c.module_by_id(g), ModuleLookup::Found(_)) {
+            return unsupported("GetModuleExecutionContext of an app the workspace does not hold (not pinned)");
+        }
+    }
+    Ok(context_value(c))
+}
+
+/// `Enum.AsInteger()`: the ordinal (types/TestEnum.al:27-40).
+fn enum_as_integer(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    match r {
+        Some(Value::Enum(_, o)) => Ok(Value::Integer(*o)),
+        other => unsupported(&format!("AsInteger of {other:?}")),
+    }
+}
+
+/// The enum a type-level call (`"Name".Names()`) or a call on a variable names: lowering passes
+/// the enum object as the receiver value.
+fn enum_receiver(ctx: &dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<(u32, Vec<(i32, String)>), Signal> {
+    let Some(Value::Enum(id, _)) = r else {
+        return unsupported(&format!("{what} without an enum receiver"));
+    };
+    let id = *id;
+    ctx.enum_members(id).map(|m| (id, m)).map_or_else(
+        || unsupported(&format!("{what}: this context has no enum metadata")),
+        Ok,
+    )
+}
+
+fn list_of(items: Vec<Value>) -> Value {
+    Value::List(Rc::new(std::cell::RefCell::new(items)))
+}
+
+/// `Enum.Names()`: every declared name, the blank ordinal included
+/// (types/TestEnumNamesContracts.al:19-60). The order is the declaration order, which matches
+/// `Ordinals()` position by position; BC's order is not pinned (docs/probes-needed.md).
+fn enum_names(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let (_, members) = enum_receiver(ctx, r, "Enum.Names")?;
+    Ok(list_of(members.into_iter().map(|(_, n)| Value::Text(n)).collect()))
+}
+
+/// `Enum.Ordinals()` (session/TestSystemExtended.al:381-390, types/TestLanguageEdgeCases.al:91-105).
+fn enum_ordinals(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let (_, members) = enum_receiver(ctx, r, "Enum.Ordinals")?;
+    Ok(list_of(members.into_iter().map(|(o, _)| Value::Integer(o)).collect()))
+}
+
+/// `Enum.FromInteger(n)`: any number is carried, declared or not (types/TestEnum.al:83-91,
+/// types/TestEnumDefaultImplTests.Codeunit.al:70).
+fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let (id, _) = enum_receiver(ctx, r, "Enum.FromInteger")?;
+    match int_arg(args, 0).and_then(|n| i32::try_from(n).ok()) {
+        Some(n) => Ok(Value::Enum(id, n)),
+        None => unsupported("Enum.FromInteger with a number outside the Integer range"),
+    }
+}
+
 fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
     Ok(Value::Boolean(receiver.is_some_and(|v| v.is(kind))))
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::rc::Rc;
 
     #[derive(Default)]
-    struct TestCtx {
+    pub(crate) struct TestCtx {
         err: AlError,
     }
     impl FormatCtx for TestCtx {
@@ -524,12 +710,12 @@ mod tests {
         }
     }
 
-    fn call(id: &str, args: Vec<Value>) -> Result<Value, Signal> {
+    pub(crate) fn call(id: &str, args: Vec<Value>) -> Result<Value, Signal> {
         let f = lookup(id).unwrap_or_else(|| panic!("{id} not registered"));
         let mut args = args;
         f(&mut TestCtx::default(), None, &mut args)
     }
-    fn t(s: &str) -> Value {
+    pub(crate) fn t(s: &str) -> Value {
         Value::Text(s.into())
     }
     fn text(r: Result<Value, Signal>) -> String {

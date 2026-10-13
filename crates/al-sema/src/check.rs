@@ -648,14 +648,15 @@ impl<'a> Checker<'a> {
                                     self.record(sc, a, r);
                                 }
                             }
-                            if let (Some(Ty::Record { table, .. }), Some(ti)) = (
-                                &receiver,
-                                receiver.as_ref().and_then(|r| match r {
-                                    Ty::Record { table, .. } => self.resolve(sc, ObjKind::Table, table),
-                                    _ => None,
-                                }),
-                            ) {
-                                let _ = table;
+                            // A `TestPage.Filter` field is a field of the page's source table
+                            // (corpus testfilter/TestTestFilter.al:1-30).
+                            let table_idx = match &receiver {
+                                Some(Ty::Record { table, .. } | Ty::TestFilter(table)) => {
+                                    self.resolve(sc, ObjKind::Table, table)
+                                }
+                                _ => None,
+                            };
+                            if let Some(ti) = table_idx {
                                 if let Some(f) = self.members[ti].field(&name_of(a)) {
                                     let id = f.id;
                                     self.record(sc, a, Res::Field { table: ti, id });
@@ -700,7 +701,11 @@ impl<'a> Checker<'a> {
                     E::Val(t) => t,
                     E::Callable(c) => self.pick(sc, &kids[0], &c, &[], &member_name(&kids[0])),
                     E::TypeName(t) => {
-                        // Static members of a type: `"ALT Status".FromInteger(1)`.
+                        // Static members of a type: `"ALT Status".FromInteger(1)`. Lowering reads
+                        // the enum behind the type name from the receiver's recorded type.
+                        let r = kids[0].text_range();
+                        self.types
+                            .insert((sc.file, r.start().into(), r.end().into()), t.clone());
                         return match self.static_members(&t, &mname) {
                             Some(c) => E::Callable(c),
                             None => E::Val(Ty::Unknown),
@@ -985,6 +990,16 @@ impl<'a> Checker<'a> {
                 if !procs.is_empty() {
                     return Some(E::Callable(procs));
                 }
+                // `CurrPage.<Part>`: the part control, whose `.Page` is the page it shows.
+                if *kind == ObjKind::Page {
+                    if let Some(sec) = self.named_section(oi, name) {
+                        if sec.name().eq_ignore_ascii_case("part") {
+                            if let Some(page) = sec.args().get(1) {
+                                return Some(E::Val(Ty::TestPart(page.clone())));
+                            }
+                        }
+                    }
+                }
                 if *kind == ObjKind::Query {
                     if let Some(l) = &self.queries[oi] {
                         if let Some(c) = l.column(name) {
@@ -1023,6 +1038,11 @@ impl<'a> Checker<'a> {
                         }
                     }
                     return Some(E::Callable(c));
+                }
+                if let (Ty::TestPart(part), true) = (t, name.eq_ignore_ascii_case("Page")) {
+                    if resolved.is_some_and(|oi| self.named_section(oi, name).is_none()) {
+                        return Some(E::Val(Ty::Object(ObjKind::Page, part.clone())));
+                    }
                 }
                 if let Some(oi) = resolved {
                     if let Some(sec) = self.named_section(oi, name) {

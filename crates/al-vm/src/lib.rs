@@ -23,6 +23,7 @@ mod refs;
 mod relations;
 mod rename;
 mod reports;
+mod sessionops;
 mod transactions;
 mod ui;
 mod views;
@@ -79,6 +80,19 @@ pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
     depth: usize,
+    /// Page handler functions running right now (`[PageHandler]`, `[ModalPageHandler]`).
+    pub(crate) page_handler_depth: usize,
+    /// `CodeCoverageLog` is recording.
+    pub(crate) code_coverage: bool,
+    /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
+    /// `NavApp.GetCallerModuleInfo`).
+    pub(crate) frames: Vec<usize>,
+    /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
+    pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
+    /// An install codeunit is running.
+    install_scope: bool,
+    /// Number sequences by (company, name); a global sequence has an empty company.
+    pub(crate) sequences: std::collections::HashMap<(String, String), sessionops::Sequence>,
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
@@ -159,6 +173,12 @@ impl Session {
             bindings: Vec::new(),
             error_finals: None,
             committed_row_version: 0,
+            page_handler_depth: 0,
+            code_coverage: false,
+            frames: Vec::new(),
+            isolated_storage: Default::default(),
+            install_scope: false,
+            sequences: Default::default(),
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
@@ -225,6 +245,7 @@ impl Session {
                     security_filtering: 2,
                     key: 0,
                     ascending: true,
+                    field_descending: false,
                     position: None,
                     auto_calc: Vec::new(),
                 })))
@@ -234,6 +255,30 @@ impl Session {
     }
 
     /// A fresh instance of codeunit `object` with default globals.
+    /// What `ModuleInfo` reports for app `index` of the program, from its manifest.
+    fn module_of_app(&self, index: usize) -> Option<al_builtins::value::ModuleInfoState> {
+        let app = self.engine.program.apps.get(index)?;
+        let version = {
+            let parts: Vec<Option<i32>> = app.version.split('.').map(|p| p.parse().ok()).collect();
+            match parts.as_slice() {
+                [Some(a), Some(b), Some(c), Some(d)] => Some([*a, *b, *c, *d]),
+                _ => None,
+            }
+        };
+        Some(al_builtins::value::ModuleInfoState {
+            id: ops::parse_guid(&app.id)?,
+            name: app.name.clone(),
+            publisher: app.publisher.clone(),
+            version,
+            dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
+        })
+    }
+
+    /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
+    pub fn set_install_scope(&mut self, on: bool) {
+        self.install_scope = on;
+    }
+
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
         let tys: Vec<RtType> = self.engine.program.objects[object]
             .globals
@@ -345,7 +390,9 @@ impl Session {
             }
         }
         self.try_depth += usize::from(is_try);
+        self.frames.push(object);
         let outcome = self.exec_block(&r.body, &mut frame);
+        self.frames.pop();
         self.try_depth -= usize::from(is_try);
         self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
@@ -472,22 +519,36 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
-            S::AssertError(body) => match self.exec_block(body, f) {
-                Err(Signal::Error(e)) => {
-                    // The caught error rolls the transaction back to the last commit
-                    // (record/TestRecordRenameRollback.al).
-                    self.rollback_transaction();
-                    self.last_error = e;
-                    Ok(())
+            S::AssertError(body) => {
+                // Inside a UI handler, with writes pending from before the page opened, the extent
+                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
+                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
+                // Initialize() without a Commit, runs a modal page whose handler does
+                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
+                // real BC. Rolling back to the last commit would undo it.
+                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                match self.exec_block(body, f) {
+                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
+                        "asserterror in a UI handler with writes pending from before it ran: the extent \
+                         of the rollback is not pinned"
+                            .into(),
+                    )),
+                    Err(Signal::Error(e)) => {
+                        // The caught error rolls the transaction back to the last commit
+                        // (record/TestRecordRenameRollback.al).
+                        self.rollback_transaction();
+                        self.last_error = e;
+                        Ok(())
+                    }
+                    // The message is not pinned by the corpus yet (docs/probes-needed.md).
+                    Ok(()) => Err(Signal::Error(AlError {
+                        message: "An error was expected inside an ASSERTERROR statement.".into(),
+                        code: "Dialog".into(),
+                        call_stack: String::new(),
+                    })),
+                    Err(other) => Err(other),
                 }
-                // The message is not pinned by the corpus yet (docs/probes-needed.md).
-                Ok(()) => Err(Signal::Error(AlError {
-                    message: "An error was expected inside an ASSERTERROR statement.".into(),
-                    code: "Dialog".into(),
-                    call_stack: String::new(),
-                })),
-                Err(other) => Err(other),
-            },
+            }
         }
     }
 
@@ -582,6 +643,12 @@ impl Session {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
                         Value::Record(rc) => self.record_instance(*object, rc, None)?,
+                        // The page a part shows (`CurrPage.<Part>.Page`).
+                        // A `Page` variable's procedures (OnInit at first use) are not modelled.
+                        Value::TestPage(st) if st.borrow().host.is_some() => {
+                            let i = self.page_instance(&st)?;
+                            self.shared_instance(i)
+                        }
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };
@@ -922,6 +989,64 @@ impl al_builtins::native::Ctx for Session {
 
     fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         Session::ref_op(self, id, receiver, args)
+    }
+    fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
+        Session::session_op(self, id, args)
+    }
+    fn module_at_frame(&self, depth: usize) -> Option<al_builtins::value::ModuleInfoState> {
+        let at = self.frames.len().checked_sub(1 + depth)?;
+        self.module_of_app(self.engine.program.objects[self.frames[at]].app as usize)
+    }
+    fn app_resources(&self) -> Option<al_builtins::native::AppResources> {
+        let obj = *self.frames.last()?;
+        let app = self
+            .engine
+            .program
+            .apps
+            .get(self.engine.program.objects[obj].app as usize)?;
+        Some((app.name.clone(), app.resources.clone()))
+    }
+    fn module_callstack(&self, skip: usize) -> Vec<al_builtins::value::ModuleInfoState> {
+        let mut seen = Vec::new();
+        let mut out = Vec::new();
+        for obj in self.frames.iter().rev().skip(skip) {
+            let app = self.engine.program.objects[*obj].app as usize;
+            if !seen.contains(&app) {
+                seen.push(app);
+                out.extend(self.module_of_app(app));
+            }
+        }
+        out
+    }
+    fn module_by_id(&self, id: &[u8; 16]) -> al_builtins::native::ModuleLookup {
+        use al_builtins::native::ModuleLookup;
+        let apps = &self.engine.program.apps;
+        let parse = |s: &str| ops::parse_guid(s);
+        if let Some(i) = apps.iter().position(|a| parse(&a.id).as_ref() == Some(id)) {
+            if let Some(m) = self.module_of_app(i) {
+                return ModuleLookup::Found(m);
+            }
+        }
+        if apps
+            .iter()
+            .any(|a| a.dependencies.iter().any(|d| parse(d).as_ref() == Some(id)))
+        {
+            return ModuleLookup::OutsideWorkspace;
+        }
+        ModuleLookup::NotInstalled
+    }
+    fn workspace_table(&self, number: i32) -> bool {
+        self.engine
+            .program
+            .objects
+            .iter()
+            .any(|o| o.kind == "table" && o.id.is_some_and(|id| i64::from(id) == i64::from(number)))
+    }
+    fn install_scope(&self) -> bool {
+        self.install_scope
+    }
+    fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
+        Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
     fn commit(&mut self) -> Result<(), Signal> {
         self.commit_builtin()

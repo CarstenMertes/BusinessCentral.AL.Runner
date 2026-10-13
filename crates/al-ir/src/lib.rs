@@ -7,6 +7,25 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Program {
     pub objects: Vec<Object>,
+    /// The apps the objects belong to, in the order the compiler was given them (`Object::app`
+    /// indexes this). Publisher and version come from the runner, which reads the manifests.
+    #[serde(default)]
+    pub apps: Vec<AppInfo>,
+}
+
+/// What `NavApp.GetCurrentModuleInfo` reports about an app.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct AppInfo {
+    pub id: String,
+    pub name: String,
+    pub publisher: String,
+    /// `1.0.0.0`.
+    pub version: String,
+    /// Ids of the apps it depends on.
+    pub dependencies: Vec<String>,
+    /// The packaged resources (`resourceFolders` of the manifest): name relative to its folder, content.
+    #[serde(default)]
+    pub resources: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,6 +51,10 @@ pub struct Object {
     pub xrec_slot: Option<usize>,
     /// For pages: the control tree and page triggers (ADR-012).
     pub page: Option<Page>,
+    /// Index of the app that owns the object, in the order the apps were given to the compiler.
+    /// Builtins scoped to a module (`IsolatedStorage`) key on it.
+    #[serde(default)]
+    pub app: u32,
     /// For queries: dataitems, columns and the query-level properties.
     #[serde(default)]
     pub query: Option<Query>,
@@ -313,6 +336,29 @@ pub struct Control {
     pub triggers: Vec<(String, usize)>,
     /// For parts: the page object index.
     pub part_page: Option<usize>,
+    /// For parts: how the part's rows follow the host's current row.
+    #[serde(default)]
+    pub part_link: Option<PartLink>,
+}
+
+/// `SubPageLink`, `SubPageView` and `Provider` of a part control (ADR-012 follow-up).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PartLink {
+    /// `SubPageLink` entries, in source order.
+    pub entries: Vec<LinkEntry>,
+    /// `SubPageView` as written.
+    pub view: Option<String>,
+    /// `Provider = <part>`: the control index (on the same page) whose current row the link reads.
+    pub provider: Option<usize>,
+}
+
+/// One `PartField = field(HostField)` / `const(..)` / `filter(..)` entry of a `SubPageLink`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LinkEntry {
+    /// Position of the part's field, position of the host (or provider) field.
+    Field(usize, usize),
+    /// Position of the part's field, the filter text (`const(x)` and `filter(x)` alike).
+    Filter(usize, String),
 }
 
 impl Control {
@@ -645,6 +691,7 @@ mod tests {
     #[test]
     fn program_round_trips_through_serde() {
         let p = Program {
+            apps: vec![],
             objects: vec![Object {
                 kind: "codeunit".into(),
                 id: Some(50100),
@@ -660,6 +707,7 @@ mod tests {
                 rec_slot: None,
                 xrec_slot: None,
                 page: None,
+                app: 0,
                 query: None,
                 xmlport: None,
                 report: None,

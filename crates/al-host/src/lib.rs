@@ -97,7 +97,20 @@ pub trait Identity {
     fn current_client_type(&self) -> ClientType;
     /// `Session.DefaultClientType()`.
     fn default_client_type(&self) -> ClientType;
+    /// The id of the company the session runs in: the `Id` of its row in the Company table.
+    fn company_id(&self) -> [u8; 16] {
+        COMPANY_ID
+    }
+    /// The name of the machine that hosts the session (the `Host Name` of the Session table).
+    fn host_name(&self) -> String {
+        "localhost".into()
+    }
 }
+
+/// `{C0A1BDFA-0000-0000-0000-43524F4E5553}`, the id of the company (ADR-013 decision 9).
+pub const COMPANY_ID: [u8; 16] = [
+    0xC0, 0xA1, 0xBD, 0xFA, 0, 0, 0, 0, 0, 0, 0x43, 0x52, 0x4F, 0x4E, 0x55, 0x53,
+];
 
 /// The identity AL Runner v2 gives the code it runs (ADR-013, decision 9; `BcRuntime.cs`).
 #[derive(Debug, Clone, Copy, Default)]

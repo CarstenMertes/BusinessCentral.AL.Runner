@@ -168,6 +168,9 @@ pub struct ObjectSym {
     pub implements: Vec<Vec<String>>,
     /// Event subscriptions it declares, for objects of scanned files.
     pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
+    /// The properties written directly in the body of an object of a scanned file, as
+    /// (name, value text). Empty for an object of a parsed file.
+    pub scanned_properties: Vec<(String, String)>,
 }
 
 /// A byte range of a parsed text.
@@ -317,6 +320,7 @@ impl Workspace {
                     extends: o.extends,
                     implements: o.implements,
                     subscribers: o.subscribers,
+                    scanned_properties: o.properties,
                 });
             }
         }
@@ -473,13 +477,16 @@ impl Workspace {
         *self.usable_cache[i].get_or_init(|| self.file_problem(o.file).is_none() && self.object_node(o).is_some())
     }
 
+    /// Whether object `i` is a table of the platform app `System`.
+    pub fn platform_table(&self, i: usize) -> bool {
+        let o = &self.objects[i];
+        o.kind == ObjKind::Table && self.apps[o.app].id.eq_ignore_ascii_case(PLATFORM_APP_ID)
+    }
+
     /// Whether object `i` is a table of the platform app `System` that nothing provides rows for
     /// (ADR-013 decision 7). Declared and empty would be silently wrong, so it is refused.
     pub fn platform_table_without_provider(&self, i: usize) -> bool {
-        let o = &self.objects[i];
-        o.kind == ObjKind::Table
-            && self.apps[o.app].id.eq_ignore_ascii_case(PLATFORM_APP_ID)
-            && o.id.is_none_or(|id| al_builtins::platform::provider(id).is_none())
+        self.platform_table(i) && self.objects[i].id.is_none_or(|id| al_builtins::platform::provider(id).is_none())
     }
 
     /// Why name `name` of `kind` does not resolve: a platform table with no provider says so
@@ -795,6 +802,7 @@ struct FileObject {
     extends: Option<Vec<String>>,
     implements: Vec<Vec<String>>,
     subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
+    properties: Vec<(String, String)>,
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
@@ -813,6 +821,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 extends: o.extends_parts(),
                 implements: o.implements_parts(),
                 subscribers: Vec::new(),
+                properties: Vec::new(),
             })
             .collect(),
         dotnet: root.dotnet_types(),
@@ -851,6 +860,7 @@ fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
                 extends: o.extends,
                 implements: o.implements,
                 subscribers: o.subscribers,
+                properties: o.properties,
             })
             .collect(),
     }

@@ -23,12 +23,29 @@ pub enum Provider {
 pub enum Virtual {
     Integer,
     Date,
+    Session,
+    ActiveSession,
+    AllObj,
+    AllObjWithCaption,
+    CodeunitMetadata,
+    TableMetadata,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
 pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_026, "Integer", Provider::Virtual(Virtual::Integer)),
     (2_000_000_007, "Date", Provider::Virtual(Virtual::Date)),
+    (2_000_000_009, "Session", Provider::Virtual(Virtual::Session)),
+    (2_000_000_110, "Active Session", Provider::Virtual(Virtual::ActiveSession)),
+    (2_000_000_038, "AllObj", Provider::Virtual(Virtual::AllObj)),
+    (2_000_000_058, "AllObjWithCaption", Provider::Virtual(Virtual::AllObjWithCaption)),
+    (2_000_000_137, "CodeUnit Metadata", Provider::Virtual(Virtual::CodeunitMetadata)),
+    (2_000_000_136, "Table Metadata", Provider::Virtual(Virtual::TableMetadata)),
+    // Stored tables whose rows AL reads as facts about the session; the platform seeds them
+    // (al-vm `platform/seed.rs`).
+    (2_000_000_006, "Company", Provider::Stored),
+    (2_000_000_120, "User", Provider::Stored),
+    (2_000_000_053, "Access Control", Provider::Stored),
 ];
 
 /// The provider of platform table `id`, if it has one.
@@ -42,6 +59,40 @@ pub fn virtual_table(id: u32) -> Option<Virtual> {
         Provider::Virtual(v) => Some(v),
         Provider::Stored => None,
     }
+}
+
+/// The columns of a registered table that a provider fills with a value something pins, by table
+/// id. A table that is not listed has every column filled; for a table that is, a column outside
+/// the list (and below the system fields) is not known, and code that uses it is refused where it
+/// is lowered (`al-sema`), never given a default (ADR-013 decision 7; hard rule 3).
+pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
+    // AllObj: record/TestAllObjVirtualTable.al, TestAllObjOwningAppPerKind.al. "AL Namespace" (62) is not read.
+    (2_000_000_038, &[1, 3, 4, 60, 61]),
+    // AllObjWithCaption: same files. "AL Namespace" (63) is not read.
+    (2_000_000_058, &[1, 3, 4, 20, 30, 60, 61, 62]),
+    // CodeUnit Metadata: record/TestCodeunitMetadataVirtualTable.al, TestCodeunitInventoryOrder.al. "App ID" (6) is not read.
+    (2_000_000_137, &[1, 2, 3, 4, 5, 7, 8, 9, 10, 11]),
+    // Table Metadata: record/TestTableMetadataVirtualTable.al.
+    (2_000_000_136, &[1, 2, 3, 4, 5, 11, 12, 13, 15]),
+    // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.
+    (2_000_000_009, &[1, 2, 3, 5, 6, 16, 17, 19]),
+    // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. The server and client computer names are not read.
+    (2_000_000_110, &[1, 2, 3, 6, 7, 9, 10, 11]),
+];
+
+/// Why column `field` of platform table `table` cannot be read, if it cannot.
+pub fn unpinned_column(table: u32, field: u32) -> Option<String> {
+    if field >= SYSTEM_OBJECT_BASE {
+        return None;
+    }
+    let (_, pinned) = PINNED_COLUMNS.iter().find(|(t, _)| *t == table)?;
+    if pinned.contains(&field) {
+        return None;
+    }
+    let name = REGISTRY.iter().find(|(i, _, _)| *i == table).map_or("?", |(_, n, _)| *n);
+    Some(format!(
+        "column {field} of platform table '{name}' ({table}) is not pinned: no corpus test fixes its value (docs/probes-needed.md)"
+    ))
 }
 
 /// The first id of the platform's system objects.

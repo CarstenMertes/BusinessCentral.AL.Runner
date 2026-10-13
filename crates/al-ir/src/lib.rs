@@ -143,6 +143,13 @@ pub struct Object {
     /// For reportextensions that change what a run does: the triggers and data items they add.
     #[serde(default)]
     pub report_ext: Option<ReportExt>,
+    /// The namespace the object is declared in.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// For an extension object: the id of the object it extends, when that object is in the
+    /// workspace (the metadata tables report it).
+    #[serde(default)]
+    pub extends_id: Option<u32>,
 }
 
 /// A report as the runtime sees it: processing only, with no layout.
@@ -905,6 +912,8 @@ mod tests {
                 xmlport: None,
                 report: None,
                 report_ext: None,
+                namespace: None,
+                extends_id: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

@@ -540,7 +540,9 @@ pub fn lower_with_positions(
                 name: o.name.clone(),
                 globals: Vec::new(),
                 routines: Vec::new(),
-                properties: Vec::new(),
+                // What the declaration scan read of the object body, so the metadata tables can
+                // answer for an object nothing compiled.
+                properties: o.scanned_properties.clone(),
                 enum_values: Vec::new(),
                 enum_captions: Vec::new(),
                 table: None,
@@ -552,6 +554,8 @@ pub fn lower_with_positions(
                 xmlport: None,
                 report: None,
                 report_ext: None,
+                namespace: o.namespace.clone(),
+                extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
             });
             out.unsupported.push(Vec::new());
             out.calls.push(Vec::new());
@@ -840,6 +844,8 @@ pub fn lower_with_positions(
             xmlport: xml_irs[oi].clone(),
             report: report_irs[oi].clone(),
             report_ext: ext_irs[oi].clone(),
+            namespace: o.namespace.clone(),
+            extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.program.positions = std::mem::take(&mut lw.positions);
@@ -1375,6 +1381,14 @@ impl Lowerer<'_> {
 
     /// The position of field `id`.
     fn readable_field_pos(&self, table: usize, id: u32) -> L<usize> {
+        // A column of a platform table that no corpus test pins is refused, not defaulted.
+        if let Some(why) = self.ws.objects[table]
+            .id
+            .filter(|_| self.ws.platform_table(table))
+            .and_then(|t| al_builtins::platform::unpinned_column(t, id))
+        {
+            return Err(why);
+        }
         self.field_pos(table, id).ok_or_else(|| "field position".to_string())
     }
 

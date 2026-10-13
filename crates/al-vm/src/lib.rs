@@ -238,8 +238,10 @@ impl Session {
     /// A session whose clock and identity come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
-        let store = al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine)));
-        Session {
+        let ident = platform::Ident::of(&host);
+        let store =
+            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+        let mut session = Session {
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
@@ -289,7 +291,9 @@ impl Session {
             application_areas: String::new(),
             report_init_depth: None,
             report_quit: false,
-        }
+        };
+        session.seed_platform_rows(&ident);
+        session
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).

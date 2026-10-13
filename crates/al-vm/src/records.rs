@@ -1028,6 +1028,22 @@ impl Session {
                         for (n, &field) in t.keys[0].iter().enumerate() {
                             ident[field] = pk[n].clone();
                         }
+                        // The same refusal as in `fail`, for the form that uses the result: a `Get` in
+                        // a dependency app's code that finds nothing in a table with no rows at all
+                        // is the state before the app's install and Company-Initialize ran, not
+                        // BC's answer (install/TestRetenPolAllowedTables_Tests.al:49 expects the
+                        // row Base Application's install registers). Goes when the install
+                        // baseline does (ADR-013 decision 5).
+                        if self.ret_used
+                            && self.in_dependency_code()
+                            && !rec.borrow().temporary
+                            && self.store_for(rec).count(&cx, &t, &[]).unwrap_or(1) == 0
+                        {
+                            return unsupported(format!(
+                                "{} is empty in code of a dependency app: the rows its install and Company-Initialize create are not seeded yet (ADR-013 decision 5)",
+                                t.name
+                            ));
+                        }
                         self.fail(&t, &ident, false)
                     }
                 }

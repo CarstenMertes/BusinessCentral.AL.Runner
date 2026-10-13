@@ -1,6 +1,6 @@
 # ADR-007: Oracle source, emulated version, and the passing-set ratchet
 
-- Status: Accepted
+- Status: Accepted. Amended by ADR-015: one oracle and one ratchet per BC major, under `oracle/<major>/` and `metrics/<major>/`.
 - Date: 2026-10-13
 
 ## Context

@@ -69,6 +69,19 @@ codeunit 50917 Single
     procedure GetBumps(): Integer begin exit(Bumps); end;
 }
 
+// corpus handlers/TestPageActionRunObjectKinds_Objects.al:254-268: TableNo gives OnRun a Rec.
+codeunit 50919 RecReader
+{
+    TableNo = "TX T";
+    trigger OnRun() var L: Record "TX T"; begin L.K := 'LOG'; L.V := Rec.V; L.Insert(); end;
+}
+
+codeunit 50920 RecWriter
+{
+    TableNo = "TX T";
+    trigger OnRun() begin Rec.V := 'changed'; end;
+}
+
 codeunit 50918 Outer
 {
     trigger OnRun() var Ok: Boolean; R: Record "TX T"; begin
@@ -409,4 +422,45 @@ fn the_scope_ends_when_the_attributed_procedure_fails() {
         ),
         "Yes"
     );
+}
+
+// handlers/TestPageActionRunObjectKinds_Tests.al:ProbeControlEachTargetRecordsItsOwnExecution
+// (:143-150): the record handed to Codeunit.Run is the Rec OnRun reads.
+#[test]
+fn codeunit_run_hands_the_record_to_a_tableno_codeunit_as_rec() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; L: Record \"TX T\"; begin
+            R.K := 'B'; R.V := 'Bravo'; R.Insert();
+            Codeunit.Run(Codeunit::RecReader, R);
+            L.Get('LOG');
+            exit(L.V);
+        end;"),
+        "Bravo"
+    );
+    // The instance form passes it the same way.
+    assert_eq!(
+        f(
+            "var R: Record \"TX T\"; L: Record \"TX T\"; Reader: Codeunit RecReader; begin
+            R.K := 'B'; R.V := 'Bravo'; R.Insert();
+            Reader.Run(R);
+            L.Get('LOG');
+            exit(L.V);
+        end;"
+        ),
+        "Bravo"
+    );
+}
+
+// Whether a change OnRun makes to Rec reaches the caller's variable is not pinned: refused.
+#[test]
+fn a_tableno_codeunit_that_changes_rec_is_refused() {
+    match run("procedure F(): Text var R: Record \"TX T\"; begin
+        R.K := 'B'; R.V := 'Bravo'; R.Insert();
+        Codeunit.Run(Codeunit::RecWriter, R);
+        exit(R.V);
+    end;")
+    {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("RecWriter") && why.contains("changed Rec"), "{why}"),
+        other => panic!("{other:?}"),
+    }
 }

@@ -419,8 +419,8 @@ reportextension 68000 "RXT Proc Report Ext" extends "RXT Proc Report"
     var Log: Codeunit "RXT Log";
 }
 
-// An extension that adds a column and a procedure changes nothing a run can see... except the
-// procedure, which a variable of the base report could not call: refused.
+// corpus extensionevents/ALTExtEvtFixtures.al:104-125: a reportextension that declares a
+// procedure and an event, a subscriber bound through the base report, and a sink.
 report 68010 "Ext Proc Base"
 {
     ProcessingOnly = true;
@@ -429,7 +429,41 @@ report 68010 "Ext Proc Base"
 }
 reportextension 68010 "Ext Proc Ext" extends "Ext Proc Base"
 {
-    procedure Raise(Value: Integer) begin end;
+    procedure RaiseReportExt(Value: Integer) begin OnReportExtEvent(Value); end;
+
+    [IntegrationEvent(false, false)]
+    local procedure OnReportExtEvent(Value: Integer) begin end;
+}
+codeunit 68012 "Ext Proc Sink"
+{
+    SingleInstance = true;
+    var Count: Integer; Last: Integer;
+    procedure Reset() begin Count := 0; Last := 0; end;
+    procedure Note(Value: Integer) begin Count += 1; Last := Value; end;
+    procedure Seen(): Text begin exit(Format(Count) + ':' + Format(Last)); end;
+}
+codeunit 68013 "Ext Proc Subscriber"
+{
+    [EventSubscriber(ObjectType::Report, Report::"Ext Proc Base", 'OnReportExtEvent', '', false, false)]
+    local procedure OnReportExtEvent(Value: Integer)
+    var Sink: Codeunit "Ext Proc Sink";
+    begin
+        Sink.Note(Value);
+    end;
+}
+
+// An extension with a procedure and a global variable: what state a variable of the base report
+// keeps for the extension is not pinned, so it is refused.
+report 68014 "Ext State Base"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset { dataitem(Rows; "Num Row") { } }
+}
+reportextension 68014 "Ext State Ext" extends "Ext State Base"
+{
+    procedure Bump() begin Count += 1; end;
+    var Count: Integer;
 }
 
 // An empty extension, as the corpus has several (_fixtures/ALTExtensionSubtypeFixtures.al:16-26).
@@ -1150,10 +1184,25 @@ fn an_error_in_the_extensions_prereport_fails_the_run() {
     );
 }
 
+// extensionevents/TestExtensionDeclaredEvents.al:ReportExtEvent_SubscriberBoundToBaseReport_FiresOnceWithArgument (:105-117)
 #[test]
-fn an_extension_with_a_procedure_is_refused() {
-    let why = refusal("var R: Report \"Ext Proc Base\"; begin R.UseRequestPage(false); exit('x'); end;");
-    assert!(why.contains("Ext Proc Ext"), "{why}");
+fn an_extension_procedure_is_called_through_the_base_report_and_raises_its_event() {
+    assert_eq!(
+        f(
+            "var R: Report \"Ext Proc Base\"; Sink: Codeunit \"Ext Proc Sink\"; begin
+            Sink.Reset();
+            R.RaiseReportExt(23);
+            exit(Sink.Seen());
+        end;"
+        ),
+        "1:23"
+    );
+}
+
+#[test]
+fn an_extension_with_a_procedure_and_a_global_variable_is_refused() {
+    let why = refusal("var R: Report \"Ext State Base\"; begin R.UseRequestPage(false); exit('x'); end;");
+    assert!(why.contains("Ext State Ext"), "{why}");
 }
 
 #[test]

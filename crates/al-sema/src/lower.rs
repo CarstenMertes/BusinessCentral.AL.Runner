@@ -692,6 +692,10 @@ pub fn lower_with_positions(
         let (mut rec_slot, mut xrec_slot) = (None, None);
         if let Some(t) = table_of[oi] {
             for (name, slot) in [("Rec", &mut rec_slot), ("xRec", &mut xrec_slot)] {
+                // A codeunit has no xRec.
+                if name == "xRec" && o.kind == ObjKind::Codeunit {
+                    continue;
+                }
                 *slot = Some(globals.len());
                 lw.globals.insert(name.to_lowercase(), globals.len());
                 globals.push(ir::Slot {
@@ -1312,10 +1316,22 @@ impl Lowerer<'_> {
                 (Some(ws), Some(t)) => ws
                     .iter()
                     .map(|w| match w {
-                        crate::relation::ParsedWhere::Value { related, text } => Some(ir::RelationWhere::Value {
-                            related: field_pos(&self.members[t], related)?,
-                            text: text.clone(),
-                        }),
+                        crate::relation::ParsedWhere::Value { related, text } => {
+                            let p = field_pos(&self.members[t], related)?;
+                            // `Database::"X"` / `Report::"X"` etc.: the object's id, as for a
+                            // CalcFormula const (corpus record/CdcOwner.Table.al:67,79).
+                            let text = if !text.starts_with('\'') && text.contains("::") {
+                                match calc_const(self.ws, self.members, file, text, &self.members[t].fields[p].ty) {
+                                    Ok(ir::Const::Integer(id)) => id.to_string(),
+                                    Ok(ir::Const::BigInteger(id)) => id.to_string(),
+                                    Ok(ir::Const::Decimal(id)) => id,
+                                    _ => return None,
+                                }
+                            } else {
+                                text.clone()
+                            };
+                            Some(ir::RelationWhere::Value { related: p, text })
+                        }
                         crate::relation::ParsedWhere::Field { related, own: o } => Some(ir::RelationWhere::Field {
                             related: field_pos(&self.members[t], related)?,
                             own: field_pos(own, o)?,
@@ -2117,6 +2133,21 @@ impl Lowerer<'_> {
             },
             Ty::Record { table, temporary } => {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
+                // A table of another type (CRM, ExternalSQL, ...) is served by a table connection.
+                let kind = self
+                    .ws
+                    .object_ast(t)
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("TableType"))
+                    .map(|p| p.value_text().trim().to_string());
+                if let Some(k) =
+                    kind.filter(|k| !k.eq_ignore_ascii_case("normal") && !k.eq_ignore_ascii_case("temporary"))
+                {
+                    return Err(format!(
+                        "table \"{}\" has TableType = {k}: it is served by a table connection, which the runtime does not model",
+                        crate::types::display_name(table)
+                    ));
+                }
                 // `TableType = Temporary` makes every record of the table temporary (corpus
                 // record/TestTempTableContracts.al:16).
                 RtType::Record(t as u32, *temporary || self.is_temporary_table(t))
@@ -2655,7 +2686,7 @@ impl Lowerer<'_> {
                     )
                 });
                 if compound {
-                    return Err("compound assignment to FieldRef.Value is not lowered yet".into());
+                    return Err("compound assignment to a setter-form builtin is not lowered yet".into());
                 }
                 let recv = kids[0].children().next().ok_or("member base")?;
                 let receiver = match self.place(&recv) {
@@ -4011,6 +4042,29 @@ table 50912 \"ALT Head\"
     }
 
     #[test]
+    fn table_relation_where_object_constants_resolve_to_the_object_id() {
+        // corpus record/CdcOwner.Table.al:67,79 (`Database::"CDC Owner"`, `Report::"ALT Simple Report"`).
+        let (_, l) = lower_src(
+            "table 50911 \"ALT Line\" { fields { field(1; Code; Code[20]) { } field(7; \"Table ID\"; Integer) { } field(8; \"Report ID\"; Integer) { } } }
+             report 50950 \"ALT Rep\" { }
+             table 50912 \"ALT Head\" { fields {
+                field(1; \"No.\"; Code[20]) { }
+                field(2; D; Code[20]) { TableRelation = \"ALT Line\".Code where(\"Table ID\" = const(Database::\"ALT Line\")); }
+                field(3; R; Code[20]) { TableRelation = \"ALT Line\".Code where(\"Report ID\" = const(Report::\"ALT Rep\")); }
+             } }",
+        );
+        let text = |name: &str| {
+            let f = flow(&l, "ALT Head", name);
+            match &f.relation_arms[0].wheres.as_ref().expect("wheres understood")[0] {
+                ir::RelationWhere::Value { text, .. } => text.clone(),
+                other => panic!("{other:?}"),
+            }
+        };
+        assert_eq!(text("D"), "50911");
+        assert_eq!(text("R"), "50950");
+    }
+
+    #[test]
     fn calc_formula_filters_rewrite_double_quotes_and_flow_references_resolve() {
         let (_, l) = lower_src(FLOW_TABLES);
         let q = flow(&l, "ALT Head", "Quoted").calc.expect("lowered");
@@ -4022,6 +4076,31 @@ table 50912 \"ALT Head\"
         // "Date Filter" is position 1 of ALT Head, Totaling position 2.
         assert_eq!(m.conds[0].value, ir::CalcValue::UpperLimit(1));
         assert_eq!(m.conds[1].value, ir::CalcValue::FieldFilter(2));
+    }
+
+    #[test]
+    fn a_record_of_a_table_that_is_not_normal_or_temporary_is_refused() {
+        // session/TestDatabaseTableConnectionCrm.al:162-176: a TableType = CRM table is served
+        // by a table connection, which the runtime does not model.
+        let (_, l) = lower_src(
+            "table 50960 Crm { TableType = CRM; fields { field(1; Id; Guid) { } } }
+             table 50961 Plain { TableType = Normal; fields { field(1; Id; Integer) { } } }
+             codeunit 50962 C {
+                procedure A() var R: Record Crm; begin R.Init(); end;
+                procedure B() var R: Record Plain; begin R.Init(); end;
+             }",
+        );
+        let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+        let reasons = |n: &str| {
+            let ri = l.program.objects[oi].routines.iter().position(|r| r.name == n).unwrap();
+            l.unsupported[oi][ri].clone()
+        };
+        assert!(
+            reasons("A").iter().any(|r| r.contains("TableType = CRM")),
+            "{:?}",
+            reasons("A")
+        );
+        assert!(reasons("B").is_empty(), "{:?}", reasons("B"));
     }
 
     #[test]

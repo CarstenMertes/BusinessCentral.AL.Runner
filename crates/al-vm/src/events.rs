@@ -70,6 +70,9 @@ impl Registry {
         // (corpus extensionevents/TestExtensionDeclaredEvents.al:92 PageExtEvent_SubscriberBoundToBasePage_...).
         let mut base_of: HashMap<usize, usize> = HashMap::new();
         for (oi, o) in program.objects.iter().enumerate() {
+            if let Some(x) = &o.report_ext {
+                base_of.insert(oi, x.base);
+            }
             if let Some(t) = &o.table {
                 for &e in &t.extensions {
                     base_of.insert(e, oi);

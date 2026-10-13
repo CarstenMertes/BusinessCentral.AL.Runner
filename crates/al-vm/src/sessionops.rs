@@ -36,7 +36,105 @@ fn big(args: &[Value], i: usize) -> Option<i64> {
     }
 }
 
+/// The connection string of the platform's own test connection, the one a CRM table connection
+/// may use in a test (corpus session/TestDatabaseTableConnectionCrm.al:8-14).
+const TEST_CONNECTION: &str = "@@test@@";
+
 impl Session {
+    /// `Database.{Register,Unregister,Has,SetDefault,GetDefault}TableConnection`. Only the CRM
+    /// test connection is modelled (session/TestDatabaseTableConnectionCrm.al); names match
+    /// ignoring case (:Database_HasTableConnection_CrmTest_NameIsCaseInsensitive).
+    fn table_connection_op(&mut self, method: &str, args: &[Value]) -> Result<Value, Signal> {
+        let kind = match args.first() {
+            Some(Value::Option(o, m)) => (*o, m.get(*o as usize).cloned().unwrap_or_default()),
+            other => return unsupported(format!("{method}TableConnection with {other:?} as the type")),
+        };
+        let name = match args.get(1) {
+            Some(v) => al_builtins::native::text_of(v),
+            None => None,
+        };
+        match (method, kind.1.as_str()) {
+            // A Cloud extension may not register an external SQL connection
+            // (session/TestMiscComplete.al:185-194: the error mentions a permission). The wording
+            // is a documentation-only assumption (docs/probes-needed.md).
+            ("Register", "ExternalSQL") => {
+                return error(
+                    "You do not have permission to register a table connection of type ExternalSQL.".to_string(),
+                );
+            }
+            // Never registered, so none is found and none is the default. The corpus only calls
+            // them for ExternalSQL and expects them not to throw
+            // (session/TestDatabaseExtended.al:75-92, TestSystemExtended.al:664-672).
+            ("Has", "ExternalSQL") => return Ok(Value::Boolean(false)),
+            ("GetDefault", "ExternalSQL") => return Ok(Value::Text(String::new())),
+            (_, "CRM") => {}
+            (m, k) => return unsupported(format!("{m}TableConnection of type {k} (not pinned)")),
+        }
+        let ord = kind.0;
+        match method {
+            "GetDefault" => Ok(Value::Text(
+                self.default_table_connection.get(&ord).cloned().unwrap_or_default(),
+            )),
+            "Has" | "Register" | "Unregister" | "SetDefault" => {
+                let Some(name) = name else {
+                    return unsupported(format!("{method}TableConnection with a name that is not text"));
+                };
+                let key = (ord, name.to_lowercase());
+                match method {
+                    "Has" => Ok(Value::Boolean(self.table_connections.contains(&key))),
+                    "Register" => {
+                        match args.get(2).and_then(al_builtins::native::text_of) {
+                            Some(c) if c == TEST_CONNECTION => {}
+                            _ => {
+                                return unsupported(
+                                    "RegisterTableConnection with a connection string other than @@test@@ (no Dataverse in the runtime)",
+                                );
+                            }
+                        }
+                        // The name is the pinned fragment of the error
+                        // (:Database_RegisterTableConnection_CrmTest_Duplicate_Throws).
+                        if !self.table_connections.insert(key) {
+                            return error(format!(
+                                "A table connection of type CRM named {name} is already registered."
+                            ));
+                        }
+                        Ok(Value::Null)
+                    }
+                    "Unregister" => {
+                        if !self.table_connections.remove(&key) {
+                            return unsupported(
+                                "UnregisterTableConnection of a connection that is not registered (not pinned)",
+                            );
+                        }
+                        // Unregistering the default clears the default too
+                        // (:Database_UnregisterTableConnection_CrmTest_ClearsDefaultAndHas).
+                        if self
+                            .default_table_connection
+                            .get(&ord)
+                            .is_some_and(|d| d.to_lowercase() == key.1)
+                        {
+                            self.default_table_connection.remove(&ord);
+                        }
+                        Ok(Value::Null)
+                    }
+                    _ => {
+                        if args.len() > 2 {
+                            return unsupported("SetDefaultTableConnection with a Scoped argument (not pinned)");
+                        }
+                        if !self.table_connections.contains(&key) {
+                            return unsupported(
+                                "SetDefaultTableConnection of a connection that is not registered (not pinned)",
+                            );
+                        }
+                        self.default_table_connection.insert(ord, name);
+                        Ok(Value::Null)
+                    }
+                }
+            }
+            other => unsupported(format!("{other}TableConnection")),
+        }
+    }
+
     /// The key of sequence `args[0]`; `scope` is the position of the optional CompanySpecific
     /// argument (company specific when omitted, as the default overload is: session/TestNumberSequence.al:15-30).
     fn sequence_key(&self, args: &[Value], scope: usize) -> Result<(String, String), Signal> {
@@ -99,6 +197,12 @@ impl Session {
                 }
                 Some(other) => unsupported(format!("CodeCoverageLog with {other:?}")),
             };
+        }
+        if let Some(method) = id
+            .strip_prefix("Database.")
+            .and_then(|m| m.strip_suffix("TableConnection#1"))
+        {
+            return self.table_connection_op(method, args);
         }
         if let Some(v) = self.error_collection_op(id, args) {
             return v;

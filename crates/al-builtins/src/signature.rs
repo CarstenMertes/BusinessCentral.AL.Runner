@@ -71,6 +71,65 @@ impl Signature {
         })
     }
 
+    /// Inverse of [`Signature::to_line`].
+    pub fn from_line(line: &str) -> Result<Signature, String> {
+        let bad = || format!("malformed catalog line `{line}`");
+        let (head, rest) = line.split_once(" (").ok_or_else(bad)?;
+        let (qual, kind) = head.rsplit_once(' ').ok_or_else(bad)?;
+        let (receiver, name) = qual.rsplit_once('.').ok_or_else(bad)?;
+        let close = rest.rfind(')').ok_or_else(bad)?;
+        let (params_s, tail) = (&rest[..close], rest[close + 1..].trim());
+        let (ret, ret_optional) = match tail.strip_prefix("-> ") {
+            Some(r) => match r.strip_suffix('?') {
+                Some(r) => (r.to_string(), true),
+                None => (r.to_string(), false),
+            },
+            None if tail.is_empty() => (String::new(), false),
+            None => return Err(bad()),
+        };
+        let mut params = Vec::new();
+        let mut depth = 0;
+        let mut cur = String::new();
+        for c in params_s.chars().chain(std::iter::once(',')) {
+            match c {
+                '[' => depth += 1,
+                ']' => depth -= 1,
+                ',' if depth == 0 => {
+                    let p = cur.trim();
+                    if !p.is_empty() {
+                        let (optional, p) = p.strip_prefix('?').map_or((false, p), |p| (true, p));
+                        let (by_var, p) = p.strip_prefix("var ").map_or((false, p), |p| (true, p));
+                        let (variadic, p) = p.strip_suffix('*').map_or((false, p), |p| (true, p));
+                        let (n, t) = p.split_once(": ").ok_or_else(bad)?;
+                        params.push(Param {
+                            name: n.into(),
+                            ty: t.into(),
+                            by_var,
+                            optional,
+                            variadic,
+                        });
+                    }
+                    cur.clear();
+                    continue;
+                }
+                _ => {}
+            }
+            cur.push(c);
+        }
+        Ok(Signature {
+            receiver: receiver.into(),
+            name: name.into(),
+            instance: match kind {
+                "inst" => true,
+                "static" => false,
+                _ => return Err(bad()),
+            },
+            params,
+            ret,
+            ret_optional,
+        })
+    }
+
     /// One catalog line: `Record.SetFilter inst (Field: Any, String: Text, ?Value: Any*) -> Boolean?`
     pub fn to_line(&self) -> String {
         let params: Vec<String> = self
@@ -329,6 +388,30 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(s.to_line(), "Dialog.Open static (String: Text, ?var Variable1: Any*)");
+    }
+
+    #[test]
+    fn line_round_trips() {
+        for l in [
+            "Record.SetFilter inst (Field: Any, String: Text, ?Value: Any*) -> Boolean?",
+            "Dialog.Open inst (String: Text, ?var Variable1: Any*)",
+            "Database.Commit static ()",
+            "Text.IndexOfAny inst (Values: List of [Char], ?StartIndex: Integer) -> Integer",
+            "Session.LogMessage static (EventId: Text, CustomDimensions: Dictionary of [Text, Text])",
+        ] {
+            assert_eq!(Signature::from_line(l).unwrap().to_line(), l);
+        }
+        let s = Signature::from_line("Dialog.Open inst (String: Text, ?var Variable1: Any*)").unwrap();
+        assert_eq!(
+            s.params[1],
+            Param {
+                name: "Variable1".into(),
+                ty: "Any".into(),
+                by_var: true,
+                optional: true,
+                variadic: true
+            }
+        );
     }
 
     #[test]

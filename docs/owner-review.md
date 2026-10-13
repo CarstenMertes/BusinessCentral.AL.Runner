@@ -34,6 +34,17 @@ reviewed it.
 
 ## Decided without owner review
 
+- 2026-10-14, orchestrator: there were 7 corpus CI runs overnight, not about 3.
+  - 3 were the probe batches.
+  - 1 was the final run on the probe head. Its corpus lint failed: two
+    probe codeunits shared a SingleInstance fixture.
+  - 1 re-ran after the fix (cdf315a).
+  - 2 were single-version runs for 28.5 and 29.0 on cdf315a.
+
+  The 28.5 and 29.0 runs were needed because the CLI requires every
+  per-version oracle to come from the same corpus commit. Without them, the
+  corpus bump for the new probe tests would have stalled.
+
 - 2026-10-14, ADR-013, dependency apps: the 45 s golden test of unresolved references
   (`corpus_resolve_deps.rs`) is `#[ignore]`d in debug builds; CI runs it in the release step.
 - 2026-10-14, ADR-013, dependency apps: the missing test-library apps (System Application Test

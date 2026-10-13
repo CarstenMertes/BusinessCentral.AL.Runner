@@ -1220,3 +1220,17 @@ fn an_error_raised_during_export_reaches_a_statement_and_refuses_a_guarded_call(
     let out = text(vars, &format!("{setup} Ok := XmlPort.Export(60023, OutStr); exit(Format(Ok));"));
     assert_eq!(out, "Yes");
 }
+
+// The statement form of an import that fails with an error AL code raised in a trigger lets that
+// error through with its own text (only the platform's own failures are refused as unpinned, see
+// a_failing_statement_import_is_refused_because_its_error_text_is_not_pinned).
+#[test]
+fn a_statement_import_lets_a_trigger_error_through() {
+    let out = text(
+        IMPORT_VARS,
+        "H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo></Universal></Universals>');
+         asserterror XmlPort.Import(60035, InStr);
+         exit(GetLastErrorText());",
+    );
+    assert_eq!(out, "RAISED-IN-TRIGGER");
+}

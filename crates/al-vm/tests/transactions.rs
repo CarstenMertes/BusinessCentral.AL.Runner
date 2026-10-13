@@ -476,3 +476,23 @@ fn only_a_test_codeunit_is_refused_when_run_from_a_test() {
         text(r).starts_with("You cannot nest the execution of test codeunits. Test codeunit 50931 TestCu was called"),
     );
 }
+
+// Only the OnRun *trigger* runs: a procedure that happens to be called OnRun is not it, and
+// neither is another trigger. The codeunit without a trigger is a no-op that succeeds
+// (types/TestLanguageEdgeCases.al:CodeunitRun_Success_ReturnsTrue).
+#[test]
+fn only_the_on_run_trigger_is_run() {
+    let extra = "codeunit 50932 NamedOnRun { procedure OnRun() begin Error('procedure ran'); end; }
+                 codeunit 50933 OtherTrigger { Subtype = Install; trigger OnInstallAppPerCompany() begin Error('other trigger ran'); end; }";
+    let r = run_in(
+        extra,
+        "procedure F(): Text
+        var Ok: Boolean;
+        begin
+            Ok := Codeunit.Run(Codeunit::NamedOnRun);
+            exit(Format(Ok) + Format(Codeunit.Run(Codeunit::OtherTrigger)));
+        end;",
+        |_| {},
+    );
+    assert_eq!(text(r), "YesYes");
+}

@@ -103,6 +103,10 @@ pub trait Ctx: FormatCtx {
     fn install_scope(&self) -> bool {
         false
     }
+    /// Whether a test codeunit is being run by the test runner (under TestIsolation = Codeunit).
+    fn in_test_run(&self) -> bool {
+        false
+    }
     /// `Error(ErrorInfo)` of a collectible error: inside a `[ErrorBehavior(Collect)]` scope the
     /// session keeps a copy and the call returns normally (`true`); outside one it is raised like
     /// any other error (`false`).
@@ -168,6 +172,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.StrLen#1", strlen),
     ("Text.StrPos#1", strpos),
     ("Text.StrCheckSum#1", strchecksum),
+    ("Session.StartSession#1", start_session),
+    ("Session.StartSession#2", start_session),
+    ("Session.StartSession#3", start_session),
     ("Text.CopyStr#1", copystr),
     ("Text.StrSubstNo#1", strsubstno),
     ("Text.UpperCase#1", uppercase),
@@ -569,6 +576,31 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     Ok(Value::Integer(pos as i32))
 }
 
+/// `StartSession`, every overload. While an app installs it starts nothing, leaves `SessionId` alone
+/// and answers false (or raises nothing when the result is ignored): install/TestInstallStartSession_Tests.al,
+/// ALSession.ALStartSessionAsyncImpl. In a test run under TestIsolation = Codeunit it raises the
+/// refusal below, also for the overload with a record, and `SessionId` stays 0
+/// (session/TestStartSessionRecord.al:StartSession_FromATestCodeunit_IsRefusedUnderCodeunitIsolation).
+/// Anywhere else a session would start, which this runtime does not do: refused.
+fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    if c.install_scope() {
+        return Ok(if c.ret_used() {
+            Value::Boolean(false)
+        } else {
+            Value::Null
+        });
+    }
+    if c.in_test_run() {
+        return Err(Signal::Error(AlError {
+            message: "Sessions can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled."
+                .into(),
+            code: String::new(),
+            call_stack: String::new(),
+        }));
+    }
+    unsupported("StartSession outside an install trigger and a test run (a second session is not modelled)")
+}
+
 /// `StrCheckSum(String [, WeightString] [, Modulus])`: `(M - (sum of digit * weight) mod M) mod M`, the
 /// formula of the documentation (methods-auto/text/text-strchecksum-method.md, its example gives 0
 /// for '4378' with weights '1234' and modulus 7). The corpus pins only that the result is not
@@ -806,6 +838,9 @@ pub(crate) mod tests {
     #[derive(Default)]
     pub(crate) struct TestCtx {
         err: AlError,
+        install: bool,
+        in_test: bool,
+        result_ignored: bool,
     }
     impl FormatCtx for TestCtx {
         fn enum_name(&self, _id: u32, o: i32) -> String {
@@ -828,6 +863,43 @@ pub(crate) mod tests {
         fn new_guid(&mut self) -> [u8; 16] {
             [1; 16]
         }
+        fn install_scope(&self) -> bool {
+            self.install
+        }
+        fn in_test_run(&self) -> bool {
+            self.in_test
+        }
+        fn ret_used(&self) -> bool {
+            !self.result_ignored
+        }
+    }
+
+    #[test]
+    fn start_session_answers_false_in_install_and_is_refused_in_a_test_run() {
+        let run = |ctx: &mut TestCtx| {
+            let mut args = vec![Value::Integer(777), Value::Integer(60448)];
+            lookup("Session.StartSession#1").unwrap()(ctx, None, &mut args)
+        };
+        // install/TestInstallStartSession_Tests.al:51-65
+        let mut install = TestCtx {
+            install: true,
+            ..Default::default()
+        };
+        assert!(matches!(run(&mut install), Ok(Value::Boolean(false))));
+        let mut plain = TestCtx {
+            install: true,
+            result_ignored: true,
+            ..Default::default()
+        };
+        assert!(matches!(run(&mut plain), Ok(Value::Null)));
+        // session/TestStartSessionRecord.al:57-66
+        let mut test = TestCtx {
+            in_test: true,
+            ..Default::default()
+        };
+        assert!(matches!(run(&mut test), Err(Signal::Error(e)) if e.message.contains(
+            "can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled")));
+        assert!(matches!(run(&mut TestCtx::default()), Err(Signal::Unsupported(_))));
     }
 
     pub(crate) fn call(id: &str, args: Vec<Value>) -> Result<Value, Signal> {

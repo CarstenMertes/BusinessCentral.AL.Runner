@@ -246,3 +246,22 @@ fn reading_the_unevaluable_field_of_a_record_with_another_field_written_is_refus
     ));
     assert!(matches!(&o[0].1, Outcome::NotRun(_)), "{o:?}");
 }
+
+// session/TestStartSessionRecord.al:57-82: StartSession from a test raises the isolation refusal,
+// with either overload, and leaves SessionId alone.
+#[test]
+fn start_session_from_a_test_is_refused_under_codeunit_isolation() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Plain() var Id: Integer; begin
+            asserterror StartSession(Id, Codeunit::\\"F2 Noop\\");
+            if StrPos(GetLastErrorText(), 'can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled') = 0 then Error('text <%1>', GetLastErrorText());
+            Check('0', Format(Id)); end;
+        [Test]
+        procedure WithRecord() var Id: Integer; R: Record \\"F2 Row\\"; begin
+            asserterror StartSession(Id, Codeunit::\\"F2 Noop\\", '', R);
+            if StrPos(GetLastErrorText(), 'can only be started in tests') = 0 then Error('text <%1>', GetLastErrorText());
+            Check('0', Format(Id)); end;"
+    ));
+}

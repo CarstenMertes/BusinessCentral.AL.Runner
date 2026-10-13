@@ -23,6 +23,9 @@ pub enum Signal {
     Unsupported(String),
 }
 
+/// An app's name and its packaged resources (name relative to the resource folder, content).
+pub type AppResources = (String, Vec<(String, Vec<u8>)>);
+
 /// What `NavApp.GetModuleInfo` finds.
 pub enum ModuleLookup {
     Found(crate::value::ModuleInfoState),
@@ -74,7 +77,7 @@ pub trait Ctx: FormatCtx {
         Vec::new()
     }
     /// The name and packaged resources of the app that owns the running code.
-    fn app_resources(&self) -> Option<(String, Vec<(String, Vec<u8>)>)> {
+    fn app_resources(&self) -> Option<AppResources> {
         None
     }
     /// The installed app with this id.

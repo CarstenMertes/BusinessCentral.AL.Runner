@@ -881,7 +881,7 @@ impl al_builtins::native::Ctx for Session {
         let at = self.frames.len().checked_sub(1 + depth)?;
         self.module_of_app(self.engine.program.objects[self.frames[at]].app as usize)
     }
-    fn app_resources(&self) -> Option<(String, Vec<(String, Vec<u8>)>)> {
+    fn app_resources(&self) -> Option<al_builtins::native::AppResources> {
         let obj = *self.frames.last()?;
         let app = self
             .engine

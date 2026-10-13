@@ -175,4 +175,56 @@ mod tests {
         refused(call("System.Power#1", vec![Value::Integer(0), Value::Integer(-1)]));
         refused(call("System.Power#1", vec![Value::Integer(10), Value::Integer(100)]));
     }
+    // Mutation-testing additions (docs/status.md debt).
+
+    #[test]
+    fn round_takes_every_whole_number_type() {
+        is_dec(call("System.Round#1", vec![Value::BigInteger(25), Value::Integer(10)]), "30");
+        is_dec(call("System.Round#1", vec![Value::Byte(7), Value::Integer(5)]), "5");
+        is_dec(call("System.Round#1", vec![Value::Integer(7), Value::BigInteger(5)]), "5");
+        is_dec(call("System.Round#1", vec![Value::Integer(7), Value::Byte(5)]), "5");
+    }
+
+    #[test]
+    fn a_direction_on_zero_is_not_a_negative_number() {
+        // The refusal is for numbers below zero only; zero rounds like any other number.
+        is_dec(call("System.Round#1", vec![d("0"), Value::Integer(1), t(">")]), "0");
+        is_dec(call("System.Round#1", vec![d("0"), Value::Integer(1), t("<")]), "0");
+    }
+
+    #[test]
+    fn the_result_keeps_the_scale_of_the_precision_and_no_more() {
+        let scale = |r: Result<Value, Signal>| match r {
+            Ok(Value::Decimal(d)) => d.scale(),
+            other => panic!("{other:?}"),
+        };
+        // 2.50 for a precision of 0.01, 3 for 1, and a precision written 0.50 counts as 0.5.
+        assert_eq!(scale(call("System.Round#1", vec![d("2.5"), d("0.01")])), 2);
+        assert_eq!(scale(call("System.Round#1", vec![d("2.5"), Value::Integer(1)])), 0);
+        assert_eq!(scale(call("System.Round#1", vec![d("1.4"), d("0.50")])), 1);
+        is_dec(call("System.Round#1", vec![d("1.4"), d("0.50")]), "1.5");
+    }
+
+    #[test]
+    fn power_exponent_limit_and_the_scale_of_a_written_exponent() {
+        let p = |a: &str, b: Value| call("System.Power#1", vec![d(a), b]);
+        // 10000 is the largest exponent computed; one more is refused.
+        is_dec(p("1", Value::Integer(10_000)), "1");
+        refused(p("1", Value::Integer(10_001)));
+        refused(p("1", Value::Integer(-10_001)));
+    }
+
+    // FOUND BY MUTATION TESTING (not fixed here: this task changes no runtime behaviour). `power`
+    // reads the whole exponent as `exp.trunc().mantissa() / 10^exp.scale()`. `trunc()` already
+    // drops the scale, so an exponent written with one (3.0, or 6 / 2 computed as 3.0) is divided
+    // by ten once too often: Power(2, 3.0) answers 1, not 8. The fix is
+    // `exp.trunc().to_i64()`. Remove the #[ignore] with the fix.
+    #[test]
+    #[ignore = "bug: Power with an exponent that carries a scale (3.0) answers 1"]
+    fn power_exponent_written_with_a_scale_is_still_a_whole_number() {
+        let p = |a: &str, b: Value| call("System.Power#1", vec![d(a), b]);
+        is_dec(p("2", d("3.0")), "8");
+        is_dec(p("2", d("-2.00")), "0.25");
+    }
+
 }

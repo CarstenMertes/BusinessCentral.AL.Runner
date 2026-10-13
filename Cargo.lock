@@ -60,6 +60,7 @@ dependencies = [
  "al-data",
  "al-ir",
  "al-sema",
+ "al-syntax",
  "al-vm",
  "quick-xml",
  "serde",

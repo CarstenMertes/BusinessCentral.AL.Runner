@@ -977,3 +977,43 @@ fn the_execution_context_is_normal_in_a_test() {
     );
     assert_eq!(r.unwrap(), "NormalYesYesYes");
 }
+
+// ---------------------------------------------------------------- collection errors
+
+#[test]
+fn list_get_outside_the_list_raises_the_invalid_argument_error() {
+    // collections/TestListTrappableError.al:21-45: both forms of Get raise it.
+    let r = text_of(
+        "l: List of [Integer]; v: Integer; a: Text;",
+        "asserterror l.Get(5, v); a := GetLastErrorText(); asserterror v := l.Get(5); exit(a + '|' + GetLastErrorText());",
+    );
+    let want = "An invalid argument was passed to a 'List' data type method.";
+    assert_eq!(r.unwrap(), format!("{want}|{want}"));
+}
+
+#[test]
+fn list_get_outside_the_list_with_the_result_used_still_answers_false() {
+    let r = text_of("l: List of [Integer]; v: Integer;", "exit(Format(l.Get(5, v)));");
+    assert_eq!(r.unwrap(), "No");
+}
+
+#[test]
+fn dictionary_get_of_a_missing_key_raises_the_key_not_found_error() {
+    // collections/TestCollectionsDictionary.al:42-55 pins the statement form; the value form
+    // (collections/TestCollectionContracts.al:188) is pinned as an error with a text (probes-needed).
+    let r = text_of(
+        "d: Dictionary of [Text, Integer]; v: Integer; a: Text;",
+        "d.Add('alpha', 11); asserterror d.Get('missing', v); a := GetLastErrorText(); asserterror v := d.Get('missing'); exit(a + '|' + GetLastErrorText());",
+    );
+    let want = "The given key was not present in the dictionary.";
+    assert_eq!(r.unwrap(), format!("{want}|{want}"));
+}
+
+#[test]
+fn other_list_index_errors_are_still_refused() {
+    // Only Get is pinned: RemoveAt, Set, Insert and GetRange outside the list stay refused.
+    for body in ["l.RemoveAt(3);", "l.Set(3, 1);", "l.Insert(4, 1);", "l.Get(0);"] {
+        let r = text_of("l: List of [Integer];", &format!("{body} exit('');"));
+        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
+    }
+}

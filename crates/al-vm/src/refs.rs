@@ -331,12 +331,13 @@ impl Session {
                 let i = int_arg(args, 0)?;
                 match usize::try_from(i - 1).ok().and_then(|i| t.keys[k].get(i).copied()) {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
-                    // corpus recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws;
-                    // the text ("Index out of bounds" per tableextension/TestTableExtKeysAndInitValue.al:326)
-                    // is only described in a comment.
-                    None => unsupported(format!(
-                        "KeyRef.FieldIndex({i}) out of range (error text not pinned yet)"
-                    )),
+                    // types/TestTypeSystemContracts.al:261 pins the fragment "Index out of bounds"
+                    // (recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws).
+                    None => Err(Signal::Error(AlError {
+                        message: "Index out of bounds".into(),
+                        code: String::new(),
+                        call_stack: String::new(),
+                    })),
                 }
             }
             other => unsupported(format!("KeyRef.{other}")),

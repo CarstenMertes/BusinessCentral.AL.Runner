@@ -306,7 +306,8 @@ fn dictionaries() {
 
 #[test]
 fn collection_errors_are_not_guessed() {
-    let src = cu("procedure F(): Integer var L: List of [Integer]; begin exit(L.Get(1)); end;");
+    // List.Get past the end is pinned (tests/builtins.rs); RemoveAt past the end is not.
+    let src = cu("procedure F(): Integer var L: List of [Integer]; begin L.RemoveAt(1); exit(0); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))));
 }
 

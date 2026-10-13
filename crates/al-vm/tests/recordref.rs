@@ -229,6 +229,22 @@ fn keyref_counts_and_names_key_fields() {
 }
 
 #[test]
+fn keyref_field_index_past_the_key_raises_index_out_of_bounds() {
+    // types/TestTypeSystemContracts.al:240-262 pins the fragment (both operands of `and` run, so
+    // FieldIndex(2) on a one-field key raises); recordref/TestBCSumIndexFieldContracts.al:188-198.
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; KR: KeyRef; m: Boolean; begin
+            RR.Open(50900);
+            KR := RR.KeyIndex(1);
+            asserterror m := (KR.FieldCount() = 2) and (KR.FieldIndex(2).Name() = 'x');
+            exit(GetLastErrorText() + Format(m));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Index out of boundsNo");
+}
+
+#[test]
 fn gettable_copies_the_record_in_settable_copies_it_out() {
     // corpus recordref/TestRecordRefGetSetTableContracts.al:30-60 (GetTable leaves the Record
     // alone, the ref takes the Record's buffer), :106-130 (SetTable: Rec is overwritten by the ref).

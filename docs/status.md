@@ -87,7 +87,7 @@ Each test is counted under the first thing that stops it.
 | 73 | RunObject actions | ADR-012 follow-up |
 | 58 | `[TransactionModel]` | Not started; corpus pins it (record/TestTransactionModelAutoRollback.al) |
 | 43 | Guarded `Codeunit.Run` (`if Codeunit.Run(...)`) | Not started |
-| ~150 | Single builtins: NavApp.GetCurrentModuleInfo, Report.Run, DMY2Date, CreateDateTime, CalcDate, Enum.Names, FilterPageBuilder, Session.ApplicationArea, … | Pick up one by one |
+| ~50 | Single builtins that remain: Session.ApplicationArea, TestFilter, FilterPageBuilder and Report.Run (page and report infrastructure), Today, CurrentDateTime and WorkDate (host clock), UserSecurityId and SessionId (host identity), Record.SetLoadFields (partial records), error collection (`[ErrorBehavior]`) | Needs the objects or host values named; see `docs/probes-needed.md` for what the done ones assume |
 | 31 | SystemCreatedAt/By and SystemModifiedAt/By are not stamped | Needs the clock and identity host values (ADR-013 identity table) |
 
 ## Open decisions for the project owner
@@ -115,9 +115,6 @@ Answered on 2026-10-13 and recorded in ADR-013:
 
 ## Known issues and debt
 
-- `al-builtins/src/format.rs`: the legacy `format()` wrapper still panics
-  (`unimplemented!`) on an unpinned format. Callers must use `try_format`.
-  Move the remaining callers over and delete the wrapper.
 - `GetLastErrorCallStack` returns a marker that refuses to be read; real call
   stacks need source lines in the IR.
 - Red/green discipline slipped in places during the parallel build-out (the
@@ -129,3 +126,16 @@ Answered on 2026-10-13 and recorded in ADR-013:
   formatting, and the `Format` of Time and DateTime.
 - `al-host` holds only the `DotNet` capability so far. Clock, identity and network go through it
   once ADR-013 lands.
+
+## Next targets after the corpus (owner, 2026-10-13)
+
+Start these when the corpus is green or nearly green and nothing big is left:
+
+1. **Microsoft's own Base App test buckets.** AL Runner has a skill for this:
+   `BusinessCentral.AL.Runner/.claude/skills/running-ms-test-buckets/SKILL.md`.
+   It measures how many of Microsoft's own test cases this runtime can run.
+   The tests need CRONUS demo data (`--test-data`), not an empty database.
+2. **CRONUS demo data in native Rust.** `bcdb` (repo `BusinessCentral.BakReader`, C#) reads BC
+   data straight from a `.bak` or `.bacpac` file, with no SQL Server. AL Runner uses it
+   for `--test-data`. Port it to Rust: here at first, possibly in that repo later.
+   This gives speed and native support for loading CRONUS into the store.

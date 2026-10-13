@@ -126,10 +126,18 @@ fn run() -> Result<ExitCode, String> {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let apps = vec![
-        runtime::load_app(&corpus_tests.join("al-language-internals-fixture"))?,
-        runtime::load_app(&root.join(&cfg.corpus_app))?,
+    let app_dirs = [
+        corpus_tests.join("al-language-internals-fixture"),
+        root.join(&cfg.corpus_app),
     ];
+    let apps = app_dirs
+        .iter()
+        .map(|d| runtime::load_app(d))
+        .collect::<Result<Vec<_>, _>>()?;
+    let manifests = app_dirs
+        .iter()
+        .map(|d| runtime::load_manifest(d))
+        .collect::<Result<Vec<_>, _>>()?;
     // ADR-014: the sidecar starts lazily, at the first `DotNet` call that reaches it.
     let host = Arc::new(SidecarHost::new(SidecarConfig {
         sidecar: args.dotnet_sidecar.clone(),
@@ -148,7 +156,7 @@ fn run() -> Result<ExitCode, String> {
         host,
         ..Default::default()
     };
-    let rt = runtime::CorpusRuntime::run_with(apps, &symbols, dotnet);
+    let rt = runtime::CorpusRuntime::run_with_dotnet(apps, &manifests, &symbols, dotnet);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",

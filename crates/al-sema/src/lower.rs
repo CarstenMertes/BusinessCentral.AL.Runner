@@ -2198,7 +2198,12 @@ impl Lowerer<'_> {
             let setter = self
                 .catalog
                 .by_id(&id)
-                .is_some_and(|s| s.receiver == "FieldRef" && s.name == "Value");
+                .is_some_and(|s| {
+                    (s.receiver == "FieldRef" && s.name == "Value")
+                        // `CurrPage.Editable := true` is the setter form of `CurrPage.Editable(true)`
+                        // (corpus handlers/TestPageModalNewRowLine_Objects.al:69).
+                        || (s.receiver == "Page" && s.name == "Editable")
+                });
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));

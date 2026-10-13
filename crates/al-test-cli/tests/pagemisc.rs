@@ -81,6 +81,26 @@ page 62015 "PM Look Card"
     } }
 }
 
+codeunit 62020 "PM Worker"
+{
+    trigger OnRun() var P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; N: Text; Row: Record "PM Row"; begin
+        P := Page.GetBackgroundParameters(); P.Get('No', N);
+        if N.StartsWith('FAIL') then Error('worker failed for %1', N);
+        if N = 'WRITE' then begin Row."No." := 'W'; Row.Insert(); end;
+        if N = 'COMMIT' then Commit();
+        R.Add('Out', 'BG:' + N); Page.SetBackgroundTaskResult(R);
+    end;
+}
+page 62021 "PM Bg Card"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout { area(Content) { field("No."; Rec."No.") { } field(OutCtl; OutText) { } field(ErrCtl; ErrText) { } } }
+    trigger OnAfterGetCurrRecord() var A: Dictionary of [Text, Text]; begin A.Add('No', Rec."No."); CurrPage.EnqueueBackgroundTask(TaskId, Codeunit::"PM Worker", A); end;
+    trigger OnPageBackgroundTaskCompleted(TaskId: Integer; Results: Dictionary of [Text, Text]) begin Results.Get('Out', OutText); end;
+    trigger OnPageBackgroundTaskError(TaskId: Integer; ErrorCode: Text; ErrorText: Text; ErrorCallStack: Text; var IsHandled: Boolean) begin ErrText := ErrorText; IsHandled := Rec.Descr = 'handled'; end;
+    var TaskId: Integer; OutText: Text; ErrText: Text;
+}
+
 page 62013 "PM Rowset"
 {
     PageType = List; SourceTable = "PM Row"; SourceTableView = sorting("No.") order(descending); Editable = false;
@@ -366,4 +386,66 @@ fn an_unhandled_lookup_with_writes_pending_is_refused() {
             OpenOn(C); C.Pageless.SetValue('PL-A'); asserterror C.Pageless.Lookup(); end;"
     ));
     assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("writes pending")), "{o:?}");
+}
+
+const BG: &str = "procedure SeedBg() var R: Record \"PM Row\"; begin R.DeleteAll();
+    R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'FAIL-H'; R.Descr := 'handled'; R.Insert(); R.\"No.\" := 'FAIL-U'; R.Descr := ''; R.Insert(); end;";
+
+// handlers/TestPageBgTask_Tests.al:61 EnqueueBackgroundTask_CompletesBeforeOpenViewReturns, :146 ..._HandledErrorDoesNotPropagate
+#[test]
+fn an_enqueued_task_has_completed_when_the_call_returns_and_a_handled_error_is_swallowed() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Completes() var C: TestPage \"PM Bg Card\"; begin
+            SeedBg(); C.OpenView(); Check('BG:A', C.OutCtl.Value); C.Close(); end;
+        [Test]
+        procedure Handled() var C: TestPage \"PM Bg Card\"; R: Record \"PM Row\"; begin
+            SeedBg(); R.Get('FAIL-H'); C.OpenView(); if not C.GoToRecord(R) then Error('goto');
+            Check('worker failed for FAIL-H', C.ErrCtl.Value); C.Close(); end;"
+    ));
+}
+
+// handlers/TestPageBgTask_Tests.al:170 EnqueueBackgroundTask_UnhandledErrorPropagates
+#[test]
+fn an_unhandled_task_error_tears_the_page_down() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Unhandled() var C: TestPage \"PM Bg Card\"; R: Record \"PM Row\"; begin
+            SeedBg(); R.Get('FAIL-U'); C.OpenView();
+            asserterror C.GoToRecord(R);
+            if StrPos(GetLastErrorText(), 'The TestPage is not open') = 0 then Error('got %1', GetLastErrorText()); end;"
+    ));
+}
+
+// handlers/TestPageBgTask_Tests.al:104 RunPageBackgroundTask_ReturnsWorkerResult, :210 ..._WorkerInsert_RefusedByReadOnlySession
+#[test]
+fn run_page_background_task_returns_the_result_and_the_worker_cannot_write() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Result() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; V: Text; begin
+            SeedBg(); C.OpenView(); P.Add('No', 'RPT'); R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false);
+            R.Get('Out', V); Check('BG:RPT', V); C.Close(); end;
+        [Test]
+        procedure NoWrite() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; Row: Record \"PM Row\"; begin
+            SeedBg(); C.OpenView(); P.Add('No', 'WRITE');
+            if TryRun(C, P) then Error('must fail');
+            if StrPos(GetLastErrorText(), 'Sorry, the current permissions prevented the action. (TableData 62000 PM Row Insert: ') = 0 then Error('got %1', GetLastErrorText());
+            if Row.Get('W') then Error('landed'); C.Close(); end;
+        [TryFunction] local procedure TryRun(var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]) var R: Dictionary of [Text, Text]; begin R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
+    ));
+}
+
+// A worker's transaction is not modelled: Commit in it is refused.
+#[test]
+fn a_commit_in_a_worker_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Commits() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; begin
+            SeedBg(); C.OpenView(); P.Add('No', 'COMMIT'); R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("Commit in a page background task")), "{o:?}");
 }

@@ -65,6 +65,8 @@ fn is_true(s: &str) -> bool {
 type Handler = (usize, usize, Rc<RefCell<al_builtins::value::Instance>>);
 
 mod areas;
+mod background;
+pub(crate) use background::BgWorker;
 mod filter;
 mod parts;
 mod runobject;
@@ -328,6 +330,9 @@ impl Session {
 
     fn page_op_inner(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         match recv {
+            None if matches!(method, "Page.GetBackgroundParameters" | "Page.SetBackgroundTaskResult") => {
+                self.bg_static(method, args)
+            }
             None if method == "Page.RunStatic" || method == "Page.RunModalStatic" => {
                 let n = match args.first() {
                     Some(Value::Integer(n)) => *n,
@@ -396,6 +401,9 @@ impl Session {
     fn test_page_op(&mut self, method: &str, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         let name = method.split_once('.').map(|(_, m)| m).unwrap_or(method);
         let r = self.test_page_op_inner(method, st, args)?;
+        // The client runs the page's background tasks before the call returns (corpus
+        // handlers/TestPageBgTask_Tests.al:EnqueueBackgroundTask_CompletesBeforeOpenViewReturns).
+        self.bg_drain(st)?;
         // A move of the host re-points its parts; a move of a part re-points the parts that take
         // their link from it (corpus testpart/TestPartProviderMove.al).
         let moved = match name {
@@ -573,6 +581,14 @@ impl Session {
                 }
                 other => unsupported(format!("Page.SetTableView with {other:?}")),
             },
+            "EnqueueBackgroundTask" => {
+                self.require_open(st)?;
+                self.bg_enqueue(st, args)
+            }
+            "RunPageBackgroundTask" => {
+                self.require_open(st)?;
+                self.bg_run_page_task(st, args)
+            }
             "Run" => {
                 let record = st.borrow().set_record.clone();
                 self.run_page_ui(st, record, false)

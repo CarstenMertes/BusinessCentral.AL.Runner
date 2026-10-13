@@ -680,6 +680,7 @@ impl Session {
             "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate"
         ) && !rec.borrow().temporary
         {
+            self.bg_refuse_write(t.object as usize, method)?;
             self.gate_write(method)?;
         }
         match method {

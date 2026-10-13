@@ -252,6 +252,10 @@ pub struct PageState {
     pub stale: bool,
     /// `LookupMode(true)` was called on this variable (`Page.RunModal(id, Rec)` is a lookup too but is not).
     pub lookup_set: bool,
+    /// Page background tasks the page enqueued and the client has not run yet: (task id, codeunit id,
+    /// parameters), and the next task id.
+    pub bg_tasks: std::collections::VecDeque<(i32, i32, Value)>,
+    pub bg_next_id: i32,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -300,6 +304,8 @@ impl PageState {
             inited: false,
             stale: false,
             lookup_set: false,
+            bg_tasks: Default::default(),
+            bg_next_id: 1,
         }
     }
 }

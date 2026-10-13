@@ -131,6 +131,8 @@ pub struct Session {
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
     pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
+    /// A page background task worker is running: its parameters and the result it set.
+    pub(crate) bg_worker: Option<pages::BgWorker>,
     /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a
     /// page saving a row passes its own xRec (corpus
     /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
@@ -210,6 +212,7 @@ impl Session {
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
+            bg_worker: None,
             page_xrec: None,
             tx_model: TxModel::default(),
             tx_world: 0,
@@ -767,6 +770,7 @@ impl Session {
                         });
                     }
                     if id == "Database.IsInWriteTransaction#1" {
+                        self.bg_refuse_transaction_call("Database.IsInWriteTransaction")?;
                         return Ok(Value::Boolean(self.in_write_transaction()));
                     }
                     if id.starts_with("Xmlport.") {

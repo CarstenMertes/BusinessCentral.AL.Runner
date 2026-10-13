@@ -3,22 +3,78 @@
 
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
-use al_builtins::value::{Instance, RtType, Value};
+use al_builtins::value::{Instance, RecordState, RtType, Value};
 use al_ir as ir;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
 use std::sync::Arc;
 
+mod records;
+
 pub struct Engine {
     pub program: ir::Program,
     /// Per object, per routine: why it cannot run, if it cannot.
     pub blocked: Vec<Vec<Option<String>>>,
+    /// Store schema per table object.
+    pub tables: Vec<Option<al_data::TableDef>>,
+    /// Lower-case names of tables some event subscriber listens to.
+    pub tables_with_subscribers: std::collections::HashSet<String>,
 }
 
 impl Engine {
     pub fn new(program: ir::Program, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
-        Arc::new(Engine { program, blocked })
+        let tables = program
+            .objects
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                o.table.as_ref().map(|t| al_data::TableDef {
+                    object: i as u32,
+                    name: o.name.clone(),
+                    fields: t
+                        .fields
+                        .iter()
+                        .map(|f| al_data::FieldDef {
+                            id: f.id,
+                            name: f.name.clone(),
+                            ty: f.ty.clone(),
+                            stored: f.stored,
+                        })
+                        .collect(),
+                    keys: t.keys.clone(),
+                    per_company: t.per_company,
+                })
+            })
+            .collect();
+        let mut tables_with_subscribers = std::collections::HashSet::new();
+        for a in program
+            .objects
+            .iter()
+            .flat_map(|o| &o.routines)
+            .flat_map(|r| &r.attributes)
+        {
+            if a.name.eq_ignore_ascii_case("EventSubscriber")
+                && a.text.to_ascii_lowercase().contains("objecttype::table")
+            {
+                if let Some(rest) = a.text.split("::").nth(2) {
+                    let name = rest
+                        .split(',')
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .trim_matches('"')
+                        .to_lowercase();
+                    tables_with_subscribers.insert(name);
+                }
+            }
+        }
+        Arc::new(Engine {
+            program,
+            blocked,
+            tables,
+            tables_with_subscribers,
+        })
     }
 }
 
@@ -28,6 +84,14 @@ pub struct Session {
     depth: usize,
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
+    pub(crate) store: al_data::memory::MemStore,
+    /// Private tables of temporary records, by temp id.
+    pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
+    next_temp: u64,
+    pub(crate) next_guid: u64,
+    pub(crate) cx: al_data::AccessContext,
+    /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
+    pub(crate) ret_used: bool,
 }
 
 /// Nested AL calls allowed before the session gives up. BC's own limit and
@@ -41,16 +105,54 @@ impl Session {
             last_error: AlError::default(),
             depth: 0,
             singletons: Default::default(),
+            store: Default::default(),
+            temps: Default::default(),
+            next_temp: 0,
+            next_guid: 0,
+            cx: al_data::AccessContext {
+                company: "CRONUS".into(),
+                user: "USER".into(),
+            },
+            ret_used: true,
+        }
+    }
+
+    /// The session's database, for runners that manage transactions around tests.
+    pub fn store_mut(&mut self) -> &mut al_data::memory::MemStore {
+        &mut self.store
+    }
+
+    /// The initial value of a slot of type `t`.
+    pub fn default_value(&mut self, t: &RtType) -> Value {
+        match t {
+            RtType::Record(table, temporary) => {
+                let temp_id = temporary.then(|| {
+                    self.next_temp += 1;
+                    self.next_temp
+                });
+                Value::Record(Rc::new(RefCell::new(RecordState {
+                    table: *table,
+                    temporary: *temporary,
+                    temp_id,
+                    fields: self.initial_fields(*table as usize),
+                    filters: Vec::new(),
+                    key: 0,
+                    ascending: true,
+                    position: None,
+                })))
+            }
+            other => Value::default_for(other),
         }
     }
 
     /// A fresh instance of codeunit `object` with default globals.
-    pub fn instance(&self, object: usize) -> Rc<RefCell<Instance>> {
-        let globals = self.engine.program.objects[object]
+    pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
+        let tys: Vec<RtType> = self.engine.program.objects[object]
             .globals
             .iter()
-            .map(|g| Value::default_for(&g.ty))
+            .map(|g| g.ty.clone())
             .collect();
+        let globals = tys.iter().map(|t| self.default_value(t)).collect();
         Rc::new(RefCell::new(Instance {
             object: object as u32,
             globals,
@@ -58,13 +160,16 @@ impl Session {
         }))
     }
 
-    fn ensure_initialized(&self, inst: &Rc<RefCell<Instance>>) {
-        let mut i = inst.borrow_mut();
-        if !i.initialized {
-            let obj = &self.engine.program.objects[i.object as usize];
-            i.globals = obj.globals.iter().map(|g| Value::default_for(&g.ty)).collect();
-            i.initialized = true;
+    fn ensure_initialized(&mut self, inst: &Rc<RefCell<Instance>>) {
+        if inst.borrow().initialized {
+            return;
         }
+        let object = inst.borrow().object as usize;
+        let fresh = self.instance(object);
+        let globals = std::mem::take(&mut fresh.borrow_mut().globals);
+        let mut i = inst.borrow_mut();
+        i.globals = globals;
+        i.initialized = true;
     }
 
     /// Calls routine `routine` of `object` on `instance`. Returns the return
@@ -100,9 +205,16 @@ impl Session {
         self.ensure_initialized(&instance);
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
-        let mut locals: Vec<Value> = r.locals.iter().map(|s| Value::default_for(&s.ty)).collect();
+        let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
+        for s in &r.locals {
+            locals.push(self.default_value(&s.ty));
+        }
         for (i, a) in args.into_iter().enumerate().take(r.params) {
-            locals[i] = ops::convert(a, &r.locals[i].ty)?;
+            locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
+                // A record passed by value is a copy (ADR-010).
+                (Value::Record(rc), false) => Value::Record(Rc::new(RefCell::new(rc.borrow().clone()))),
+                (a, _) => ops::convert(a, &r.locals[i].ty)?,
+            };
         }
         let mut frame = Frame {
             object,
@@ -228,6 +340,9 @@ impl Session {
             S::Break => Err(Signal::Break),
             S::AssertError(body) => match self.exec_block(body, f) {
                 Err(Signal::Error(e)) => {
+                    // The caught error rolls the transaction back to the last commit
+                    // (record/TestRecordRenameRollback.al).
+                    al_data::Store::rollback(&mut self.store);
                     self.last_error = e;
                     Ok(())
                 }
@@ -331,6 +446,8 @@ impl Session {
                     None => f.instance.clone(),
                     Some(e) => match self.eval(e, f)? {
                         Value::Codeunit(i) => self.shared_instance(i),
+                        // A table procedure runs with the record as its Rec.
+                        Value::Record(rc) => self.record_instance(*object, rc)?,
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };
@@ -357,7 +474,12 @@ impl Session {
                 }
                 Ok(ret)
             }
-            E::Builtin { id, receiver, args } => {
+            E::Builtin {
+                id,
+                receiver,
+                args,
+                ret_used,
+            } => {
                 let native =
                     al_builtins::native::lookup(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
                 let mut recv = match receiver.as_deref() {
@@ -372,6 +494,7 @@ impl Session {
                         ir::Arg::Ref(p) => self.read(p, f)?,
                     });
                 }
+                self.ret_used = *ret_used;
                 let ret = native(self, recv.as_mut(), &mut values)?;
                 if let (Some(ir::Arg::Ref(p)), Some(v)) = (receiver.as_deref(), recv) {
                     self.write(p, v, f)?;
@@ -397,22 +520,11 @@ impl Session {
         if !single {
             return i;
         }
-        let engine = self.engine.clone();
-        self.singletons
-            .entry(object)
-            .or_insert_with(|| {
-                let globals = engine.program.objects[object]
-                    .globals
-                    .iter()
-                    .map(|g| Value::default_for(&g.ty))
-                    .collect();
-                Rc::new(RefCell::new(Instance {
-                    object: object as u32,
-                    globals,
-                    initialized: true,
-                }))
-            })
-            .clone()
+        if !self.singletons.contains_key(&object) {
+            let inst = self.instance(object);
+            self.singletons.insert(object, inst);
+        }
+        self.singletons[&object].clone()
     }
 
     fn place_type(&self, p: &ir::Place, f: &Frame) -> RtType {
@@ -427,6 +539,12 @@ impl Session {
                 RtType::Array(_, el) => *el,
                 other => other,
             },
+            ir::Place::Field(base, pos) => match self.place_type(base, f) {
+                RtType::Record(t, _) => self.engine.tables[t as usize]
+                    .as_ref()
+                    .map_or(RtType::Variant, |td| td.fields[*pos].ty.clone()),
+                _ => RtType::Variant,
+            },
         }
     }
 
@@ -439,10 +557,37 @@ impl Session {
                 let v = arr.borrow()[flat].clone();
                 Ok(v)
             }
+            ir::Place::Field(base, pos) => match self.read(base, f)? {
+                Value::Record(rc) => Ok(rc.borrow().fields[*pos].clone()),
+                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+            },
         }
     }
 
     fn write(&mut self, p: &ir::Place, v: Value, f: &mut Frame) -> Result<(), Signal> {
+        // `:=` between records copies the fields into the target record (ADR-010).
+        if let Value::Record(src) = &v {
+            if !matches!(p, ir::Place::Field(..)) {
+                if let Ok(Value::Record(dst)) = self.read(p, f) {
+                    if !Rc::ptr_eq(src, &dst) {
+                        let fields = src.borrow().fields.clone();
+                        dst.borrow_mut().fields = fields;
+                    }
+                    return Ok(());
+                }
+            }
+        }
+        if let ir::Place::Field(base, pos) = p {
+            let ty = self.place_type(p, f);
+            let v = ops::convert(v, &ty)?;
+            return match self.read(base, f)? {
+                Value::Record(rc) => {
+                    rc.borrow_mut().fields[*pos] = v;
+                    Ok(())
+                }
+                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+            };
+        }
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
@@ -451,6 +596,7 @@ impl Session {
                 let (arr, flat) = self.element(base, idx, f)?;
                 arr.borrow_mut()[flat] = ops::convert(v, &el_ty)?;
             }
+            ir::Place::Field(..) => unreachable!("handled above"),
         }
         Ok(())
     }
@@ -510,6 +656,7 @@ fn constant(c: &ir::Const) -> Value {
         ir::Const::DateTime(t) => Value::DateTime(*t),
         ir::Const::Option(i, m) => Value::Option(*i, m.clone().into()),
         ir::Const::Enum(o, v) => Value::Enum(*o, *v),
+        ir::Const::FieldPos(p) => Value::Integer(*p as i32),
     }
 }
 
@@ -530,6 +677,19 @@ impl al_builtins::native::Ctx for Session {
     }
     fn set_last_error(&mut self, e: AlError) {
         self.last_error = e;
+    }
+    fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        match rec {
+            Some(Value::Record(rc)) => {
+                let rc = rc.clone();
+                self.record_op(method, &rc, args)
+            }
+            other => Err(Signal::Unsupported(format!("record method {method} on {other:?}"))),
+        }
+    }
+    fn commit(&mut self) -> Result<(), Signal> {
+        al_data::Store::commit(&mut self.store);
+        Ok(())
     }
 }
 

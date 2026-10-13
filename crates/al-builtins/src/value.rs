@@ -65,6 +65,26 @@ pub enum Value {
     Array(Rc<RefCell<Vec<Value>>>),
     Codeunit(Rc<RefCell<Instance>>),
     Library(String, Rc<RefCell<LibraryValue>>),
+    /// A record variable (ADR-010: a handle; `:=` copies fields, see the VM).
+    Record(Rc<RefCell<RecordState>>),
+}
+
+/// Everything a record variable carries.
+#[derive(Debug, Clone)]
+pub struct RecordState {
+    /// Object index of the table.
+    pub table: u32,
+    pub temporary: bool,
+    /// Identity of the private table behind a temporary record (shared by `Copy(x, true)`).
+    pub temp_id: Option<u64>,
+    /// Field values in the table's field order.
+    pub fields: Vec<Value>,
+    pub filters: Vec<crate::filter::FieldFilter>,
+    /// Index of the current key in the table's keys.
+    pub key: usize,
+    pub ascending: bool,
+    /// Position of the last row found (key fields then primary key), for `Next`.
+    pub position: Option<Vec<Value>>,
 }
 
 /// The global variables of one codeunit instance.
@@ -113,7 +133,8 @@ impl Value {
                 object: *id,
                 ..Default::default()
             }))),
-            RtType::Record(..) => unimplemented!("record values arrive with al-data"),
+            // Records need the table's field types: the VM builds them.
+            RtType::Record(..) => Value::Null,
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),
         }
     }
@@ -149,6 +170,7 @@ impl Value {
             Value::Array(_) => false,
             Value::Codeunit(_) => k == "codeunit",
             Value::Library(n, _) => n.eq_ignore_ascii_case(&k),
+            Value::Record(_) => k == "record",
         }
     }
 }

@@ -26,6 +26,11 @@ pub enum Signal {
 pub trait Ctx: FormatCtx {
     fn last_error(&self) -> AlError;
     fn set_last_error(&mut self, e: AlError);
+    /// Record methods (`Record.Insert`, ...) need the store, triggers and
+    /// table metadata: the VM implements them. `method` is the catalog name.
+    fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal>;
+    /// `Commit()`.
+    fn commit(&mut self) -> Result<(), Signal>;
 }
 
 pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result<Value, Signal>;
@@ -44,6 +49,28 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.StrSubstNo#1", strsubstno),
     ("Text.UpperCase#1", uppercase),
     ("Text.LowerCase#1", lowercase),
+    ("Database.Commit#1", |c, _, _| c.commit().map(|_| Value::Null)),
+    ("System.Clear#1", clear),
+    ("Record.Init#1", |c, r, a| c.record("Init", r, a)),
+    ("Record.Insert#1", |c, r, a| c.record("Insert", r, a)),
+    ("Record.Insert#2", |c, r, a| c.record("Insert", r, a)),
+    ("Record.Modify#1", |c, r, a| c.record("Modify", r, a)),
+    ("Record.Delete#1", |c, r, a| c.record("Delete", r, a)),
+    ("Record.DeleteAll#1", |c, r, a| c.record("DeleteAll", r, a)),
+    ("Record.Get#1", |c, r, a| c.record("Get", r, a)),
+    ("Record.Find#1", |c, r, a| c.record("Find", r, a)),
+    ("Record.FindFirst#1", |c, r, a| c.record("FindFirst", r, a)),
+    ("Record.FindLast#1", |c, r, a| c.record("FindLast", r, a)),
+    ("Record.FindSet#1", |c, r, a| c.record("FindSet", r, a)),
+    ("Record.FindSet#2", |c, r, a| c.record("FindSet", r, a)),
+    ("Record.Next#1", |c, r, a| c.record("Next", r, a)),
+    ("Record.Count#1", |c, r, a| c.record("Count", r, a)),
+    ("Record.IsEmpty#1", |c, r, a| c.record("IsEmpty", r, a)),
+    ("Record.SetRange#1", |c, r, a| c.record("SetRange", r, a)),
+    ("Record.Reset#1", |c, r, a| c.record("Reset", r, a)),
+    ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
+    ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
+    ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -65,7 +92,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // Kinds the value model has no variant for yet are never true.
     ("Variant.IsRecordId#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
-    ("Variant.IsRecord#1", |_, _, _| Ok(Value::Boolean(false))),
+    ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
     ("Variant.IsRecordRef#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFieldRef#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsDotNet#1", |_, _, _| Ok(Value::Boolean(false))),
@@ -225,6 +252,30 @@ fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
     Ok(Value::Text(text_arg(args, 0)?.to_lowercase()))
 }
 
+/// `Clear(var X)`: the default of the value's own kind. Records go to the VM.
+fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let v = &mut args[0];
+    *v = match v {
+        Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
+        Value::Boolean(_) => Value::Boolean(false),
+        Value::Integer(_) => Value::Integer(0),
+        Value::BigInteger(_) => Value::BigInteger(0),
+        Value::Decimal(_) => Value::Decimal(Default::default()),
+        Value::Byte(_) => Value::Byte(0),
+        Value::Char(_) => Value::Char(0),
+        Value::Text(_) => Value::Text(String::new()),
+        Value::Code(_) => Value::Code(String::new()),
+        Value::Date(..) => Value::Date(0, false),
+        Value::Time(_) => Value::Time(0),
+        Value::DateTime(_) => Value::DateTime(0),
+        Value::Duration(_) => Value::Duration(0),
+        Value::Guid(_) => Value::Guid([0; 16]),
+        Value::Option(_, m) => Value::Option(0, m.clone()),
+        other => return unsupported(&format!("Clear of {other:?}")),
+    };
+    Ok(Value::Null)
+}
+
 fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
     Ok(Value::Boolean(receiver.is_some_and(|v| v.is(kind))))
 }
@@ -249,6 +300,12 @@ mod tests {
         }
         fn set_last_error(&mut self, e: AlError) {
             self.err = e;
+        }
+        fn record(&mut self, m: &str, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+            Err(Signal::Unsupported(m.into()))
+        }
+        fn commit(&mut self) -> Result<(), Signal> {
+            Ok(())
         }
     }
 

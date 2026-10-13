@@ -17,3 +17,7 @@
 # TestPart.Filter is a property, like TestPage.Filter. Corpus:
 # testfilter/TestTestFilter.al:586 `Host.Lines.Filter.SetFilter("Line No.", '20');`.
 + TestPart.Filter inst () -> TestFilter
+
+# Clear accepts any variable; the scrape only has the Array and SecretText
+# overloads. Corpus: record/TestRecordRenameRollback.al:43 `Clear(Rec);`.
++ System.Clear static (var Variable: Any)

@@ -21,6 +21,41 @@ pub struct Object {
     pub properties: Vec<(String, String)>,
     /// For enums: (declared value, name), extensions included.
     pub enum_values: Vec<(i32, String)>,
+    /// For tables: fields (extensions and system fields included), keys as
+    /// field positions (`keys[0]` primary), `DataPerCompany`.
+    pub table: Option<Table>,
+    /// Global slots of the implicit `Rec` / `xRec` (tables, table extensions).
+    pub rec_slot: Option<usize>,
+    pub xrec_slot: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Table {
+    pub fields: Vec<Field>,
+    pub keys: Vec<Vec<usize>>,
+    pub per_company: bool,
+    /// Object index of each table extension (their triggers are not run yet).
+    pub extensions: Vec<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Field {
+    pub id: u32,
+    pub name: String,
+    pub ty: RtType,
+    /// Normal fields; FlowFields and FlowFilters are not stored.
+    pub stored: bool,
+    /// `InitValue`, if declared and understood.
+    pub init: Option<Const>,
+    /// `InitValue` as written; set with `init: None` means not understood yet.
+    pub init_text: Option<String>,
+    /// Lower-case name of the table a `TableRelation` points to.
+    pub relation_table: Option<String>,
+    pub auto_increment: bool,
+    /// The field declares a `TableRelation`.
+    pub relation: bool,
+    /// (object, routine) of the field's OnValidate trigger, if any.
+    pub on_validate: Option<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -32,6 +67,8 @@ pub struct Slot {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Routine {
     pub name: String,
+    /// For field triggers: the field position in the table.
+    pub field: Option<usize>,
     pub is_trigger: bool,
     pub attributes: Vec<Attribute>,
     /// Parameters occupy the first locals; `by_var[i]` for parameter i.
@@ -49,6 +86,8 @@ pub struct Routine {
 pub struct Attribute {
     pub name: String,
     pub args: Vec<Const>,
+    /// The attribute as written (`[EventSubscriber(ObjectType::Table, ...)]`).
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -66,6 +105,8 @@ pub enum Const {
     DateTime(i64),
     Option(i32, Vec<String>),
     Enum(u32, i32),
+    /// A field reference passed to a record method (`SetRange(Field, ...)`): its position.
+    FieldPos(u32),
 }
 
 /// Where an assignment writes or a `var` argument points.
@@ -75,6 +116,8 @@ pub enum Place {
     Global(usize),
     /// Element of an array place.
     Index(Box<Place>, Vec<Expr>),
+    /// Field at position `.1` of the record in place `.0`.
+    Field(Box<Place>, usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,10 +176,13 @@ pub enum Expr {
         try_call: bool,
     },
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
+    /// `ret_used`: the result is used, so methods with an optional Boolean
+    /// result report failure as `false` instead of raising an error.
     Builtin {
         id: String,
         receiver: Option<Box<Arg>>,
         args: Vec<Arg>,
+        ret_used: bool,
     },
 }
 
@@ -192,12 +238,17 @@ mod tests {
                 }],
                 properties: vec![("Subtype".into(), "Test".into())],
                 enum_values: vec![],
+                table: None,
+                rec_slot: None,
+                xrec_slot: None,
                 routines: vec![Routine {
                     name: "P".into(),
+                    field: None,
                     is_trigger: false,
                     attributes: vec![Attribute {
                         name: "Test".into(),
                         args: vec![],
+                        text: "[Test]".into(),
                     }],
                     params: 0,
                     by_var: vec![],
@@ -220,6 +271,7 @@ mod tests {
                             id: "Dialog.Error#2".into(),
                             receiver: None,
                             args: vec![Arg::Value(Expr::Const(Const::Text("x".into())))],
+                            ret_used: false,
                         })]),
                     ],
                 }],

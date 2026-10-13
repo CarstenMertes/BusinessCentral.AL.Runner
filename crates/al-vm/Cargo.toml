@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+al-data.workspace = true
 al-builtins.workspace = true
 al-ir.workspace = true
 rust_decimal = "1"

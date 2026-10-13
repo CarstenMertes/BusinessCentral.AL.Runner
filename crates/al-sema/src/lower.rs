@@ -45,9 +45,28 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
         unsupported: Vec::new(),
         calls: Vec::new(),
     };
+    // The table whose record is the implicit `Rec` of each object, and each table's extensions.
+    let mut table_of: Vec<Option<usize>> = vec![None; ws.objects.len()];
+    let mut extensions: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (oi, o) in ws.objects.iter().enumerate() {
+        match o.kind {
+            ObjKind::Table => table_of[oi] = Some(oi),
+            ObjKind::TableExtension => {
+                if let Some(base) = ws.object_ast(oi).extends_parts() {
+                    if let Resolution::Found(t) = ws.resolve_ref(o.file, ObjKind::Table, &base) {
+                        table_of[oi] = Some(t);
+                        extensions.entry(t).or_default().push(oi);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     for (oi, o) in ws.objects.iter().enumerate() {
         let obj = ws.object_ast(oi);
         let mut lw = Lowerer {
+            rec_slot: None,
+            table_of: &table_of,
             ws,
             members,
             checked,
@@ -74,6 +93,18 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 }
             }
         }
+        let (mut rec_slot, mut xrec_slot) = (None, None);
+        if let Some(t) = table_of[oi] {
+            for (name, slot) in [("Rec", &mut rec_slot), ("xRec", &mut xrec_slot)] {
+                *slot = Some(globals.len());
+                lw.globals.insert(name.to_lowercase(), globals.len());
+                globals.push(ir::Slot {
+                    name: name.into(),
+                    ty: RtType::Record(t as u32, false),
+                });
+            }
+        }
+        lw.rec_slot = rec_slot;
         let mut routines = Vec::new();
         let mut unsupported = Vec::new();
         let mut calls = Vec::new();
@@ -97,6 +128,10 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 .iter()
                 .map(|(v, n)| (*v as i32, n.clone()))
                 .collect(),
+            table: (o.kind == ObjKind::Table)
+                .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), &routine_at)),
+            rec_slot,
+            xrec_slot,
         });
         out.unsupported.push(unsupported);
         out.calls.push(calls);
@@ -106,7 +141,69 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
 
 type L<T> = Result<T, String>;
 
+/// An `InitValue` property as a constant of the field's type; `None` for
+/// forms not handled yet (the field then starts at its type's default).
+fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
+    let t = text.trim();
+    Some(match ty {
+        Ty::Integer => ir::Const::Integer(t.parse().ok()?),
+        Ty::BigInteger => ir::Const::BigInteger(t.parse().ok()?),
+        Ty::Decimal => ir::Const::Decimal(t.parse::<rust_decimal::Decimal>().ok()?.to_string()),
+        Ty::Boolean if t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes") => ir::Const::Boolean(true),
+        Ty::Boolean if t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no") => ir::Const::Boolean(false),
+        Ty::Text(_) | Ty::Code(_) => ir::Const::Text(
+            t.strip_prefix('\'')
+                .and_then(|x| x.strip_suffix('\''))
+                .unwrap_or(t)
+                .replace("''", "'"),
+        ),
+        Ty::Option(m) => {
+            let name = t.trim_matches('"');
+            ir::Const::Option(m.iter().position(|x| x.eq_ignore_ascii_case(name))? as i32, m.clone())
+        }
+        Ty::Date => ir::Const::Date(date_literal(t)?),
+        Ty::Time => ir::Const::Time(time_literal(t)?),
+        _ => return None,
+    })
+}
+
+/// `20240115D` / `0D` as a day number.
+fn date_literal(text: &str) -> Option<i32> {
+    let d = text.strip_suffix(['D', 'd'])?;
+    if d.chars().all(|c| c == '0') {
+        return Some(0);
+    }
+    if d.len() != 8 || !d.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(al_builtins::format::day_from_civil(
+        d[..4].parse().ok()?,
+        d[4..6].parse().ok()?,
+        d[6..].parse().ok()?,
+    ))
+}
+
+/// `120000T` / `120000.5T` / `0T` as milliseconds since midnight plus one.
+fn time_literal(text: &str) -> Option<i64> {
+    let d = text.strip_suffix(['T', 't'])?;
+    if d.chars().all(|c| c == '0') && !d.is_empty() && d.len() < 6 {
+        return Some(0);
+    }
+    let (hms, frac) = d.split_once('.').unwrap_or((d, "0"));
+    if hms.len() != 6 || !hms.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let h: i64 = hms[..2].parse().ok()?;
+    let m: i64 = hms[2..4].parse().ok()?;
+    let s: i64 = hms[4..].parse().ok()?;
+    let ms: i64 = format!("{frac:0<3}")[..3].parse().ok()?;
+    Some(((h * 60 + m) * 60 + s) * 1000 + ms + 1)
+}
+
 struct Lowerer<'a> {
+    /// Global slot of the implicit `Rec` of the current object.
+    rec_slot: Option<usize>,
+    table_of: &'a [Option<usize>],
     ws: &'a Workspace,
     members: &'a [Members],
     checked: &'a CheckResult,
@@ -154,6 +251,76 @@ fn sig_tokens(n: &SyntaxNode) -> Vec<al_syntax::SyntaxToken> {
 }
 
 impl Lowerer<'_> {
+    fn field_pos(&self, table: usize, id: u32) -> Option<usize> {
+        self.members[table].fields.iter().position(|f| f.id == id)
+    }
+
+    fn table_schema(
+        &self,
+        oi: usize,
+        obj: &ast::Object,
+        extensions: Vec<usize>,
+        routine_at: &HashMap<(usize, usize), usize>,
+    ) -> ir::Table {
+        let m = &self.members[oi];
+        let fields = m
+            .fields
+            .iter()
+            .map(|f| ir::Field {
+                id: f.id,
+                name: f.name.clone(),
+                ty: self.rt(&f.ty).unwrap_or(RtType::Variant),
+                stored: f.class == crate::members::FieldClass::Normal,
+                init: f.init_value.as_ref().and_then(|v| init_const(v, &f.ty)),
+                auto_increment: f.auto_increment,
+                relation: f.table_relation,
+                init_text: f.init_value.clone(),
+                relation_table: f.relation_table.clone(),
+                on_validate: match (f.declared_in, f.on_validate) {
+                    (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
+                    _ => None,
+                },
+            })
+            .collect();
+        let mut keys = Vec::new();
+        for o in std::iter::once(oi).chain(extensions.iter().copied()) {
+            for sec in self
+                .ws
+                .object_ast(o)
+                .sections()
+                .filter(|s| s.name().eq_ignore_ascii_case("keys"))
+            {
+                for k in sec.sections().filter(|k| k.name().eq_ignore_ascii_case("key")) {
+                    let names: Vec<String> = k
+                        .args()
+                        .get(1)
+                        .map(|a| a.split(',').map(|n| n.trim().trim_matches('"').to_string()).collect())
+                        .unwrap_or_default();
+                    let pos: Vec<usize> = names
+                        .iter()
+                        .filter_map(|n| m.fields.iter().position(|f| f.name.eq_ignore_ascii_case(n)))
+                        .collect();
+                    if pos.len() == names.len() && !pos.is_empty() {
+                        keys.push(pos);
+                    }
+                }
+            }
+        }
+        if keys.is_empty() {
+            // Without a keys section the first field is the primary key (doc: Table keys).
+            keys.push(vec![0]);
+        }
+        let per_company = !obj.properties().any(|p| {
+            p.name().eq_ignore_ascii_case("DataPerCompany") && p.value_text().trim().eq_ignore_ascii_case("false")
+        });
+        ir::Table {
+            fields,
+            keys,
+            per_company,
+            extensions,
+        }
+    }
+
     fn res(&self, n: &SyntaxNode) -> Option<&Res> {
         self.checked.resolutions.get(&key(self.file, n))
     }
@@ -198,7 +365,9 @@ impl Lowerer<'_> {
             Ty::Dictionary(k, v) => RtType::Dictionary(Box::new(self.rt(k)?), Box::new(self.rt(v)?)),
             Ty::Array(d, t) => RtType::Array(d.clone(), Box::new(self.rt(t)?)),
             Ty::Builtin(n) => RtType::Library(n.clone()),
-            Ty::Record { .. } => return Err("records are not lowered yet".into()),
+            Ty::Record { table, temporary } => {
+                RtType::Record(self.resolve_obj(ObjKind::Table, table)? as u32, *temporary)
+            }
             other => return Err(format!("type {other} is not lowered yet")),
         })
     }
@@ -253,12 +422,23 @@ impl Lowerer<'_> {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
+        let field = r
+            .syntax()
+            .ancestors()
+            .filter_map(ast::Section::cast)
+            .find(|s| s.name().eq_ignore_ascii_case("field"))
+            .and_then(|s| {
+                let id: u32 = s.args().first()?.parse().ok()?;
+                self.table_of[self.oi].and_then(|t| self.field_pos(t, id))
+            });
         ir::Routine {
             name: r.name(),
+            field,
             is_trigger: r.is_trigger(),
             attributes: r
                 .attributes()
                 .map(|a| ir::Attribute {
+                    text: a.syntax().text().to_string(),
                     name: a.name(),
                     args: a
                         .args()
@@ -296,6 +476,12 @@ impl Lowerer<'_> {
             // A try function called as a statement behaves like a normal method
             // (doc: TryFunction attribute), so its errors propagate.
             ExprStmt => self.expr(&kids[0]).map(|e| match e {
+                ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
+                    id,
+                    receiver,
+                    args,
+                    ret_used: false,
+                }),
                 ir::Expr::Call {
                     object,
                     routine,
@@ -493,7 +679,15 @@ impl Lowerer<'_> {
                     .get(name)
                     .map(|i| ir::Place::Global(*i))
                     .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
-                Some(Res::Field { .. }) => Err("record fields are not lowered yet".into()),
+                Some(Res::Field { table, id }) => {
+                    let (table, id) = (*table, *id);
+                    let pos = self.field_pos(table, id).ok_or("field position")?;
+                    let base = match n.kind() {
+                        SyntaxKind::MemberExpr => self.place(&n.children().next().ok_or("member base")?)?,
+                        _ => ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
+                    };
+                    Ok(ir::Place::Field(Box::new(base), pos))
+                }
                 _ => Err(format!("`{}` is not assignable", n.text())),
             },
         }
@@ -615,7 +809,6 @@ impl Lowerer<'_> {
             },
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
-                Some(Res::Field { .. }) => Err("record fields are not lowered yet".into()),
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },
             other => Err(format!("expression {other:?} `{}` is not lowered yet", n.text())),
@@ -649,11 +842,15 @@ impl Lowerer<'_> {
                     .ok_or("procedure signature")?
                     .clone();
                 let instance = match &receiver_node {
-                    Some(r) if matches!(self.ty_of(r), Ty::Object(ObjKind::Codeunit, _)) => {
+                    Some(r) if matches!(self.ty_of(r), Ty::Object(ObjKind::Codeunit, _) | Ty::Record { .. }) => {
                         Some(Box::new(self.expr(r)?))
                     }
-                    Some(_) => return Err("procedure calls on non-codeunit receivers are not lowered yet".into()),
+                    Some(_) => return Err("procedure calls on this receiver are not lowered yet".into()),
                     None if object == self.oi => None,
+                    // A table extension calling its table's procedure: on the same Rec.
+                    None if self.table_of[object].is_some() && self.rec_slot.is_some() => Some(Box::new(
+                        ir::Expr::Load(ir::Place::Global(self.rec_slot.expect("checked"))),
+                    )),
                     None => return Err("implicit calls into another object are not lowered yet".into()),
                 };
                 let mut out = Vec::new();
@@ -699,6 +896,10 @@ impl Lowerer<'_> {
                         Ok(p) => ir::Arg::Ref(p),
                         Err(_) => ir::Arg::Value(self.expr(r)?),
                     })),
+                    // An unqualified record method in table code runs on the implicit Rec.
+                    None if sig.instance && sig.receiver == "Record" => Some(Box::new(ir::Arg::Ref(
+                        ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
+                    ))),
                     _ => None,
                 };
                 let mut out = Vec::new();
@@ -708,8 +909,12 @@ impl Lowerer<'_> {
                         .get(i)
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
-                    if matches!(self.res(a), Some(Res::Field { .. })) {
-                        return Err("field arguments are not lowered yet".into());
+                    let field_param =
+                        p.name.to_ascii_lowercase().starts_with("field") || p.name.eq_ignore_ascii_case("FromField");
+                    if let (true, Some(Res::Field { table, id })) = (field_param, self.res(a).cloned()) {
+                        let pos = self.field_pos(table, id).ok_or("field position")?;
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
+                        continue;
                     }
                     out.push(if p.by_var {
                         ir::Arg::Ref(self.place(a)?)
@@ -721,6 +926,7 @@ impl Lowerer<'_> {
                     id,
                     receiver,
                     args: out,
+                    ret_used: true,
                 })
             }
             other => Err(format!("call `{}` ({other:?}) is not lowered yet", node.text())),
@@ -834,7 +1040,7 @@ mod tests {
             panic!()
         };
         assert!(
-            matches!(&**e, ir::Expr::Builtin { id, receiver: None, args } if id == "System.Format#1" && args.len() == 1)
+            matches!(&**e, ir::Expr::Builtin { id, receiver: None, args, .. } if id == "System.Format#1" && args.len() == 1)
         );
     }
 
@@ -879,6 +1085,127 @@ mod tests {
         assert!(l.unsupported[0][pi].is_empty(), "{:?}", l.unsupported[0][pi]);
         assert!(matches!(p.body[0], ir::Stmt::If(_, ref t, ref e) if t.len() == 1 && e == &vec![ir::Stmt::Exit(None)]));
         assert!(matches!(p.body[1], ir::Stmt::AssertError(ref b) if b.len() == 1));
+    }
+
+    const TABLE: &str = "table 50900 \"ALT T\"
+{
+    fields
+    {
+        field(1; \"No.\"; Code[20]) { }
+        field(2; Amount; Decimal) { InitValue = 5; trigger OnValidate() begin Amount := Amount * 2; end; }
+        field(3; Counter; Integer) { AutoIncrement = true; }
+        field(4; Total; Decimal) { FieldClass = FlowField; }
+    }
+    keys { key(PK; \"No.\") { } key(ByAmount; Amount) { } }
+    procedure Double(X: Integer): Integer begin exit(X * 2); end;
+    procedure SetAmount() begin Amount := 1; end;
+}";
+
+    fn table_ir(l: &Lowered) -> &ir::Table {
+        l.program.objects[0].table.as_ref().expect("table schema")
+    }
+
+    #[test]
+    fn table_schema_fields_keys_and_system_fields() {
+        let (_, l) = lower_src(TABLE);
+        let t = table_ir(&l);
+        let names: Vec<_> = t.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(&names[..4], ["No.", "Amount", "Counter", "Total"]);
+        assert!(names.contains(&"SystemId"));
+        assert_eq!(t.keys, vec![vec![0], vec![1]]);
+        assert_eq!(t.fields[1].init, Some(ir::Const::Decimal("5".into())));
+        assert!(t.fields[2].auto_increment);
+        assert!(!t.fields[3].stored, "FlowFields are not stored");
+        assert!(t.fields[1].on_validate.is_some());
+        assert!(t.per_company);
+    }
+
+    #[test]
+    fn without_keys_the_first_field_is_the_primary_key() {
+        let (_, l) = lower_src("table 50901 K { fields { field(1; A; Integer) { } field(2; B; Integer) { } } }");
+        assert_eq!(table_ir(&l).keys, vec![vec![0]]);
+    }
+
+    #[test]
+    fn record_fields_are_places() {
+        let src = format!(
+            "{TABLE}\ncodeunit 50100 C {{ procedure P() var R: Record \"ALT T\"; begin R.\"No.\" := 'a'; end; }}"
+        );
+        let (_, l) = lower_src(&src);
+        let p = l.program.objects[1].routines.iter().find(|r| r.name == "P").unwrap();
+        assert_eq!(p.locals[0].ty, RtType::Record(0, false));
+        assert_eq!(
+            p.body,
+            vec![ir::Stmt::Assign(
+                ir::Place::Field(Box::new(ir::Place::Local(0)), 0),
+                ir::Expr::Convert(
+                    RtType::Code(Some(20)),
+                    Box::new(ir::Expr::Const(ir::Const::Text("a".into())))
+                )
+            )]
+        );
+    }
+
+    #[test]
+    fn implicit_rec_in_table_code() {
+        let (_, l) = lower_src(TABLE);
+        let o = &l.program.objects[0];
+        let rec = o.rec_slot.expect("Rec slot");
+        assert_eq!(o.globals[rec].ty, RtType::Record(0, false));
+        let p = o.routines.iter().find(|r| r.name == "SetAmount").unwrap();
+        assert!(matches!(&p.body[0], ir::Stmt::Assign(ir::Place::Field(b, 1), _) if **b == ir::Place::Global(rec)));
+        let v = o.routines.iter().find(|r| r.name == "OnValidate").unwrap();
+        assert_eq!(v.field, Some(1));
+    }
+
+    #[test]
+    fn record_methods_know_whether_their_result_is_used() {
+        let src = format!(
+            "{TABLE}\ncodeunit 50100 C {{ procedure P() var R: Record \"ALT T\"; begin R.Insert(); if R.Get('a') then; end; }}"
+        );
+        let (_, l) = lower_src(&src);
+        let p = l.program.objects[1].routines.iter().find(|r| r.name == "P").unwrap();
+        assert!(
+            matches!(&p.body[0], ir::Stmt::Expr(ir::Expr::Builtin { id, receiver: Some(r), ret_used: false, .. }) if id == "Record.Insert#1" && **r == ir::Arg::Ref(ir::Place::Local(0))),
+            "{:?}",
+            p.body[0]
+        );
+        assert!(
+            matches!(&p.body[1], ir::Stmt::If(ir::Expr::Builtin { ret_used: true, .. }, _, _)),
+            "{:?}",
+            p.body[1]
+        );
+    }
+
+    #[test]
+    fn field_arguments_become_field_positions() {
+        let src = format!(
+            "{TABLE}\ncodeunit 50100 C {{ procedure P() var R: Record \"ALT T\"; begin R.SetRange(Amount, 1); end; }}"
+        );
+        let (_, l) = lower_src(&src);
+        let p = l.program.objects[1].routines.iter().find(|r| r.name == "P").unwrap();
+        let ir::Stmt::Expr(ir::Expr::Builtin { args, .. }) = &p.body[0] else {
+            panic!("{:?}", p.body)
+        };
+        assert_eq!(args[0], ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(1))));
+    }
+
+    #[test]
+    fn table_procedures_run_on_the_record() {
+        let src = format!(
+            "{TABLE}\ncodeunit 50100 C {{ procedure P(): Integer var R: Record \"ALT T\"; begin exit(R.Double(2)); end; }}"
+        );
+        let (_, l) = lower_src(&src);
+        let p = l.program.objects[1].routines.iter().find(|r| r.name == "P").unwrap();
+        let ir::Stmt::Exit(Some(ir::Expr::Call {
+            object: 0,
+            instance: Some(i),
+            ..
+        })) = &p.body[0]
+        else {
+            panic!("{:?}", p.body)
+        };
+        assert_eq!(**i, ir::Expr::Load(ir::Place::Local(0)));
     }
 
     #[test]

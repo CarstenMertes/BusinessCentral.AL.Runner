@@ -127,6 +127,15 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             .map(|&r| (obj.routines[r].name.clone(), o.clone()))
             .collect::<Vec<_>>()
     };
+    // Test-runner transaction modes are not implemented; tests in such a
+    // codeunit depend on each other, so none of them runs.
+    if let Some(a) = tests.iter().flat_map(|&r| &obj.routines[r].attributes).find(|a| {
+        ["transactionmodel", "commitbehavior", "errorbehavior"].contains(&a.name.to_ascii_lowercase().as_str())
+    }) {
+        return all(Outcome::NotRun(format!("[{}] is not implemented yet", a.name)));
+    }
+    // What publishing the app does first: run its install codeunits, then commit.
+    let skipped_installs = run_install_codeunits(lowered, &mut session);
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
     {
@@ -134,7 +143,9 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             return all(Outcome::NotRun(format!("OnRun: {reason}")));
         }
         match session.call(object, on_run, instance.clone(), Vec::new()) {
-            Ok(_) => {}
+            // NavTestCodeunit.DoRunAsync commits after a declared OnRun
+            // (codeunit/TestTestCodeunitOnRun.al).
+            Ok(_) => al_builtins::native::Ctx::commit(&mut session).expect("commit"),
             Err(Signal::Unsupported(r)) => return all(Outcome::NotRun(format!("OnRun: {r}"))),
             Err(Signal::Error(e)) => {
                 return all(Outcome::NotRun(format!(
@@ -156,6 +167,12 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             Outcome::NotRun("handler functions are not supported yet".into())
         } else if let Some(reason) = blocked_reason(lowered, object, r) {
             Outcome::NotRun(reason)
+        } else if let Some(reason) = skipped_installs
+            .iter()
+            .find(|(tables, _)| !tables.is_disjoint(&tables_touched(lowered, object, r)))
+            .map(|(_, why)| why)
+        {
+            Outcome::NotRun(reason.clone())
         } else {
             session.last_error = Default::default();
             match session.call(object, r, instance.clone(), Vec::new()) {
@@ -166,6 +183,74 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
             }
         };
         out.push((routine.name.clone(), outcome));
+    }
+    out
+}
+
+/// Runs every `Subtype = Install` codeunit's OnInstallAppPerDatabase, then
+/// its OnInstallAppPerCompany (doc: Writing extension install code), and
+/// commits. An installer that cannot run is skipped; returned are the tables
+/// it touches and why, so tests that touch them can be reported not run.
+fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
+    let mut skipped = Vec::new();
+    for (oi, o) in lowered.program.objects.iter().enumerate() {
+        let install = o.kind == "codeunit"
+            && o.properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"));
+        if !install {
+            continue;
+        }
+        let inst = session.instance(oi);
+        for trigger in ["OnInstallAppPerDatabase", "OnInstallAppPerCompany"] {
+            let Some(ri) = o
+                .routines
+                .iter()
+                .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case(trigger))
+            else {
+                continue;
+            };
+            let why = match blocked_reason(lowered, oi, ri) {
+                Some(reason) => Some(reason),
+                None => match session.call(oi, ri, inst.clone(), Vec::new()) {
+                    Ok(_) => None,
+                    Err(Signal::Unsupported(r)) => Some(r),
+                    Err(Signal::Error(e)) => Some(format!("failed (behaviour not pinned): {}", e.message)),
+                    Err(_) => None,
+                },
+            };
+            if let Some(why) = why {
+                al_data::Store::rollback(session.store_mut());
+                skipped.push((
+                    tables_touched(lowered, oi, ri),
+                    format!("install codeunit {} could not run: {why}", o.name),
+                ));
+            }
+        }
+        al_builtins::native::Ctx::commit(session).expect("commit");
+    }
+    skipped
+}
+
+/// Tables whose records appear in the slots of anything `routine` can reach.
+fn tables_touched(lowered: &Lowered, object: usize, routine: usize) -> BTreeSet<u32> {
+    fn record_tables(t: &al_builtins::value::RtType, out: &mut BTreeSet<u32>) {
+        if let al_builtins::value::RtType::Record(id, _) = t {
+            out.insert(*id);
+        }
+    }
+    let mut out = BTreeSet::new();
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(object, routine)];
+    while let Some((o, r)) = stack.pop() {
+        if !seen.insert((o, r)) {
+            continue;
+        }
+        let obj = &lowered.program.objects[o];
+        for s in obj.routines[r].locals.iter().chain(&obj.globals) {
+            record_tables(&s.ty, &mut out);
+        }
+        stack.extend(lowered.calls[o][r].iter().copied());
     }
     out
 }
@@ -293,6 +378,46 @@ mod tests {
             "{:?}",
             o[2].1
         );
+    }
+
+    #[test]
+    fn transaction_models_make_the_codeunit_not_run() {
+        let o = outcomes(
+            "codeunit 60101 T { Subtype = Test;
+            [Test] [TransactionModel(TransactionModel::AutoRollback)] procedure A() begin end;
+            [Test] procedure B() begin end; }",
+        );
+        assert!(
+            o.iter()
+                .all(|(_, x)| matches!(x, Outcome::NotRun(r) if r.contains("TransactionModel"))),
+            "{o:?}"
+        );
+    }
+
+    #[test]
+    fn install_codeunits_run_before_the_tests() {
+        let o = outcomes("table 60900 S { fields { field(1; K; Code[10]) { } } }
+            codeunit 60901 Inst { Subtype = Install;
+                trigger OnInstallAppPerCompany() var R: Record S; begin R.K := 'CO'; R.Insert(); end;
+                trigger OnInstallAppPerDatabase() var R: Record S; begin R.K := 'DB'; R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure A() var R: Record S; begin if R.Count() <> 2 then Error('install did not run'); end; }");
+        assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    }
+
+    #[test]
+    fn a_blocked_installer_only_blocks_tests_that_touch_its_tables() {
+        let o = outcomes(
+            "table 60900 S { fields { field(1; K; Code[10]) { } } }
+            table 60903 Other { fields { field(1; K; Code[10]) { } } }
+            codeunit 60901 Inst { Subtype = Install;
+                trigger OnInstallAppPerCompany() var R: Record S; begin Sleep(1); R.Insert(); end; }
+            codeunit 60102 T { Subtype = Test;
+                [Test] procedure UsesS() var R: Record S; begin end;
+                [Test] procedure UsesOther() var R: Record Other; begin end; }",
+        );
+        assert!(matches!(&o[0].1, Outcome::NotRun(r) if r.contains("install")), "{o:?}");
+        assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
     }
 
     #[test]

@@ -40,6 +40,7 @@ dependencies = [
  "al-ir",
  "al-syntax",
  "rowan",
+ "rust_decimal",
  "serde",
  "serde_json",
 ]
@@ -56,6 +57,7 @@ name = "al-test-cli"
 version = "0.1.0"
 dependencies = [
  "al-builtins",
+ "al-data",
  "al-ir",
  "al-sema",
  "al-vm",
@@ -71,6 +73,7 @@ name = "al-vm"
 version = "0.1.0"
 dependencies = [
  "al-builtins",
+ "al-data",
  "al-ir",
  "al-sema",
  "rust_decimal",

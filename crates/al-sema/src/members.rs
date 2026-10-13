@@ -19,6 +19,14 @@ pub struct FieldInfo {
     pub class: FieldClass,
     /// Object index of the table or tableextension that declares it (None for system fields).
     pub declared_in: Option<usize>,
+    /// The `InitValue` property as written.
+    pub init_value: Option<String>,
+    pub auto_increment: bool,
+    pub table_relation: bool,
+    /// Lower-case name of the table the `TableRelation` points to.
+    pub relation_table: Option<String>,
+    /// Offset of the field's OnValidate trigger node (in `declared_in`'s file).
+    pub on_validate: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,12 +123,28 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     Some(c) if c == "flowfilter" => FieldClass::FlowFilter,
                     _ => FieldClass::Normal,
                 };
+                let prop = |n: &str| {
+                    f.properties()
+                        .find(|p| p.name().eq_ignore_ascii_case(n))
+                        .map(|p| p.value_text())
+                };
+                let init_value = prop("InitValue");
+                let auto_increment = prop("AutoIncrement").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+                let on_validate = f
+                    .triggers()
+                    .find(|t| t.name().eq_ignore_ascii_case("OnValidate"))
+                    .map(|t| t.syntax().text_range().start().into());
                 m.fields.push(FieldInfo {
                     id,
                     name: fname.clone(),
                     ty,
                     class,
                     declared_in: Some(i),
+                    init_value,
+                    auto_increment,
+                    table_relation: prop("TableRelation").is_some(),
+                    relation_table: prop("TableRelation").map(|v| relation_target(&v)),
+                    on_validate,
                 });
             }
         } else if name == "value" {
@@ -138,6 +162,11 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 ty: ty.clone(),
                 class: FieldClass::Normal,
                 declared_in: None,
+                init_value: None,
+                auto_increment: false,
+                table_relation: false,
+                relation_table: None,
+                on_validate: None,
             });
         }
     }
@@ -159,6 +188,16 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
         });
     }
     m
+}
+
+/// The table a `TableRelation` value names first: `"Cust".No.` → `cust`.
+fn relation_target(v: &str) -> String {
+    let v = v.trim();
+    let name = match v.strip_prefix('"') {
+        Some(rest) => rest.split('"').next().unwrap_or(""),
+        None => v.split(['.', ' ', '(']).next().unwrap_or(""),
+    };
+    name.to_lowercase()
 }
 
 #[cfg(test)]

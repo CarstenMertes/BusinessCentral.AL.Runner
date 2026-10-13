@@ -1,3 +1,11 @@
+# Spike brief (historical)
+
+> This is the original brief that started the project as a 2–4 week
+> feasibility spike. The spike answered its question with **Go** on its first
+> day of agent work (see `spike-report.md`); the project is now being built as
+> a product. Current docs: `README.md`, `docs/architecture.md`,
+> `docs/status.md`. Kept unchanged below for the record.
+
 # Handoff: AL Runtime in Rust — Spike
 
 > Corpus counts in this brief predate the current corpus; see

@@ -1,4 +1,4 @@
-//! Performance budget: cold compile of the pinned corpus (issue #1, handoff
+//! Performance budget: cold compile of the pinned corpus (issue #1, docs/architecture.md
 //! budget of at most 1 s).
 //!
 //! "Compile" is everything between the app folders on disk and the lowered
@@ -16,7 +16,7 @@ use al_test_cli::runtime;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-/// The handoff budget (docs/handoff.md): at most one second.
+/// The compile budget (docs/architecture.md): at most one second.
 ///
 /// The asserted limit is the budget itself, not a looser number. The margin
 /// for noisy runners is in the measurement instead: the best of `RUNS`

@@ -14,7 +14,7 @@ pub enum Outcome {
     NotRun(String),
 }
 
-/// Milestones from the spike handoff, by area folder.
+/// Milestone groups from the original brief (docs/history/spike-brief.md), by area folder.
 pub const MILESTONES: &[(&str, &[&str])] = &[
     (
         "M2 pure semantics",

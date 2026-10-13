@@ -6,14 +6,14 @@ numbers with `python3 tools/inventory.py corpus/tests/al-language oracle/junit-2
 
 ## Apps in the corpus
 
-| App | `.al` files | Role for the spike |
+| App | `.al` files | Role |
 |---|---:|---|
 | `tests/al-language` (Target = Cloud) | 1330 | The test app. Everything below refers to it. |
 | `tests/al-language-internals-fixture` | 8 | A dependency of the test app (CI publishes it first). Must be loaded as a second app: some `codeunit/` tests call its objects across the app boundary (`ALT Internal Codeunit`, `ALT Cross Compute`). |
 | `tests/al-language-onprem` (Target = OnPrem) | 9 | Not in the 27.5 oracle (separate CI job). Out of scope. |
 | `tests/al-language-isolation-probe` | 5 | Not in the CI test run. Out of scope. |
 
-The handoff's "519 files / 273 test codeunits" is out of date: the test app
+The original brief's "519 files / 273 test codeunits" is out of date: the test app
 now has 1330 files and 643 test codeunits.
 
 ## First-task answers

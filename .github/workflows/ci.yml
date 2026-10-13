@@ -2,7 +2,7 @@ name: CI
 
 # Every push and PR: lint, unit + contract tests, then the corpus pass-rate
 # report. The daily schedule produces one report per day even without pushes,
-# which is the spike's pass-rate curve (one `pass-rate-<date>` artifact per day).
+# which gives the pass-rate curve (one `pass-rate-<date>` artifact per day).
 
 on:
   push:

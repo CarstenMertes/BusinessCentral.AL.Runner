@@ -1,0 +1,311 @@
+//! An `.app` package: its manifest and its AL source entries.
+
+use crate::select::DepDecl;
+use crate::version::Version;
+use crate::zip::{Zip, ZipError, navx_payload};
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Manifest {
+    pub id: String,
+    pub name: String,
+    pub publisher: String,
+    pub version: Version,
+    /// `Platform` and `Application` floors, when the manifest has them.
+    pub platform: Option<Version>,
+    pub application: Option<Version>,
+    pub target: String,
+    pub dependencies: Vec<DepDecl>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PackageError {
+    Zip(ZipError),
+    /// No `NavxManifest.xml`.
+    NoManifest,
+    Manifest(String),
+}
+
+impl fmt::Display for PackageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PackageError::Zip(e) => write!(f, "{e}"),
+            PackageError::NoManifest => write!(f, "the package has no NavxManifest.xml"),
+            PackageError::Manifest(m) => write!(f, "NavxManifest.xml: {m}"),
+        }
+    }
+}
+
+impl std::error::Error for PackageError {}
+
+impl From<ZipError> for PackageError {
+    fn from(e: ZipError) -> PackageError {
+        PackageError::Zip(e)
+    }
+}
+
+/// The AL source of a package: (path inside the package, text), sorted by path.
+pub type Sources = Vec<(String, String)>;
+
+/// Parses `NavxManifest.xml`.
+pub fn parse_manifest(xml: &str) -> Result<Manifest, PackageError> {
+    use quick_xml::events::{BytesStart, Event};
+    let bad = |m: String| PackageError::Manifest(m);
+    let attrs = |e: &BytesStart| -> Result<Vec<(String, String)>, PackageError> {
+        e.attributes()
+            .map(|a| {
+                let a = a.map_err(|err| bad(err.to_string()))?;
+                let v = a.unescape_value().map_err(|err| bad(err.to_string()))?;
+                Ok((String::from_utf8_lossy(a.key.as_ref()).into_owned(), v.into_owned()))
+            })
+            .collect()
+    };
+    let get = |a: &[(String, String)], k: &str| a.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+    let version = |a: &[(String, String)], k: &str| -> Result<Option<Version>, PackageError> {
+        get(a, k)
+            .filter(|v| !v.is_empty())
+            .map(|v| v.parse().map_err(bad))
+            .transpose()
+    };
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut manifest: Option<Manifest> = None;
+    let mut in_dependencies = false;
+    let mut dependencies = Vec::new();
+    loop {
+        match reader.read_event() {
+            Err(e) => return Err(bad(e.to_string())),
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.name().as_ref() {
+                b"App" => {
+                    let a = attrs(&e)?;
+                    manifest = Some(Manifest {
+                        id: get(&a, "Id").unwrap_or_default().to_ascii_lowercase(),
+                        name: get(&a, "Name").unwrap_or_default(),
+                        publisher: get(&a, "Publisher").unwrap_or_default(),
+                        version: version(&a, "Version")?.unwrap_or_default(),
+                        platform: version(&a, "Platform")?,
+                        application: version(&a, "Application")?,
+                        target: get(&a, "Target").unwrap_or_default(),
+                        dependencies: Vec::new(),
+                    });
+                }
+                b"Dependencies" => in_dependencies = true,
+                b"Dependency" if in_dependencies => {
+                    let a = attrs(&e)?;
+                    dependencies.push(DepDecl {
+                        id: get(&a, "Id").unwrap_or_default().to_ascii_lowercase(),
+                        name: get(&a, "Name").unwrap_or_default(),
+                        publisher: get(&a, "Publisher").unwrap_or_default(),
+                        min: version(&a, "MinVersion")?.unwrap_or_default(),
+                        optional: false,
+                    });
+                }
+                _ => {}
+            },
+            Ok(Event::End(e)) if e.name().as_ref() == b"Dependencies" => in_dependencies = false,
+            Ok(_) => {}
+        }
+    }
+    let mut m = manifest.ok_or_else(|| bad("no <App> element".into()))?;
+    m.dependencies = dependencies;
+    Ok(m)
+}
+
+/// How deep a wrapper package may nest an inner `.app`.
+const MAX_NESTING: usize = 2;
+
+fn is_al(name: &str) -> bool {
+    name.len() > 3 && name[name.len() - 3..].eq_ignore_ascii_case(".al")
+}
+
+fn is_app(name: &str) -> bool {
+    name.len() > 4 && name[name.len() - 4..].eq_ignore_ascii_case(".app")
+}
+
+/// The package whose archive holds the source: the one given, or the `.app`
+/// nested in a precompiled wrapper that holds none itself.
+fn with_archive<T>(
+    app: &[u8],
+    depth: usize,
+    f: &mut dyn FnMut(&Zip<'_>, Manifest) -> Result<T, PackageError>,
+) -> Result<T, PackageError> {
+    let zip = Zip::parse(navx_payload(app)?)?;
+    let manifest = zip.find("NavxManifest.xml").ok_or(PackageError::NoManifest)?;
+    let manifest = parse_manifest(&String::from_utf8_lossy(&zip.read(manifest)?))?;
+    if depth < MAX_NESTING && !zip.entries.iter().any(|e| is_al(&e.name)) {
+        if let Some(inner) = zip.entries.iter().find(|e| is_app(&e.name)) {
+            let bytes = zip.read(inner)?;
+            return with_archive(&bytes, depth + 1, f);
+        }
+    }
+    f(&zip, manifest)
+}
+
+/// Reads only the manifest and whether the package has AL source.
+pub fn read_info(app: &[u8]) -> Result<(Manifest, bool), PackageError> {
+    with_archive(app, 0, &mut |zip, m| {
+        Ok((m, zip.entries.iter().any(|e| is_al(&e.name))))
+    })
+}
+
+/// Reads the manifest and every `.al` entry, each checked against its CRC-32.
+pub fn read_package(app: &[u8]) -> Result<(Manifest, Sources), PackageError> {
+    use rayon::prelude::*;
+    with_archive(app, 0, &mut |zip, m| {
+        let al: Vec<&crate::zip::Entry> = zip.entries.iter().filter(|e| is_al(&e.name)).collect();
+        let read: Vec<Result<(String, String), PackageError>> = al
+            .par_iter()
+            .map(|e| {
+                let bytes = zip.read(e)?;
+                let text = String::from_utf8_lossy(&bytes);
+                let text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_string();
+                Ok((percent_decode_once(&e.name), text))
+            })
+            .collect();
+        let mut sources = read.into_iter().collect::<Result<Sources, _>>()?;
+        sources.sort();
+        Ok((m, sources))
+    })
+}
+
+/// `%20` to a space, once. Entry names in packages are encoded twice by the packer.
+fn percent_decode_once(name: &str) -> String {
+    let b = name.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            let hex = |c: u8| (c as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::zip::testutil::{Builder, navx};
+
+    const MANIFEST: &str = r#"<Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+  <App Id="437DBF0E-84FF-417A-965D-ED2BB9650972" Name="Base &amp; Co" Publisher="Microsoft" Version="27.5.46862.48827" Platform="27.0.0.0" Application="27.5.0.0" Target="OnPrem" />
+  <IdRanges><IdRange MinObjectId="1" MaxObjectId="49999" /></IdRanges>
+  <Dependencies>
+    <Dependency Id="63ca2fa4-4f03-4f2b-a480-172fef340d3f" Name="System Application" Publisher="Microsoft" MinVersion="27.5.0.0" CompatibilityId="0.0.0.0" />
+    <Dependency Id="f3552374-a1f2-4356-848e-196002525837" Name="Business Foundation" Publisher="Microsoft" MinVersion="27.5.0.0" />
+  </Dependencies>
+  <InternalsVisibleTo><Module Id="6992416f-3f39-4d3c-8242-3fff61350bea" Name="Other" Publisher="Microsoft" /></InternalsVisibleTo>
+</Package>"#;
+
+    fn app_with(files: &[(&str, &str)]) -> Vec<u8> {
+        let mut b = Builder::new().add("NavxManifest.xml", MANIFEST.as_bytes(), true);
+        for (n, t) in files {
+            b = b.add(n, t.as_bytes(), true);
+        }
+        navx(&b.finish())
+    }
+
+    #[test]
+    fn the_manifest_gives_identity_floors_and_dependencies() {
+        let m = parse_manifest(MANIFEST).unwrap();
+        assert_eq!(m.id, "437dbf0e-84ff-417a-965d-ed2bb9650972");
+        assert_eq!(m.name, "Base & Co");
+        assert_eq!(m.publisher, "Microsoft");
+        assert_eq!(m.version, "27.5.46862.48827".parse().unwrap());
+        assert_eq!(m.platform, Some("27.0".parse().unwrap()));
+        assert_eq!(m.application, Some("27.5".parse().unwrap()));
+        assert_eq!(m.target, "OnPrem");
+        assert_eq!(
+            m.dependencies
+                .iter()
+                .map(|d| (d.name.as_str(), d.min.to_string()))
+                .collect::<Vec<_>>(),
+            [
+                ("System Application", "27.5.0.0".to_string()),
+                ("Business Foundation", "27.5.0.0".to_string())
+            ]
+        );
+        // Modules that may see internals are not dependencies.
+        assert!(m.dependencies.iter().all(|d| d.name != "Other"));
+    }
+
+    #[test]
+    fn a_manifest_without_an_app_element_is_an_error() {
+        assert!(matches!(parse_manifest("<Package/>"), Err(PackageError::Manifest(_))));
+        assert!(matches!(parse_manifest("not xml <"), Err(PackageError::Manifest(_))));
+    }
+
+    #[test]
+    fn sources_are_the_al_entries_sorted_by_path() {
+        let app = app_with(&[
+            ("src/B.Codeunit.al", "codeunit 2 B { }"),
+            ("src/A.Codeunit.al", "codeunit 1 A { }"),
+            ("SymbolReference.json", "{}"),
+            ("src/readme.txt", "x"),
+        ]);
+        let (m, src) = read_package(&app).unwrap();
+        assert_eq!(m.name, "Base & Co");
+        assert_eq!(
+            src,
+            [
+                ("src/A.Codeunit.al".to_string(), "codeunit 1 A { }".to_string()),
+                ("src/B.Codeunit.al".to_string(), "codeunit 2 B { }".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn entry_names_are_percent_decoded_once_and_a_byte_order_mark_is_dropped() {
+        let app = app_with(&[("src/Azure%2520Function/F.al", "\u{feff}codeunit 1 F { }")]);
+        let (_, src) = read_package(&app).unwrap();
+        assert_eq!(src[0].0, "src/Azure%20Function/F.al");
+        assert_eq!(src[0].1, "codeunit 1 F { }");
+    }
+
+    #[test]
+    fn read_info_reports_whether_there_is_source_without_reading_it() {
+        let (m, has) = read_info(&app_with(&[("src/A.al", "codeunit 1 A { }")])).unwrap();
+        assert_eq!(m.version.0, 27);
+        assert!(has);
+        let (_, has) = read_info(&app_with(&[("SymbolReference.json", "{}")])).unwrap();
+        assert!(!has);
+    }
+
+    #[test]
+    fn a_wrapper_package_around_an_inner_app_is_unwrapped() {
+        // Precompiled packages hold the real `.app` as an entry and carry no source themselves.
+        let inner = app_with(&[("src/A.al", "codeunit 1 A { }")]);
+        let outer = navx(
+            &Builder::new()
+                .add("NavxManifest.xml", MANIFEST.as_bytes(), true)
+                .add("Microsoft_Base Application.app", &inner, false)
+                .finish(),
+        );
+        let (_, has) = read_info(&outer).unwrap();
+        assert!(has);
+        let (_, src) = read_package(&outer).unwrap();
+        assert_eq!(src.len(), 1);
+    }
+
+    #[test]
+    fn a_package_with_a_bad_crc_is_an_error_not_partial_source() {
+        let zip = Builder::new()
+            .add("NavxManifest.xml", MANIFEST.as_bytes(), true)
+            .add_with_crc("src/A.al", b"codeunit 1 A { }", 1)
+            .finish();
+        let err = read_package(&navx(&zip)).unwrap_err();
+        assert!(matches!(err, PackageError::Zip(ZipError::Crc { .. })), "{err:?}");
+    }
+
+    #[test]
+    fn a_package_without_a_manifest_is_an_error() {
+        let zip = Builder::new().add("src/A.al", b"codeunit 1 A { }", false).finish();
+        assert_eq!(read_package(&navx(&zip)).unwrap_err(), PackageError::NoManifest);
+    }
+}

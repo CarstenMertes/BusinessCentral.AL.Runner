@@ -32,6 +32,9 @@ pub struct Object {
     pub xrec_slot: Option<usize>,
     /// For pages: the control tree and page triggers (ADR-012).
     pub page: Option<Page>,
+    /// For queries: dataitems, columns and the query-level properties.
+    #[serde(default)]
+    pub query: Option<Query>,
     /// For xmlports: the schema. Triggers and procedures are ordinary routines of the object.
     #[serde(default)]
     pub xmlport: Option<XmlPort>,
@@ -104,6 +107,64 @@ impl XmlNode {
     pub fn trigger(&self, name: &str) -> Option<usize> {
         self.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r)
     }
+}
+
+/// A query object (corpus query/): a chain of dataitems joined by `DataItemLink`, and the
+/// columns they project. Execution is the VM's (`al-vm/src/queries.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Query {
+    /// Dataitems in source order; each nests in `parent`.
+    pub items: Vec<QueryItem>,
+    /// `column(...)` and `filter(...)` elements in source order. A query column is identified by
+    /// its position here.
+    pub columns: Vec<QueryColumn>,
+    /// `OrderBy` as (column, ascending).
+    pub order_by: Vec<(usize, bool)>,
+    /// The `TopNumberOfRows` property; 0 = all rows.
+    pub top: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueryItem {
+    pub name: String,
+    /// Object index of the source table.
+    pub table: usize,
+    /// The enclosing dataitem (index into `Query::items`); `None` for the root.
+    pub parent: Option<usize>,
+    /// `SqlJoinType = LeftOuterJoin`, which is also the default of a nested dataitem.
+    pub left_outer: bool,
+    /// `DataItemLink`: (field position in this table, field position in the parent's table).
+    pub link: Vec<(usize, usize)>,
+    /// `DataItemTableFilter`: conditions on fields of this table.
+    pub table_filter: Vec<CalcCond>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum QueryMethod {
+    Sum,
+    Count,
+    Average,
+    Min,
+    Max,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct QueryColumn {
+    pub name: String,
+    /// The `Caption` property when it is a plain text literal.
+    pub caption: Option<String>,
+    /// Index into `Query::items`.
+    pub item: usize,
+    /// Position of the source field in the dataitem's table; `None` for a `Count` column.
+    pub field: Option<usize>,
+    /// A `filter(...)` element: it filters its dataitem and is not part of the dataset.
+    pub filter_element: bool,
+    pub method: Option<QueryMethod>,
+    pub reverse_sign: bool,
+    /// Type of the value the column reads.
+    pub ty: RtType,
+    /// `ColumnFilter`: a `const` or `filter` condition on this column.
+    pub static_filter: Option<CalcValue>,
 }
 
 /// A page object as the test client sees it (ADR-012). The AL code of a page
@@ -416,11 +477,34 @@ pub enum Expr {
         args: Vec<Arg>,
         try_call: bool,
     },
+    /// A call through an interface: `receiver` evaluates to the codeunit instance the
+    /// interface variable holds, and the call runs the target routine of that
+    /// instance's object. `targets` are (object, routine) of every implementation.
+    InterfaceCall {
+        receiver: Box<Expr>,
+        targets: Vec<(usize, usize)>,
+        args: Vec<Arg>,
+    },
+    /// An enum value cast to an interface: a fresh instance of the codeunit that
+    /// implements the interface for the value's ordinal. `by_ordinal` has every declared
+    /// ordinal of the enum (extensions included), already resolved through the value's own
+    /// `Implementation` and the enum's `DefaultImplementation`; `unknown` is the
+    /// `UnknownValueImplementation` for ordinals the enum does not declare.
+    EnumImpl {
+        value: Box<Expr>,
+        by_ordinal: Vec<(i32, usize)>,
+        unknown: Option<usize>,
+    },
     /// A control of the test page `page` evaluates to (`TP.Ctl`), by index
     /// into the page's control list (ADR-012).
     Control {
         page: Box<Expr>,
         control: usize,
+    },
+    /// The current row's value of column `column` of a query variable (`Q.Amount`).
+    QueryColumn {
+        query: Box<Expr>,
+        column: usize,
     },
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
@@ -490,6 +574,7 @@ mod tests {
                 rec_slot: None,
                 xrec_slot: None,
                 page: None,
+                query: None,
                 xmlport: None,
                 routines: vec![Routine {
                     name: "P".into(),

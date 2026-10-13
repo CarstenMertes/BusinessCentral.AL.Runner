@@ -55,8 +55,32 @@ pub struct ProcSig {
     pub offset: usize,
 }
 
+/// Where an interface implementation of an enum is declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImplSlot {
+    /// `Implementation = I = C` on the value with this ordinal.
+    Value(u32),
+    /// `DefaultImplementation = I = C` on the enum.
+    Default,
+    /// `UnknownValueImplementation = I = C` on the enum.
+    Unknown,
+}
+
+/// One `Interface = Codeunit` pair of an enum's `Implementation`, `DefaultImplementation` or
+/// `UnknownValueImplementation` property, names as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumImpl {
+    pub slot: ImplSlot,
+    pub interface: Vec<String>,
+    pub codeunit: Vec<String>,
+    /// Object index of the enum or enumextension that declares it (names resolve from its file).
+    pub declared_in: usize,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Members {
+    /// Interface implementations of an enum, extensions merged.
+    pub enum_impls: Vec<EnumImpl>,
     pub fields: Vec<FieldInfo>,
     pub enum_values: Vec<(u32, String)>,
     /// `Caption` of enum values that declare one, by ordinal.
@@ -91,6 +115,7 @@ pub fn build(ws: &Workspace) -> Vec<Members> {
             target.fields.extend(ext.fields);
             target.enum_values.extend(ext.enum_values);
             target.enum_captions.extend(ext.enum_captions);
+            target.enum_impls.extend(ext.enum_impls);
             target.procedures.extend(ext.procedures);
             // `modify(Field) { Caption = ...; }` changes properties of an existing field
             // (corpus tableextension/TestTableExtFieldModify.al:40-67, record/TestRecordCaptionSeparators.al:79-85).
@@ -212,6 +237,12 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
             let args = sec.args();
             if let (Some(id), Some(v)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) {
                 m.enum_values.push((id, v.clone()));
+                for p in sec
+                    .properties()
+                    .filter(|p| p.name().eq_ignore_ascii_case("Implementation"))
+                {
+                    push_impls(&mut m, ImplSlot::Value(id), &p.value_text(), i);
+                }
                 let caption = sec
                     .properties()
                     .find(|p| p.name().eq_ignore_ascii_case("Caption"))
@@ -221,6 +252,14 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 }
             }
         }
+    }
+    for p in obj.properties() {
+        let slot = match p.name().to_ascii_lowercase().as_str() {
+            "defaultimplementation" => ImplSlot::Default,
+            "unknownvalueimplementation" => ImplSlot::Unknown,
+            _ => continue,
+        };
+        push_impls(&mut m, slot, &p.value_text(), i);
     }
     if ws.objects[i].kind == ObjKind::Table {
         for (id, name, ty) in SYSTEM_FIELDS {
@@ -264,6 +303,45 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
         });
     }
     m
+}
+
+/// The `Interface = Codeunit` pairs of an implementation property (`I = C, J = D`).
+fn push_impls(m: &mut Members, slot: ImplSlot, value: &str, declared_in: usize) {
+    for pair in split_outside_quotes(value, ',') {
+        let sides = split_outside_quotes(&pair, '=');
+        if let [interface, codeunit] = sides.as_slice() {
+            m.enum_impls.push(EnumImpl {
+                slot: slot.clone(),
+                interface: name_parts(interface),
+                codeunit: name_parts(codeunit),
+                declared_in,
+            });
+        }
+    }
+}
+
+fn split_outside_quotes(text: &str, sep: char) -> Vec<String> {
+    let mut out = vec![String::new()];
+    let mut in_quote = false;
+    for c in text.chars() {
+        match c {
+            '"' => {
+                in_quote = !in_quote;
+                out.last_mut().expect("non-empty").push(c);
+            }
+            c if c == sep && !in_quote => out.push(String::new()),
+            c => out.last_mut().expect("non-empty").push(c),
+        }
+    }
+    out
+}
+
+/// `Ns."Some Name"` as the parts of an object reference.
+fn name_parts(text: &str) -> Vec<String> {
+    split_outside_quotes(text.trim(), '.')
+        .into_iter()
+        .map(|p| p.trim().trim_matches('"').to_string())
+        .collect()
 }
 
 /// `Open,"In Progress",,Closed` as member names: quotes removed and kept spaces inside them,

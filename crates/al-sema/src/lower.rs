@@ -303,6 +303,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             xrec_slot,
             page,
             xmlport: xml_irs[oi].clone(),
+            query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.unsupported.push(unsupported);
         out.calls.push(calls);
@@ -314,7 +315,7 @@ type L<T> = Result<T, String>;
 
 /// An `InitValue` property as a constant of the field's type; `None` for
 /// forms not handled yet (the field then starts at its type's default).
-fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
+pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
     let t = text.trim();
     Some(match ty {
         Ty::Integer => ir::Const::Integer(t.parse().ok()?),
@@ -336,6 +337,97 @@ fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
         Ty::Time => ir::Const::Time(time_literal(t)?),
         _ => return None,
     })
+}
+
+/// A `const(..)` value as a constant of the source field's type.
+pub(crate) fn calc_const(
+    ws: &Workspace,
+    members: &[Members],
+    file: usize,
+    raw: &str,
+    ty: &Ty,
+) -> Result<ir::Const, String> {
+    let raw = raw.trim();
+    // `Database::"X"` / `Report::"X"`: the object's id (corpus
+    // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
+    if let Some((kind, name)) = raw.split_once("::") {
+        let kind = match kind.trim().to_ascii_lowercase().as_str() {
+            "database" => Some(ObjKind::Table),
+            other => ObjKind::from_type_name(other),
+        };
+        let name = name.trim().trim_matches('"').to_string();
+        let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
+            return Err(format!("CalcFormula const({raw}) is not understood yet"));
+        };
+        let Resolution::Found(o) = ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
+            return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
+        };
+        let id = ws.objects[o]
+            .id
+            .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
+        return match ty {
+            Ty::Integer => Ok(ir::Const::Integer(id as i32)),
+            Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
+            Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
+            _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
+        };
+    }
+    let unquoted = raw.trim_matches('"');
+    if let Ty::Enum(name) = ty {
+        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
+            return Err(format!(
+                "CalcFormula const({raw}): enum `{name}` is outside the workspace"
+            ));
+        };
+        let values = &members[e].enum_values;
+        let ordinal = values
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
+            .map(|(v, _)| *v as i32)
+            .or_else(|| unquoted.parse().ok())
+            .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
+        return Ok(ir::Const::Enum(e as u32, ordinal));
+    }
+    if let Ty::Option(members) = ty {
+        if let Ok(n) = unquoted.parse::<i32>() {
+            return Ok(ir::Const::Option(n, members.clone()));
+        }
+    }
+    init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
+}
+
+/// The runtime type of a scalar type (numbers, text, dates, options, enums); `None` for the rest.
+pub(crate) fn scalar_rt(ws: &Workspace, file: usize, t: &Ty) -> Option<L<RtType>> {
+    Some(Ok(match t {
+        Ty::Integer => RtType::Integer,
+        Ty::BigInteger => RtType::BigInteger,
+        Ty::Decimal => RtType::Decimal,
+        Ty::Boolean => RtType::Boolean,
+        Ty::Char => RtType::Char,
+        Ty::Byte => RtType::Byte,
+        Ty::Text(n) => RtType::Text(*n),
+        Ty::Code(n) => RtType::Code(*n),
+        Ty::Label => RtType::Text(None),
+        Ty::Date => RtType::Date,
+        Ty::Time => RtType::Time,
+        Ty::DateTime => RtType::DateTime,
+        Ty::Duration => RtType::Duration,
+        Ty::DateFormula => RtType::DateFormula,
+        Ty::Guid => RtType::Guid,
+        Ty::Variant => RtType::Variant,
+        Ty::Option(m) => RtType::Option(m.clone()),
+        Ty::Enum(n) => match ws.resolve_ref(file, ObjKind::Enum, &crate::types::qualified_parts(n)) {
+            Resolution::Found(i) => RtType::Enum(i as u32),
+            _ => {
+                return Some(Err(format!(
+                    "{} `{}` is outside the workspace",
+                    ObjKind::Enum.label(),
+                    crate::types::display_name(n)
+                )));
+            }
+        },
+        _ => return None,
+    }))
 }
 
 /// `20240115D` / `0D` as a day number.
@@ -389,7 +481,7 @@ fn label_text(t: &ast::TypeRef) -> Option<String> {
 /// the single-quoted literals the filter grammar understands. AL quotes an
 /// identifier with `"`; the filter grammar treats `"` as an ordinary
 /// character (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9).
-fn rewrite_quotes(raw: &str) -> String {
+pub(crate) fn rewrite_quotes(raw: &str) -> String {
     let mut out = String::new();
     let mut chars = raw.chars().peekable();
     while let Some(c) = chars.next() {
@@ -449,6 +541,16 @@ struct Lowerer<'a> {
     xmlports: &'a [Option<ir::XmlPort>],
     /// `routine_attributes` memo, by (object, routine offset).
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+}
+
+/// An interface type anywhere inside a collection type.
+fn holds_interface(t: &Ty) -> bool {
+    match t {
+        Ty::Object(ObjKind::Interface, _) => true,
+        Ty::List(t) | Ty::Array(_, t) => holds_interface(t),
+        Ty::Dictionary(k, v) => holds_interface(k) || holds_interface(v),
+        _ => false,
+    }
 }
 
 fn key(file: usize, n: &SyntaxNode) -> (usize, usize, usize) {
@@ -903,53 +1005,7 @@ impl Lowerer<'_> {
 
     /// A `const(..)` value as a constant of the source field's type.
     fn calc_const(&self, file: usize, raw: &str, ty: &Ty) -> Result<ir::Const, String> {
-        let raw = raw.trim();
-        // `Database::"X"` / `Report::"X"`: the object's id (corpus
-        // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
-        if let Some((kind, name)) = raw.split_once("::") {
-            let kind = match kind.trim().to_ascii_lowercase().as_str() {
-                "database" => Some(ObjKind::Table),
-                other => ObjKind::from_type_name(other),
-            };
-            let name = name.trim().trim_matches('"').to_string();
-            let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
-                return Err(format!("CalcFormula const({raw}) is not understood yet"));
-            };
-            let Resolution::Found(o) = self.ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
-                return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
-            };
-            let id = self.ws.objects[o]
-                .id
-                .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
-            return match ty {
-                Ty::Integer => Ok(ir::Const::Integer(id as i32)),
-                Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
-                Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
-                _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
-            };
-        }
-        let unquoted = raw.trim_matches('"');
-        if let Ty::Enum(name) = ty {
-            let Resolution::Found(e) = self.ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
-                return Err(format!(
-                    "CalcFormula const({raw}): enum `{name}` is outside the workspace"
-                ));
-            };
-            let values = &self.members[e].enum_values;
-            let ordinal = values
-                .iter()
-                .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
-                .map(|(v, _)| *v as i32)
-                .or_else(|| unquoted.parse().ok())
-                .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
-            return Ok(ir::Const::Enum(e as u32, ordinal));
-        }
-        if let Ty::Option(members) = ty {
-            if let Ok(n) = unquoted.parse::<i32>() {
-                return Ok(ir::Const::Option(n, members.clone()));
-            }
-        }
-        init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
+        calc_const(self.ws, self.members, file, raw, ty)
     }
 
     fn res(&self, n: &SyntaxNode) -> Option<&Res> {
@@ -985,25 +1041,10 @@ impl Lowerer<'_> {
     }
 
     fn rt(&self, t: &Ty) -> L<RtType> {
+        if let Some(r) = scalar_rt(self.ws, self.file, t) {
+            return r;
+        }
         Ok(match t {
-            Ty::Integer => RtType::Integer,
-            Ty::BigInteger => RtType::BigInteger,
-            Ty::Decimal => RtType::Decimal,
-            Ty::Boolean => RtType::Boolean,
-            Ty::Char => RtType::Char,
-            Ty::Byte => RtType::Byte,
-            Ty::Text(n) => RtType::Text(*n),
-            Ty::Code(n) => RtType::Code(*n),
-            Ty::Label => RtType::Text(None),
-            Ty::Date => RtType::Date,
-            Ty::Time => RtType::Time,
-            Ty::DateTime => RtType::DateTime,
-            Ty::Duration => RtType::Duration,
-            Ty::DateFormula => RtType::DateFormula,
-            Ty::Guid => RtType::Guid,
-            Ty::Variant => RtType::Variant,
-            Ty::Option(m) => RtType::Option(m.clone()),
-            Ty::Enum(n) => RtType::Enum(self.resolve_obj(ObjKind::Enum, n)? as u32),
             Ty::Object(ObjKind::Codeunit, n) => RtType::Codeunit(self.resolve_obj(ObjKind::Codeunit, n)? as u32),
             // An xmlport variable is an instance with its own globals, like a codeunit's.
             Ty::Object(ObjKind::XmlPort, n) => {
@@ -1020,12 +1061,33 @@ impl Lowerer<'_> {
                     Some(why) => return Err(format!("Page \"{n}\": {why}")),
                 }
             }
+            Ty::Object(ObjKind::Query, n) => {
+                let q = self.resolve_obj(ObjKind::Query, n)?;
+                match self.checked.queries[q].as_ref().and_then(|l| l.reasons.first()) {
+                    None => RtType::Query(q as u32),
+                    Some(why) => return Err(format!("Query \"{}\": {why}", crate::types::display_name(n))),
+                }
+            }
             Ty::TestPage(n) => {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
                 match self.page_reasons[p].first() {
                     None => RtType::TestPage(p as u32),
                     Some(why) => return Err(format!("TestPage \"{}\": {why}", crate::types::display_name(n))),
                 }
+            }
+            Ty::Object(ObjKind::Interface, n) => {
+                let i = self.resolve_obj(ObjKind::Interface, n)?;
+                // Which procedures an extending interface inherits is not pinned by the corpus.
+                if self.ws.object_ast(i).extends_parts().is_some() {
+                    return Err(format!(
+                        "interface \"{}\" extends another interface (`extends` is not lowered yet)",
+                        crate::types::display_name(n)
+                    ));
+                }
+                RtType::Interface(i as u32)
+            }
+            Ty::List(_) | Ty::Dictionary(..) | Ty::Array(..) if holds_interface(t) => {
+                return Err("an interface inside a List, Dictionary or array is not lowered yet (not pinned)".into());
             }
             Ty::List(t) => RtType::List(Box::new(self.rt(t)?)),
             Ty::Dictionary(k, v) => RtType::Dictionary(Box::new(self.rt(k)?), Box::new(self.rt(v)?)),
@@ -1041,6 +1103,163 @@ impl Lowerer<'_> {
                 RtType::Record(t as u32, *temporary || self.is_temporary_table(t))
             }
             other => return Err(format!("type {other} is not lowered yet")),
+        })
+    }
+
+    /// Whether codeunit `cu` lists interface `iface` after `implements`.
+    fn implements(&self, cu: usize, iface: usize) -> bool {
+        let file = self.ws.objects[cu].file;
+        self.ws
+            .object_ast(cu)
+            .implements_parts()
+            .iter()
+            .any(|p| matches!(self.ws.resolve_ref(file, ObjKind::Interface, p), Resolution::Found(i) if i == iface))
+    }
+
+    /// `value` (of type `src`) converted for a slot of type `target`. An interface slot takes a
+    /// codeunit that implements it (corpus codeunit/TestCodeunitInterface.al:14-26) or an enum
+    /// that implements it (types/TestEnumDefaultImplTests.Codeunit.al:30-42); everything else
+    /// is refused.
+    fn convert_to(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
+        let slot = self.rt(target)?;
+        let RtType::Interface(iface) = slot else {
+            return Ok(ir::Expr::Convert(slot, Box::new(value)));
+        };
+        let iface = iface as usize;
+        let iname = &self.ws.objects[iface].name;
+        match src {
+            Ty::Object(ObjKind::Interface, n) if self.rt(src)? == slot => {
+                let _ = n;
+                Ok(ir::Expr::Convert(slot, Box::new(value)))
+            }
+            Ty::Object(ObjKind::Codeunit, n) => {
+                let cu = self.resolve_obj(ObjKind::Codeunit, n)?;
+                if !self.implements(cu, iface) {
+                    return Err(format!(
+                        "codeunit \"{}\" does not implement interface \"{iname}\"",
+                        crate::types::display_name(n)
+                    ));
+                }
+                Ok(ir::Expr::Convert(slot, Box::new(value)))
+            }
+            Ty::Enum(n) => self.enum_impl(n, iface, value),
+            other => Err(format!("{other} into interface \"{iname}\" is not lowered yet")),
+        }
+    }
+
+    /// The cast of an enum value to interface `iface`: per declared ordinal the value's own
+    /// `Implementation`, else the enum's `DefaultImplementation`; undeclared ordinals take
+    /// `UnknownValueImplementation` (corpus types/TestEnumDefaultImplTests.Codeunit.al:58-100,
+    /// types/TestEnumExtImplTests.Codeunit.al:33-76: an enumextension adds values with their own
+    /// `Implementation` and falls back to the base enum's default).
+    fn enum_impl(&self, enum_name: &str, iface: usize, value: ir::Expr) -> L<ir::Expr> {
+        use crate::members::ImplSlot;
+        let e = self.resolve_obj(ObjKind::Enum, enum_name)?;
+        let iname = &self.ws.objects[iface].name;
+        let find = |slot: &ImplSlot| -> L<Option<usize>> {
+            for im in self.members[e].enum_impls.iter().filter(|i| i.slot == *slot) {
+                let file = self.ws.objects[im.declared_in].file;
+                if !matches!(self.ws.resolve_ref(file, ObjKind::Interface, &im.interface), Resolution::Found(i) if i == iface)
+                {
+                    continue;
+                }
+                return match self.ws.resolve_ref(file, ObjKind::Codeunit, &im.codeunit) {
+                    Resolution::Found(c) => Ok(Some(c)),
+                    _ => Err(format!("codeunit `{}` is outside the workspace", im.codeunit.join("."))),
+                };
+            }
+            Ok(None)
+        };
+        let default = find(&ImplSlot::Default)?;
+        let unknown = find(&ImplSlot::Unknown)?;
+        let mut by_ordinal = Vec::new();
+        for (ordinal, vname) in &self.members[e].enum_values {
+            match find(&ImplSlot::Value(*ordinal))?.or(default) {
+                Some(c) => by_ordinal.push((*ordinal as i32, c)),
+                None => {
+                    return Err(format!(
+                        "enum \"{enum_name}\" value `{vname}` has no implementation of interface \"{iname}\""
+                    ));
+                }
+            }
+        }
+        Ok(ir::Expr::EnumImpl {
+            value: Box::new(value),
+            by_ordinal,
+            unknown,
+        })
+    }
+
+    /// A call of an interface procedure on `receiver`: it runs the same-named procedure of
+    /// whichever codeunit the variable holds, so every implementation is a possible target.
+    fn interface_call(
+        &mut self,
+        iface: usize,
+        offset: usize,
+        receiver: Option<&SyntaxNode>,
+        args: &[SyntaxNode],
+    ) -> L<ir::Expr> {
+        let Some(receiver) = receiver else {
+            return Err("an interface procedure called without a receiver is not lowered yet".into());
+        };
+        if !matches!(self.ty_of(receiver), Ty::Object(ObjKind::Interface, _)) {
+            return Err("an interface procedure called on something that is not an interface variable".into());
+        }
+        let sig = self.members[iface]
+            .procedures
+            .iter()
+            .find(|p| p.offset == offset)
+            .ok_or("interface procedure signature")?
+            .clone();
+        let mut targets = Vec::new();
+        for cu in 0..self.ws.objects.len() {
+            if self.ws.objects[cu].kind != ObjKind::Codeunit || !self.implements(cu, iface) {
+                continue;
+            }
+            let same_shape: Vec<_> = self.members[cu]
+                .procedures
+                .iter()
+                .filter(|p| {
+                    !p.local
+                        && p.name.eq_ignore_ascii_case(&sig.name)
+                        && p.params.len() == sig.params.len()
+                        && p.params.iter().zip(&sig.params).all(|(a, b)| a.by_var == b.by_var)
+                })
+                .collect();
+            let exact = same_shape
+                .iter()
+                .find(|p| p.params.iter().zip(&sig.params).all(|(a, b)| a.ty == b.ty));
+            let Some(imp) = exact.or(same_shape.first()) else {
+                return Err(format!(
+                    "codeunit \"{}\" implements \"{}\" without a procedure `{}`",
+                    self.ws.objects[cu].name, self.ws.objects[iface].name, sig.name
+                ));
+            };
+            let routine = *self.routine_at.get(&(cu, imp.offset)).ok_or("procedure not found")?;
+            self.calls.push((cu, routine));
+            targets.push((cu, routine));
+        }
+        if targets.is_empty() {
+            return Err(format!(
+                "interface \"{}\" has no implementing codeunit in the workspace",
+                self.ws.objects[iface].name
+            ));
+        }
+        let receiver = Box::new(self.expr(receiver)?);
+        let mut out = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let p = sig.params.get(i).ok_or("too many arguments")?;
+            if p.by_var {
+                out.push(ir::Arg::Ref(self.place(a)?));
+            } else {
+                let value = self.expr(a)?;
+                out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
+            }
+        }
+        Ok(ir::Expr::InterfaceCall {
+            receiver,
+            targets,
+            args: out,
         })
     }
 
@@ -1066,11 +1285,22 @@ impl Lowerer<'_> {
         for p in r.params() {
             by_var.push(p.is_var());
             let ty = p.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+            if p.is_var() && matches!(ty, Ty::Object(ObjKind::Interface, _)) {
+                self.reasons.push(format!(
+                    "`{}`: a var interface parameter is not lowered yet (not pinned)",
+                    p.name()
+                ));
+            }
             add(self, p.name(), ty, &mut locals);
         }
         let params = locals.len();
         let ret_ty = r.return_type().map(|t| Ty::from_type_ref(&t));
         let ret = match &ret_ty {
+            Some(Ty::Object(ObjKind::Interface, _)) => {
+                self.reasons
+                    .push("return type: an interface return value is not lowered yet (not pinned)".into());
+                None
+            }
             Some(t) => match self.rt(t) {
                 Ok(rt) => Some(rt),
                 Err(e) => {
@@ -1296,7 +1526,7 @@ impl Lowerer<'_> {
             }
         }
         let place = self.place(&kids[0])?;
-        let slot = self.rt(&self.ty_of(&kids[0]))?;
+        let target_ty = self.ty_of(&kids[0]);
         let rhs = self.expr(&kids[1])?;
         let op = sig_tokens(n).into_iter().find(|t| {
             matches!(
@@ -1308,7 +1538,8 @@ impl Lowerer<'_> {
                     | SyntaxKind::SlashAssign
             )
         });
-        let value = match op.map(|t| t.kind()) {
+        let op_kind = op.map(|t| t.kind());
+        let value = match op_kind {
             Some(SyntaxKind::PlusAssign) => {
                 ir::Expr::Binary(ir::BinOp::Add, Box::new(ir::Expr::Load(place.clone())), Box::new(rhs))
             }
@@ -1323,7 +1554,11 @@ impl Lowerer<'_> {
             }
             _ => rhs,
         };
-        Ok(ir::Stmt::Assign(place, ir::Expr::Convert(slot, Box::new(value))))
+        let value = match op_kind {
+            Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, &self.ty_of(&kids[1]), value)?,
+            Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
+        };
+        Ok(ir::Stmt::Assign(place, value))
     }
 
     fn case(&mut self, kids: &[SyntaxNode]) -> L<ir::Stmt> {
@@ -1533,6 +1768,17 @@ impl Lowerer<'_> {
             MemberExpr if self.is_control_access(n) => self.control(n),
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) => self.call(n, n, &[]),
+                // `Q.Amount`: the current row's value of a query column.
+                Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
+                    let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
+                    if layout.query.columns[column].filter_element {
+                        return Err("reading a filter element of a query (not pinned)".into());
+                    }
+                    Ok(ir::Expr::QueryColumn {
+                        query: Box::new(self.expr(&kids[0])?),
+                        column,
+                    })
+                }
                 // `Database::A.B."Name"`: a namespace-qualified object id.
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
@@ -1624,6 +1870,9 @@ impl Lowerer<'_> {
             .then(|| callee.children().next())
             .flatten();
         match self.res(node).cloned() {
+            Some(Res::Proc { object, offset }) if self.ws.objects[object].kind == ObjKind::Interface => {
+                self.interface_call(object, offset, receiver_node.as_ref(), args)
+            }
             Some(Res::Proc { object, offset }) => {
                 let routine = *self.routine_at.get(&(object, offset)).ok_or("procedure not found")?;
                 let sig = self.members[object]
@@ -1655,10 +1904,8 @@ impl Lowerer<'_> {
                     if p.by_var {
                         out.push(ir::Arg::Ref(self.place(a)?));
                     } else {
-                        out.push(ir::Arg::Value(ir::Expr::Convert(
-                            self.rt(&p.ty)?,
-                            Box::new(self.expr(a)?),
-                        )));
+                        let value = self.expr(a)?;
+                        out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
                     }
                 }
                 self.calls.push((object, routine));
@@ -1729,12 +1976,21 @@ impl Lowerer<'_> {
                         .get(i)
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
-                    let field_param =
-                        p.name.to_ascii_lowercase().starts_with("field") || p.name.eq_ignore_ascii_case("FromField");
-                    if let (true, Some(Res::Field { table, id })) = (field_param, self.res(a).cloned()) {
-                        let pos = self.readable_field_pos(table, id)?;
-                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
-                        continue;
+                    let field_param = p.name.to_ascii_lowercase().starts_with("field")
+                        || p.name.eq_ignore_ascii_case("FromField")
+                        || p.name.to_ascii_lowercase().starts_with("column");
+                    match (field_param, self.res(a).cloned()) {
+                        (true, Some(Res::Field { table, id })) => {
+                            let pos = self.readable_field_pos(table, id)?;
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
+                            continue;
+                        }
+                        // A query column is named by its position in the query's column list.
+                        (true, Some(Res::QueryColumn { column, .. })) => {
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(column as u32))));
+                            continue;
+                        }
+                        _ => {}
                     }
                     // Generic parameters convert to the collection's element types.
                     let elem = match (p.ty.as_str(), receiver_node.as_ref().map(|r| self.ty_of(r))) {

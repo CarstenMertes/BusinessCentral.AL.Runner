@@ -33,6 +33,12 @@ type Tables = im::OrdMap<(String, u32), Table>;
 pub struct MemStore {
     tables: Tables,
     committed: Tables,
+    /// The value of `counter` when each table last changed. It follows `tables` through commit and
+    /// rollback, so a table has the same stamp exactly when it has the same content history.
+    versions: im::OrdMap<(String, u32), u64>,
+    committed_versions: im::OrdMap<(String, u32), u64>,
+    /// Handed out by writes; never goes back, so a stamp is never reused.
+    counter: u64,
 }
 
 fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
@@ -56,6 +62,17 @@ impl MemStore {
         !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
     }
 
+    /// A number that changes whenever the rows of table `t` change (a rollback included). Queries
+    /// compare it to tell whether their result set is stale (corpus query/TestQueryReadAfterWrite.al).
+    pub fn table_stamp(&self, cx: &AccessContext, t: &TableDef) -> u64 {
+        self.versions.get(&slot(cx, t)).copied().unwrap_or(0)
+    }
+
+    fn touch(&mut self, cx: &AccessContext, t: &TableDef) {
+        self.counter += 1;
+        self.versions.insert(slot(cx, t), self.counter);
+    }
+
     fn table(&self, cx: &AccessContext, t: &TableDef) -> Option<&Table> {
         self.tables.get(&slot(cx, t))
     }
@@ -73,6 +90,7 @@ impl Store for MemStore {
             return Ok(InsertOutcome::AlreadyExists);
         }
         table.insert(k, row);
+        self.touch(cx, t);
         Ok(InsertOutcome::Inserted)
     }
 
@@ -87,12 +105,16 @@ impl Store for MemStore {
             return Ok(WriteOutcome::NotFound);
         }
         table.insert(k, row);
+        self.touch(cx, t);
         Ok(WriteOutcome::Done)
     }
 
     fn delete(&mut self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<WriteOutcome, StoreError> {
         Ok(match self.table_mut(cx, t).remove(&Key(pk.to_vec())) {
-            Some(_) => WriteOutcome::Done,
+            Some(_) => {
+                self.touch(cx, t);
+                WriteOutcome::Done
+            }
             None => WriteOutcome::NotFound,
         })
     }
@@ -114,6 +136,7 @@ impl Store for MemStore {
         }
         table.remove(&Key(old.to_vec()));
         table.insert(new_k, row);
+        self.touch(cx, t);
         Ok(RenameOutcome::Renamed)
     }
 
@@ -166,15 +189,20 @@ impl Store for MemStore {
         for k in &doomed {
             table.remove(k);
         }
+        if !doomed.is_empty() {
+            self.touch(cx, t);
+        }
         Ok(doomed.len())
     }
 
     fn commit(&mut self) {
         self.committed = self.tables.clone();
+        self.committed_versions = self.versions.clone();
     }
 
     fn rollback(&mut self) {
         self.tables = self.committed.clone();
+        self.versions = self.committed_versions.clone();
     }
 }
 
@@ -184,7 +212,9 @@ impl SnapshotStore for MemStore {
         self.clone()
     }
     fn restore(&mut self, s: MemStore) {
+        let counter = self.counter.max(s.counter);
         *self = s;
+        self.counter = counter;
     }
 }
 
@@ -224,6 +254,40 @@ mod tests {
         s.insert(&cx, &t, vec![Value::Integer(2)]).unwrap();
         s.rollback();
         assert!(!s.has_uncommitted());
+    }
+
+    #[test]
+    fn table_stamp_changes_with_every_write_and_rollback() {
+        let cx = AccessContext {
+            company: "C".into(),
+            user: "U".into(),
+        };
+        let t = TableDef {
+            object: 0,
+            name: "T".into(),
+            fields: vec![FieldDef {
+                id: 1,
+                name: "K".into(),
+                ty: al_builtins::value::RtType::Integer,
+                stored: true,
+            }],
+            keys: vec![vec![0]],
+            per_company: true,
+        };
+        let mut s = MemStore::default();
+        let s0 = s.table_stamp(&cx, &t);
+        s.insert(&cx, &t, vec![Value::Integer(1)]).unwrap();
+        let s1 = s.table_stamp(&cx, &t);
+        assert_ne!(s0, s1, "an insert changes the stamp");
+        s.insert(&cx, &t, vec![Value::Integer(1)]).unwrap();
+        assert_eq!(s1, s.table_stamp(&cx, &t), "a refused insert does not");
+        s.commit();
+        s.insert(&cx, &t, vec![Value::Integer(2)]).unwrap();
+        let s2 = s.table_stamp(&cx, &t);
+        s.rollback();
+        assert_eq!(s1, s.table_stamp(&cx, &t), "a rollback restores the committed stamp");
+        s.insert(&cx, &t, vec![Value::Integer(3)]).unwrap();
+        assert_ne!(s2, s.table_stamp(&cx, &t), "a stamp is never reused for other content");
     }
 
     #[test]

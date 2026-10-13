@@ -415,7 +415,7 @@ impl Session {
     }
 
     /// Calls `f` on every row of `t` passing `filters`, in primary key order.
-    fn each_row(
+    pub(crate) fn each_row(
         &mut self,
         t: &TableDef,
         filters: &[FieldFilter],

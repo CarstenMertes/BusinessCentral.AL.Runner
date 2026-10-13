@@ -172,6 +172,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.StrLen#1", strlen),
     ("Text.StrPos#1", strpos),
     ("Text.StrCheckSum#1", strchecksum),
+    ("Session.LogMessage#1", log_message),
+    ("Session.LogMessage#2", log_message),
+    ("System.Variant2Date#1", variant_2_date),
+    ("System.Variant2Time#1", variant_2_time),
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
     ("Session.StartSession#3", start_session),
@@ -576,6 +580,33 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     Ok(Value::Integer(pos as i32))
 }
 
+/// `Session.LogMessage`: telemetry has no effect AL code can see in a test, so the call returns
+/// (session/TestSessionExtended.al:76-89 only needs it callable).
+fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    Ok(Value::Null)
+}
+
+/// `Variant2Date(Variant)`: the Date a Variant holds (session/TestFinalCoverage.al:79-88). Another
+/// content raises a conversion error whose text is not pinned: refused.
+fn variant_2_date(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    match args.first() {
+        Some(d @ Value::Date(..)) => Ok(d.clone()),
+        other => unsupported(&format!(
+            "Variant2Date of {other:?} (the conversion error is not pinned)"
+        )),
+    }
+}
+
+/// `Variant2Time(Variant)`: the Time a Variant holds (session/TestFinalCoverage.al:91-100).
+fn variant_2_time(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    match args.first() {
+        Some(t @ Value::Time(_)) => Ok(t.clone()),
+        other => unsupported(&format!(
+            "Variant2Time of {other:?} (the conversion error is not pinned)"
+        )),
+    }
+}
+
 /// `StartSession`, every overload. While an app installs it starts nothing, leaves `SessionId` alone
 /// and answers false (or raises nothing when the result is ignored): install/TestInstallStartSession_Tests.al,
 /// ALSession.ALStartSessionAsyncImpl. In a test run under TestIsolation = Codeunit it raises the
@@ -872,6 +903,26 @@ pub(crate) mod tests {
         fn ret_used(&self) -> bool {
             !self.result_ignored
         }
+    }
+
+    #[test]
+    fn variant_conversions_and_log_message() {
+        assert!(matches!(
+            call("System.Variant2Date#1", vec![Value::Date(5, false)]),
+            Ok(Value::Date(5, false))
+        ));
+        assert!(matches!(
+            call("System.Variant2Time#1", vec![Value::Time(7)]),
+            Ok(Value::Time(7))
+        ));
+        assert!(matches!(
+            call("System.Variant2Date#1", vec![Value::Integer(1)]),
+            Err(Signal::Unsupported(_))
+        ));
+        assert!(matches!(
+            call("Session.LogMessage#2", vec![t("E"), t("m")]),
+            Ok(Value::Null)
+        ));
     }
 
     #[test]

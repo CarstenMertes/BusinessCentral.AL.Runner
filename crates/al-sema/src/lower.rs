@@ -450,6 +450,16 @@ struct Lowerer<'a> {
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
 }
 
+/// An interface type anywhere inside a collection type.
+fn holds_interface(t: &Ty) -> bool {
+    match t {
+        Ty::Object(ObjKind::Interface, _) => true,
+        Ty::List(t) | Ty::Array(_, t) => holds_interface(t),
+        Ty::Dictionary(k, v) => holds_interface(k) || holds_interface(v),
+        _ => false,
+    }
+}
+
 fn key(file: usize, n: &SyntaxNode) -> (usize, usize, usize) {
     let r = n.text_range();
     (file, r.start().into(), r.end().into())
@@ -964,6 +974,20 @@ impl Lowerer<'_> {
                     Some(why) => return Err(format!("TestPage \"{}\": {why}", crate::types::display_name(n))),
                 }
             }
+            Ty::Object(ObjKind::Interface, n) => {
+                let i = self.resolve_obj(ObjKind::Interface, n)?;
+                // Which procedures an extending interface inherits is not pinned by the corpus.
+                if self.ws.object_ast(i).extends_parts().is_some() {
+                    return Err(format!(
+                        "interface \"{}\" extends another interface (`extends` is not lowered yet)",
+                        crate::types::display_name(n)
+                    ));
+                }
+                RtType::Interface(i as u32)
+            }
+            Ty::List(_) | Ty::Dictionary(..) | Ty::Array(..) if holds_interface(t) => {
+                return Err("an interface inside a List, Dictionary or array is not lowered yet (not pinned)".into());
+            }
             Ty::List(t) => RtType::List(Box::new(self.rt(t)?)),
             Ty::Dictionary(k, v) => RtType::Dictionary(Box::new(self.rt(k)?), Box::new(self.rt(v)?)),
             Ty::Array(d, t) => RtType::Array(d.clone(), Box::new(self.rt(t)?)),
@@ -978,6 +1002,163 @@ impl Lowerer<'_> {
                 RtType::Record(t as u32, *temporary || self.is_temporary_table(t))
             }
             other => return Err(format!("type {other} is not lowered yet")),
+        })
+    }
+
+    /// Whether codeunit `cu` lists interface `iface` after `implements`.
+    fn implements(&self, cu: usize, iface: usize) -> bool {
+        let file = self.ws.objects[cu].file;
+        self.ws
+            .object_ast(cu)
+            .implements_parts()
+            .iter()
+            .any(|p| matches!(self.ws.resolve_ref(file, ObjKind::Interface, p), Resolution::Found(i) if i == iface))
+    }
+
+    /// `value` (of type `src`) converted for a slot of type `target`. An interface slot takes a
+    /// codeunit that implements it (corpus codeunit/TestCodeunitInterface.al:14-26) or an enum
+    /// that implements it (types/TestEnumDefaultImplTests.Codeunit.al:30-42); everything else
+    /// is refused.
+    fn convert_to(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
+        let slot = self.rt(target)?;
+        let RtType::Interface(iface) = slot else {
+            return Ok(ir::Expr::Convert(slot, Box::new(value)));
+        };
+        let iface = iface as usize;
+        let iname = &self.ws.objects[iface].name;
+        match src {
+            Ty::Object(ObjKind::Interface, n) if self.rt(src)? == slot => {
+                let _ = n;
+                Ok(ir::Expr::Convert(slot, Box::new(value)))
+            }
+            Ty::Object(ObjKind::Codeunit, n) => {
+                let cu = self.resolve_obj(ObjKind::Codeunit, n)?;
+                if !self.implements(cu, iface) {
+                    return Err(format!(
+                        "codeunit \"{}\" does not implement interface \"{iname}\"",
+                        crate::types::display_name(n)
+                    ));
+                }
+                Ok(ir::Expr::Convert(slot, Box::new(value)))
+            }
+            Ty::Enum(n) => self.enum_impl(n, iface, value),
+            other => Err(format!("{other} into interface \"{iname}\" is not lowered yet")),
+        }
+    }
+
+    /// The cast of an enum value to interface `iface`: per declared ordinal the value's own
+    /// `Implementation`, else the enum's `DefaultImplementation`; undeclared ordinals take
+    /// `UnknownValueImplementation` (corpus types/TestEnumDefaultImplTests.Codeunit.al:58-100,
+    /// types/TestEnumExtImplTests.Codeunit.al:33-76: an enumextension adds values with their own
+    /// `Implementation` and falls back to the base enum's default).
+    fn enum_impl(&self, enum_name: &str, iface: usize, value: ir::Expr) -> L<ir::Expr> {
+        use crate::members::ImplSlot;
+        let e = self.resolve_obj(ObjKind::Enum, enum_name)?;
+        let iname = &self.ws.objects[iface].name;
+        let find = |slot: &ImplSlot| -> L<Option<usize>> {
+            for im in self.members[e].enum_impls.iter().filter(|i| i.slot == *slot) {
+                let file = self.ws.objects[im.declared_in].file;
+                if !matches!(self.ws.resolve_ref(file, ObjKind::Interface, &im.interface), Resolution::Found(i) if i == iface)
+                {
+                    continue;
+                }
+                return match self.ws.resolve_ref(file, ObjKind::Codeunit, &im.codeunit) {
+                    Resolution::Found(c) => Ok(Some(c)),
+                    _ => Err(format!("codeunit `{}` is outside the workspace", im.codeunit.join("."))),
+                };
+            }
+            Ok(None)
+        };
+        let default = find(&ImplSlot::Default)?;
+        let unknown = find(&ImplSlot::Unknown)?;
+        let mut by_ordinal = Vec::new();
+        for (ordinal, vname) in &self.members[e].enum_values {
+            match find(&ImplSlot::Value(*ordinal))?.or(default) {
+                Some(c) => by_ordinal.push((*ordinal as i32, c)),
+                None => {
+                    return Err(format!(
+                        "enum \"{enum_name}\" value `{vname}` has no implementation of interface \"{iname}\""
+                    ));
+                }
+            }
+        }
+        Ok(ir::Expr::EnumImpl {
+            value: Box::new(value),
+            by_ordinal,
+            unknown,
+        })
+    }
+
+    /// A call of an interface procedure on `receiver`: it runs the same-named procedure of
+    /// whichever codeunit the variable holds, so every implementation is a possible target.
+    fn interface_call(
+        &mut self,
+        iface: usize,
+        offset: usize,
+        receiver: Option<&SyntaxNode>,
+        args: &[SyntaxNode],
+    ) -> L<ir::Expr> {
+        let Some(receiver) = receiver else {
+            return Err("an interface procedure called without a receiver is not lowered yet".into());
+        };
+        if !matches!(self.ty_of(receiver), Ty::Object(ObjKind::Interface, _)) {
+            return Err("an interface procedure called on something that is not an interface variable".into());
+        }
+        let sig = self.members[iface]
+            .procedures
+            .iter()
+            .find(|p| p.offset == offset)
+            .ok_or("interface procedure signature")?
+            .clone();
+        let mut targets = Vec::new();
+        for cu in 0..self.ws.objects.len() {
+            if self.ws.objects[cu].kind != ObjKind::Codeunit || !self.implements(cu, iface) {
+                continue;
+            }
+            let same_shape: Vec<_> = self.members[cu]
+                .procedures
+                .iter()
+                .filter(|p| {
+                    !p.local
+                        && p.name.eq_ignore_ascii_case(&sig.name)
+                        && p.params.len() == sig.params.len()
+                        && p.params.iter().zip(&sig.params).all(|(a, b)| a.by_var == b.by_var)
+                })
+                .collect();
+            let exact = same_shape
+                .iter()
+                .find(|p| p.params.iter().zip(&sig.params).all(|(a, b)| a.ty == b.ty));
+            let Some(imp) = exact.or(same_shape.first()) else {
+                return Err(format!(
+                    "codeunit \"{}\" implements \"{}\" without a procedure `{}`",
+                    self.ws.objects[cu].name, self.ws.objects[iface].name, sig.name
+                ));
+            };
+            let routine = *self.routine_at.get(&(cu, imp.offset)).ok_or("procedure not found")?;
+            self.calls.push((cu, routine));
+            targets.push((cu, routine));
+        }
+        if targets.is_empty() {
+            return Err(format!(
+                "interface \"{}\" has no implementing codeunit in the workspace",
+                self.ws.objects[iface].name
+            ));
+        }
+        let receiver = Box::new(self.expr(receiver)?);
+        let mut out = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            let p = sig.params.get(i).ok_or("too many arguments")?;
+            if p.by_var {
+                out.push(ir::Arg::Ref(self.place(a)?));
+            } else {
+                let value = self.expr(a)?;
+                out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
+            }
+        }
+        Ok(ir::Expr::InterfaceCall {
+            receiver,
+            targets,
+            args: out,
         })
     }
 
@@ -1003,11 +1184,22 @@ impl Lowerer<'_> {
         for p in r.params() {
             by_var.push(p.is_var());
             let ty = p.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+            if p.is_var() && matches!(ty, Ty::Object(ObjKind::Interface, _)) {
+                self.reasons.push(format!(
+                    "`{}`: a var interface parameter is not lowered yet (not pinned)",
+                    p.name()
+                ));
+            }
             add(self, p.name(), ty, &mut locals);
         }
         let params = locals.len();
         let ret_ty = r.return_type().map(|t| Ty::from_type_ref(&t));
         let ret = match &ret_ty {
+            Some(Ty::Object(ObjKind::Interface, _)) => {
+                self.reasons
+                    .push("return type: an interface return value is not lowered yet (not pinned)".into());
+                None
+            }
             Some(t) => match self.rt(t) {
                 Ok(rt) => Some(rt),
                 Err(e) => {
@@ -1233,7 +1425,7 @@ impl Lowerer<'_> {
             }
         }
         let place = self.place(&kids[0])?;
-        let slot = self.rt(&self.ty_of(&kids[0]))?;
+        let target_ty = self.ty_of(&kids[0]);
         let rhs = self.expr(&kids[1])?;
         let op = sig_tokens(n).into_iter().find(|t| {
             matches!(
@@ -1245,7 +1437,8 @@ impl Lowerer<'_> {
                     | SyntaxKind::SlashAssign
             )
         });
-        let value = match op.map(|t| t.kind()) {
+        let op_kind = op.map(|t| t.kind());
+        let value = match op_kind {
             Some(SyntaxKind::PlusAssign) => {
                 ir::Expr::Binary(ir::BinOp::Add, Box::new(ir::Expr::Load(place.clone())), Box::new(rhs))
             }
@@ -1260,7 +1453,11 @@ impl Lowerer<'_> {
             }
             _ => rhs,
         };
-        Ok(ir::Stmt::Assign(place, ir::Expr::Convert(slot, Box::new(value))))
+        let value = match op_kind {
+            Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, &self.ty_of(&kids[1]), value)?,
+            Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
+        };
+        Ok(ir::Stmt::Assign(place, value))
     }
 
     fn case(&mut self, kids: &[SyntaxNode]) -> L<ir::Stmt> {
@@ -1572,6 +1769,9 @@ impl Lowerer<'_> {
             .then(|| callee.children().next())
             .flatten();
         match self.res(node).cloned() {
+            Some(Res::Proc { object, offset }) if self.ws.objects[object].kind == ObjKind::Interface => {
+                self.interface_call(object, offset, receiver_node.as_ref(), args)
+            }
             Some(Res::Proc { object, offset }) => {
                 let routine = *self.routine_at.get(&(object, offset)).ok_or("procedure not found")?;
                 let sig = self.members[object]
@@ -1603,10 +1803,8 @@ impl Lowerer<'_> {
                     if p.by_var {
                         out.push(ir::Arg::Ref(self.place(a)?));
                     } else {
-                        out.push(ir::Arg::Value(ir::Expr::Convert(
-                            self.rt(&p.ty)?,
-                            Box::new(self.expr(a)?),
-                        )));
+                        let value = self.expr(a)?;
+                        out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
                     }
                 }
                 self.calls.push((object, routine));

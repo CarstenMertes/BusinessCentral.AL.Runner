@@ -229,9 +229,11 @@ fn int_consts_expr(e: &ir::Expr, out: &mut Vec<i64>) {
         E::Const(ir::Const::Integer(i)) => out.push(i64::from(*i)),
         E::Const(ir::Const::BigInteger(i)) => out.push(*i),
         E::Const(_) | E::Load(_) => {}
-        E::Unary(_, e) | E::Convert(_, e) | E::Control { page: e, .. } | E::QueryColumn { query: e, .. } => {
-            int_consts_expr(e, out)
-        }
+        E::Unary(_, e)
+        | E::Convert(_, e)
+        | E::Control { page: e, .. }
+        | E::QueryColumn { query: e, .. }
+        | E::EnumImpl { value: e, .. } => int_consts_expr(e, out),
         E::Binary(_, a, b) => {
             int_consts_expr(a, out);
             int_consts_expr(b, out);
@@ -249,6 +251,14 @@ fn int_consts_expr(e: &ir::Expr, out: &mut Vec<i64>) {
             int_consts_expr(a, out);
             int_consts_expr(b, out);
             int_consts_expr(c, out);
+        }
+        E::InterfaceCall { receiver, args, .. } => {
+            int_consts_expr(receiver, out);
+            for a in args {
+                if let ir::Arg::Value(e) = a {
+                    int_consts_expr(e, out);
+                }
+            }
         }
         E::Call { instance, args, .. } => {
             instance.iter().for_each(|e| int_consts_expr(e, out));

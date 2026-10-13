@@ -50,6 +50,9 @@ pub enum RtType {
     /// A `Page` variable of the page with this object index: a page instance that exists before
     /// it is run (ADR-012).
     Page(u32),
+    /// An `Interface` variable of the interface with this object index. It holds the
+    /// codeunit instance it was assigned (or `Null` while unassigned).
+    Interface(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
     Library(String),
 }
@@ -329,6 +332,8 @@ impl Value {
                 object: *id,
                 ..Default::default()
             }))),
+            // An unassigned interface holds nothing.
+            RtType::Interface(_) => Value::Null,
             RtType::TestPage(id) | RtType::Page(id) => Value::TestPage(Rc::new(RefCell::new(PageState::closed(*id)))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,

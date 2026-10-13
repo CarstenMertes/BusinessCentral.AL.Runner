@@ -344,6 +344,24 @@ pub enum Expr {
         args: Vec<Arg>,
         try_call: bool,
     },
+    /// A call through an interface: `receiver` evaluates to the codeunit instance the
+    /// interface variable holds, and the call runs the target routine of that
+    /// instance's object. `targets` are (object, routine) of every implementation.
+    InterfaceCall {
+        receiver: Box<Expr>,
+        targets: Vec<(usize, usize)>,
+        args: Vec<Arg>,
+    },
+    /// An enum value cast to an interface: a fresh instance of the codeunit that
+    /// implements the interface for the value's ordinal. `by_ordinal` has every declared
+    /// ordinal of the enum (extensions included), already resolved through the value's own
+    /// `Implementation` and the enum's `DefaultImplementation`; `unknown` is the
+    /// `UnknownValueImplementation` for ordinals the enum does not declare.
+    EnumImpl {
+        value: Box<Expr>,
+        by_ordinal: Vec<(i32, usize)>,
+        unknown: Option<usize>,
+    },
     /// A control of the test page `page` evaluates to (`TP.Ctl`), by index
     /// into the page's control list (ADR-012).
     Control {

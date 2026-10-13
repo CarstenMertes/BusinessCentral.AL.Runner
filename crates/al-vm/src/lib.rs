@@ -14,6 +14,7 @@ mod autoinc;
 mod dispatch;
 pub mod events;
 mod flowfields;
+mod interfaces;
 mod pages;
 mod recmeta;
 mod records;
@@ -575,37 +576,23 @@ impl Session {
                         other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
                     },
                 };
-                let mut values = Vec::with_capacity(args.len());
-                for a in args {
-                    values.push(match a {
-                        ir::Arg::Value(e) => self.eval(e, f)?,
-                        ir::Arg::Ref(p) => self.read(p, f)?,
-                    });
-                }
-                let result = self.call(*object, *routine, inst, values);
-                if let Err(Signal::Error(_)) = &result {
-                    if let Some(finals) = self.error_finals.take() {
-                        for (a, v) in args.iter().zip(finals) {
-                            if let ir::Arg::Ref(p) = a {
-                                self.write(p, v, f)?;
-                            }
-                        }
-                    }
-                }
-                let (ret, finals) = match (result, try_call) {
-                    (Err(Signal::Error(e)), true) => {
-                        self.last_error = e;
-                        return Ok(Value::Boolean(false));
-                    }
-                    (Ok((_, finals)), true) => (Value::Boolean(true), finals),
-                    (r, _) => r?,
-                };
-                for (a, v) in args.iter().zip(finals) {
-                    if let ir::Arg::Ref(p) = a {
-                        self.write(p, v, f)?;
-                    }
-                }
-                Ok(ret)
+                self.finish_call(*object, *routine, inst, args, *try_call, f)
+            }
+            E::InterfaceCall {
+                receiver,
+                targets,
+                args,
+            } => {
+                let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
+                self.finish_call(object, routine, inst, args, false, f)
+            }
+            E::EnumImpl {
+                value,
+                by_ordinal,
+                unknown,
+            } => {
+                let v = self.eval(value, f)?;
+                self.enum_implementation(v, by_ordinal, *unknown)
             }
             E::Control { page, control } => {
                 let p = self.eval(page, f)?;
@@ -670,6 +657,50 @@ impl Session {
                 Ok(ret)
             }
         }
+    }
+
+    /// Evaluates the arguments of a resolved call and runs it on `inst`, writing back the
+    /// by-reference arguments.
+    fn finish_call(
+        &mut self,
+        object: usize,
+        routine: usize,
+        inst: Rc<RefCell<Instance>>,
+        args: &[ir::Arg],
+        try_call: bool,
+        f: &mut Frame,
+    ) -> Result<Value, Signal> {
+        let mut values = Vec::with_capacity(args.len());
+        for a in args {
+            values.push(match a {
+                ir::Arg::Value(e) => self.eval(e, f)?,
+                ir::Arg::Ref(p) => self.read(p, f)?,
+            });
+        }
+        let result = self.call(object, routine, inst, values);
+        if let Err(Signal::Error(_)) = &result {
+            if let Some(finals) = self.error_finals.take() {
+                for (a, v) in args.iter().zip(finals) {
+                    if let ir::Arg::Ref(p) = a {
+                        self.write(p, v, f)?;
+                    }
+                }
+            }
+        }
+        let (ret, finals) = match (result, try_call) {
+            (Err(Signal::Error(e)), true) => {
+                self.last_error = e;
+                return Ok(Value::Boolean(false));
+            }
+            (Ok((_, finals)), true) => (Value::Boolean(true), finals),
+            (r, _) => r?,
+        };
+        for (a, v) in args.iter().zip(finals) {
+            if let ir::Arg::Ref(p) = a {
+                self.write(p, v, f)?;
+            }
+        }
+        Ok(ret)
     }
 
     /// The instance a call on codeunit value `i` runs on: the session's

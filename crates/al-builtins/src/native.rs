@@ -31,6 +31,8 @@ pub trait Ctx: FormatCtx {
     fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal>;
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
+    /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
+    fn new_guid(&mut self) -> [u8; 16];
     /// Whether the result of the builtin being called is used (`[Ok :=]` forms
     /// return false instead of raising when it is).
     fn ret_used(&self) -> bool {
@@ -72,6 +74,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.Count#1", |c, r, a| c.record("Count", r, a)),
     ("Record.IsEmpty#1", |c, r, a| c.record("IsEmpty", r, a)),
     ("Record.SetRange#1", |c, r, a| c.record("SetRange", r, a)),
+    ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
+    ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    ("System.IsNullGuid#1", |_, _, a| {
+        Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
+    }),
     ("Record.Reset#1", |c, r, a| c.record("Reset", r, a)),
     ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
     ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
@@ -315,6 +322,9 @@ mod tests {
         }
         fn commit(&mut self) -> Result<(), Signal> {
             Ok(())
+        }
+        fn new_guid(&mut self) -> [u8; 16] {
+            [1; 16]
         }
     }
 

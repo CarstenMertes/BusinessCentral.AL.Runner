@@ -353,3 +353,46 @@ fn rename_of_a_table_other_fields_relate_to_is_unsupported() {
     let inst = s.instance(oi);
     assert!(matches!(s.call(oi, 0, inst, vec![]), Err(Signal::Unsupported(r)) if r.contains("relat")));
 }
+
+#[test]
+fn setfilter_with_expressions_and_placeholders() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; begin
+            R.\"No.\" := 'AP1'; R.Grp := 5; R.Insert();
+            R.\"No.\" := 'AP2'; R.Grp := 15; R.Insert();
+            R.\"No.\" := 'B'; R.Grp := 25; R.Insert();
+            R.SetFilter(\"No.\", 'ap*');
+            R.SetFilter(Grp, '>%1', 10);
+            exit(Format(R.Count()) + Format(R.FindFirst()) + R.\"No.\");
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "1YesAP2");
+}
+
+#[test]
+fn manual_subscribers_that_nothing_binds_do_not_block_writes() {
+    // corpus _fixtures/events/ALTManualTableEventSubscriber.al: a Manual subscriber only fires while bound.
+    let src = format!("{TABLE}\ncodeunit 50101 Sub {{ EventSubscriberInstance = Manual;
+        [EventSubscriber(ObjectType::Table, Database::\"ALT T\", 'OnAfterInsertEvent', '', false, false)]
+        local procedure OnAfterInsert(var Rec: Record \"ALT T\") begin Error('must not fire'); end; }}
+        codeunit 50100 C {{ procedure F(): Integer var R: Record \"ALT T\"; begin R.\"No.\" := 'A'; R.Insert(); exit(R.Count()); end; }}");
+    let (_, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let mut s = Session::new(Engine::new(l.program, blocked));
+    let inst = s.instance(oi);
+    assert!(matches!(s.call(oi, 0, inst, vec![]), Ok((Value::Integer(1), _))));
+}

@@ -310,3 +310,11 @@ fn collection_errors_are_not_guessed() {
     let src = cu("procedure F(): Integer var L: List of [Integer]; begin exit(L.Get(1)); end;");
     assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))));
 }
+
+#[test]
+fn create_guid_gives_distinct_non_null_guids() {
+    let src = cu(
+        "procedure F(): Text var A: Guid; B: Guid; N: Guid; begin A := CreateGuid(); B := CreateGuid(); exit(Format(A <> B) + Format(IsNullGuid(A)) + Format(IsNullGuid(N))); end;",
+    );
+    assert_eq!(text(run(&src, "F", vec![])), "YesNoYes");
+}

@@ -48,9 +48,18 @@ impl Engine {
             })
             .collect();
         let mut tables_with_subscribers = std::collections::HashSet::new();
+        // A Manual subscriber only fires while an instance is bound (corpus
+        // TestTableEventManualBinding.al); BindSubscription is not implemented,
+        // so tests that bind are not run and Manual subscribers never fire.
+        let manual = |o: &&ir::Object| {
+            o.properties.iter().any(|(k, v)| {
+                k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual")
+            })
+        };
         for a in program
             .objects
             .iter()
+            .filter(|o| !manual(o))
             .flat_map(|o| &o.routines)
             .flat_map(|r| &r.attributes)
         {
@@ -693,6 +702,14 @@ impl al_builtins::native::Ctx for Session {
     }
     fn ret_used(&self) -> bool {
         self.ret_used
+    }
+    fn new_guid(&mut self) -> [u8; 16] {
+        // Deterministic ids (ADR-006: no OS randomness in the core).
+        self.next_guid += 1;
+        let mut g = [0u8; 16];
+        g[8..].copy_from_slice(&self.next_guid.to_be_bytes());
+        g[6] = 0x40;
+        g
     }
 }
 

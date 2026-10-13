@@ -456,6 +456,17 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
+            "SetFilter" => {
+                let pos = arg_pos(args, 0)?;
+                let ty = t.fields[pos].ty.clone();
+                let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
+                let expr = al_builtins::filter::parse_filter(&text, &args[2..], &ty)
+                    .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?;
+                let mut r = rec.borrow_mut();
+                r.filters.retain(|f| f.field != pos);
+                r.filters.push(FieldFilter { field: pos, expr });
+                Ok(Value::Null)
+            }
             "Reset" => {
                 let mut r = rec.borrow_mut();
                 r.filters.clear();

@@ -247,6 +247,8 @@ pub struct PageState {
     /// A page whose rowset OnFindRecord/OnNextRecord serve was refreshed: which row the client
     /// settles on is not modelled, so Rec-bound controls are not read until the cursor moves.
     pub stale: bool,
+    /// `LookupMode(true)` was called on this variable (`Page.RunModal(id, Rec)` is a lookup too but is not).
+    pub lookup_set: bool,
 }
 
 // The page instance holds `CurrPage`, which points back here: print only the facts.
@@ -294,6 +296,7 @@ impl PageState {
             areas: String::new(),
             inited: false,
             stale: false,
+            lookup_set: false,
         }
     }
 }

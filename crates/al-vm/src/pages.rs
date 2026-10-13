@@ -533,6 +533,7 @@ impl Session {
             "LookupMode" => match args.first() {
                 Some(v) => {
                     st.borrow_mut().lookup = ops::truthy(v)?;
+                    st.borrow_mut().lookup_set = true;
                     Ok(Value::Null)
                 }
                 None => Ok(Value::Boolean(st.borrow().lookup)),
@@ -546,6 +547,20 @@ impl Session {
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetRecord with {other:?}")),
+            },
+            // `P.SetTableView(Rec)` hands the page variable the view of Rec (filters and sorting) but not its
+            // position, so the page opens on its first row (corpus handlers/TestPageModalNewRowLine_Tests.al:
+            // ReEditable_LookupModeTrue_HasNoNewRowLine, Plain_LookupModeFalse_HasTheNewRowLine).
+            "SetTableView" => match args.first() {
+                Some(Value::Record(r)) => {
+                    let copy = Rc::new(RefCell::new(r.borrow().clone()));
+                    let table = copy.borrow().table as usize;
+                    let blank = self.initial_fields(table);
+                    copy.borrow_mut().fields = blank;
+                    st.borrow_mut().set_record = Some(copy);
+                    Ok(Value::Null)
+                }
+                other => unsupported(format!("Page.SetTableView with {other:?}")),
             },
             "Run" => {
                 let record = st.borrow().set_record.clone();
@@ -1093,6 +1108,10 @@ impl Session {
         };
         Ok(has_repeater
             && st.borrow().mode == PageMode::Edit
+            // A list handed over in lookup mode has no new-row line (corpus
+            // handlers/TestPageModalNewRowLine_Tests.al:209 Plain_LookupModeTrue_HasNoNewRowLine). Only a
+            // LookupMode(true) call does that: Page.RunModal(id, Rec) keeps the line (:180).
+            && !(st.borrow().lookup_set && st.borrow().lookup && self.is_list_page(st))
             && !prop_false("Editable")
             && !prop_false("InsertAllowed"))
     }

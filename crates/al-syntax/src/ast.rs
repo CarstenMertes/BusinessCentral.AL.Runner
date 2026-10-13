@@ -396,6 +396,34 @@ impl TypeRef {
     pub fn is_temporary(&self) -> bool {
         significant_tokens(&self.0).any(|t| t.text().eq_ignore_ascii_case("temporary"))
     }
+    /// Integer arguments in brackets: `Text[30]` → `[30]`, `array[2, 3] of T` → `[2, 3]`.
+    pub fn size_args(&self) -> Vec<u32> {
+        self.0
+            .children()
+            .filter(|n| n.kind() == SyntaxKind::TypeArgs)
+            .flat_map(|a| {
+                a.children()
+                    .filter(|n| n.kind() == SyntaxKind::Literal)
+                    .collect::<Vec<_>>()
+            })
+            .filter_map(|l| l.text().to_string().trim().parse().ok())
+            .collect()
+    }
+    /// `Option ,A,"B C"` → `["", "A", "B C"]`.
+    pub fn option_members(&self) -> Vec<String> {
+        let toks: Vec<_> = significant_tokens(&self.0).skip(1).collect();
+        let mut out = vec![String::new()];
+        for t in toks {
+            match t.kind() {
+                SyntaxKind::Comma => out.push(String::new()),
+                SyntaxKind::Ident | SyntaxKind::QuotedIdent | SyntaxKind::Integer => {
+                    *out.last_mut().expect("non-empty") = ident_text(&t)
+                }
+                _ => {}
+            }
+        }
+        out
+    }
     /// Nested type arguments (`List of [T]`, `array[..] of T`).
     pub fn type_args(&self) -> Vec<TypeRef> {
         let mut out: Vec<TypeRef> = children(&self.0, TypeRef::cast).collect();

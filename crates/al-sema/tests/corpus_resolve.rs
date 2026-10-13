@@ -77,3 +77,26 @@ fn unresolved_references_are_exactly_the_known_external_set() {
         "unresolved references changed; review and rerun with UPDATE_GOLDEN=1"
     );
 }
+
+#[test]
+fn every_corpus_table_field_has_a_known_type() {
+    let ws = corpus();
+    let members = al_sema::members::build(&ws);
+    let mut unknown = Vec::new();
+    let mut fields = 0;
+    for (i, m) in members.iter().enumerate() {
+        for f in m.fields.iter().filter(|f| f.declared_in == Some(i)) {
+            fields += 1;
+            if f.ty == al_sema::types::Ty::Unknown {
+                unknown.push(format!("{} :: {}", ws.objects[i].name, f.name));
+            }
+        }
+    }
+    assert!(fields > 300, "only {fields} fields found");
+    assert!(
+        unknown.is_empty(),
+        "{} field(s) with unknown type:\n{}",
+        unknown.len(),
+        unknown.join("\n")
+    );
+}

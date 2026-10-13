@@ -5,6 +5,7 @@ mod expressions;
 mod objects;
 mod statements;
 
+pub(crate) use declarations::type_ref;
 pub(crate) use objects::source_file;
 
 #[cfg(test)]

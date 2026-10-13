@@ -321,6 +321,16 @@ impl Workspace {
         hits?.iter().find(visible).copied()
     }
 
+    /// The syntax node of object `i`.
+    pub fn object_ast(&self, i: usize) -> ast::Object {
+        let o = &self.objects[i];
+        let root = al_syntax::SyntaxNode::new_root(self.files[o.file].green.clone());
+        root.descendants()
+            .filter_map(ast::Object::cast)
+            .find(|n| usize::from(n.syntax().text_range().start()) == o.offset)
+            .expect("object node at recorded offset")
+    }
+
     fn resolve_references(&mut self) {
         let mut diags = Vec::new();
         for o in &self.objects {

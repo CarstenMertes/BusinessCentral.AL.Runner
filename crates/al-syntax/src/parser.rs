@@ -32,6 +32,16 @@ pub fn parse(src: &str, symbols: &BTreeSet<String>) -> Parse {
     parse_entry(src, symbols, crate::grammar::source_file)
 }
 
+/// Parses a standalone type such as a table field's `Code[20]`; `None` if it is
+/// not exactly one well-formed type.
+pub fn parse_type(src: &str) -> Option<crate::ast::TypeRef> {
+    let p = parse_entry(src, &BTreeSet::new(), crate::grammar::type_ref);
+    if !p.errors.is_empty() {
+        return None;
+    }
+    p.syntax().children().find_map(crate::ast::TypeRef::cast)
+}
+
 pub(crate) fn parse_entry(src: &str, symbols: &BTreeSet<String>, entry: fn(&mut Parser)) -> Parse {
     let pre = preprocess(src, &lex(src), symbols);
     let mut p = Parser::new(src, &pre.tokens);

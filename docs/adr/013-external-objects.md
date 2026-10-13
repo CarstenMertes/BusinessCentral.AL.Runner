@@ -865,3 +865,60 @@ AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, wh
    Azure AD Plan Test Library; no `.alpackages` holds them. Until Layer A exists a developer can
    put them in a local `--deps` folder; CI keeps refusing the tests that need them. None of them
    is committed (hard rule 7).
+
+## Install baseline and Global Triggers as built (branch `baseline`, 2026-10-14)
+
+**Global Triggers.** The platform codeunit `Global Triggers` (2000000002, in the platform `System.app`) has only
+body-less business events. The runtime raises them itself (`al-vm/src/globaltriggers.rs`), whether or not
+`System.app` is loaded; its subscribers are registered under the codeunit when a loaded app declares it, else under
+a pseudo object key. The order and the cases are in `docs/probes-needed.md`. In the demand-driven check
+(`check/demand.rs`) a write to any table, of any app, reaches the subscribers in dependency apps: the setup events
+always, the database events of the operations used (Base Application's codeunit 49 `GlobalTriggerManagement` among
+them). Base Application's subscribers reach platform tables that have no provider (`API Webhook Subscription`,
+`User`), so they cannot run yet: `al-test-cli` marks them unavailable and the events skip them, with a line on stderr.
+This is what main did before (it never raised the events); what it leaves out is Base Application's own reaction to
+a write (change log, Dataverse, API webhooks), which needs configuration rows a run starts without. Delete the skip
+when the providers of the `platform-tables` work make them runnable.
+
+**Install baseline** (`al-test-cli/src/baseline.rs`, `al-vm/src/baseline.rs`). Roots of the check: the install
+codeunits of every dependency app (`Subtype = Install`, found by the scan) and Base Application's `Company-Initialize`.
+`AL_NO_BASELINE=1` leaves them out (to measure). The run, once per process, on a fresh session: per dependency app, in
+dependency order, every `OnInstallAppPerCompany`, then every `OnInstallAppPerDatabase` with `CompanyName()` empty (a
+per-company table is refused there, a `DataPerCompany = false` table works); then `Company-Initialize`; then
+`Session::capture_baseline` (rows, system id, row version and AutoIncrement counters, isolated storage, number
+sequences). Every test codeunit's session starts with `restore_baseline` (the persistent store makes both O(1));
+the project's own install codeunits still run per test codeunit, as before. A root that stops (Unsupported or an AL
+error) is reported on stderr: `Company-Initialize` keeps the rows it wrote before, an install trigger is rolled back.
+The tables such a root can write, minus the tables that hold a row in the baseline, are `Engine::unseeded`; only for
+them does a `Get` that finds nothing in dependency code stay refused (decision 5 of this ADR); for every other table
+it is BC's real error. Not built: seeding the platform rows (Published Application, User, Company, Access Control:
+they wait for the providers), the second snapshot after the project's own installs, a persistent copy.
+
+What stops it today on the corpus (Base Application 27.5): `Company-Initialize` stops in its `OnBeforeOnRun`
+subscriber (the retention policy install, which evaluates an empty `DateFormula`: "date formula ``: this form is not
+pinned by the corpus"), so no setup row is created yet; 3 of the 16 roots run to their end. The others wait for
+platform tables (`Company`, `Field`, `Table Metadata`, `AllObjWithCaption`, ...), the `Copilot Capability` enum,
+`Session.ApplicationIdentifier`, `System.GetUrl`, `TaskScheduler.CanCreateTask`. The mechanism is tested with
+synthetic dependency apps (`al-test-cli/src/runtime.rs` tests).
+
+### Decided without owner review (2026-10-13/14), baseline
+
+1. **Install order.** Options: AL Runner's and this ADR's text (per codeunit: per-company, then per-database, with a
+   company); the order the probe agent measured on real BC 27.5 (a fresh install with two companies: every
+   `OnInstallAppPerCompany` for each company first, `OnInstallAppPerDatabase` last, with `CompanyName()` empty).
+   Chosen: the measurement, per app. It differs from AL Runner, which runs per codeunit with a company set. One
+   company here, so "for each company" is one run.
+2. **A root that stops.** `Company-Initialize` keeps its earlier rows (AL Runner's partial company initialization);
+   an install trigger is rolled back (the existing handling of the project's own installers). Options: keep both,
+   roll back both. Chosen as stated; the rows before a stop are exactly a prefix of BC's own.
+3. **Which `Get` misses stay refused.** Options: all of them in dependency code (the old rule); none; those for
+   tables a failed root could have written and that hold no row. Chosen: the last.
+4. **Skipping Base Application's `Global Triggers` subscribers that cannot run**, instead of refusing every write.
+   Options: refuse every write in a run with Base Application (loses about 2300 passes); skip silently (main's
+   behaviour); refuse the tests that touch tables the subscribers read (the closure is hundreds of tables: it
+   removed 43 passing tests). Chosen: skip, with a line on stderr, until the providers exist.
+5. **`Session.LogMessage` is a no-op** and `TelemetryScope` has the members `ExtensionPublisher` and `All`
+   (Microsoft docs; ordinals not pinned). Telemetry is not observable from AL.
+6. **`DeleteAll(false)` and the database events.** Per row, with the table events and the database event, following
+   the probe 68212 on real BC 27.5 (corpus citation pending). This also lifts the old refusal of `DeleteAll(false)` on a
+   table with delete event subscribers.

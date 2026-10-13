@@ -33,20 +33,35 @@ pub struct Publisher {
     pub isolated: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Registry {
     /// (publisher object, lower-case event name) → subscribers, in program order.
     pub subscribers: HashMap<(usize, String), Vec<Subscriber>>,
     /// (object, routine) → the event the routine publishes.
     pub publishers: HashMap<(usize, usize), Publisher>,
-    /// Whether any subscriber of the platform codeunit `Global Triggers` exists.
-    /// That codeunit is not in the workspace, so those subscribers never fire
-    /// here; writes to the tables they name are refused instead.
+    /// The object key under which subscribers to the platform codeunit `Global Triggers`
+    /// (2000000002) are registered: the codeunit itself when a loaded app declares it
+    /// (the platform `System.app`), else [`GLOBAL_TRIGGERS`].
+    pub global_key: usize,
+    /// Whether any subscriber of `Global Triggers` exists.
     pub has_global_triggers: bool,
-    /// Tables named by the subscribers that enable those platform triggers
-    /// (`GetGlobalTableTriggerMask`, `GetDatabaseTableTriggerSetup`). When no
-    /// table can be read off them, every table counts.
-    pub global_trigger_tables: std::collections::HashSet<usize>,
+    /// Subscribers (object, routine) of `Global Triggers` in a dependency app that cannot run
+    /// (they reach something refused, such as a platform table with no provider). The host that
+    /// sets this must report as not run every test that could observe what they would do; the
+    /// events skip them (al-test-cli `runtime.rs`, ADR-013 as built, "bridge").
+    pub unavailable_global: std::collections::HashSet<(usize, usize)>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Registry {
+            subscribers: HashMap::new(),
+            publishers: HashMap::new(),
+            global_key: GLOBAL_TRIGGERS,
+            has_global_triggers: false,
+            unavailable_global: Default::default(),
+        }
+    }
 }
 
 fn is_manual(o: &ir::Object) -> bool {
@@ -62,6 +77,15 @@ fn flag(args: &[String], i: usize) -> bool {
 /// The object key under which subscribers to the Caption Class codeunit's OnResolveCaptionClass
 /// are registered (the codeunit itself is not in the workspace).
 pub const CAPTION_CLASS: usize = usize::MAX;
+
+/// The object key under which subscribers to the platform codeunit `Global Triggers` are
+/// registered while no loaded app declares that codeunit. Its events have no body: the runtime
+/// raises them itself (`globaltriggers.rs`).
+pub const GLOBAL_TRIGGERS: usize = usize::MAX - 1;
+
+fn is_global_triggers(target: &str) -> bool {
+    target.eq_ignore_ascii_case("Global Triggers") || target == "2000000002"
+}
 
 impl Registry {
     pub fn build(program: &ir::Program) -> Registry {
@@ -91,6 +115,12 @@ impl Registry {
             if let Some(id) = o.id {
                 by_id.entry((o.kind.as_str(), id)).or_insert(oi);
             }
+        }
+        if let Some(&gt) = by_name
+            .get(&("codeunit", "global triggers".to_string()))
+            .or_else(|| by_id.get(&("codeunit", 2_000_000_002)))
+        {
+            reg.global_key = gt;
         }
         for (oi, o) in program.objects.iter().enumerate() {
             for (ri, r) in o.routines.iter().enumerate() {
@@ -160,20 +190,17 @@ impl Registry {
                                             element: String::new(),
                                         })
                                 }
-                                None if kind == "codeunit" && target.eq_ignore_ascii_case("Global Triggers") => {
+                                None if kind == "codeunit" && is_global_triggers(&target) => {
                                     reg.has_global_triggers = true;
-                                    if matches!(
-                                        event.as_str(),
-                                        "getglobaltabletriggermask" | "getdatabasetabletriggersetup"
-                                    ) {
-                                        let mut ids = Vec::new();
-                                        int_consts(&r.body, &mut ids);
-                                        let tables: Vec<usize> = ids
-                                            .iter()
-                                            .filter_map(|&id| by_id.get(&("table", id as u32)).copied())
-                                            .collect();
-                                        reg.global_trigger_tables.extend(tables);
-                                    }
+                                    reg.subscribers
+                                        .entry((reg.global_key, event))
+                                        .or_default()
+                                        .push(Subscriber {
+                                            object: oi,
+                                            routine: ri,
+                                            manual: is_manual(o),
+                                            element: String::new(),
+                                        })
                                 }
                                 None => {}
                             }
@@ -191,131 +218,6 @@ impl Registry {
         self.subscribers
             .get(&(object, event.to_string()))
             .is_some_and(|v| !v.is_empty())
-    }
-
-    /// Whether a write to table `object` would raise `Global Triggers` events in BC.
-    pub fn global_triggers_apply(&self, object: usize) -> bool {
-        // Without a table named by a setup subscriber, any table could be affected.
-        self.has_global_triggers
-            && (self.global_trigger_tables.is_empty() || self.global_trigger_tables.contains(&object))
-    }
-}
-
-/// Integer literals anywhere in `stmts` (object ids written as `Database::X`
-/// lower to integers).
-fn int_consts(stmts: &[ir::Stmt], out: &mut Vec<i64>) {
-    use ir::Stmt as S;
-    for s in stmts {
-        match s {
-            S::Assign(_, e) | S::Expr(e) => int_consts_expr(e, out),
-            S::If(c, t, e) => {
-                int_consts_expr(c, out);
-                int_consts(t, out);
-                int_consts(e, out);
-            }
-            S::While(c, b) | S::Repeat(b, c) => {
-                int_consts_expr(c, out);
-                int_consts(b, out);
-            }
-            S::For { from, to, body, .. } => {
-                int_consts_expr(from, out);
-                int_consts_expr(to, out);
-                int_consts(body, out);
-            }
-            S::Foreach { collection, body, .. } => {
-                int_consts_expr(collection, out);
-                int_consts(body, out);
-            }
-            S::Case {
-                scrutinee,
-                branches,
-                otherwise,
-            } => {
-                int_consts_expr(scrutinee, out);
-                for (labels, b) in branches {
-                    for l in labels {
-                        match l {
-                            ir::SetElem::One(e) => int_consts_expr(e, out),
-                            ir::SetElem::Range(a, b) => {
-                                a.iter().chain(b).for_each(|e| int_consts_expr(e, out));
-                            }
-                        }
-                    }
-                    int_consts(b, out);
-                }
-                int_consts(otherwise, out);
-            }
-            S::Exit(e) => e.iter().for_each(|e| int_consts_expr(e, out)),
-            S::Break | S::Pos(_) => {}
-            S::AssertError(b) => int_consts(b, out),
-        }
-    }
-}
-
-fn int_consts_expr(e: &ir::Expr, out: &mut Vec<i64>) {
-    use ir::Expr as E;
-    match e {
-        E::Const(ir::Const::Integer(i)) => out.push(i64::from(*i)),
-        E::Const(ir::Const::BigInteger(i)) => out.push(*i),
-        E::Const(_) | E::Load(_) => {}
-        E::Unary(_, e)
-        | E::Convert(_, e)
-        | E::Control { page: e, .. }
-        | E::QueryColumn { query: e, .. }
-        | E::DotNetCoerce(_, e)
-        | E::EnumImpl { value: e, .. } => int_consts_expr(e, out),
-        E::DotNet { receiver, args, .. } => {
-            receiver.iter().for_each(|e| int_consts_expr(e, out));
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
-        E::Binary(_, a, b) => {
-            int_consts_expr(a, out);
-            int_consts_expr(b, out);
-        }
-        E::In(v, set) => {
-            int_consts_expr(v, out);
-            for s in set {
-                match s {
-                    ir::SetElem::One(e) => int_consts_expr(e, out),
-                    ir::SetElem::Range(a, b) => a.iter().chain(b).for_each(|e| int_consts_expr(e, out)),
-                }
-            }
-        }
-        E::Ternary(a, b, c) => {
-            int_consts_expr(a, out);
-            int_consts_expr(b, out);
-            int_consts_expr(c, out);
-        }
-        E::InterfaceCall { receiver, args, .. } => {
-            int_consts_expr(receiver, out);
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
-        E::Call { instance, args, .. } => {
-            instance.iter().for_each(|e| int_consts_expr(e, out));
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
-        E::Builtin { receiver, args, .. } => {
-            if let Some(ir::Arg::Value(e)) = receiver.as_deref() {
-                int_consts_expr(e, out);
-            }
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
     }
 }
 

@@ -178,6 +178,9 @@ impl Session {
         };
         let mut targets = Vec::new();
         for s in subs {
+            if object == engine.events.global_key && engine.events.unavailable_global.contains(&(s.object, s.routine)) {
+                continue;
+            }
             if let Some(el) = element {
                 if !s.element.eq_ignore_ascii_case(el) {
                     continue;

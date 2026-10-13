@@ -4,6 +4,7 @@
 //! raises `Signal::Unsupported` instead of guessing.
 
 use crate::Session;
+use crate::globaltriggers::GlobalOp;
 use al_builtins::filter::{FieldFilter, FilterExpr, key_cmp};
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
@@ -98,11 +99,12 @@ impl Session {
             return Ok(Value::Boolean(false));
         }
         // A dependency app's code reads rows (setup records, mostly) that installing the app and
-        // initialising a company create. This runtime does not run that yet (ADR-013 decision 5),
-        // so a missing row there is not BC's answer: refuse rather than report it as one.
-        if !exists && self.in_dependency_code() {
+        // initialising a company create. Where the install baseline could not create them
+        // (ADR-013 decision 5), a missing row there is not BC's answer: refuse rather than
+        // report it as one.
+        if !exists && self.in_dependency_code() && self.engine.unseeded.contains(&(t.object as usize)) {
             return unsupported(format!(
-                "{} not found in code of a dependency app: the rows its install and Company-Initialize create are not seeded yet (ADR-013 decision 5)",
+                "{} not found in code of a dependency app: the rows its install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
             ));
         }
@@ -135,8 +137,7 @@ impl Session {
 
     /// Hooks around `op` that this runtime cannot run are refused rather than
     /// silently skipped (hard rule 4): the triggers a table extension attaches to a
-    /// field (`modify(Field) { trigger OnBeforeValidate }`), and the platform events
-    /// of the Base App's `Global Triggers` codeunit.
+    /// field (`modify(Field) { trigger OnBeforeValidate }`).
     fn check_hooks(&self, t: &TableDef, op: &str) -> Result<(), Signal> {
         if op == "Validate" {
             if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
@@ -156,15 +157,6 @@ impl Session {
                     }
                 }
             }
-        }
-        // The workspace subscribes to the platform's Global Triggers events for this
-        // table (record/TestTriggerDispatchOrder.al: OnDatabaseInsert/OnGlobalRename ...).
-        // That codeunit is Base App, so those subscribers can never run here.
-        if op != "Validate" && self.engine.events.global_triggers_apply(t.object as usize) {
-            return unsupported(format!(
-                "{op} on {}: events of the Global Triggers codeunit (Base App) are not available",
-                t.name
-            ));
         }
         Ok(())
     }
@@ -324,6 +316,7 @@ impl Session {
             }
             self.run_ext_trigger(t, "OnDelete", rec, Some(&x))?;
         }
+        self.global_trigger(t, GlobalOp::Delete, rec, None)?;
         let row = rec.borrow().fields.clone();
         let pk = t.primary_key(&row);
         match self
@@ -706,6 +699,38 @@ impl Session {
                 ));
             }
         }
+        // OnInstallAppPerDatabase runs with CompanyName() empty; a per-company table fails there
+        // with "You must choose a company before you can access the ..." (measured on BC 27.5,
+        // docs/probes-needed.md; the rest of the text is not known, so this is refused).
+        if self.cx.company.is_empty()
+            && t.per_company
+            && !rec.borrow().temporary
+            && matches!(
+                method,
+                "Insert"
+                    | "Modify"
+                    | "Delete"
+                    | "DeleteAll"
+                    | "ModifyAll"
+                    | "Rename"
+                    | "Truncate"
+                    | "Get"
+                    | "Find"
+                    | "FindFirst"
+                    | "FindLast"
+                    | "FindSet"
+                    | "Next"
+                    | "Count"
+                    | "IsEmpty"
+                    | "CalcFields"
+                    | "CalcSums"
+            )
+        {
+            return unsupported(format!(
+                "{method} on the per-company table {} with no company chosen (BC: \"You must choose a company before you can access the ...\")",
+                t.name
+            ));
+        }
         if matches!(
             method,
             "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate"
@@ -799,6 +824,9 @@ impl Session {
                     }
                     self.run_ext_trigger(&t, "OnInsert", rec, insert_xrec.as_ref())?;
                 }
+                // The database event follows the table's triggers and precedes the write
+                // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
+                self.global_trigger(&t, GlobalOp::Insert, rec, None)?;
                 // Only Insert(_, true) takes a SystemId the code put in the buffer; a trigger
                 // that sets one on any other insert changes nothing about the stored id.
                 if let (false, Some(i), Some(id)) = (keep_id, id_slot, assigned) {
@@ -913,15 +941,22 @@ impl Session {
                 // xRec is the stored row (the page's own xRec for a row a page saves), one handle
                 // for the events and the trigger.
                 let stored_row = stored.clone();
+                let from_page = self.page_xrec.is_some();
                 let xrec = self.page_xrec.take().or(stored).map(|f| Self::xrec_handle(rec, f));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {
                     self.run_ext_trigger(&t, "OnBeforeModify", rec, xrec.as_ref())?;
                     if let Some(tr) = self.table_trigger(&t, "OnModify") {
-                        self.run_trigger(t.object as usize, tr, rec, xrec.as_ref())?;
+                        // The table's own OnModify sees xRec equal to Rec when code drove the
+                        // Modify, and the previous row when a page did
+                        // (record/TestXRecContracts.al:69-87 OnModify_xRec_MirrorsRecValues_WhenCalledFromCode,
+                        // record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
+                        let code_xrec = (!from_page).then(|| Self::xrec_handle(rec, rec.borrow().fields.clone()));
+                        self.run_trigger(t.object as usize, tr, rec, code_xrec.as_ref().or(xrec.as_ref()))?;
                     }
                     self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
+                self.global_trigger(&t, GlobalOp::Modify, rec, xrec.as_ref())?;
                 let old_version = self.bump_row_version(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
                 let mut row = rec.borrow().fields.clone();
@@ -974,17 +1009,14 @@ impl Session {
                 for n in ["OnBeforeDelete", "OnDelete", "OnAfterDelete"] {
                     trigger |= self.ext_trigger(&t, n)?.is_some();
                 }
-                if !run && events {
-                    // Whether DeleteAll(false) raises the delete events per row (as BC must when
-                    // Truncate is refused for subscribed tables, record/TestRecordTruncateEventAndFilterGuards.al)
-                    // is not pinned: docs/probes-needed.md.
-                    return unsupported(format!(
-                        "DeleteAll(false) on {}, which has delete event subscribers",
-                        t.name
-                    ));
-                }
-                if run && (events || trigger) {
-                    // One Delete(true) per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
+                let global = self.global_enabled(&t, GlobalOp::Delete)?;
+                // With delete events or database triggers a DeleteAll deletes row by row: the events
+                // and the database trigger per row, the table's and extensions' triggers only for
+                // DeleteAll(true). Pinned on real BC 27.5 by the probe codeunit 68212
+                // (record/TestTableExtensionTriggerOrderContracts.al:Delete_And_DeleteAll_...,
+                // corpus branch `al-runtime-rs`; the citation is pending until the corpus bump).
+                if events || global || (run && trigger) {
+                    // One Delete per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
                     let key = rec.borrow().key;
                     let mut rows = Vec::new();
                     let mut after = None;
@@ -996,7 +1028,7 @@ impl Session {
                         let mut st = rec.borrow().clone();
                         st.fields = row;
                         st.filters.clear();
-                        self.delete_row(&t, &Rc::new(RefCell::new(st)), true)?;
+                        self.delete_row(&t, &Rc::new(RefCell::new(st)), run)?;
                     }
                     return Ok(Value::Null);
                 }
@@ -1312,6 +1344,7 @@ impl Session {
                     self.run_trigger(t.object as usize, tr, rec, Some(&xrec))?;
                 }
                 self.run_ext_trigger(&t, "OnRename", rec, Some(&xrec))?;
+                self.global_trigger(&t, GlobalOp::Rename, rec, Some(&xrec))?;
                 let _ = self.bump_row_version(&t, rec);
                 let _ = self.stamp_rename(&t, rec);
                 let row = rec.borrow().fields.clone();

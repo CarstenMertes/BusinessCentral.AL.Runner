@@ -3439,15 +3439,41 @@ pub fn compile_apps_for(
     compile_with(apps, kinds, symbols, &al_builtins::catalog::Catalog::for_target(target))
 }
 
+/// [`compile_apps_for`] (or the newest catalog without a target) with extra demand roots: the
+/// install baseline (ADR-013 decision 5).
+pub fn compile_apps_with(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    roots: crate::check::Roots,
+) -> (Workspace, Lowered) {
+    let catalog = match target {
+        Some(t) => al_builtins::catalog::Catalog::for_target(t),
+        None => al_builtins::catalog::Catalog::load(),
+    };
+    compile_with_roots(apps, kinds, symbols, &catalog, roots)
+}
+
 fn compile_with(
     apps: Vec<crate::workspace::AppSource>,
     kinds: Vec<crate::workspace::AppKind>,
     symbols: &std::collections::BTreeSet<String>,
     catalog: &al_builtins::catalog::Catalog,
 ) -> (Workspace, Lowered) {
+    compile_with_roots(apps, kinds, symbols, catalog, Default::default())
+}
+
+fn compile_with_roots(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    catalog: &al_builtins::catalog::Catalog,
+    roots: crate::check::Roots,
+) -> (Workspace, Lowered) {
     let ws = Workspace::load_apps(apps, kinds, symbols);
     let members = crate::members::build(&ws);
-    let checked = crate::check::check(&ws, &members, catalog);
+    let checked = crate::check::check_with(&ws, &members, catalog, roots);
     let lowered = lower(&ws, &members, &checked);
     (ws, lowered)
 }

@@ -168,6 +168,8 @@ pub struct ObjectSym {
     pub implements: Vec<Vec<String>>,
     /// Event subscriptions it declares, for objects of scanned files.
     pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
+    /// A codeunit with `Subtype = Install` (known for objects of scanned files only).
+    pub install: bool,
 }
 
 /// A byte range of a parsed text.
@@ -317,6 +319,7 @@ impl Workspace {
                     extends: o.extends,
                     implements: o.implements,
                     subscribers: o.subscribers,
+                    install: o.install,
                 });
             }
         }
@@ -384,6 +387,22 @@ impl Workspace {
         }
         keys.into_iter()
             .flat_map(|k| self.subscribers_of.get(&(o.kind, k)).into_iter().flatten().copied())
+            .collect()
+    }
+
+    /// Subscribers (object, index in its `subscribers`) of scanned objects to the platform codeunit
+    /// `Global Triggers` (2000000002), which no app need declare: its events are raised by the
+    /// runtime around record writes.
+    pub fn global_trigger_subscribers(&self) -> Vec<(usize, usize)> {
+        ["global triggers", "2000000002"]
+            .iter()
+            .flat_map(|k| {
+                self.subscribers_of
+                    .get(&(ObjKind::Codeunit, (*k).to_string()))
+                    .into_iter()
+                    .flatten()
+                    .copied()
+            })
             .collect()
     }
 
@@ -756,6 +775,7 @@ struct FileObject {
     extends: Option<Vec<String>>,
     implements: Vec<Vec<String>>,
     subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
+    install: bool,
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
@@ -774,6 +794,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 extends: o.extends_parts(),
                 implements: o.implements_parts(),
                 subscribers: Vec::new(),
+                install: false,
             })
             .collect(),
         dotnet: root.dotnet_types(),
@@ -812,6 +833,7 @@ fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
                 extends: o.extends,
                 implements: o.implements,
                 subscribers: o.subscribers,
+                install: o.install,
             })
             .collect(),
     }

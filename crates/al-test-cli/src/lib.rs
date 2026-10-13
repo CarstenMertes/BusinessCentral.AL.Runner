@@ -1,5 +1,6 @@
 //! Runs the corpus's `[Test]` codeunits and reports them against the oracle.
 
+pub mod baseline;
 pub mod config;
 pub mod corpus;
 pub mod deps;

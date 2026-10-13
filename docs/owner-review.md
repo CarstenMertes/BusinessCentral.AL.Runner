@@ -115,4 +115,12 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
-
+- 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
+  `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
+- 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that
+  stops is rolled back; the tables they would have written and that hold no row are `unseeded`, and a `Get` that finds
+  nothing in dependency code is refused only for those.
+- 2026-10-14, ADR-013 (Global Triggers): dependency subscribers to `Global Triggers` that cannot run (Base Application's
+  `GlobalTriggerManagement` reaches platform tables with no provider) are skipped and reported on stderr, as main always
+  did, instead of refusing every write; remove when nothing is unavailable.
+- 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).

@@ -774,18 +774,9 @@ impl Lowerer<'_> {
         init_const(text, ty)
     }
 
-    /// The position of field `id`, refusing the audit system fields (SystemCreatedAt/By,
-    /// SystemModifiedAt/By, ids 2000000001-4): the core has no clock or user (ADR-006), so
-    /// the runtime stamps no values into them and would read defaults.
+    /// The position of field `id`.
     fn readable_field_pos(&self, table: usize, id: u32) -> L<usize> {
-        let pos = self.field_pos(table, id).ok_or("field position")?;
-        if (2_000_000_001..=2_000_000_004).contains(&id) {
-            return Err(format!(
-                "system field {} is not stamped by the runtime yet",
-                self.members[table].fields[pos].name
-            ));
-        }
-        Ok(pos)
+        self.field_pos(table, id).ok_or_else(|| "field position".to_string())
     }
 
     fn table_schema(
@@ -1111,20 +1102,6 @@ impl Lowerer<'_> {
                 .position(|x| x.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| format!("CalcFormula refers to field `{name}`, which the table does not have"))
         };
-        // SystemCreatedAt/By and SystemModifiedAt/By are not stamped on writes yet, so a formula
-        // reading them would calculate on defaults.
-        let unmaintained = |fields: &[crate::members::FieldInfo], pos: usize| {
-            if (2_000_000_001..=2_000_000_004).contains(&fields[pos].id) {
-                Err(format!(
-                    "CalcFormula reads system field {}, which the runtime does not maintain yet",
-                    fields[pos].name
-                ))
-            } else {
-                Ok(pos)
-            }
-        };
-        let src_pos = |name: &str| src_pos(name).and_then(|p| unmaintained(src_fields, p));
-        let own_pos = |name: &str| own_pos(name).and_then(|p| unmaintained(own, p));
         let field = f.field.as_deref().map(src_pos).transpose()?;
         let mut conds = Vec::new();
         for c in &f.conds {
@@ -2356,12 +2333,13 @@ mod tests {
 
     #[test]
     fn unimplemented_builtin_makes_the_routine_unsupported() {
-        let (_, l) = lower_src("codeunit 50100 C { procedure P() begin Sleep(1); end; procedure Ok() begin end; }");
+        let (_, l) =
+            lower_src("codeunit 50100 C { procedure P() begin LastUsedRowVersion(); end; procedure Ok() begin end; }");
         let (pi, _) = routine(&l, "P");
         let (oi, _) = routine(&l, "Ok");
         assert_eq!(
             l.unsupported[0][pi],
-            vec!["builtin System.Sleep#1 is not implemented".to_string()]
+            vec!["builtin Database.LastUsedRowVersion#1 is not implemented".to_string()]
         );
         assert!(l.unsupported[0][oi].is_empty());
     }
@@ -2561,10 +2539,11 @@ table 50912 \"ALT Head\"
         );
     }
 
-    // The runtime stamps SystemRowVersion and SystemId on writes but not the created/modified
-    // stamps, so a formula that reads them would calculate on defaults.
+    // The runtime stamps SystemId, SystemRowVersion and the created/modified pairs on writes
+    // (al-vm hostvalues.rs), so a formula may read any of them
+    // (record/TestCalcFormulaSystemFieldsTests.Codeunit.al:120-169).
     #[test]
-    fn formulas_over_unmaintained_system_fields_are_refused_but_system_id_and_row_version_are_not() {
+    fn formulas_over_system_fields_are_lowered() {
         let src = "table 50920 L { fields { field(1; K; Integer) { } field(2; Ref; Guid) { } } }
 table 50921 H { fields { field(1; K; Integer) { }
     field(2; A; DateTime) { FieldClass = FlowField; CalcFormula = max(L.SystemCreatedAt where(K = field(K))); }
@@ -2573,23 +2552,14 @@ table 50921 H { fields { field(1; K; Integer) { }
     field(5; D; Integer) { FieldClass = FlowField; CalcFormula = count(L where(Ref = field(SystemId))); }
     field(6; E; BigInteger) { FieldClass = FlowField; CalcFormula = max(L.SystemRowVersion where(K = field(K))); } } }";
         let (_, l) = lower_src(src);
-        for name in ["A", "B", "C"] {
-            let f = flow(&l, "H", name);
-            assert!(
-                f.calc.is_none() && f.calc_refusal.as_deref().unwrap_or("").contains("System"),
-                "{name}: {:?}",
-                f.calc_refusal
-            );
-        }
-        for name in ["D", "E"] {
+        for name in ["A", "B", "C", "D", "E"] {
             let f = flow(&l, "H", name);
             assert!(f.calc.is_some(), "{name}: {:?}", f.calc_refusal);
         }
     }
 
-    // Reading SystemCreatedAt would give the default DateTime, not the time of the insert.
     #[test]
-    fn routines_reading_unstamped_system_fields_are_refused() {
+    fn routines_reading_system_fields_are_lowered() {
         let src = format!(
             "codeunit 50100 C {{ procedure Stamped() var R: Record \"ALT T\"; D: DateTime; begin D := R.SystemModifiedAt; end;
              procedure Id() var R: Record \"ALT T\"; G: Guid; begin G := R.SystemId; end; }}\n{TABLE}"
@@ -2599,9 +2569,7 @@ table 50921 H { fields { field(1; K; Integer) { }
         let (id, _) = routine(&l, "Id");
         let oi = 0;
         assert!(
-            l.unsupported[oi][stamped]
-                .iter()
-                .any(|r| r.contains("SystemModifiedAt")),
+            l.unsupported[oi][stamped].is_empty(),
             "{:?}",
             l.unsupported[oi][stamped]
         );
@@ -2707,10 +2675,9 @@ table 50921 H { fields { field(1; K; Integer) { }
     }
 
     #[test]
-    fn audit_system_fields_are_refused_until_they_are_written() {
-        // record/TestBCSystemFieldContracts.al needs a clock and the user's security id for
-        // SystemCreatedAt/By and SystemModifiedAt/By; neither exists yet, and a default
-        // value would silently pass for a populated one.
+    fn audit_system_fields_are_lowered_now_that_the_runtime_stamps_them() {
+        // record/TestBCSystemFieldContracts.al reads SystemCreatedAt/By and SystemModifiedAt/By;
+        // the session stamps them from the host's clock and identity (al-vm hostvalues.rs).
         let src = format!(
             "{TABLE}\ncodeunit 50100 C {{
                 procedure Read() var R: Record \"ALT T\"; D: DateTime; begin D := R.SystemModifiedAt; end;
@@ -2720,15 +2687,13 @@ table 50921 H { fields { field(1; K; Integer) { }
         );
         let (_, l) = lower_src(&src);
         let find = |n: &str| l.program.objects[1].routines.iter().position(|r| r.name == n).unwrap();
-        assert_eq!(
-            l.unsupported[1][find("Read")],
-            vec!["system field SystemModifiedAt is not stamped by the runtime yet".to_string()]
-        );
-        assert_eq!(
-            l.unsupported[1][find("Filter")],
-            vec!["system field SystemCreatedBy is not stamped by the runtime yet".to_string()]
-        );
-        assert!(l.unsupported[1][find("Ok")].is_empty());
+        for n in ["Read", "Filter", "Ok"] {
+            assert!(
+                l.unsupported[1][find(n)].is_empty(),
+                "{n}: {:?}",
+                l.unsupported[1][find(n)]
+            );
+        }
     }
 
     #[test]

@@ -1991,7 +1991,10 @@ impl Session {
         };
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
         let caption = self.control_caption(st, idx)?;
-        let fmt = self.control_format(st, idx)?;
+        let fmt = al_builtins::pagefmt::ControlFormat {
+            work_date: self.work_date_day(),
+            ..self.control_format(st, idx)?
+        };
         let arg = args.first().cloned().unwrap_or(Value::Null);
         let text = match &arg {
             Value::Text(t) | Value::Code(t) => t.clone(),

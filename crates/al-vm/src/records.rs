@@ -741,24 +741,41 @@ impl Session {
                 // Before event, then the trigger, then the write, then the After event
                 // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
                 self.table_event(&t, "onbeforeinsertevent", rec, None, run, None)?;
-                if run {
-                    // The extension's triggers bracket the base table's own (tableextensiontrigger/
-                    // TestTableExtensionTableTriggers_Tests.al); Insert(false) runs none of them.
-                    self.run_ext_trigger(&t, "OnBeforeInsert", rec, None)?;
-                    if let Some(tr) = self.table_trigger(&t, "OnInsert") {
-                        self.run_trigger(t.object as usize, tr, rec, None)?;
-                    }
-                    self.run_ext_trigger(&t, "OnInsert", rec, None)?;
-                }
+                // Rec already carries its SystemId in OnInsert, the one that is stored
+                // (record/TestXRecStampFields.al:80-90); the stamps and the key come below it.
                 let keep_id = match args.get(1) {
                     Some(v) => ops::truthy(v)?,
                     None => false,
                 };
                 self.assign_system_id(&t, rec, keep_id);
+                let id_slot = t.fields.iter().position(|f| f.id == 2_000_000_000);
+                let assigned = id_slot.map(|i| rec.borrow().fields[i].clone());
+                // xRec in the insert triggers is the buffer without the SystemId it was just given
+                // (record/TestXRecStampFields.al:38-52).
+                let insert_xrec = id_slot.map(|i| {
+                    let mut copy = rec.borrow().clone();
+                    copy.fields[i] = Value::Guid([0; 16]);
+                    Rc::new(RefCell::new(copy))
+                });
+                if run {
+                    // The extension's triggers bracket the base table's own (tableextensiontrigger/
+                    // TestTableExtensionTableTriggers_Tests.al); Insert(false) runs none of them.
+                    self.run_ext_trigger(&t, "OnBeforeInsert", rec, insert_xrec.as_ref())?;
+                    if let Some(tr) = self.table_trigger(&t, "OnInsert") {
+                        self.run_trigger(t.object as usize, tr, rec, insert_xrec.as_ref())?;
+                    }
+                    self.run_ext_trigger(&t, "OnInsert", rec, insert_xrec.as_ref())?;
+                }
+                // Only Insert(_, true) takes a SystemId the code put in the buffer; a trigger
+                // that sets one on any other insert changes nothing about the stored id.
+                if let (false, Some(i), Some(id)) = (keep_id, id_slot, assigned) {
+                    rec.borrow_mut().fields[i] = id;
+                }
                 if keep_id {
                     self.check_system_id_unique(rec, &t)?;
                 }
                 let old_version = self.bump_row_version(&t, rec);
+                let stamped = self.stamp_insert(&t, rec);
                 // The key is chosen below the trigger: OnInsert starts with it still 0 and a
                 // refused Insert never takes a value (corpus record/TestAutoIncrementExplicitKey.al:63,
                 // TestAutoIncrementEdges.al:354).
@@ -773,6 +790,7 @@ impl Session {
                 // (corpus record/TestAutoIncrementExplicitKey.al:131,163).
                 if self.violates_unique_key(rec, &t, &row)? {
                     Self::restore_row_version(rec, old_version);
+                    Self::unstamp(rec, stamped);
                     if let Some(a) = auto {
                         if taken {
                             rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
@@ -800,6 +818,7 @@ impl Session {
                     }
                     InsertOutcome::AlreadyExists => {
                         Self::restore_row_version(rec, old_version);
+                        Self::unstamp(rec, stamped);
                         // The value stays consumed; the key it took does not stay on the record.
                         if let (Some(a), true) = (auto, taken) {
                             rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
@@ -859,6 +878,7 @@ impl Session {
                     None => Vec::new(),
                 };
                 // xRec is the stored row, one handle for the events and the trigger.
+                let stored_row = stored.clone();
                 let xrec = stored.map(|f| Self::xrec_handle(rec, f));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {
@@ -869,6 +889,7 @@ impl Session {
                     self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
                 let old_version = self.bump_row_version(&t, rec);
+                let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
                 let mut row = rec.borrow().fields.clone();
                 for (i, v) in kept {
                     row[i] = v;
@@ -888,6 +909,7 @@ impl Session {
                     }
                     WriteOutcome::NotFound => {
                         Self::restore_row_version(rec, old_version);
+                        Self::unstamp(rec, stamped);
                         self.fail(&t, &row, false)
                     }
                 }
@@ -1218,15 +1240,31 @@ impl Session {
                 }
                 self.run_ext_trigger(&t, "OnRename", rec, Some(&xrec))?;
                 let _ = self.bump_row_version(&t, rec);
+                let _ = self.stamp_rename(&t, rec);
                 let row = rec.borrow().fields.clone();
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
-                match self
-                    .store_for(rec)
-                    .rename(&cx, &t, &old_pk, stored.clone())
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
-                {
+                // A rename to the key the row has succeeds and writes the row again, which is what
+                // stamps it (record/TestRecordSystemId.al:752-775).
+                let same_key = ops::compare_keys(&old_pk, &t.primary_key(&row));
+                let outcome = if same_key {
+                    match self
+                        .store_for(rec)
+                        .modify(&cx, &t, stored.clone())
+                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                    {
+                        WriteOutcome::Done => RenameOutcome::Renamed,
+                        WriteOutcome::NotFound => RenameOutcome::NotFound,
+                    }
+                } else {
+                    self.store_for(rec)
+                        .rename(&cx, &t, &old_pk, stored.clone())
+                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                };
+                match outcome {
                     RenameOutcome::Renamed => {
-                        self.propagate_rename(&t, &refs, &old_fields, &row)?;
+                        if !same_key {
+                            self.propagate_rename(&t, &refs, &old_fields, &row)?;
+                        }
                         self.run_ext_trigger(&t, "OnAfterRename", rec, Some(&xrec))?;
                         self.table_event(&t, "onafterrenameevent", rec, Some(&xrec), true, None)?;
                         Ok(Value::Boolean(true))

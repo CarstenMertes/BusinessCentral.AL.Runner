@@ -66,9 +66,19 @@ needs more.
 - **Reports.** A report lowers to an object whose first globals are its data item
   records (source order), then a hidden request-page flag, then its declared
   variables; the dataset is `Object::report`. A variable is a codeunit-like
-  instance and its first use runs `OnInitReport`. `Run`, `RunModal`, `Execute`
-  and `SetTableView` run in `al-vm/src/reports.rs`: processing only, with no
-  request page, layout or output (those are refused).
+  instance and its first use runs `OnInitReport`. `Run`, `RunModal`, `Execute`,
+  `RunRequestPage` and `SetTableView` run in `al-vm/src/reports.rs`: processing
+  only, with no layout or output (a run that gets as far as output is refused).
+- **Request pages (ADR-012).** The request page of a report is `Object.page` of the
+  report: the same test client, over the report's own instance. Its controls bind to
+  the report's variables, each data item is a `DataItem` control over the item's
+  record, and a reportextension's request page merges in like a page extension. A run
+  that shows the page opens it in `al-vm/src/pages/request.rs`, hands it to the
+  `[RequestPageHandler]` (`UiKind::RequestPage`, bound by the report) and goes on if the
+  handler confirmed with OK. `RunRequestPage` returns the parameters text.
+- **FilterPageBuilder.** `LibraryValue::FilterPageBuilder` holds named controls, each
+  a record buffer; `al-vm/src/filterpage.rs` runs it. `:=` copies the control list and
+  shares the records. `RunModal` is refused.
 - **Culture.** Fixed en-US, which matches the oracle.
 - **DotNet (ADR-014).** A `dotnet { assembly(..) { type(..; Alias) } }` block declares
   aliases; `X: DotNet Alias` lowers to `RtType::DotNet` and member uses to `Expr::DotNet`

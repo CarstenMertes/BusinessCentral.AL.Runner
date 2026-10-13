@@ -83,6 +83,18 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 }
             }
         }
+        // A reportextension that extends the request page merges into it the way a page extension
+        // merges into its page (corpus handlers/TestRequestPageControlErrorName.al).
+        if o.kind == ObjKind::ReportExtension {
+            let ext = ws.object_ast(oi);
+            if ext.sections().any(|s| s.name().eq_ignore_ascii_case("requestpage")) {
+                if let Some(base) = ext.extends_parts() {
+                    if let Resolution::Found(r) = ws.resolve_ref(o.file, ObjKind::Report, &base) {
+                        page_extensions.entry(r).or_default().push(oi);
+                    }
+                }
+            }
+        }
     }
     // Extensions apply dependencies first, then by object id: when two modify one property, the
     // later one wins (corpus handlers/TestPageExtensionModifyCaption_Tests.al: a higher object id wins
@@ -338,6 +350,26 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             let next = slots.len();
             slots.entry(i.name.to_lowercase()).or_insert(next);
         }
+        // The request page: its controls and the data items a handler can filter. Why the test
+        // client cannot drive it yet becomes a reason on the page, not on the report: a run
+        // that never opens the page (UseRequestPage = false) does not need it.
+        let exts: Vec<(usize, ast::Object)> = page_extensions
+            .get(&oi)
+            .map(|v| v.iter().map(|&e| (e, ws.object_ast(e))).collect())
+            .unwrap_or_default();
+        let (request, _) = crate::reports::request_layout(&obj, &l.items, &exts);
+        page_reasons[oi].extend(request.reasons.iter().cloned());
+        // Its variables would follow the base items' records in the extension's globals, which the
+        // slots the request page binds to do not account for.
+        for (e, _) in &exts {
+            if changing.get(&oi).is_some_and(|c| c.contains(e)) {
+                page_reasons[oi].push(format!(
+                    "reportextension `{}` changes the run and extends the request page (not supported yet)",
+                    ws.objects[*e].name
+                ));
+            }
+        }
+        layouts[oi] = Some(request);
         let exts = changing.get(&oi).cloned().unwrap_or_default();
         let extension_reasons = if exts.len() > 1 {
             vec!["more than one reportextension changes the run (their order is not pinned)".to_string()]
@@ -574,6 +606,14 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             }
         }
         lw.rec_slot = rec_slot;
+        if o.kind == ObjKind::Report {
+            // `CurrPage` of the request page. Typed Variant: the test client puts the page there
+            // when it opens, and AL code cannot name it.
+            globals.push(ir::Slot {
+                name: "CurrPage".into(),
+                ty: RtType::Variant,
+            });
+        }
         // The page an extension extends, when it is in the workspace.
         let extended_page = (o.kind == ObjKind::PageExtension)
             .then(|| page_extensions.iter().find(|(_, v)| v.contains(&oi)).map(|(&p, _)| p))
@@ -647,16 +687,34 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             calls.push(std::mem::take(&mut lw.calls));
             routines.push(routine);
         }
+        let request_section = (o.kind == ObjKind::Report)
+            .then(|| obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage")))
+            .flatten();
         let page = layouts[oi]
             .as_ref()
-            .map(|l| lw.page(oi, &obj, l, &globals, &page_reasons[oi]));
+            .map(|l| lw.page(oi, (&obj, request_section.as_ref()), l, &globals, &page_reasons[oi]));
+        // A report's request page properties (`SaveValues`, `Caption`) read like a page's: the
+        // report's own `Caption` wins over the request page's
+        // (corpus handlers/TestReportRequestPageCaption.al).
+        let mut properties: Vec<(String, String)> = obj.properties().map(|p| (p.name(), p.value_text())).collect();
+        if let Some(sec) = &request_section {
+            for p in sec.properties() {
+                let name = p.name();
+                if name.eq_ignore_ascii_case("Caption")
+                    && properties.iter().any(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                {
+                    continue;
+                }
+                properties.push((name, p.value_text()));
+            }
+        }
         out.program.objects.push(ir::Object {
             kind: o.kind.label().to_string(),
             id: o.id,
             name: o.name.clone(),
             globals,
             routines,
-            properties: obj.properties().map(|p| (p.name(), p.value_text())).collect(),
+            properties,
             enum_values: members[oi]
                 .enum_values
                 .iter()
@@ -1248,7 +1306,7 @@ impl Lowerer<'_> {
     fn page(
         &self,
         oi: usize,
-        obj: &ast::Object,
+        (obj, request_section): (&ast::Object, Option<&ast::Section>),
         layout: &crate::pages::Layout,
         globals: &[ir::Slot],
         reasons: &[String],
@@ -1305,6 +1363,32 @@ impl Lowerer<'_> {
         let mut controls = Vec::new();
         for raw in &layout.controls {
             let sec = &raw.section;
+            // A data item of a request page: the test client reads and writes the filters of its
+            // record. The item's own properties and triggers belong to the report run.
+            if raw.kind == ir::ControlKind::DataItem {
+                let binding = match self.globals.get(&raw.name.to_lowercase()) {
+                    Some(slot) => ir::Binding::Var(*slot),
+                    None => {
+                        unsupported.push(format!("data item {} has no record", raw.name));
+                        ir::Binding::None
+                    }
+                };
+                controls.push(ir::Control {
+                    name: raw.name.clone(),
+                    kind: ir::ControlKind::DataItem,
+                    parent: None,
+                    binding,
+                    props: Vec::new(),
+                    triggers: Vec::new(),
+                    part_page: None,
+                    part_link: None,
+                    owner: None,
+                    ext_triggers: Vec::new(),
+                    run_object: None,
+                    action_ref: None,
+                });
+                continue;
+            }
             let ow = owner_of(raw.owner);
             let mut props: Vec<(String, ir::PropVal)> = Vec::new();
             for p in sec.properties() {
@@ -1453,14 +1537,32 @@ impl Lowerer<'_> {
             });
         }
         let base = owner_of(None);
-        let triggers = obj
-            .triggers()
-            .filter_map(|t| routine_of(&base, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
-            .collect();
+        let triggers = match request_section {
+            Some(sec) => sec
+                .triggers()
+                .filter_map(|t| routine_of(&base, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
+                .collect(),
+            None if obj.kind().eq_ignore_ascii_case("report") => Vec::new(),
+            None => obj
+                .triggers()
+                .filter_map(|t| routine_of(&base, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
+                .collect(),
+        };
         let mut ext_triggers = Vec::new();
         for &e in &extensions {
             let ow = owner_of(Some(e));
-            for t in ow.obj.triggers() {
+            // The triggers of a reportextension's request page are in its `requestpage` section.
+            let triggers: Vec<ast::Routine> = if request_section.is_some() || obj.kind().eq_ignore_ascii_case("report")
+            {
+                ow.obj
+                    .sections()
+                    .filter(|s| s.name().eq_ignore_ascii_case("requestpage"))
+                    .flat_map(|s| s.triggers().collect::<Vec<_>>())
+                    .collect()
+            } else {
+                ow.obj.triggers().collect()
+            };
+            for t in triggers {
                 if let Some(r) = routine_of(&ow, &t) {
                     ext_triggers.push((t.name().to_ascii_lowercase(), e, r));
                 }
@@ -1798,6 +1900,16 @@ impl Lowerer<'_> {
                 match self.page_reasons[p].first() {
                     None => RtType::TestPage(p as u32),
                     Some(why) => return Err(format!("TestPage \"{}\": {why}", crate::types::display_name(n))),
+                }
+            }
+            // A request page is the page of a report; the handler's variable is typed by the report.
+            Ty::TestRequestPage(n) => {
+                let r = self.resolve_obj(ObjKind::Report, n)?;
+                match self.page_reasons[r].first() {
+                    None => RtType::TestPage(r as u32),
+                    Some(why) => {
+                        return Err(format!("TestRequestPage \"{}\": {why}", crate::types::display_name(n)));
+                    }
                 }
             }
             Ty::Object(ObjKind::Interface, n) => {
@@ -2590,9 +2702,12 @@ impl Lowerer<'_> {
     /// `TP.Ctl`: a member access on a test page or part that names a control.
     fn is_control_access(&self, n: &SyntaxNode) -> bool {
         let Some(recv) = n.children().next() else { return false };
-        matches!(self.ty_of(&recv), Ty::TestPage(_) | Ty::TestPart(_))
+        let request = matches!(self.ty_of(&recv), Ty::TestRequestPage(_));
+        (matches!(self.ty_of(&recv), Ty::TestPage(_) | Ty::TestPart(_)) || request)
             && (matches!(self.ty_of(n), Ty::TestPart(_))
-                || matches!(self.ty_of(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction"))
+                || matches!(self.ty_of(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction")
+                // A data item of a request page.
+                || (request && matches!(self.ty_of(n), Ty::TestFilter(_))))
     }
 
     /// `CurrPage.<Part>.Page`
@@ -2621,10 +2736,17 @@ impl Lowerer<'_> {
 
     fn control(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         let recv = n.children().next().ok_or("control access without a receiver")?;
-        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page)) = self.ty_of(&recv) else {
+        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page) | Ty::TestRequestPage(page)) =
+            self.ty_of(&recv)
+        else {
             return Err("control of a non-page".into());
         };
-        let page = self.resolve_obj(ObjKind::Page, &page)?;
+        let kind = if matches!(self.ty_of(&recv), Ty::TestRequestPage(_)) {
+            ObjKind::Report
+        } else {
+            ObjKind::Page
+        };
+        let page = self.resolve_obj(kind, &page)?;
         let name = n
             .children()
             .last()

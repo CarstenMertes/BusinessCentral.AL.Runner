@@ -155,7 +155,9 @@ pub fn expand(src: &str, symbols: &BTreeSet<String>) -> Option<String> {
     let root = ast::SourceFile::cast(parse.syntax())?;
     let mut inserts: Vec<(usize, String)> = Vec::new();
     for obj in root.objects() {
-        if !obj.kind().eq_ignore_ascii_case("page") && !obj.kind().eq_ignore_ascii_case("pageextension") {
+        // A report's request page has the same controls (corpus handlers/TestReportRequestPageControl.al).
+        let kind = obj.kind().to_ascii_lowercase();
+        if !["page", "pageextension", "report", "reportextension"].contains(&kind.as_str()) {
             continue;
         }
         let Some(close) = obj.close_brace_offset() else {
@@ -246,12 +248,19 @@ pub fn layout(obj: &ast::Object) -> Layout {
 /// The control tree of page `obj` with the page extensions `exts` merged in, in the order given
 /// (the order they apply: a later `modify` of a property wins).
 pub fn layout_with(obj: &ast::Object, exts: &[(usize, ast::Object)]) -> Layout {
+    let exts: Vec<(usize, Vec<ast::Section>)> = exts.iter().map(|(e, o)| (*e, o.sections().collect())).collect();
+    layout_from(obj.sections(), &exts)
+}
+
+/// The control tree among `sections` (the top-level sections of a page, or the sections of a
+/// report's `requestpage`) with the sections of the extensions `exts` merged in, in the order given.
+pub fn layout_from(sections: impl Iterator<Item = ast::Section>, exts: &[(usize, Vec<ast::Section>)]) -> Layout {
     let mut tree = Tree {
         nodes: Vec::new(),
         areas: Vec::new(),
         reasons: Vec::new(),
     };
-    for top in obj.sections() {
+    for top in sections {
         let n = top.name().to_ascii_lowercase();
         if n == "layout" || n == "actions" {
             let in_actions = n == "actions";
@@ -439,10 +448,10 @@ impl Tree {
     /// Merges the extensions in order. A section whose target another extension adds is retried
     /// until nothing more can be placed, so the order of the extensions never decides whether a
     /// target is found.
-    fn merge(&mut self, exts: &[(usize, ast::Object)]) {
+    fn merge(&mut self, exts: &[(usize, Vec<ast::Section>)]) {
         let mut pending: Vec<Op> = Vec::new();
-        for (e, obj) in exts {
-            for top in obj.sections() {
+        for (e, sections) in exts {
+            for top in sections {
                 let n = top.name().to_ascii_lowercase();
                 if n != "layout" && n != "actions" {
                     continue;

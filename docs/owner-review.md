@@ -82,3 +82,16 @@ reviewed it.
   stand-in for the Tenant Media tables until ADR-013 lands.
 - 2026-10-14, ADR-017, partial records: `AddLoadFields` and `SetBaseLoadFields` on a full load answer false.
 - 2026-10-14, ADR-017, call depth: the ceiling is 1000 nested calls; beyond it the run is refused.
+- 2026-10-13, ADR-012 (request pages): a report without a `requestpage` section opens a request page of
+  its data items' filters unless `UseRequestPage` is switched off; a run that opens a request page where the
+  test declares no `[RequestPageHandler]` is refused, not answered with `Unhandled UI`.
+- 2026-10-13, ADR-012 (request pages): `RunRequestPage` returns an XML text of this runtime's own layout and
+  accepts only that text back as a seed; `RunRequestPage` commits its transaction world like `Run`.
+- 2026-10-13, ADR-012 (request pages): the id in "The action with ID = N is not found on the page." is
+  FNV-1a over the UTF-16 text of the report id and the action name, fitted to three corpus ids.
+- 2026-10-13, ADR-012 (request pages): a report that renders output (not `ProcessingOnly`, or a layout) is
+  refused when its run reaches the output, so its request page can still be tested.
+- 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
+  caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
+  around the control name (the corpus pins only the name).
+

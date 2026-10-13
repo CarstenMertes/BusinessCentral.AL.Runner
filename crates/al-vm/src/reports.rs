@@ -5,6 +5,7 @@
 //! (`Signal::Unsupported`) and listed in docs/probes-needed.md. In particular a run whose request
 //! page would open is refused: request pages arrive with the page work.
 
+use crate::pages::RequestClosed;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{Session, Signal};
 use al_builtins::value::{Instance, Value};
@@ -157,16 +158,28 @@ impl Session {
                 ))
             }
             "Report.RunRequestPage#1" | "Report.RunRequestPage#2" => {
-                let schema = if id == "Report.RunRequestPage#1" {
+                let (inst, schema, seed) = if id == "Report.RunRequestPage#1" {
                     let inst = self.report_instance(receiver, false)?.0;
-                    self.report_schema(&inst)?
+                    let schema = self.report_schema(&inst)?;
+                    (inst, schema, args.first())
                 } else {
-                    self.report_by_number(id, args.first())?.1
+                    let (inst, schema) = self.report_by_number(id, args.first())?;
+                    (inst, schema, args.get(1))
+                };
+                // Only the empty string and the text this runtime produced are understood; how BC
+                // loads a parameters string into the page is pinned only by its result
+                // (handlers/TestReportInstanceRunReqPage.al:SeededWithParameters_StillRunsTheHandler).
+                let seed = match seed {
+                    None => None,
+                    Some(Value::Text(s)) if s.is_empty() => None,
+                    Some(Value::Text(s)) => Some(s.clone()),
+                    Some(other) => return unsupported(format!("{id} seeded with {other:?}")),
                 };
                 // RunRequestPage always shows the page, so it always enters a transaction world
                 // (record/TestTxModelReportExec.al:77-102, Test02 and Test03).
-                self.report_enter_world(&schema, true)?;
-                unsupported("Report.RunRequestPage opens the request page, which is not implemented yet")
+                let enters = self.report_enter_world(&schema, true)?;
+                self.report_in_world(enters, |s| s.report_request_only(&inst, &schema, seed.as_deref()))
+                    .map(Value::Text)
             }
             other => unsupported(format!("builtin {other}")),
         }
@@ -404,27 +417,30 @@ impl Session {
         // same: no corpus test runs one without switching the page off.
         let shows_page = entry == Entry::Run && window && report.use_request_page != Some(false);
         let enters = self.report_enter_world(schema, shows_page)?;
-        if shows_page {
-            return unsupported(format!(
-                "report \"{}\" opens its request page, which is not implemented yet",
-                schema.name()
-            ));
-        }
-        // A run that enters no world still begins a transaction of its own under
-        // TransactionModel::None, which ends with the run
-        // (codeunit/TestWriteTxTestBoundary.al:259-279, Test11).
+        self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page))
+    }
+
+    /// Runs `body` as the platform runs a report: a run that enters no world still begins a
+    /// transaction of its own under TransactionModel::None, which ends with the run
+    /// (codeunit/TestWriteTxTestBoundary.al:259-279, Test11).
+    fn report_in_world<T>(
+        &mut self,
+        enters: bool,
+        body: impl FnOnce(&mut Self) -> Result<T, Signal>,
+    ) -> Result<T, Signal> {
         let began_world = self.no_transaction();
         self.tx_world += 1;
-        let result = self.report_body(inst, schema);
+        let result = body(self);
         self.tx_world -= 1;
         match result {
-            Ok(()) => {
+            Ok(v) => {
                 if (enters || began_world) && self.tx_model != TxModel::AutoRollback {
                     // A world that is entered commits its own writes when the run returns
-                    // (record/TestTxModelReportRun.al:177-196, Test07).
+                    // (record/TestTxModelReportRun.al:177-196, Test07). That `RunRequestPage` does
+                    // the same is docs/probes-needed.md.
                     self.commit_transaction();
                 }
-                Ok(())
+                Ok(v)
             }
             Err(e) => {
                 // A run that raises inside its world does not commit what it wrote
@@ -437,12 +453,35 @@ impl Session {
         }
     }
 
-    /// `OnPreReport`, every top-level data item, `OnPostReport`; a reportextension's triggers
-    /// follow the base report's own. The order of the report triggers among themselves is pinned
-    /// by reportextension/TestReportExtensionTriggers.al:244-250 (base pre, extension pre, base
-    /// post, extension post); the rest is the order the BC documentation gives
-    /// (docs/probes-needed.md).
-    fn report_body(&mut self, inst: &Inst, schema: &Schema) -> Result<(), Signal> {
+    /// `RunRequestPage`: the request page and nothing else. A cancelled page returns no parameters
+    /// (handlers/TestReportRunRequestPage.al:TestReport_RunRequestPage_CancelledHandlerReturnsNoParameters);
+    /// confirming it is not a run, so a `SaveValues` page does not remember what was confirmed
+    /// (handlers/TestReportRequestPageSaveValues.al:SourceReport_SaveValues_RunRequestPageReturnsTheValueWithoutSavingIt).
+    fn report_request_only(&mut self, inst: &Inst, schema: &Schema, seed: Option<&str>) -> Result<String, Signal> {
+        let run = self.report_prepare(inst, schema)?;
+        let before = self.saved_values.get(&(schema.object as u32)).cloned();
+        let ext = run.ext.as_ref().map(|(i, e)| (*e, i.clone()));
+        let closed = self.run_request_page(inst, schema.object, seed, ext, true);
+        match before {
+            Some(v) => {
+                self.saved_values.insert(schema.object as u32, v);
+            }
+            None => {
+                self.saved_values.remove(&(schema.object as u32));
+            }
+        }
+        match closed? {
+            (RequestClosed::Cancel, _) => Ok(String::new()),
+            (RequestClosed::Ok, parameters) => Ok(parameters.expect("parameters were asked for")),
+        }
+    }
+
+    /// The instances a run executes (the report, and the reportextension that changes it) with
+    /// every data item's own view in force. The views are in force before the request page opens
+    /// (handlers/TestReportMultiLineDataItemView.al: "the request page applies those views to the
+    /// data items before the handler runs") and before OnPreReport, which may refine them
+    /// (handlers/TestReportGetFilterInTriggers.al:43-52 reads the view there).
+    fn report_prepare(&mut self, inst: &Inst, schema: &Schema) -> Result<Run, Signal> {
         let report = schema.report();
         // A reportextension that changes the run gets an instance of its own for this run, whose
         // names for the base items point at the report's own records.
@@ -468,13 +507,40 @@ impl Session {
             base: inst.clone(),
             ext,
         };
-        // The data items' own views are in force before OnPreReport, which may refine them
-        // (handlers/TestReportGetFilterInTriggers.al:43-52 reads the view there).
         for r in run.all_items() {
             let Some(view) = run.item(r).view.clone() else { continue };
             let rec = self.report_item_record(&run, r)?;
             let t = self.table(&rec)?;
             self.set_view(&rec, &t, &view)?;
+        }
+        Ok(run)
+    }
+
+    /// `OnPreReport`, every top-level data item, `OnPostReport`; a reportextension's triggers
+    /// follow the base report's own. The order of the report triggers among themselves is pinned
+    /// by reportextension/TestReportExtensionTriggers.al:244-250 (base pre, extension pre, base
+    /// post, extension post); the rest is the order the BC documentation gives
+    /// (docs/probes-needed.md).
+    fn report_body(&mut self, inst: &Inst, schema: &Schema, shows_page: bool) -> Result<(), Signal> {
+        let report = schema.report();
+        let run = self.report_prepare(inst, schema)?;
+        // The request page opens once the items' views are in force; what the handler filters is
+        // what the run reads, so the views are not applied again afterwards. A cancelled page ends
+        // the run without an error (handlers/TestReportRunWithRequestPage.al:
+        // Report_Run_CancelledRequestPageRunsNothingAndRaisesNoError).
+        if shows_page {
+            let ext = run.ext.as_ref().map(|(i, e)| (*e, i.clone()));
+            if self.run_request_page(inst, schema.object, None, ext, false)?.0 == RequestClosed::Cancel {
+                return Ok(());
+            }
+        }
+        // A report that renders output runs up to its request page and no further: there is no
+        // renderer (docs/probes-needed.md).
+        if let Some(why) = report.output.first() {
+            return unsupported(format!(
+                "report \"{}\" renders output, which the runtime does not produce: {why}",
+                schema.name()
+            ));
         }
         // How a filter on a field a DataItemLink joins combines with the link is not pinned.
         for r in run.all_items() {

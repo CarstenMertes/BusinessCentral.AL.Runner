@@ -363,8 +363,8 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
             };
             let Some(kind) = UiKind::from_attribute(kind_attr) else {
                 let why = match kind_attr.to_ascii_lowercase().as_str() {
-                    "requestpagehandler" | "filterpagehandler" => {
-                        "it needs request and filter pages (docs/adr/012-testpage-runtime.md)"
+                    "filterpagehandler" => {
+                        "no corpus test pins how FilterPageBuilder.RunModal reaches a filter page handler"
                     }
                     "sendnotificationhandler" | "recallnotificationhandler" => "it needs the Notification type",
                     "sessionsettingshandler" => "it needs the SessionSettings type",
@@ -379,7 +379,7 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                 Some(al_builtins::value::RtType::TestPage(p)) => Some(*p),
                 _ => None,
             };
-            let is_page = matches!(kind, UiKind::Page | UiKind::ModalPage);
+            let is_page = matches!(kind, UiKind::Page | UiKind::ModalPage | UiKind::RequestPage);
             if let Some((_, other)) = out
                 .iter()
                 .find(|(k, r)| *k == kind && (!is_page || page_of(&obj.routines[*r]) == page_of(routine)))
@@ -1169,16 +1169,23 @@ mod tests {
             codeunit 60121 T { Subtype = Test;
                 [Test] [HandlerFunctions('Modal')] procedure A() begin end;
                 [Test] [HandlerFunctions('Req')] procedure B() begin end;
+                [Test] [HandlerFunctions('Fil')] procedure C() begin end;
                 [ModalPageHandler] procedure Modal(var P: TestPage Pg) begin end;
-                [RequestPageHandler] procedure Req(var P: TestRequestPage Rp) begin end; }",
+                [RequestPageHandler] procedure Req(var P: TestRequestPage Rp) begin end;
+                [FilterPageHandler] procedure Fil(var F: FilterPageBuilder) begin end; }",
         );
-        // A modal handler is supported now; one the test never triggers is reported as BC does.
+        // Modal and request page handlers are supported; one the test never triggers is reported
+        // as BC does.
         assert!(
             matches!(&o[0].1, Outcome::Fail(r) if r.contains("not executed")),
             "{o:?}"
         );
         assert!(
-            matches!(&o[1].1, Outcome::NotRun(r) if r.contains("RequestPageHandler")),
+            matches!(&o[1].1, Outcome::Fail(r) if r.contains("not executed")),
+            "{o:?}"
+        );
+        assert!(
+            matches!(&o[2].1, Outcome::NotRun(r) if r.contains("FilterPageHandler")),
             "{o:?}"
         );
     }

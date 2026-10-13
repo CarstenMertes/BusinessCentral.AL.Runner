@@ -121,6 +121,11 @@ pub struct Report {
     pub extension: Option<usize>,
     /// Global slot of the hidden flag `Report.UseRequestPage(x)` sets: 0 = not set, 1 = true, 2 = false.
     pub request_flag_slot: usize,
+    /// Why running the report would render output (it is not `ProcessingOnly`, or it declares a
+    /// layout): the runtime renders nothing, so a run that gets that far is refused. Its request
+    /// page still opens first.
+    #[serde(default)]
+    pub output: Vec<String>,
     /// Why the runtime cannot run this report yet; empty = it can.
     pub unsupported: Vec<String>,
 }
@@ -339,6 +344,9 @@ pub enum ControlKind {
     SystemAction,
     ActionGroup,
     Part,
+    /// A data item of a report's request page: its `binding` is the global slot of the item's
+    /// record, and the test client reads and writes that record's filters.
+    DataItem,
 }
 
 /// Where a field control reads and writes its value.

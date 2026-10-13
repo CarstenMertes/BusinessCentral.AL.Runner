@@ -223,6 +223,12 @@ page 50002 "PG List"
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
+    run_in(body, routine, false)
+}
+
+/// With `no_transaction`, the codeunit's `Seed` runs first under the default model and commits,
+/// then `routine` runs under `TransactionModel::None`.
+fn run_in(body: &str, routine: &str, no_transaction: bool) -> Result<Value, Signal> {
     let src = format!("{OBJECTS}\ncodeunit 50100 C {{ {body} }}");
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
@@ -262,6 +268,15 @@ fn run(body: &str, routine: &str) -> Result<Value, Signal> {
     let engine = Engine::new(l.program, blocked);
     let mut s = Session::new(engine);
     let inst = s.instance(oi);
+    if no_transaction {
+        let seed = s.engine.program.objects[oi]
+            .routines
+            .iter()
+            .position(|r| r.name == "Seed")
+            .unwrap();
+        s.call(oi, seed, inst.clone(), vec![]).unwrap();
+        s.tx_model = al_vm::TxModel::None;
+    }
     s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
 }
 
@@ -893,4 +908,33 @@ fn a_get_of_a_row_the_view_hides_shows_nothing() {
         "F",
     );
     assert_eq!(text(r), "[][]");
+}
+
+// codeunit/TestWriteTxTestBoundary.al:Test13, Test13c, Test13d: under TransactionModel::None a
+// TestPage operation opens a transaction of its own, so the page may write, and the transaction
+// ends with the operation. A direct write from the test is refused again afterwards.
+#[test]
+fn under_transaction_model_none_a_page_operation_may_write_and_ends_its_transaction() {
+    let r = run_in(
+        &format!(
+            "procedure Seed() var R: Record \"PG Row\"; begin {} Commit(); end;
+            procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; X: Text; begin
+                TP.OpenEdit();
+                TP.QtyCtl.SetValue(5);
+                TP.Close();
+                X := Format(Database.IsInWriteTransaction());
+                R.Get('A');
+                X += '|' + Format(R.Qty);
+                asserterror begin R.\"No.\" := 'Z'; R.Insert(); end;
+                exit(X + '|' + GetLastErrorText());
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+        true,
+    );
+    assert_eq!(
+        text(r),
+        "No|5|A transaction must be started before changes can be made to the database."
+    );
 }

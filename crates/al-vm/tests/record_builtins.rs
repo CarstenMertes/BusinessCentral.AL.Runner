@@ -189,20 +189,6 @@ fn truncate_inside_a_try_function_is_refused_even_nested() {
 }
 
 #[test]
-fn truncate_with_a_normal_filter_or_reset_counter_is_refused_not_guessed() {
-    // corpus record/TestRecordTruncateEventAndFilterGuards.al:140-160 only pins a filter that
-    // matches every row, so whether the filter limits the delete is not known.
-    let r = run(
-        "procedure F() var R: Record \"ALT T\"; begin R.SetRange(Grp, 1); R.Truncate(); end;",
-        "F",
-    );
-    assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("filter")),
-        "{r:?}"
-    );
-}
-
-#[test]
 fn rename_is_refused_when_a_referencing_relation_has_a_shape_that_is_not_understood() {
     // The conditional-relation shapes themselves propagate (rename.rs); a where() form the parser does
     // not read (`upperlimit`) cannot be applied faithfully, so the rename of the table it names refuses.
@@ -245,21 +231,13 @@ codeunit 50100 C { procedure F() var P: Record "Parent B"; begin P.Code := 'OLD'
 
 #[test]
 fn system_field_captions_only_where_the_corpus_pins_them() {
-    // corpus record/TestRecordSystemId.al:178 pins SystemId's caption; the other system fields'
-    // captions are not pinned, so asking for them is refused rather than answered with the name.
+    // corpus record/TestRecordSystemId.al:178 pins SystemId's caption; the audit fields are
+    // refused at lowering when AL names them (SystemCreatedAt/By, SystemModifiedAt/By).
     let r = run(
         "procedure F(): Text var R: Record \"ALT T\"; begin exit(R.FieldCaption(SystemId)); end;",
         "F",
     );
     assert_eq!(text(r), "System ID");
-    let r = run(
-        "procedure F(): Text var R: Record \"ALT T\"; begin exit(R.FieldCaption(SystemCreatedAt)); end;",
-        "F",
-    );
-    assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("SystemCreatedAt")),
-        "{r:?}"
-    );
 }
 
 #[test]

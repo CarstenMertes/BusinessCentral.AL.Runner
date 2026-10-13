@@ -106,7 +106,7 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
                 lw.globals.insert(name.to_lowercase(), globals.len());
                 globals.push(ir::Slot {
                     name: name.into(),
-                    ty: RtType::Record(t as u32, false),
+                    ty: RtType::Record(t as u32, lw.is_temporary_table(t)),
                 });
             }
         }
@@ -129,11 +129,15 @@ pub fn lower(ws: &Workspace, members: &[Members], checked: &CheckResult) -> Lowe
             globals,
             routines,
             properties: obj.properties().map(|p| (p.name(), p.value_text())).collect(),
-            enum_value_props: members[oi].enum_value_props.clone(),
             enum_values: members[oi]
                 .enum_values
                 .iter()
                 .map(|(v, n)| (*v as i32, n.clone()))
+                .collect(),
+            enum_captions: members[oi]
+                .enum_captions
+                .iter()
+                .map(|(v, c)| (*v as i32, c.clone()))
                 .collect(),
             table: (o.kind == ObjKind::Table)
                 .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), &routine_at)),
@@ -219,6 +223,45 @@ fn label_text(t: &ast::TypeRef) -> Option<String> {
         .find(|k| k.kind() == SyntaxKind::StringLit)?;
     let text = tok.text();
     Some(text[1..text.len() - 1].replace("''", "'"))
+}
+
+/// A filter expression written in AL, with double-quoted names turned into
+/// the single-quoted literals the filter grammar understands. AL quotes an
+/// identifier with `"`; the filter grammar treats `"` as an ordinary
+/// character (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9).
+fn rewrite_quotes(raw: &str) -> String {
+    let mut out = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                out.push('\'');
+                for n in chars.by_ref() {
+                    match n {
+                        '"' => break,
+                        '\'' => out.push_str("''"),
+                        n => out.push(n),
+                    }
+                }
+                out.push('\'');
+            }
+            '\'' => {
+                out.push('\'');
+                while let Some(n) = chars.next() {
+                    out.push(n);
+                    if n == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            out.push(chars.next().expect("peeked"));
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 struct Lowerer<'a> {
@@ -378,6 +421,20 @@ impl Lowerer<'_> {
         init_const(text, ty)
     }
 
+    /// The position of field `id`, refusing the audit system fields (SystemCreatedAt/By,
+    /// SystemModifiedAt/By, ids 2000000001-4): the core has no clock or user (ADR-006), so
+    /// the runtime stamps no values into them and would read defaults.
+    fn readable_field_pos(&self, table: usize, id: u32) -> L<usize> {
+        let pos = self.field_pos(table, id).ok_or("field position")?;
+        if (2_000_000_001..=2_000_000_004).contains(&id) {
+            return Err(format!(
+                "system field {} is not stamped by the runtime yet",
+                self.members[table].fields[pos].name
+            ));
+        }
+        Ok(pos)
+    }
+
     fn table_schema(
         &self,
         oi: usize,
@@ -389,25 +446,41 @@ impl Lowerer<'_> {
         let fields = m
             .fields
             .iter()
-            .map(|f| ir::Field {
-                id: f.id,
-                name: f.name.clone(),
-                ty: self.rt(&f.ty).unwrap_or(RtType::Variant),
-                stored: f.class == crate::members::FieldClass::Normal,
-                init: f.init_value.as_ref().and_then(|v| init_const(v, &f.ty)),
-                auto_increment: f.auto_increment,
-                relation: f.table_relation,
-                init_text: f.init_value.clone(),
-                properties: f.properties.clone(),
-                relation_arms: self.relation_arms(oi, f),
-                relation_table: f.relation_table.clone(),
-                on_validate: match (f.declared_in, f.on_validate) {
-                    (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
-                    _ => None,
-                },
+            .map(|f| {
+                let (calc, refusal) = match (&f.class, &f.calc_formula) {
+                    (crate::members::FieldClass::FlowField, Some(text)) => {
+                        match self.lower_calc(oi, f.declared_in.unwrap_or(oi), text) {
+                            Ok(c) => (Some(c), None),
+                            Err(e) => (None, Some(e)),
+                        }
+                    }
+                    _ => (None, None),
+                };
+                ir::Field {
+                    id: f.id,
+                    name: f.name.clone(),
+                    ty: self.rt(&f.ty).unwrap_or(RtType::Variant),
+                    stored: f.class == crate::members::FieldClass::Normal,
+                    init: f.init_value.as_ref().and_then(|v| init_const(v, &f.ty)),
+                    auto_increment: f.auto_increment,
+                    relation: f.table_relation,
+                    init_text: f.init_value.clone(),
+                    relation_table: f.relation_table.clone(),
+                    relation_tables: f.relation_tables.clone(),
+                    properties: f.properties.clone(),
+                    relation_arms: self.relation_arms(oi, f),
+                    on_validate: match (f.declared_in, f.on_validate) {
+                        (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
+                        _ => None,
+                    },
+                    flow_filter: f.class == crate::members::FieldClass::FlowFilter,
+                    calc,
+                    calc_refusal: refusal,
+                }
             })
             .collect();
         let mut keys = Vec::new();
+        let mut unique_keys = Vec::new();
         for o in std::iter::once(oi).chain(extensions.iter().copied()) {
             for sec in self
                 .ws
@@ -435,6 +508,10 @@ impl Lowerer<'_> {
                         .collect();
                     if pos.len() == names.len() && !pos.is_empty() {
                         keys.push(pos);
+                        unique_keys.push(k.properties().any(|p| {
+                            p.name().eq_ignore_ascii_case("Unique")
+                                && p.value_text().trim().eq_ignore_ascii_case("true")
+                        }));
                     }
                 }
             }
@@ -442,6 +519,7 @@ impl Lowerer<'_> {
         if keys.is_empty() {
             // Without a keys section the first field is the primary key (doc: Table keys).
             keys.push(vec![0]);
+            unique_keys.push(false);
         }
         let per_company = !obj.properties().any(|p| {
             p.name().eq_ignore_ascii_case("DataPerCompany") && p.value_text().trim().eq_ignore_ascii_case("false")
@@ -449,9 +527,147 @@ impl Lowerer<'_> {
         ir::Table {
             fields,
             keys,
+            unique_keys,
             per_company,
             extensions,
         }
+    }
+
+    /// A FlowField's `CalcFormula` with field names resolved against the table
+    /// `oi` it belongs to and object names in the file of `declared_in` (the table or table
+    /// extension that wrote it). `Err` is why it cannot be calculated yet.
+    fn lower_calc(&self, oi: usize, declared_in: usize, text: &str) -> Result<ir::CalcFormula, String> {
+        use crate::calcformula::{CondValue, parse};
+        let f = parse(text)?;
+        // Names resolve where the field was written: its table or table extension.
+        let file = self.ws.objects[declared_in].file;
+        let Resolution::Found(src) = self
+            .ws
+            .resolve_ref(file, ObjKind::Table, std::slice::from_ref(&f.table))
+        else {
+            return Err(format!(
+                "CalcFormula source table `{}` is outside the workspace",
+                f.table
+            ));
+        };
+        let src_fields = &self.members[src].fields;
+        let src_pos = |name: &str| {
+            src_fields
+                .iter()
+                .position(|x| x.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("CalcFormula field `{name}` is not in table `{}`", f.table))
+        };
+        let own = &self.members[oi].fields;
+        let own_pos = |name: &str| {
+            own.iter()
+                .position(|x| x.name.eq_ignore_ascii_case(name))
+                .ok_or_else(|| format!("CalcFormula refers to field `{name}`, which the table does not have"))
+        };
+        // SystemCreatedAt/By and SystemModifiedAt/By are not stamped on writes yet, so a formula
+        // reading them would calculate on defaults.
+        let unmaintained = |fields: &[crate::members::FieldInfo], pos: usize| {
+            if (2_000_000_001..=2_000_000_004).contains(&fields[pos].id) {
+                Err(format!(
+                    "CalcFormula reads system field {}, which the runtime does not maintain yet",
+                    fields[pos].name
+                ))
+            } else {
+                Ok(pos)
+            }
+        };
+        let src_pos = |name: &str| src_pos(name).and_then(|p| unmaintained(src_fields, p));
+        let own_pos = |name: &str| own_pos(name).and_then(|p| unmaintained(own, p));
+        let field = f.field.as_deref().map(src_pos).transpose()?;
+        let mut conds = Vec::new();
+        for c in &f.conds {
+            let pos = src_pos(&c.field)?;
+            let decl = src_fields[pos].declared_in.map_or(file, |d| self.ws.objects[d].file);
+            let value = match &c.value {
+                CondValue::Const(raw) => ir::CalcValue::Const(self.calc_const(decl, raw, &src_fields[pos].ty)?),
+                CondValue::Filter(raw) => ir::CalcValue::Filter(rewrite_quotes(raw)),
+                CondValue::Field(n) => ir::CalcValue::Field(own_pos(n)?),
+                CondValue::UpperLimit(n) => ir::CalcValue::UpperLimit(own_pos(n)?),
+                CondValue::FieldFilter(n) => ir::CalcValue::FieldFilter(own_pos(n)?),
+            };
+            conds.push(ir::CalcCond { field: pos, value });
+        }
+        // Two conditions on one source field: only a link replaced by a
+        // field(filter()) on the same field is pinned (corpus
+        // record/TestCalcFormulaFlowFiltersTests.Codeunit.al:230); anything
+        // else is refused rather than guessed.
+        for (i, c) in conds.iter().enumerate() {
+            for d in &conds[i + 1..] {
+                let replaces = matches!(
+                    (&c.value, &d.value),
+                    (ir::CalcValue::Field(_), ir::CalcValue::FieldFilter(_))
+                        | (ir::CalcValue::FieldFilter(_), ir::CalcValue::Field(_))
+                );
+                if c.field == d.field && !replaces {
+                    return Err(format!(
+                        "CalcFormula has two conditions on the same source field `{}` (their combination is not pinned yet)",
+                        src_fields[c.field].name
+                    ));
+                }
+            }
+        }
+        Ok(ir::CalcFormula {
+            method: f.method,
+            negate: f.negate,
+            table: src,
+            field,
+            conds,
+        })
+    }
+
+    /// A `const(..)` value as a constant of the source field's type.
+    fn calc_const(&self, file: usize, raw: &str, ty: &Ty) -> Result<ir::Const, String> {
+        let raw = raw.trim();
+        // `Database::"X"` / `Report::"X"`: the object's id (corpus
+        // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
+        if let Some((kind, name)) = raw.split_once("::") {
+            let kind = match kind.trim().to_ascii_lowercase().as_str() {
+                "database" => Some(ObjKind::Table),
+                other => ObjKind::from_type_name(other),
+            };
+            let name = name.trim().trim_matches('"').to_string();
+            let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
+                return Err(format!("CalcFormula const({raw}) is not understood yet"));
+            };
+            let Resolution::Found(o) = self.ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
+                return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
+            };
+            let id = self.ws.objects[o]
+                .id
+                .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
+            return match ty {
+                Ty::Integer => Ok(ir::Const::Integer(id as i32)),
+                Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
+                Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
+                _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
+            };
+        }
+        let unquoted = raw.trim_matches('"');
+        if let Ty::Enum(name) = ty {
+            let Resolution::Found(e) = self.ws.resolve_ref(file, ObjKind::Enum, std::slice::from_ref(name)) else {
+                return Err(format!(
+                    "CalcFormula const({raw}): enum `{name}` is outside the workspace"
+                ));
+            };
+            let values = &self.members[e].enum_values;
+            let ordinal = values
+                .iter()
+                .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
+                .map(|(v, _)| *v as i32)
+                .or_else(|| unquoted.parse().ok())
+                .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
+            return Ok(ir::Const::Enum(e as u32, ordinal));
+        }
+        if let Ty::Option(members) = ty {
+            if let Ok(n) = unquoted.parse::<i32>() {
+                return Ok(ir::Const::Option(n, members.clone()));
+            }
+        }
+        init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
     }
 
     fn res(&self, n: &SyntaxNode) -> Option<&Res> {
@@ -471,6 +687,12 @@ impl Lowerer<'_> {
             Resolution::Found(i) => Ok(i),
             _ => Err(format!("{} `{name}` is outside the workspace", kind.label())),
         }
+    }
+
+    fn is_temporary_table(&self, table: usize) -> bool {
+        self.ws.object_ast(table).properties().any(|p| {
+            p.name().eq_ignore_ascii_case("TableType") && p.value_text().trim().eq_ignore_ascii_case("temporary")
+        })
     }
 
     fn rt(&self, t: &Ty) -> L<RtType> {
@@ -502,7 +724,10 @@ impl Lowerer<'_> {
             }
             Ty::Builtin(n) => RtType::Library(n.clone()),
             Ty::Record { table, temporary } => {
-                RtType::Record(self.resolve_obj(ObjKind::Table, table)? as u32, *temporary)
+                let t = self.resolve_obj(ObjKind::Table, table)?;
+                // `TableType = Temporary` makes every record of the table temporary (corpus
+                // record/TestTempTableContracts.al:16).
+                RtType::Record(t as u32, *temporary || self.is_temporary_table(t))
             }
             other => return Err(format!("type {other} is not lowered yet")),
         })
@@ -865,7 +1090,7 @@ impl Lowerer<'_> {
                     .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::Field { table, id }) => {
                     let (table, id) = (*table, *id);
-                    let pos = self.field_pos(table, id).ok_or("field position")?;
+                    let pos = self.readable_field_pos(table, id)?;
                     let base = match n.kind() {
                         SyntaxKind::MemberExpr => self.place(&n.children().next().ok_or("member base")?)?,
                         _ => ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
@@ -1008,15 +1233,26 @@ impl Lowerer<'_> {
         }
     }
 
-    /// Lower-case attribute names of the routine at `offset` in `object`.
-    fn routine_attributes(&self, object: usize, offset: usize) -> Vec<String> {
+    /// (lower-case name, argument constants) of each attribute of the routine
+    /// at `offset` in `object`.
+    fn routine_attributes(&self, object: usize, offset: usize) -> Vec<(String, Vec<ir::Const>)> {
         self.ws
             .object_ast(object)
             .syntax()
             .descendants()
             .filter_map(ast::Routine::cast)
             .find(|r| usize::from(r.syntax().text_range().start()) == offset)
-            .map(|r| r.attributes().map(|a| a.name().to_ascii_lowercase()).collect())
+            .map(|r| {
+                r.attributes()
+                    .map(|a| {
+                        let args = a
+                            .args()
+                            .map(|l| l.children().filter_map(|e| self.constant(&e).ok()).collect())
+                            .unwrap_or_default();
+                        (a.name().to_ascii_lowercase(), args)
+                    })
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -1060,13 +1296,7 @@ impl Lowerer<'_> {
                 }
                 self.calls.push((object, routine));
                 let attrs = self.routine_attributes(object, offset);
-                if attrs
-                    .iter()
-                    .any(|a| ["integrationevent", "businessevent", "internalevent"].contains(&a.as_str()))
-                {
-                    return Err("event publishing is not implemented yet".into());
-                }
-                let try_call = attrs.iter().any(|a| a == "tryfunction");
+                let try_call = attrs.iter().any(|(a, _)| a == "tryfunction");
                 Ok(ir::Expr::Call {
                     object,
                     routine,
@@ -1105,7 +1335,7 @@ impl Lowerer<'_> {
                     let field_param =
                         p.name.to_ascii_lowercase().starts_with("field") || p.name.eq_ignore_ascii_case("FromField");
                     if let (true, Some(Res::Field { table, id })) = (field_param, self.res(a).cloned()) {
-                        let pos = self.field_pos(table, id).ok_or("field position")?;
+                        let pos = self.readable_field_pos(table, id)?;
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
                         continue;
                     }
@@ -1279,6 +1509,24 @@ mod tests {
     }
 
     #[test]
+    fn event_publisher_calls_lower_including_isolated_ones() {
+        let (_, l) = lower_src(
+            "codeunit 50100 C {
+                [IntegrationEvent(false, false)] procedure OnA() begin end;
+                [BusinessEvent(false)] procedure OnB() begin end;
+                [InternalEvent(false)] procedure OnC() begin end;
+                [IntegrationEvent(false, false, true)] procedure OnIso() begin end;
+                [BusinessEvent(false, true)] procedure OnIsoB() begin end;
+                procedure Plain() begin OnA(); OnB(); OnC(); end;
+                procedure Iso() begin OnIso(); OnIsoB(); end;
+            }",
+        );
+        let reasons = |n: &str| l.unsupported[0][routine(&l, n).0].clone();
+        assert!(reasons("Plain").is_empty(), "{:?}", reasons("Plain"));
+        assert!(reasons("Iso").is_empty(), "{:?}", reasons("Iso"));
+    }
+
+    #[test]
     fn control_flow_and_asserterror() {
         let (_, l) = lower_src(
             "codeunit 50100 C { procedure P() var I: Integer; begin if I = 0 then I := 1 else exit; asserterror Error('x'); end; }",
@@ -1320,6 +1568,267 @@ mod tests {
         assert!(!t.fields[3].stored, "FlowFields are not stored");
         assert!(t.fields[1].on_validate.is_some());
         assert!(t.per_company);
+    }
+
+    const FLOW_TABLES: &str = "
+enum 50910 \"ALT Kind\" { value(0; \" \") { } value(1; \"Initial Entry\") { } value(5; Application) { } }
+table 50911 \"ALT Line\"
+{
+    fields
+    {
+        field(1; \"Entry No.\"; Integer) { }
+        field(2; \"Doc No.\"; Code[20]) { }
+        field(3; Amount; Decimal) { }
+        field(4; Kind; Enum \"ALT Kind\") { }
+        field(5; St; Option) { OptionMembers = Open,Released,Closed; }
+        field(6; Open; Boolean) { }
+        field(7; \"Table ID\"; Integer) { }
+    }
+}
+table 50912 \"ALT Head\"
+{
+    fields
+    {
+        field(1; \"No.\"; Code[20]) { }
+        field(2; \"Date Filter\"; Date) { FieldClass = FlowFilter; }
+        field(3; Totaling; Text[250]) { }
+        field(10; Total; Decimal) { FieldClass = FlowField; CalcFormula = sum(\"ALT Line\".Amount where(\"Doc No.\" = field(\"No.\"))); }
+        field(11; Neg; Integer) { FieldClass = FlowField; CalcFormula = -count(\"ALT Line\" where(\"Doc No.\" = field(\"No.\"), Open = const(true), St = const(Closed), \"Table ID\" = const(Database::\"ALT Line\"))); }
+        field(12; Quoted; Decimal) { FieldClass = FlowField; CalcFormula = sum(\"ALT Line\".Amount where(Kind = filter(\"Initial Entry\" | Application))); }
+        field(13; Limit; Decimal) { FieldClass = FlowField; CalcFormula = sum(\"ALT Line\".Amount where(\"Doc No.\" = field(\"No.\"), Kind = const(\"Initial Entry\"))); }
+        field(14; Lim2; Decimal) { FieldClass = FlowField; CalcFormula = sum(\"ALT Line\".Amount where(\"Entry No.\" = field(upperlimit(\"Date Filter\")), \"Doc No.\" = field(filter(Totaling)))); }
+        field(15; NoFormula; Decimal) { FieldClass = FlowField; }
+        field(16; Outside; Integer) { FieldClass = FlowField; CalcFormula = count(Date where(\"Period Type\" = const(Date))); }
+        field(17; BadField; Integer) { FieldClass = FlowField; CalcFormula = count(\"ALT Line\" where(Nope = const(1))); }
+        field(18; Both; Integer) { FieldClass = FlowField; CalcFormula = count(\"ALT Line\" where(Open = const(true), Open = const(false))); }
+    }
+}";
+
+    fn flow(l: &Lowered, table: &str, field: &str) -> ir::Field {
+        let o = l.program.objects.iter().find(|o| o.name == table).unwrap();
+        o.table
+            .as_ref()
+            .unwrap()
+            .fields
+            .iter()
+            .find(|f| f.name == field)
+            .unwrap_or_else(|| panic!("{field}"))
+            .clone()
+    }
+
+    #[test]
+    fn flow_filters_and_flow_fields_are_marked_and_lowered() {
+        let (_, l) = lower_src(FLOW_TABLES);
+        let df = flow(&l, "ALT Head", "Date Filter");
+        assert!(df.flow_filter && !df.stored && df.calc.is_none());
+        let t = flow(&l, "ALT Head", "Total");
+        assert!(!t.flow_filter && !t.stored);
+        // Source table "ALT Line" is object 1 (enum 0, line 1, head 2); Amount is position 2.
+        assert_eq!(
+            t.calc,
+            Some(ir::CalcFormula {
+                method: ir::CalcMethod::Sum,
+                negate: false,
+                table: 1,
+                field: Some(2),
+                conds: vec![ir::CalcCond {
+                    field: 1,
+                    value: ir::CalcValue::Field(0)
+                }],
+            })
+        );
+        assert_eq!(t.calc_refusal, None);
+    }
+
+    #[test]
+    fn calc_formula_consts_are_typed_as_the_source_field() {
+        let (_, l) = lower_src(FLOW_TABLES);
+        let n = flow(&l, "ALT Head", "Neg");
+        let f = n.calc.clone().unwrap_or_else(|| panic!("{:?}", n.calc_refusal));
+        assert!(f.negate && f.method == ir::CalcMethod::Count && f.field.is_none());
+        let consts: Vec<_> = f.conds[1..].iter().map(|c| c.value.clone()).collect();
+        assert_eq!(
+            consts,
+            vec![
+                ir::CalcValue::Const(ir::Const::Boolean(true)),
+                ir::CalcValue::Const(ir::Const::Option(
+                    2,
+                    vec!["Open".into(), "Released".into(), "Closed".into()]
+                )),
+                // Database::"ALT Line" is that table's object id.
+                ir::CalcValue::Const(ir::Const::Integer(50911)),
+            ]
+        );
+        let k = flow(&l, "ALT Head", "Limit").calc.expect("lowered");
+        assert_eq!(k.conds[1].value, ir::CalcValue::Const(ir::Const::Enum(0, 1)));
+    }
+
+    #[test]
+    fn calc_formula_filters_rewrite_double_quotes_and_flow_references_resolve() {
+        let (_, l) = lower_src(FLOW_TABLES);
+        let q = flow(&l, "ALT Head", "Quoted").calc.expect("lowered");
+        assert_eq!(
+            q.conds[0].value,
+            ir::CalcValue::Filter("'Initial Entry' | Application".into())
+        );
+        let m = flow(&l, "ALT Head", "Lim2").calc.expect("lowered");
+        // "Date Filter" is position 1 of ALT Head, Totaling position 2.
+        assert_eq!(m.conds[0].value, ir::CalcValue::UpperLimit(1));
+        assert_eq!(m.conds[1].value, ir::CalcValue::FieldFilter(2));
+    }
+
+    #[test]
+    fn unusable_formulas_carry_a_reason_and_a_missing_formula_carries_none() {
+        let (_, l) = lower_src(FLOW_TABLES);
+        let nf = flow(&l, "ALT Head", "NoFormula");
+        assert!(nf.calc.is_none() && nf.calc_refusal.is_none() && !nf.stored && !nf.flow_filter);
+        let out = flow(&l, "ALT Head", "Outside");
+        assert!(out.calc.is_none());
+        assert!(
+            out.calc_refusal.as_deref().unwrap().contains("Date"),
+            "{:?}",
+            out.calc_refusal
+        );
+        let bad = flow(&l, "ALT Head", "BadField");
+        assert!(
+            bad.calc_refusal.as_deref().unwrap().contains("Nope"),
+            "{:?}",
+            bad.calc_refusal
+        );
+        let both = flow(&l, "ALT Head", "Both");
+        assert!(
+            both.calc_refusal.as_deref().unwrap().contains("same source field"),
+            "{:?}",
+            both.calc_refusal
+        );
+    }
+
+    // The runtime stamps SystemRowVersion and SystemId on writes but not the created/modified
+    // stamps, so a formula that reads them would calculate on defaults.
+    #[test]
+    fn formulas_over_unmaintained_system_fields_are_refused_but_system_id_and_row_version_are_not() {
+        let src = "table 50920 L { fields { field(1; K; Integer) { } field(2; Ref; Guid) { } } }
+table 50921 H { fields { field(1; K; Integer) { }
+    field(2; A; DateTime) { FieldClass = FlowField; CalcFormula = max(L.SystemCreatedAt where(K = field(K))); }
+    field(3; B; Guid) { FieldClass = FlowField; CalcFormula = lookup(L.SystemModifiedBy where(K = field(K))); }
+    field(4; C; Integer) { FieldClass = FlowField; CalcFormula = count(L where(SystemCreatedBy = field(SystemId))); }
+    field(5; D; Integer) { FieldClass = FlowField; CalcFormula = count(L where(Ref = field(SystemId))); }
+    field(6; E; BigInteger) { FieldClass = FlowField; CalcFormula = max(L.SystemRowVersion where(K = field(K))); } } }";
+        let (_, l) = lower_src(src);
+        for name in ["A", "B", "C"] {
+            let f = flow(&l, "H", name);
+            assert!(
+                f.calc.is_none() && f.calc_refusal.as_deref().unwrap_or("").contains("System"),
+                "{name}: {:?}",
+                f.calc_refusal
+            );
+        }
+        for name in ["D", "E"] {
+            let f = flow(&l, "H", name);
+            assert!(f.calc.is_some(), "{name}: {:?}", f.calc_refusal);
+        }
+    }
+
+    // Reading SystemCreatedAt would give the default DateTime, not the time of the insert.
+    #[test]
+    fn routines_reading_unstamped_system_fields_are_refused() {
+        let src = format!(
+            "codeunit 50100 C {{ procedure Stamped() var R: Record \"ALT T\"; D: DateTime; begin D := R.SystemModifiedAt; end;
+             procedure Id() var R: Record \"ALT T\"; G: Guid; begin G := R.SystemId; end; }}\n{TABLE}"
+        );
+        let (_, l) = lower_src(&src);
+        let (stamped, _) = routine(&l, "Stamped");
+        let (id, _) = routine(&l, "Id");
+        let oi = 0;
+        assert!(
+            l.unsupported[oi][stamped]
+                .iter()
+                .any(|r| r.contains("SystemModifiedAt")),
+            "{:?}",
+            l.unsupported[oi][stamped]
+        );
+        assert!(l.unsupported[oi][id].is_empty(), "{:?}", l.unsupported[oi][id]);
+    }
+
+    // corpus _fixtures/ALTRelationScopeExtension.al: a name in a tableextension's CalcFormula means
+    // what it means in the extension's file (own namespace first), not in the extended table's.
+    #[test]
+    fn a_table_extension_formula_resolves_names_in_the_extensions_file() {
+        let files = vec![
+            (
+                "a.al".to_string(),
+                "namespace N1;
+                table 70001 Pkg { fields { field(1; Code; Code[10]) { } } }
+                table 70000 Base { fields { field(1; Code; Code[10]) { } } }"
+                    .to_string(),
+            ),
+            (
+                "b.al".to_string(),
+                "namespace N2;
+                using N1;
+                table 70002 Pkg { fields { field(1; Code; Code[10]) { } } }
+                tableextension 70003 Ext extends Base { fields {
+                    field(5; Rows; Integer) { FieldClass = FlowField; CalcFormula = count(Pkg where(Code = field(Code))); } } }"
+                    .to_string(),
+            ),
+        ];
+        let (_, l) = crate::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files,
+            }],
+            &Default::default(),
+        );
+        let local = l.program.objects.iter().position(|o| o.id == Some(70002)).unwrap();
+        let f = flow(&l, "Base", "Rows");
+        assert_eq!(f.calc.map(|c| c.table), Some(local), "{:?}", f.calc_refusal);
+    }
+
+    #[test]
+    fn option_fields_carry_their_option_members() {
+        // types/TestOption.al:Option_Format_ReturnsName -- Format(option=1) is 'Draft'.
+        let (_, l) = lower_src(
+            "table 50901 K { fields {
+                field(1; A; Integer) { }
+                field(2; O; Option) { OptionMembers = \" \",Draft,\"In Work\"; }
+                field(3; P; Option) { OptionMembers = ,Alpha; }
+                field(4; Q; Option) { }
+            } }",
+        );
+        let t = table_ir(&l);
+        assert_eq!(
+            t.fields[1].ty,
+            RtType::Option(vec![" ".into(), "Draft".into(), "In Work".into()])
+        );
+        assert_eq!(t.fields[2].ty, RtType::Option(vec!["".into(), "Alpha".into()]));
+        assert_eq!(t.fields[3].ty, RtType::Option(vec!["".into()]));
+    }
+
+    #[test]
+    fn audit_system_fields_are_refused_until_they_are_written() {
+        // record/TestBCSystemFieldContracts.al needs a clock and the user's security id for
+        // SystemCreatedAt/By and SystemModifiedAt/By; neither exists yet, and a default
+        // value would silently pass for a populated one.
+        let src = format!(
+            "{TABLE}\ncodeunit 50100 C {{
+                procedure Read() var R: Record \"ALT T\"; D: DateTime; begin D := R.SystemModifiedAt; end;
+                procedure Filter() var R: Record \"ALT T\"; begin R.SetRange(SystemCreatedBy); end;
+                procedure Ok() var R: Record \"ALT T\"; G: Guid; begin G := R.SystemId; end;
+            }}"
+        );
+        let (_, l) = lower_src(&src);
+        let find = |n: &str| l.program.objects[1].routines.iter().position(|r| r.name == n).unwrap();
+        assert_eq!(
+            l.unsupported[1][find("Read")],
+            vec!["system field SystemModifiedAt is not stamped by the runtime yet".to_string()]
+        );
+        assert_eq!(
+            l.unsupported[1][find("Filter")],
+            vec!["system field SystemCreatedBy is not stamped by the runtime yet".to_string()]
+        );
+        assert!(l.unsupported[1][find("Ok")].is_empty());
     }
 
     #[test]

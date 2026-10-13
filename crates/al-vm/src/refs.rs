@@ -462,13 +462,12 @@ impl Session {
                 let members = o
                     .enum_values
                     .iter()
-                    .zip(&o.enum_value_props)
-                    .map(|((ord, name), props)| {
-                        let caption = props
+                    .map(|(ord, name)| {
+                        let caption = o
+                            .enum_captions
                             .iter()
-                            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
-                            .and_then(|(_, v)| crate::recmeta::string_literal(v))
-                            .unwrap_or_else(|| name.clone());
+                            .find(|(c, _)| c == ord)
+                            .map_or_else(|| name.clone(), |(_, c)| c.clone());
                         (*ord, name.clone(), caption)
                     })
                     .collect();

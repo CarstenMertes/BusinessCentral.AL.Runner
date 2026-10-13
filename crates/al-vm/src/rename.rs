@@ -114,7 +114,8 @@ impl Session {
             let mut parent_ok = true;
             for w in &wheres {
                 if let ir::RelationWhere::Value { related, text } = w {
-                    let expr = al_builtins::filter::parse_filter(text, &[], &t.fields[*related].ty)
+                    let expr = self
+                        .parse_filter_text(text, &t.fields[*related].ty)
                         .map_err(|e| Signal::Unsupported(format!("where() of a relation: {e}")))?;
                     parent_ok &= expr.matches(&new[*related]);
                 }
@@ -174,9 +175,11 @@ impl Session {
                 let old_pk = child.primary_key(&row);
                 let mut changed = row.clone();
                 changed[r.pos] = new_value.clone();
-                if let Some((i, v)) = self.next_row_version(&child) {
-                    changed[i] = v;
+                if let Some(i) = child.fields.iter().position(|f| f.id == 2_000_000_005) {
+                    self.next_row_version += 1;
+                    changed[i] = Value::BigInteger(self.next_row_version);
                 }
+                let changed = self.stored_view(&child, &changed);
                 let in_key = child.keys[0].contains(&r.pos);
                 let done = if in_key {
                     match self

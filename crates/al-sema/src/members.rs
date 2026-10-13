@@ -22,9 +22,13 @@ pub struct FieldInfo {
     /// The `InitValue` property as written.
     pub init_value: Option<String>,
     pub auto_increment: bool,
+    /// The `CalcFormula` property as written.
+    pub calc_formula: Option<String>,
     pub table_relation: bool,
     /// Lower-case name of the table the `TableRelation` points to.
     pub relation_table: Option<String>,
+    /// Lower-case names of every table of the relation (all arms of a conditional one).
+    pub relation_tables: Vec<String>,
     /// Offset of the field's OnValidate trigger node (in `declared_in`'s file).
     pub on_validate: Option<usize>,
     /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
@@ -55,8 +59,8 @@ pub struct ProcSig {
 pub struct Members {
     pub fields: Vec<FieldInfo>,
     pub enum_values: Vec<(u32, String)>,
-    /// The properties of each enum value (`Caption`, ...), parallel to `enum_values`.
-    pub enum_value_props: Vec<Vec<(String, String)>>,
+    /// `Caption` of enum values that declare one, by ordinal.
+    pub enum_captions: Vec<(u32, String)>,
     pub procedures: Vec<ProcSig>,
 }
 
@@ -86,7 +90,7 @@ pub fn build(ws: &Workspace) -> Vec<Members> {
             let target = &mut out[t];
             target.fields.extend(ext.fields);
             target.enum_values.extend(ext.enum_values);
-            target.enum_value_props.extend(ext.enum_value_props);
+            target.enum_captions.extend(ext.enum_captions);
             target.procedures.extend(ext.procedures);
             // `modify(Field) { Caption = ...; }` changes properties of an existing field
             // (corpus tableextension/TestTableExtFieldModify.al:40-67, record/TestRecordCaptionSeparators.al:79-85).
@@ -128,6 +132,26 @@ const SYSTEM_FIELDS: &[(u32, &str, Ty)] = &[
     (2000000005, "SystemRowVersion", Ty::BigInteger),
 ];
 
+/// The text of the first `'…'` literal in a property value (`'It''s', Locked = true` → `It's`).
+fn first_string_literal(value: &str) -> Option<String> {
+    let rest = value.trim().strip_prefix('\'')?;
+    let mut out = String::new();
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            if chars.peek() == Some(&'\'') {
+                chars.next();
+                out.push('\'');
+            } else {
+                return Some(out);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    None
+}
+
 fn own_members(ws: &Workspace, i: usize) -> Members {
     let obj = ws.object_ast(i);
     let mut m = Members::default();
@@ -139,23 +163,11 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 let (Some(id), Some(fname)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) else {
                     continue;
                 };
-                let ty = args
+                let mut ty = args
                     .get(2)
                     .and_then(|t| al_syntax::parse_type(t))
                     .map(|t| Ty::from_type_ref(&t))
                     .unwrap_or(Ty::Unknown);
-                // An Option field lists its members in the OptionMembers property
-                // (corpus _fixtures/tables/ALTUniversal.al:59), not in the type.
-                let ty = match ty {
-                    Ty::Option(m) if m.iter().all(|x| x.is_empty()) && m.len() <= 1 => {
-                        let listed = f
-                            .properties()
-                            .find(|p| p.name().eq_ignore_ascii_case("OptionMembers"))
-                            .map(|p| split_members(&p.value_text()));
-                        Ty::Option(listed.unwrap_or(m))
-                    }
-                    other => other,
-                };
                 let class = match f
                     .properties()
                     .find(|p| p.name().eq_ignore_ascii_case("FieldClass"))
@@ -170,6 +182,10 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                         .find(|p| p.name().eq_ignore_ascii_case(n))
                         .map(|p| p.value_text())
                 };
+                // A table field of type Option lists its members in a property.
+                if let (Ty::Option(_), Some(members)) = (&ty, prop("OptionMembers")) {
+                    ty = Ty::Option(split_option_members(&members));
+                }
                 let init_value = prop("InitValue");
                 let auto_increment = prop("AutoIncrement").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
                 let on_validate = f
@@ -184,8 +200,10 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                     declared_in: Some(i),
                     init_value,
                     auto_increment,
+                    calc_formula: prop("CalcFormula"),
                     table_relation: prop("TableRelation").is_some(),
                     relation_table: prop("TableRelation").map(|v| relation_target(&v)),
+                    relation_tables: prop("TableRelation").map(|v| relation_targets(&v)).unwrap_or_default(),
                     on_validate,
                     properties: f.properties().map(|p| (p.name(), p.value_text())).collect(),
                 });
@@ -194,8 +212,13 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
             let args = sec.args();
             if let (Some(id), Some(v)) = (args.first().and_then(|a| a.parse().ok()), args.get(1)) {
                 m.enum_values.push((id, v.clone()));
-                m.enum_value_props
-                    .push(sec.properties().map(|p| (p.name(), p.value_text())).collect());
+                let caption = sec
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("Caption"))
+                    .and_then(|p| first_string_literal(&p.value_text()));
+                if let Some(c) = caption {
+                    m.enum_captions.push((id, c));
+                }
             }
         }
     }
@@ -209,8 +232,10 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 declared_in: None,
                 init_value: None,
                 auto_increment: false,
+                calc_formula: None,
                 table_relation: false,
                 relation_table: None,
+                relation_tables: Vec::new(),
                 on_validate: None,
                 // Only SystemId's caption is pinned (corpus record/TestRecordSystemId.al:178).
                 properties: if *id == 2000000000 {
@@ -241,29 +266,95 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
     m
 }
 
-/// The members of an `OptionMembers` list: comma separated, a member may be
-/// quoted, and an empty member (`,A`) is the blank first option.
-fn split_members(v: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut quoted = false;
-    let mut was_quoted = false;
-    let mut flush = |cur: &mut String, was_quoted: &mut bool| {
-        let m = std::mem::take(cur);
-        out.push(if *was_quoted { m } else { m.trim().to_string() });
-        *was_quoted = false;
-    };
-    for c in v.trim().chars() {
+/// `Open,"In Progress",,Closed` as member names: quotes removed and kept spaces inside them,
+/// blank members kept, unquoted names trimmed.
+fn split_option_members(text: &str) -> Vec<String> {
+    let mut out: Vec<(String, bool)> = vec![(String::new(), false)];
+    let mut in_quote = false;
+    for c in text.chars() {
         match c {
             '"' => {
-                quoted = !quoted;
-                was_quoted = true;
+                in_quote = !in_quote;
+                out.last_mut().expect("non-empty").1 = true;
             }
-            ',' if !quoted => flush(&mut cur, &mut was_quoted),
-            c => cur.push(c),
+            ',' if !in_quote => out.push((String::new(), false)),
+            c => out.last_mut().expect("non-empty").0.push(c),
         }
     }
-    flush(&mut cur, &mut was_quoted);
+    out.into_iter()
+        .map(|(name, quoted)| if quoted { name } else { name.trim().to_string() })
+        .collect()
+}
+
+/// Every table a `TableRelation` names: `if (..) A.F else if (..) B.F else C.F` gives A, B, C.
+/// The `where(..)` filter of an arm names no table.
+fn relation_targets(v: &str) -> Vec<String> {
+    let c: Vec<char> = v.chars().collect();
+    let mut out = Vec::new();
+    let (mut i, mut expect_table) = (0, true);
+    let skip_parens = |i: &mut usize| {
+        // At a '(': to just past its matching ')', ignoring quoted text.
+        let mut depth = 0;
+        while *i < c.len() {
+            match c[*i] {
+                '"' | '\'' => {
+                    let q = c[*i];
+                    *i += 1;
+                    while *i < c.len() && c[*i] != q {
+                        *i += 1;
+                    }
+                }
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        *i += 1;
+                        return;
+                    }
+                }
+                _ => {}
+            }
+            *i += 1;
+        }
+    };
+    while i < c.len() {
+        if c[i].is_whitespace() || c[i] == '.' {
+            i += 1;
+            continue;
+        }
+        if c[i] == '(' {
+            skip_parens(&mut i);
+            continue;
+        }
+        let word = if c[i] == '"' {
+            i += 1;
+            let start = i;
+            while i < c.len() && c[i] != '"' {
+                i += 1;
+            }
+            let w: String = c[start..i].iter().collect();
+            i += 1;
+            (w, true)
+        } else {
+            let start = i;
+            while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_') {
+                i += 1;
+            }
+            if start == i {
+                i += 1;
+                continue;
+            }
+            (c[start..i].iter().collect::<String>(), false)
+        };
+        match (word.1, word.0.to_ascii_lowercase().as_str()) {
+            (false, "if" | "else" | "where") => expect_table = !word.0.eq_ignore_ascii_case("where"),
+            _ if expect_table => {
+                out.push(word.0.to_lowercase());
+                expect_table = false;
+            }
+            _ => {}
+        }
+    }
     out
 }
 
@@ -343,26 +434,65 @@ tableextension 50901 "ALT Ext" extends "ALT Universal"
     }
 
     #[test]
+    fn option_fields_take_their_members_from_the_option_members_property() {
+        let w = ws(&[(
+            "t.al",
+            "table 50902 T { fields { field(1; K; Code[10]) { } field(2; St; Option) { OptionMembers = Open,\"In Progress\",Closed; } field(3; Bl; Option) { OptionMembers = ,A,B; } field(4; Sp; Option) { OptionMembers = \" \",Draft; } } }",
+        )]);
+        let m = members_of(&w, ObjKind::Table, "T");
+        assert_eq!(
+            m.field("St").unwrap().ty,
+            Ty::Option(vec!["Open".into(), "In Progress".into(), "Closed".into()])
+        );
+        assert_eq!(
+            m.field("Bl").unwrap().ty,
+            Ty::Option(vec!["".into(), "A".into(), "B".into()])
+        );
+        // A quoted name keeps its spaces: a member named with one space is not a blank one.
+        assert_eq!(m.field("Sp").unwrap().ty, Ty::Option(vec![" ".into(), "Draft".into()]));
+    }
+
+    // corpus _fixtures/tables/ALTRelationParentChild.al:49-96: every arm of a conditional
+    // relation names a table whose rename the relating field follows.
+    #[test]
+    fn relation_tables_lists_every_table_of_a_conditional_relation() {
+        let w = ws(&[(
+            "t.al",
+            "table 50903 T { fields { field(1; K; Code[10]) { }
+                field(2; A; Code[10]) { TableRelation = \"Parent A\".\"Code\"; }
+                field(3; B; Code[10]) { TableRelation = if (K = const(A)) \"Parent A\".\"Code\" else \"Parent B\".\"Code\"; }
+                field(4; C; Code[10]) { TableRelation = if (K = const(A)) \"Parent A\".\"Code\" else if (K = const(B)) \"Parent B\".Code else \"Parent C\".\"Code\"; }
+                field(5; D; Code[10]) { TableRelation = \"Parent A\".\"Code\" where(Blocked = const(false)); }
+                field(6; E; Code[10]) { TableRelation = if (K = const(A)) Other.Code; }
+                field(7; F; Code[10]) { } } }",
+        )]);
+        let m = members_of(&w, ObjKind::Table, "T");
+        let rel = |n: &str| m.field(n).unwrap().relation_tables.clone();
+        assert_eq!(rel("A"), ["parent a"]);
+        assert_eq!(rel("B"), ["parent a", "parent b"]);
+        assert_eq!(rel("C"), ["parent a", "parent b", "parent c"]);
+        assert_eq!(rel("D"), ["parent a"]);
+        assert_eq!(rel("E"), ["other"]);
+        assert!(rel("F").is_empty());
+    }
+
+    #[test]
+    fn calc_formula_text_is_kept_for_flow_fields() {
+        let w = ws(&[("t.al", TABLES)]);
+        let m = members_of(&w, ObjKind::Table, "ALT Universal");
+        assert_eq!(
+            m.field("Total").unwrap().calc_formula.as_deref(),
+            Some("sum(\"ALT Universal\".Amount)")
+        );
+        assert_eq!(m.field("Amount").unwrap().calc_formula, None);
+    }
+
+    #[test]
     fn table_extension_fields_and_procedures_are_merged_into_the_table() {
         let w = ws(&[("t.al", TABLES)]);
         let m = members_of(&w, ObjKind::Table, "ALT Universal");
         assert_eq!(m.field("Ext Field").unwrap().ty, Ty::Text(Some(50)));
         assert_eq!(m.procedures_named("FromExt").len(), 1);
-    }
-
-    #[test]
-    fn option_fields_take_their_members_from_the_optionmembers_property() {
-        // corpus _fixtures/tables/ALTUniversal.al:59: `OptionMembers = " ",Draft,Active,Closed;`
-        let w = ws(&[(
-            "t.al",
-            "table 50910 O { fields { field(1; K; Integer) { } field(2; S; Option) { OptionMembers = \" \",Draft,\"In Work\"; } field(3; B; Option) { OptionMembers = ,X; } } keys { key(PK; K) { } } }",
-        )]);
-        let m = members_of(&w, ObjKind::Table, "O");
-        assert_eq!(
-            m.field("S").unwrap().ty,
-            Ty::Option(vec![" ".into(), "Draft".into(), "In Work".into()])
-        );
-        assert_eq!(m.field("B").unwrap().ty, Ty::Option(vec!["".into(), "X".into()]));
     }
 
     #[test]

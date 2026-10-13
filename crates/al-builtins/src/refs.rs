@@ -146,7 +146,6 @@ record_methods! {
     "Record.TestField#19" => "TestField",
     "Record.TestField#21" => "TestField",
     "Record.TestField#23" => "TestField",
-    "Record.Truncate#1" => "Truncate",
     "Record.FieldCaption#1" => "FieldCaption",
     "Record.FieldName#1" => "FieldName",
     "Record.FieldNo#1" => "FieldNo",

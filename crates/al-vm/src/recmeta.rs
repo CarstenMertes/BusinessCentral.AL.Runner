@@ -228,7 +228,7 @@ impl Session {
             "ReadConsistency" => Ok(Value::Boolean(false)),
             "RecordLevelLocking" => Ok(Value::Boolean(true)),
             "ReadPermission" | "WritePermission" => Ok(Value::Boolean(true)),
-            "CountApprox" => self.count_rows(rec, t).map(|n| Value::Integer(n as i32)),
+            "CountApprox" => self.record_op("Count", rec, &mut []),
             "CurrentCompany" => Ok(Value::Text(self.cx.company.clone())),
             "ReadIsolation" | "SecurityFiltering" => {
                 let (enum_name, is_iso) = if method == "ReadIsolation" {
@@ -379,7 +379,6 @@ impl Session {
             }
             "TestField" => self.test_field(rec, t, args),
             "FieldError" => self.field_error(rec, t, args),
-            "Truncate" => self.truncate(rec, t, args),
             other => unsupported(format!("Record.{other}")),
         }
     }
@@ -473,7 +472,8 @@ impl Session {
                         .and_then(|id| t.fields.iter().position(|f| f.id == id))
                 })
                 .ok_or_else(|| Signal::Unsupported(format!("position field `{name}`")))?;
-            let expr = al_builtins::filter::parse_filter(value, &[], &t.fields[pos].ty)
+            let expr = self
+                .parse_filter_text(value, &t.fields[pos].ty)
                 .map_err(|e| Signal::Unsupported(format!("SetPosition: {e}")))?;
             let al_builtins::filter::FilterExpr::Eq(v) = expr else {
                 return unsupported(format!("position value `{value}`"));
@@ -574,7 +574,8 @@ impl Session {
         };
         match found {
             Some(row) => {
-                rec.borrow_mut().fields = row;
+                // Through `load`: SetAutoCalcFields fields are calculated when a row is read.
+                self.load(rec, row)?;
                 Ok(Value::Boolean(true))
             }
             None if self.ret_used => Ok(Value::Boolean(false)),
@@ -651,57 +652,5 @@ impl Session {
             format!("{} {text} in {}: {key}.", self.field_caption(t, pos), self.caption(t)),
             "Dialog",
         ))
-    }
-
-    /// `Truncate(ResetAutoIncrement)`: the guards BC runs first are pinned by
-    /// record/TestRecordTruncate*.al; what a filter does to the delete is not.
-    fn truncate(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
-        // record/TestRecordTruncateTryScope.al:36-110
-        if self.try_depth > 0 {
-            return Err(error("Truncate is not supported in try functions.".into(), "Dialog"));
-        }
-        // record/TestRecordTruncateEventAndFilterGuards.al:70-95: a delete subscriber refuses Truncate.
-        // Which events a table's subscribers listen to is not modelled yet, so any subscriber refuses.
-        self.check_writable(t, "Delete")?;
-        let schema = self.engine.program.objects[t.object as usize].table.clone();
-        let filters = rec.borrow().filters.clone();
-        // :112-125: a filter on a FlowField (not a FlowFilter).
-        if let Some(schema) = &schema {
-            let is_flowfield = |pos: usize| {
-                schema.fields[pos]
-                    .properties
-                    .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowField"))
-            };
-            if filters.iter().any(|f| is_flowfield(f.field)) {
-                return Err(error(
-                    "Truncate does not support filters on FlowFields.".into(),
-                    "Dialog",
-                ));
-            }
-            if schema
-                .fields
-                .iter()
-                .any(|f| matches!(&f.ty, al_builtins::value::RtType::Library(n) if n == "Media" || n == "MediaSet"))
-            {
-                return unsupported("Truncate on a table with a Media field (guard not pinned)");
-            }
-            if schema.fields.iter().any(|f| f.auto_increment) && matches!(args.first(), Some(Value::Boolean(true))) {
-                return unsupported(
-                    "Truncate(true) on a table with an AutoIncrement field (counter reset not implemented)",
-                );
-            }
-        }
-        if rec.borrow().temporary {
-            return unsupported("Truncate of a temporary table (guard not pinned)");
-        }
-        if !filters.is_empty() {
-            return unsupported("Truncate with a filter (whether the filter limits the delete is not pinned)");
-        }
-        let cx = self.cx.clone();
-        self.store_for(rec)
-            .delete_all(&cx, t, &[])
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-        Ok(Value::Boolean(true))
     }
 }

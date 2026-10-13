@@ -141,7 +141,8 @@ impl Session {
             filters.push(match w {
                 ir::RelationWhere::Value { related: p, text } => FieldFilter {
                     field: *p,
-                    expr: al_builtins::filter::parse_filter(text, &[], &related.fields[*p].ty)
+                    expr: self
+                        .parse_filter_text(text, &related.fields[*p].ty)
                         .map_err(|e| Signal::Unsupported(format!("where() of a relation: {e}")))?,
                     group: 0,
                 },

@@ -21,8 +21,9 @@ pub struct Object {
     pub properties: Vec<(String, String)>,
     /// For enums: (declared value, name), extensions included.
     pub enum_values: Vec<(i32, String)>,
-    /// For enums: the properties of each value (`Caption`, ...), parallel to `enum_values`.
-    pub enum_value_props: Vec<Vec<(String, String)>>,
+    /// For enums: the `Caption` of values that declare one, by ordinal.
+    #[serde(default)]
+    pub enum_captions: Vec<(i32, String)>,
     /// For tables: fields (extensions and system fields included), keys as
     /// field positions (`keys[0]` primary), `DataPerCompany`.
     pub table: Option<Table>,
@@ -35,6 +36,8 @@ pub struct Object {
 pub struct Table {
     pub fields: Vec<Field>,
     pub keys: Vec<Vec<usize>>,
+    /// `Unique = true` per key (parallel to `keys`).
+    pub unique_keys: Vec<bool>,
     pub per_company: bool,
     /// Object index of each table extension (their triggers are not run yet).
     pub extensions: Vec<usize>,
@@ -53,6 +56,8 @@ pub struct Field {
     pub init_text: Option<String>,
     /// Lower-case name of the table a `TableRelation` points to.
     pub relation_table: Option<String>,
+    /// Lower-case names of every table the relation names (all arms of a conditional one).
+    pub relation_tables: Vec<String>,
     pub auto_increment: bool,
     /// The field declares a `TableRelation`.
     pub relation: bool,
@@ -63,6 +68,13 @@ pub struct Field {
     /// The `TableRelation` arms in written order; empty when the field has none or its shape is
     /// not understood (`relation` tells the two apart).
     pub relation_arms: Vec<RelationArm>,
+    /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
+    pub flow_filter: bool,
+    /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither
+    /// this nor `calc_refusal` declares no formula at all.
+    pub calc: Option<CalcFormula>,
+    /// Why a declared `CalcFormula` cannot be calculated yet.
+    pub calc_refusal: Option<String>,
 }
 
 /// One arm of a `TableRelation`: `if (Kind = const(A)) Table.Field where(...)`.
@@ -93,6 +105,53 @@ pub enum RelationWhere {
     Value { related: usize, text: String },
     /// `related = field(own)`: the related field equals the referencing row's field.
     Field { related: usize, own: usize },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CalcMethod {
+    Sum,
+    Count,
+    Average,
+    Min,
+    Max,
+    Exist,
+    Lookup,
+}
+
+/// A FlowField's `CalcFormula` with every name resolved to positions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalcFormula {
+    pub method: CalcMethod,
+    /// A leading `-`: negates a sum, count, average, ... and `not`s an exist.
+    pub negate: bool,
+    /// Object index of the source table.
+    pub table: usize,
+    /// Position of the aggregated or looked-up field in the source table.
+    pub field: Option<usize>,
+    pub conds: Vec<CalcCond>,
+}
+
+/// One where-condition: a field of the source table against a value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalcCond {
+    /// Position in the source table.
+    pub field: usize,
+    pub value: CalcValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum CalcValue {
+    /// `const(..)`, typed as the source field.
+    Const(Const),
+    /// `filter(..)`: a filter expression over the source field's type, with
+    /// AL double-quoted names rewritten as single-quoted literals.
+    Filter(String),
+    /// `field(X)`: position of X in the table being calculated.
+    Field(usize),
+    /// `field(upperlimit(X))`.
+    UpperLimit(usize),
+    /// `field(filter(X))`: X's value read as a filter expression.
+    FieldFilter(usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -275,7 +334,7 @@ mod tests {
                 }],
                 properties: vec![("Subtype".into(), "Test".into())],
                 enum_values: vec![],
-                enum_value_props: vec![],
+                enum_captions: vec![],
                 table: None,
                 rec_slot: None,
                 xrec_slot: None,

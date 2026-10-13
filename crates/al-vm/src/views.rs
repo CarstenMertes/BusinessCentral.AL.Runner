@@ -24,6 +24,13 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 const FILTER_SPECIAL: &[char] = &['|', '&', '<', '>', '=', '*', '?', '@', '\'', '"', '(', ')'];
 
 impl Session {
+    /// A filter expression over a field of type `ty`, enum members by name included.
+    pub(crate) fn parse_filter_text(&self, text: &str, ty: &al_builtins::value::RtType) -> Result<FilterExpr, String> {
+        let engine = self.engine.clone();
+        let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+        al_builtins::filter::parse_filter_with(text, &[], ty, &enums)
+    }
+
     fn filter_value(&self, v: &Value) -> Result<String, Signal> {
         if let Value::Text(s) | Value::Code(s) = v {
             if s.contains(FILTER_SPECIAL) || s.contains("..") {
@@ -193,7 +200,8 @@ impl Session {
                             return unsupported(format!("view condition `{item}`"));
                         }
                         let ty = t.fields[pos].ty.clone();
-                        let expr = al_builtins::filter::parse_filter(value, &[], &ty)
+                        let expr = self
+                            .parse_filter_text(value, &ty)
                             .map_err(|e| Signal::Unsupported(format!("SetView: {e}")))?;
                         filters.retain(|f| f.field != pos);
                         filters.push(FieldFilter {

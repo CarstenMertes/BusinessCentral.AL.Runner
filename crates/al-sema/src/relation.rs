@@ -1,0 +1,358 @@
+//! `TableRelation` property text → arms (before names are resolved).
+//!
+//! ```text
+//! TableRelation = if (Kind = const(A)) "Parent".Code where("Group" = field("Own Group"))
+//!                 else if (Kind = const(B)) Other
+//!                 else Third.Field;
+//! ```
+//!
+//! Only these shapes are understood; anything else makes the whole relation
+//! `None`, so the runtime refuses it instead of guessing (docs/probes-needed.md).
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedArm {
+    /// `(own field name, constant text)` of each `Field = const(x)` condition.
+    pub conditions: Vec<(String, String)>,
+    /// The related table (and optionally its field) as written: `["Microsoft", "Sales", "Customer", "No."]`.
+    pub path: Vec<String>,
+    /// `None` when a where() clause is present but not understood.
+    pub wheres: Option<Vec<ParsedWhere>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParsedWhere {
+    /// `RelatedField = const(text)` or `= filter(text)`.
+    Value { related: String, text: String },
+    /// `RelatedField = field(OwnField)`.
+    Field { related: String, own: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Tok {
+    Word(String),
+    Quoted(String),
+    Str(String),
+    Sym(&'static str),
+    /// The raw text between a balanced `(` and its `)`.
+    Group(String),
+}
+
+fn lex(src: &str) -> Option<Vec<Tok>> {
+    let c: Vec<char> = src.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        let ch = c[i];
+        if ch.is_whitespace() {
+            i += 1;
+        } else if ch == '"' {
+            let end = c[i + 1..].iter().position(|x| *x == '"')? + i + 1;
+            out.push(Tok::Quoted(c[i + 1..end].iter().collect()));
+            i = end + 1;
+        } else if ch == '\'' {
+            let mut s = String::new();
+            i += 1;
+            loop {
+                match c.get(i)? {
+                    '\'' if c.get(i + 1) == Some(&'\'') => {
+                        s.push('\'');
+                        i += 2;
+                    }
+                    '\'' => {
+                        i += 1;
+                        break;
+                    }
+                    x => {
+                        s.push(*x);
+                        i += 1;
+                    }
+                }
+            }
+            out.push(Tok::Str(s));
+        } else if ch.is_alphanumeric() || ch == '_' {
+            let start = i;
+            while i < c.len() && (c[i].is_alphanumeric() || c[i] == '_') {
+                i += 1;
+            }
+            out.push(Tok::Word(c[start..i].iter().collect()));
+        } else if ch == '(' {
+            // Keep a parenthesised group's text raw, quotes respected, so `const(Database::"X")`
+            // and `filter(<>'')` survive as written; the structure inside is read on demand.
+            let mut depth = 0;
+            let start = i + 1;
+            let mut quote: Option<char> = None;
+            loop {
+                let x = *c.get(i)?;
+                match (quote, x) {
+                    (Some(q), x) if x == q => quote = None,
+                    (Some(_), _) => {}
+                    (None, '"' | '\'') => quote = Some(x),
+                    (None, '(') => depth += 1,
+                    (None, ')') => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            out.push(Tok::Group(c[start..i].iter().collect()));
+            i += 1;
+        } else if ch == '.' {
+            out.push(Tok::Sym("."));
+            i += 1;
+        } else if ch == ',' {
+            out.push(Tok::Sym(","));
+            i += 1;
+        } else if ch == '=' {
+            out.push(Tok::Sym("="));
+            i += 1;
+        } else {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+struct P {
+    t: Vec<Tok>,
+    i: usize,
+}
+
+impl P {
+    fn word_is(&self, w: &str) -> bool {
+        matches!(self.t.get(self.i), Some(Tok::Word(x)) if x.eq_ignore_ascii_case(w))
+    }
+
+    fn name(&mut self) -> Option<String> {
+        let r = match self.t.get(self.i)? {
+            Tok::Word(w) | Tok::Quoted(w) => w.clone(),
+            _ => return None,
+        };
+        self.i += 1;
+        Some(r)
+    }
+
+    fn group(&mut self) -> Option<String> {
+        match self.t.get(self.i)? {
+            Tok::Group(g) => {
+                let g = g.clone();
+                self.i += 1;
+                Some(g)
+            }
+            _ => None,
+        }
+    }
+
+    fn sym(&mut self, s: &str) -> Option<()> {
+        match self.t.get(self.i)? {
+            Tok::Sym(x) if *x == s => {
+                self.i += 1;
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    /// `const(text)` / `filter(text)` / `field(name)` after a `=`: its keyword and inner text.
+    fn kind_group(&mut self) -> Option<(String, String)> {
+        let kw = match self.t.get(self.i)? {
+            Tok::Word(w) => w.to_ascii_lowercase(),
+            _ => return None,
+        };
+        self.i += 1;
+        Some((kw, self.group()?))
+    }
+
+    fn arm(&mut self) -> Option<ParsedArm> {
+        let mut conditions = Vec::new();
+        if self.word_is("if") {
+            self.i += 1;
+            let g = self.group()?;
+            for cond in split_commas(&g) {
+                let mut p = P { t: lex(cond)?, i: 0 };
+                let field = p.name()?;
+                p.sym("=")?;
+                let (kw, text) = p.kind_group()?;
+                if kw != "const" || p.i != p.t.len() {
+                    return None;
+                }
+                conditions.push((field, unquote(&text)));
+            }
+        }
+        let mut path = vec![self.name()?];
+        while self.sym(".").is_some() {
+            path.push(self.name()?);
+        }
+        let mut wheres = Some(Vec::new());
+        if self.word_is("where") {
+            self.i += 1;
+            wheres = self.group().and_then(|g| {
+                split_commas(&g)
+                    .into_iter()
+                    .map(|w| {
+                        let mut p = P { t: lex(w)?, i: 0 };
+                        let related = p.name()?;
+                        p.sym("=")?;
+                        let (kw, text) = p.kind_group()?;
+                        if p.i != p.t.len() {
+                            return None;
+                        }
+                        match kw.as_str() {
+                            "const" | "filter" => Some(ParsedWhere::Value {
+                                related,
+                                text: unquote(&text),
+                            }),
+                            "field" => Some(ParsedWhere::Field {
+                                related,
+                                own: unquote(&text),
+                            }),
+                            _ => None,
+                        }
+                    })
+                    .collect()
+            });
+        }
+        Some(ParsedArm {
+            conditions,
+            path,
+            wheres,
+        })
+    }
+}
+
+/// `a, b(c, d), e` → `a`, `b(c, d)`, `e` (commas inside parentheses and quotes stay).
+fn split_commas(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut start, mut quote) = (0i32, 0usize, None::<char>);
+    for (i, ch) in s.char_indices() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(ch),
+            (None, '(') => depth += 1,
+            (None, ')') => depth -= 1,
+            (None, ',') if depth == 0 => {
+                out.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
+/// A group's text as a plain value: quotes around one name or string removed.
+fn unquote(s: &str) -> String {
+    let s = s.trim();
+    for q in ['"', '\''] {
+        if let Some(inner) = s.strip_prefix(q).and_then(|x| x.strip_suffix(q)) {
+            if !inner.contains(q) {
+                return inner.to_string();
+            }
+        }
+    }
+    s.to_string()
+}
+
+/// The arms of a `TableRelation` value, or `None` when its shape is not understood.
+pub fn parse(src: &str) -> Option<Vec<ParsedArm>> {
+    let mut p = P { t: lex(src)?, i: 0 };
+    let mut arms = vec![p.arm()?];
+    while p.word_is("else") {
+        p.i += 1;
+        arms.push(p.arm()?);
+    }
+    (p.i == p.t.len()).then_some(arms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arm(conds: &[(&str, &str)], path: &[&str], wheres: Option<Vec<ParsedWhere>>) -> ParsedArm {
+        ParsedArm {
+            conditions: conds.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            path: path.iter().map(|s| s.to_string()).collect(),
+            wheres,
+        }
+    }
+
+    #[test]
+    fn plain_and_qualified_targets() {
+        // corpus _fixtures/tables/ALTRelationWhereField.al: `"ALT Rel Where Parent"."Code"`
+        assert_eq!(
+            parse("\"ALT Rel Where Parent\".\"Code\""),
+            Some(vec![arm(&[], &["ALT Rel Where Parent", "Code"], Some(vec![]))])
+        );
+        assert_eq!(parse("Location"), Some(vec![arm(&[], &["Location"], Some(vec![]))]));
+        // fieldref/TestFieldRefRelation.al:270-325: namespace-qualified targets keep every part
+        assert_eq!(
+            parse("Microsoft.Manufacturing.Forecast.\"Production Forecast Name\".Name"),
+            Some(vec![arm(
+                &[],
+                &[
+                    "Microsoft",
+                    "Manufacturing",
+                    "Forecast",
+                    "Production Forecast Name",
+                    "Name"
+                ],
+                Some(vec![])
+            )])
+        );
+    }
+
+    #[test]
+    fn conditional_arms_with_where_clauses() {
+        let src =
+            "if (Kind = const(A)) \"ALT Rel Where Parent\".\"Code\" where(\"Parent Group\" = field(\"Child Group\"))
+            else
+            \"ALT Relation Parent B\".\"Code\"";
+        assert_eq!(
+            parse(src),
+            Some(vec![
+                arm(
+                    &[("Kind", "A")],
+                    &["ALT Rel Where Parent", "Code"],
+                    Some(vec![ParsedWhere::Field {
+                        related: "Parent Group".into(),
+                        own: "Child Group".into()
+                    }])
+                ),
+                arm(&[], &["ALT Relation Parent B", "Code"], Some(vec![])),
+            ])
+        );
+        // else-if chains (_fixtures/tables/ALTRelationFieldClass.al `Cond On Filter Ref`)
+        let chain = "if (\"Kind Filter\" = const(A)) X.Code else if (\"Kind Filter\" = const(B)) Y.Code";
+        let arms = parse(chain).unwrap();
+        assert_eq!(arms.len(), 2);
+        assert_eq!(arms[1].conditions, vec![("Kind Filter".to_string(), "B".to_string())]);
+    }
+
+    #[test]
+    fn constants_filters_and_object_references_in_where() {
+        // record/CdcOwner.Table.al:67: `where("Table ID" = const(Database::"CDC Owner"))`, DvtFlowRow: `const(Date)`
+        let a = &parse("\"CDC Ref Row\".\"Code\" where(\"Table ID\" = const(Database::\"CDC Owner\"))").unwrap()[0];
+        assert_eq!(
+            a.wheres,
+            Some(vec![ParsedWhere::Value {
+                related: "Table ID".into(),
+                text: "Database::\"CDC Owner\"".into()
+            }])
+        );
+        let a = &parse("T.F where(A = const(1), B = filter(<>''))").unwrap()[0];
+        assert_eq!(a.wheres.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn shapes_not_understood_are_none_not_guessed() {
+        assert_eq!(parse("if (const(X)) A.B"), None);
+        assert_eq!(parse("A.B where(C = upperlimit(D))").unwrap()[0].wheres, None);
+        assert_eq!(parse("A.B unexpected"), None);
+        assert_eq!(parse(""), None);
+    }
+}

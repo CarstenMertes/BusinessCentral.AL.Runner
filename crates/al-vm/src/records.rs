@@ -625,12 +625,15 @@ impl Session {
                     .expect("table");
                 let field = schema.fields[pos].clone();
                 self.check_writable(&t, "Validate")?;
-                if field.relation {
-                    return unsupported("Validate of a field with a TableRelation");
-                }
                 let before = rec.borrow().fields.clone();
-                if let Some(v) = args.get(1) {
-                    let v = ops::convert(v.clone(), &field.ty)?;
+                let new_value = match args.get(1) {
+                    Some(v) => Some(ops::convert(v.clone(), &field.ty)?),
+                    None => None,
+                };
+                // The relation is checked before the value goes in, and before OnValidate runs.
+                let checked = new_value.clone().unwrap_or_else(|| before[pos].clone());
+                self.validate_relation(rec, &t, pos, checked)?;
+                if let Some(v) = new_value {
                     rec.borrow_mut().fields[pos] = v;
                 }
                 if let Some((object, routine)) = field.on_validate {

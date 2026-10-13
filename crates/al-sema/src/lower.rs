@@ -279,6 +279,105 @@ impl Lowerer<'_> {
         self.members[table].fields.iter().position(|f| f.id == id)
     }
 
+    /// The arms of a field's `TableRelation`, with names resolved from the declaring file's scope.
+    fn relation_arms(&self, oi: usize, f: &crate::members::FieldInfo) -> Vec<ir::RelationArm> {
+        let Some(text) = f
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("TableRelation"))
+            .map(|(_, v)| v)
+        else {
+            return Vec::new();
+        };
+        let Some(parsed) = crate::relation::parse(text) else {
+            return Vec::new();
+        };
+        let file = f
+            .declared_in
+            .map_or(self.ws.objects[oi].file, |d| self.ws.objects[d].file);
+        let own = &self.members[oi];
+        let field_pos =
+            |m: &crate::members::Members, name: &str| m.fields.iter().position(|x| x.name.eq_ignore_ascii_case(name));
+        let mut arms = Vec::new();
+        for a in parsed {
+            let mut conditions = Vec::new();
+            for (name, value) in &a.conditions {
+                let Some(pos) = field_pos(own, name) else {
+                    return Vec::new();
+                };
+                let Some(value) = self.condition_const(file, value, &own.fields[pos].ty) else {
+                    return Vec::new();
+                };
+                conditions.push(ir::RelationCond { field: pos, value });
+            }
+            // The whole path names a table, or all but the last part do and the last is a field.
+            let resolve = |parts: &[String]| match self.ws.resolve_ref_certain(file, ObjKind::Table, parts) {
+                Resolution::Found(t) => Some(t),
+                _ => None,
+            };
+            let (table, field) = match resolve(&a.path) {
+                Some(t) => (Some(t), None),
+                None if a.path.len() > 1 => match resolve(&a.path[..a.path.len() - 1]) {
+                    Some(t) => match field_pos(&self.members[t], &a.path[a.path.len() - 1]) {
+                        Some(p) => (Some(t), Some(p)),
+                        None => return Vec::new(),
+                    },
+                    None => (None, None),
+                },
+                None => (None, None),
+            };
+            // A relation onto SystemRowVersion relates to the primary key instead (BC encodes
+            // the field as id 0): corpus record/TestCalcFormulaSystemFieldsTests.Codeunit.al:229-260.
+            let field = match (table, field) {
+                (Some(t), Some(p)) if self.members[t].fields[p].id == 2_000_000_005 => None,
+                (_, f) => f,
+            };
+            let wheres = match (&a.wheres, table) {
+                (Some(ws), Some(t)) => ws
+                    .iter()
+                    .map(|w| match w {
+                        crate::relation::ParsedWhere::Value { related, text } => Some(ir::RelationWhere::Value {
+                            related: field_pos(&self.members[t], related)?,
+                            text: text.clone(),
+                        }),
+                        crate::relation::ParsedWhere::Field { related, own: o } => Some(ir::RelationWhere::Field {
+                            related: field_pos(&self.members[t], related)?,
+                            own: field_pos(own, o)?,
+                        }),
+                    })
+                    .collect(),
+                (Some(ws), None) if ws.is_empty() => Some(Vec::new()),
+                _ => None,
+            };
+            arms.push(ir::RelationArm {
+                conditions,
+                table,
+                table_name: a.path.join("."),
+                field,
+                wheres,
+            });
+        }
+        arms
+    }
+
+    /// The constant of a `Field = const(x)` condition, typed by the field.
+    fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
+        if let Ty::Enum(name) = ty {
+            let Resolution::Found(e) = self
+                .ws
+                .resolve_ref_certain(file, ObjKind::Enum, std::slice::from_ref(name))
+            else {
+                return None;
+            };
+            let (value, _) = self.members[e]
+                .enum_values
+                .iter()
+                .find(|(_, n)| n.eq_ignore_ascii_case(text.trim()))?;
+            return Some(ir::Const::Enum(e as u32, *value as i32));
+        }
+        init_const(text, ty)
+    }
+
     fn table_schema(
         &self,
         oi: usize,
@@ -300,6 +399,7 @@ impl Lowerer<'_> {
                 relation: f.table_relation,
                 init_text: f.init_value.clone(),
                 properties: f.properties.clone(),
+                relation_arms: self.relation_arms(oi, f),
                 relation_table: f.relation_table.clone(),
                 on_validate: match (f.declared_in, f.on_validate) {
                     (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
@@ -397,6 +497,9 @@ impl Lowerer<'_> {
             Ty::List(t) => RtType::List(Box::new(self.rt(t)?)),
             Ty::Dictionary(k, v) => RtType::Dictionary(Box::new(self.rt(k)?), Box::new(self.rt(v)?)),
             Ty::Array(d, t) => RtType::Array(d.clone(), Box::new(self.rt(t)?)),
+            Ty::Builtin(n) if al_builtins::sysenum::members(n).is_some() => {
+                RtType::Option(al_builtins::sysenum::option_members(n).expect("checked"))
+            }
             Ty::Builtin(n) => RtType::Library(n.clone()),
             Ty::Record { table, temporary } => {
                 RtType::Record(self.resolve_obj(ObjKind::Table, table)? as u32, *temporary)
@@ -883,6 +986,9 @@ impl Lowerer<'_> {
                 Some(Res::EnumValue { object, value }) => Ok(ir::Expr::Const(ir::Const::Enum(object as u32, value))),
                 Some(Res::OptionValue(i)) => match self.ty_of(n) {
                     Ty::Option(m) => Ok(ir::Expr::Const(ir::Const::Option(i, m))),
+                    Ty::Builtin(b) if al_builtins::sysenum::members(&b).is_some() => Ok(ir::Expr::Const(
+                        ir::Const::Option(i, al_builtins::sysenum::option_members(&b).expect("checked")),
+                    )),
                     _ => Err("option value without its option type".into()),
                 },
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),

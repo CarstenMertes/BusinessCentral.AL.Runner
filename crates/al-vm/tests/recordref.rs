@@ -24,6 +24,7 @@ table 50900 "ALT T"
         field(5; Kind; Enum "ALT E") { }
         field(6; Opt; Option) { OptionMembers = A,B,C; OptionCaption = 'Alpha,Beta,Gamma'; }
         field(7; Flag; Boolean) { }
+        field(8; Tot; Decimal) { FieldClass = FlowField; }
     }
     keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } }
 }
@@ -439,4 +440,24 @@ fn recordref_recordid_and_get_by_recordid() {
         "F",
     );
     assert_eq!(text(r), "Yes22No");
+}
+
+#[test]
+fn field_type_and_class_are_system_options() {
+    // corpus fieldref/TestFieldRefMetadata.al:56-98 (Type non-empty, Class = Normal),
+    // TestFieldRefEnumKeywordCase.al:95-106 (an enum field's Type formats as 'Option'),
+    // tableextensiontrigger/TestTableExtTargetNamespace_Tests.al:119-121 (FieldType::Integer / ::Text)
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; ft: FieldType; fc: FieldClass; s: Text; begin
+            RR.Open(50900);
+            ft := RR.Field(3).Type();
+            fc := RR.Field(3).Class();
+            s := Format(ft) + '/' + Format(fc) + '/' + Format(ft = FieldType::Integer) + Format(fc = FieldClass::Normal) + Format(ft = FieldType::Text);
+            s += '|' + Format(RR.Field(5).Type()) + Format(RR.Field(1).Type()) + Format(RR.Field(4).Type()) + Format(RR.Field(7).Type());
+            s += '|' + Format(RR.Field(8).Class()) + Format(RR.Field(8).Class() = FieldClass::FlowField);
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Integer/Normal/YesYesNo|OptionCodeTextBoolean|FlowFieldYes");
 }

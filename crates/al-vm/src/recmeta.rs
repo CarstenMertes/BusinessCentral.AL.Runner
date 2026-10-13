@@ -57,7 +57,7 @@ pub(crate) fn mentions_table(relation: &str, table: &str) -> bool {
 }
 
 /// Whether a value is its type's blank value (what `TestField(Field)` rejects).
-fn is_blank(v: &Value) -> Result<bool, Signal> {
+pub(crate) fn is_blank(v: &Value) -> Result<bool, Signal> {
     Ok(match v {
         Value::Integer(0) | Value::BigInteger(0) | Value::Byte(0) | Value::Char(0) => true,
         Value::Decimal(d) => d.is_zero(),
@@ -202,6 +202,19 @@ impl Session {
                     (F::Range(_, Some(hi)), "GetRangeMax") | (F::Eq(hi), "GetRangeMax") => Ok(hi.clone()),
                     _ => unsupported(format!("{method} of a filter that is not a single range")),
                 }
+            }
+            // corpus record/TestRecordExtended.al:15-40: Record.Relation on a field without a TableRelation
+            // raises an error whose text is not pinned (FieldRef.Relation answers 0 instead).
+            "Relation" => {
+                let pos = arg_pos(args, 0)?;
+                let has = self.engine.program.objects[t.object as usize]
+                    .table
+                    .as_ref()
+                    .is_some_and(|s| s.fields[pos].relation);
+                if !has {
+                    return unsupported("Relation of a field without a TableRelation (error text not pinned)");
+                }
+                self.field_relation(rec, t, pos).map(Value::Integer)
             }
             "GetBySystemId" => self.get_by_system_id(rec, t, args),
             "ModifyAll" => self.modify_all(rec, t, args),

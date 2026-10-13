@@ -13,6 +13,7 @@ use std::sync::Arc;
 mod recmeta;
 mod records;
 mod refs;
+mod relations;
 mod views;
 
 pub struct Engine {

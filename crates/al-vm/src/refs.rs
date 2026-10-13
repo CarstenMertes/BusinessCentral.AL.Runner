@@ -352,6 +352,23 @@ impl Session {
             "Number" => Ok(Value::Integer(field.id as i32)),
             "Name" => Ok(Value::Text(field.name.clone())),
             "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
+            "Type" => self.field_type(&t, pos),
+            "Class" => {
+                let class = self
+                    .field_property(&t, pos, "FieldClass")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_ascii_lowercase();
+                let ord = match class.as_str() {
+                    "flowfield" => 1,
+                    "flowfilter" => 2,
+                    "" | "normal" => 0,
+                    other => return unsupported(format!("FieldClass `{other}`")),
+                };
+                let m = al_builtins::sysenum::option_members("FieldClass").expect("known");
+                Ok(Value::Option(ord, m.into()))
+            }
+            "Relation" => self.field_relation(&rec, &t, pos).map(Value::Integer),
             "GetFilter" => self.field_filter_text(&rec, pos).map(Value::Text),
             "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
             "Validate" => {
@@ -394,6 +411,30 @@ impl Session {
 }
 
 impl Session {
+    /// `FieldRef.Type`. An Enum field is an Option field at run time (corpus fieldref/
+    /// TestFieldRefEnumKeywordCase.al:95-106).
+    fn field_type(&self, t: &TableDef, pos: usize) -> Result<Value, Signal> {
+        let name = match &t.fields[pos].ty {
+            RtType::Integer => "Integer",
+            RtType::BigInteger => "BigInteger",
+            RtType::Decimal => "Decimal",
+            RtType::Boolean => "Boolean",
+            RtType::Text(_) => "Text",
+            RtType::Code(_) => "Code",
+            RtType::Date => "Date",
+            RtType::Time => "Time",
+            RtType::DateTime => "DateTime",
+            RtType::Duration => "Duration",
+            RtType::Guid => "GUID",
+            RtType::DateFormula => "DateFormula",
+            RtType::Option(_) | RtType::Enum(_) => "Option",
+            other => return unsupported(format!("FieldRef.Type of a {other:?} field")),
+        };
+        let members = al_builtins::sysenum::option_members("FieldType").expect("known");
+        let ord = members.iter().position(|m| m == name).expect("listed") as i32;
+        Ok(Value::Option(ord, members.into()))
+    }
+
     /// A field property as written (`OptionCaption`, ...), if declared.
     pub(crate) fn field_property(&self, t: &TableDef, pos: usize, name: &str) -> Option<String> {
         self.engine.program.objects[t.object as usize]

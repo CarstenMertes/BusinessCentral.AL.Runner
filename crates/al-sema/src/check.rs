@@ -962,6 +962,16 @@ impl<'a> Checker<'a> {
                 if !procs.is_empty() {
                     return Some(E::Callable(procs));
                 }
+                // `CurrPage.<Part>`: the part control, whose `.Page` is the page it shows.
+                if *kind == ObjKind::Page {
+                    if let Some(sec) = self.named_section(oi, name) {
+                        if sec.name().eq_ignore_ascii_case("part") {
+                            if let Some(page) = sec.args().get(1) {
+                                return Some(E::Val(Ty::TestPart(page.clone())));
+                            }
+                        }
+                    }
+                }
                 if matches!(
                     kind,
                     ObjKind::Page | ObjKind::Query | ObjKind::Report | ObjKind::XmlPort
@@ -993,6 +1003,11 @@ impl<'a> Checker<'a> {
                         }
                     }
                     return Some(E::Callable(c));
+                }
+                if let (Ty::TestPart(part), true) = (t, name.eq_ignore_ascii_case("Page")) {
+                    if resolved.is_some_and(|oi| self.named_section(oi, name).is_none()) {
+                        return Some(E::Val(Ty::Object(ObjKind::Page, part.clone())));
+                    }
                 }
                 if let Some(oi) = resolved {
                     if let Some(sec) = self.named_section(oi, name) {

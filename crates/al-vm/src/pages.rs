@@ -1163,8 +1163,14 @@ impl Session {
         }
         let rec = self.page_rec(st);
         self.ret_used = true;
-        let method = if which == "-" { "FindFirst" } else { "FindLast" };
-        Ok(matches!(self.record_op(method, &rec, &mut [])?, Value::Boolean(true)))
+        Ok(matches!(
+            match which {
+                "-" => self.record_op("FindFirst", &rec, &mut [])?,
+                "+" => self.record_op("FindLast", &rec, &mut [])?,
+                w => self.record_op("Find", &rec, &mut [Value::Text(w.into())])?,
+            },
+            Value::Boolean(true)
+        ))
     }
 
     /// Next(steps) of the page's rowset: OnNextRecord when the page declares it, which answers how
@@ -2930,12 +2936,8 @@ impl Session {
             self.mark_closed(st);
             return Ok(());
         }
-        if self.engine.program.objects[st.borrow().object as usize]
-            .page
-            .as_ref()
-            .is_some_and(|p| p.triggers.iter().any(|(n, _)| n == "onfindrecord"))
-        {
-            return unsupported("a list whose current row an action deleted, with an OnFindRecord trigger");
+        if self.declares(st, "onfindrecord") {
+            return self.settle_gone_row_with_find(st, &rec);
         }
         self.ret_used = true;
         let moved = matches!(
@@ -2966,6 +2968,64 @@ impl Session {
                 self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
             }
         }
+        Ok(())
+    }
+
+    /// A list that serves its rows from OnFindRecord lost its current row to an action. The client asks
+    /// the trigger again (corpus pageupdate/TestPageUpdateGoneRow.al:390 List_DeletedByAction_OnFindRecord_PicksTheRow,
+    /// :423 List_DeletedByAction_PassThroughFind_MiddleRow, :456 _LastRow, :483 _OnlyRow):
+    /// * when it knows other rows of the list: `=` (the gone row), `=>` (from there on), and `=` again for
+    ///   the row it settled on, which is the one `=>` answered, else the row before the gone one;
+    /// * when it knows no other row: `=>` and `=><` only, and then it shows the blank line, raising
+    ///   OnAfterGetCurrRecord once before the two calls and twice after.
+    /// "Knows other rows" is read as: the rows it populated hold more than the gone one. That reading is
+    /// only checked against these four shapes (docs/probes-needed.md); a list the client knows as
+    /// one row while the view holds more is refused.
+    fn settle_gone_row_with_find(&mut self, st: &St, rec: &Rec) -> Result<(), Signal> {
+        let gone = self.row_key(rec)?;
+        let window = st.borrow().window.clone();
+        let at = window.iter().position(|w| Self::same_key(&w.key, &gone));
+        if window.len() > 1 {
+            let Some(at) = at else {
+                return unsupported("a list row an action deleted, which the client had not populated (not pinned)");
+            };
+            self.nav_find(st, "=")?;
+            let after = self.nav_find(st, "=>")?;
+            if !after {
+                if at == 0 {
+                    return unsupported("a deleted first row whose OnFindRecord finds no row after it (not pinned)");
+                }
+                rec.borrow_mut().fields = window[at - 1].stored.clone();
+            }
+            if !self.nav_find(st, "=")? {
+                return unsupported("OnFindRecord does not find the row the client settled on");
+            }
+            st.borrow_mut().window = Vec::new();
+            st.borrow_mut().cursor = Cursor::Row;
+            let r = self.arrive(st);
+            return self.torn_down_on_error(st, r);
+        }
+        // The client knows no other row: nothing may be left in the view for that to be true.
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        self.ret_used = true;
+        if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
+            return unsupported("a list whose only populated row an action deleted, with more rows in its view (not pinned)");
+        }
+        let table = rec.borrow().table as usize;
+        let fresh = self.initial_fields(table);
+        rec.borrow_mut().fields = fresh;
+        st.borrow_mut().cursor = Cursor::None;
+        st.borrow_mut().window = Vec::new();
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        if self.nav_find(st, "=>")? || self.nav_find(st, "=><")? {
+            return unsupported("OnFindRecord finds a row in a view the page showed as empty (not pinned)");
+        }
+        for _ in 0..2 {
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        }
+        st.borrow_mut().refresh = false;
         Ok(())
     }
 

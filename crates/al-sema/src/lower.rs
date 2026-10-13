@@ -923,7 +923,7 @@ impl Lowerer<'_> {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
                 match self.page_reasons[p].first() {
                     None => RtType::TestPage(p as u32),
-                    Some(why) => return Err(format!("TestPage \"{n}\": {why}")),
+                    Some(why) => return Err(format!("TestPage \"{}\": {why}", crate::types::display_name(n))),
                 }
             }
             Ty::List(t) => RtType::List(Box::new(self.rt(t)?)),

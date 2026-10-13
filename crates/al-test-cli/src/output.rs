@@ -67,8 +67,19 @@ pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome) -> Str
     s
 }
 
+/// XML text: markup characters escaped, and the control characters XML 1.0 forbids
+/// (all below U+0020 but tab, LF, CR) replaced by `?`.
 fn esc(t: &str) -> String {
-    t.replace('&', "&amp;")
+    t.chars()
+        .map(|c| {
+            if (c as u32) < 0x20 && !matches!(c, '\t' | '\n' | '\r') {
+                '?'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
@@ -128,6 +139,22 @@ mod tests {
         assert_eq!(
             ids,
             vec![(id(1, "a"), false), (id(1, "b<&>"), true), (id(2, "c"), true)]
+        );
+    }
+
+    #[test]
+    fn junit_never_emits_characters_xml_forbids() {
+        // XML 1.0 allows no control characters but tab, LF and CR; a reason that carries one
+        // (a qualified-name separator) made the CI artifact unparseable.
+        let xml = esc("a\u{1f}b\u{0}c\td");
+        assert!(
+            !xml.chars()
+                .any(|c| (c as u32) < 0x20 && !matches!(c, '\t' | '\n' | '\r')),
+            "{xml:?}"
+        );
+        assert!(
+            xml.contains('a') && xml.contains('b') && xml.contains("c\td"),
+            "{xml:?}"
         );
     }
 

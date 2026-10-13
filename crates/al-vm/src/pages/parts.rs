@@ -42,6 +42,17 @@ impl Session {
         Ok(())
     }
 
+    /// Runs the OnInit of every part page that has not run it yet.
+    pub(super) fn init_parts(&mut self, st: &St) -> Result<(), Signal> {
+        let parts = st.borrow().parts.clone();
+        for (_, child) in parts {
+            if !std::mem::replace(&mut child.borrow_mut().inited, true) {
+                self.page_trigger(&child, "oninit", vec![])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Opens the parts right after the host's OnOpenPage: the ones whose `Visible` came out false
     /// are dropped, the others run their OnInit and OnOpenPage.
     pub(super) fn open_parts(&mut self, st: &St) -> Result<(), Signal> {

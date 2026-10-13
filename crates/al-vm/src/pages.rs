@@ -889,6 +889,9 @@ impl Session {
             if !std::mem::take(&mut st.borrow_mut().inited) {
                 self.page_trigger(st, "oninit", vec![])?;
             }
+            // The parts' OnInit runs between the host's OnInit and its OnOpenPage (corpus
+            // testpart/TestPartTriggerOrderAndRefresh.al:236-247).
+            self.init_parts(st)?;
             if let Some(kind) = bind {
                 handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
             }
@@ -1244,12 +1247,14 @@ impl Session {
         }
         // The blank line of a part is a started record: the client runs NewRecord when it becomes
         // current (corpus handlers/TestPagePartDraftLineLink.al:LinkedPart_DraftLine_*,
-        // handlers/TestPagePartOnNewRecordCount.al). A top-level list is not pinned.
-        if st.borrow().host.is_some() {
-            self.stamp_from_filters(st, true)?;
-            self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
-            self.page_event(st, "onnewrecordevent", None, Some(true))?;
-        }
+        // handlers/TestPagePartOnNewRecordCount.al). A top-level list does the same, and both then
+        // run OnAfterGetCurrRecord on the blank row (corpus testpart/TestPartTriggerOrderAndRefresh.al:
+        // 258-273 TopLevelList_BlankLine_RunsOnNewRecord, Part_BlankLine_RunsOnNewRecord).
+        self.stamp_from_filters(st, true)?;
+        self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+        self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         Ok(())
     }
 
@@ -3060,6 +3065,10 @@ impl Session {
         })();
         self.torn_down_on_error(st, r)?;
         st.borrow_mut().refresh = false;
+        // The parts read their rows again after the host's own triggers (corpus
+        // testpart/TestPartTriggerOrderAndRefresh.al:HostCurrPageUpdate_ReReadsThePart:
+        // "host.Action;host.AGCR(2);part.AGCR(2);", and no part OnOpenPage).
+        self.sync_parts(st)?;
         Ok(())
     }
 

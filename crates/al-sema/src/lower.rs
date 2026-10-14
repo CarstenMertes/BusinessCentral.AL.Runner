@@ -295,11 +295,15 @@ pub(crate) fn lower_core(
         let mut lines: Vec<String> = Vec::new();
         for (i, o) in ws.objects.iter().enumerate() {
             if ws.is_dependency(i) && d.active(i) {
-                lines.push(format!("{:?} {} level {}", o.kind, o.name, d.level[i]));
+                lines.push(format!("{} {} level {}", o.kind.label(), o.name, d.level[i]));
             }
         }
         for &(i, off) in &d.reached {
-            lines.push(format!("{:?} {} routine {off}", ws.objects[i].kind, ws.objects[i].name));
+            lines.push(format!(
+                "{} {} routine {off}",
+                ws.objects[i].kind.label(),
+                ws.objects[i].name
+            ));
         }
         lines.sort();
         let _ = std::fs::write(path, lines.join("\n"));

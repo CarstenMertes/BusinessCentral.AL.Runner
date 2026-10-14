@@ -41,11 +41,6 @@ fn passes(tests: &str) {
     }
 }
 
-fn not_run(tests: &str, needle: &str) {
-    let o = outcomes(tests);
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains(needle)), "{o:?}");
-}
-
 const HELPERS: &str = "procedure Check(Expected: Text; Actual: Text) begin if Expected <> Actual then Error('expected <%1> got <%2>', Expected, Actual); end;";
 
 // ---------------------------------------------------------------- Notification

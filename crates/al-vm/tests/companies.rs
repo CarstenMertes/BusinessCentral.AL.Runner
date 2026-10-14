@@ -99,13 +99,6 @@ fn text(vars: &str, body: &str) -> String {
     }
 }
 
-fn refusal(vars: &str, body: &str) -> String {
-    match run_with(TABLES, vars, body) {
-        Err(Signal::Unsupported(r)) => r,
-        other => panic!("expected a refusal, got {other:?}"),
-    }
-}
-
 const NEW_CO: &str = "Co: Record Company;";
 const MAKE_CO: &str = "Co.Name := 'OTHER'; Co.Insert(); Commit();";
 

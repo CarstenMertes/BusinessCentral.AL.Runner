@@ -94,7 +94,7 @@ fn every_oracle_case_is_reported_and_attributed_to_an_area() {
     assert_eq!(r["overall"]["total"], 5221);
     assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "{}", r["unmapped"]);
     assert_eq!(r["areas"]["json"]["total"], 129);
-    assert_eq!(r["areas"]["record"]["total"], 1076);
+    assert_eq!(r["areas"]["record"]["total"], 1081);
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "6219bf4b41cb9802e1d7fe20efc252778f2e02ef",
+            "337859e7007337a0bf52ae2d82c6b802c2b5fba0",
             "0000000000000000000000000000000000000000",
         ),
     )

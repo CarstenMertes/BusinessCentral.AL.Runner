@@ -775,6 +775,21 @@ impl<'a> Checker<'a> {
                 let op = first_token(node).to_ascii_lowercase();
                 E::Val(if op == "not" { Ty::Boolean } else { t })
             }
+            BinExpr if matches!(op_token(node).as_str(), "is" | "as") => {
+                // The right operand is an interface name, not a value: it is not resolved as a
+                // name here. `x is I` is a Boolean, `x as I` has the type of interface I.
+                if let Some(k) = kids.first() {
+                    self.ty(sc, k);
+                }
+                if op_token(node) == "is" {
+                    E::Val(Ty::Boolean)
+                } else {
+                    E::Val(
+                        kids.get(1)
+                            .map_or(Ty::Unknown, |n| Ty::Object(ObjKind::Interface, type_name_text(n))),
+                    )
+                }
+            }
             BinExpr => {
                 let l = kids.first().map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
                 let r = kids.get(1).map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
@@ -1286,11 +1301,25 @@ impl<'a> Checker<'a> {
                 if *kind == ObjKind::Codeunit && name.eq_ignore_ascii_case("Run") {
                     self.reach_run(oi);
                 }
-                let procs: Vec<Cand> = self.members[oi]
+                let mut procs: Vec<Cand> = self.members[oi]
                     .procedures_named(name)
                     .iter()
                     .map(|p| proc_cand(p))
                     .collect();
+                // An interface also has the procedures of the interfaces it extends
+                // (codeunit/TestInterfaceRuntimeContracts.al:Interface_ExtendedInterface_IsAndAs).
+                if procs.is_empty() && *kind == ObjKind::Interface {
+                    for b in self.ws.interface_bases(oi) {
+                        procs = self.members[b]
+                            .procedures_named(name)
+                            .iter()
+                            .map(|p| proc_cand(p))
+                            .collect();
+                        if !procs.is_empty() {
+                            break;
+                        }
+                    }
+                }
                 if !procs.is_empty() {
                     return Some(E::Callable(procs));
                 }
@@ -1469,6 +1498,18 @@ fn op_token(node: &SyntaxNode) -> String {
         .find(|t| !t.kind().is_trivia())
         .map(|t| t.text().to_ascii_lowercase())
         .unwrap_or_default()
+}
+
+/// The name written as the right operand of `is` and `as`: `I`, `"A B"` or `Ns.I`.
+pub(crate) fn type_name_text(node: &SyntaxNode) -> String {
+    match node.kind() {
+        SyntaxKind::MemberExpr => node
+            .children()
+            .map(|k| type_name_text(&k))
+            .collect::<Vec<_>>()
+            .join("."),
+        _ => name_of(node),
+    }
 }
 
 fn member_name(node: &SyntaxNode) -> String {

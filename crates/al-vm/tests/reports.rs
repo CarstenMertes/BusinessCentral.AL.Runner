@@ -891,7 +891,7 @@ fn an_update_report_is_refused_while_the_caller_has_an_uncommitted_write() {
             asserterror R.Run();
             exit(GetLastErrorText() + '|' + Format(H.Has(60040082)) + '|' + Format(H.Has(60040081)));
         end;"),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|No|No"
     );
 }
 
@@ -911,7 +911,7 @@ fn a_request_page_report_is_refused_while_the_caller_has_an_uncommitted_write() 
                     exit(GetLastErrorText() + '|' + Format(H.Has(60040042)) + '|' + Format(H.Has(60040041)));
                 end;"
             )),
-            "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No",
+            "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|No|No",
             "{call}"
         );
     }
@@ -1024,7 +1024,7 @@ fn execute_of_an_update_report_commits_its_writes_or_is_refused() {
             asserterror R.Execute('');
             exit(GetLastErrorText() + '|' + Format(H.Has(60029062)) + '|' + Format(H.Has(60029061)));
         end;"),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|No|No"
     );
 }
 
@@ -1038,7 +1038,7 @@ fn the_static_execute_is_refused_the_same_way() {
             asserterror Report.Execute(Report::\"TxRpt Update Marker\", '');
             exit(GetLastErrorText() + '|' + Format(H.Has(60029101)));
         end;"),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|No"
     );
 }
 
@@ -1053,7 +1053,7 @@ fn print_of_an_update_report_is_refused_with_a_pending_write() {
             asserterror R.Print('');
             exit(GetLastErrorText() + '|' + Format(H.Has(60029112)) + '|' + Format(H.Has(60029111)));
         end;"),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No|No"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|No|No"
     );
 }
 
@@ -1069,7 +1069,7 @@ fn runrequestpage_is_refused_with_a_pending_write() {
             exit(GetLastErrorText() + '|' + Format(H.Has(60029021)));
         end;"
         ),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|No"
     );
     assert_eq!(
         f("var H: Codeunit Helpers; P: Text; begin
@@ -1078,7 +1078,7 @@ fn runrequestpage_is_refused_with_a_pending_write() {
             asserterror P := Report.RunRequestPage(Report::\"TxRpt ReqPage Marker\");
             exit(GetLastErrorText() + '|' + Format(H.Has(60029031)));
         end;"),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|No"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|No"
     );
 }
 

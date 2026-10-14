@@ -29,10 +29,7 @@ fn corpus_files() -> Vec<PathBuf> {
 /// Corpus files the parser does not handle yet. Each is a red corpus test waiting for a fix, not a
 /// pass: the runtime reports every case in such a file as not run (the file does not compile).
 /// An entry whose file now parses fails the test below, so the list only shrinks (ADR-007).
-const KNOWN_UNPARSED: &[(&str, &str)] = &[(
-    "codeunit/TestInterfaceRuntimeContracts.al",
-    "`is` and `as` operators on interface values (`Foo is \"Probe IBar\"`)",
-)];
+const KNOWN_UNPARSED: &[(&str, &str)] = &[];
 
 #[test]
 fn every_corpus_file_parses_without_errors_and_round_trips() {

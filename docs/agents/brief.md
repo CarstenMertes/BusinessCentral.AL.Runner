@@ -163,9 +163,15 @@ Run these in order. Do not skip any.
    reaches. When unsure, run it:
    `tools/demand_vs_eager.sh run`
    It takes about 3 minutes and needs `python3`. It compares a normal run with
-   an eager run (`AL_EAGER_DEPENDENCIES=1`). Any difference not listed in
-   `tools/demand-eager-known-differences.txt` fails. Never add to that list to
-   make it pass.
+   an eager run (`AL_EAGER_DEPENDENCIES=1`). Any difference fails, and
+   `tools/cache_vs_uncached.sh run` does the same for the compile cache. Owner
+   decision of 2026-10-14: there are zero differences.
+   `tools/demand-eager-known-differences.txt` is empty and stays empty; never
+   add a line to make a run pass. Find the cause: `AL_BLOCK_PATH=1` prints the
+   call chain from a test to the routine that refuses it, and
+   `AL_DUMP_REACH=FILE` writes what the demand-driven compile reached, `AL_STACK_OF=TEXT` prints the routines a not-run test was refused in (for a
+   diff between two runs). A static refusal may depend on the sources only,
+   never on what was compiled or on which other tests are selected.
 5. Commit on your branch. Do not add attribution or session lines to commit
    messages. The message says what changed and why, in plain American English.
 6. Merge current `origin/main` into your branch (`git fetch`, then

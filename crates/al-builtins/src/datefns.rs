@@ -245,6 +245,11 @@ pub fn formula_text(text: &str) -> String {
 /// with no term, lower case letters and the like are not pinned.
 fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
     let refuse = || unsupported(format!("date formula `{text}`: this form is not pinned by the corpus"));
+    // The empty formula, `<>` and a text of white space are formulas without a term; CalcDate with
+    // them returns the date (types/TestDateFormulaDurationFormatContracts.al:28-74).
+    if is_blank_formula(text) {
+        return Ok(Vec::new());
+    }
     let body = match text.strip_prefix('<') {
         Some(rest) => match rest.strip_suffix('>') {
             Some(b) => b,
@@ -317,6 +322,22 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         return refuse();
     }
     Ok(terms)
+}
+
+/// The formulas without a term: the empty text, `<>` and white space. `Evaluate` accepts them and
+/// stores the empty formula, which `Format` prints as an empty text
+/// (types/TestDateFormulaDurationFormatContracts.al:28-74: `''`, `'<>'`, `' '`).
+pub fn is_blank_formula(text: &str) -> bool {
+    text == "<>" || text.trim().is_empty()
+}
+
+/// Whether `Evaluate` rejects `text` as a date formula: it holds a letter that no formula uses
+/// (the letters are C, D, W, M, Q and Y). Only `xyz` is pinned
+/// (types/TestDateFormulaDurationFormatContracts.al:68); the rest of the texts the parser does not
+/// know stay refused, not rejected (docs/probes-needed.md).
+pub fn is_garbage_formula(text: &str) -> bool {
+    text.bytes()
+        .any(|b| b.is_ascii_alphabetic() && !matches!(b.to_ascii_uppercase(), b'C' | b'D' | b'W' | b'M' | b'Q' | b'Y'))
 }
 
 /// Whether `text` is a date formula `Evaluate` can store (see [`parse_formula`]).
@@ -396,6 +417,9 @@ fn calcdate(formula: &str, base: Option<&Value>) -> Out {
     let Some(base) = base else {
         return unsupported("CalcDate without a date uses the work date, which is not available");
     };
+    if terms.is_empty() && matches!(base, Value::Date(0, false)) {
+        return unsupported("CalcDate of the undefined date with an empty formula (not pinned)");
+    }
     if matches!(base, Value::Date(0, false)) {
         // types/TestDateRoundFormatStringContracts.al:CalcDate_UndefinedDate_Throws (CR and backslash line breaks).
         return raise(
@@ -691,7 +715,7 @@ mod tests {
     fn calcdate_refuses_forms_the_corpus_does_not_pin() {
         let from = date(2024, 3, 15);
         for f in [
-            "<MON>", "<1W+MON>", "<2CM>", "<>", "", "<1X>", "<D>", "<+>", "<1D", "<1M1D>", "<WD0>", "<WD8>", "<1d>",
+            "<MON>", "<1W+MON>", "<2CM>", "<1X>", "<D>", "<+>", "<1D", "<1M1D>", "<WD0>", "<WD8>", "<1d>",
         ] {
             refused(calc(f, from.clone()));
         }
@@ -749,7 +773,31 @@ mod tests {
         is_date(c("<1M>", date(2024, 1, 1)), 2024, 2, 1);
         is_date(c("<-1D>", date(2024, 1, 2)), 2024, 1, 1);
         is_date(c("<1Y>", date(2024, 1, 1)), 2025, 1, 1);
-        refused(c("", date(2024, 1, 1)));
+        // types/TestDateFormulaDurationFormatContracts.al:30-43: the empty formula moves nothing.
+        is_date(c("", date(2024, 1, 1)), 2024, 1, 1);
+        is_date(call("System.CalcDate#2", vec![t(""), date(2024, 3, 5)]), 2024, 3, 5);
+        // The undefined date is not pinned for the empty formula.
+        refused(c("", Value::Date(0, false)));
+    }
+
+    // types/TestDateFormulaDurationFormatContracts.al:28-74.
+    #[test]
+    fn evaluate_reads_the_blank_like_formulas_and_rejects_garbage() {
+        let f = lookup("System.Evaluate#1").unwrap();
+        let eval = |old: &str, text: &str| {
+            let mut args = vec![Value::DateFormula(old.into()), t(text)];
+            let mut ctx = TestCtx::default();
+            let r = f(&mut ctx, None, &mut args);
+            let Value::DateFormula(now) = &args[0] else { panic!() };
+            (matches!(r, Ok(Value::Boolean(true))), super::formula_text(now))
+        };
+        assert_eq!(eval("<1D>", ""), (true, String::new()));
+        assert_eq!(eval("<1D>", "<>"), (true, String::new()));
+        assert_eq!(eval("<1D>", " "), (true, String::new()));
+        assert_eq!(eval("", "0D"), (true, "0D".into()));
+        assert_eq!(eval("", "<0D>"), (true, "0D".into()));
+        // A failed Evaluate leaves the value.
+        assert_eq!(eval("<0D>", "xyz"), (false, "0D".into()));
     }
 
     #[test]
@@ -762,7 +810,14 @@ mod tests {
             Ok(Value::Boolean(true))
         ));
         assert!(matches!(&args[0], Value::DateFormula(s) if s == "<1D>"));
+        // A text with letters no formula uses is rejected (types/TestDateFormulaDurationFormatContracts.al:68).
         let mut args = vec![Value::DateFormula(String::new()), t("not a formula")];
+        assert!(matches!(
+            f(&mut TestCtx::default(), None, &mut args),
+            Ok(Value::Boolean(false))
+        ));
+        // A text the parser does not know but that has only formula letters stays refused.
+        let mut args = vec![Value::DateFormula(String::new()), t("<1D")];
         refused(f(&mut TestCtx::default(), None, &mut args));
     }
 }

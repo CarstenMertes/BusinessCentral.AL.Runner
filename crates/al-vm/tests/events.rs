@@ -1028,6 +1028,65 @@ fn deleteall_with_nothing_to_delete_raises_no_global_trigger_event() {
     assert_eq!(text(run(&src, "Empty")), "");
 }
 
+// session/TestEnvironmentUserTenantContracts.al:275-299 and :377-399 (probe batch 3): the first write
+// to a table, a DeleteAll that finds no row included, asks for the mask and then the setup, once per
+// session; a subscriber that sets OnDatabaseInsert gets OnDatabaseInsert for Insert(true) and Insert(false).
+fn setup_log_src(extra: &str) -> String {
+    format!(
+        r#"
+table 50311 Own
+{{
+    fields {{ field(1; Id; Integer) {{ }} }}
+    keys {{ key(PK; Id) {{ }} }}
+}}
+codeunit 50312 Log
+{{
+    SingleInstance = true;
+    var Text: Text;
+    procedure Add(What: Text) begin Text += What + ';'; end;
+    procedure Take(): Text var R: Text; begin R := Text; Text := ''; exit(R); end;
+}}
+codeunit 50313 GT
+{{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'GetDatabaseTableTriggerSetup', '', false, false)]
+    local procedure Setup(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean)
+    var L: Codeunit Log;
+    begin
+        if TableId <> Database::Own then exit;
+        L.Add('Setup(' + Format(OnDatabaseInsert) + ')');
+        OnDatabaseInsert := true;
+    end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'GetGlobalTableTriggerMask', '', false, false)]
+    local procedure Mask(TableId: Integer; var TableTriggerMask: Integer)
+    var L: Codeunit Log;
+    begin
+        if TableId <> Database::Own then exit;
+        L.Add('Mask(' + Format(TableTriggerMask) + ')');
+    end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnDatabaseInsert', '', false, false)]
+    local procedure DI(RecRef: RecordRef)
+    var L: Codeunit Log;
+    begin
+        if RecRef.Number = Database::Own then L.Add('OnDatabaseInsert');
+    end;
+}}
+codeunit 50100 C
+{{
+{extra}
+}}"#
+    )
+}
+
+#[test]
+fn the_first_write_even_a_deleteall_of_nothing_asks_the_mask_then_the_setup_once() {
+    let src = setup_log_src(
+        r#"procedure First(): Text var R: Record Own; L: Codeunit Log; begin R.DeleteAll(); exit(L.Take()); end;
+    procedure Both(): Text var R: Record Own; L: Codeunit Log; begin R.DeleteAll(); L.Take(); R.Id := 1; R.Insert(true); R.Id := 2; R.Insert(false); exit(L.Take()); end;"#,
+    );
+    assert_eq!(text(run(&src, "First")), "Mask(0);Setup(No);");
+    assert_eq!(text(run(&src, "Both")), "OnDatabaseInsert;OnDatabaseInsert;");
+}
+
 // record/TestManualTableIntegrationEvent.al and record/TestManualTableIncludeSenderEvent.al: an
 // [IntegrationEvent] declared on a table is raised from the table's own code and reaches
 // its subscribers, with Rec or as Sender.

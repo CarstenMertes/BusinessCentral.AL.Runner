@@ -155,7 +155,7 @@ jobs:
               echo
               ./target/release/al-test-cli "${eager_reports[@]}"
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           exit $status
 
       - name: Date stamp

@@ -1,6 +1,8 @@
 //! Dependency apps for a corpus run (ADR-013): the project's `.alpackages` is
 //! the first place looked up, then any `--deps` directories.
 
+use al_deps::artifact::{ArtifactUse, Fetch, HttpCdn, load_with_artifacts};
+use al_deps::build::BuildQuery;
 use al_deps::load::{AppJson, Request, WorkspaceApp, load_dependencies, parse_app_json};
 use al_deps::select::MissingPolicy;
 use al_sema::workspace::AppSource;
@@ -15,6 +17,18 @@ pub struct Dependencies {
     pub summary: Vec<String>,
     /// One line per app loaded, and one per problem, for the run's log.
     pub log: Vec<String>,
+    /// The Microsoft build the feed was consulted for (Layer A), when some dependency was not
+    /// in `.alpackages` or `--deps`. `None`: every dependency was found on disk.
+    pub build: Option<ArtifactUse>,
+}
+
+/// How a run may use Microsoft's artifact feed (ADR-013 Layer A).
+pub struct Provision {
+    /// `--cache-dir`; else the environment and the default (`al_deps::cache::cache_root_from_env`).
+    pub cache_dir: Option<PathBuf>,
+    /// False for `--no-download`.
+    pub download: bool,
+    pub query: BuildQuery,
 }
 
 fn app_json(dir: &Path) -> Result<AppJson, String> {
@@ -26,10 +40,23 @@ fn app_json(dir: &Path) -> Result<AppJson, String> {
 /// Resolves and reads the dependencies of the app in `app_dir`. Apps in
 /// `source_dirs` are built from source by the caller and satisfy their own dependents.
 ///
-/// A dependency no package supplies is skipped and logged, not an error: the corpus
-/// names two test-library apps that no `.alpackages` holds, and downloading comes
-/// later. The objects they would supply stay unresolved and are refused.
+/// A dependency no package supplies is skipped and logged, not an error: the objects it would
+/// supply stay unresolved and are refused. This is the offline form, with no feed (the golden
+/// test of the unresolved references uses it); see [`load_with`].
 pub fn load(app_dir: &Path, source_dirs: &[PathBuf], extra_dirs: &[PathBuf]) -> Result<Dependencies, String> {
+    load_with(app_dir, source_dirs, extra_dirs, None)
+}
+
+/// Like [`load`], and with `Some(provision)` a dependency that `.alpackages` and `--deps` do not
+/// supply is downloaded from Microsoft's artifact feed (the test libraries the corpus names, for
+/// one). With `download: false` it is skipped and logged, as in the offline form. A feed that does
+/// not answer is an error: a run that expected the test libraries must not quietly lose them.
+pub fn load_with(
+    app_dir: &Path,
+    source_dirs: &[PathBuf],
+    extra_dirs: &[PathBuf],
+    provision: Option<&Provision>,
+) -> Result<Dependencies, String> {
     let project = app_json(app_dir)?;
     let mut workspace_apps = Vec::new();
     for d in source_dirs {
@@ -40,13 +67,28 @@ pub fn load(app_dir: &Path, source_dirs: &[PathBuf], extra_dirs: &[PathBuf]) -> 
     }
     let mut search_dirs = vec![app_dir.join(".alpackages")];
     search_dirs.extend(extra_dirs.iter().cloned());
-    let loaded = load_dependencies(&Request {
+    let req = Request {
         project: &project,
         workspace_apps: &workspace_apps,
         search_dirs: &search_dirs,
         missing: MissingPolicy::Skip,
-    })?;
+    };
     let mut log = Vec::new();
+    let (loaded, build) = match provision {
+        None => (load_dependencies(&req)?, None),
+        Some(p) => {
+            let fetch = Fetch {
+                cache_root: al_deps::cache::cache_root_from_env(p.cache_dir.as_deref()),
+                download: p.download,
+                query: p.query.clone(),
+            };
+            let got = load_with_artifacts(&req, &fetch, &HttpCdn::from_env()).map_err(|e| {
+                format!("{e}\n(pass --no-download to run without the dependency apps the artifact feed would supply)")
+            })?;
+            log.extend(got.log);
+            (got.loaded, got.artifact)
+        }
+    };
     log.extend(loaded.notes.iter().map(|n| format!("dependency note: {n}")));
     for s in &loaded.skipped {
         log.push(format!("dependency skipped: {s}"));
@@ -75,5 +117,6 @@ pub fn load(app_dir: &Path, source_dirs: &[PathBuf], extra_dirs: &[PathBuf]) -> 
         manifests,
         summary,
         log,
+        build,
     })
 }

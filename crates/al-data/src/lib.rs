@@ -84,7 +84,7 @@ pub struct Scan<'a> {
     pub after: Option<&'a [Value]>,
 }
 
-/// Tables whose rows are computed on read instead of stored (ADR-018): the platform's virtual and
+/// Tables whose rows are computed on read instead of stored (ADR-019): the platform's virtual and
 /// metadata tables. A [`memory::MemStore`] given one asks it first for every table it `serves`;
 /// those tables have no rows of their own, cannot be written, and are not part of a snapshot,
 /// commit or rollback.

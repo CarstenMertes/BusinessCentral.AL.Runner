@@ -6,6 +6,19 @@ reviewed it.
 
 ## Open questions (not decided)
 
+- Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
+  - It is about 60 tests in 8 files, at local head b06fdc0 in corpus-probes.
+  - All of them pass on the local BC 27.5 container, and the corpus gate
+    scripts pass.
+  - A push means 3 more corpus CI runs (27.5, 28.5 and 29.0) and then an
+    oracle bump.
+  - The findings: report filters, transactions, Skip/Break/Quit, RunObject
+    page types, xmlport nesting and VariableText, Text filter case
+    sensitivity, Copy and SetView, the order of Global Triggers, the SystemId
+    of temp records, the RunModal result values, and the order of part close
+    triggers.
+  - Held because tonight's CI budget is used up.
+
 - ADR-016 (Proposed), Release: AL Runner v3. Eleven open questions, each with
   options and a recommendation in the ADR:
   - binary name;
@@ -22,6 +35,13 @@ reviewed it.
 
   Nothing is built on ADR-016 until it is accepted.
 
+- Corpus workflow fix to push in the morning (branch `al-runtime-rs`, repo
+  BusinessCentral.AL.Language.Tests; never master). The workflow's dispatch path builds the
+  preprocessor symbols with `for v in 27 28` and never adds `BC29PLUS`. Four existing
+  `BC29PLUS`-guarded tests failed on the 29.0 dispatch run on cdf315a (run 38478399478), so that run
+  cannot be the BC 29 oracle. After the fix: run 29.0 on the pin, re-record `oracle/29/junit.xml`, drop
+  `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
+
 ## Decided by the owner (recorded)
 
 - 2026-10-13, ADR-016: server mode, watch mode and `--affected` are deferred
@@ -34,12 +54,34 @@ reviewed it.
 
 ## Decided without owner review
 
+- 2026-10-14, orchestrator: there were 7 corpus CI runs overnight, not about 3.
+  - 3 were the probe batches.
+  - 1 was the final run on the probe head. Its corpus lint failed: two
+    probe codeunits shared a SingleInstance fixture.
+  - 1 re-ran after the fix (cdf315a).
+  - 2 were single-version runs for 28.5 and 29.0 on cdf315a.
+
+  The 28.5 and 29.0 runs were needed because the CLI requires every
+  per-version oracle to come from the same corpus commit. Without them, the
+  corpus bump for the new probe tests would have stalled.
+
 - 2026-10-14, ADR-013, dependency apps: the 45 s golden test of unresolved references
   (`corpus_resolve_deps.rs`) is `#[ignore]`d in debug builds; CI runs it in the release step.
 - 2026-10-14, ADR-013, dependency apps: the missing test-library apps (System Application Test
-  Library, Permissions Mock, Azure AD Plan Test Library) come from the artifact feed through the
-  download fallback (Layer A). Until then a local `--deps` folder works for developers and CI
-  refuses their tests. Nothing of theirs is committed.
+  Library, Permissions Mock, and Any, which the first needs) come from the artifact feed through the
+  download fallback (Layer A, built). Nothing of theirs is committed. Azure AD Plan Test Library
+  is a module inside System Application Test Library, not a separate app.
+- 2026-10-14, ADR-013, Layer A: `--no-download` skips a missing app with a printed line instead of
+  failing; a feed that does not answer fails the run (exit 2). The library keeps the error policy.
+- 2026-10-14, ADR-013, Layer A: a cached build wins over a newer published one, and the project's
+  `.alpackages` wins over both; an exact build the feed has dropped is an error.
+- 2026-10-14, ADR-013, Layer A: the cache keeps each entry as Microsoft ships it with a record of
+  build, entry, size and CRC-32; the build variables in Base Application's `app.json` are filled
+  from the build (evidence: the compiled manifest of 27.5.46862.48827).
+- 2026-10-14, ADR-013, Layer A: no build is chosen and nothing is requested when every dependency is
+  on disk; `--project DIR --fetch-deps` is the only project mode so far.
+- 2026-10-14, ADR-013 and ADR-016, Layer A: names `ALRUNNER_CACHE`, `ALRUNNER_ARTIFACT_URL`,
+  `--cache-dir`, with `AL_RUNTIME_CACHE` and `AL_RUNNER_CACHE_ROOT/v3` read as fallbacks.
 - 2026-10-13, orchestrator, hard rule 3: when a guarded XmlPort import fails,
   its last error cannot be read. Reading it refuses the test instead of
   returning an invented text.
@@ -115,17 +157,38 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
-- 2026-10-14, ADR-018: a column of a platform table that no corpus test pins is refused where code names it
+- 2026-10-14, ADR-019: a column of a platform table that no corpus test pins is refused where code names it
   (at lowering), not filled with a default.
-- 2026-10-14, ADR-018: package ids are a function of the app id (not empty, one per app, different between apps);
+- 2026-10-14, ADR-019: package ids are a function of the app id (not empty, one per app, different between apps);
   objects of the platform app have none.
-- 2026-10-14, ADR-018: the default host lists five Windows time zones; Windows Language holds three rows (1031,
+- 2026-10-14, ADR-019: the default host lists five Windows time zones; Windows Language holds three rows (1031,
   1033, 2057) and refuses a read that needs any other id up to 65535.
-- 2026-10-14, ADR-018: a static event subscriber that cannot reach a global of its codeunit runs, whatever the
+- 2026-10-14, ADR-019: a static event subscriber that cannot reach a global of its codeunit runs, whatever the
   instance lifetime is; one that can stays refused until a probe pins the lifetime (44 tests moved).
-- 2026-10-14, ADR-018: a `Get` that finds nothing in an empty table of a dependency app, in that app's code, is
+- 2026-10-14, ADR-019: a `Get` that finds nothing in an empty table of a dependency app, in that app's code, is
   refused when its result is used, until the install baseline exists.
-- 2026-10-14, ADR-018: the session seeds the Company (`My Company`), the User (`TESTUSER`) and the SUPER Access
+- 2026-10-14, ADR-019: the session seeds the Company (`My Company`), the User (`TESTUSER`) and the SUPER Access
   Control row when it starts, as ordinary stored rows. The install baseline branch must not seed them again.
-- 2026-10-14, ADR-018: Page Metadata and Page Control Field spellings the corpus does not pin (declared
+- 2026-10-14, ADR-019: Page Metadata and Page Control Field spellings the corpus does not pin (declared
   `Visible`/`Enabled`/`Editable` in lower case, `SourceTableView` only for one `where(f = const(v))`).
+- 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
+  `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
+- 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that
+  stops is rolled back; the tables they would have written and that hold no row are `unseeded`, and a `Get` that finds
+  nothing in dependency code is refused only for those.
+- 2026-10-14, ADR-013 (Global Triggers): an event that a dependency subscriber which cannot run (Base Application's
+  `GlobalTriggerManagement`, platform tables with no provider) would receive is refused; the setup events skip it while
+  the configuration tables it reads are empty. The 73 tests behind `ALT Triggered` stay not run until `API Webhook
+  Subscription` and `Database::User` exist.
+- 2026-10-14, ADR-013 (baseline): every read of a table the baseline could not fill is refused, not only a missing `Get`.
+- 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).
+- 2026-10-14, ADR-007: an oracle may be recorded for an older corpus commit when the corpus diff since then
+  only adds files under `tests/` (checked by the CLI). BC 29 stays on `cf6e546` for that reason; 27 and 28 are
+  on `cdf315a`.
+- 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
+  passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
+- 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
+- 2026-10-14, ADR-018, telemetry: `Session.LogMessage` is a no-op in every overload.
+- 2026-10-14, ADR-018, SessionSettings: `RequestSessionUpdate(false)` hands a copy to the handler and needs true back; `(true)` and a missing handler are refused.
+- 2026-10-14, ADR-018, InitValue: `0DT` and closing-date literals raise in `Init()` of a written record and on the first read of an untouched one.
+- 2026-10-14, ADR-018, held branch: the narrower static-subscriber global check is not merged (net zero) until the `DeleteAll(false)` probe is in.

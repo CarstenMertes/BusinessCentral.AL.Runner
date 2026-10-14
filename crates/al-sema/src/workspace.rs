@@ -171,6 +171,8 @@ pub struct ObjectSym {
     /// The properties written directly in the body of an object of a scanned file, as
     /// (name, value text). Empty for an object of a parsed file.
     pub scanned_properties: Vec<(String, String)>,
+    /// A codeunit with `Subtype = Install` (known for objects of scanned files only).
+    pub install: bool,
 }
 
 /// A byte range of a parsed text.
@@ -321,6 +323,7 @@ impl Workspace {
                     implements: o.implements,
                     subscribers: o.subscribers,
                     scanned_properties: o.properties,
+                    install: o.install,
                 });
             }
         }
@@ -388,6 +391,22 @@ impl Workspace {
         }
         keys.into_iter()
             .flat_map(|k| self.subscribers_of.get(&(o.kind, k)).into_iter().flatten().copied())
+            .collect()
+    }
+
+    /// Subscribers (object, index in its `subscribers`) of scanned objects to the platform codeunit
+    /// `Global Triggers` (2000000002), which no app need declare: its events are raised by the
+    /// runtime around record writes.
+    pub fn global_trigger_subscribers(&self) -> Vec<(usize, usize)> {
+        ["global triggers", "2000000002"]
+            .iter()
+            .flat_map(|k| {
+                self.subscribers_of
+                    .get(&(ObjKind::Codeunit, (*k).to_string()))
+                    .into_iter()
+                    .flatten()
+                    .copied()
+            })
             .collect()
     }
 
@@ -612,6 +631,18 @@ impl Workspace {
         self.resolve_in_scope(file, kind, parts, true, true)
     }
 
+    /// A `TableRelation` target. The file of a dependency app resolves it among the apps that app
+    /// saw (`visible`), as BC fixed it when the app compiled: a same-named table of a dependent app
+    /// is not a candidate (corpus fieldref/TestRelationTargetNameCollision.al). The file of the
+    /// workspace resolves it as `resolve_ref_certain` does.
+    pub fn resolve_relation_target(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
+        if self.kinds[self.files[file].app] == AppKind::Dependency {
+            self.resolve_ref(file, kind, parts)
+        } else {
+            self.resolve_ref_certain(file, kind, parts)
+        }
+    }
+
     /// `check_usable`: leave out objects of a dependency file that does not parse. That parses
     /// the file of every candidate, which the extension index must not trigger.
     fn resolve_in_scope(
@@ -803,6 +834,7 @@ struct FileObject {
     implements: Vec<Vec<String>>,
     subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
     properties: Vec<(String, String)>,
+    install: bool,
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
@@ -822,6 +854,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 implements: o.implements_parts(),
                 subscribers: Vec::new(),
                 properties: Vec::new(),
+                install: false,
             })
             .collect(),
         dotnet: root.dotnet_types(),
@@ -861,6 +894,7 @@ fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
                 implements: o.implements,
                 subscribers: o.subscribers,
                 properties: o.properties,
+                install: o.install,
             })
             .collect(),
     }

@@ -17,6 +17,10 @@ pub struct VersionEntry {
     pub major: u16,
     /// The corpus CI leg the oracle came from (the newest minor of the major).
     pub bc_version: String,
+    /// The corpus commit this oracle was recorded for, when it is older than the pin. Absent
+    /// means the pin. Accepted only when the corpus diff since then adds files and changes none
+    /// (`pin::check`, ADR-007).
+    pub corpus_commit: Option<String>,
     /// The full build, once the corpus records it.
     pub bc_build: Option<String>,
     pub workflow_run: Option<u64>,
@@ -28,6 +32,11 @@ pub struct VersionEntry {
 }
 
 impl VersionEntry {
+    /// The corpus commit this version's oracle belongs to.
+    pub fn oracle_commit<'a>(&'a self, pin: &'a str) -> &'a str {
+        self.corpus_commit.as_deref().unwrap_or(pin)
+    }
+
     /// The BC version of the oracle leg, with the build when it is known.
     pub fn bc(&self) -> BcVersion {
         let mut v = BcVersion::parse(&self.bc_version).unwrap_or_else(|_| BcVersion::new(self.major, 0));
@@ -128,6 +137,17 @@ baseline = "metrics/28/passing.txt"
         assert_eq!(f.versions.len(), 3);
         assert_eq!(f.versions[1].artifact_id, Some(2));
         assert_eq!(f.versions[0].bc_build, None);
+    }
+
+    #[test]
+    fn a_version_may_record_an_older_corpus_commit() {
+        let t = TOML.replace(
+            "bc_build = \"29.0.54011.55816\"",
+            "bc_build = \"29.0.54011.55816\"\ncorpus_commit = \"old\"",
+        );
+        let f = OracleFile::parse(&t).unwrap();
+        assert_eq!(f.versions[1].oracle_commit("abc"), "old");
+        assert_eq!(f.versions[0].oracle_commit("abc"), "abc");
     }
 
     #[test]

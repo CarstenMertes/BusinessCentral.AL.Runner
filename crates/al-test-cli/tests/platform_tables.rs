@@ -1,4 +1,4 @@
-//! Platform tables (ADR-013 decision 7, ADR-018): the registry of native providers is bound to
+//! Platform tables (ADR-013 decision 7, ADR-019): the registry of native providers is bound to
 //! the real declarations in the platform `System` app, and a provider never stands in for AL
 //! that exists.
 //!

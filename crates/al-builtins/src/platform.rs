@@ -1,4 +1,4 @@
-//! The registry of platform tables that have a native row provider (ADR-013 decision 7, ADR-018).
+//! The registry of platform tables that have a native row provider (ADR-013 decision 7, ADR-019).
 //!
 //! A platform table is a table of the platform app `System` (the system tables, ids from
 //! 2000000000). Its schema is the real declaration, taken as AL. Its rows are not AL: the platform

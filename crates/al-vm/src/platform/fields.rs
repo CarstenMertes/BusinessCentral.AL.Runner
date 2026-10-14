@@ -76,7 +76,8 @@ fn table_of<'a>(c: &'a Catalog, i: usize) -> Option<(&'a Object, &'a al_ir::Tabl
 }
 
 pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
         let (Some(tid), "table") = (o.id, base_kind(o)) else { continue };
@@ -181,7 +182,8 @@ fn field_row(
 }
 
 pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
         let (Some(tid), "table") = (o.id, base_kind(o)) else { continue };

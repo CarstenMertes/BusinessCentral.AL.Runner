@@ -145,7 +145,8 @@ fn caption_fields(o: &Object, table: Option<&Object>) -> Result<String, String> 
 }
 
 pub(super) fn page_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for o in c.objects {
         let (Some(id), "page") = (o.id, base_kind(o)) else { continue };
@@ -228,7 +229,8 @@ fn bool_prop(o: &Object, ctl: &al_ir::Control, name: &str, default: &str) -> Res
 }
 
 pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for o in c.objects {
         let (Some(id), "page") = (o.id, base_kind(o)) else { continue };

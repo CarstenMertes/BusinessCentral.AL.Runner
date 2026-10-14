@@ -1,4 +1,4 @@
-# ADR-018: Platform table providers
+# ADR-019: Platform table providers
 
 - Status: Accepted (2026-10-14). Decided without owner review, under the overnight rule. The owner reviews it
   with the other lines in `docs/owner-review.md`.

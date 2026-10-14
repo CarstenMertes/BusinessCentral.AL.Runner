@@ -19,7 +19,7 @@ fn version(v: &str) -> Option<[i32; 4]> {
 
 /// NAV App Installed App: "App ID" (1), "Package ID" (2), Name (3), Publisher (4), version (5 to 8).
 pub(super) fn nav_app_installed_app_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    p.engine
+    p.engine()
         .program
         .apps
         .iter()
@@ -43,7 +43,7 @@ pub(super) fn nav_app_installed_app_rows(p: &Providers, t: &TableDef) -> Vec<Ent
 /// version (6 to 9). The two package ids of an app are one value (AL Runner measured that on a real tier
 /// for an app published through the development endpoint).
 pub(super) fn published_application_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    p.engine
+    p.engine()
         .program
         .apps
         .iter()

@@ -39,7 +39,7 @@ pub struct MemStore {
     committed_versions: im::OrdMap<(String, u32), u64>,
     /// Handed out by writes; never goes back, so a stamp is never reused.
     counter: u64,
-    /// Tables that have no stored rows (ADR-018).
+    /// Tables that have no stored rows (ADR-019).
     virtuals: Option<std::rc::Rc<dyn VirtualTables>>,
 }
 
@@ -67,6 +67,24 @@ impl MemStore {
         }
     }
 
+    /// The store without its provider: the data only. A captured snapshot (ADR-004) holds no
+    /// provider, so it cannot keep the session that made it alive.
+    pub fn detached(mut self) -> MemStore {
+        self.virtuals = None;
+        self
+    }
+
+    /// The provider of the computed tables.
+    pub fn virtual_tables(&self) -> Option<std::rc::Rc<dyn VirtualTables>> {
+        self.virtuals.clone()
+    }
+
+    /// This store's data with `v` as its provider.
+    pub fn attached(mut self, v: Option<std::rc::Rc<dyn VirtualTables>>) -> MemStore {
+        self.virtuals = v;
+        self
+    }
+
     /// The provider of table `t`, if its rows are computed.
     fn virtual_of(&self, t: &TableDef) -> Option<&dyn VirtualTables> {
         self.virtuals.as_deref().filter(|v| v.serves(t))
@@ -79,6 +97,20 @@ impl MemStore {
     /// Whether any write since the last commit or rollback is pending.
     pub fn has_uncommitted(&self) -> bool {
         !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
+    }
+
+    /// Whether table object `object` holds a row now (committed or not) in any company.
+    pub fn has_rows(&self, object: u32) -> bool {
+        self.tables.iter().any(|((_, o), t)| *o == object && !t.is_empty())
+    }
+
+    /// The table objects that hold a committed row in any company.
+    pub fn nonempty_tables(&self) -> std::collections::BTreeSet<u32> {
+        self.committed
+            .iter()
+            .filter(|(_, t)| !t.is_empty())
+            .map(|((_, object), _)| *object)
+            .collect()
     }
 
     /// A number that changes whenever the rows of table `t` change (a rollback included). Queries

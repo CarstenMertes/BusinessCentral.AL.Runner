@@ -5,7 +5,7 @@
 
 use al_host::dotnet::DotNetHost;
 use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
-use al_test_cli::{config, corpus, deps, drift, oracle, output, report, runner::Runner, runtime, target};
+use al_test_cli::{config, corpus, deps, drift, oracle, output, pin, report, runner::Runner, runtime, target};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -42,6 +42,19 @@ struct Args {
     dotnet_timeout_secs: Option<u64>,
     /// `--require-dotnet`: a machine without a usable .NET is an error, not a skip (CI).
     require_dotnet: bool,
+    /// `--no-download`: never fetch a dependency app from Microsoft's artifact feed (ADR-013).
+    no_download: bool,
+    /// `--cache-dir DIR`: where downloaded artifacts are kept (else `ALRUNNER_CACHE`, else
+    /// `~/.cache/al-runtime`).
+    cache_dir: Option<PathBuf>,
+    /// `--fetch-deps`: resolve and download the dependency apps, then stop (warms the cache).
+    fetch_deps: bool,
+    /// `--print-builds`: print the newest published build for each version and stop. CI keys its
+    /// artifact cache by this.
+    print_builds: bool,
+    /// `--project DIR` (with `--fetch-deps`): any AL project, not the corpus. The BC build comes
+    /// from `--bc-version`, else from the app.json floor (ADR-013 Layer A, ADR-015 3.2).
+    project: Option<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -70,6 +83,11 @@ fn parse_args() -> Result<Args, String> {
             "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(val()?),
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
             "--require-dotnet" => a.require_dotnet = true,
+            "--no-download" => a.no_download = true,
+            "--cache-dir" => a.cache_dir = Some(val()?),
+            "--fetch-deps" => a.fetch_deps = true,
+            "--print-builds" => a.print_builds = true,
+            "--project" => a.project = Some(val()?),
             "--dotnet-timeout-secs" => {
                 let v = val()?;
                 a.dotnet_timeout_secs = Some(
@@ -110,6 +128,9 @@ fn write(p: &Path, s: &str) -> Result<(), String> {
 fn run() -> Result<ExitCode, String> {
     let args = parse_args()?;
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
+    if let Some(project) = &args.project {
+        return fetch_project(&args, &root, project);
+    }
     let oracle_path = args.oracle.clone().unwrap_or_else(|| root.join("oracle/oracle.toml"));
     let cfg = config::OracleFile::parse(&read(&oracle_path)?).map_err(|e| format!("{}: {e}", oracle_path.display()))?;
     if args.all_versions && (args.bc_version.is_some() || args.baseline.is_some()) {
@@ -123,6 +144,9 @@ fn run() -> Result<ExitCode, String> {
         vec![cfg.select(args.bc_version.as_deref())?]
     };
 
+    if args.print_builds {
+        return print_builds(&versions);
+    }
     let pinned = git_head(&root.join(&cfg.corpus_repo))?;
     if pinned != cfg.corpus_commit {
         return Err(format!(
@@ -138,7 +162,7 @@ fn run() -> Result<ExitCode, String> {
         code = code.max(r.code);
         runs.push((v.major, r));
     }
-    if runs.len() > 1 {
+    if runs.len() > 1 && !args.fetch_deps {
         print!("{}", drift_summary(&runs));
     }
     Ok(ExitCode::from(code))
@@ -169,6 +193,8 @@ fn per_version(p: &Path, major: u16, all: bool) -> PathBuf {
 fn drift_summary(runs: &[(u16, VersionRun)]) -> String {
     let oracle_sets: Vec<_> = runs.iter().map(|(m, r)| (m.to_string(), r.oracle.clone())).collect();
     let passing_sets: Vec<_> = runs.iter().map(|(m, r)| (m.to_string(), r.passing.clone())).collect();
+    // A case one oracle lacks (older corpus commit, ADR-007) cannot show a runtime difference.
+    let passing_sets = drift::restrict(&passing_sets, &drift::common(&oracle_sets));
     let mut out = String::from("\nVersion comparison\n");
     out.push_str(&drift::table("oracle", &oracle_sets));
     out.push_str(&drift::table("runtime", &passing_sets));
@@ -182,18 +208,21 @@ fn run_version(
     cfg: &config::OracleFile,
     version: &config::VersionEntry,
 ) -> Result<VersionRun, String> {
+    // ADR-007: the oracle may be recorded for an older corpus commit when the pin only added files.
+    pin::check(
+        &root.join(&cfg.corpus_repo),
+        version.oracle_commit(&cfg.corpus_commit),
+        &cfg.corpus_commit,
+    )
+    .map_err(|e| format!("BC {}: {e}", version.bc_version))?;
     let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
     let cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
 
     // ADR-015 3.2: the corpus runs as the oracle's BC version with the corpus app's runtime.
     let leg = version.bc();
-    let chosen = al_version::choose_target(
-        Some(&leg),
-        &target::read_app_versions(&root.join(&cfg.corpus_app))?,
-        &leg,
-    )
-    .map_err(|e| e.to_string())?;
+    let app_versions = target::read_app_versions(&root.join(&cfg.corpus_app))?;
+    let mut chosen = al_version::choose_target(Some(&leg), &app_versions, &leg).map_err(|e| e.to_string())?;
     println!("target: BC {}, runtime {}", chosen.target.bc, chosen.target.runtime);
     for note in &chosen.notes {
         eprintln!("note: {note}");
@@ -216,16 +245,45 @@ fn run_version(
         .collect::<Result<Vec<_>, _>>()?;
     let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
     let mut dependency_summary = Vec::new();
+    let mut bc_build = None;
     if !args.no_deps {
         // Dependencies go after the corpus apps, so the corpus objects keep their positions.
-        let deps = deps::load(&root.join(&cfg.corpus_app), &[fixture_dir], &args.deps)?;
+        // ADR-013 Layer A: the oracle leg is the explicit `--bc-version`, so the Microsoft build
+        // is the newest cached (else newest published) build of that minor.
+        let provision = deps::Provision {
+            cache_dir: args.cache_dir.clone(),
+            download: !args.no_download,
+            query: target::build_query(Some(&leg.to_string()), &chosen, &app_versions),
+        };
+        let deps = deps::load_with(
+            &root.join(&cfg.corpus_app),
+            &[fixture_dir],
+            &args.deps,
+            Some(&provision),
+        )?;
         for line in &deps.log {
             eprintln!("{line}");
+        }
+        match &deps.build {
+            Some(u) => {
+                println!("bc build: {} ({})", u.build, origin_word(u.origin));
+                chosen.target.bc.build = Some(u.build.to_string());
+                bc_build = Some(u.build.to_string());
+            }
+            None => println!("bc build: none needed (every dependency came from .alpackages or --deps)"),
         }
         kinds.extend(deps.apps.iter().map(|_| al_sema::AppKind::Dependency));
         manifests.extend(deps.manifests);
         dependency_summary = deps.summary;
         apps.extend(deps.apps);
+    }
+    if args.fetch_deps {
+        println!("dependencies ready for BC {}", chosen.target.bc);
+        return Ok(VersionRun {
+            code: 0,
+            oracle: Default::default(),
+            passing: Default::default(),
+        });
     }
     // ADR-014: the sidecar starts lazily, at the first `DotNet` call that reaches it.
     let host = Arc::new(SidecarHost::new(SidecarConfig {
@@ -256,6 +314,7 @@ fn run_version(
     let area_of = |cu: u32| index.area_of(cu).map(str::to_string);
     let mut rep = report::build(&cases, &area_of, &outcome);
     rep.dependencies = dependency_summary;
+    rep.bc_build = bc_build.clone();
     if !rep.unmapped.is_empty() {
         return Err(format!(
             "{} oracle case(s) have no test codeunit in the corpus, e.g. {}",
@@ -275,7 +334,10 @@ fn run_version(
         write(&per_version(p, version.major, all), &output::markdown(&rep))?;
     }
     if let Some(p) = &args.junit {
-        write(&per_version(p, version.major, all), &output::junit(&cases, &outcome))?;
+        write(
+            &per_version(p, version.major, all),
+            &output::junit(&cases, &outcome, bc_build.as_deref()),
+        )?;
     }
     let oracle_ok: std::collections::BTreeSet<_> =
         cases.iter().filter(|c| !c.bc_failed).map(|c| c.id.clone()).collect();
@@ -345,6 +407,71 @@ fn run_version(
         oracle: oracle_ok,
         passing,
     })
+}
+
+fn origin_word(o: al_deps::build::Origin) -> &'static str {
+    match o {
+        al_deps::build::Origin::Cache => "from the artifact cache",
+        al_deps::build::Origin::Published => "newest published, downloaded",
+    }
+}
+
+/// `--print-builds`: one line per version, `<major> <newest published build>`, from the index
+/// alone (no cache, no artifact). CI keys its artifact cache by these lines.
+fn print_builds(versions: &[&config::VersionEntry]) -> Result<ExitCode, String> {
+    let cdn = al_deps::artifact::HttpCdn::from_env();
+    for v in versions {
+        let q = al_deps::build::BuildQuery::new(Some(&v.bc().to_string()), v.major, None);
+        let sel = al_deps::artifact::newest_published(&cdn, &q)?;
+        println!("{} {}", v.major, sel.build);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `--project DIR --fetch-deps`: the dependency flow for any AL project. The target comes from
+/// `al_version::choose_target` (ADR-015 3.2): `--bc-version`, else the floor in the project's
+/// app.json, else the newest version the oracle verifies. Layer A then picks the Microsoft build
+/// for that target and the missing apps are downloaded into the cache.
+fn fetch_project(args: &Args, root: &Path, project: &Path) -> Result<ExitCode, String> {
+    if !args.fetch_deps {
+        return Err(
+            "--project is only built for --fetch-deps so far: running a project's tests is not implemented".into(),
+        );
+    }
+    let app_versions = target::read_app_versions(project)?;
+    let requested = args
+        .bc_version
+        .as_deref()
+        .map(al_version::BcVersion::parse)
+        .transpose()
+        .map_err(|e| format!("--bc-version: {e}"))?;
+    let oracle_path = args.oracle.clone().unwrap_or_else(|| root.join("oracle/oracle.toml"));
+    let newest_verified = std::fs::read_to_string(&oracle_path)
+        .ok()
+        .and_then(|t| config::OracleFile::parse(&t).ok())
+        .and_then(|c| c.select(None).ok().map(|v| v.bc()))
+        .unwrap_or_else(|| al_version::BcVersion::new(al_version::MIN_BC_MAJOR, 0));
+    let chosen =
+        al_version::choose_target(requested.as_ref(), &app_versions, &newest_verified).map_err(|e| e.to_string())?;
+    println!("target: BC {}, runtime {}", chosen.target.bc, chosen.target.runtime);
+    for note in &chosen.notes {
+        eprintln!("note: {note}");
+    }
+    let provision = deps::Provision {
+        cache_dir: args.cache_dir.clone(),
+        download: !args.no_download,
+        query: target::build_query(args.bc_version.as_deref(), &chosen, &app_versions),
+    };
+    let deps = deps::load_with(project, &[], &args.deps, Some(&provision))?;
+    for line in &deps.log {
+        eprintln!("{line}");
+    }
+    match &deps.build {
+        Some(u) => println!("bc build: {} ({})", u.build, origin_word(u.origin)),
+        None => println!("bc build: none needed (every dependency came from .alpackages or --deps)"),
+    }
+    println!("dependencies: {}", deps.summary.join(", "));
+    Ok(ExitCode::SUCCESS)
 }
 
 fn git_head(repo: &Path) -> Result<String, String> {

@@ -1,28 +1,34 @@
 # One [[version]] table per BC major (ADR-015). The oracle of a major is the CI leg of its
-# newest minor. All JUnit files must come from the CI run of `corpus_commit`.
+# newest minor. `corpus_commit` is the pin (the `corpus` submodule). A JUnit file comes from the
+# CI run of the pin, or of the commit named by the version's own `corpus_commit`, which the CLI
+# accepts only when the corpus diff since that commit adds files under tests/ and changes none
+# (ADR-007).
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
-corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
+corpus_commit = "cdf315abd1e7115fcbfbcc88c720371e75989b8e"
 
 [[version]]
 major = 27
 bc_version = "27.5"
-workflow_run = 38306086475
-artifact_id = 11772863083
+workflow_run = 38476427517
+artifact_id = 11856955675
 junit = "27/junit.xml"
 baseline = "metrics/27/passing.txt"
 
 [[version]]
 major = 28
 bc_version = "28.5"
-workflow_run = 38306086475
-artifact_id = 11773069390
+workflow_run = 38480686379
+artifact_id = 11858881269
 junit = "28/junit.xml"
 baseline = "metrics/28/passing.txt"
 
 [[version]]
 major = 29
 bc_version = "29.0"
+# Recorded for the older commit: the 29.0 dispatch run on the pin is unusable (the corpus workflow
+# does not define BC29PLUS on dispatch; docs/owner-review.md). Re-record once that is fixed.
+corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
 workflow_run = 38306086475
 artifact_id = 11773034371
 junit = "29/junit.xml"

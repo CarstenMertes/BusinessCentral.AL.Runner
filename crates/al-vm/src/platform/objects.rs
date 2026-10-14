@@ -10,6 +10,7 @@
 //! the rule used is stated at the column.
 
 use super::mat::Entry;
+use crate::Engine;
 use super::{Providers, blank, ids, option, pos};
 use al_builtins::value::{RtType, Value};
 use al_data::{Row, TableDef};
@@ -145,8 +146,8 @@ pub(super) struct Catalog<'a> {
 }
 
 impl<'a> Catalog<'a> {
-    pub(super) fn new(p: &'a Providers) -> Catalog<'a> {
-        let program = &p.engine.program;
+    pub(super) fn new(engine: &'a Engine) -> Catalog<'a> {
+        let program = &engine.program;
         let mut names: HashMap<(&str, String), Vec<u32>> = HashMap::new();
         for o in &program.objects {
             if let Some(id) = o.id {
@@ -271,7 +272,8 @@ fn entries(
 }
 
 pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     entries(
         &c,
         t,
@@ -291,7 +293,8 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
 }
 
 pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     entries(
         &c,
         t,
@@ -317,7 +320,8 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
 // ---- CodeUnit Metadata ----------------------------------------------------------------------------
 
 pub(super) fn codeunit_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     entries(
         &c,
         t,
@@ -395,7 +399,8 @@ fn ordinal_of(members: &[&str], text: &str) -> Option<i32> {
 }
 
 pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
-    let c = Catalog::new(p);
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
     entries(
         &c,
         t,

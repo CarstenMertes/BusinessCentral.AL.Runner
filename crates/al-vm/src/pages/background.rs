@@ -51,9 +51,10 @@ impl Session {
     /// Runs the worker codeunit `codeunit` with `params`: the dictionary it set as its result (empty when it
     /// set none), or the error it raised. Its session may not write to a table of the database (corpus
     /// handlers/TestPageBgTask_Tests.al:EnqueueBackgroundTask_WorkerInsert_RefusedByReadOnlySession and
-    /// the Modify and Rename arms). What its transaction does around Commit, Codeunit.Run and
-    /// Database.IsInWriteTransaction is pinned by handlers/TestPageBgTaskTx_Tests.al only in
-    /// ways the runtime does not model: those calls end the run as unsupported.
+    /// the Modify and Rename arms). It reads the caller's rows, the uncommitted ones too, and is
+    /// outside the caller's write transaction (handlers/TestPageBgTaskTx_Tests.al): see
+    /// `in_write_transaction` and `codeunit_run`. A direct `Commit` and an unguarded `Codeunit.Run`
+    /// are not pinned and end the run as unsupported.
     fn bg_run_worker(&mut self, codeunit: i32, params: V) -> Result<Result<V, AlError>, Signal> {
         let engine = self.engine();
         let Some(object) = engine
@@ -231,11 +232,12 @@ impl Session {
         )))
     }
 
-    /// Commit, Codeunit.Run and Database.IsInWriteTransaction inside a worker.
+    /// The calls inside a worker whose transaction effect is not pinned: a direct `Commit` and an
+    /// unguarded `Codeunit.Run` (the corpus pins the guarded run only).
     pub(crate) fn bg_refuse_transaction_call(&self, what: &str) -> Result<(), Signal> {
         if self.bg_worker.is_some() {
             return unsupported(format!(
-                "{what} in a page background task (its transaction is not modelled: handlers/TestPageBgTaskTx_Tests.al)"
+                "{what} in a page background task (not pinned: handlers/TestPageBgTaskTx_Tests.al pins only the guarded Codeunit.Run)"
             ));
         }
         Ok(())

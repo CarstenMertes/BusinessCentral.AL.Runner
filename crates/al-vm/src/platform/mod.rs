@@ -1,4 +1,4 @@
-//! Row providers for the platform's system tables (ADR-013 decision 7, ADR-018).
+//! Row providers for the platform's system tables (ADR-013 decision 7, ADR-019).
 //!
 //! The schema of a platform table is the real declaration in the platform `System` app, compiled
 //! like any other table. Its rows are not AL: the platform computes them. A [`Providers`] is
@@ -71,7 +71,9 @@ impl Ident {
 
 /// The rows of every virtual platform table, computed on read.
 pub(crate) struct Providers {
-    pub(super) engine: Arc<Engine>,
+    /// Weak: the engine owns nothing of the session, and a baseline snapshot of the store (which
+    /// holds this provider) must not keep the engine shared.
+    engine: std::sync::Weak<Engine>,
     ident: Ident,
     /// Per object index: the provider of that table, if it is a virtual platform table.
     served: Vec<Option<Virtual>>,
@@ -94,11 +96,15 @@ impl Providers {
             })
             .collect();
         Providers {
-            engine: engine.clone(),
+            engine: Arc::downgrade(engine),
             ident,
             served,
             listed: RefCell::default(),
         }
+    }
+
+    pub(super) fn engine(&self) -> Arc<Engine> {
+        self.engine.upgrade().expect("a session outlives its provider's reads")
     }
 
     fn kind(&self, t: &TableDef) -> Virtual {
@@ -128,7 +134,6 @@ impl Providers {
         };
         let m = Rc::new(mat::Mat::new(t, rows));
         self.listed.borrow_mut().insert(kind, m.clone());
-        let _ = &self.engine;
         Ok(m)
     }
 }
@@ -163,7 +168,7 @@ impl VirtualTables for Providers {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
     }
 
-    fn get(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+    fn get(&self, _store: &MemStore, _cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
@@ -172,7 +177,7 @@ impl VirtualTables for Providers {
         }
     }
 
-    fn next(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+    fn next(&self, _store: &MemStore, _cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::next(t, scan),
             Virtual::Date => date::next(t, scan),
@@ -181,7 +186,7 @@ impl VirtualTables for Providers {
         }
     }
 
-    fn count(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
+    fn count(&self, _store: &MemStore, _cx: &AccessContext, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::count(t, filters),
             Virtual::Date => date::count(t, filters),

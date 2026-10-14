@@ -497,6 +497,12 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Record.FieldError#3" | "FieldRef.FieldError#3" => {
             "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
         }
+        "BigText.Read#1" => {
+            "BigText.Read is in no corpus test, so the encoding it reads with and whether it replaces or appends to the text are not pinned"
+        }
+        "Media.ImportStream#2" => {
+            "Media.ImportStream with a file name: what the file name is stored as (the Tenant Media row) is not pinned; only the form with a description and a MIME type is (media/TestMediaPngImport.al)"
+        }
         _ => return None,
     })
 }

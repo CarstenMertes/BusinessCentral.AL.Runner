@@ -265,6 +265,11 @@ pub struct PageState {
     pub frozen_visible: Vec<bool>,
     /// Primary keys of the rows a repeater page has populated (its window).
     pub window: Vec<WindowRow>,
+    /// The window holds the rows from the first row of the view on, with none missing: the page
+    /// opened on its first row, or read on from there. A GoToKey reads on in blocks only then.
+    pub window_from_start: bool,
+    /// A read has run to the end of the view and read the last two rows once more.
+    pub window_eof: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -351,6 +356,8 @@ impl PageState {
             dirty: false,
             frozen_visible: Vec::new(),
             window: Vec::new(),
+            window_from_start: false,
+            window_eof: false,
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),

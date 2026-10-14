@@ -636,7 +636,17 @@ pub(crate) fn lower_core(
     // Per report: the reportextensions that change a run.
     let mut changing: HashMap<usize, Vec<usize>> = HashMap::new();
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::ReportExtension || !active(oi) || prov(oi) {
+        // Every reportextension of a report that is compiled counts, whether or not it was
+        // compiled itself: what changes a run is decided by the installed apps' sources, never by
+        // what a selection reached (issue 11). The demand-driven compile activates an extension with
+        // its report, so the two agree today; this keeps them from drifting.
+        if o.kind != ObjKind::ReportExtension || prov(oi) {
+            continue;
+        }
+        if !active(oi) && !ws.extension_target(oi).is_some_and(|r| active(r)) {
+            continue;
+        }
+        if !ws.usable(oi) {
             continue;
         }
         let ext = ws.object_ast(oi);

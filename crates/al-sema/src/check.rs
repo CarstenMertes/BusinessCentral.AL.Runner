@@ -1010,6 +1010,10 @@ impl<'a> Checker<'a> {
             }
             if let (Some(n), Some(t)) = (r.return_name(), r.return_type()) {
                 locals.insert(n.to_lowercase(), Ty::from_type_ref(&t));
+            } else if let Some(t) = r.return_type() {
+                // An unnamed return value is used by the code that runs as well (an interface it
+                // names must be compiled, or the routine is refused for it).
+                self.touch_ty(file, &Ty::from_type_ref(&t));
             }
             for v in r.local_var_decls() {
                 let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
@@ -1918,8 +1922,8 @@ impl<'a> Checker<'a> {
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),
             // A RecordRef writes to a table that is known only when the code runs; the write raises
             // the platform's database events whatever the table is.
-            Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") => {
-                self.touch_global_ops(demand::record_ops(name));
+            Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") || b.eq_ignore_ascii_case("FieldRef") => {
+                self.touch_recref_ops(demand::record_ops(name));
             }
             Ty::Record { table, .. } => {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {

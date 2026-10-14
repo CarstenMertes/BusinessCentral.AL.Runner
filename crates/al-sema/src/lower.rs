@@ -657,7 +657,7 @@ pub(crate) fn lower_core(
         if o.kind != ObjKind::ReportExtension || prov(oi) {
             continue;
         }
-        if !active(oi) && !ws.extension_target(oi).is_some_and(|r| active(r)) {
+        if !active(oi) && !ws.extension_target(oi).is_some_and(&active) {
             continue;
         }
         if !ws.usable(oi) {

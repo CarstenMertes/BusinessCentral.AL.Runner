@@ -168,7 +168,7 @@ impl Vars {
 /// A source archive (`<App>.Source.zip` in the platform artifact) has no `NavxManifest.xml`; its
 /// root `app.json` describes the whole app, and every `.al` file under any folder belongs to it.
 /// Module folders inside carry an `app.json` of their own, which does not describe a separate app.
-fn manifest_of_source_zip(app_json: &str, vars: &Vars) -> Result<Manifest, PackageError> {
+pub(crate) fn manifest_of_source_zip(app_json: &str, vars: &Vars) -> Result<Manifest, PackageError> {
     let text = app_json.strip_prefix('\u{feff}').unwrap_or(app_json);
     let text = vars.apply(text);
     let text = text.as_str();
@@ -176,7 +176,7 @@ fn manifest_of_source_zip(app_json: &str, vars: &Vars) -> Result<Manifest, Packa
         let var: String = text[at..].chars().take_while(|c| *c != ')').chain([')']).collect();
         return Err(PackageError::Manifest(format!(
             "app.json holds Microsoft's build variable `{var}`, which only the build it came from can fill; \
-             keep the archive in the artifact cache (its record names the build)"
+             keep the archive under a folder named for its build (four numbers, as the artifact cache names it), beside a `<file>.json` record naming the build, or pass the exact build as `--bc-version`"
         )));
     }
     let j = crate::load::parse_app_json(text).map_err(PackageError::Manifest)?;

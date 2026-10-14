@@ -15,3 +15,10 @@ impl Runner for NoRuntime {
         Outcome::NotRun("runtime not implemented".into())
     }
 }
+
+/// The outcomes of the first run (the main corpus app, or the only run).
+impl Runner for crate::runtime::CorpusRuntime {
+    fn outcome(&self, case: &CaseId) -> Outcome {
+        self.first_outcome(case)
+    }
+}

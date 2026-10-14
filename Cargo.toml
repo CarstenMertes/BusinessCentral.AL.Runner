@@ -17,6 +17,7 @@ al-data = { path = "crates/al-data" }
 al-host = { path = "crates/al-host" }
 al-deps = { path = "crates/al-deps" }
 al-version = { path = "crates/al-version" }
+al-testrun = { path = "crates/al-testrun" }
 quick-xml = "0.37"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

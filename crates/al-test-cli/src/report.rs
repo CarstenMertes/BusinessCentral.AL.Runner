@@ -5,14 +5,7 @@ use crate::oracle::{CaseId, OracleCase};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Outcome {
-    Pass,
-    /// The runtime ran the case and it failed (assertion or runtime error).
-    Fail(String),
-    /// The runtime could not run the case: compile-time unsupported, or no runtime yet.
-    NotRun(String),
-}
+pub use al_testrun::Outcome;
 
 /// Milestone groups from the original brief (docs/history/spike-brief.md), by area folder.
 pub const MILESTONES: &[(&str, &[&str])] = &[

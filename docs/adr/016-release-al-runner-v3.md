@@ -496,6 +496,48 @@ This answers open questions 1 (binary name: a new one, still to be picked),
 2 (no compatibility launcher for now) and 4 (the repository is al-runtime-rs
 for now).
 
+## Decided without owner review (2026-10-14): the first `alrunner test`
+
+Built on branch `alrunner-cli` as the owner asked: a minimal user command line with Microsoft's BaseApp
+test buckets as the first real target. Each item is easy to change.
+
+- **Binary name `alrunner`**, crate `alrunner-cli` (open question 1: the recommended name; the owner's
+  2026-10-14 decision already said "a new one, still to be picked").
+- **Shared code is the crate `al-testrun`**, extracted from `al-test-cli`: the test runner (`runtime.rs`),
+  install baseline, dependency loading, .NET sidecar host, `--explain` text, target choice, and now test-codeunit
+  discovery and refusal ranking. `al-test-cli` re-exports the modules, so its tests and flags are unchanged. This
+  is the refactor section 2 describes. No seam changed.
+- **Exit codes**: 0 all selected tests passed, 1 a test failed, 2 bad invocation or the run could not start, 6 the
+  selection matched no test, 7 some tests were not run. `--allow-not-run` makes 7 into 0. When several apply the
+  order is 2, 6, 1, 7 (a failure outranks a refusal). Code 3 (could not compile) is not used: the compiler refuses
+  per routine, never for a whole run. This takes the first option of open question 3.
+- **Flags** (a clean set, not v2's): `--dep PATH` (a package file, an app folder or a folder of packages),
+  `--package-cache DIR` (a folder of `.app` files; v2's spelling), `--bc-version`, `--no-download`, `--cache-dir`,
+  `--codeunit ID`, `--filter TEXT` (`--test` accepted), `--junit FILE`, `--top-refusals [N]`, `--allow-not-run`,
+  `--verbose`, `--quiet`, `--timings`, `--files-dir`, the `--dotnet-*` flags of `al-test-cli`. `--test-data` is refused
+  with exit 2 until ADR-020 is accepted, and the flags deferred in this ADR (`--watch`, `--affected`, `--tdd`) are
+  refused by name. Rule 1 (keep v2 spellings) applies to `--package-cache`, `--filter`/`--test` and `--junit`.
+- **Isolation** is `TestIsolation = Codeunit`, which is the default of Microsoft's test runner
+  (`ALTestRunner.psm1`, `$TestIsolation = "Codeunit"`) and what every corpus oracle is recorded under. There is no
+  `--isolation` flag yet (parity row SEL-4/SEL-5).
+- **Dependencies** come from the closure of the APPs' `app.json`: `--dep`, then `--package-cache`, then each folder
+  APP's `.alpackages`, then Microsoft's artifact feed (ADR-013 Layer A). A source archive that holds Microsoft's
+  `$(app_...)` variables is read with the build named by a record beside it, else by a four-number build among the
+  folders it lies in (the artifact cache layout), else by an exact `--bc-version`. A prefix gives no build and
+  the archive is refused with a message saying so.
+- **`application` and `platform` floors are dependencies.** Microsoft's buckets declare neither Base Application
+  nor `Application`; AL gives an app with an `application` floor a dependency on the `Application` aggregate, which
+  propagates Base Application, System Application and Business Foundation. `alrunner` declares both floors as
+  Microsoft dependencies (so the feed can supply them) and adds the implied ids to the visibility of each app
+  (`Request::application_implies_dependencies`, off for the corpus job).
+- **Not-run tests are the measurement.** With no test data (ADR-020 is Proposed) Microsoft's tests fail on missing
+  setup data, so the summary line says failures are not trusted. The ranking of refusal reasons is the output to
+  act on.
+- **A run never ends in a panic of the lowering.** A binary expression the parser left with one operand is refused
+  in its routine (a page field source with a hyphen in its name reached the synthetic source routine unquoted, which
+  panicked and ended the whole Tests-ERM run). The cause, in `al-sema/src/pages.rs` (`Section::args` drops the quotes
+  of a lone quoted name), is not fixed here.
+
 ## Consequences
 
 - A new crate set (`alrunner-cli`, `al-testrun`, `al-host-std`, `al-deps`) appears.

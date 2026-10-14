@@ -123,7 +123,12 @@ pub fn key_for(
         .collect();
     Key::new(
         runtime_build(),
-        target.map(target_text).unwrap_or_default(),
+        // `AL_UNPINNED_BASE_ACCESS` changes what the lowering produces (ADR-023), so it is an input.
+        format!(
+            "{}{}",
+            target.map(target_text).unwrap_or_default(),
+            std::env::var("AL_UNPINNED_BASE_ACCESS").map_or(String::new(), |v| format!(" base-access {v}"))
+        ),
         symbols.iter().cloned().collect(),
         apps,
     )

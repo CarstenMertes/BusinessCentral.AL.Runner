@@ -899,3 +899,33 @@ codeunit 50101 C2 { procedure F(): Boolean var R: Record T2; begin exit(R.FieldA
     let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+#[test]
+fn setfilter_placeholder_text_with_a_filter_character_is_refused_until_a_probe_pins_it() {
+    // A text substituted for %1 that holds `@`, a wildcard or an operator: no corpus test says whether
+    // BC quotes it or keeps `@` and the wildcards active (a real project filters an e-mail address with
+    // '@' + Email). It used to match literally, which is wrong where BC keeps `@` active.
+    for filter_value in ["'@john@example.com'", "'a*'", "'a&b'", "'a..b'"] {
+        let r = run(
+            &format!(
+                "procedure F(): Integer var R: Record \"ALT T\"; begin
+                    R.SetFilter(Descr, '%1', {filter_value}); exit(R.Count());
+                end;"
+            ),
+            "F",
+        );
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(m)) if m.contains("filter character")),
+            "{filter_value}: {r:?}"
+        );
+    }
+    // A plain text is an exact match, as before.
+    let r = run(
+        "procedure F(): Integer var R: Record \"ALT T\"; begin
+            R.\"No.\" := 'A'; R.Descr := 'plain text'; R.Insert();
+            R.SetFilter(Descr, '%1', 'plain text'); exit(R.Count());
+        end;",
+        "F",
+    );
+    assert_eq!(text_or_int(r), 1);
+}

@@ -160,11 +160,22 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
         } else if c[i] == '%' && c.get(i + 1).is_some_and(|d| d.is_ascii_digit()) {
             flush(&mut raw, &mut out);
             let n = c[i + 1].to_digit(10).expect("digit") as usize;
-            out.push(Tok::Typed(
-                args.get(n.wrapping_sub(1))
-                    .cloned()
-                    .ok_or("filter placeholder without an argument")?,
-            ));
+            let arg = args
+                .get(n.wrapping_sub(1))
+                .cloned()
+                .ok_or("filter placeholder without an argument")?;
+            // What BC makes of a text that holds a filter character (`@`, a wildcard, an operator)
+            // is not pinned: whether it quotes the text, and whether `@` and the wildcards stay
+            // active. No corpus test substitutes such a text (docs/probes-needed.md, batch 7), so it
+            // is refused instead of matched literally.
+            if let Value::Text(t) | Value::Code(t) = &arg {
+                if let Some(ch) = t.chars().find(|ch| "@*?&|()=<>'".contains(*ch)).or_else(|| t.contains("..").then_some('.')) {
+                    return Err(format!(
+                        "placeholder %{n} holds a text with the filter character `{ch}`: how BC quotes it is not pinned"
+                    ));
+                }
+            }
+            out.push(Tok::Typed(arg));
             i += 2;
         } else {
             raw.push(c[i]);

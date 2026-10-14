@@ -196,11 +196,17 @@ pub fn rank(not_run: impl IntoIterator<Item = (CaseId, String)>) -> Vec<Refusal>
 
 /// The ranking as text: `limit` entries, then what was left out.
 pub fn render_top(title: &str, list: &[Refusal], limit: usize) -> String {
+    render_ranked("Top refusals", title, "not run", "--top-refusals", list, limit)
+}
+
+/// [`render_top`] for failed tests (`--top-failures`): the same folding, another heading.
+pub fn render_top_failures(title: &str, list: &[Refusal], limit: usize) -> String {
+    render_ranked("Top failures", title, "failed", "--top-failures", list, limit)
+}
+
+fn render_ranked(heading: &str, title: &str, noun: &str, flag: &str, list: &[Refusal], limit: usize) -> String {
     let total: usize = list.iter().map(|r| r.count).sum();
-    let mut s = format!(
-        "Top refusals, {title}: {total} not run, {} distinct reasons\n",
-        list.len()
-    );
+    let mut s = format!("{heading}, {title}: {total} {noun}, {} distinct reasons\n", list.len());
     for r in list.iter().take(limit) {
         s.push_str(&format!("{:>6}  {}\n", r.count, r.key));
         let raw = if r.example_reason == r.key {
@@ -216,7 +222,7 @@ pub fn render_top(title: &str, list: &[Refusal], limit: usize) -> String {
     if list.len() > limit {
         let rest: usize = list[limit..].iter().map(|r| r.count).sum();
         s.push_str(&format!(
-            "        ... {} more reasons, {rest} cases (--top-refusals {})\n",
+            "        ... {} more reasons, {rest} cases ({flag} {})\n",
             list.len() - limit,
             list.len()
         ));

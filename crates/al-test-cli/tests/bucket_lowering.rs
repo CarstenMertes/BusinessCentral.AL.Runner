@@ -160,20 +160,18 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Unqualified");
 }
 
-/// Microsoft's tests write `Page.FindFirstField(Name, Value)` with the control named bare. The
-/// corpus only qualifies the control (`ListPage."Integer Field"`, handlers/
-/// TestBCReportHandlerContracts.al:247), so the bare form is refused with a reason that says so,
-/// not with "`Name` is not assignable".
+/// Microsoft's tests write `Page.FindFirstField(Name, Value)` with the control named bare, and so
+/// does the corpus (handlers/TestPagePlatformPageSourceTable_Tests.al:66, :125): a bare name in the
+/// field position of a test page method is a control of that page.
 #[test]
-fn a_bare_control_name_as_a_testfield_argument_is_refused_with_its_own_reason() {
+fn a_bare_control_name_as_a_testfield_argument_is_that_pages_control() {
     let o = outcomes(
         r#"table 50002 "Row" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
 page 50010 "Rows" { PageType = List; SourceTable = "Row"; layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } } } } }
 codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure Bare() var TP: TestPage "Rows"; begin TP.OpenView(); if TP.FindFirstField("No.", 1) then; end; }"#,
+  [Test] procedure Bare() var TP: TestPage "Rows"; begin TP.OpenView(); if TP.FindFirstField("No.", 1) then Error('no rows, no hit'); end; }"#,
     );
-    let why = not_run(&o, "Bare");
-    assert!(why.contains("TestField") && !why.contains("not assignable"), "{why}");
+    passes(&o, "Bare");
 }
 
 /// Microsoft's code compares `ClientType::ODataV4` (Price List Lines, Calc. Running GL. Acc.

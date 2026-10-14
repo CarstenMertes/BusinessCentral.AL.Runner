@@ -67,7 +67,9 @@ impl Session {
         };
         if t.per_company
             && !r.temporary
-            && (self.engine.unseeded.contains(&(t.object as usize)) || self.baseline_rows.contains(&t.object))
+            && (self.engine.unseeded.contains(&(t.object as usize))
+                || self.baseline_rows.contains(&t.object)
+                || self.backs_rows(t.object))
         {
             return unsupported(format!(
                 "{} in company {company}: a company BC creates holds the rows installing the apps and Company-Initialize make there, and this runtime made them only for the session company",

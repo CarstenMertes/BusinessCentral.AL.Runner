@@ -459,3 +459,125 @@ fn text_encodings_decide_the_bytes_per_character() {
     // UTF16 is two bytes per character (streams/TestStreamsRuntimeContracts.al:WriteText_ExplicitEncodings_Bytes).
     assert_eq!(text(vars, &write("UTF16")), "12|Yes");
 }
+
+#[test]
+fn json_write_to_an_out_stream_refuses_text_whose_bytes_are_not_pinned() {
+    // Text that is not ASCII on a Windows stream, or a UTF-16 stream: the bytes real BC writes
+    // are not pinned.
+    assert!(refused(
+        base!("A: JsonArray;"),
+        "A.Add('\u{e9}'); B.Data.CreateOutStream(O); A.WriteTo(O); exit('');"
+    ));
+    assert!(refused(
+        base!("A: JsonArray;"),
+        "A.Add(1); B.Data.CreateOutStream(O, TextEncoding::UTF16); A.WriteTo(O); exit('');"
+    ));
+}
+
+#[test]
+fn json_write_to_an_out_stream_writes_non_ascii_text_as_utf8_on_a_utf8_stream() {
+    let t = text(
+        base!("A: JsonArray; V: Byte;"),
+        "A.Add('\u{e9}'); B.Data.CreateOutStream(O, TextEncoding::UTF8); A.WriteTo(O); B.Data.CreateInStream(I);
+         while not I.EOS() do begin I.Read(V); T += Format(V) + ','; end; exit(T);",
+    );
+    assert_eq!(t, "91,34,195,169,34,93,");
+}
+
+#[test]
+fn json_write_to_an_out_stream_writes_the_compact_text_the_text_overload_gives() {
+    // The text is pinned by json/TestJsonArray.al:90 and json/TestJsonRuntimeContracts.al
+    // (JsonObject_WriteTo_IsCompactAndKeepsInsertionOrder); a stream receives the same characters.
+    // The stream encoding is not pinned for JSON (docs/probes-needed.md), so only text that is
+    // identical in UTF-8 and the single-byte code pages is written to a Windows stream.
+    let vars = base!("A: JsonArray; J: JsonObject;");
+    let body = |enc: &str| {
+        format!(
+            "J.Add('k', 'v'); A.Add(1); A.Add(J); B.Code := 'J'; B.Data.CreateOutStream(O{enc}); A.WriteTo(O); B.Insert();
+             B.Get('J'); B.CalcFields(Data); B.Data.CreateInStream(I{enc}); I.ReadText(T); exit(T);"
+        )
+    };
+    assert_eq!(text(vars, &body("")), "[1,{\"k\":\"v\"}]");
+    assert_eq!(text(vars, &body(", TextEncoding::UTF8")), "[1,{\"k\":\"v\"}]");
+    assert_eq!(
+        text(
+            base!("J: JsonObject;"),
+            "J.Add('a', 1); B.Data.CreateOutStream(O, TextEncoding::UTF8); J.WriteTo(O); B.Data.CreateInStream(I, TextEncoding::UTF8); I.ReadText(T); exit(T);"
+        ),
+        "{\"a\":1}"
+    );
+}
+
+#[test]
+fn json_write_to_an_out_stream_appends_at_the_stream_position() {
+    // Like WriteText (streams/TestArrayStreamContracts.al InStream_Sequential_WriteText_ConcatenatesContent).
+    let t = text(
+        base!("A: JsonArray;"),
+        "A.Add(1); B.Data.CreateOutStream(O); O.WriteText('x'); A.WriteTo(O); O.WriteText('y');
+         B.Data.CreateInStream(I); I.ReadText(T); exit(T);",
+    );
+    assert_eq!(t, "x[1]y");
+}
+
+#[test]
+fn json_read_from_an_in_stream_parses_what_the_stream_holds() {
+    // The same parse as ReadFrom(Text) (json/TestJsonObject.al, TestJsonArray.al); the stream's
+    // rest is read and the position moves to its end. The bytes are taken as UTF-8 only where that
+    // equals the stream's own reading (docs/probes-needed.md).
+    let vars = base!("A: JsonArray; J: JsonObject; Ok: Boolean;");
+    assert_eq!(
+        text(
+            vars,
+            "B.Data.CreateOutStream(O, TextEncoding::UTF8); O.WriteText('[1,{\"k\":\"v\"}]'); B.Data.CreateInStream(I, TextEncoding::UTF8);
+             Ok := A.ReadFrom(I); exit(Format(Ok) + Format(A.Count()) + Format(I.EOS()));"
+        ),
+        "Yes2Yes"
+    );
+    assert_eq!(
+        text(
+            vars,
+            "B.Data.CreateOutStream(O); O.WriteText('{\"k\":5}'); B.Data.CreateInStream(I);
+             Ok := J.ReadFrom(I); exit(Format(Ok) + Format(J.Contains('k')));"
+        ),
+        "YesYes"
+    );
+    // The default (Windows) stream with a non-ASCII byte, and a UTF-16 stream, are refused.
+    assert!(refused(
+        vars,
+        "B.Data.CreateOutStream(O); O.WriteText('[\"\u{e9}\"]'); B.Data.CreateInStream(I); Ok := A.ReadFrom(I); exit('');"
+    ));
+    assert!(refused(
+        vars,
+        "B.Data.CreateOutStream(O, TextEncoding::UTF16); O.WriteText('[1]'); B.Data.CreateInStream(I, TextEncoding::UTF16); Ok := A.ReadFrom(I); exit('');"
+    ));
+}
+
+#[test]
+fn json_write_to_then_read_from_a_stream_round_trips() {
+    // The install path of System Application's "Reten. Pol. Allowed Tbl. Impl." and "Upgrade Tag
+    // Impl.": WriteTo(OutStream) into a Blob, then ReadFrom(InStream) of it.
+    let t = text(
+        base!("A: JsonArray; A2: JsonArray;"),
+        "A.Add(1); A.Add('x'); B.Code := 'R'; B.Data.CreateOutStream(O, TextEncoding::UTF8); A.WriteTo(O); B.Insert();
+         B.Get('R'); B.CalcFields(Data); B.Data.CreateInStream(I, TextEncoding::UTF8);
+         if not A2.ReadFrom(I) then exit('fail'); A2.WriteTo(T); exit(T);",
+    );
+    assert_eq!(t, "[1,\"x\"]");
+}
+
+#[test]
+fn read_into_a_text_reads_back_what_write_of_a_text_wrote() {
+    // streams/TestStreamsRuntimeContracts.al:OutStream_Write_BinaryFormsOfEachType pins Write(Text)
+    // as the characters and a zero byte. Read(Text) takes the characters up to that zero byte; a
+    // stream without one is refused (what BC reads then is not pinned).
+    let t = text(
+        base!("A: Text; C: Text; E: Text;"),
+        "B.Data.CreateOutStream(O, TextEncoding::UTF8); O.Write('abc'); O.Write('de'); B.Data.CreateInStream(I, TextEncoding::UTF8);
+         I.Read(A); I.Read(C); exit(A + '|' + C + '|' + Format(I.EOS()));",
+    );
+    assert_eq!(t, "abc|de|Yes");
+    assert!(refused(
+        base!("A: Text;"),
+        "B.Data.CreateOutStream(O); O.WriteText('abc'); B.Data.CreateInStream(I); I.Read(A); exit(A);"
+    ));
+}

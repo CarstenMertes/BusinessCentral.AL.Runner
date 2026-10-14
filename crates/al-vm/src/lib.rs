@@ -38,6 +38,7 @@ mod relations;
 mod rename;
 mod reports;
 mod sessionops;
+mod testdata;
 mod transactions;
 mod ui;
 mod usertable;
@@ -63,6 +64,9 @@ pub struct Engine {
     /// Table objects whose rows the install baseline should have created and did not (ADR-013
     /// decision 5): a `Get` that finds nothing in dependency code is not BC's answer for them.
     pub unseeded: std::collections::HashSet<usize>,
+    /// Rows of a restored company, read when a session first touches a table (ADR-020). `None`: a
+    /// run without test data.
+    pub test_data: Option<al_host::testdata::TestData>,
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
@@ -149,6 +153,7 @@ impl Engine {
             target,
             dotnet,
             unseeded: Default::default(),
+            test_data: None,
             unevaluable_init,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
@@ -324,11 +329,19 @@ impl Session {
 
     /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
+        // The session of a run with test data works in the restored company.
+        let host = match &engine.test_data {
+            Some(td) => host.in_company(td.provider.company()),
+            None => host,
+        };
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
         let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
-        let store =
+        let mut store =
             al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+        if let Some(td) = &engine.test_data {
+            store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
+        }
         let mut session = Session {
             global_language: host.identity.global_language(),
             host,
@@ -496,6 +509,8 @@ impl Session {
     /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
     pub fn set_install_scope(&mut self, on: bool) {
         self.install_scope = on;
+        // Install code does not rewrite the rows of a restored company (ADR-020).
+        self.store.guard_backed_rows(on);
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
@@ -1403,6 +1418,7 @@ fn constant(c: &ir::Const) -> Value {
         ir::Const::DateTime(t) => Value::DateTime(*t),
         ir::Const::Option(i, m) => Value::Option(*i, m.clone().into()),
         ir::Const::Enum(o, v) => Value::Enum(*o, *v),
+        ir::Const::DateFormula(f) => Value::DateFormula(f.clone()),
         ir::Const::FieldPos(p) => Value::Integer(*p as i32),
     }
 }

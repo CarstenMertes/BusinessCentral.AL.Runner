@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 al-bcdb = { path = "../al-bcdb" }
+al-bcdb-std = { path = "../al-bcdb-std" }
 rayon = "1"
 serde_json.workspace = true
 

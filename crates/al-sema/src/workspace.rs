@@ -1058,6 +1058,45 @@ mod tests {
     }
 
     #[test]
+    fn a_table_moved_to_another_app_does_not_make_its_name_ambiguous() {
+        // Base Application 27.5 keeps `table 230 "Source Code"` with `ObsoleteState = Moved` while
+        // Business Foundation declares the live one; `Record "Source Code"` in Company-Initialize
+        // names the live table.
+        let live = app(
+            "foundation",
+            &[],
+            &[(
+                "sc.al",
+                "namespace Microsoft.Foundation.AuditCodes; table 230 \"Source Code\" { fields { field(1; Code; Code[10]) { } } }",
+            )],
+        );
+        let old = app(
+            "base",
+            &["foundation"],
+            &[
+                (
+                    "sc.al",
+                    "namespace Microsoft.Foundation.AuditCodes; table 230 \"Source Code\" { ObsoleteState = Moved; MovedTo = 'f3552374'; fields { field(1; Code; Code[10]) { } } }",
+                ),
+                (
+                    "ci.al",
+                    "namespace Microsoft.Foundation.Company; using Microsoft.Foundation.AuditCodes; codeunit 2 CI { var S: Record \"Source Code\"; }",
+                ),
+            ],
+        );
+        let ws = Workspace::load_apps(
+            vec![live, old],
+            vec![AppKind::Dependency, AppKind::Dependency],
+            &al_version::corpus_symbols(27),
+        );
+        let file = ws.objects.iter().find(|o| o.name == "CI").unwrap().file;
+        match ws.resolve_ref(file, ObjKind::Table, &["Source Code".to_string()]) {
+            Resolution::Found(i) => assert_eq!(ws.apps[ws.objects[i].app].id, "foundation"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn run_time_resolution_only_trusts_tiers_no_absent_app_could_shadow() {
         // corpus fieldref/TestRelationOwnNamespaceDependency.al, TestRelationTargetNamespaceScope.al:
         // a workspace table must not stand in for a Base Application one that is not here.

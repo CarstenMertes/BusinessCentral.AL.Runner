@@ -186,6 +186,20 @@ fn global_language_can_be_set() {
 }
 
 #[test]
+fn global_language_can_be_assigned_like_a_property() {
+    // `GlobalLanguage := Id` is the other spelling of `GlobalLanguage(Id)`; System Application's
+    // "Reten. Pol. Telemetry Impl." sets and restores it that way. The setter itself is pinned by
+    // session/TestSessionSettings.al:534.
+    assert_eq!(
+        text(
+            "Saved: Integer;",
+            "Saved := GlobalLanguage(); GlobalLanguage := 1031; exit(Format(Saved) + '>' + Format(GlobalLanguage));"
+        ),
+        "1033>1031"
+    );
+}
+
+#[test]
 fn client_types_are_callable() {
     // session/TestSessionExtended.al:21,31.
     assert!(truth(
@@ -393,6 +407,21 @@ fn the_current_transaction_type_reads_and_a_set_is_refused() {
         matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("CurrentTransactionType")),
         "{r:?}"
     );
+}
+
+#[test]
+fn hyperlink_lowers_and_is_refused_only_when_it_runs() {
+    // Nothing pins what a test run does with a URL the client would open (docs/probes-needed.md), so
+    // a call is refused at run time; a routine that only mentions it still lowers and runs, which
+    // is how pages of Base Application with a `Hyperlink` call in an unused routine stay usable.
+    assert_eq!(
+        text("", "if false then Hyperlink('https://example.com'); exit('ran');"),
+        "ran"
+    );
+    match run("procedure F(): Text begin Hyperlink('https://example.com'); exit('ran'); end;") {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("Hyperlink"), "{why}"),
+        other => panic!("{other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------- randomness

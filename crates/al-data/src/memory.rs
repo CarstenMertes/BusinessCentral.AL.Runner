@@ -29,6 +29,62 @@ impl Ord for Key {
 type Table = im::OrdMap<Key, Row>;
 type Tables = im::OrdMap<(String, u32), Table>;
 
+/// The rows of one table, built to be handed to a [`MemStore`] by a [`Backing`].
+#[derive(Clone)]
+pub struct Rows(Table, i64);
+
+impl Rows {
+    /// The largest value of the table's AutoIncrement field among the rows (0 when it has none):
+    /// the counter continues above it, as an identity column does after a restore.
+    pub fn with_auto_increment_floor(mut self, floor: i64) -> Rows {
+        self.1 = floor;
+        self
+    }
+
+    pub fn auto_increment_floor(&self) -> i64 {
+        self.1
+    }
+
+    /// The table `rows` make. Two rows with the same primary key are an error carrying how many
+    /// rows were lost to it: a table is never built from rows that overwrite each other.
+    pub fn from_rows(t: &TableDef, rows: Vec<Row>) -> Result<Rows, usize> {
+        let n = rows.len();
+        let map: Table = rows.into_iter().map(|r| (Key(t.primary_key(&r)), r)).collect();
+        if map.len() == n {
+            Ok(Rows(map, 0))
+        } else {
+            Err(n - map.len())
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Rows a table holds before any write to it, read when the table is first touched (ADR-020: test
+/// data). A table the store has no entry for reads as the backing's rows; the first write copies
+/// them into the store, and from then on the store holds the table. A rollback to a state without
+/// the entry reads the backing again: its rows are committed data.
+pub trait Backing {
+    /// The company the rows belong to.
+    fn company(&self) -> &str;
+    /// The rows of table `object` for `company` (the empty name for a table that is not per
+    /// company); `None` when the backing has none to offer. Answering is cheap after the first
+    /// time: a clone of a shared map.
+    fn rows(&self, company: &str, object: u32) -> Option<Rows>;
+    /// Whether the table is served at all (a table with rows to offer in some company).
+    fn has_rows(&self, object: u32) -> bool {
+        self.rows(self.company(), object)
+            .or_else(|| self.rows("", object))
+            .is_some_and(|r| !r.is_empty())
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct MemStore {
     tables: Tables,
@@ -41,6 +97,11 @@ pub struct MemStore {
     counter: u64,
     /// Tables that have no stored rows (ADR-019).
     virtuals: Option<std::rc::Rc<dyn VirtualTables>>,
+    /// Rows a table holds before anything wrote to it (ADR-020).
+    backing: Option<std::rc::Rc<dyn Backing>>,
+    /// While set, a change to a row of the backing (a modify, delete or rename) is refused. Install
+    /// code runs under it: a restored company is not rewritten by the code that sets one up.
+    guard_backed: bool,
 }
 
 fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
@@ -65,6 +126,42 @@ impl MemStore {
             virtuals: Some(v),
             ..Default::default()
         }
+    }
+
+    /// This store with `b` as the rows its untouched tables read.
+    pub fn with_backing(mut self, b: std::rc::Rc<dyn Backing>) -> MemStore {
+        self.backing = Some(b);
+        self
+    }
+
+    /// Refuses (`true`) or allows (`false`) changes to the rows the backing holds. Inserts of other
+    /// keys are always allowed.
+    pub fn guard_backed_rows(&mut self, on: bool) {
+        self.guard_backed = on;
+    }
+
+    /// Whether the guard forbids changing the row with this key: the backing holds it.
+    fn guarded(&self, cx: &AccessContext, t: &TableDef, key: &Key) -> bool {
+        if !self.guard_backed {
+            return false;
+        }
+        let slot = slot(cx, t);
+        self.backing
+            .as_ref()
+            .and_then(|b| b.rows(&slot.0, slot.1))
+            .is_some_and(|r| r.0.contains_key(key))
+    }
+
+    fn refuse_guarded(t: &TableDef, what: &str) -> StoreError {
+        StoreError::Refused(format!(
+            "{what} of a row of {} that the restored company holds (install code does not rewrite restored rows)",
+            t.name
+        ))
+    }
+
+    /// The rows table `object` has to offer `company`, if the store has a backing.
+    pub fn backed_rows(&self, company: &str, object: u32) -> Option<Rows> {
+        self.backing.as_ref()?.rows(company, object)
     }
 
     /// The store without its provider: the data only. A captured snapshot (ADR-004) holds no
@@ -107,7 +204,12 @@ impl MemStore {
 
     /// Whether table object `object` holds a row now (committed or not) in any company.
     pub fn has_rows(&self, object: u32) -> bool {
-        self.tables.iter().any(|((_, o), t)| *o == object && !t.is_empty())
+        if self.tables.iter().any(|((_, o), t)| *o == object && !t.is_empty()) {
+            return true;
+        }
+        // A table the store holds is what its rows are now; only an absent one reads the backing.
+        let held = self.tables.keys().any(|(_, o)| *o == object);
+        !held && self.backing.as_ref().is_some_and(|b| b.has_rows(object))
     }
 
     /// The table objects that hold a committed row in any company.
@@ -124,15 +226,28 @@ impl MemStore {
         self.tables
             .iter()
             .any(|((c, _), t)| !c.is_empty() && c.eq_ignore_ascii_case(company) && !t.is_empty())
+            || self
+                .backing
+                .as_ref()
+                .is_some_and(|b| !company.is_empty() && b.company().eq_ignore_ascii_case(company))
     }
 
     /// The companies that hold a row in per-company table `object`, committed or not.
     pub fn companies_with_rows(&self, object: u32) -> Vec<String> {
-        self.tables
+        let mut out: Vec<String> = self
+            .tables
             .iter()
             .filter(|((c, o), t)| *o == object && !c.is_empty() && !t.is_empty())
             .map(|((c, _), _)| c.clone())
-            .collect()
+            .collect();
+        if let Some(b) = &self.backing {
+            let company = b.company();
+            let held = self.tables.contains_key(&(company.to_string(), object));
+            if !held && b.rows(company, object).is_some_and(|r| !r.is_empty()) {
+                out.push(company.to_string());
+            }
+        }
+        out
     }
 
     /// Removes every row of `company`'s tables, as deleting the company does. Part of the open
@@ -165,12 +280,29 @@ impl MemStore {
         self.versions.insert(slot(cx, t), self.counter);
     }
 
-    fn table(&self, cx: &AccessContext, t: &TableDef) -> Option<&Table> {
-        self.tables.get(&slot(cx, t))
+    fn table(&self, cx: &AccessContext, t: &TableDef) -> Option<std::borrow::Cow<'_, Table>> {
+        let slot = slot(cx, t);
+        match self.tables.get(&slot) {
+            Some(table) => Some(std::borrow::Cow::Borrowed(table)),
+            None => self
+                .backing
+                .as_ref()?
+                .rows(&slot.0, slot.1)
+                .map(|r| std::borrow::Cow::Owned(r.0)),
+        }
     }
 
     fn table_mut(&mut self, cx: &AccessContext, t: &TableDef) -> &mut Table {
-        self.tables.entry(slot(cx, t)).or_default()
+        let slot = slot(cx, t);
+        if !self.tables.contains_key(&slot) {
+            let start = self
+                .backing
+                .as_ref()
+                .and_then(|b| b.rows(&slot.0, slot.1))
+                .map_or_else(Table::new, |r| r.0);
+            self.tables.insert(slot.clone(), start);
+        }
+        self.tables.get_mut(&slot).expect("the slot was just inserted")
     }
 }
 
@@ -201,6 +333,9 @@ impl Store for MemStore {
             return Err(self.read_only(t, "Modify"));
         }
         let k = Key(t.primary_key(&row));
+        if self.guarded(cx, t, &k) {
+            return Err(Self::refuse_guarded(t, "Modify"));
+        }
         let table = self.table_mut(cx, t);
         if !table.contains_key(&k) {
             return Ok(WriteOutcome::NotFound);
@@ -213,6 +348,9 @@ impl Store for MemStore {
     fn delete(&mut self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<WriteOutcome, StoreError> {
         if self.virtual_of(t).is_some() {
             return Err(self.read_only(t, "Delete"));
+        }
+        if self.guarded(cx, t, &Key(pk.to_vec())) {
+            return Err(Self::refuse_guarded(t, "Delete"));
         }
         Ok(match self.table_mut(cx, t).remove(&Key(pk.to_vec())) {
             Some(_) => {
@@ -234,6 +372,9 @@ impl Store for MemStore {
             return Err(self.read_only(t, "Rename"));
         }
         let new_k = Key(t.primary_key(&row));
+        if self.guarded(cx, t, &Key(old.to_vec())) {
+            return Err(Self::refuse_guarded(t, "Rename"));
+        }
         let table = self.table_mut(cx, t);
         if !table.contains_key(&Key(old.to_vec())) {
             return Ok(RenameOutcome::NotFound);
@@ -296,12 +437,20 @@ impl Store for MemStore {
         if self.virtual_of(t).is_some() {
             return Err(self.read_only(t, "DeleteAll"));
         }
+        let doomed: Vec<Key> = self
+            .table(cx, t)
+            .map(|table| {
+                table
+                    .iter()
+                    .filter(|(_, r)| passes(r, f))
+                    .map(|(k, _)| k.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if doomed.iter().any(|k| self.guarded(cx, t, k)) {
+            return Err(Self::refuse_guarded(t, "DeleteAll"));
+        }
         let table = self.table_mut(cx, t);
-        let doomed: Vec<Key> = table
-            .iter()
-            .filter(|(_, r)| passes(r, f))
-            .map(|(k, _)| k.clone())
-            .collect();
         for k in &doomed {
             table.remove(k);
         }
@@ -438,6 +587,168 @@ mod tests {
         assert_eq!(s1, s.table_stamp(&cx, &t), "a rollback restores the committed stamp");
         s.insert(&cx, &t, vec![Value::Integer(3)]).unwrap();
         assert_ne!(s2, s.table_stamp(&cx, &t), "a stamp is never reused for other content");
+    }
+
+    /// Rows a table holds before anything wrote to it: three rows for company `C`, table 7.
+    struct ThreeRows {
+        reads: std::cell::Cell<usize>,
+    }
+
+    impl Backing for ThreeRows {
+        fn company(&self) -> &str {
+            "C"
+        }
+        fn rows(&self, company: &str, object: u32) -> Option<Rows> {
+            if company != "C" || object != 7 {
+                return None;
+            }
+            self.reads.set(self.reads.get() + 1);
+            let t = crate::contract::table();
+            Rows::from_rows(
+                &t,
+                vec![
+                    crate::contract::row("A", 1, 1),
+                    crate::contract::row("B", 2, 1),
+                    crate::contract::row("C", 3, 2),
+                ],
+            )
+            .ok()
+        }
+    }
+
+    fn backed() -> (MemStore, std::rc::Rc<ThreeRows>) {
+        let b = std::rc::Rc::new(ThreeRows {
+            reads: Default::default(),
+        });
+        (MemStore::default().with_backing(b.clone()), b)
+    }
+
+    #[test]
+    fn a_table_nothing_wrote_to_reads_the_backing_rows() {
+        let (s, _) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 3);
+        assert!(s.get(&cx, &t, &[Value::Code("B".into())]).unwrap().is_some());
+        // another company and another table see nothing
+        assert_eq!(s.count(&crate::contract::cx("D"), &t, &[]).unwrap(), 0);
+        let mut other = t.clone();
+        other.object = 8;
+        assert_eq!(s.count(&cx, &other, &[]).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_write_starts_from_the_backing_rows() {
+        let (mut s, _) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        assert_eq!(
+            s.insert(&cx, &t, crate::contract::row("A", 9, 9)).unwrap(),
+            InsertOutcome::AlreadyExists,
+            "a restored key cannot be inserted again"
+        );
+        assert_eq!(
+            s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap(),
+            InsertOutcome::Inserted
+        );
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 4);
+        assert_eq!(
+            s.delete(&cx, &t, &[Value::Code("A".into())]).unwrap(),
+            WriteOutcome::Done
+        );
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 3);
+    }
+
+    #[test]
+    fn deleting_every_restored_row_leaves_the_table_empty_not_restored_again() {
+        let (mut s, _) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        assert_eq!(s.delete_all(&cx, &t, &[]).unwrap(), 3);
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 0);
+        s.commit();
+        s.rollback();
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_rollback_puts_the_backing_rows_back_and_a_commit_keeps_a_write() {
+        let (mut s, _) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
+        s.rollback();
+        assert_eq!(
+            s.count(&cx, &t, &[]).unwrap(),
+            3,
+            "the restored rows are committed data"
+        );
+        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
+        s.commit();
+        s.rollback();
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 4);
+    }
+
+    #[test]
+    fn a_snapshot_taken_before_a_touch_still_reads_the_backing_rows() {
+        let (s, _) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let snap = s.snapshot();
+        let mut s = s;
+        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
+        s.restore(snap);
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 3);
+    }
+
+    #[test]
+    fn the_company_and_table_queries_include_the_backing_rows() {
+        let (s, _) = backed();
+        assert!(s.has_rows(7) && !s.has_rows(8));
+        assert!(s.has_company_rows("c") && !s.has_company_rows("D"));
+        assert_eq!(s.companies_with_rows(7), vec!["C".to_string()]);
+    }
+
+    #[test]
+    fn the_guard_refuses_changes_to_backing_rows_only() {
+        let (mut s, _) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        s.guard_backed_rows(true);
+        let refused = |r: Result<_, StoreError>| matches!(r, Err(StoreError::Refused(_)));
+        assert!(refused(s.modify(&cx, &t, crate::contract::row("A", 9, 9)).map(|_| ())));
+        assert!(refused(s.delete(&cx, &t, &[Value::Code("A".into())]).map(|_| ())));
+        assert!(refused(
+            s.rename(&cx, &t, &[Value::Code("A".into())], crate::contract::row("Z", 1, 1))
+                .map(|_| ())
+        ));
+        assert!(refused(s.delete_all(&cx, &t, &[]).map(|_| ())));
+        // a row the guarded code made itself is its own to change
+        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
+        assert_eq!(
+            s.modify(&cx, &t, crate::contract::row("D", 5, 3)).unwrap(),
+            WriteOutcome::Done
+        );
+        assert_eq!(
+            s.delete(&cx, &t, &[Value::Code("D".into())]).unwrap(),
+            WriteOutcome::Done
+        );
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 3);
+        s.guard_backed_rows(false);
+        assert_eq!(
+            s.modify(&cx, &t, crate::contract::row("A", 9, 9)).unwrap(),
+            WriteOutcome::Done
+        );
+    }
+
+    #[test]
+    fn the_backing_is_asked_again_only_while_the_slot_is_absent() {
+        let (mut s, b) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
+        let after_write = b.reads.get();
+        for _ in 0..5 {
+            s.count(&cx, &t, &[]).unwrap();
+        }
+        assert_eq!(
+            b.reads.get(),
+            after_write,
+            "a table the store holds is not read from the backing again"
+        );
     }
 
     #[test]

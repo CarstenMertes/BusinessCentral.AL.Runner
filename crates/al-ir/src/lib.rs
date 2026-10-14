@@ -762,6 +762,10 @@ pub struct Field {
     pub calc: Option<CalcFormula>,
     /// Why a declared `CalcFormula` cannot be calculated yet.
     pub calc_refusal: Option<String>,
+    /// The object index of the table or table extension that declares the field; `None` for a
+    /// system field. Its app is the app that owns the field's column (test data, ADR-020).
+    #[serde(default)]
+    pub declared_in: Option<u32>,
 }
 
 /// One arm of a `TableRelation`: `if (Kind = const(A)) Table.Field where(...)`.
@@ -942,6 +946,8 @@ pub enum Const {
     DateTime(i64),
     Option(i32, Vec<String>),
     Enum(u32, i32),
+    /// A date formula as written (`1Y`), already checked to be one the runtime can calculate with.
+    DateFormula(String),
     /// A field reference passed to a record method (`SetRange(Field, ...)`): its position.
     FieldPos(u32),
 }

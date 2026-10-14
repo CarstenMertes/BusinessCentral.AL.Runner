@@ -2099,6 +2099,7 @@ impl Session {
             return unsupported(format!("{how} on a built-in control"));
         };
         let wanted = args.get(1).cloned().unwrap_or(Value::Null);
+        let result_used = self.ret_used;
         let origin = self.row_key(&self.page_rec(st))?;
         let (first_step, step) = match how {
             "FindFirstField" => ("First", "Next"),
@@ -2115,6 +2116,12 @@ impl Session {
         }
         let mut key = origin;
         self.page_go_to_key(st, &mut key)?;
+        // A FindFirstField whose result is not used raises when no row carries the value
+        // (handlers/TestPagePlatformPageSourceTable_Tests.al:125-131, the whole message). The same
+        // for FindNextField and FindPreviousField is not pinned: they keep answering false.
+        if how == "FindFirstField" && !result_used {
+            return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+        }
         Ok(Value::Boolean(false))
     }
 

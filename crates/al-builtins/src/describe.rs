@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn option_names_its_member() {
-        let members: Rc<[String]> = Rc::from(vec!["A".to_string(), "B".to_string()]);
+        let members: std::sync::Arc<[String]> = std::sync::Arc::from(vec!["A".to_string(), "B".to_string()]);
         assert_eq!(Value::Option(1, members.clone()).describe(), "Option member 'B'");
         assert_eq!(Value::Option(9, members).describe(), "Option member 9");
     }

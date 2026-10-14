@@ -63,7 +63,7 @@ pub struct Args {
     pub top_refusals_area: Option<String>,
     /// `--baseline-diff`: list what newly passes, what fails and what left the baseline.
     pub baseline_diff: bool,
-    /// `--timings`: print how long loading, compiling and running took.
+    /// `--timings`: print how long loading, compiling and running took, and the slowest test codeunits.
     pub timings: bool,
     /// `--timings-table FILE` (repeatable): print the timing table of these `--json` reports, then
     /// stop. CI uses it for the runs whose reports are not part of the summary.
@@ -215,8 +215,9 @@ DIAGNOSE
   --top-refusals-area FOLDER  the same for one corpus folder; also selects that folder
   --baseline-diff             per version: cases that newly pass, cases that fail and are not in
                               the baseline, and baseline cases that no longer pass; listed by area
-  --timings                   print how long loading, compiling and running took (the --json and
-                              --markdown reports always carry it)
+  --timings                   print how long loading, compiling and running took, and the slowest
+                              test codeunits (the --json and --markdown reports always carry the
+                              times)
   --timings-table FILE        print the timing table of the --json reports named (repeatable), then stop
 
 BASELINE AND REPORTS

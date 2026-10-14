@@ -1405,3 +1405,48 @@ fn calcsums_refuses_stored_non_numbers_and_flow_fields() {
     );
     assert!(unsupported(r).contains("only stored number fields are implemented"));
 }
+
+/// min and max over the second field of a two-field primary key, with the first field pinned,
+/// are the first and last row of the range; the other group's rows and a filter on the field
+/// itself leave them right (corpus record/TestDateVirtualTableFlowField.al:94-110 has the same
+/// shape over Date: key (Period Type, Period Start)).
+#[test]
+fn min_and_max_over_a_pinned_key_prefix_ignore_the_rows_of_other_groups() {
+    const T: &str = r#"
+table 60610 "MM Row"
+{
+    fields
+    {
+        field(1; Grp; Integer) { }
+        field(2; Seq; Integer) { }
+        field(3; "Seq Filter"; Integer) { FieldClass = FlowFilter; }
+        field(4; LowSeq; Integer) { FieldClass = FlowField; CalcFormula = min("MM Row".Seq where(Grp = const(1), Seq = field("Seq Filter"))); }
+        field(5; HighSeq; Integer) { FieldClass = FlowField; CalcFormula = max("MM Row".Seq where(Grp = const(1), Seq = field("Seq Filter"))); }
+        field(6; HighAny; Integer) { FieldClass = FlowField; CalcFormula = max("MM Row".Seq); }
+    }
+    keys { key(PK; Grp, Seq) { Clustered = true; } }
+}
+"#;
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var R: Record \"MM Row\"; Q: Record \"MM Row\"; S: Text;
+        begin
+            R.Grp := 1; R.Seq := 30; R.Insert();
+            R.Grp := 2; R.Seq := 99; R.Insert();
+            R.Grp := 1; R.Seq := 10; R.Insert();
+            R.Grp := 1; R.Seq := 20; R.Insert();
+            R.Grp := 0; R.Seq := 5; R.Insert();
+            Q.CalcFields(LowSeq, HighSeq, HighAny);
+            S := Format(Q.LowSeq) + '/' + Format(Q.HighSeq) + '/' + Format(Q.HighAny);
+            Q.SetRange(\"Seq Filter\", 11, 25);
+            Q.CalcFields(LowSeq, HighSeq);
+            S := S + ' ' + Format(Q.LowSeq) + '/' + Format(Q.HighSeq);
+            Q.SetRange(\"Seq Filter\", 31, 40);
+            Q.CalcFields(LowSeq, HighSeq);
+            exit(S + ' ' + Format(Q.LowSeq) + '/' + Format(Q.HighSeq));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "10/30/99 20/20 0/0");
+}

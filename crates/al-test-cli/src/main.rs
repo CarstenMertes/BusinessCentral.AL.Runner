@@ -400,6 +400,24 @@ fn run_version(
             "timings: BC {}: load apps and dependencies {:.2} s, compile {:.2} s, install baseline {:.2} s, run tests {:.2} s, total {:.2} s",
             version.bc_version, timings.load_s, timings.compile_s, timings.baseline_s, timings.tests_s, timings.total_s
         );
+        let c = &p.compile_parts;
+        eprintln!(
+            "compile: load {:.2} s, members {:.2} s, check workspace {:.2} s, baseline roots {:.2} s, demand {:.2} s, check rest {:.2} s, lower {:.2} s, engine {:.2} s",
+            c.load.as_secs_f64(),
+            c.members.as_secs_f64(),
+            c.check.workspace.as_secs_f64(),
+            c.check.baseline.as_secs_f64(),
+            c.check.demand.as_secs_f64(),
+            c.check.rest.as_secs_f64(),
+            c.lower.as_secs_f64(),
+            p.engine.as_secs_f64()
+        );
+        let slowest: Vec<String> = p
+            .slowest
+            .iter()
+            .map(|(id, name, t)| format!("{id} {name} {:.2} s", t.as_secs_f64()))
+            .collect();
+        eprintln!("slowest test codeunits: {}", slowest.join("; "));
     }
     if rt.panics > 0 {
         eprintln!(

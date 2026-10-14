@@ -472,3 +472,33 @@ fn explain_needs_one_test() {
     assert_eq!(none.code, 2);
     assert!(none.err.contains("no test matches"), "{}", none.err);
 }
+
+#[test]
+fn timings_names_the_slowest_test_codeunits() {
+    let r = cli(&["--no-ratchet", "--timings", "--codeunit", &SMALL_CU.to_string()]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(r.err.contains("timings: BC 29"), "{}", r.err);
+    let line = r
+        .err
+        .lines()
+        .find(|l| l.starts_with("slowest test codeunits:"))
+        .unwrap_or_else(|| panic!("no slowest line:\n{}", r.err));
+    assert!(line.contains(&format!("{SMALL_CU} ")), "{line}");
+    // The compile is split into its parts.
+    let detail = r
+        .err
+        .lines()
+        .find(|l| l.starts_with("compile:"))
+        .unwrap_or_else(|| panic!("no compile line:\n{}", r.err));
+    for part in [
+        "load",
+        "members",
+        "check workspace",
+        "baseline roots",
+        "demand",
+        "lower",
+        "engine",
+    ] {
+        assert!(detail.contains(part), "{part} missing in {detail}");
+    }
+}

@@ -44,12 +44,14 @@ mod xmlports;
 pub use transactions::TxModel;
 pub use ui::{UiHandler, UiKind};
 
+static NEXT_ENGINE_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub struct Engine {
-    pub program: ir::Program,
+    pub program: Arc<ir::Program>,
     /// Per object, per routine: why it cannot run, if it cannot.
     pub blocked: Vec<Vec<Option<String>>>,
     /// Store schema per table object.
-    pub tables: Vec<Option<al_data::TableDef>>,
+    pub tables: Vec<Option<Arc<al_data::TableDef>>>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
     /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
@@ -62,16 +64,22 @@ pub struct Engine {
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
+    /// Names this engine among all those the process built: state shared between sessions of one
+    /// engine is keyed by it.
+    pub uid: u64,
+    /// The tables a non-manual subscriber listens to the delete events of (see
+    /// `autoinc::tables_with_delete_subscribers`), found when `Truncate` first asks.
+    pub(crate) delete_subscribed: std::sync::OnceLock<std::collections::HashSet<String>>,
 }
 
 impl Engine {
-    pub fn new(program: ir::Program, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
+    pub fn new(program: impl Into<Arc<ir::Program>>, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
         Engine::with_config(program, blocked, None, dotnet::DotNetConfig::default())
     }
 
     /// An engine that runs as `target`: version-gated behaviour follows it (ADR-015 3.4).
     pub fn with_target(
-        program: ir::Program,
+        program: impl Into<Arc<ir::Program>>,
         blocked: Vec<Vec<Option<String>>>,
         target: Option<al_version::Target>,
     ) -> Arc<Engine> {
@@ -80,7 +88,7 @@ impl Engine {
 
     /// An engine whose `DotNet` calls are served by `dotnet` (ADR-014). `new` uses no .NET.
     pub fn with_dotnet(
-        program: ir::Program,
+        program: impl Into<Arc<ir::Program>>,
         blocked: Vec<Vec<Option<String>>>,
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
@@ -89,31 +97,34 @@ impl Engine {
 
     /// Target and .NET host together.
     pub fn with_config(
-        program: ir::Program,
+        program: impl Into<Arc<ir::Program>>,
         blocked: Vec<Vec<Option<String>>>,
         target: Option<al_version::Target>,
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
+        let program: Arc<ir::Program> = program.into();
         let tables = program
             .objects
             .iter()
             .enumerate()
             .map(|(i, o)| {
-                o.table.as_ref().map(|t| al_data::TableDef {
-                    object: i as u32,
-                    name: o.name.clone(),
-                    fields: t
-                        .fields
-                        .iter()
-                        .map(|f| al_data::FieldDef {
-                            id: f.id,
-                            name: f.name.clone(),
-                            ty: f.ty.clone(),
-                            stored: f.stored,
-                        })
-                        .collect(),
-                    keys: t.keys.clone(),
-                    per_company: t.per_company,
+                o.table.as_ref().map(|t| {
+                    Arc::new(al_data::TableDef {
+                        object: i as u32,
+                        name: o.name.clone(),
+                        fields: t
+                            .fields
+                            .iter()
+                            .map(|f| al_data::FieldDef {
+                                id: f.id,
+                                name: f.name.clone(),
+                                ty: f.ty.clone(),
+                                stored: f.stored,
+                            })
+                            .collect(),
+                        keys: t.keys.clone(),
+                        per_company: t.per_company,
+                    })
                 })
             })
             .collect();
@@ -135,6 +146,8 @@ impl Engine {
             dotnet,
             unseeded: Default::default(),
             unevaluable_init,
+            uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            delete_subscribed: Default::default(),
         })
     }
 }

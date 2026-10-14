@@ -8,7 +8,7 @@
 
 use super::mat::Entry;
 use super::objects::{Catalog, base_kind, ident, member, prop, string_lit, truthy};
-use super::{Providers, blank, option, pos};
+use super::{Blank, Providers, option, pos};
 use al_builtins::value::{RtType, Value};
 use al_data::{Row, TableDef};
 use al_ir::{Binding, ControlKind, Object, PropVal};
@@ -173,11 +173,12 @@ pub(super) fn page_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
+    let blank = Blank::new(t);
     for o in c.objects {
         let (Some(id), "page") = (o.id, base_kind(o)) else {
             continue;
         };
-        let mut key = blank(t);
+        let mut key = blank.row();
         key[pos(t, 1)] = Value::Integer(id as i32);
         match page_metadata_row(&c, o, t, key.clone()) {
             Ok(r) => out.push(Entry::ok(r)),
@@ -201,10 +202,7 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
         }
     };
     let src_id = source_table_id(c, o)?;
-    let src = c
-        .objects
-        .iter()
-        .find(|x| x.id == Some(src_id) && base_kind(x) == "table" && src_id != 0);
+    let src = c.table_by_id(src_id).filter(|_| src_id != 0);
     // A page with no source table has no source object: its flags are all false and its texts empty
     // (AL Runner, measured on BC: docs of RecordPatches.PageMetadataSourceObject).
     let has_source = src_id != 0;
@@ -290,12 +288,13 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
     let engine = p.engine();
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
+    let blank = Blank::new(t);
     for o in c.objects {
         let (Some(id), "page") = (o.id, base_kind(o)) else {
             continue;
         };
         let Some(page) = &o.page else {
-            let mut k = blank(t);
+            let mut k = blank.row();
             k[pos(t, 1)] = Value::Integer(id as i32);
             out.push(Entry::poisoned_prefix(
                 k,
@@ -309,13 +308,13 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             if ctl.kind != ControlKind::Field {
                 continue;
             }
-            let mut r = blank(t);
+            let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(id as i32);
             r[pos(t, 2)] = Value::Integer(n as i32 + 1);
             match control_row(&c, o, src, ctl, t, &mut r) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {
-                    let mut k = blank(t);
+                    let mut k = blank.row();
                     k[pos(t, 1)] = Value::Integer(id as i32);
                     k[pos(t, 2)] = Value::Integer(n as i32 + 1);
                     out.push(Entry::poisoned(k, why));

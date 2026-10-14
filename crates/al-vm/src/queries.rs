@@ -19,6 +19,7 @@ use rust_decimal::Decimal;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
+use std::sync::Arc;
 
 type Qs = Rc<RefCell<QueryState>>;
 /// One row of each dataitem's table, in dataitem order.
@@ -623,7 +624,7 @@ impl Session {
             return Ok(());
         }
         let item = &def.items[level];
-        let t: TableDef = self.engine.tables[item.table].clone().expect("table");
+        let t: Arc<TableDef> = self.engine.tables[item.table].clone().expect("table");
         let mut filters = plan.scan[level].clone();
         // A parent that had no match has nothing to link to.
         let parent_missing = item.parent.is_some_and(|p| chosen[p].is_empty());

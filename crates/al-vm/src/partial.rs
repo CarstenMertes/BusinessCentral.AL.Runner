@@ -127,12 +127,9 @@ impl Session {
         args: &[Value],
     ) -> Result<Value, Signal> {
         let wanted = positions(args)?;
-        let schema = self.engine.program.objects[t.object as usize].table.clone();
-        let stored = |p: usize| {
-            schema
-                .as_ref()
-                .is_some_and(|s| s.fields.get(p).is_some_and(|f| f.stored))
-        };
+        let engine = self.engine.clone();
+        let schema = engine.program.objects[t.object as usize].table.as_ref();
+        let stored = |p: usize| schema.is_some_and(|s| s.fields.get(p).is_some_and(|f| f.stored));
         match method {
             "SetLoadFields" | "AddLoadFields" => {
                 if let Some(p) = wanted.iter().find(|&&p| !stored(p)) {

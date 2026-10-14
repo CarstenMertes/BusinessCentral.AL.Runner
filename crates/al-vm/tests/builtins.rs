@@ -827,11 +827,11 @@ fn run_two_apps(dep_src: &str, main_src: &str, routine: &str) -> Result<Value, S
     );
     assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
     // The runner patches what only the manifests know.
-    l.program.apps[0].publisher = "Dep Publisher".into();
-    l.program.apps[0].version = "2.3.4.5".into();
-    l.program.apps[1].publisher = "Main Publisher".into();
-    l.program.apps[1].version = "1.0.0.0".into();
-    l.program.apps[1].resources = vec![
+    l.program_mut().apps[0].publisher = "Dep Publisher".into();
+    l.program_mut().apps[0].version = "2.3.4.5".into();
+    l.program_mut().apps[1].publisher = "Main Publisher".into();
+    l.program_mut().apps[1].version = "1.0.0.0".into();
+    l.program_mut().apps[1].resources = vec![
         ("greeting.txt".into(), b"Hello from packaged resource".to_vec()),
         ("sub/nested.txt".into(), b"nested-resource-content".to_vec()),
         ("data.json".into(), b"{\"a\": 1}".to_vec()),

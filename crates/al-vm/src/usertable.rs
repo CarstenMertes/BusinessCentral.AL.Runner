@@ -27,6 +27,7 @@ use crate::platform::{blank, pos};
 use al_builtins::native::{AlError, Ctx, Signal};
 use al_builtins::value::Value;
 use al_data::{AccessContext, Row, Scan, Store, TableDef, WriteOutcome};
+use std::sync::Arc;
 
 pub(crate) const USER: u32 = 2_000_000_120;
 pub(crate) const USER_PROPERTY: u32 = 2_000_000_121;
@@ -141,7 +142,7 @@ impl Session {
     }
 
     /// The compiled table `id`, if the program holds it (a table nothing reaches is not compiled).
-    fn table_def(&self, id: u32) -> Option<TableDef> {
+    fn table_def(&self, id: u32) -> Option<Arc<TableDef>> {
         self.compiled_table(id).and_then(|i| self.engine.tables[i].clone())
     }
 

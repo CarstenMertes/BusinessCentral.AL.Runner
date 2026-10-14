@@ -1,25 +1,15 @@
    1 unresolved codeunit `Azure AD Plan Test Library`
    8 unresolved codeunit `Permissions Mock`
-  15 unresolved table `Aggregate Permission Set`
   21 unresolved table `All Profile`
    4 unresolved table `Code Coverage Test Lookup`
    6 unresolved table `Code Coverage Tests Run`
    9 unresolved table `Code Coverage`
    7 unresolved table `Event Subscription`
-  26 unresolved table `Expanded Permission`
    5 unresolved table `Feature Key`
-  18 unresolved table `Metadata Permission Set`
-   6 unresolved table `Metadata Permission`
    9 unresolved table `Page Action`
-  11 unresolved table `Permission Set`
-   4 unresolved table `Permission`
    8 unresolved table `Query Metadata`
   10 unresolved table `Report Data Items`
   13 unresolved table `Report Layout List`
    5 unresolved table `Report Metadata`
    7 unresolved table `Table Relations Metadata`
-   1 unresolved table `Tenant Media`
-  10 unresolved table `Tenant Permission Set`
-   9 unresolved table `Tenant Permission`
-   2 unresolved table `User Personalization`
   11 unresolved table `XmlPort Metadata`

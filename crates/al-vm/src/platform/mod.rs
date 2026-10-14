@@ -219,8 +219,10 @@ impl VirtualTables for Providers {
             // From BC 29 a read by key under any App ID finds the null-App-ID row of SUPER and
             // SECURITY (permissions/TestMetadataPermissionSet.al:85-128).
             Virtual::MetadataPermissionSet
-                if al_version::gate_on(self.engine().target.as_ref(), al_version::Gate::SuperPermissionSetIgnoresAppId)
-                    && matches!(pk.get(1), Some(Value::Code(r) | Value::Text(r)) if r.eq_ignore_ascii_case("SUPER") || r.eq_ignore_ascii_case("SECURITY")) =>
+                if al_version::gate_on(
+                    self.engine().target.as_ref(),
+                    al_version::Gate::SuperPermissionSetIgnoresAppId,
+                ) && matches!(pk.get(1), Some(Value::Code(r) | Value::Text(r)) if r.eq_ignore_ascii_case("SUPER") || r.eq_ignore_ascii_case("SECURITY")) =>
             {
                 let mut key = pk.to_vec();
                 key[0] = Value::Guid([0; 16]);
@@ -233,13 +235,7 @@ impl VirtualTables for Providers {
         }
     }
 
-    fn next(
-        &self,
-        store: &MemStore,
-        cx: &AccessContext,
-        t: &TableDef,
-        scan: &Scan,
-    ) -> Result<Option<Row>, StoreError> {
+    fn next(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::AggregatePermissionSet => self.aggregate(store, cx, t)?.next(t, scan),
             Virtual::MetadataPermission | Virtual::ExpandedPermission | Virtual::Permission => {

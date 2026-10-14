@@ -1116,7 +1116,10 @@ impl<'a> Checker<'a> {
         }
         // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
         if key == "this" && self.ws.objects[sc.oi].kind == ObjKind::Codeunit && sc.self_obj == sc.oi {
-            return Some(E::Val(Ty::Object(ObjKind::Codeunit, self.ws.objects[sc.oi].name.clone())));
+            return Some(E::Val(Ty::Object(
+                ObjKind::Codeunit,
+                self.ws.objects[sc.oi].name.clone(),
+            )));
         }
         if sc.rec_unqualified {
             if let Some(rec) = sc.rec.clone() {

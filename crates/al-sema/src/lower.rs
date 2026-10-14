@@ -3287,7 +3287,10 @@ impl Lowerer<'_> {
                     .clone();
                 let instance = match &receiver_node {
                     // `this.Proc()` runs on the current instance, like a bare call.
-                    Some(r) if r.kind() == SyntaxKind::NameRef && r.text().to_string().trim().eq_ignore_ascii_case("this") => {
+                    Some(r)
+                        if r.kind() == SyntaxKind::NameRef
+                            && r.text().to_string().trim().eq_ignore_ascii_case("this") =>
+                    {
                         if object != self.oi {
                             return Err("`this` calls a procedure of another object".into());
                         }

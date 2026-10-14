@@ -139,11 +139,11 @@ fn not_run(o: &[(String, Outcome)], test: &str) -> String {
 fn a_platform_table_with_no_provider_is_refused_where_code_uses_it_and_names_table_and_id() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure UsesATableWithNoProvider() var P: Record "Aggregate Permission Set"; begin if P.IsEmpty() then; end; }"#,
+  [Test] procedure UsesATableWithNoProvider() var P: Record "Code Coverage"; begin if P.IsEmpty() then; end; }"#,
     );
     let why = not_run(&o, "UsesATableWithNoProvider");
     assert!(
-        why.contains("platform table 'Aggregate Permission Set' (2000000167) has no provider"),
+        why.contains("platform table 'Code Coverage' (2000000049) has no provider"),
         "{why}"
     );
 }
@@ -184,4 +184,85 @@ fn registry_providers_are_virtual_or_stored() {
     for (_, name, p) in REGISTRY {
         assert!(matches!(p, Provider::Virtual(_) | Provider::Stored), "{name}");
     }
+}
+
+fn passes(o: &[(String, Outcome)], test: &str) {
+    match o.iter().find(|(n, _)| n == test).map(|(_, o)| o) {
+        Some(Outcome::Pass) => {}
+        other => panic!("{test} was expected to pass, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_session_starts_with_its_company_user_and_super_row() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure CompanyRow() var C: Record Company; begin if not C.Get(CompanyName()) then Error('no company row'); end;
+  [Test] procedure UserRow() var U: Record User; begin if not U.Get(UserSecurityId()) then Error('no user row'); if U."User Name" <> UserId() then Error('name %1', U."User Name"); end;
+  [Test] procedure SuperRow() var A: Record "Access Control"; begin A.SetRange("User Security ID", UserSecurityId()); A.SetRange("Role ID", 'SUPER'); if A.IsEmpty() then Error('no SUPER'); end; }"#,
+    );
+    for t in ["CompanyRow", "UserRow", "SuperRow"] {
+        passes(&o, t);
+    }
+}
+
+#[test]
+fn record_links_are_rows_of_the_record_link_table() {
+    let o = outcomes(
+        r#"table 50001 "Host" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure AddHasDelete() var H: Record "Host"; L: Record "Record Link"; Id: Integer; begin
+    H."No." := 1; H.Insert();
+    if H.HasLinks() then Error('links before');
+    Id := H.AddLink('https://example.com', 'D');
+    if not H.HasLinks() then Error('no links after AddLink');
+    L.Get(Id);
+    if L.URL1 <> 'https://example.com' then Error('url');
+    H.DeleteLinks();
+    if H.HasLinks() then Error('links after DeleteLinks');
+  end; }"#,
+    );
+    passes(&o, "AddHasDelete");
+}
+
+#[test]
+fn date_and_time_zone_and_windows_language_answer_from_their_pins() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure MondayWeek() var D: Record Date; begin D.SetRange("Period Type", D."Period Type"::Week); D.SetRange("Period Start", DMY2Date(19, 1, 2026)); if not D.FindFirst() then Error('no week'); if D."Period No." <> 4 then Error('week %1', D."Period No."); end;
+  [Test] procedure ZonesNumbered() var Z: Record "Time Zone"; N: Integer; begin if Z.Count() < 2 then Error('few'); Z.FindSet(); repeat N += 1; if Z."No." <> N then Error('gap'); until Z.Next() = 0; end;
+  [Test] procedure English() var W: Record "Windows Language"; begin if not W.Get(1033) then Error('no 1033'); if W."Language Tag" <> 'en-US' then Error('tag'); if W.Get(999999) then Error('999999'); end; }"#,
+    );
+    for t in ["MondayWeek", "ZonesNumbered", "English"] {
+        passes(&o, t);
+    }
+}
+
+#[test]
+fn a_permission_set_is_listed_with_its_caption_and_assignable_default() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+permissionset 50002 "My Set" { Caption = 'My Set Caption'; Assignable = true; Permissions = tabledata "Thing" = RIMD; }
+permissionset 50003 "No Assign" { Permissions = tabledata "Thing" = r; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Listed() var M: Record "Metadata Permission Set"; begin M.SetRange("Role ID", 'MY SET'); M.FindFirst(); if M.Name <> 'My Set Caption' then Error('name'); if not M.Assignable then Error('assignable'); end;
+  [Test] procedure UndeclaredIsNotAssignable() var M: Record "Metadata Permission Set"; begin M.SetRange("Role ID", 'NO ASSIGN'); M.FindFirst(); if M.Assignable then Error('assignable'); if M.Name <> 'NO ASSIGN' then Error('name %1', M.Name); end;
+  [Test] procedure Grants() var P: Record "Metadata Permission"; begin P.SetRange("Role ID", 'MY SET'); if P.Count() <> 1 then Error('count'); P.FindFirst(); if P."Insert Permission" <> P."Insert Permission"::Yes then Error('insert'); if P."Object Type" <> P."Object Type"::"Table Data" then Error('type'); end; }"#,
+    );
+    for t in ["Listed", "UndeclaredIsNotAssignable", "Grants"] {
+        passes(&o, t);
+    }
+}
+
+#[test]
+fn this_ready_isolation_member_and_filter_group_setter_lower() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  local procedure Twice(N: Integer): Integer begin exit(N * 2); end;
+  [Test] procedure ThisCall() begin if this.Twice(2) <> 4 then Error('this'); end;
+  [Test] procedure Setters() var R: Record "Thing"; begin R.ReadIsolation := R.ReadIsolation::ReadUnCommitted; R.FilterGroup := 2; if R.FilterGroup <> 2 then Error('group'); end; }"#,
+    );
+    passes(&o, "ThisCall");
+    passes(&o, "Setters");
 }

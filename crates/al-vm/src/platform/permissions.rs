@@ -20,8 +20,8 @@ use super::objects::{Catalog, base_kind, prop, string_lit, truthy};
 use super::{Providers, blank, pos};
 use al_builtins::filter::{FieldFilter, FilterExpr};
 use al_builtins::value::Value;
-use al_data::{AccessContext, Scan, Store, StoreError, TableDef};
 use al_data::memory::MemStore;
+use al_data::{AccessContext, Scan, Store, StoreError, TableDef};
 use std::rc::Rc;
 
 const TENANT_PERMISSION_SET: u32 = 2_000_000_165;
@@ -107,7 +107,12 @@ pub(super) fn pins_the_primary_key(t: &TableDef, filters: &[FieldFilter]) -> boo
 }
 
 /// Aggregate Permission Set: Scope (1), "App ID" (2), "Role ID" (3), Name (4), "App Name" (5).
-pub(super) fn aggregate_rows(p: &Providers, store: &MemStore, cx: &AccessContext, t: &TableDef) -> Result<Vec<Entry>, StoreError> {
+pub(super) fn aggregate_rows(
+    p: &Providers,
+    store: &MemStore,
+    cx: &AccessContext,
+    t: &TableDef,
+) -> Result<Vec<Entry>, StoreError> {
     let mut out = Vec::new();
     for s in sets(p).into_iter().filter(|s| s.assignable) {
         let mut r = blank(t);
@@ -127,7 +132,9 @@ pub(super) fn aggregate_rows(p: &Providers, store: &MemStore, cx: &AccessContext
                 ascending: true,
                 after: after.as_deref(),
             };
-            let Some(row) = store.next(cx, &tenant, &scan)? else { break };
+            let Some(row) = store.next(cx, &tenant, &scan)? else {
+                break;
+            };
             after = Some(al_data::position(&tenant, 0, &row));
             let at = |id: u32| row[pos(&tenant, id)].clone();
             if !matches!(at(4), Value::Boolean(true)) {
@@ -206,7 +213,10 @@ fn split_entries(text: &str) -> Vec<String> {
         }
     }
     out.push(cur);
-    out.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 /// The last name of a possibly namespace-qualified, possibly quoted name: `A.B."C D"` is `C D`.
@@ -226,13 +236,17 @@ fn last_name(s: &str) -> String {
 }
 
 fn parse_grants(o: &Object, ids: &dyn Fn(&str, &str) -> Result<u32, String>) -> Result<Vec<Grant>, String> {
-    let Some(text) = prop(o, "Permissions") else { return Ok(Vec::new()) };
+    let Some(text) = prop(o, "Permissions") else {
+        return Ok(Vec::new());
+    };
     let mut out: Vec<Grant> = Vec::new();
     for entry in split_entries(text) {
         let bad = |why: &str| format!("permission set '{}': `{entry}` {why}", o.name);
         let (head, mask) = entry.rsplit_once('=').ok_or_else(|| bad("has no permission mask"))?;
         let head = head.trim();
-        let (kind_word, name) = head.split_once(char::is_whitespace).ok_or_else(|| bad("names no object"))?;
+        let (kind_word, name) = head
+            .split_once(char::is_whitespace)
+            .ok_or_else(|| bad("names no object"))?;
         let name = name.trim();
         if name == "*" {
             return Err(bad("grants a whole object type (not listed row by row)"));
@@ -308,9 +322,17 @@ impl Grants {
                 let ids = |ty: &str, name: &str| c.id_of(ty, name);
                 let mut sets = Vec::new();
                 let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
-                for o in c.objects.iter().filter(|o| base_kind(o) == "permissionset" && o.id.is_some()) {
+                for o in c
+                    .objects
+                    .iter()
+                    .filter(|o| base_kind(o) == "permissionset" && o.id.is_some())
+                {
                     let role = o.name.to_uppercase();
-                    let app = if role == "SUPER" || role == "SECURITY" { [0; 16] } else { c.owner(o) };
+                    let app = if role == "SUPER" || role == "SECURITY" {
+                        [0; 16]
+                    } else {
+                        c.owner(o)
+                    };
                     let includes = prop(o, "IncludedPermissionSets")
                         .map(|t| split_entries(t).iter().map(|n| last_name(n).to_lowercase()).collect())
                         .unwrap_or_default();
@@ -348,7 +370,12 @@ impl Grants {
             for inc in &set.includes {
                 let target = match b.by_name.get(inc).map(Vec::as_slice) {
                     Some([t]) => *t,
-                    _ => return Err(format!("permission set '{}' includes `{inc}`, which is not one set", set.role)),
+                    _ => {
+                        return Err(format!(
+                            "permission set '{}' includes `{inc}`, which is not one set",
+                            set.role
+                        ));
+                    }
                 };
                 for g in self.expanded(b, target, visiting)?.iter() {
                     match all.iter_mut().find(|x| x.kind == g.kind && x.id == g.id) {

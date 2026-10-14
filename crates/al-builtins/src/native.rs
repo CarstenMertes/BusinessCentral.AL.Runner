@@ -190,10 +190,18 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // The URL of the web client depends on the server's address, which a host has not been asked
     // for: a run that builds one is refused (session/TestFinalCoverage.al:105-125 asks only that
     // GetUrl does not throw).
-    ("System.GetUrl#1", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
-    ("System.GetUrl#2", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
-    ("System.GetUrl#3", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
-    ("System.GetUrl#4", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
+    ("System.GetUrl#1", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
+    ("System.GetUrl#2", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
+    ("System.GetUrl#3", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
+    ("System.GetUrl#4", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
     ("TaskScheduler.CanCreateTask#1", |_, _, _| {
         unsupported("TaskScheduler.CanCreateTask (not pinned)")
     }),

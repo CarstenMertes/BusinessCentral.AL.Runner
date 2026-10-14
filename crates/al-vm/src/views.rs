@@ -20,8 +20,14 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
-/// Characters that would need quoting in a filter value.
-const FILTER_SPECIAL: &[char] = &['|', '&', '<', '>', '=', '*', '?', '@', '\'', '"', '(', ')'];
+/// Characters whose presence in a text value makes `GetFilter` quote the whole value (record/
+/// TestSetFilterSpecialTextContracts.al, BC 27.5), and `..`.
+fn needs_quotes(s: &str) -> bool {
+    s.contains(['|', '&', '<', '=', '(', ')']) || s.contains("..")
+}
+
+/// Characters in a value `GetFilter` cannot show yet: nothing pins them.
+const FILTER_UNPINNED: &[char] = &['>', '*', '?', '"'];
 
 impl Session {
     /// A filter expression over a field of type `ty`, enum members by name included.
@@ -33,7 +39,13 @@ impl Session {
 
     fn filter_value(&self, v: &Value) -> Result<String, Signal> {
         if let Value::Text(s) | Value::Code(s) = v {
-            if s.contains(FILTER_SPECIAL) || s.contains("..") {
+            if needs_quotes(s) {
+                if s.contains(FILTER_UNPINNED) || s.contains('\'') || s.starts_with('@') {
+                    return unsupported("a filter value that needs quoting and holds more filter characters");
+                }
+                return Ok(format!("'{s}'"));
+            }
+            if s.contains(FILTER_UNPINNED) || s.starts_with('@') {
                 return unsupported("a filter value that needs quoting");
             }
         }
@@ -65,6 +77,9 @@ impl Session {
             FilterExpr::Le(v) => format!("<={}", self.filter_value(v)?),
             FilterExpr::Gt(v) => format!(">{}", self.filter_value(v)?),
             FilterExpr::Ge(v) => format!(">={}", self.filter_value(v)?),
+            FilterExpr::Like(p, ci) if needs_quotes(p) && !p.contains(['*', '?', '\'', '>']) => {
+                format!("'{}{p}'", if *ci { "@" } else { "" })
+            }
             FilterExpr::Like(p, ci) => format!("{}{p}", if *ci { "@" } else { "" }),
             FilterExpr::Or(xs) => xs
                 .iter()

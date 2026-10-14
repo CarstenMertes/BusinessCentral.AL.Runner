@@ -74,6 +74,8 @@ fn handle_of(v: &Value) -> Result<Handle, Signal> {
             "jsonobject" => JsonNode::Object(Vec::new()),
             "jsonarray" => JsonNode::Array(Vec::new()),
             "jsonvalue" => JsonNode::Scalar(Scalar::Undefined),
+            // An unassigned JsonToken acts as a JSON null (json/TestJsonTokenUnassignedEvaluateGuidContracts.al).
+            "jsontoken" => JsonNode::Scalar(Scalar::Null),
             other => return unsupported(format!("use of an unassigned {other}")),
         };
         *h.borrow_mut() = LibraryValue::Json(JsonCell { node, parent: None });
@@ -822,6 +824,45 @@ fn object_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result
     Ok(Value::Boolean(true))
 }
 
+/// `Replace(Key, Value)`: removes the key and adds it again at the END; true when the key was there.
+/// A missing key answers false when the result is used and raises "There is no property with the '<key>'
+/// key on the JSON object." (JsonPropertyNotFound) as a statement (json/TestJsonObjectReplaceKeysContracts.al).
+fn object_replace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let key = key_text(&a[0])?;
+    let Some(old) = object_get_child(&h, &a[0])? else {
+        return if c.ret_used() {
+            Ok(Value::Boolean(false))
+        } else {
+            Err(missing_key(&a[0]))
+        };
+    };
+    let new = node_for(&a[1])?;
+    with_node(&h, |n| {
+        if let JsonNode::Object(kids) = n {
+            kids.retain(|(k, _)| *k != key);
+        }
+    });
+    set_parent(&old, None);
+    let child = attach(&h, new);
+    with_node(&h, |n| {
+        if let JsonNode::Object(kids) = n {
+            kids.push((key, child));
+        }
+    });
+    Ok(Value::Boolean(true))
+}
+
+/// `Keys()`: the keys in insertion order, as a new list.
+fn object_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let keys = with_node(&h, |n| match n {
+        JsonNode::Object(kids) => Ok(kids.iter().map(|(k, _)| Value::Text(k.clone())).collect::<Vec<_>>()),
+        _ => unsupported("JsonObject.Keys on a JSON value that is not an object"),
+    })?;
+    Ok(Value::List(Rc::new(std::cell::RefCell::new(keys))))
+}
+
 fn object_contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
     let h = recv(r)?;
     Ok(Value::Boolean(object_get_child(&h, &a[0])?.is_some()))
@@ -1220,11 +1261,27 @@ fn as_token(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<V
     Ok(tagged("JsonToken", recv(r)?))
 }
 
+/// AsObject / AsArray of a token that holds a value raise a conversion error between the .NET token
+/// types (json/TestJsonTokenUnassignedEvaluateGuidContracts.al:UnassignedJsonToken_ActsAsANull, a null).
 fn token_as_object(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    child_as(recv(r)?, "object", "JsonObject")
+    let h = recv(r)?;
+    if with_node(&h, |n| matches!(n, JsonNode::Scalar(Scalar::Null))) {
+        return Err(conversion(
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonToken",
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonObject",
+        ));
+    }
+    child_as(h, "object", "JsonObject")
 }
 fn token_as_array(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    child_as(recv(r)?, "array", "JsonArray")
+    let h = recv(r)?;
+    if with_node(&h, |n| matches!(n, JsonNode::Scalar(Scalar::Null))) {
+        return Err(conversion(
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonToken",
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonArray",
+        ));
+    }
+    child_as(h, "array", "JsonArray")
 }
 fn token_as_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let h = recv(r)?;
@@ -1381,6 +1438,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     let f: NativeFn = match (method.as_str(), params.as_slice()) {
         ("JsonObject.Add", [_, _]) => object_add,
         ("JsonObject.Contains", [_]) => object_contains,
+        ("JsonObject.Replace", [_, _]) => object_replace,
+        ("JsonObject.Keys", []) => object_keys,
         ("JsonObject.Get", [_, _]) => object_get,
         ("JsonObject.Remove", [_]) => object_remove,
         ("JsonObject.GetBoolean", _) => obj_boolean,

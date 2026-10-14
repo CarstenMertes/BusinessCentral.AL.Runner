@@ -301,8 +301,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.
     (2_000_000_009, &[1, 2, 3, 5, 6, 16, 17, 19]),
-    // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. The server and client computer names are not read.
-    (2_000_000_110, &[1, 2, 3, 6, 7, 9, 10, 11]),
+    // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. "Server Instance Name", "Server Computer Name" and "Client Computer Name": session/TestActiveSessionHostColumnsContracts.al (shape only).
+    (2_000_000_110, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
 ];
 
 /// Why column `field` of platform table `table` cannot be read, if it cannot.

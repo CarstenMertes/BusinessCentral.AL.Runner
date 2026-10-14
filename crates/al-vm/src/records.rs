@@ -671,7 +671,7 @@ impl Session {
             let unset = matches!(r.fields[i], Value::Guid(g) if g == [0; 16]);
             if unset || !keep {
                 // Deterministic ids that look random (ADR-006, `fresh_guid`).
-                r.fields[i] = Value::Guid(self.fresh_guid());
+                r.fields[i] = Value::Guid(self.fresh_system_id());
             }
         }
     }

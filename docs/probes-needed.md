@@ -908,3 +908,15 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | Area | Assumption | Probe wanted |
 |---|---|---|
 | `Record.FilterGroup(-1)` | In BC the filters set in group -1 on different fields are alternatives (a row matches when any of them does), and the other groups still AND with it. The runtime applies every group as an AND, so it would select other rows. Used by Base Application's `General Posting Setup` `FilterBlankSalesDiscountAccounts` and `FilterBlankPurchDiscountAccounts` (Tests-ERM codeunit 132523, T100 and T101, and every test that sets "Discount Posting" to "All Discounts" with missing accounts). No corpus test pins it | REFUSED (`FilterGroup` with a negative value). Probe wanted: a table with fields A and B, rows with A blank only, B blank only, both blank, neither; `FilterGroup(-1); SetRange(A, ''); SetRange(B, '')`, then `FindSet` and `Count`; also with a filter in group 0 on a third field, and `GetFilters`/`HasFilter` inside and outside the group, and `FilterGroup(0)` afterwards |
+
+## Probe round 6, types and JSON (2026-10-14)
+
+| Area | Assumption or open point | Probe wanted | Where |
+|---|---|---|---|
+| RoundDateTime | A precision that does not divide a day (700000) is refused: the probe's three results fit no calendar origin we could name, so where the count starts is unknown. Precisions that divide a day count from midnight | `RoundDateTime(dt, 700000, '<')` for several dates, to find the origin | `datefns.rs` `round_datetime` |
+| DateTime + Decimal | The conversion error has an empty code (the probe pins only the text); a whole Decimal adds as milliseconds | `GetLastErrorCode()` after the overflow; `DateTime + 1000.0` | `ops.rs` |
+| Element WriteTo(OutStream) | Written with a byte order mark like the document (the probe reads it through a UTF-8 InStream, which does not show one) | The leading bytes of `Element.WriteTo(OutStream)` | `xml.rs` `write_to_outstream` |
+| Encrypt | The text is 256 pseudo-random bytes in base 64 (344 characters); this session remembers what it encrypted. Decrypt of text that looks encrypted but this session did not make, and of the empty text, is refused | Decrypt of an Encrypt result from an earlier test session; `Decrypt('')` | `sessionops.rs` |
+| InStream.Read(Text, Length) | Pinned only for a Windows-encoded stream and bytes outside 128 to 159 | Reading those bytes, and a UTF-8 stream | `stream.rs` |
+| SetFilter %1 | A text with `>` or `"`, or with a wildcard together with `& | ( ) < =` or `..`, is still refused | Those texts through `SetFilter` and `GetFilter` | `filter.rs`, `views.rs` |
+| Query ReadState | `ReadUncommitted` is accepted; other values refuse the query | Not needed on runtime 16 | `al-sema/queries.rs` |

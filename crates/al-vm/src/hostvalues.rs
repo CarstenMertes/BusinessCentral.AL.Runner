@@ -34,6 +34,11 @@ impl Session {
         self.host.clock.now_utc_millis() + self.waited_ms
     }
 
+    /// Today as a day number.
+    pub(crate) fn today_day_number(&self) -> i32 {
+        (self.now_millis().div_euclid(MS_PER_DAY) + unix_epoch_day()) as i32
+    }
+
     /// The instant for a system stamp: the clock, but always later than the previous stamp, so
     /// two writes in one millisecond still tell which came last (record/TestRecordSystemId.al:449,
     /// TestXRecStampFields.al:179 compare stamps with `<>` and `>`).
@@ -46,10 +51,7 @@ impl Session {
     /// The builtins of this module, `None` for any other id.
     pub(crate) fn host_op(&mut self, id: &str, args: &mut [Value]) -> Option<Result<Value, Signal>> {
         Some(match id {
-            "System.Today#1" => Ok(Value::Date(
-                (self.now_millis().div_euclid(MS_PER_DAY) + unix_epoch_day()) as i32,
-                false,
-            )),
+            "System.Today#1" => Ok(Value::Date(self.today_day_number(), false)),
             "System.Time#1" => Ok(Value::Time(self.now_millis().rem_euclid(MS_PER_DAY) + 1)),
             "System.CurrentDateTime#1" => Ok(datetime_of_unix_millis(self.now_millis())),
             "System.WorkDate#1" => self.work_date_op(args),

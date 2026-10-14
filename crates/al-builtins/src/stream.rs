@@ -404,6 +404,29 @@ fn is_unit(u: &[u8], c: u8) -> bool {
 /// InOutStream_Write_Integer_ReadInteger) or a Byte (one byte: the HexOf helper of
 /// streams/TestStreamsRuntimeContracts.al reads a stream byte by byte). Other types are not pinned.
 fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    // `Read(Text, Length)` on a single-byte stream takes Length bytes as one character each
+    // (xml/TestXmlDocumentWriteToOutStreamContracts.al:LeadingBytes reads the bytes 239 187 191 of a
+    // byte order mark into a Text[3]); bytes 128 to 159, other encodings and a used result are not pinned.
+    if let (2, Value::Text(_) | Value::Code(_), Some(Value::Integer(n))) = (a.len(), &a[0], a.get(1)) {
+        let n = usize::try_from(*n).unwrap_or(0);
+        if c.ret_used() {
+            return unsupported("the result of InStream.Read(Text, Length) (not pinned)");
+        }
+        let text = with_in(r, |s| {
+            if s.enc != Encoding::Windows {
+                return unsupported("InStream.Read(Text, Length) on a stream that is not Windows-encoded (not pinned)");
+            }
+            let rest = s.rest();
+            let taken = &rest[..n.min(rest.len())];
+            if taken.iter().any(|b| (0x80..0xA0).contains(b)) {
+                return unsupported("InStream.Read(Text, Length) of bytes 128 to 159 (not pinned)");
+            }
+            s.pos += taken.len();
+            Ok(taken.iter().map(|b| char::from(*b)).collect::<String>())
+        })?;
+        a[0] = Value::Text(text);
+        return Ok(Value::Null);
+    }
     if a.len() > 1 {
         return unsupported("InStream.Read with a length (not pinned)");
     }
@@ -490,6 +513,13 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
         _ => return unsupported("serialising non-ASCII text to a code-page OutStream (the bytes are not pinned)"),
     }
     write_bytes(&b, text.as_bytes());
+    Ok(())
+}
+
+/// Writes bytes to an `OutStream` argument whatever its encoding (the caller pins the bytes).
+pub(crate) fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
+    let (b, _) = out_buf(Some(stream))?;
+    write_bytes(&b, bytes);
     Ok(())
 }
 

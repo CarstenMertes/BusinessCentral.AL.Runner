@@ -21,3 +21,7 @@
 # Clear accepts any variable; the scrape only has the Array and SecretText
 # overloads. Corpus: record/TestRecordRenameRollback.al:43 `Clear(Rec);`.
 + System.Clear static (var Variable: Any)
+
+# XmlWriteOptions has no scraped methods. Probe: xml/TestXmlDocumentWriteToOutStreamContracts.al
+# `Options.PreserveWhitespace(true);` compiles on BC 27.5 and changes what WriteTo writes.
++ XmlWriteOptions.PreserveWhitespace inst (Value: Boolean)

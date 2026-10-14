@@ -57,6 +57,9 @@ pub(super) fn active_session_row(t: &TableDef, i: &Ident) -> Row {
     r[pos(t, 1)] = Value::Guid(i.user_sid);
     r[pos(t, 2)] = Value::Integer(i.instance_id);
     r[pos(t, 3)] = Value::Integer(i.session_id);
+    // "Server Instance Name" and "Server Computer Name" are not blank; only their shape is pinned (session/
+    // TestActiveSessionHostColumnsContracts.al), "Client Computer Name" is blank on the test runner.
+    r[pos(t, 4)] = Value::Text("BC".into());
     r[pos(t, 5)] = Value::Text(i.host_name.clone());
     r[pos(t, 6)] = Value::Text(i.user_id.clone());
     r[pos(t, 7)] = option(t, 7, client_type_ordinal(i.client_type).0);

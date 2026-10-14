@@ -110,27 +110,23 @@ fn boolean(text: &str) -> Result<Parsed, Signal> {
 }
 
 fn guid(text: &str) -> Result<Parsed, Signal> {
-    // types/TestGuid.al:78 evaluates Format(Guid) (braces, upper case); the XML form without
-    // braces is not pinned.
-    let inner = text.strip_prefix('{').and_then(|t| t.strip_suffix('}'));
-    let Some(inner) = inner else {
-        return unsupported(format!(
-            "Evaluate of `{text}` into Guid (form not pinned by the corpus)"
-        ));
-    };
+    // The braced, the plain (36 characters) and the 32 digit forms; anything else, the empty text
+    // included, is rejected (types/TestJsonTokenUnassignedEvaluateGuidContracts.al:EvaluateGuid_Forms_AndFailures).
+    let inner = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')).unwrap_or(text);
     let parts: Vec<&str> = inner.split('-').collect();
-    let widths = [8, 4, 4, 4, 12];
-    let shaped = parts.len() == 5
+    let hex_only = |p: &str| p.bytes().all(|b| b.is_ascii_hexdigit());
+    let hex: String = if parts.len() == 5
         && parts
             .iter()
-            .zip(widths)
-            .all(|(p, w)| p.len() == w && p.bytes().all(|b| b.is_ascii_hexdigit()));
-    if !shaped {
-        return unsupported(format!(
-            "Evaluate of `{text}` into Guid (form not pinned by the corpus)"
-        ));
-    }
-    let hex: String = parts.concat();
+            .zip([8, 4, 4, 4, 12])
+            .all(|(p, w)| p.len() == w && hex_only(p))
+    {
+        parts.concat()
+    } else if parts.len() == 1 && inner.len() == 32 && hex_only(inner) && inner.len() == text.len() {
+        inner.to_string()
+    } else {
+        return Ok(Parsed::Rejected);
+    };
     let mut out = [0u8; 16];
     for (i, b) in out.iter_mut().enumerate() {
         *b = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("hex digits checked");
@@ -293,6 +289,10 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
             Ok(Value::Boolean(true))
         }
         Parsed::Rejected if c.ret_used() => Ok(Value::Boolean(false)),
+        Parsed::Rejected if matches!(a[0], Value::Guid(_)) => crate::native::raise(
+            "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+            "InvalidGuidFormat",
+        ),
         Parsed::Rejected => unsupported(format!(
             "Evaluate of `{text}` failed with the result unused (error text not pinned yet)"
         )),

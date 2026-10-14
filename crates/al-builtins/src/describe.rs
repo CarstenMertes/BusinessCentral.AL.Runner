@@ -156,6 +156,7 @@ impl Describe for LibraryValue {
             LibraryValue::XmlList(_) => "XmlNodeList".into(),
             LibraryValue::XmlAttrs(_) => "XmlAttributeCollection".into(),
             LibraryValue::XmlNameTable => "XmlNameTable".into(),
+            LibraryValue::XmlWriteOptions { .. } => "XmlWriteOptions".into(),
             LibraryValue::File(_) => "File".into(),
             LibraryValue::XmlNamespaces(_) => "XmlNamespaceManager".into(),
             LibraryValue::InStream(_) => "InStream".into(),

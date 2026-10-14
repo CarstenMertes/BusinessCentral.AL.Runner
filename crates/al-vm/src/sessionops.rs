@@ -168,6 +168,9 @@ impl Session {
         if let Some(answer) = self.host_op(id, args) {
             return answer;
         }
+        if let Some(answer) = self.encryption_op(id, args) {
+            return answer;
+        }
         if id == "SessionInformation.Callstack#1" {
             // Frames innermost first, a backslash after each, the runner's below
             // (session/TestSessionInformationCallstackContracts.al:130-143).
@@ -450,5 +453,75 @@ impl Session {
             }
             other => unsupported(format!("IsolatedStorage.{other}")),
         }
+    }
+}
+
+const BASE64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+fn base64(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(BASE64[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+impl Session {
+    /// `EncryptionEnabled`, `EncryptionKeyExists`, `Encrypt` and `Decrypt`, for a tier that has an
+    /// encryption key (types/TestVersionCreateEncryptionContracts.al, BC 27.5 on bc-linux). Encrypted text is
+    /// 344 characters (256 bytes in base 64) and differs on every call; this session remembers what it
+    /// encrypted, so `Decrypt` returns it. Text that is not encrypted data raises the pinned error;
+    /// text that looks like encrypted data this session did not make is refused.
+    fn encryption_op(&mut self, id: &str, args: &mut [Value]) -> Option<Result<Value, Signal>> {
+        Some(match id {
+            "System.EncryptionEnabled#1" | "System.EncryptionKeyExists#1" => Ok(Value::Boolean(true)),
+            "System.Encrypt#1" => {
+                let Some(plain) = args.first().and_then(al_builtins::native::text_of) else {
+                    return Some(unsupported("Encrypt of something that is not text"));
+                };
+                if plain.is_empty() {
+                    return Some(Ok(Value::Text(String::new())));
+                }
+                let mut bytes = Vec::with_capacity(256);
+                for _ in 0..16 {
+                    bytes.extend_from_slice(&self.fresh_guid());
+                }
+                let cipher = base64(&bytes);
+                self.encrypted.insert(cipher.clone(), plain);
+                Ok(Value::Text(cipher))
+            }
+            "System.Decrypt#1" => {
+                let Some(cipher) = args.first().and_then(al_builtins::native::text_of) else {
+                    return Some(unsupported("Decrypt of something that is not text"));
+                };
+                if let Some(plain) = self.encrypted.get(&cipher) {
+                    return Some(Ok(Value::Text(plain.clone())));
+                }
+                let looks_encrypted = cipher.len() == 344
+                    && cipher
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'='));
+                if cipher.is_empty() || looks_encrypted {
+                    return Some(unsupported(
+                        "Decrypt of text this session did not encrypt (the key and the empty text are not pinned)",
+                    ));
+                }
+                Err(crate::transactions::al_error_code(
+                    "Unable to decrypt data. The data was encrypted using a different key.",
+                    "Encryption:Format",
+                ))
+            }
+            _ => return None,
+        })
     }
 }

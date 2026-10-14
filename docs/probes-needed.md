@@ -926,3 +926,8 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | InStream.Read(Text, Length) | Pinned only for a Windows-encoded stream and bytes outside 128 to 159 | Reading those bytes, and a UTF-8 stream | `stream.rs` |
 | SetFilter %1 | A text with `>` or `"`, or with a wildcard together with `& | ( ) < =` or `..`, is still refused | Those texts through `SetFilter` and `GetFilter` | `filter.rs`, `views.rs` |
 | Query ReadState | `ReadUncommitted` is accepted; other values refuse the query | Not needed on runtime 16 | `al-sema/queries.rs` |
+## Clear of a DotNet variable (ADR-024 follow-up)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `Clear(X)` with `X: DotNet T` | An unassigned variable stays unassigned (any reading agrees). A variable that holds an object is REFUSED when the line runs: whether BC calls `Dispose` on the object, and so whether a wrapped stream is flushed or closed, is not pinned. No corpus test and no probe covers it (the DotNet probe app, codeunit 61400, has none). | In the OnPrem DotNet probe app: `Writer := Writer.StreamWriter(OutStream)`, `Writer.Write('x')`, `Clear(Writer)`, then read the blob (flushed or empty); and `Memory := Memory.MemoryStream()`, keep a second variable `Other := Memory`, `Clear(Memory)`, then `Other.CanWrite` (disposed or not). |

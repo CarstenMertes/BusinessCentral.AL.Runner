@@ -1788,12 +1788,15 @@ impl Session {
         // A TestPart raises when the key has the wrong number of fields, and when the key is
         // missing and the result is not used (corpus testpart/TestTestPart.al:
         // TestPart_GoToKey_ErrorsWhenTheKeyFieldCountIsWrong, _ErrorsForAMissingKeyWhenTheReturnIsDiscarded).
-        // The corpus pins that an error is raised, not its text: refused.
+        // Texts and codes: handlers/TestPageRuntimeContracts.al:300-312 (TestPart_GoToKey_Arity_AndMissingKey).
         if st.borrow().host.is_some() {
             let rec = self.page_rec(st);
             let wanted = self.table(&rec)?.keys[0].len();
             if key.len() != wanted {
-                return unsupported("TestPart.GoToKey with the wrong number of key values (error text not pinned)");
+                return Err(error_code(
+                    "The number of arguments does not match the number of primary key fields.",
+                    "TestInvalidNumberOfKeyFieldValues",
+                ));
             }
         }
         self.save_row(st)?;
@@ -1834,7 +1837,7 @@ impl Session {
             s.draft = before_draft;
             drop(s);
             if st.borrow().host.is_some() && !result_used {
-                return unsupported("TestPart.GoToKey of a missing key with the result unused (error text not pinned)");
+                return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
             }
         }
         Ok(Value::Boolean(found))
@@ -2271,11 +2274,14 @@ impl Session {
     /// handlers/TestPageRecordTriggers.al:76 OnInsertRecord_ReturningFalse_SuppressesTheInsert).
     fn insert_draft(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
-        let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(false)])?;
+        // BelowxRec is Yes for a row added with New() at the end, as it is for OnNewRecord (corpus
+        // handlers/TestPageRuntimeContracts.al:197-211 TestPage_New_AtTheEnd_PassesBelowxRecTrueToOnInsertRecord).
+        // A row added in the middle is not pinned; it is given the same Yes as OnNewRecord gets.
+        let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
         if go == Some(false) {
             return Ok(());
         }
-        if !self.page_event(st, "oninsertrecordevent", Some(true), Some(false))? {
+        if !self.page_event(st, "oninsertrecordevent", Some(true), Some(true))? {
             return Ok(());
         }
         self.auto_split_key(st)?;

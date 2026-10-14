@@ -17,7 +17,7 @@ The order is now pinned (BC 27.5, corpus branch `al-runtime-rs`):
 
 ## Decision (proposed)
 
-1. **IR.** Add `Report::extensions: Vec<usize>` (`#[serde(default)]`): every reportextension that changes the run, in object id order. Keep `extension: Option<usize>` and set it to the first element, so code that only needs "is there one" keeps working. Nothing is removed.
+1. **IR.** `Report::extensions: Vec<usize>` (`#[serde(default)]`) replaces `extension`: every reportextension that changes the run, in object id order (owner-review decision 1).
 2. **Order.** Extensions sort by object id. Extensions of different apps (`ObjectSym::app`) are refused with their own reason ("reportextensions of different apps change the run (their order across apps is not pinned)"), also when an id is missing. The old reason stays for nothing else.
 3. **Placement.** Each extension keeps its own `ReportExt::added`. At run time the items under a parent are woven by extension in id order: every `Before(a)` inserts immediately before the anchor and every `After(a)` immediately after it, so the later extension ends nearest; `First` items splice at the front per extension (the later one lands first); `Last` items append in id order.
 4. **Refusals that stay.** An anchor on an item another extension added (already refused in `build_ext`); `addlast` under the same base parent from two extensions; two items at one place from one extension with `After` (the existing "two data items added at the same place" reason stays for that case only; `First` and `Before` in declaration order are pinned and can be allowed).
@@ -36,7 +36,14 @@ The order is now pinned (BC 27.5, corpus branch `al-runtime-rs`):
 - One more field in `Report`, one list in the cache facts, no removal.
 - Cost when unused: none for a report with at most one extension (a one-element list).
 
-## Decisions needed
+## Decided without owner review (2026-10-14, by the coordinator)
+
+1. `Report::extension` is replaced by `Report::extensions` (one source of truth); every reader is updated.
+2. Reportextensions of different apps stay refused until probed.
+3. `addlast` of two extensions under one parent and two items from one extension `After` stay refused until probed. `addfirst` and `addbefore` with several items of one extension are pinned (declaration order) and allowed.
+4. `al_cache::FORMAT` is 2 in the same change; the cache owner is no longer running, so `provided.rs` was reviewed by the implementer.
+
+## Decisions that were needed
 
 1. Accept the list design (new `extensions` field beside `extension`), or replace `extension` and update every reader.
 2. Accept refusing extensions of different apps (order across apps unprobed), or ask for that probe first.

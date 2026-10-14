@@ -54,7 +54,7 @@ pub(crate) struct DrivenCtx {
     page_runs: Vec<Vec<usize>>,
     /// Per object: an xmlport or report, whose triggers Import, Export and Run call.
     runs_triggers: Vec<bool>,
-    report_extension: Vec<Option<usize>>,
+    report_extension: Vec<Vec<usize>>,
     routine_counts: Vec<usize>,
 }
 
@@ -120,7 +120,7 @@ fn driven_edges<'a>(
             if d.runs_triggers[p] {
                 out.extend(compiled(p));
             }
-            if let Some(e) = d.report_extension[p] {
+            for &e in &d.report_extension[p] {
                 out.extend(compiled(e));
             }
         }
@@ -620,9 +620,18 @@ pub(crate) fn lower_core(
             }
         }
         layouts[oi] = Some(request);
-        let exts = changing.get(&oi).cloned().unwrap_or_default();
-        let extension_reasons = if exts.len() > 1 {
-            vec!["more than one reportextension changes the run (their order is not pinned)".to_string()]
+        // Several extensions apply in object id order (corpus reportextensiontrigger/
+        // TestReportExtensionBaseMembersContracts.al:256, ADR-025). Their order across apps is not
+        // pinned.
+        let mut exts = changing.get(&oi).cloned().unwrap_or_default();
+        exts.sort_by_key(|&e| (ws.objects[e].id, e));
+        let extension_reasons = if exts.len() > 1
+            && (exts.iter().any(|&e| ws.objects[e].id.is_none())
+                || exts.iter().any(|&e| ws.objects[e].app != ws.objects[exts[0]].app))
+        {
+            vec![
+                "reportextensions of different apps change the run (their order across apps is not pinned)".to_string(),
+            ]
         } else {
             Vec::new()
         };
@@ -636,7 +645,7 @@ pub(crate) fn lower_core(
             request_flag_slot: slots.len(),
             routine_at: &routine_at,
             extension_reasons,
-            extension: exts.first().copied().filter(|_| exts.len() == 1),
+            extensions: exts.clone(),
         };
         report_irs[oi] = Some(crate::reports::build(&cx, &obj, Vec::new()));
         report_layouts[oi] = Some(l);
@@ -671,6 +680,26 @@ pub(crate) fn lower_core(
             );
         }
     }
+    // Two extensions that add items last under one base item: the order is not pinned (ADR-025).
+    for (&base, exts) in &changing {
+        let mut seen: Vec<(usize, usize)> = Vec::new();
+        for &e in exts {
+            let Some(x) = ext_irs[e].as_ref() else { continue };
+            for a in x.added.iter().filter(|a| a.place == ir::AddedPlace::Last) {
+                if let Some(p) = a.base_parent {
+                    if seen.iter().any(|&(q, other)| q == p && other != e) {
+                        if let Some(r) = report_irs[base].as_mut() {
+                            r.unsupported.push(format!(
+                                "two reportextensions add data items last under the same data item ({}): their order is not pinned",
+                                a.item.name
+                            ));
+                        }
+                    }
+                    seen.push((p, e));
+                }
+            }
+        }
+    }
     // Why a variable of an xmlport or report is refused, and the report extension that changes a
     // run: the cache supplies them for its objects.
     let n_objects = ws.objects.len();
@@ -680,15 +709,20 @@ pub(crate) fn lower_core(
     let mut report_reasons: Vec<Option<String>> = (0..n_objects)
         .map(|oi| report_irs[oi].as_ref().and_then(|p| p.unsupported.first().cloned()))
         .collect();
-    let mut report_extension: Vec<Option<usize>> = (0..n_objects)
-        .map(|oi| report_irs[oi].as_ref().and_then(|r| r.extension))
+    let mut report_extension: Vec<Vec<usize>> = (0..n_objects)
+        .map(|oi| {
+            report_irs[oi]
+                .as_ref()
+                .map(|r| r.extensions.clone())
+                .unwrap_or_default()
+        })
         .collect();
     if let Some(src) = src {
         for oi in (0..n_objects).filter(|&oi| prov(oi)) {
             let f = src.facts(oi);
             xml_reasons[oi] = f.xml_reason.clone();
             report_reasons[oi] = f.report_reason.clone();
-            report_extension[oi] = f.report_extension.map(|e| e as usize);
+            report_extension[oi] = f.report_extensions.iter().map(|&e| e as usize).collect();
         }
     }
     let driven = DrivenCtx {
@@ -889,7 +923,7 @@ pub(crate) fn lower_core(
                 routine_offsets: shared.routine_offsets[oi].iter().map(|&o| o as u32).collect(),
                 xml_reason: shared.xml_reasons[oi].clone(),
                 report_reason: shared.report_reasons[oi].clone(),
-                report_extension: shared.driven.report_extension[oi].map(|e| e as u32),
+                report_extensions: shared.driven.report_extension[oi].iter().map(|&e| e as u32).collect(),
                 query: checked.queries[oi].clone(),
             });
         }

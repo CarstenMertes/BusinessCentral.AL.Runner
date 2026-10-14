@@ -131,9 +131,18 @@ impl Session {
         match found {
             Some(c) => Ok(c),
             None => {
-                // The id is generated per compilation; the corpus asserts only the tail
-                // (testpart/TestTestPart.al:TestPart_InvisiblePart_IsNotInTheControlTreeAtAll).
-                Err(error("The part with ID = 0 was not found on the page."))
+                // Text and code: testpart/TestPartTriggerOrderAndRefresh.al:316-340. The id is
+                // `control_id` of the declaring object and the part's name (testpart/TestTestPart.al:233).
+                let engine = self.engine();
+                let ctl = &page_of(&engine, st).controls[control];
+                let declaring = self.object_id_of(ctl.owner.unwrap_or(st.borrow().object as usize) as u32);
+                Err(error_code(
+                    format!(
+                        "The part with ID = {} was not found on the page.",
+                        control_id(declaring, &ctl.name)
+                    ),
+                    "TestPartNotFound",
+                ))
             }
         }
     }

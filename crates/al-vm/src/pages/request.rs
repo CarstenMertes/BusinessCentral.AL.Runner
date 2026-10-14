@@ -558,4 +558,13 @@ mod tests {
         assert_eq!(action_id(60398, "AppendText"), 622_821_794);
         assert_eq!(action_id(60398, "RefuseAction"), 1_188_892_507);
     }
+
+    // testpart/TestTestPart.al:233 and pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:57,92,124
+    #[test]
+    fn control_ids_are_the_ones_the_corpus_pins() {
+        assert_eq!(action_id(60344, "Hidden"), 1_318_487_454);
+        assert_eq!(action_id(329, "Name"), 301_776_846);
+        assert_eq!(action_id(5361, "User Defined"), 104_384_132);
+        assert_eq!(action_id(6478, "Ignore Status on Service Docs."), 1_790_009_997);
+    }
 }

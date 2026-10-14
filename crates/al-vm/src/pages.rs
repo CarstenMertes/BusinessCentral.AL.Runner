@@ -37,6 +37,23 @@ fn error(message: impl Into<String>) -> Signal {
     })
 }
 
+fn error_code(message: impl Into<String>, code: &str) -> Signal {
+    Signal::Error(AlError {
+        message: message.into(),
+        code: code.into(),
+        call_stack: String::new(),
+    })
+}
+
+/// The id a TestPage error names a control by: FNV-1a over the UTF-16 text of the declaring
+/// object's id followed by the control name, read as a signed 32-bit number and made positive.
+/// It reproduces every id the corpus pins: part `Hidden` of page 60344 (1318487454), `Name` of
+/// page 329 (301776846), `User Defined` of page 5361 (104384132) and the extension control
+/// `Ignore Status on Service Docs.` of page extension 6478 (1790009997).
+pub(crate) fn control_id(object_id: u32, name: &str) -> i64 {
+    request::action_id(object_id, name)
+}
+
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
@@ -466,7 +483,11 @@ impl Session {
             "GetField" => {
                 self.require_open(st)?;
                 match args.first() {
-                    Some(Value::Integer(n)) => Err(error(format!("The field with ID = {n} is not found on the page."))),
+                    // Code: handlers/TestPageRuntimeContracts.al:274-275 (page and part).
+                    Some(Value::Integer(n)) => Err(error_code(
+                        format!("The field with ID = {n} is not found on the page."),
+                        "TestFieldNotFound",
+                    )),
                     _ => unsupported("TestPart.GetField without an id"),
                 }
             }
@@ -637,7 +658,9 @@ impl Session {
                 let s = st.borrow();
                 match usize::try_from(i - 1).ok().and_then(|n| s.errors.get(n)) {
                     Some((_, t)) => Ok(Value::Text(t.clone())),
-                    None => Err(error(format!("The index {i} is out of range."))),
+                    // Index 0 is pinned (handlers/TestPageRuntimeContracts.al:224-236: text and code);
+                    // an index past the last error is assumed to raise the same (docs/probes-needed.md).
+                    None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
                 }
             }
             "Update" | "SaveRecord" => {
@@ -2596,19 +2619,23 @@ impl Session {
                 ir::ControlKind::Action | ir::ControlKind::SystemAction => "action",
                 _ => "field",
             };
-            // A page that ships precompiled names the control by an internal number in this
-            // message (corpus pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:92
-            // pins `ID = 301776846` for a Base Application control). How the number derives from the
-            // control is not known, so the text is refused rather than guessed.
+            // The id in the text is generated from the declaring object and the control name
+            // (see `control_id`); it matches the ids the corpus pins for Base Application controls
+            // (pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:57, :92, :124)
+            // and for a part (testpart/TestTestPart.al:233). The code of a field is pinned by
+            // handlers/TestPageRuntimeContracts.al:260; that of an action is not.
+            let ctl_name = ctl.name.clone();
+            let owner = ctl.owner;
             let object = st.borrow().object as usize;
-            let app = engine.program.objects[object].app as usize;
-            if engine.program.apps.get(app).is_some_and(|a| a.dependency) {
-                return unsupported(format!(
-                    "the error text for the {what} {} of a page from a dependency app (it names the control by an internal ID)",
-                    ctl.name
-                ));
-            }
-            return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
+            let declaring = self.object_id_of(owner.unwrap_or(object) as u32);
+            let id = control_id(declaring, &ctl_name);
+            return Err(match what {
+                "action" => error(format!("The action with ID = {id} is not found on the page.")),
+                _ => error_code(
+                    format!("The field with ID = {id} is not found on the page."),
+                    "TestFieldNotFound",
+                ),
+            });
         }
         // Only Invoke of an actionref is pinned: it runs the action it stands for. A found actionref
         // reads Visible true when neither it nor its target states a Visible (corpus

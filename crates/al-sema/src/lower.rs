@@ -1704,12 +1704,9 @@ impl Lowerer<'_> {
             } else {
                 None
             };
-            let run_object = match self.run_object(oi, file, sec) {
-                // An action that declares both runs only the RunObject
-                // (handlers/TestPageRunObjectContracts.al:371-390).
-                Some(r) => Some(r),
-                None => None,
-            };
+            // An action that declares both RunObject and OnAction runs only the RunObject
+            // (handlers/TestPageRunObjectContracts.al:371-390).
+            let run_object = self.run_object(oi, file, sec);
             controls.push(ir::Control {
                 name: raw.name.clone(),
                 kind: raw.kind.clone(),

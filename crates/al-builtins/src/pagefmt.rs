@@ -612,7 +612,10 @@ mod tests {
             Ok(Value::Duration(-86_400_001))
         ));
         // A sign on the first unit only is not BC's spelling (handlers/TestPageRuntimeContracts.al:157).
-        assert_eq!(p("-1 day 1 millisecond", &T::Duration).unwrap_err(), ParseError::Unsupported);
+        assert_eq!(
+            p("-1 day 1 millisecond", &T::Duration).unwrap_err(),
+            ParseError::Unsupported
+        );
         assert_eq!(p("5s", &T::Duration).unwrap_err(), ParseError::Unsupported);
         assert_eq!(
             p("1 second 2 hours", &T::Duration).unwrap_err(),

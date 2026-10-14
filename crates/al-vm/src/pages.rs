@@ -12,9 +12,9 @@ use al_builtins::ops;
 use al_builtins::pagefmt::{self, Blank, ControlFormat};
 use al_builtins::value::{ControlRef, ControlTarget, Cursor, PageMode, PageState, RecordState, RtType, Value};
 use al_ir as ir;
+use rust_decimal::prelude::ToPrimitive;
 use std::cell::RefCell;
 use std::rc::Rc;
-use rust_decimal::prelude::ToPrimitive;
 use std::sync::Arc;
 
 type St = Rc<RefCell<PageState>>;
@@ -1490,7 +1490,9 @@ impl Session {
             // line the corpus pins exactly these values; the rule behind them is not known, so
             // any other negative last line is refused.
             (Some(l), None) if l >= D::ZERO => l + step,
-            (Some(l), None) if !is_decimal && [-30000, -20000, -10000, -5, -1].contains(&ToPrimitive::to_i64(&l).unwrap_or(0)) => {
+            (Some(l), None)
+                if !is_decimal && [-30000, -20000, -10000, -5, -1].contains(&ToPrimitive::to_i64(&l).unwrap_or(0)) =>
+            {
                 D::from(match ToPrimitive::to_i64(&l).unwrap_or(0) {
                     -30000 => -22500,
                     -20000 => -15000,
@@ -3223,7 +3225,10 @@ impl Session {
         }
         if !self.is_list(st) {
             let parts: Vec<St> = st.borrow().parts.iter().map(|(_, c)| c.clone()).collect();
-            if parts.iter().any(|c| self.declares(c, "onclosepage") || self.declares(c, "onqueryclosepage")) {
+            if parts
+                .iter()
+                .any(|c| self.declares(c, "onclosepage") || self.declares(c, "onqueryclosepage"))
+            {
                 return unsupported("a card closed by a deleted row whose parts declare close triggers (not pinned)");
             }
             self.page_trigger(st, "onclosepage", vec![])?;

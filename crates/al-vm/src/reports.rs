@@ -151,7 +151,11 @@ impl Session {
                 self.report_execute_args(id, args.first(), args.get(1))?;
                 // handlers/TestReportRuntimeContracts.al:395-414: Execute keeps the globals, and a
                 // second Execute on the same variable is refused.
-                if self.report_executed.iter().any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst))) {
+                if self
+                    .report_executed
+                    .iter()
+                    .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)))
+                {
                     return Err(al_error("The object has been run. Use the function CLEAR(Report)."));
                 }
                 self.report_executed.retain(|w| w.strong_count() > 0);
@@ -345,7 +349,10 @@ impl Session {
     /// ends and the run reads the request (`report_trigger_call`).
     fn report_flow_builtin(&mut self, running: &Inst, flow: Flow) -> Result<Value, Signal> {
         let object = running.borrow().object as usize;
-        let on_report = matches!(self.engine.program.objects[object].kind.as_str(), "report" | "reportextension");
+        let on_report = matches!(
+            self.engine.program.objects[object].kind.as_str(),
+            "report" | "reportextension"
+        );
         let allowed = match self.report_trigger {
             Some((depth, kind)) if on_report && depth == self.depth => match flow {
                 Flow::Skip | Flow::Break => kind == TrigKind::Row,
@@ -438,7 +445,11 @@ impl Session {
         // A view handed to SetTableView stays in force over a DataItemTableView that only sorts
         // (handlers/TestReportRuntimeContracts.al:393-410 "Probe Rep Order"); how it combines with
         // a DataItemTableView that filters is not pinned.
-        if item.view.as_ref().is_some_and(|v| v.to_ascii_lowercase().contains("where")) {
+        if item
+            .view
+            .as_ref()
+            .is_some_and(|v| v.to_ascii_lowercase().contains("where"))
+        {
             return unsupported(format!(
                 "a table view for data item {}, which declares a DataItemTableView (not pinned)",
                 item.name

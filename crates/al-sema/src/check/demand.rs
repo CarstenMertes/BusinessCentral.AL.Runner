@@ -23,6 +23,7 @@
 
 use super::*;
 use crate::workspace::Resolution;
+use al_ir as ir;
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -74,6 +75,8 @@ pub(super) struct State {
     fresh_global: u8,
     ctxs: HashMap<usize, Rc<ObjCtx>>,
     routines: HashMap<usize, Rc<Vec<ast::Routine>>>,
+    /// The `OnResolveCaptionClass` subscribers are reached (a page with a `CaptionClass` is run).
+    caption_class: bool,
 }
 
 impl State {
@@ -89,6 +92,7 @@ impl State {
             fresh_global: 0,
             ctxs: HashMap::new(),
             routines: HashMap::new(),
+            caption_class: false,
         }
     }
 }
@@ -164,14 +168,13 @@ impl Checker<'_> {
         self.raise(i, FULL);
     }
 
-    /// Reached code writes to table `i` (`ops`): that runs its triggers and the subscribers
-    /// to its events for those operations.
-    pub(super) fn touch_ops(&self, i: usize, ops: u8) {
+    /// Reached code writes (`ops`) to a table of any app, perhaps one it does not name (a
+    /// `RecordRef`): that raises the events of the platform's `Global Triggers` codeunit, whose
+    /// subscribers can sit in a dependency app.
+    pub(super) fn touch_global_ops(&self, ops: u8) {
         if ops == 0 {
             return;
         }
-        // Any write, to a table of any app, raises the events of the platform's `Global Triggers`
-        // codeunit, whose subscribers can sit in a dependency app.
         if let Some(st) = self.demand.borrow_mut().as_mut() {
             let new = ops & !st.global_ops;
             if new != 0 {
@@ -179,6 +182,15 @@ impl Checker<'_> {
                 st.fresh_global |= new;
             }
         }
+    }
+
+    /// Reached code writes to table `i` (`ops`): that runs its triggers and the subscribers
+    /// to its events for those operations.
+    pub(super) fn touch_ops(&self, i: usize, ops: u8) {
+        if ops == 0 {
+            return;
+        }
+        self.touch_global_ops(ops);
         if !self.ws.is_dependency(i) {
             return;
         }
@@ -360,11 +372,13 @@ impl Checker<'_> {
                 if level == FULL {
                     self.reach_all(i);
                     self.activate_source_table(i);
+                    self.activate_page_events(i);
                 }
             }
             ObjKind::Report | ObjKind::ReportExtension | ObjKind::XmlPort if level == FULL => {
                 self.reach_triggers(i);
                 self.activate_source_table(i);
+                self.activate_page_events(i);
             }
             ObjKind::Query => {
                 if level == FULL {
@@ -452,7 +466,18 @@ impl Checker<'_> {
                     let ext_field_trigger = op == VALIDATE
                         && (r.name().eq_ignore_ascii_case("OnBeforeValidate")
                             || r.name().eq_ignore_ascii_case("OnAfterValidate"));
-                    if r.is_trigger() && (r.name().eq_ignore_ascii_case(trigger) || ext_field_trigger) {
+                    // A table extension also has `OnBeforeInsert` and `OnAfterInsert` around the
+                    // table's own trigger (and so for Modify, Delete and Rename).
+                    let around = o != t
+                        && op != VALIDATE
+                        && ["OnBefore", "OnAfter"].iter().any(|p| {
+                            let name = r.name();
+                            name.get(..p.len()).is_some_and(|h| h.eq_ignore_ascii_case(p))
+                                && name
+                                    .get(p.len()..)
+                                    .is_some_and(|t| t.eq_ignore_ascii_case(&trigger[2..]))
+                        });
+                    if r.is_trigger() && (r.name().eq_ignore_ascii_case(trigger) || ext_field_trigger || around) {
                         self.reach(o, usize::from(r.syntax().text_range().start()));
                     }
                 }
@@ -495,6 +520,83 @@ impl Checker<'_> {
         self.raise(o, FULL);
     }
 
+    /// A page (or the request page of a report) the test client opens raises the platform's page
+    /// events, and resolves its `CaptionClass` properties through `OnResolveCaptionClass`. Reach
+    /// the subscribers of the events the client raises (`al_ir::RAISED_PAGE_EVENTS`) and the
+    /// caption class resolvers. A subscriber to any other event of the page is not reached: the
+    /// runtime refuses to open the page (`check_page_events`).
+    fn activate_page_events(&mut self, i: usize) {
+        for (o, k) in self.ws.subscribers_of(i) {
+            let event = &self.ws.objects[o].subscribers[k].event;
+            if ir::RAISED_PAGE_EVENTS.iter().any(|e| event.eq_ignore_ascii_case(e)) {
+                self.reach_subscriber(o, k);
+            }
+        }
+        self.reach_caption_class_if_used(i);
+    }
+
+    /// The pages and codeunits that the `RunObject` actions of workspace page `i` run. The test
+    /// client opens a page target and runs a codeunit's `OnRun` when the action is invoked.
+    /// (Only workspace pages: a dependency page's actions would pull in the app along the links.)
+    pub(super) fn reach_run_objects(&self, i: usize) {
+        if self.demand.borrow().is_none() || self.ws.is_dependency(i) {
+            return;
+        }
+        let file = self.ws.objects[i].file;
+        for sec in ast::sections_in(self.ws.object_ast(i).syntax()) {
+            let Some(text) = sec
+                .properties()
+                .find(|p| p.name().eq_ignore_ascii_case("RunObject"))
+                .map(|p| p.value_text())
+            else {
+                continue;
+            };
+            let Ok((kind, parts)) = crate::pages::parse_run_object(&text) else {
+                continue;
+            };
+            match kind {
+                ir::RunKind::Codeunit => {
+                    if let Some(t) = self.resolve_parts(file, ObjKind::Codeunit, &parts) {
+                        self.reach_run(t);
+                    }
+                }
+                ir::RunKind::Page => {
+                    if let Some(t) = self.resolve_parts(file, ObjKind::Page, &parts) {
+                        self.touch_full(t);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Object `i` (a page or report the client can open) declares a `CaptionClass`: the subscribers
+    /// to `OnResolveCaptionClass` run when it opens.
+    pub(super) fn reach_caption_class_if_used(&self, i: usize) {
+        if self.demand.borrow().is_none() {
+            return;
+        }
+        let text = self.ws.object_ast(i).syntax().text().to_string();
+        if !text.to_ascii_lowercase().contains("captionclass") {
+            return;
+        }
+        let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
+            let first = !st.caption_class;
+            st.caption_class = true;
+            first
+        });
+        if first {
+            for (o, k) in self.ws.caption_class_subscribers() {
+                if self.ws.objects[o].subscribers[k]
+                    .event
+                    .eq_ignore_ascii_case("OnResolveCaptionClass")
+                {
+                    self.reach_subscriber(o, k);
+                }
+            }
+        }
+    }
+
     /// A page lowers with its source table and the pages it shows as parts; without them it
     /// would be refused as pointing outside the workspace.
     fn activate_page_shape(&mut self, i: usize) {
@@ -521,7 +623,7 @@ impl Checker<'_> {
     }
 
     /// A page, report or XML port runs against the table it is built on.
-    fn activate_source_table(&mut self, i: usize) {
+    pub(super) fn activate_source_table(&self, i: usize) {
         let obj = self.ws.object_ast(i);
         let file = self.ws.objects[i].file;
         let source = obj
@@ -532,6 +634,20 @@ impl Checker<'_> {
             if let Some(t) = self.resolve_at(file, ObjKind::Table, &name) {
                 if matches!(self.ws.objects[i].kind, ObjKind::Page | ObjKind::PageExtension) {
                     self.touch_ops(t, ALL_OPS);
+                    // A lookup on a control the page gives no OnLookup runs the table field's
+                    // (corpus handlers/TestPageFieldTableLookup.al:55).
+                    if self.ws.is_dependency(t) && self.ws.usable(t) {
+                        for o in std::iter::once(t).chain(self.ws.extensions_of(t).iter().copied()) {
+                            if !self.ws.usable(o) {
+                                continue;
+                            }
+                            for r in self.routines_of(o).iter() {
+                                if r.is_trigger() && r.name().eq_ignore_ascii_case("OnLookup") {
+                                    self.reach(o, usize::from(r.syntax().text_range().start()));
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -635,7 +751,9 @@ impl Checker<'_> {
             .any(|a| EVENT_ATTRS.iter().any(|e| a.name().eq_ignore_ascii_case(e)));
         if is_publisher {
             let name = r.name();
-            for (o, k) in self.ws.subscribers_of(object) {
+            // Subscribers name the base object of an event an extension publishes.
+            let publisher = self.ws.extension_target(object).unwrap_or(object);
+            for (o, k) in self.ws.subscribers_of(publisher) {
                 if self.ws.objects[o].subscribers[k].event.eq_ignore_ascii_case(&name) {
                     self.reach_subscriber(o, k);
                 }
@@ -690,6 +808,52 @@ impl Checker<'_> {
             reached: st.reached,
         })
     }
+}
+
+/// The event subscribers of dependency objects that are declared but not compiled, for events of
+/// objects (and platform codeunits) that are. BC would run them when the event is raised; the
+/// program has no code for them, so the runtime refuses to raise such an event (hard rule 4).
+/// Manual subscribers are left out: they fire only on an instance somebody bound, and that
+/// instance is a compiled codeunit.
+pub fn uncompiled_subscribers(ws: &Workspace, active: &dyn Fn(usize) -> bool) -> Vec<ir::UncompiledSubscriber> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let mut add = |publisher: Option<usize>, platform: ir::PlatformPublisher, so: usize, si: usize| {
+        let o = &ws.objects[so];
+        if !ws.is_dependency(so) || active(so) || o.manual_subscribers {
+            return;
+        }
+        if !seen.insert((publisher, platform as u8, so, si)) {
+            return;
+        }
+        let s = &o.subscribers[si];
+        out.push(ir::UncompiledSubscriber {
+            publisher: publisher.map(|p| p as u32),
+            platform,
+            event: s.event.to_lowercase(),
+            element: s.element.clone(),
+            subscriber: format!("{} \"{}\"", o.kind.label(), o.name),
+        });
+    };
+    for oi in 0..ws.objects.len() {
+        if active(oi) {
+            for (so, si) in ws.subscribers_of(oi) {
+                add(Some(oi), ir::PlatformPublisher::None, so, si);
+            }
+        }
+    }
+    for (so, si) in ws.global_trigger_subscribers() {
+        add(None, ir::PlatformPublisher::GlobalTriggers, so, si);
+    }
+    for (so, si) in ws.caption_class_subscribers() {
+        if ws.objects[so].subscribers[si]
+            .event
+            .eq_ignore_ascii_case("OnResolveCaptionClass")
+        {
+            add(None, ir::PlatformPublisher::CaptionClass, so, si);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1000,5 +1164,253 @@ mod tests {
         );
         assert!(l.program.objects[object(&l, "Lib")].routines.is_empty());
         assert!(l.dependency[object(&l, "Lib")] && !l.dependency[object(&l, "Main")]);
+    }
+
+    const T_WITH_TRIGGERS: &str = "table 10 T { fields { field(1; K; Code[10]) { } field(2; V; Integer) { } } \
+         trigger OnInsert() begin end; trigger OnModify() begin end; trigger OnDelete() begin end; \
+         procedure Bump() begin V := 1; Modify(true); end; }";
+
+    #[test]
+    fn a_write_without_the_record_name_inside_table_code_runs_the_trigger_of_that_operation() {
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record T; begin R.Bump(); end; }",
+            &[("t.al", T_WITH_TRIGGERS)],
+        );
+        assert!(
+            compiled(&l, "T", "OnModify"),
+            "`Modify(true)` inside Bump writes the table"
+        );
+        assert!(!compiled(&l, "T", "OnDelete"));
+    }
+
+    #[test]
+    fn a_workspace_page_over_a_dependency_table_runs_what_the_client_writes() {
+        let (_, l) = compile(
+            "page 5 Mine { PageType = Card; SourceTable = T; layout { area(Content) { field(K; Rec.K) { } } } }",
+            &[("t.al", T_WITH_TRIGGERS)],
+        );
+        for t in ["OnInsert", "OnModify", "OnDelete"] {
+            assert!(compiled(&l, "T", t), "{t}");
+        }
+    }
+
+    #[test]
+    fn the_run_object_actions_of_a_workspace_page_run_their_targets() {
+        let dep = [(
+            "c.al",
+            "codeunit 10 Lib { trigger OnRun() begin end; procedure Other() begin end; } \
+             codeunit 11 Unused { trigger OnRun() begin end; }",
+        )];
+        let (_, l) = compile(
+            "page 5 Mine { PageType = Card; layout { area(Content) { } } \
+             actions { area(Processing) { action(A) { RunObject = Codeunit Lib; } } } }",
+            &dep,
+        );
+        assert!(compiled(&l, "Lib", "OnRun"));
+        assert!(!compiled(&l, "Lib", "Other"));
+        assert!(l.program.objects[object(&l, "Unused")].routines.is_empty());
+    }
+
+    #[test]
+    fn a_page_the_client_opens_reaches_the_subscribers_of_the_events_it_raises_and_no_others() {
+        let dep = [
+            ("t.al", "table 10 T { fields { field(1; K; Code[10]) { } } }"),
+            (
+                "p.al",
+                "page 20 P { PageType = Card; SourceTable = T; layout { area(Content) { field(K; Rec.K) { } } } }",
+            ),
+            (
+                "s.al",
+                "codeunit 30 Subs {\n\
+                 [EventSubscriber(ObjectType::Page, Page::P, 'OnOpenPageEvent', '', false, false)]\n\
+                 local procedure Opened() begin end;\n\
+                 [EventSubscriber(ObjectType::Page, Page::P, 'OnAfterGetRecordEvent', '', false, false)]\n\
+                 local procedure Row() begin end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var P: TestPage P; begin P.OpenNew(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "Subs", "Opened"));
+        assert!(
+            !compiled(&l, "Subs", "Row"),
+            "the client does not raise it; the page refuses to open"
+        );
+        // Both are declared: the one nobody compiled is on the program's list, the other is not.
+        let events: Vec<&str> = l
+            .program
+            .uncompiled_subscribers
+            .iter()
+            .map(|u| u.event.as_str())
+            .collect();
+        assert!(events.is_empty(), "{events:?}: a stub is registered, not missing");
+    }
+
+    #[test]
+    fn caption_class_resolvers_are_reached_by_a_workspace_page_that_has_a_caption_class() {
+        let resolver = (
+            "r.al",
+            "codeunit 30 Resolver {\n\
+             [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Caption Class\", 'OnResolveCaptionClass', '', false, false)]\n\
+             local procedure R(CaptionArea: Text; CaptionExpr: Text; Language: Integer; var Caption: Text; var Resolved: Boolean) begin end; }",
+        );
+        let with = "table 5 Mine { fields { field(1; K; Code[10]) { } } }\n\
+             page 5 Mine { PageType = Card; SourceTable = Mine; layout { area(Content) { \
+             field(K; Rec.K) { CaptionClass = 'ZZ,x'; } } } }";
+        let (_, l) = compile(with, &[resolver]);
+        assert!(compiled(&l, "Resolver", "R"));
+        let without = with.replace("CaptionClass = 'ZZ,x';", "");
+        let (_, l) = compile(&without, &[resolver]);
+        assert!(l.program.objects[object(&l, "Resolver")].routines.is_empty());
+        // Not reached, yet declared: the page client refuses to raise the event.
+        assert_eq!(l.program.uncompiled_subscribers.len(), 1);
+        let u = &l.program.uncompiled_subscribers[0];
+        assert_eq!(u.platform, al_ir::PlatformPublisher::CaptionClass);
+        assert_eq!(u.event, "onresolvecaptionclass");
+    }
+
+    #[test]
+    fn an_event_published_by_an_extension_reaches_the_subscribers_of_its_base_object() {
+        let dep = [
+            ("t.al", "table 10 T { fields { field(1; K; Code[10]) { } } }"),
+            (
+                "x.al",
+                "tableextension 11 TX extends T { procedure Fire() begin OnThing(); end; \
+                 [IntegrationEvent(false, false)] local procedure OnThing() begin end; }",
+            ),
+            (
+                "s.al",
+                "codeunit 30 Subs {\n\
+                 [EventSubscriber(ObjectType::Table, Database::T, 'OnThing', '', false, false)]\n\
+                 local procedure A() begin end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record T; begin R.Fire(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "Subs", "A"));
+    }
+
+    #[test]
+    fn a_record_ref_write_raises_the_global_events_of_that_operation() {
+        let dep = [(
+            "s.al",
+            "codeunit 20 Subs {\n\
+             [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnDatabaseModify', '', false, false)]\n\
+             local procedure Mod(RecRef: RecordRef) begin end;\n\
+             [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnDatabaseDelete', '', false, false)]\n\
+             local procedure Del(RecRef: RecordRef) begin end; }",
+        )];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var RR: RecordRef; begin RR.Modify(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "Subs", "Mod"));
+        assert!(!compiled(&l, "Subs", "Del"));
+        // The delete subscriber sits in a compiled object, so it is a stub that refuses if it is
+        // asked, not a missing one.
+        assert!(l.program.uncompiled_subscribers.is_empty());
+        assert!(reasons(&l, "Subs", "Del")[0].contains("not compiled"));
+    }
+
+    #[test]
+    fn running_a_report_or_xmlport_reaches_its_triggers_by_variable_or_by_constant() {
+        let dep = [
+            (
+                "r.al",
+                "report 40 Rep { trigger OnPreReport() begin end; procedure Other() begin end; }",
+            ),
+            (
+                "x.al",
+                "xmlport 41 Xp { schema { textelement(Root) { } } trigger OnPreXmlPort() begin end; }",
+            ),
+        ];
+        let (_, by_var) = compile(
+            "codeunit 1 Main { procedure Go() var R: Report Rep; begin R.Run(); end; }",
+            &dep,
+        );
+        assert!(compiled(&by_var, "Rep", "OnPreReport"));
+        assert!(!compiled(&by_var, "Rep", "Other"));
+        let (_, by_constant) = compile(
+            "codeunit 1 Main { procedure Go() begin Report.Run(Report::Rep); XmlPort.Import(XmlPort::Xp); end; }",
+            &dep,
+        );
+        assert!(compiled(&by_constant, "Rep", "OnPreReport"));
+        assert!(compiled(&by_constant, "Xp", "OnPreXmlPort"));
+        // Only named, not run: nothing is reached.
+        let (_, named) = compile(
+            "codeunit 1 Main { procedure Go() var I: Integer; begin I := Report::Rep; end; }",
+            &dep,
+        );
+        assert!(!compiled(&named, "Rep", "OnPreReport"));
+    }
+
+    #[test]
+    fn the_triggers_before_and_after_a_table_trigger_that_an_extension_declares_are_reached() {
+        let dep = [
+            ("t.al", "table 10 T { fields { field(1; K; Code[10]) { } } }"),
+            (
+                "x.al",
+                "tableextension 11 TX extends T { trigger OnBeforeInsert() begin end; trigger OnAfterInsert() begin end; \
+                 trigger OnBeforeDelete() begin end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: Record T; begin R.Insert(); end; }",
+            &dep,
+        );
+        assert!(compiled(&l, "TX", "OnBeforeInsert") && compiled(&l, "TX", "OnAfterInsert"));
+        assert!(!compiled(&l, "TX", "OnBeforeDelete"));
+    }
+
+    #[test]
+    fn subscribers_nothing_compiled_are_listed_by_publisher_unless_they_are_manual() {
+        let dep = [
+            ("t.al", "table 10 T { fields { field(1; K; Code[10]) { } } }"),
+            (
+                "p.al",
+                "codeunit 20 Pub { [IntegrationEvent(false, false)] procedure OnX() begin end; }",
+            ),
+            (
+                "s.al",
+                "codeunit 30 Auto {\n\
+                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnX', '', false, false)]\n\
+                 local procedure A() begin end; }",
+            ),
+            (
+                "m.al",
+                "codeunit 31 Manual { EventSubscriberInstance = Manual;\n\
+                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnX', '', false, false)]\n\
+                 local procedure A() begin end; }",
+            ),
+        ];
+        // The workspace uses the publisher without calling the event routine, so its subscribers
+        // are not reached; the manual one cannot fire without a bound instance.
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var P: Codeunit Pub; begin end; }",
+            &dep,
+        );
+        let list: Vec<_> = l
+            .program
+            .uncompiled_subscribers
+            .iter()
+            .map(|u| {
+                (
+                    u.publisher.map(|p| l.program.objects[p as usize].name.clone()),
+                    u.event.clone(),
+                    u.subscriber.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            list,
+            [(
+                Some("Pub".to_string()),
+                "onx".to_string(),
+                "codeunit \"Auto\"".to_string()
+            )]
+        );
     }
 }

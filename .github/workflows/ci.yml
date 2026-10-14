@@ -83,6 +83,24 @@ jobs:
             --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml
           cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
 
+      # ADR-013 decision 6: the demand-driven compile of the dependency apps must never change an
+      # outcome. The corpus runs a second time with every dependency routine compiled
+      # (`AL_EAGER_DEPENDENCIES=1`), and no test may come out differently (pass, fail or not run).
+      # A test the demand-driven compile refuses and the eager one runs shows up here as well:
+      # that is a path BC runs and the demand-driven compile did not reach. Cost: a second corpus
+      # run, about twice the first (measured 8 s against 15 s of CPU for one BC version), so it
+      # runs on every push. `tools/compare_junit.py` prints each difference with both reasons.
+      - name: Demand-driven compile against the eager compile
+        run: |
+          status=0
+          AL_EAGER_DEPENDENCIES=1 ./target/release/al-test-cli --all-versions --require-dotnet \
+            --junit eager-junit.xml || status=1
+          for v in 27 28 29; do
+            python3 tools/compare_junit.py --allow tools/demand-eager-known-differences.txt \
+              runtime-junit-$v.xml eager-junit-$v.xml || status=1
+          done
+          exit $status
+
       # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s,
       # parser throughput at least 50 MB/s. #[ignore]d in plain `cargo test`
       # because they only mean something in release. After the corpus step so a
@@ -117,4 +135,5 @@ jobs:
             pass-rate-*.json
             pass-rate-*.md
             runtime-junit-*.xml
+            eager-junit-*.xml
           retention-days: 90

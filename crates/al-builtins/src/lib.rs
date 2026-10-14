@@ -18,6 +18,7 @@ pub mod datefns;
 pub mod dotnet_sigs;
 pub mod errorinfo;
 pub mod evaluate;
+pub mod file;
 pub mod filter;
 pub mod format;
 pub mod formatstr;

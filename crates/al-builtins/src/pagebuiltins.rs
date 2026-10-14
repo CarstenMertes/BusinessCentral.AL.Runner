@@ -58,6 +58,7 @@ page_methods! {
     "TestPage.New#1" => "TestPage.New",
     "Page.Update#1" => "Page.Update",
     "Page.Editable#1" => "Page.Editable",
+    "Page.Caption#1" => "Page.Caption",
     "Page.PromptMode#1" => "Page.PromptMode",
     "Page.EnqueueBackgroundTask#1" => "Page.EnqueueBackgroundTask",
     "Page.GetBackgroundParameters#1" => "Page.GetBackgroundParameters",

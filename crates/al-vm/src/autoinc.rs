@@ -113,7 +113,11 @@ impl Session {
         if self.try_depth > 0 {
             return error("Truncate is not supported in try functions.");
         }
-        if self.delete_event_subscribed(&t.name) {
+        // A subscriber that was not compiled is a subscriber to BC all the same.
+        let undeclared_delete_subscriber = ["onbeforedeleteevent", "onafterdeleteevent"]
+            .iter()
+            .any(|e| self.engine.events.missing_for(t.object as usize, e, None).is_some());
+        if undeclared_delete_subscriber || self.delete_event_subscribed(&t.name) {
             return error(
                 "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed. Please remove the events subscriptions or use DeleteAll.",
             );

@@ -293,6 +293,8 @@ pub struct PageState {
     /// OnInit/OnOpenPage are running, and `CurrPage.Editable(false)` has been called in them.
     pub opening: bool,
     pub editable_off: bool,
+    /// `CurrPage.Caption := x` (handlers/TestPageCaption_Page.al:44); reset when the page opens.
+    pub caption: Option<String>,
     /// The pages shown by the part controls of this page: (control index, child page). Only parts
     /// that are in the control tree at open have one.
     pub parts: Vec<(usize, Rc<RefCell<PageState>>)>,
@@ -363,6 +365,7 @@ impl PageState {
             draft_stored: false,
             opening: false,
             editable_off: false,
+            caption: None,
             parts: Vec::new(),
             lower_key: None,
             set_record: None,
@@ -555,6 +558,8 @@ pub struct SessionSettingsState {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NotificationState {
     pub message: Option<String>,
+    /// `Id := guid` (handlers/TestNotificationHandler.al:55-56); the default is not pinned.
+    pub id: Option<[u8; 16]>,
     /// Ordinal in the `NotificationScope` members.
     pub scope: Option<i32>,
     pub data: Vec<(String, String)>,
@@ -652,6 +657,8 @@ pub enum LibraryValue {
     XmlAttrs(crate::json::Handle),
     /// An XmlNameTable (opaque).
     XmlNameTable,
+    /// A `File` that was created or opened, or had a mode set (an untouched one is `Empty`).
+    File(crate::file::FileState),
     /// An XmlNamespaceManager: the (prefix, namespace) pairs added to it.
     XmlNamespaces(Vec<(String, String)>),
     /// An InStream: a snapshot being read.

@@ -281,8 +281,8 @@ fn parse_grants(o: &Object, ids: &dyn Fn(&str, &str) -> Result<u32, String>) -> 
         }
         match out.iter_mut().find(|g| g.kind == kind && g.id == id) {
             Some(g) => {
-                for i in 0..5 {
-                    g.level[i] = merge(g.level[i], level[i]);
+                for (have, add) in g.level.iter_mut().zip(level) {
+                    *have = merge(*have, add);
                 }
             }
             None => out.push(Grant { kind, id, level }),
@@ -306,11 +306,15 @@ pub(super) struct Built {
     by_name: HashMap<String, Vec<usize>>,
 }
 
+type Expanded = Result<Rc<Vec<Grant>>, String>;
+/// (grants table, the sets the read could select).
+type MatKey = (u8, Vec<usize>);
+
 #[derive(Default)]
 pub(super) struct Grants {
     built: OnceCell<Rc<Built>>,
-    expanded: RefCell<HashMap<usize, Result<Rc<Vec<Grant>>, String>>>,
-    mats: RefCell<HashMap<(u8, Vec<usize>), Rc<Mat>>>,
+    expanded: RefCell<HashMap<usize, Expanded>>,
+    mats: RefCell<HashMap<MatKey, Rc<Mat>>>,
 }
 
 impl Grants {

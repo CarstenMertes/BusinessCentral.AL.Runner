@@ -258,6 +258,14 @@ fn scan_object(src: &str, sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
                 code -= 1;
             }
         }
+        if depth == 1
+            && sig[i].kind == Ident
+            && sig[i].text.eq_ignore_ascii_case("Subtype")
+            && sig.get(i + 1).is_some_and(|t| t.kind == Eq)
+            && sig.get(i + 2).is_some_and(|t| t.is_kw("Install"))
+        {
+            obj.install = true;
+        }
         match sig[i].kind {
             LBrace => depth += 1,
             RBrace => {
@@ -266,14 +274,6 @@ fn scan_object(src: &str, sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
                     i += 1;
                     break;
                 }
-            }
-            Ident
-                if depth == 1
-                    && sig[i].text.eq_ignore_ascii_case("Subtype")
-                    && sig.get(i + 1).is_some_and(|t| t.kind == Eq)
-                    && sig.get(i + 2).is_some_and(|t| t.is_kw("Install")) =>
-            {
-                obj.install = true;
             }
             LBrack if depth == 1 => {
                 if let Some(s) = subscriber(sig, i) {

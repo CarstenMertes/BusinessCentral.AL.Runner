@@ -709,6 +709,9 @@ impl Session {
             after = Some(al_data::position(t, key, &row));
             rows.push(row);
         }
+        // One fresh set of table globals for all rows, not the caller's (ADR-021 decision 6; corpus
+        // probe TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee).
+        let shared = al_builtins::value::TableGlobals::new_shared();
         for mut row in rows {
             row[pos] = value.clone();
             let copy = {
@@ -719,6 +722,7 @@ impl Session {
                     marks: Vec::new(),
                     marked_only: false,
                     position: None,
+                    globals: shared.share(),
                     ..r.clone()
                 }
             };

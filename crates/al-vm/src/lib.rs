@@ -482,6 +482,7 @@ impl Session {
                     auto_calc: Vec::new(),
                     load: Default::default(),
                     touched: false,
+                    globals: Default::default(),
                 })))
             }
             other => Value::default_for(other),
@@ -523,6 +524,37 @@ impl Session {
             .map(|g| g.ty.clone())
             .collect();
         let globals = tys.iter().map(|t| self.default_value(t)).collect();
+        Rc::new(RefCell::new(Instance {
+            object: object as u32,
+            globals,
+            initialized: true,
+        }))
+    }
+
+    /// A fresh instance of a table or table extension for one record variable (ADR-021). Its `Rec`
+    /// and `xRec` slots hold `Null` until a call fills them (`Session::enter_record`), so no
+    /// record state is built for them.
+    pub(crate) fn table_instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
+        let (rs, xs) = {
+            let o = &self.engine.program.objects[object];
+            (o.rec_slot, o.xrec_slot)
+        };
+        let tys: Vec<RtType> = self.engine.program.objects[object]
+            .globals
+            .iter()
+            .map(|g| g.ty.clone())
+            .collect();
+        let globals = tys
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                if Some(i) == rs || Some(i) == xs {
+                    Value::Null
+                } else {
+                    self.default_value(t)
+                }
+            })
+            .collect();
         Rc::new(RefCell::new(Instance {
             object: object as u32,
             globals,
@@ -917,8 +949,14 @@ impl Session {
                     None => f.instance.clone(),
                     Some(e) => match self.eval(e, f)? {
                         Value::Codeunit(i) => self.shared_instance(i),
-                        // A table procedure runs with the record as its Rec.
-                        Value::Record(rc) => self.record_instance(*object, rc, None)?,
+                        // A table procedure runs with the record as its Rec, on the record
+                        // variable's own globals (ADR-021).
+                        Value::Record(rc) => {
+                            let (inst, saved) = self.enter_record(*object, rc, None)?;
+                            let r = self.finish_call(*object, *routine, inst.clone(), args, *try_call, f);
+                            Self::leave_record(&inst, saved);
+                            return r;
+                        }
                         // A query procedure runs with the query it was called on as its own state.
                         Value::Query(q) => self.query_instance(*object, q),
                         // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which

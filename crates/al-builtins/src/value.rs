@@ -451,6 +451,96 @@ pub struct RecordState {
     /// AL code has written a field of the buffer. BC builds the buffer of a record variable on
     /// the first write, and evaluates the `InitValue`s only then (record/TestDateTimeInitValue.Codeunit.al).
     pub touched: bool,
+    /// The table's and its extensions' global variables of this record variable (ADR-021).
+    pub globals: TableGlobals,
+}
+
+/// The global variables of a table and of its table extensions, as one record variable holds
+/// them (ADR-021). They live as long as the variable: every procedure and trigger call on it
+/// runs on the same `Instance`, created on the first call. `Clone` gives an EMPTY set, because
+/// a copy of a record state (a record passed by value, a row image, `RecordRef.GetTable`) starts
+/// with fresh globals; use [`TableGlobals::share`] to keep two states on one set.
+///
+/// The instances hold `Rec` and `xRec` only while a call runs (the VM puts back what the slots
+/// held before), so a state owns its globals and nothing points back: no `Rc` cycle.
+#[derive(Default)]
+pub struct TableGlobals {
+    // Interior mutability: a handle is made through a shared borrow of the record state, which a
+    // caller may hold (`xrec_handle(rec, rec.borrow().fields.clone())`).
+    data: RefCell<Option<Rc<RefCell<GlobalsData>>>>,
+}
+
+/// Debug prints the number of instances only: while a call runs, an instance points at its record.
+impl std::fmt::Debug for TableGlobals {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self.data.borrow().as_ref().map_or(0, |d| d.borrow().instances.len());
+        write!(f, "TableGlobals({n})")
+    }
+}
+
+#[derive(Default)]
+struct GlobalsData {
+    /// One instance per object (the table, each table extension) that has been called.
+    instances: Vec<(u32, Rc<RefCell<Instance>>)>,
+    /// `xRec`'s own set: it persists with the variable and survives `Clear` and `Reset` of `Rec`.
+    xrec: TableGlobals,
+}
+
+impl Clone for TableGlobals {
+    fn clone(&self) -> Self {
+        TableGlobals::default()
+    }
+}
+
+impl TableGlobals {
+    /// An empty set that other states can [`share`](TableGlobals::share).
+    pub fn new_shared() -> TableGlobals {
+        TableGlobals {
+            data: RefCell::new(Some(Rc::default())),
+        }
+    }
+
+    /// Whether nothing has been called on this set yet.
+    pub fn is_unset(&self) -> bool {
+        self.data.borrow().is_none()
+    }
+
+    fn data(&self) -> Rc<RefCell<GlobalsData>> {
+        self.data.borrow_mut().get_or_insert_with(Default::default).clone()
+    }
+
+    /// A second handle onto this very set (not a copy). Creates the set if there is none yet.
+    pub fn share(&self) -> TableGlobals {
+        TableGlobals {
+            data: RefCell::new(Some(self.data())),
+        }
+    }
+
+    /// The instance of `object`, if one was created.
+    pub fn instance(&self, object: u32) -> Option<Rc<RefCell<Instance>>> {
+        let data = self.data.borrow();
+        let d = data.as_ref()?.borrow();
+        d.instances.iter().find(|(o, _)| *o == object).map(|(_, i)| i.clone())
+    }
+
+    pub fn set_instance(&self, object: u32, inst: Rc<RefCell<Instance>>) {
+        self.data().borrow_mut().instances.push((object, inst));
+    }
+
+    /// Every instance created so far.
+    pub fn instances(&self) -> Vec<(u32, Rc<RefCell<Instance>>)> {
+        match &*self.data.borrow() {
+            Some(d) => d.borrow().instances.clone(),
+            None => Vec::new(),
+        }
+    }
+
+    /// A handle onto `xRec`'s set (created on first use).
+    pub fn xrec(&self) -> TableGlobals {
+        let data = self.data();
+        let d = data.borrow();
+        d.xrec.share()
+    }
 }
 
 /// A set of field positions.

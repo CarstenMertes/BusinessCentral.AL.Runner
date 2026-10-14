@@ -1040,6 +1040,22 @@ fn the_server_class_members_answer_the_values_of_the_probe_and_al_runner_v2() {
     );
 }
 
+/// Tests-ERM `Azure AD Identity Mgmt.IsUserDelegatedAdmin`: the session user is not delegated (corpus
+/// `session/TestEnvironmentUserTenantContracts.al:245`, `IsUserDelegated` false), and a delegated admin is a
+/// delegated user, so it is not a delegated admin either.
+#[test]
+fn the_session_user_is_not_a_delegated_admin() {
+    assert_eq!(
+        text(run_as(
+            Some("27.5"),
+            "U: DotNet NavUserAccountHelper;",
+            "exit(Format(U.IsUserDelegatedAdmin()));",
+            ": Text"
+        )),
+        "No"
+    );
+}
+
 /// `Environment Information.IsSaaSInfrastructure` is `NavUserAccountHelper.IsAzure()`: true on the
 /// BC 27.5 and 28.5 oracle runs, false on the 29.0 run (corpus
 /// `session/TestEnvironmentUserTenantContracts.al:164-174`, `#if BC29PLUS`). No target is the newest.

@@ -5632,6 +5632,19 @@ codeunit 50101 C2
         assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
     }
 
+    // Tests-ERM Document Service Management.CheckError: `Error(Service.LastError.Message)`. A DotNet result
+    // fits the Text overload of Error, not the ErrorInfo one (ADR-024).
+    #[test]
+    fn a_dotnet_result_passed_to_error_picks_the_text_overload() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P() var Convert: DotNet Convert; begin Error(Convert.ToBase64String('x')); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        assert!(format!("{:?}", r.body).contains("DotNetCoerce(Text"), "{:?}", r.body);
+    }
+
     // A `[Native]` procedure of a platform app has an empty AL body: the service tier implements it. Running
     // the empty body would answer the default value (the corpus run showed `Agent Utilities.IsAgentSession`
     // deciding every session is an agent session, because the native `GetCurrentSessionAgentMetadataProviderType`

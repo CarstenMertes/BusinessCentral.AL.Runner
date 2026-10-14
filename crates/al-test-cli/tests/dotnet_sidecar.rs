@@ -938,3 +938,18 @@ fn refused_text(r: Result<(), DotNetFailure>) -> String {
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
+
+// ---- ADR-024 follow-up: a static member read through an object of a derived type ----------
+
+#[test]
+fn a_static_member_is_found_through_an_instance_of_a_derived_type() {
+    // NPR `Encoding.UTF8.GetBytes(...)` on a variable that already holds an Encoding: the object's type is
+    // `UTF8EncodingSealed`, and `UTF8` is a static member of its base class `Encoding`.
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    let enc = sess.get_property(st("System.Text.Encoding"), "UTF8").unwrap();
+    let enc = handle_of(&enc);
+    let again = sess.get_property(DotNetTarget::Instance(enc), "UTF8").unwrap();
+    assert!(matches!(again.value, DotNetValue::Handle { .. }), "{again:?}");
+    sess.close();
+}

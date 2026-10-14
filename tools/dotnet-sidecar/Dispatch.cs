@@ -92,7 +92,7 @@ public sealed class Server
                 var (target, type) = Target(req["target"]!);
                 string name = req["member"]!.GetValue<string>();
                 var args = DecodeArgs(req);
-                var flags = BindingFlags.Public | BindingFlags.Static | (target != null ? BindingFlags.Instance : 0);
+                var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy | (target != null ? BindingFlags.Instance : 0);
                 var cands = type.GetMethods(flags).Where(m => m.Name == name && !m.IsGenericMethodDefinition).ToArray();
                 if (cands.Length == 0)
                     throw new Refusal(target == null && type.GetMethods(BindingFlags.Public | BindingFlags.Instance).Any(m => m.Name == name)
@@ -106,7 +106,7 @@ public sealed class Server
             {
                 var (target, type) = Target(req["target"]!);
                 string name = req["member"]!.GetValue<string>();
-                var flags = BindingFlags.Public | BindingFlags.Static | (target != null ? BindingFlags.Instance : 0);
+                var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy | (target != null ? BindingFlags.Instance : 0);
                 var prop = type.GetProperty(name, flags, null, null, Type.EmptyTypes, null);
                 if (prop != null && prop.GetMethod != null)
                     return Done(prop.GetValue(prop.GetMethod.IsStatic ? null : target), null, null, null, prop.PropertyType);
@@ -124,7 +124,7 @@ public sealed class Server
                 var (target, type) = Target(req["target"]!);
                 string name = req["member"]!.GetValue<string>();
                 var value = marshal.Decode(req["value"], 0);
-                var flags = BindingFlags.Public | BindingFlags.Static | (target != null ? BindingFlags.Instance : 0);
+                var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy | (target != null ? BindingFlags.Instance : 0);
                 var prop = type.GetProperty(name, flags, null, null, Type.EmptyTypes, null);
                 if (prop != null && prop.SetMethod != null)
                 {

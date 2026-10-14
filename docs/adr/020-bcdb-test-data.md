@@ -125,8 +125,8 @@ rolled back and `Company-Initialize` keeps the rows before it, both reported as 
 ### Measured (2026-10-14, 27.5 recipe, `docs/alrunner-buckets.md`)
 
 Tests-SMB: 6 passed, 6 failed, 1018 not run without test data; 10, 3 and 1017 with it (2953 rows from 97
-tables, 3.64 s in all, 1818 MB). Tests-ERM: 224, 121 and 8988 without; 431, 9 and 8893 with (15350 rows
-from 165 tables, 6.2 s, 2.9 GB, the same peak as without within 3 percent). No install root was refused by
+tables, 4.3 s in all, 1826 MB). Tests-ERM: 227, 121 and 8985 without; 434, 9 and 8890 with (15352 rows
+from 167 tables, 6.7 s, 2.9 GB, the same peak as without within 2 percent). No install root was refused by
 the restored-row guard in either bucket. The failures that remain are listed in the buckets document and are
 runtime defects, not differences between the restored company and a freshly prepared one.
 

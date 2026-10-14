@@ -46,14 +46,14 @@ check, lowering and tests; one run each; under `MemoryMax=4G`):
 
 | Bucket | Test data | Passed | Failed | Not run | Run | Total | Peak memory |
 |---|---|---:|---:|---:|---:|---:|---:|
-| Tests-SMB | off | 6 | 6 | 1018 | 0.14 s | 3.17 s | 1810 MB |
-| Tests-SMB | on | 10 | 3 | 1017 | 0.19 s | 3.64 s | 1818 MB |
-| Tests-ERM | off | 224 | 121 | 8988 | 0.24 s | 4.54 s | 2840 MB |
-| Tests-ERM | on | 431 | 9 | 8893 | 2.18 s | 6.18 s | 2916 MB |
+| Tests-SMB | off | 6 | 6 | 1018 | 0.13 s | 2.72 s | 1833 MB |
+| Tests-SMB | on | 10 | 3 | 1017 | 0.18 s | 4.29 s | 1826 MB |
+| Tests-ERM | off | 227 | 121 | 8985 | 0.24 s | 4.40 s | 2878 MB |
+| Tests-ERM | on | 434 | 9 | 8890 | 2.12 s | 6.67 s | 2928 MB |
 
-With test data Tests-SMB loads 2953 rows from 97 tables and Tests-ERM 15350 rows from 165 tables; no table is
-refused. The data costs nothing before a table is touched, which is why the run phase grows only with the tests that
-now get far enough to run (ERM: 2.18 s for 431 passing tests instead of 0.24 s).
+With test data Tests-SMB loads 2953 rows from 97 tables and Tests-ERM 15352 rows from 167 tables; no table is
+refused. The Tests-SMB total includes 1.6 s to open the 860 MB backup on a cold page cache (0.1 to 0.2 s warm). The data costs nothing before a table is touched, which is why the run phase grows only with the tests that
+now get far enough to run (ERM: 2.12 s for 434 passing tests instead of 0.24 s).
 
 ### Failures with test data
 

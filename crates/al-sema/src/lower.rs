@@ -2306,9 +2306,12 @@ impl Lowerer<'_> {
     /// The constant of a `Field = const(x)` condition, typed by the field.
     fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
         if let Ty::Enum(name) = ty {
+            // The enum is named in the file that declares the field, as a relation target is: a
+            // dependency's file resolves it among the apps it saw (its `using`s included), so that an
+            // enum of another namespace is found (Gen. Journal Line."IC Account No.", issue 23).
             let Resolution::Found(e) =
                 self.ws
-                    .resolve_ref_certain(file, ObjKind::Enum, &crate::types::qualified_parts(name))
+                    .resolve_relation_target(file, ObjKind::Enum, &crate::types::qualified_parts(name))
             else {
                 return None;
             };

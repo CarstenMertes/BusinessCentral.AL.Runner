@@ -423,24 +423,7 @@ impl Session {
             }
             // Returns the group it sets, or the current one without an argument (corpus
             // record/TestRecordRuntimeTextsAndViews.al:Record_FilterGroup_ReturnsTheGroupJustSet_...).
-            "FilterGroup" => {
-                let mut r = rec.borrow_mut();
-                if let Some(v) = args.first() {
-                    r.filter_group = match v {
-                        // The OR group: filters on different fields are alternatives in BC, which the
-                        // runtime does not model (every group applies as an AND). Not pinned by the
-                        // corpus (docs/probes-needed.md), so refused.
-                        Value::Integer(n) if *n < 0 => {
-                            return unsupported(format!(
-                                "FilterGroup({n}) (the OR group: its filters are alternatives); not pinned (docs/probes-needed.md)"
-                            ));
-                        }
-                        Value::Integer(n) => *n,
-                        other => return unsupported(format!("FilterGroup({})", other.describe())),
-                    };
-                }
-                Ok(Value::Integer(r.filter_group))
-            }
+            "FilterGroup" => Self::filter_group(rec, args),
             // Doc (Record.SetRecFilter): filters the primary key fields to the current values; the
             // filters on other fields stay (record/TestRecordViewCopyMarkContracts.al:41,
             // SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey).

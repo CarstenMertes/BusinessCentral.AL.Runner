@@ -318,6 +318,7 @@ impl Session {
             "ChangeCompany" => self.change_company(&rec, args),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
+            "FilterGroup" => Self::filter_group(&rec, args),
             "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
             "GetView" => {
                 let use_names = match args.first() {

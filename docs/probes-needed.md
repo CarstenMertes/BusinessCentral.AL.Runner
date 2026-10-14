@@ -931,3 +931,10 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | Area | Assumption | Probe wanted |
 |---|---|---|
 | `Clear(X)` with `X: DotNet T` | An unassigned variable stays unassigned (any reading agrees). A variable that holds an object is REFUSED when the line runs: whether BC calls `Dispose` on the object, and so whether a wrapped stream is flushed or closed, is not pinned. No corpus test and no probe covers it (the DotNet probe app, codeunit 61400, has none). | In the OnPrem DotNet probe app: `Writer := Writer.StreamWriter(OutStream)`, `Writer.Write('x')`, `Clear(Writer)`, then read the blob (flushed or empty); and `Memory := Memory.MemoryStream()`, keep a second variable `Other := Memory`, `Clear(Memory)`, then `Other.CanWrite` (disposed or not). |
+
+## RecordRef.FilterGroup, Option to Enum (issue 23)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `RecordRef.FilterGroup` | Behaves as `Record.FilterGroup` (the group it sets, or the current one; a group shows only its own filters), because a RecordRef holds the same record buffer. Pinned for Record (record/TestRecordRuntimeTextsAndViews.al:374); no corpus test calls it on a RecordRef. A negative group stays refused (see the FilterGroup(-1) section) | The test at record/TestRecordRuntimeTextsAndViews.al:374 through `RecordRef.Open`, `FieldRef.SetRange` and `RecordRef.GetFilters`; also `RecordRef.GetTable(Rec)` and `SetTable` carrying the group |
+| An Option assigned to an Enum | BC takes the enum value for the option's ordinal (Base Application assigns an Option document type to an Enum field). No corpus test pins it, nor the error for an ordinal the enum lacks. REFUSED (208 Tests-ERM tests) | `Opt := Opt::B; Enum := Opt;` with an enum whose ordinals are not 0, 1, 2 (explicit values), and an ordinal the enum does not have; with `AssignmentCompatibility = true` on the enum and without; as an argument and as a field assignment |

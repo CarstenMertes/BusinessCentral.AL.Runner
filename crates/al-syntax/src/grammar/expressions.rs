@@ -76,7 +76,7 @@ pub(crate) fn expr(p: &mut Parser) {
 fn relational(p: &mut Parser) {
     let cp = p.checkpoint();
     additive(p);
-    while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_kw("in") {
+    while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_kw("in") || p.at_kw("is") {
         p.start_at(cp, BinExpr);
         p.bump_any();
         additive(p);

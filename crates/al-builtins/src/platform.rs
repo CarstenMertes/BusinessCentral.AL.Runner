@@ -37,6 +37,10 @@ pub enum Virtual {
     WindowsLanguage,
     NavAppInstalledApp,
     PublishedApplication,
+    /// Known to exist, not pinned: lowers, and every read is refused.
+    ApiWebhookEntity,
+    /// Media live in the session's media store (ADR-017); the table is not a view of it yet.
+    TenantMedia,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -57,6 +61,7 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_045, "Windows Language", Provider::Virtual(Virtual::WindowsLanguage)),
     (2_000_000_153, "NAV App Installed App", Provider::Virtual(Virtual::NavAppInstalledApp)),
     (2_000_000_206, "Published Application", Provider::Virtual(Virtual::PublishedApplication)),
+    (2_000_000_097, "API Webhook Entity", Provider::Virtual(Virtual::ApiWebhookEntity)),
     // Stored tables whose rows AL reads as facts about the session; the platform seeds them
     // (al-vm `platform/seed.rs`).
     (2_000_000_006, "Company", Provider::Stored),
@@ -64,6 +69,14 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_053, "Access Control", Provider::Stored),
     // Written by Record.AddLink and friends (al-vm `platform/links.rs`).
     (2_000_000_068, "Record Link", Provider::Stored),
+    // Read by Base Application's API Webhook Notification Mgt. when a database write reaches the Global
+    // Triggers codeunit; a plain tenant table with no native behaviour.
+    (2_000_000_095, "API Webhook Subscription", Provider::Stored),
+    (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
+    (2_000_000_121, "User Property", Provider::Stored),
+    (2000000175, "Scheduled Task", Provider::Stored),
+    (2_000_000_096, "API Webhook Notification", Provider::Stored),
+    (2_000_000_098, "API Webhook Notification Aggr", Provider::Stored),
 ];
 
 /// The provider of platform table `id`, if it has one.

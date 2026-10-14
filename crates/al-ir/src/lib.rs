@@ -800,6 +800,13 @@ pub enum Expr {
         targets: Vec<(usize, usize)>,
         args: Vec<Arg>,
     },
+    /// `value is Interface`: whether the codeunit instance an interface variable holds is one of the
+    /// codeunits that implement the interface on the right (`objects`, indexes into
+    /// `Program::objects`). An unassigned interface is not an instance of anything.
+    IsInterface {
+        value: Box<Expr>,
+        objects: Vec<usize>,
+    },
     /// An enum value cast to an interface: a fresh instance of the codeunit that
     /// implements the interface for the value's ordinal. `by_ordinal` has every declared
     /// ordinal of the enum (extensions included), already resolved through the value's own

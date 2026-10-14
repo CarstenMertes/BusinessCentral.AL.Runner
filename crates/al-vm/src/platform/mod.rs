@@ -117,6 +117,16 @@ impl Providers {
             return Ok(m.clone());
         }
         let rows = match kind {
+            Virtual::ApiWebhookEntity => {
+                return Err(refused(
+                    "API Webhook Entity: the entities of the API pages are listed by the platform and no corpus test pins them",
+                ));
+            }
+            Virtual::TenantMedia => {
+                return Err(refused(
+                    "Tenant Media: media live in the session's media store, which this table does not read yet (ADR-017)",
+                ));
+            }
             Virtual::NavAppInstalledApp => apps::nav_app_installed_app_rows(self, t),
             Virtual::PublishedApplication => apps::published_application_rows(self, t),
             Virtual::TimeZone => host_tables::time_zone_rows(t, &self.ident),

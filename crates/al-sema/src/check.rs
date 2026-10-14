@@ -775,6 +775,18 @@ impl<'a> Checker<'a> {
                 let op = first_token(node).to_ascii_lowercase();
                 E::Val(if op == "not" { Ty::Boolean } else { t })
             }
+            // `Connector is "Other Interface"`: the right side names an interface, not a value.
+            BinExpr if op_token(node).eq_ignore_ascii_case("is") => {
+                if let Some(k) = kids.first() {
+                    self.ty(sc, k);
+                }
+                if let Some(name) = kids.get(1).map(name_of) {
+                    if let Some(i) = self.resolve(sc, ObjKind::Interface, &name) {
+                        self.touch(i);
+                    }
+                }
+                E::Val(Ty::Boolean)
+            }
             BinExpr => {
                 let l = kids.first().map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
                 let r = kids.get(1).map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
@@ -1038,6 +1050,13 @@ impl<'a> Checker<'a> {
                             _ => {}
                         }
                         E::Val(t)
+                    }
+                    // `Rec.ReadIsolation::ReadUncommitted`: the property name is also the way to name the
+                    // members of the option it takes (Base Application writes it).
+                    E::Callable(_) if system_option_of_property(&kids[0], &rhs).is_some() => {
+                        let (enum_name, i) = system_option_of_property(&kids[0], &rhs).expect("checked");
+                        self.record(sc, node, Res::OptionValue(i as i32));
+                        E::Val(Ty::Builtin(enum_name.to_string()))
                     }
                     E::Callable(c) => E::Val(self.pick(sc, &kids[0], &c, &[], &rhs)),
                 }
@@ -1573,6 +1592,22 @@ fn receiver_of(t: &Ty) -> Option<String> {
         }
         .to_string(),
     )
+}
+
+/// For `Rec.ReadIsolation` and `Rec.SecurityFiltering` written before `::`: the system option the
+/// property takes and the position of member `member` in it.
+fn system_option_of_property(base: &SyntaxNode, member: &str) -> Option<(&'static str, usize)> {
+    let text = base.text().to_string();
+    let last = text.rsplit('.').next()?.trim().trim_matches('"').to_ascii_lowercase();
+    let enum_name = match last.as_str() {
+        "readisolation" => "IsolationLevel",
+        "securityfiltering" => "SecurityFilter",
+        _ => return None,
+    };
+    let i = al_builtins::sysenum::members(enum_name)?
+        .iter()
+        .position(|m| m.eq_ignore_ascii_case(member))?;
+    Some((enum_name, i))
 }
 
 fn proc_cand(p: &ProcSig) -> Cand {

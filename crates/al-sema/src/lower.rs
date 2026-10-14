@@ -2721,6 +2721,9 @@ impl Lowerer<'_> {
                         // `CurrPage.Editable := true` is the setter form of `CurrPage.Editable(true)`
                         // (corpus handlers/TestPageModalNewRowLine_Objects.al:69).
                         || (s.receiver == "Page" && matches!(s.name.as_str(), "Editable" | "PromptMode"))
+                        // `Rec.ReadIsolation := IsolationLevel::UpdLock` is the setter form of
+                        // `Rec.ReadIsolation(...)`; the read form answers the level the record has.
+                        || (s.receiver == "Record" && matches!(s.name.as_str(), "ReadIsolation" | "SecurityFiltering"))
             });
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {
@@ -2939,6 +2942,21 @@ impl Lowerer<'_> {
                     _ => ir::UnOp::Plus,
                 };
                 Ok(ir::Expr::Unary(op, Box::new(self.expr(&kids[0])?)))
+            }
+            BinExpr if sig_tokens(n)[0].text().eq_ignore_ascii_case("is") => {
+                if !matches!(self.ty_of(&kids[0]), Ty::Object(ObjKind::Interface, _)) {
+                    return Err("`is` on something that is not an interface variable".into());
+                }
+                let name = kids[1].text().to_string().trim().trim_matches('"').to_string();
+                let iface = self.resolve_obj(ObjKind::Interface, &name)?;
+                let value = self.expr(&kids[0])?;
+                let objects = (0..self.ws.objects.len())
+                    .filter(|&cu| self.ws.objects[cu].kind == ObjKind::Codeunit && self.implements(cu, iface))
+                    .collect();
+                Ok(ir::Expr::IsInterface {
+                    value: Box::new(value),
+                    objects,
+                })
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();

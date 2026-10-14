@@ -198,6 +198,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
                 Expr::Const(_) => {}
                 Expr::Load(p) => self.place(p),
                 Expr::Unary(_, a) | Expr::Convert(_, a) | Expr::DotNetCoerce(_, a) => self.expr(a),
+                Expr::IsInterface { value, .. } => self.expr(value),
                 Expr::Binary(_, a, b) => {
                     self.expr(a);
                     self.expr(b);

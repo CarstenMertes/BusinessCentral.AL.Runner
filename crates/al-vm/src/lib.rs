@@ -839,6 +839,10 @@ impl Session {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
                 self.finish_call(object, routine, inst, args, false, f)
             }
+            E::IsInterface { value, objects } => match self.eval(value, f)? {
+                Value::Codeunit(inst) => Ok(Value::Boolean(objects.contains(&(inst.borrow().object as usize)))),
+                _ => Ok(Value::Boolean(false)),
+            },
             E::EnumImpl {
                 value,
                 by_ordinal,

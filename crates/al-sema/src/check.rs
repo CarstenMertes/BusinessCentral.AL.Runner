@@ -1130,6 +1130,26 @@ impl<'a> Checker<'a> {
                         continue;
                     }
                     let field_pos = cands.iter().any(|c| c.is_field_pos(i));
+                    // `Page.FindFirstField(Code, 'x')`: a bare name in a field position of a test page
+                    // method is a control of that page (corpus
+                    // handlers/TestPagePlatformPageSourceTable_Tests.al:66).
+                    if field_pos && a.kind() == NameRef {
+                        if let Some(t @ (Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_))) = receiver.clone()
+                        {
+                            // A variable of that name wins; `Code` is also a type name, so the
+                            // name lookup in general is not asked.
+                            let var = name_of(a).to_lowercase();
+                            if !sc.vars.iter().any(|f| f.contains_key(&var)) {
+                                if let Some(E::Val(ct)) = self.page_control_member(sc, &t, &name_of(a)) {
+                                    let r = a.text_range();
+                                    self.types
+                                        .insert((sc.file, r.start().into(), r.end().into()), ct.clone());
+                                    arg_tys.push(ct);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
                     if field_pos && a.kind() == NameRef {
                         if let Some(t) = receiver.as_ref().and_then(|r| self.field_of(sc, r, &name_of(a))) {
                             let r = a.text_range();
@@ -2116,6 +2136,13 @@ fn proc_cand(p: &ProcSig) -> Cand {
 /// Whether an argument of type `arg` fits a parameter declared as `param`
 /// (catalog spelling or `Ty` display). Only used to break arity ties.
 fn fits(arg: &Ty, param: &str) -> bool {
+    // A record fits a parameter declared on a table only when it is that table
+    // (System Application overloads `ValidateRetentionPeriod` on two record types).
+    if let Ty::Record { .. } = arg {
+        if param.to_ascii_lowercase().starts_with("record \"") {
+            return arg.to_string().eq_ignore_ascii_case(param);
+        }
+    }
     let p = param.to_ascii_lowercase();
     let p = p.split(['[', ' ']).next().unwrap_or("");
     match arg {

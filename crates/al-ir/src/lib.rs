@@ -946,6 +946,8 @@ pub enum Const {
     DateTime(i64),
     Option(i32, Vec<String>),
     Enum(u32, i32),
+    /// A date formula as written (`1Y`), already checked to be one the runtime can calculate with.
+    DateFormula(String),
     /// A field reference passed to a record method (`SetRange(Field, ...)`): its position.
     FieldPos(u32),
 }

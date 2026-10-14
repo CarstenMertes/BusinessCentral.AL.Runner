@@ -226,6 +226,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Session.LogMessage#1", log_message),
     ("Session.LogMessage#2", log_message),
     ("Session.LogSecurityAudit#1", log_message),
+    ("Session.LogAuditMessage#1", log_message),
+    ("System.Hyperlink#1", hyperlink),
     ("System.Variant2Date#1", variant_2_date),
     ("System.Variant2Time#1", variant_2_time),
     // Whether the host can create tasks is not pinned (corpus session/TestTaskSchedulerCloudBehavior.al
@@ -710,12 +712,19 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     Ok(Value::Integer(pos as i32))
 }
 
-/// `Session.LogMessage` and `Session.LogSecurityAudit`: telemetry and the security audit log have
+/// `Session.LogMessage`, `Session.LogSecurityAudit` and `Session.LogAuditMessage`: telemetry and the security audit log have
 /// no effect AL code can see in a test, so the call returns (session/TestSessionExtended.al:76-89
 /// only needs LogMessage callable; session/TestEnvironmentUserTenantContracts.al:315-374 runs
 /// Change Log Management, which logs a security audit entry, and reads only the change log).
 fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     Ok(Value::Null)
+}
+
+/// `Hyperlink(Url)` asks the client to open a page. What a test run does with that is not pinned
+/// (docs/probes-needed.md), so the call is refused when it runs; a routine that only contains it
+/// still lowers and runs.
+fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    unsupported("Hyperlink opens the client's browser; what a test run does with it is not pinned")
 }
 
 /// `Variant2Date(Variant)`: the Date a Variant holds (session/TestFinalCoverage.al:79-88). Another
@@ -844,6 +853,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                     | "WebServiceActionContext"
                     | "SessionSettings"
                     | "Notification"
+                    | "JsonObject"
+                    | "JsonArray"
+                    | "JsonValue"
+                    | "JsonToken"
             ) =>
         {
             Value::Library(name.clone(), Default::default())
@@ -921,6 +934,16 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 object,
                 ..Default::default()
             })))
+        }
+        // An array goes back to its initial value element by element, in place: a `var` parameter
+        // that shares it sees the change (docs/probes-needed.md; the oracle runs
+        // pageupdate/PageUpdateFacts.Page.al:58 `Clear(Derived)` on an array of Decimal).
+        Value::Array(a) => {
+            let a = a.clone();
+            for e in a.borrow_mut().iter_mut() {
+                clear(ctx, None, std::slice::from_mut(e))?;
+            }
+            return Ok(Value::Null);
         }
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
@@ -1075,6 +1098,20 @@ pub(crate) mod tests {
         ));
         assert!(matches!(
             call("Session.LogMessage#2", vec![t("E"), t("m")]),
+            Ok(Value::Null)
+        ));
+        // The security audit log has no effect AL can see, like LogSecurityAudit.
+        assert!(matches!(
+            call(
+                "Session.LogAuditMessage#1",
+                vec![
+                    t("D"),
+                    Value::Integer(0),
+                    Value::Integer(0),
+                    Value::Integer(1),
+                    Value::Integer(0)
+                ]
+            ),
             Ok(Value::Null)
         ));
     }

@@ -342,6 +342,15 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_option_return_type_does_not_take_the_next_keyword_as_a_member() {
+        // Base Application's `procedure ConvertPostingType(): Option var FAJnlLine: ...`: the `var`
+        // that follows is the next section, not an option member.
+        assert_eq!(errors("procedure P(): Option var X: Integer; begin end;", routine), 0);
+        assert_eq!(errors("procedure P(): Option begin end;", routine), 0);
+        assert_eq!(t("Option A,B"), "(TypeRef Option A , B)");
+    }
+
+    #[test]
     fn option_members_including_empty_and_quoted() {
         assert_eq!(t("Option ,A,\"B C\""), "(TypeRef Option , A , \"B C\")");
     }

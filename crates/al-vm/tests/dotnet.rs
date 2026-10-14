@@ -318,6 +318,7 @@ fn tenant_registry(hits: &'static std::sync::atomic::AtomicUsize) -> Registry {
             kind: MemberKind::Call,
             pin: Pin::Probe("test".into()),
             call: is_sandbox,
+            call_ref: None,
         }],
     }])
     .unwrap()
@@ -369,6 +370,7 @@ fn a_registry_member_without_a_pin_does_not_build() {
             kind: MemberKind::Call,
             pin: Pin::Corpus("  ".into()),
             call: nothing,
+            call_ref: None,
         }],
     }])
     .err()
@@ -1002,6 +1004,30 @@ fn registry_results_are_operands() {
     assert_eq!(host.log(), vec![]);
 }
 
+/// session/TestEnvironmentUserTenantContracts.al:TenantAndAzureAd_Answers (:209-212) pins the three
+/// settings System Application reads through `TryGetStringTenantSetting(name, var value)`.
+#[test]
+fn try_get_string_tenant_setting_answers_the_pinned_names_and_refuses_the_others() {
+    let host = no_host();
+    for (name, want) in [("TENANTID", "default"), ("DISPLAYNAME", ""), ("AADTENANTID", "common")] {
+        let r = run(
+            &host,
+            "T: DotNet NavTenantSettingsHelper; V: Text;",
+            &format!("V := 'unset'; if not T.TryGetStringTenantSetting('{name}', V) then exit('false'); exit(V);"),
+            ": Text",
+        );
+        assert_eq!(text(r), want, "{name}");
+    }
+    let r = run(
+        &host,
+        "T: DotNet NavTenantSettingsHelper; V: Text;",
+        "exit(Format(T.TryGetStringTenantSetting('SOMETHINGELSE', V)));",
+        ": Text",
+    );
+    assert!(unsupported(&r).contains("SOMETHINGELSE"));
+    assert_eq!(host.log(), vec![]);
+}
+
 /// The rule of ADR-014 section 1 for every shipped type: a member the registry does not
 /// implement is refused by name, and nothing a registered type does reaches the host.
 #[test]
@@ -1086,7 +1112,15 @@ fn the_declared_result_types_match_the_registry() {
             _ => vec![],
         };
         let mut s = Session::new(Engine::new(al_ir::Program::default(), vec![]));
-        let v = (m.call)(&mut s, None, &args).unwrap_or_else(|e| panic!("{clr}.{member}: {e:?}"));
+        let mut args = args;
+        if *member == "TryGetStringTenantSetting" {
+            args = vec![Value::Text("TENANTID".into()), Value::Text(String::new())];
+        }
+        let v = match m.call_ref {
+            Some(f) => f(&mut s, None, &mut args),
+            None => (m.call)(&mut s, None, &args),
+        }
+        .unwrap_or_else(|e| panic!("{clr}.{member}: {e:?}"));
         let ok = match ret {
             Ret::Boolean => matches!(v, Value::Boolean(_)),
             Ret::Integer => matches!(v, Value::Integer(_)),

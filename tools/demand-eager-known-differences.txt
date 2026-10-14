@@ -9,10 +9,19 @@
 Codeunit 67640::PrecompiledPage_PageVariableControl_NoCaption_IsTheControlName
 
 # The "Contact Duplicates" page (opened by these two tests) declares a part page whose routine
-# `Merge Duplicate Subform.Set` calls Record.CopyFilter, which the runtime does not implement yet.
-# Compiling all of Base Application makes that routine reachable from the page variable's call graph,
-# so the eager run refuses the test before it starts. The demand-driven run never reaches the routine
-# and passes (pages-2, after systempart controls stopped refusing the page). Delete these two lines
-# when Record.CopyFilter is implemented.
+# `Merge Duplicate Subform.Set` ran into Record.CopyFilter, which is implemented now (fixes-7). The
+# eager compile still refuses the tests before they start: compiling all of Base Application makes
+# `Merge Duplicates Line Buffer.CountRecords` reachable from the page variable's call graph, and it
+# reads column 9 of the platform table `Table Relations Metadata`, which no corpus test pins. The
+# demand-driven run never reaches that routine and passes. Delete these two lines when that column
+# is pinned.
 Codeunit 60037::ReportRun_FromBaseAppPageAction_HandlerCancelsTheRequestPage
 Codeunit 60037::ReportRun_FromBaseAppPageAction_HandlerErrorReachesTheTest
+
+# These two tests (RecordRef.Ascending, fixes-7) use a Base Application page with a part. Compiling
+# all of Base Application makes `Navigate.OnAction` reachable from the page variable's call graph;
+# it runs the report `Document Entries`, which more than one report extension changes (their order
+# is not pinned). The demand-driven run never reaches that routine and passes. Delete these two
+# lines when the order of report extensions that change a run is pinned.
+Codeunit 67990::PrecompiledHostLinkedPartShowsTheRowTheViewExcluded
+Codeunit 67990::PrecompiledHostPartSubPageViewShowsOnlyTheRowsItsViewSelects

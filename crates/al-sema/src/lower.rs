@@ -1345,6 +1345,19 @@ pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
         }
         Ty::Date => ir::Const::Date(date_literal(t)?),
         Ty::Time => ir::Const::Time(time_literal(t)?),
+        // The same reading as `Evaluate` into a DateFormula (types/TestBlankEnumInitTests.Codeunit.al:88-95
+        // says InitValue and Evaluate share one evaluator): a calculable formula is kept as written.
+        // Blank, garbled and not-yet-supported formulas stay refused (the field is not initialised).
+        Ty::DateFormula => {
+            let f = t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).unwrap_or(t);
+            if al_builtins::datefns::is_blank_formula(f)
+                || al_builtins::datefns::is_garbage_formula(f)
+                || al_builtins::datefns::check_formula(f).is_err()
+            {
+                return None;
+            }
+            ir::Const::DateFormula(f.to_string())
+        }
         _ => return None,
     })
 }
@@ -3361,6 +3374,32 @@ impl Lowerer<'_> {
                 }));
             }
         }
+        // `GlobalLanguage := Id` is the other spelling of `GlobalLanguage(Id)` (System Application's
+        // "Reten. Pol. Telemetry Impl." writes it so; the setter is pinned by
+        // session/TestSessionSettings.al:534): a builtin call, not a place.
+        if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
+            if id == "System.GlobalLanguage#1" && kids[0].kind() != SyntaxKind::MemberExpr {
+                if sig_tokens(n).iter().any(|t| {
+                    t.kind() != SyntaxKind::Assign
+                        && matches!(
+                            t.kind(),
+                            SyntaxKind::PlusAssign
+                                | SyntaxKind::MinusAssign
+                                | SyntaxKind::StarAssign
+                                | SyntaxKind::SlashAssign
+                        )
+                }) {
+                    return Err("compound assignment to GlobalLanguage is not lowered yet".into());
+                }
+                let rhs = self.expr(&kids[1])?;
+                return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
+                    id,
+                    receiver: None,
+                    args: vec![ir::Arg::Value(rhs)],
+                    ret_used: false,
+                }));
+            }
+        }
         let place = self.place(&kids[0])?;
         let target_ty = self.ty_of(&kids[0]);
         let rhs = self.expr(&kids[1])?;
@@ -3744,17 +3783,6 @@ impl Lowerer<'_> {
 
     fn control(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         let recv = n.children().next().ok_or("control access without a receiver")?;
-        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page) | Ty::TestRequestPage(page)) =
-            self.ty_of(&recv)
-        else {
-            return Err("control of a non-page".into());
-        };
-        let kind = if matches!(self.ty_of(&recv), Ty::TestRequestPage(_)) {
-            ObjKind::Report
-        } else {
-            ObjKind::Page
-        };
-        let page = self.resolve_obj(kind, &page)?;
         let name = n
             .children()
             .last()
@@ -3765,14 +3793,30 @@ impl Lowerer<'_> {
             })
             .map(|t| ast::ident_text(&t))
             .ok_or("control name")?;
+        self.control_named(&recv, &name)
+    }
+
+    /// The control `name` of the test page (or part, or request page) that `recv` evaluates to.
+    fn control_named(&mut self, recv: &SyntaxNode, name: &str) -> L<ir::Expr> {
+        let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page) | Ty::TestRequestPage(page)) =
+            self.ty_of(recv)
+        else {
+            return Err("control of a non-page".into());
+        };
+        let kind = if matches!(self.ty_of(recv), Ty::TestRequestPage(_)) {
+            ObjKind::Report
+        } else {
+            ObjKind::Page
+        };
+        let page = self.resolve_obj(kind, &page)?;
         let layout = self.layouts.page_layout(page).ok_or("page layout")?;
         let control = layout
             .controls
             .iter()
-            .position(|c| c.name.eq_ignore_ascii_case(&name))
+            .position(|c| c.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("control `{name}` is not in the page layout"))?;
         Ok(ir::Expr::Control {
-            page: Box::new(self.expr(&recv)?),
+            page: Box::new(self.expr(recv)?),
             control,
         })
     }
@@ -4053,6 +4097,44 @@ impl Lowerer<'_> {
                             Some(rt) => ir::Expr::DotNetCoerce(rt, Box::new(self.expr(a)?)),
                             None => self.expr(a)?,
                         }));
+                        continue;
+                    }
+                    // A bare control name in a field position of a test page method.
+                    if a.kind() == SyntaxKind::NameRef
+                        && self.res(a).is_none()
+                        && matches!(self.ty_of(a), Ty::Builtin(ref b) if b == "TestField")
+                        && receiver_node.as_ref().is_some_and(|r| {
+                            matches!(
+                                self.ty_of(r),
+                                Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_)
+                            )
+                        })
+                    {
+                        let name = a
+                            .children_with_tokens()
+                            .filter_map(|e| e.into_token())
+                            .find(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))
+                            .map(|t| ast::ident_text(&t))
+                            .ok_or("control name")?;
+                        let recv = receiver_node.clone().expect("checked");
+                        out.push(ir::Arg::Value(self.control_named(&recv, &name)?));
+                        continue;
+                    }
+                    // `Source.CopyFilter(FromField, Target."ToField")`: the target is a field of another
+                    // record variable, passed as that record and the field's position.
+                    if id == "Record.CopyFilter#1" && i == 1 {
+                        let Some(Res::Field { table, id: fid }) = self.res(a).cloned() else {
+                            return Err("CopyFilter to something that is not a field of a record".into());
+                        };
+                        let pos = self.readable_field_pos(table, fid)?;
+                        let base = match a.kind() {
+                            SyntaxKind::MemberExpr => self.place(&a.children().next().ok_or("member base")?)?,
+                            _ => ir::Place::Global(
+                                self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
+                            ),
+                        };
+                        out.push(ir::Arg::Ref(base));
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
                         continue;
                     }
                     let field_param = p.name.to_ascii_lowercase().starts_with("field")

@@ -431,7 +431,6 @@ fn parse_time(t: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
     use std::str::FromStr;
 
     fn d(s: &str) -> Value {
@@ -529,7 +528,7 @@ mod tests {
         let f = ControlFormat::default();
         assert_eq!(t(&Value::Boolean(true), &f), "Yes");
         assert_eq!(t(&Value::Boolean(false), &f), "No");
-        let members: Rc<[String]> = Rc::from(vec!["Alpha".to_string(), "Beta".to_string()]);
+        let members: std::sync::Arc<[String]> = std::sync::Arc::from(vec!["Alpha".to_string(), "Beta".to_string()]);
         let cap = ControlFormat {
             option_captions: Some(vec!["Eins".into(), "Zwei".into()]),
             ..Default::default()

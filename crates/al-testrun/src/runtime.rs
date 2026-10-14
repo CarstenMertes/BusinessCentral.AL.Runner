@@ -385,6 +385,9 @@ impl CorpusRuntime {
                 eprintln!("parse: ... {} more", unparsed.len() - 10);
             }
         }
+        if std::env::var_os("AL_REACH_REPORT").is_some() {
+            eprintln!("{}", crate::reach::report(&ws, &lowered));
+        }
         // Nothing else holds the program yet, so this does not copy it.
         for (app, m) in std::sync::Arc::make_mut(&mut lowered.program)
             .apps

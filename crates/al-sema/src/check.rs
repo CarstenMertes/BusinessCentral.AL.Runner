@@ -452,6 +452,9 @@ impl Cand {
 struct Scope {
     oi: usize,
     file: usize,
+    /// The object's variables, shared by the routines of the object.
+    globals: std::rc::Rc<HashMap<String, Ty>>,
+    /// The routine's own frames (parameters and locals), the last first.
     vars: Vec<HashMap<String, Ty>>,
     /// The implicit record of table/page code (and `Rec` in codeunits with TableNo).
     rec: Option<Ty>,
@@ -482,15 +485,22 @@ struct Checker<'a> {
     demand: std::cell::RefCell<Option<demand::State>>,
     /// Files to parse ahead on other threads: those of the dependency objects just reached.
     prefetch: Option<std::sync::mpsc::Sender<usize>>,
+    /// What `resolve_ref` found for a name written in a file, by (file, kind) and then name. While
+    /// a check runs the answer does not change (nothing is left out of the compile before it ends),
+    /// and the same few names are asked for again and again by the routines of a file.
+    resolved: std::cell::RefCell<Resolved>,
     /// Checks that panicked (see [`CheckResult::panicked`]).
     panicked: HashMap<(usize, usize), String>,
 }
+
+/// Names resolved so far, by (file, kind) and then name; see [`Checker::resolved`].
+type Resolved = HashMap<(usize, ObjKind), HashMap<String, Option<usize>>>;
 
 /// What every routine of an object sees.
 struct ObjCtx {
     oi: usize,
     file: usize,
-    globals: HashMap<String, Ty>,
+    globals: std::rc::Rc<HashMap<String, Ty>>,
     rec: Option<Ty>,
     rec_unqualified: bool,
     self_obj: usize,
@@ -504,7 +514,7 @@ pub(crate) fn is_this_keyword(node: &SyntaxNode) -> bool {
 
 /// Whether a variable of this name is in scope, whatever frame.
 fn sc_has_var(sc: &Scope, name: &str) -> bool {
-    sc.vars.iter().any(|frame| frame.contains_key(name))
+    sc.globals.contains_key(name) || sc.vars.iter().any(|frame| frame.contains_key(name))
 }
 
 fn name_of(node: &SyntaxNode) -> String {
@@ -560,6 +570,7 @@ impl<'a> Checker<'a> {
             calls: Vec::new(),
             demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
             prefetch: None,
+            resolved: Default::default(),
             panicked: HashMap::new(),
         }
     }
@@ -610,31 +621,31 @@ impl<'a> Checker<'a> {
     /// Resolves an object reference written in `file`. Whatever it finds is used by the code
     /// being checked, so a dependency object found this way is reached (see `demand`).
     fn resolve_at(&self, file: usize, kind: ObjKind, name: &str) -> Option<usize> {
-        let parts: Vec<String> = if name.parse::<u32>().is_ok() {
-            vec![name.to_string()]
-        } else {
-            split_qualified(name)
-        };
-        match self.ws.resolve_ref(file, kind, &parts) {
-            Resolution::Found(i) => {
-                self.touch(i);
-                Some(i)
-            }
-            _ => None,
-        }
+        let found = self.resolve_quiet(file, kind, name)?;
+        self.touch(found);
+        Some(found)
     }
 
     /// `resolve_at` without marking the object as used.
     fn resolve_quiet(&self, file: usize, kind: ObjKind, name: &str) -> Option<usize> {
+        if let Some(hit) = self.resolved.borrow().get(&(file, kind)).and_then(|m| m.get(name)) {
+            return *hit;
+        }
         let parts: Vec<String> = if name.parse::<u32>().is_ok() {
             vec![name.to_string()]
         } else {
             split_qualified(name)
         };
-        match self.ws.resolve_ref(file, kind, &parts) {
+        let found = match self.ws.resolve_ref(file, kind, &parts) {
             Resolution::Found(i) => Some(i),
             _ => None,
-        }
+        };
+        self.resolved
+            .borrow_mut()
+            .entry((file, kind))
+            .or_default()
+            .insert(name.to_string(), found);
+        found
     }
 
     /// Like `resolve_at`, for a reference already split into its parts.
@@ -844,7 +855,7 @@ impl<'a> Checker<'a> {
         ObjCtx {
             oi,
             file,
-            globals,
+            globals: std::rc::Rc::new(globals),
             rec,
             rec_unqualified,
             self_obj,
@@ -915,7 +926,8 @@ impl<'a> Checker<'a> {
             let mut sc = Scope {
                 oi,
                 file,
-                vars: vec![globals.clone()],
+                globals: globals.clone(),
+                vars: Vec::new(),
                 rec,
                 rec_unqualified,
                 self_obj,
@@ -1560,7 +1572,7 @@ impl<'a> Checker<'a> {
     fn this_member(&mut self, sc: &mut Scope, node: &SyntaxNode, member: &SyntaxNode) -> Option<E> {
         let n = name_of(member);
         let key = n.to_lowercase();
-        if let Some(t) = sc.vars.first().and_then(|globals| globals.get(&key)).cloned() {
+        if let Some(t) = sc.globals.get(&key).cloned() {
             self.record(sc, node, Res::Global(key));
             return Some(E::Val(t));
         }
@@ -1576,12 +1588,15 @@ impl<'a> Checker<'a> {
     fn lookup_name(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Option<E> {
         let n = name_of(node);
         let key = n.to_lowercase();
-        for (depth, frame) in sc.vars.iter().enumerate().rev() {
-            if let Some(t) = frame.get(&key) {
-                let t = t.clone();
-                self.record(sc, node, if depth == 0 { Res::Global(key) } else { Res::Local(key) });
-                return Some(E::Val(t));
-            }
+        if let Some(t) = sc.vars.iter().rev().find_map(|frame| frame.get(&key)) {
+            let t = t.clone();
+            self.record(sc, node, Res::Local(key));
+            return Some(E::Val(t));
+        }
+        if let Some(t) = sc.globals.get(&key) {
+            let t = t.clone();
+            self.record(sc, node, Res::Global(key));
+            return Some(E::Val(t));
         }
         // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
         if key == "this" && self.ws.objects[sc.oi].kind == ObjKind::Codeunit && sc.self_obj == sc.oi {

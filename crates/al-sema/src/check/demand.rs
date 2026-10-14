@@ -73,10 +73,18 @@ pub(super) struct State {
     global_ops: u8,
     /// Write operations not yet processed for `Global Triggers`.
     fresh_global: u8,
+    /// The write operations a `RecordRef` or `FieldRef` performs on a table that is known only
+    /// when the code runs: every table the compile holds runs their triggers and subscribers.
+    recref_ops: u8,
+    /// `recref_ops` not processed yet.
+    fresh_recref: u8,
     ctxs: HashMap<usize, Rc<ObjCtx>>,
     routines: HashMap<usize, Rc<Vec<ast::Routine>>>,
     /// The `OnResolveCaptionClass` subscribers are reached (a page with a `CaptionClass` is run).
     caption_class: bool,
+    /// Bits per object kind: the catalog tables that list the objects of that kind are used, and
+    /// every object of the kind is compiled to its shape (`touch_object_catalog`).
+    catalogs: u8,
 }
 
 impl State {
@@ -90,9 +98,12 @@ impl State {
             fresh_ops: Vec::new(),
             global_ops: 0,
             fresh_global: 0,
+            recref_ops: 0,
+            fresh_recref: 0,
             ctxs: HashMap::new(),
             routines: HashMap::new(),
             caption_class: false,
+            catalogs: 0,
         }
     }
 }
@@ -184,6 +195,24 @@ impl Checker<'_> {
         }
     }
 
+    /// Reached code writes through a `RecordRef` or `FieldRef` (`ops`): the table is known only when
+    /// the code runs, and a table the compile holds may be the one. Every table that is compiled,
+    /// now or later, runs the triggers and subscribers of those operations (so the complete and the
+    /// cached compile, which hold every table, give the outcome the demand-driven one gives).
+    pub(super) fn touch_recref_ops(&self, ops: u8) {
+        if ops == 0 {
+            return;
+        }
+        self.touch_global_ops(ops);
+        if let Some(st) = self.demand.borrow_mut().as_mut() {
+            let new = ops & !st.recref_ops;
+            if new != 0 {
+                st.recref_ops |= new;
+                st.fresh_recref |= new;
+            }
+        }
+    }
+
     /// Reached code writes to table `i` (`ops`): that runs its triggers and the subscribers
     /// to its events for those operations.
     pub(super) fn touch_ops(&self, i: usize, ops: u8) {
@@ -216,7 +245,9 @@ impl Checker<'_> {
         }
         match t {
             Ty::Record { table, .. } | Ty::TestFilter(table) => {
-                self.resolve_at(file, ObjKind::Table, table);
+                if let Some(t) = self.resolve_at(file, ObjKind::Table, table) {
+                    self.touch_object_catalog(t);
+                }
             }
             Ty::Object(kind, name) => {
                 let i = self.resolve_at(file, *kind, name);
@@ -248,6 +279,45 @@ impl Checker<'_> {
                 self.touch_ty(file, v);
             }
             _ => {}
+        }
+    }
+
+    /// A read of a platform table that lists the objects of the installed apps (`Field`, `Key`,
+    /// `Table Relations Metadata`, `Report Metadata`, `Page Metadata`, `Page Action`, `Event
+    /// Subscription`, ...) answers for every one of them; an object that was not compiled would be
+    /// a row the runtime must refuse. So using such a table compiles the shape of every object it
+    /// lists, in every compile alike (the complete and the cached compile have them all).
+    fn touch_object_catalog(&self, t: usize) {
+        use al_builtins::platform::{Provider, Virtual as V};
+        let o = &self.ws.objects[t];
+        if !self.ws.platform_table(t) {
+            return;
+        }
+        let Some(Provider::Virtual(v)) = o.id.and_then(al_builtins::platform::provider) else {
+            return;
+        };
+        let kinds: &[ObjKind] = match v {
+            V::Field | V::Key | V::TableRelations => &[ObjKind::Table],
+            V::ReportMetadata | V::ReportDataItems => &[ObjKind::Report, ObjKind::Table],
+            V::PageMetadata | V::PageControlField => &[ObjKind::Page, ObjKind::Table],
+            V::PageAction => &[ObjKind::Page, ObjKind::Table, ObjKind::Codeunit],
+            V::EventSubscription => &[ObjKind::Codeunit],
+            _ => return,
+        };
+        for &kind in kinds {
+            let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
+                let bit = 1u8 << (kind as u8 % 8);
+                let first = st.catalogs & bit == 0;
+                st.catalogs |= bit;
+                first
+            });
+            if first {
+                for i in 0..self.ws.objects.len() {
+                    if self.ws.objects[i].kind == kind && self.ws.is_dependency(i) && self.ws.usable(i) {
+                        self.raise(i, SCHEMA);
+                    }
+                }
+            }
         }
     }
 
@@ -923,6 +993,7 @@ impl Checker<'_> {
             {
                 let mut guard = self.demand.borrow_mut();
                 let Some(st) = guard.as_mut() else { return };
+                st.apply_recref(self.ws);
                 round.extend(
                     std::mem::take(&mut st.fresh)
                         .into_iter()
@@ -1008,6 +1079,7 @@ impl Checker<'_> {
             self.touch_ops(i, ops);
         }
         self.touch_global_ops(d.global);
+        self.touch_recref_ops(d.recref);
         if let Some(st) = self.demand.borrow_mut().as_mut() {
             for r in d.reached {
                 if st.reached.insert(r) {
@@ -1090,16 +1162,42 @@ struct Delta {
     ops: Vec<(usize, u8)>,
     /// Write operations whose `Global Triggers` subscribers are reached.
     global: u8,
+    /// `RecordRef` write operations.
+    recref: u8,
     /// Routines reached.
     reached: Vec<(usize, usize)>,
 }
 
 impl State {
+    /// `RecordRef` writes (see `touch_recref_ops`): the tables that are compiled run their
+    /// operations. Called with the state of the calling thread, before a round is cut.
+    fn apply_recref(&mut self, ws: &Workspace) {
+        self.fresh_recref = 0;
+        if self.recref_ops == 0 {
+            return;
+        }
+        for i in 0..self.level.len() {
+            if self.level[i] < READ || ws.objects[i].kind != ObjKind::Table || !ws.is_dependency(i) {
+                continue;
+            }
+            let new = self.recref_ops & !self.ops[i];
+            if new != 0 {
+                self.ops[i] |= new;
+                self.fresh_ops.push((i, new));
+                if self.level[i] < FULL {
+                    self.level[i] = FULL;
+                    self.fresh.push((i, FULL));
+                }
+            }
+        }
+    }
+
     fn take_delta(&mut self) -> Delta {
         Delta {
             raised: std::mem::take(&mut self.fresh),
             ops: std::mem::take(&mut self.fresh_ops),
             global: std::mem::take(&mut self.fresh_global),
+            recref: std::mem::take(&mut self.fresh_recref),
             reached: std::mem::take(&mut self.queue),
         }
     }

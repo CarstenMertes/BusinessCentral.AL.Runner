@@ -1197,3 +1197,33 @@ routine (or an activation task of an object) and lowering a routine are now wrap
 routine of the object for a panic outside a routine, a body-less stub with the reason
 "internal error while checking: ..." or "internal error while lowering: ...". The tests that reach it are not run;
 the rest are. Panics outside routines (object layouts, page expansion, the loader) still end the run.
+
+## Zero differences between the compiles (owner decision 2026-10-14, branch `zero-diff`)
+
+The demand-driven compile (uncached), the eager compile (`AL_EAGER_DEPENDENCIES=1`) and the cached compile (ADR-022) give
+exactly the same outcome for every test, on the corpus (BC 27, 28, 29 and the suites) and on the 32 Microsoft
+buckets. `tools/demand-eager-known-differences.txt` is empty, and CI fails on any difference.
+
+The rule behind it: **what a static refusal covers depends on the sources of the installed apps, never on what was
+compiled and never on which other tests are selected.** Concretely:
+
+- The call graph of a page, report or xmlport variable (`lower.rs`, `driven_edges`) is built from routine roles, not from
+  the routines that happen to be compiled. A `TestPage` variable adds its page, the page's extensions and parts; a
+  report or xmlport variable (also a `TestRequestPage`) adds its triggers and the routines made for its properties.
+  `RunObject` targets of workspace pages are followed; those of a dependency page are compiled (the test can invoke
+  the action) but add no edge. A `Page` variable of a dependency page adds no edge, and a platform method called on it
+  reaches the page. `CurrPage` adds nothing. The demand-driven compile reaches exactly what these edges name.
+- A platform table that lists objects (`Field`, `Key`, `Table Relations Metadata`, `Report Metadata`, `Page Metadata`,
+  `Page Action`, `Event Subscription`, ...) compiles the shape of every object it lists when reached code declares it.
+- A write through a `RecordRef` or `FieldRef` runs the triggers and subscribers of every table the compile holds.
+- The types of a reached routine's parameters and return value are used by it (an interface it returns is compiled).
+- `Report.Run(Report::"X")` in dependency code resolves quoted and namespace-qualified names.
+- The reportextensions that change a run are counted from the sources of the reports that are compiled, active or not.
+
+Cost, measured on the corpus (BC 29, 4 threads, a loaded machine): compile 3.1 s to 3.8 s (+0.6 s) for the demand-driven
+compile; Tests-ERM cold compile 4.2 s to 4.7 s, cached compile unchanged (2.1 to 2.3 s).
+
+Not decided here: one timing flake. A full run of Tests-ERM on a machine under heavy CPU load gives 752 to 756 passed,
+and the extra refusals read "IsEmpty on Workflow: BC holds rows here ..." (Price List Line UT). The compile is the
+same in every run (`AL_DUMP_REACH` files are identical), the thread counts do not matter, and it does not happen on
+a quiet machine. Cause not found.

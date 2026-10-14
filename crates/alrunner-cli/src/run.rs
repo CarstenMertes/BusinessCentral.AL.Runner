@@ -228,7 +228,14 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
     let selection = Selection {
         codeunits: a.codeunits.clone(),
-        filters: a.filters.iter().chain(&a.explain).cloned().collect(),
+        // `--explain NAME --codeunit ID` explains the test of that one codeunit; the name alone
+        // selects every codeunit that has a test of that name.
+        filters: a
+            .filters
+            .iter()
+            .chain(a.explain.iter().filter(|_| a.codeunits.is_empty()))
+            .cloned()
+            .collect(),
     };
     let chosen_units: Vec<&Found> = found
         .iter()
@@ -476,7 +483,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         lazy: std::iter::repeat_n(None, inputs.len())
             .chain(dependencies.lazy.iter().cloned())
             .collect(),
-        trace: a.explain.is_some(),
+        trace: a.explain.is_some() || std::env::var_os("AL_STACK_OF").is_some(),
         test_time_limit: match a.test_timeout_secs.unwrap_or(20) {
             0 => None,
             n => Some(std::time::Duration::from_secs(n)),
@@ -515,6 +522,27 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     results.sort_by_key(|r| (r.app, r.codeunit));
     let counts = Counts::of(results.iter().copied());
 
+    // Debug aid: `AL_STACK_OF=TEXT` prints, for up to five not-run tests whose reason contains TEXT
+    // (and, with `AL_STACK_NAME`, whose name contains it),
+    // the routines they were refused in (as `--explain` does for one test).
+    if let Some(text) = std::env::var_os("AL_STACK_OF").map(|t| t.to_string_lossy().to_string()) {
+        for r in results
+            .iter()
+            .filter(|r| matches!(&r.outcome, Outcome::NotRun(w) if w.contains(&text)))
+            .filter(|r| std::env::var("AL_STACK_NAME").map_or(true, |n| r.test.contains(&n)))
+            .take(5)
+        {
+            let id = CaseId {
+                codeunit: r.codeunit,
+                name: r.test.clone(),
+            };
+            let head = format!("{} {}.{}", r.codeunit, r.codeunit_name, r.test);
+            eprintln!(
+                "{}",
+                al_testrun::explain::render_without_oracle(&head, &r.outcome, rt.detail_in("", &id))
+            );
+        }
+    }
     if let Some(pattern) = &a.explain {
         return explain(&rt, &results, pattern, &a.codeunits, &chosen.target.bc.to_string());
     }

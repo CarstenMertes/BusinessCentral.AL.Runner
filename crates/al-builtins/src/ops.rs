@@ -385,6 +385,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Library(_, a), V::Library(_, b)) => {
             use crate::value::LibraryValue as L;
             match (&*a.borrow(), &*b.borrow()) {
+                (L::Version(a), L::Version(b)) => a.cmp(b),
                 (L::Empty, L::Empty) => Ordering::Equal,
                 (L::Empty, L::RecordId { .. }) => Ordering::Less,
                 (L::RecordId { .. }, L::Empty) => Ordering::Greater,

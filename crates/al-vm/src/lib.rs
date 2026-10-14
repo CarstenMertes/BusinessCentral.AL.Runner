@@ -308,6 +308,8 @@ pub struct Session {
     pub(crate) host: al_host::Host,
     /// The time `Sleep` has waited, added to every clock reading.
     pub(crate) waited_ms: i64,
+    /// Text this session encrypted: ciphertext to plain text (`Encrypt`, `Decrypt`).
+    pub(crate) encrypted: std::collections::HashMap<String, String>,
     /// Temporary files created so far (`File.CreateTempFile` names them in order).
     pub(crate) temp_files: u32,
     /// The instant of the last system stamp (milliseconds since the Unix epoch).
@@ -375,6 +377,7 @@ impl Session {
             curr_report_language: None,
             host,
             waited_ms: 0,
+            encrypted: Default::default(),
             temp_files: 0,
             last_stamp: i64::MIN / 2,
             work_date: None,

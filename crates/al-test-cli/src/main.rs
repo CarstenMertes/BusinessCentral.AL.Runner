@@ -234,7 +234,16 @@ fn run_version(
         .map(Path::to_path_buf)
         .unwrap_or_default();
     let fixture_dir = corpus_tests.join("al-language-internals-fixture");
-    let app_dirs = [fixture_dir.clone(), root.join(&cfg.corpus_app)];
+    let mut app_dirs = vec![fixture_dir.clone(), root.join(&cfg.corpus_app)];
+    // The other test apps of this version follow the main app (before any dependency app), each
+    // once however many runs use it. `app_index` is where the runtime finds its objects.
+    let mut app_index: Vec<(&str, usize)> = Vec::new();
+    for suite in &version.suites {
+        if !app_index.iter().any(|(a, _)| *a == suite.app) {
+            app_index.push((&suite.app, app_dirs.len()));
+            app_dirs.push(root.join(&suite.app));
+        }
+    }
     let mut apps = app_dirs
         .iter()
         .map(|d| runtime::load_app(d))
@@ -303,7 +312,22 @@ fn run_version(
         host,
         ..Default::default()
     };
-    let rt = runtime::CorpusRuntime::run_for_apps(apps, kinds, &manifests, &symbols, Some(&chosen.target), dotnet);
+    let mut runs = vec![runtime::SuiteRun {
+        name: String::new(),
+        app: None,
+        runner: None,
+    }];
+    // The main run takes the corpus app's test codeunits only, as before.
+    runs[0].app = Some(1);
+    for suite in &version.suites {
+        let app = app_index.iter().find(|(a, _)| *a == suite.app).map(|(_, i)| *i);
+        runs.push(runtime::SuiteRun {
+            name: suite.name.clone(),
+            app,
+            runner: suite.runner,
+        });
+    }
+    let rt = runtime::CorpusRuntime::run_suites(apps, kinds, &manifests, &symbols, Some(&chosen.target), dotnet, &runs);
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",
@@ -323,6 +347,46 @@ fn run_version(
         ));
     }
 
+    // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
+    let mut suite_cases = Vec::new();
+    for suite in &version.suites {
+        pin::check(
+            &root.join(&cfg.corpus_repo),
+            suite
+                .corpus_commit
+                .as_deref()
+                .unwrap_or_else(|| version.oracle_commit(&cfg.corpus_commit)),
+            &cfg.corpus_commit,
+        )
+        .map_err(|e| format!("BC {} {}: {e}", version.bc_version, suite.name))?;
+        let path = oracle_path.parent().unwrap_or(Path::new(".")).join(&suite.oracle);
+        let text = read(&path)?;
+        let cases = match suite.format {
+            config::OracleFormat::Junit => oracle::parse_junit(&text),
+            config::OracleFormat::Xunit => oracle::parse_xunit(&text).map(|v| v.into_iter().map(|c| c.case).collect()),
+        }
+        .map_err(|e| format!("{}: {e:?}", path.display()))?;
+        let suite_index = corpus::discover(&root.join(&suite.app)).map_err(|e| format!("{}: {e}", suite.app))?;
+        let (sr, unmapped) = report::SuiteReport::new(
+            &suite.name,
+            suite.bc_version.as_deref().unwrap_or(&version.bc_version),
+            &cases,
+            &|cu| suite_index.area_of(cu).map(str::to_string),
+            &|c| rt.outcome_in(&suite.name, c),
+        );
+        if !unmapped.is_empty() {
+            return Err(format!(
+                "{}: {} oracle case(s) have no test codeunit in {}, e.g. {}",
+                suite.name,
+                unmapped.len(),
+                suite.app,
+                unmapped[0]
+            ));
+        }
+        rep.suites.push(sr);
+        suite_cases.push(cases);
+    }
+
     let all = args.all_versions;
     if let Some(p) = &args.json {
         write(
@@ -338,6 +402,20 @@ fn run_version(
             &per_version(p, version.major, all),
             &output::junit(&cases, &outcome, bc_build.as_deref()),
         )?;
+    }
+    if let Some(p) = &args.junit {
+        for (suite, cases) in version.suites.iter().zip(&suite_cases) {
+            let name = format!(
+                "{}-{}.{}",
+                p.file_stem().unwrap_or_default().to_string_lossy(),
+                suite.name,
+                p.extension().map_or("xml".into(), |e| e.to_string_lossy())
+            );
+            write(
+                &per_version(&p.with_file_name(name), version.major, all),
+                &output::junit(cases, &|c| rt.outcome_in(&suite.name, c), bc_build.as_deref()),
+            )?;
+        }
     }
     let oracle_ok: std::collections::BTreeSet<_> =
         cases.iter().filter(|c| !c.bc_failed).map(|c| c.id.clone()).collect();
@@ -355,6 +433,20 @@ fn run_version(
         rep.overall.fail,
         rep.overall.not_run
     );
+    for x in &rep.suites {
+        println!(
+            "BC {} {}: {}/{} pass ({:.1}%), {} fail, {} not run; BC fails {} on purpose, the runtime fails {} of them",
+            x.oracle_leg,
+            x.name,
+            x.counts.pass,
+            x.counts.total,
+            x.counts.rate() * 100.0,
+            x.counts.fail,
+            x.counts.not_run,
+            x.bc_failed,
+            x.bc_failed_reproduced
+        );
+    }
 
     if args.no_ratchet {
         if args.update_baseline {
@@ -366,41 +458,75 @@ fn run_version(
             passing,
         });
     }
-    let baseline_path = args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline));
-    let baseline =
-        report::parse_baseline(&read(&baseline_path)?).map_err(|e| format!("{}: {e}", baseline_path.display()))?;
-    let ratchet = report::ratchet(&baseline, &outcome);
-    if !ratchet.skipped.is_empty() {
-        // ADR-014 section 11: not a regression, but never silent.
-        eprintln!(
-            "{} baseline case(s) skipped, .NET is unavailable on this machine (CI uses --require-dotnet):",
-            ratchet.skipped.len()
-        );
-        for (c, why) in &ratchet.skipped {
-            eprintln!("  {} {}: {why}", c.codeunit, c.name);
+    // One ratchet per oracle file: the main app's, then each other test app's.
+    struct Target<'a> {
+        label: String,
+        baseline_path: PathBuf,
+        passing: std::collections::BTreeSet<oracle::CaseId>,
+        outcome: Box<dyn Fn(&oracle::CaseId) -> report::Outcome + 'a>,
+    }
+    let mut targets = vec![Target {
+        label: version.bc_version.clone(),
+        baseline_path: args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline)),
+        passing: passing.clone(),
+        outcome: Box::new(outcome),
+    }];
+    for (suite, cases) in version.suites.iter().zip(&suite_cases) {
+        let outcome = |c: &oracle::CaseId| rt.outcome_in(&suite.name, c);
+        targets.push(Target {
+            label: format!("{} {}", version.bc_version, suite.name),
+            baseline_path: root.join(&suite.baseline),
+            passing: cases
+                .iter()
+                .filter(|c| !c.bc_failed && outcome(&c.id) == report::Outcome::Pass)
+                .map(|c| c.id.clone())
+                .collect(),
+            outcome: Box::new(outcome),
+        });
+    }
+    let mut regressed = false;
+    for t in &targets {
+        let baseline = report::parse_baseline(&read(&t.baseline_path)?)
+            .map_err(|e| format!("{}: {e}", t.baseline_path.display()))?;
+        let ratchet = report::ratchet(&baseline, &*t.outcome);
+        if !ratchet.skipped.is_empty() {
+            // ADR-014 section 11: not a regression, but never silent.
+            eprintln!(
+                "{} baseline case(s) skipped, .NET is unavailable on this machine (CI uses --require-dotnet):",
+                ratchet.skipped.len()
+            );
+            for (c, why) in &ratchet.skipped {
+                eprintln!("  {} {}: {why}", c.codeunit, c.name);
+            }
+        }
+        match report::decide(&ratchet, args.update_baseline, args.require_dotnet) {
+            report::Decision::Ok => {}
+            report::Decision::Setup(why) => return Err(why),
+            report::Decision::Regression => {
+                eprintln!(
+                    "BC {}: {} regression(s): cases in {} no longer pass:",
+                    t.label,
+                    ratchet.regressions.len(),
+                    t.baseline_path.display()
+                );
+                for c in &ratchet.regressions {
+                    eprintln!("  {} {}", c.codeunit, c.name);
+                }
+                regressed = true;
+            }
         }
     }
-    match report::decide(&ratchet, args.update_baseline, args.require_dotnet) {
-        report::Decision::Ok => {}
-        report::Decision::Setup(why) => return Err(why),
-        report::Decision::Regression => {
-            eprintln!(
-                "{} regression(s): cases in {} no longer pass:",
-                ratchet.regressions.len(),
-                baseline_path.display()
-            );
-            for c in &ratchet.regressions {
-                eprintln!("  {} {}", c.codeunit, c.name);
-            }
-            return Ok(VersionRun {
-                code: 1,
-                oracle: oracle_ok,
-                passing,
-            });
-        }
+    if regressed {
+        return Ok(VersionRun {
+            code: 1,
+            oracle: oracle_ok,
+            passing,
+        });
     }
     if args.update_baseline {
-        write(&baseline_path, &report::format_baseline(&passing))?;
+        for t in &targets {
+            write(&t.baseline_path, &report::format_baseline(&t.passing))?;
+        }
     }
     Ok(VersionRun {
         code: 0,

@@ -58,6 +58,51 @@ pub struct Report {
     /// The Microsoft build the dependency apps came from, when the artifact feed was used (ADR-013
     /// Layer A). `None` when every dependency was found in `.alpackages` or `--deps`.
     pub bc_build: Option<String>,
+    /// The other test apps (`[[version.suite]]` in `oracle.toml`), each against its own oracle.
+    /// Their cases are not part of `overall`.
+    pub suites: Vec<SuiteReport>,
+}
+
+/// One extra test app's pass rate.
+#[derive(Debug, Serialize)]
+pub struct SuiteReport {
+    pub name: String,
+    /// The BC build its oracle was recorded on.
+    pub oracle_leg: String,
+    pub counts: Counts,
+    pub areas: BTreeMap<String, Counts>,
+    /// Cases real BC failed. A control suite has some on purpose (the isolation probe under
+    /// `TestIsolation = Codeunit` fails its `T5`); they are excluded from `counts`.
+    pub bc_failed: usize,
+    /// Of those, how many the runtime fails too. Equal to `bc_failed` when it agrees with BC.
+    pub bc_failed_reproduced: usize,
+}
+
+impl SuiteReport {
+    pub fn new(
+        name: &str,
+        oracle_leg: &str,
+        oracle: &[OracleCase],
+        areas: &dyn Fn(u32) -> Option<String>,
+        outcome: &dyn Fn(&CaseId) -> Outcome,
+    ) -> (SuiteReport, Vec<String>) {
+        let r = build(oracle, areas, outcome);
+        let bc_failed_reproduced = oracle
+            .iter()
+            .filter(|c| c.bc_failed && matches!(outcome(&c.id), Outcome::Fail(_)))
+            .count();
+        (
+            SuiteReport {
+                name: name.into(),
+                oracle_leg: oracle_leg.into(),
+                counts: r.overall,
+                areas: r.areas,
+                bc_failed: r.excluded_bc_failed,
+                bc_failed_reproduced,
+            },
+            r.unmapped,
+        )
+    }
 }
 
 pub fn build(
@@ -76,6 +121,7 @@ pub fn build(
         unmapped: Vec::new(),
         dependencies: Vec::new(),
         bc_build: None,
+        suites: Vec::new(),
     };
     for case in oracle {
         if case.bc_failed {

@@ -10,8 +10,8 @@ numbers with `python3 tools/inventory.py corpus/tests/al-language oracle/27/juni
 |---|---:|---|
 | `tests/al-language` (Target = Cloud) | 1330 | The test app. Everything below refers to it. |
 | `tests/al-language-internals-fixture` | 8 | A dependency of the test app (CI publishes it first). Must be loaded as a second app: some `codeunit/` tests call its objects across the app boundary (`ALT Internal Codeunit`, `ALT Cross Compute`). |
-| `tests/al-language-onprem` (Target = OnPrem) | 9 | Not in the 27.5 oracle (separate CI job). Out of scope. |
-| `tests/al-language-isolation-probe` | 5 | Not in the CI test run. Out of scope. |
+| `tests/al-language-onprem` (Target = OnPrem) | 9 | Not in the main oracle (a separate CI job and artifact). Run as the `onprem` suite against its own oracle (`oracle/README.md`). |
+| `tests/al-language-isolation-probe` | 5 | Only in the Windows nightly, under two custom test runners. Run as the `isolation-function` and `isolation-codeunit` suites (BC 28 only). |
 
 The original brief's "519 files / 273 test codeunits" is out of date: the test app
 now has 1330 files and 643 test codeunits.

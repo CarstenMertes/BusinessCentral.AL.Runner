@@ -82,3 +82,7 @@ before you open a source file.
 - Shell hygiene: never build a file list with `$(grep -l …)` that can come back
   empty. `grep PATTERN` with no files waits on stdin forever; use `grep -rn
   PATTERN dir/`.
+- Working method for implementation agents (gates, memory caps, report):
+  `docs/agents/brief.md`.
+- A session on another machine that takes GitHub issues (setup and task loop):
+  `docs/agents/remote-worker.md`.

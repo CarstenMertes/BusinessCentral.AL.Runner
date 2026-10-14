@@ -194,6 +194,12 @@ pub struct Session {
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
     pub(crate) next_guid: u64,
+    /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
+    pub(crate) sent_notifications: Vec<[u8; 16]>,
+    /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
+    pub(crate) rng: al_host::random::NetRandom,
+    /// How many `Randomize()` calls without a seed the session has seen.
+    pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
     /// Last AutoIncrement value handed out per table (and company). It is not part of the
     /// store: a rollback undoes rows but not the counter (corpus
@@ -319,6 +325,7 @@ impl Session {
     /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
+        let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
         let store =
             al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
@@ -338,6 +345,9 @@ impl Session {
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
+            sent_notifications: Vec::new(),
+            rng: al_host::random::NetRandom::new(random_seed),
+            unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
             truncate_undo: Default::default(),
@@ -1558,6 +1568,12 @@ impl al_builtins::native::Ctx for Session {
     }
     fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
         Session::ui_session_settings(self, settings)
+    }
+    fn ui_send_notification(&mut self, notification: Value, id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Session::ui_send_notification(self, notification, id)
+    }
+    fn ui_recall_notification(&mut self, id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Session::ui_recall_notification(self, id)
     }
     fn new_guid(&mut self) -> [u8; 16] {
         // Deterministic ids (ADR-006: no OS randomness in the core).

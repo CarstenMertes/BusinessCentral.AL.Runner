@@ -20,6 +20,9 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     "tooltip",
     "tooltipml",
     "description",
+    // Feeds the client's Tell Me search only (docs/owner-review.md, 2026-10-14).
+    "additionalsearchterms",
+    "additionalsearchtermsml",
     // Where the platform reads from (a replica); nothing a run or its dataset shows.
     "dataaccessintent",
 ];
@@ -991,6 +994,28 @@ mod tests {
         let output = l.output.join("; ");
         assert!(output.contains("defaultlayout"), "{output}");
         assert!(output.contains("section rendering"), "{output}");
+    }
+
+    #[test]
+    fn search_terms_are_inert_on_a_report() {
+        // AdditionalSearchTerms only feeds the client's Tell Me search; no AL code or test client
+        // reads it, like Caption and UsageCategory next to it (docs/owner-review.md).
+        let l = layout_of(
+            "report 1 R { ProcessingOnly = true; AdditionalSearchTerms = 'x'; AdditionalSearchTermsML = 'x'; dataset { dataitem(A; Cust) { } } }",
+        );
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        let l = ext_layout_of("reportextension 1 E extends R { AdditionalSearchTerms = 'x'; }");
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+    }
+
+    #[test]
+    fn addafter_stays_refused_because_the_dataset_order_is_not_pinned() {
+        // `add` columns land in the dataset a SaveAs writes (report-saveas); where `addafter`
+        // puts them, and where it puts a data item, is pinned by no corpus test.
+        let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { column(X; No) { } } } }");
+        assert!(l.reasons.join(";").contains("addafter(A)"), "{:?}", l.reasons);
+        let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { dataitem(B; Ledger) { } } } }");
+        assert!(l.reasons.join(";").contains("addafter(A)"), "{:?}", l.reasons);
     }
 
     #[test]

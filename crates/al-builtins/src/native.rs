@@ -177,6 +177,17 @@ pub trait Ctx: FormatCtx {
     fn ui_confirm(&mut self, _question: String, _default: bool) -> Result<bool, Signal> {
         Err(Signal::Unsupported("Confirm: this context has no UI".into()))
     }
+    /// `Notification.Send()`: hands a copy of the notification (and its id, when set) to the bound
+    /// `[SendNotificationHandler]`.
+    fn ui_send_notification(&mut self, _notification: Value, _id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Err(Signal::Unsupported("Notification.Send: this context has no UI".into()))
+    }
+    /// `Notification.Recall()` for the notification with this id.
+    fn ui_recall_notification(&mut self, _id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Err(Signal::Unsupported(
+            "Notification.Recall: this context has no UI".into(),
+        ))
+    }
     /// `SessionSettings.RequestSessionUpdate(false)`: hands a copy of the settings to the bound
     /// `[SessionSettingsHandler]`.
     fn ui_session_settings(&mut self, _settings: Value) -> Result<(), Signal> {

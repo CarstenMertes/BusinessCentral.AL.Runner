@@ -9,7 +9,7 @@ use al_bcdb::bacpac::BacpacSource;
 use al_bcdb::bcp::{BacpacColumn, BcpRowReader};
 use al_bcdb::value::Value;
 use al_bcdb::zip::ZipIndex;
-use al_bcdb::{open, Error};
+use al_bcdb::{Error, open};
 use common::*;
 
 fn col(name: &str, ty: &str) -> BacpacColumn {
@@ -109,12 +109,21 @@ fn decimal_carries_its_own_precision_and_scale() {
 #[test]
 fn time_and_datetime2_are_always_full_width_hundred_nanosecond_units() {
     let t0: Vec<u8> = 863_990_000_000i64.to_le_bytes()[..5].to_vec(); // 23:59:59
-    assert_eq!(read(&t0, &[notnull("t", "time")]).unwrap()[0][0].to_string(), "23:59:59");
+    assert_eq!(
+        read(&t0, &[notnull("t", "time")]).unwrap()[0][0].to_string(),
+        "23:59:59"
+    );
     let mut dt2 = t0.clone();
     dt2.extend([0x5B, 0x95, 0x0A]); // 1900-01-01
-    assert_eq!(read(&dt2, &[notnull("d", "datetime2")]).unwrap()[0][0].to_string(), "1900-01-01 23:59:59");
+    assert_eq!(
+        read(&dt2, &[notnull("d", "datetime2")]).unwrap()[0][0].to_string(),
+        "1900-01-01 23:59:59"
+    );
     let c7 = BacpacColumn::from_model("d", "datetime2", false, false, 0, 0, 7);
-    assert_eq!(read(&dt2, &[c7]).unwrap()[0][0].to_string(), "1900-01-01 23:59:59.0000000");
+    assert_eq!(
+        read(&dt2, &[c7]).unwrap()[0][0].to_string(),
+        "1900-01-01 23:59:59.0000000"
+    );
 }
 
 #[test]
@@ -124,22 +133,34 @@ fn datetime_halves_are_swapped_relative_to_storage() {
     let ticks = ((18 * 3600 + 45 * 60 + 30) * 300 + 37) as u32; // 37/300 s = 123.3 ms -> .123
     let mut d = days.to_le_bytes().to_vec();
     d.extend(ticks.to_le_bytes());
-    assert_eq!(read(&d, &[notnull("d", "datetime")]).unwrap()[0][0].to_string(), "1980-06-15 18:45:30.123");
+    assert_eq!(
+        read(&d, &[notnull("d", "datetime")]).unwrap()[0][0].to_string(),
+        "1980-06-15 18:45:30.123"
+    );
 }
 
 #[test]
 fn non_unicode_text_is_exported_as_utf16() {
     let mut data = vec![0x0A, 0];
     data.extend(utf16("Hello"));
-    assert_eq!(read(&data, &[sized("v", "varchar", true, 100)]).unwrap()[0][0].to_string(), "Hello");
+    assert_eq!(
+        read(&data, &[sized("v", "varchar", true, 100)]).unwrap()[0][0].to_string(),
+        "Hello"
+    );
     let ch = utf16("xyz       "); // char(10), padded by the server
-    assert_eq!(read(&ch, &[sized("c", "char", false, 10)]).unwrap()[0][0].to_string(), "xyz       ");
+    assert_eq!(
+        read(&ch, &[sized("c", "char", false, 10)]).unwrap()[0][0].to_string(),
+        "xyz       "
+    );
 }
 
 #[test]
 fn rowversion_is_eight_bytes_big_endian() {
     let data = [8, 0, 0, 0, 0, 0, 0, 0, 0x07, 0xE9];
-    assert_eq!(read(&data, &[notnull("v", "rowversion")]).unwrap()[0][0].to_string(), "0x00000000000007E9");
+    assert_eq!(
+        read(&data, &[notnull("v", "rowversion")]).unwrap()[0][0].to_string(),
+        "0x00000000000007E9"
+    );
 }
 
 // ---- guards -------------------------------------------------------------------
@@ -171,9 +192,16 @@ fn truncated_stream_throws_naming_the_table() {
 #[test]
 fn chunked_max_value_is_refused_rather_than_guessed() {
     // 0xFFFFFFFFFFFFFFFE is SQL Server's "length unknown, chunks follow" form.
-    let e = read(&[0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF], &[max("b", "varbinary", true)]).unwrap_err();
+    let e = read(
+        &[0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+        &[max("b", "varbinary", true)],
+    )
+    .unwrap_err();
     assert!(matches!(e, Error::NotSupported(_)));
-    assert!(e.message().contains('b') && e.message().contains("refusing to guess"), "{e}");
+    assert!(
+        e.message().contains('b') && e.message().contains("refusing to guess"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -214,7 +242,10 @@ fn model_checksum_mismatch_throws() {
     let src = open(Box::new(z)).unwrap();
     let e = src.tables().unwrap_err();
     assert!(matches!(e, Error::InvalidData(_)));
-    assert!(e.message().contains("model.xml") && e.message().contains("checksum"), "{e}");
+    assert!(
+        e.message().contains("model.xml") && e.message().contains("checksum"),
+        "{e}"
+    );
 }
 
 #[test]
@@ -222,17 +253,26 @@ fn unknown_data_stream_version_throws() {
     let z = rewrite("Origin.xml", |s| s.replace("\"Data\">2.0.0.0<", "\"Data\">3.0.0.0<"));
     let e = BacpacSource::open(Box::new(z)).err().expect("must refuse");
     assert!(matches!(e, Error::InvalidData(_)));
-    assert!(e.message().contains("3.0.0.0") && e.message().contains("refusing to guess"), "{e}");
+    assert!(
+        e.message().contains("3.0.0.0") && e.message().contains("refusing to guess"),
+        "{e}"
+    );
 }
 
 #[test]
 fn a_data_stream_with_no_table_in_the_model_throws() {
     let bytes = fixture_bytes("typeprobe.bacpac");
     let idx = ZipIndex::parse(&bytes).unwrap();
-    let mut entries: Vec<(String, Vec<u8>)> =
-        idx.entries.iter().map(|e| (e.name.clone(), idx.read(&bytes, &e.name).unwrap())).collect();
+    let mut entries: Vec<(String, Vec<u8>)> = idx
+        .entries
+        .iter()
+        .map(|e| (e.name.clone(), idx.read(&bytes, &e.name).unwrap()))
+        .collect();
     entries.push(("Data/dbo.ghost_table/TableData-000-00000.BCP".into(), vec![1, 2, 3]));
     let src = open(Box::new(build_zip(&entries))).unwrap();
     let e = src.tables().unwrap_err();
-    assert!(e.message().contains("ghost_table") && e.message().contains("refusing to guess"), "{e}");
+    assert!(
+        e.message().contains("ghost_table") && e.message().contains("refusing to guess"),
+        "{e}"
+    );
 }

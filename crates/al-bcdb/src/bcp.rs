@@ -20,7 +20,7 @@
 //! precision). DacFx also writes char/varchar/text as UTF-16.
 
 use crate::error::{Error, Result};
-use crate::types::{decode, Cell, SysColumn};
+use crate::types::{Cell, SysColumn, decode};
 use crate::value::Value;
 use std::io::Read;
 
@@ -178,7 +178,7 @@ impl<'a> BcpRowReader<'a> {
             42 => 8, // datetime; date; time; datetime2 (always full precision)
             36 => 16,
             189 => 8,
-            106 | 108 => 19, // decimal = prec+scale+sign+16
+            106 | 108 => 19,     // decimal = prec+scale+sign+16
             175 => 2 * c.length, // char(n), written as UTF-16
             _ => -1,
         }
@@ -229,8 +229,12 @@ impl<'a> BcpRowReader<'a> {
             wanted[i] = Some(w);
         }
         // Per column: the framing facts and, where wanted, the decoder's view of it.
-        let sys: Vec<Option<SysColumn>> =
-            self.cols.iter().zip(&wanted).map(|(c, w)| w.map(|_| c.to_sys_column(0))).collect();
+        let sys: Vec<Option<SysColumn>> = self
+            .cols
+            .iter()
+            .zip(&wanted)
+            .map(|(c, w)| w.map(|_| c.to_sys_column(0)))
+            .collect();
         let mut cur = Cursor::new(stream, self.table);
         let mut row: Vec<Value> = vec![Value::Null; want.len()];
         while !cur.at_end()? {
@@ -325,7 +329,11 @@ impl<'a> BcpRowReader<'a> {
                 let units = self.time_units(c, raw, 8)?;
                 let days = raw[5] as i64 | (raw[6] as i64) << 8 | (raw[7] as i64) << 16;
                 crate::types::check_days(days, sys)?;
-                Ok(Value::DateTime2 { days, units, scale: c.scale })
+                Ok(Value::DateTime2 {
+                    days,
+                    units,
+                    scale: c.scale,
+                })
             }
             _ => decode(Cell::Value(raw), sys, false, None, true),
         }
@@ -367,7 +375,11 @@ impl<'a> BcpRowReader<'a> {
         }
         let mut mag = [0u8; 16];
         mag[..keep].copy_from_slice(&raw[3..3 + keep]);
-        Ok(Value::Decimal { negative: raw[2] == 0, magnitude: u128::from_le_bytes(mag), scale: c.scale })
+        Ok(Value::Decimal {
+            negative: raw[2] == 0,
+            magnitude: u128::from_le_bytes(mag),
+            scale: c.scale,
+        })
     }
 
     /// BCP writes time (and the time half of datetime2) as five bytes of 100-nanosecond
@@ -414,7 +426,11 @@ impl<'a> BcpRowReader<'a> {
 }
 
 fn all_ones(prefix_bytes: usize) -> u64 {
-    if prefix_bytes == 8 { u64::MAX } else { (1u64 << (8 * prefix_bytes)) - 1 }
+    if prefix_bytes == 8 {
+        u64::MAX
+    } else {
+        (1u64 << (8 * prefix_bytes)) - 1
+    }
 }
 
 /// A forward-only byte cursor that can tell a clean end of stream from a truncated row.
@@ -432,7 +448,14 @@ impl<'t, R: Read> Cursor<'t, R> {
     const CHUNK: usize = 256 * 1024;
 
     fn new(r: R, table: &'t str) -> Self {
-        Cursor { r, table, buf: vec![0; Self::CHUNK], pos: 0, len: 0, eof: false }
+        Cursor {
+            r,
+            table,
+            buf: vec![0; Self::CHUNK],
+            pos: 0,
+            len: 0,
+            eof: false,
+        }
     }
 
     fn truncated(&self, column: &str) -> Error {

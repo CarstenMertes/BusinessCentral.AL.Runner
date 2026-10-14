@@ -16,15 +16,31 @@ pub enum Value {
     /// SQL `float`.
     Float(f64),
     /// decimal/numeric: `(-1)^negative * magnitude / 10^scale`, exact for precision 38.
-    Decimal { negative: bool, magnitude: u128, scale: u8 },
+    Decimal {
+        negative: bool,
+        magnitude: u128,
+        scale: u8,
+    },
     /// Legacy `datetime`: days since 1900-01-01 (may be negative) and 1/300 s ticks.
-    DateTime { days: i32, ticks: u32 },
+    DateTime {
+        days: i32,
+        ticks: u32,
+    },
     /// `date`: days since 0001-01-01.
-    Date { days: i64 },
+    Date {
+        days: i64,
+    },
     /// `time(scale)`: units of 10^-scale seconds since midnight.
-    Time { units: i64, scale: u8 },
+    Time {
+        units: i64,
+        scale: u8,
+    },
     /// `datetime2(scale)`.
-    DateTime2 { days: i64, units: i64, scale: u8 },
+    DateTime2 {
+        days: i64,
+        units: i64,
+        scale: u8,
+    },
     /// `uniqueidentifier`, in SQL Server's storage byte order (.NET `Guid(byte[])`).
     Guid([u8; 16]),
     /// binary, varbinary, image, and every off-row binary value.
@@ -108,9 +124,11 @@ impl fmt::Display for Value {
             Value::Int(i) => write!(f, "{i}"),
             Value::Real(x) => f.write_str(&format_real(*x)),
             Value::Float(x) => f.write_str(&format_float(*x)),
-            Value::Decimal { negative, magnitude, scale } => {
-                f.write_str(&format_scaled(*negative, *magnitude, *scale))
-            }
+            Value::Decimal {
+                negative,
+                magnitude,
+                scale,
+            } => f.write_str(&format_scaled(*negative, *magnitude, *scale)),
             Value::DateTime { days, ticks } => f.write_str(&format_datetime(*days, *ticks)),
             Value::Date { days } => f.write_str(&format_date(*days)),
             Value::Time { units, scale } => f.write_str(&format_time(*units, *scale)),
@@ -235,8 +253,16 @@ fn format_shortest(nan: bool, inf: bool, neg: bool, sci: &str, max_digits: i32) 
     let dig_pos = exp + 1; // position of the decimal point relative to the first digit
     if dig_pos > max_digits || dig_pos < -3 {
         // scientific: d[.ddd]E+xx
-        let m = if digits.len() > 1 { format!("{}.{}", &digits[..1], &digits[1..]) } else { digits };
-        let e = if exp < 0 { format!("-{:02}", -exp) } else { format!("+{:02}", exp) };
+        let m = if digits.len() > 1 {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        } else {
+            digits
+        };
+        let e = if exp < 0 {
+            format!("-{:02}", -exp)
+        } else {
+            format!("+{:02}", exp)
+        };
         return format!("{sign}{m}E{e}");
     }
     if dig_pos <= 0 {

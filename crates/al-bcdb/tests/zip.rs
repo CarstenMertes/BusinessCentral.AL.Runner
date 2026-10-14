@@ -1,6 +1,6 @@
 mod common;
-use al_bcdb::zip::ZipIndex;
 use al_bcdb::Error;
+use al_bcdb::zip::ZipIndex;
 use common::*;
 
 #[test]

@@ -7,15 +7,15 @@
 //! The IAM bitmap is what SQL Server itself trusts and matched
 //! sys.dm_db_database_page_allocations exactly (bcdb PROVENANCE.md "IAM pages").
 
-use crate::catalog::{read_page_ptr, AllocUnit, Catalog, PhysColumn};
+use crate::catalog::{AllocUnit, Catalog, PhysColumn, read_page_ptr};
 use crate::error::{Error, Result};
-use crate::io::{le, ByteSource};
+use crate::io::{ByteSource, le};
 use crate::lob::LobReader;
 use crate::mtf::PAGE_SIZE;
-use crate::pagefile::{header, PageFile, GAM_INTERVAL_EXTENTS, GAM_INTERVAL_PAGES, PAGES_PER_EXTENT};
+use crate::pagefile::{GAM_INTERVAL_EXTENTS, GAM_INTERVAL_PAGES, PAGES_PER_EXTENT, PageFile, header};
 use crate::records::{self, CdScratch, FixedVar};
 use crate::source::{BcSource, SourceTable};
-use crate::types::{decode, Cell, SysColumn};
+use crate::types::{Cell, SysColumn, decode};
 use crate::value::Value;
 use std::collections::HashSet;
 
@@ -47,7 +47,9 @@ impl BakSource {
         let mut tables = Vec::new();
         let mut entries = Vec::new();
         for o in &cat.objects {
-            let Ok(rs) = cat.rowset_for(o.object_id, &[1, 0]) else { continue };
+            let Ok(rs) = cat.rowset_for(o.object_id, &[1, 0]) else {
+                continue;
+            };
             tables.push(SourceTable {
                 name: o.name.clone(),
                 compression: match rs.compression_level {
@@ -65,7 +67,12 @@ impl BakSource {
                 compression_level: rs.compression_level,
             });
         }
-        Ok(BakSource { pf, cat, tables, entries })
+        Ok(BakSource {
+            pf,
+            cat,
+            tables,
+            entries,
+        })
     }
 
     /// The underlying page file, for the page-map commands only a backup has.
@@ -91,7 +98,9 @@ impl BakSource {
         while iam_pid != 0 && seen.insert((iam_fid, iam_pid)) {
             let iam = pf.page(iam_fid as i32, iam_pid)?;
             if header::page_type(&iam) != 10 {
-                return Err(crate::invalid!("page {iam_fid}:{iam_pid} in the IAM chain is not an IAM page"));
+                return Err(crate::invalid!(
+                    "page {iam_fid}:{iam_pid} in the IAM chain is not an IAM page"
+                ));
             }
             if header::slot_count(&iam) != 2 {
                 return Err(Error::InvalidData("unexpected IAM slot count".into()));
@@ -102,10 +111,14 @@ impl BakSource {
             }
             let (base_pid, base_fid) = read_page_ptr(&iam, s0 + 40);
             if base_fid != 0 && base_fid != 1 {
-                return Err(crate::unsupported!("IAM interval base in file {base_fid} — only single-data-file databases are supported"));
+                return Err(crate::unsupported!(
+                    "IAM interval base in file {base_fid} — only single-data-file databases are supported"
+                ));
             }
             if base_pid < 0 || base_pid as usize % GAM_INTERVAL_PAGES != 0 {
-                return Err(crate::invalid!("IAM interval base {base_pid} is not a GAM-interval boundary"));
+                return Err(crate::invalid!(
+                    "IAM interval base {base_pid} is not a GAM-interval boundary"
+                ));
             }
             for sp in 0..8 {
                 let (sp_pid, sp_fid) = read_page_ptr(&iam, s0 + 46 + 6 * sp);
@@ -113,7 +126,9 @@ impl BakSource {
                     continue;
                 }
                 if sp_fid != 1 {
-                    return Err(crate::unsupported!("IAM single-page slot points into file {sp_fid} — only single-data-file databases are supported"));
+                    return Err(crate::unsupported!(
+                        "IAM single-page slot points into file {sp_fid} — only single-data-file databases are supported"
+                    ));
                 }
                 if !pf.is_page_allocated(sp_pid)? {
                     continue;
@@ -240,9 +255,8 @@ fn decode_fixed_var(
     for (pc, out) in &plan.entries {
         let Some(o) = *out else { continue };
         let col = &columns[o];
-        let cell: Cell<'_> = if pc.null_bit as usize > rec.ncols {
-            Cell::Null // column added after this row was written
-        } else if rec.is_null(pc.null_bit as usize - 1) {
+        // a null bit beyond the record's column count: the column was added after this row was written
+        let cell: Cell<'_> = if pc.null_bit as usize > rec.ncols || rec.is_null(pc.null_bit as usize - 1) {
             Cell::Null
         } else if pc.is_var() {
             let n = pc.var_ordinal();
@@ -254,12 +268,26 @@ fn decode_fixed_var(
             }
         } else {
             let off = pc.leaf_offset as usize;
-            let off = off.checked_sub(4).ok_or_else(|| crate::invalid!("column {} has leaf offset {} inside the record header", col.name, pc.leaf_offset))?;
+            let off = off.checked_sub(4).ok_or_else(|| {
+                crate::invalid!(
+                    "column {} has leaf offset {} inside the record header",
+                    col.name,
+                    pc.leaf_offset
+                )
+            })?;
             if pc.xtype == 104 {
                 if off >= fx.len() {
-                    return Err(crate::invalid!("bit column {} at offset {} beyond fixed data", col.name, pc.leaf_offset));
+                    return Err(crate::invalid!(
+                        "bit column {} at offset {} beyond fixed data",
+                        col.name,
+                        pc.leaf_offset
+                    ));
                 }
-                if (fx[off] >> pc.bit_pos) & 1 == 1 { Cell::Value(&[1]) } else { Cell::Value(&[0]) }
+                if (fx[off] >> pc.bit_pos) & 1 == 1 {
+                    Cell::Value(&[1])
+                } else {
+                    Cell::Value(&[0])
+                }
             } else {
                 let width = pc.max_length.max(0) as usize;
                 if off + width > fx.len() {
@@ -288,7 +316,11 @@ impl BcSource for BakSource {
     }
 
     fn columns(&self, t: &SourceTable) -> Result<Vec<SysColumn>> {
-        Ok(self.cat.load_column_metadata(&self.pf, self.entries[t.handle].object_id)?.columns.clone())
+        Ok(self
+            .cat
+            .load_column_metadata(&self.pf, self.entries[t.handle].object_id)?
+            .columns
+            .clone())
     }
 
     /// The clustered index key.
@@ -299,9 +331,17 @@ impl BcSource for BakSource {
         idx.sort_by_key(|i| i.key_ordinal);
         idx.iter()
             .map(|i| {
-                meta.columns.iter().find(|c| c.col_id == i.col_id).map(|c| c.name.clone()).ok_or_else(|| {
-                    crate::invalid!("clustered key column id {} of {} is not in syscolpars", i.col_id, t.name)
-                })
+                meta.columns
+                    .iter()
+                    .find(|c| c.col_id == i.col_id)
+                    .map(|c| c.name.clone())
+                    .ok_or_else(|| {
+                        crate::invalid!(
+                            "clustered key column id {} of {} is not in syscolpars",
+                            i.col_id,
+                            t.name
+                        )
+                    })
             })
             .collect()
     }
@@ -320,9 +360,15 @@ impl BcSource for BakSource {
         let mut row = vec![Value::Null; columns.len()];
         let mut scratch = CdScratch::default();
         self.for_each_data_page(au, &mut |_pid, page| {
-            let ci = if header::type_flag_bits(page) & 0x80 != 0 { Some(records::parse_ci(page)?) } else { None };
+            let ci = if header::type_flag_bits(page) & 0x80 != 0 {
+                Some(records::parse_ci(page)?)
+            } else {
+                None
+            };
             for s in 0..header::checked_slot_count(page)? {
-                let Some(so) = records::live_slot(header::slot_offset(page, s))? else { continue };
+                let Some(so) = records::live_slot(header::slot_offset(page, s))? else {
+                    continue;
+                };
                 // A slot array entry of 0 is an empty slot (deleted / never completed): SQL
                 // Server's own scan skips it. Anything else below the 96-byte header is corruption.
                 for v in row.iter_mut() {

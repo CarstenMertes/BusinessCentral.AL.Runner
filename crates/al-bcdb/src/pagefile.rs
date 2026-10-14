@@ -25,7 +25,7 @@
 //! can carry the same page id as a live page. It is kept as a cross-check only.
 
 use crate::error::Result;
-use crate::io::{le, ByteSource};
+use crate::io::{ByteSource, le};
 use crate::mtf::{DataRegion, MtfFile, PAGE_SIZE};
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -71,7 +71,8 @@ fn expect_page(b: &[u8], page_id: i32, ty: u8, what: &str) -> Result<()> {
     if b[0] != 1 || b[1] != ty || pid != page_id || fid != 1 {
         return Err(crate::invalid!(
             "expected {what} (page 1:{page_id}, type {ty}) but found headerVersion={} type={} page {fid}:{pid} — backup layout differs from every observed file, refusing to guess",
-            b[0], b[1]
+            b[0],
+            b[1]
         ));
     }
     Ok(())
@@ -154,7 +155,10 @@ impl PageFile {
 
     fn read_block(&self, r: &DataRegion, block: u64) -> Result<Page<'_>> {
         if block >= r.block_count {
-            return Err(crate::invalid!("block {block} beyond region ({} blocks)", r.block_count));
+            return Err(crate::invalid!(
+                "block {block} beyond region ({} blocks)",
+                r.block_count
+            ));
         }
         self.src.slice(r.data_offset + block * PAGE_SIZE as u64, PAGE_SIZE)
     }
@@ -213,7 +217,10 @@ impl PageFile {
         let mut cursor: u64 = 0;
         let mut derived_pages = 0usize;
         let mut exhausted = false;
-        let intervals = ((header_size_pages.max(r0.block_count as usize) + GAM_INTERVAL_PAGES - 1) / GAM_INTERVAL_PAGES).max(1);
+        let intervals = header_size_pages
+            .max(r0.block_count as usize)
+            .div_ceil(GAM_INTERVAL_PAGES)
+            .max(1);
         for k in 0..intervals {
             let lead_block = cursor;
             // Interval 0: GAM at page 2 / SGAM at 3. Interval k>0: GAM at the interval's
@@ -222,9 +229,19 @@ impl PageFile {
             let gam_page = self.read_block(&r0, lead_block + if k == 0 { 2 } else { 0 })?;
             expect_page(&gam_page, gam_pid as i32, PT_GAM, &format!("GAM page of interval {k}"))?;
             let sgam_page = self.read_block(&r0, lead_block + if k == 0 { 3 } else { 1 })?;
-            expect_page(&sgam_page, gam_pid as i32 + 1, PT_SGAM, &format!("SGAM page of interval {k}"))?;
+            expect_page(
+                &sgam_page,
+                gam_pid as i32 + 1,
+                PT_SGAM,
+                &format!("SGAM page of interval {k}"),
+            )?;
             let dcm_page = self.read_block(&r0, lead_block + 6)?;
-            expect_page(&dcm_page, (k * GAM_INTERVAL_PAGES + 6) as i32, PT_DCM, &format!("DCM page of interval {k}"))?;
+            expect_page(
+                &dcm_page,
+                (k * GAM_INTERVAL_PAGES + 6) as i32,
+                PT_DCM,
+                &format!("DCM page of interval {k}"),
+            )?;
             let gam = alloc_bitmap(&gam_page)?;
             let sgam = alloc_bitmap(&sgam_page)?;
             drop((gam_page, sgam_page, dcm_page));
@@ -244,7 +261,8 @@ impl PageFile {
                 }
                 // End of the copied data: the first proposed extent whose lead block is
                 // filler IS that end (page type 0x65 is not a SQL page type).
-                let lead = self.read_block(&r0, cursor)?;
+                // Only the 40 header bytes are needed, so only they are read.
+                let lead = self.src.slice(r0.data_offset + cursor * PAGE_SIZE as u64, 40)?;
                 if is_filler(&lead) {
                     exhausted = true;
                     break;
@@ -296,7 +314,9 @@ impl PageFile {
             let mut dcm_final: Option<Vec<u8>> = None;
             while c1 + PAGES_PER_EXTENT as u64 <= r1.block_count {
                 // whole 64 KB extent frame in one positional read
-                let frame = self.src.slice(r1.data_offset + c1 * PAGE_SIZE as u64, PAGES_PER_EXTENT * PAGE_SIZE)?;
+                let frame = self
+                    .src
+                    .slice(r1.data_offset + c1 * PAGE_SIZE as u64, PAGES_PER_EXTENT * PAGE_SIZE)?;
                 let pg = |p: usize| &frame[p * PAGE_SIZE..(p + 1) * PAGE_SIZE];
                 let mut candidates: HashSet<i64> = HashSet::new();
                 for p in 0..PAGES_PER_EXTENT {
@@ -388,7 +408,9 @@ impl PageFile {
         let mut b = from;
         while b < r.block_count {
             let blocks = (256u64).min(r.block_count - b) as usize;
-            let chunk = self.src.slice(r.data_offset + b * PAGE_SIZE as u64, blocks * PAGE_SIZE)?;
+            let chunk = self
+                .src
+                .slice(r.data_offset + b * PAGE_SIZE as u64, blocks * PAGE_SIZE)?;
             for i in 0..blocks {
                 if !is_filler(&chunk[i * PAGE_SIZE..]) {
                     return Err(crate::invalid!(
@@ -472,7 +494,9 @@ impl PageFile {
             let mut b = 0u64;
             while b < r.block_count {
                 let blocks = 256u64.min(r.block_count - b) as usize;
-                let chunk = self.src.slice(r.data_offset + b * PAGE_SIZE as u64, blocks * PAGE_SIZE)?;
+                let chunk = self
+                    .src
+                    .slice(r.data_offset + b * PAGE_SIZE as u64, blocks * PAGE_SIZE)?;
                 for i in 0..blocks {
                     let blk = &chunk[i * PAGE_SIZE..(i + 1) * PAGE_SIZE];
                     if blk[0] == 1 && KNOWN_PAGE_TYPES.contains(&blk[1]) {
@@ -500,7 +524,12 @@ impl PageFile {
             .map(|(pid, _)| *pid)
             .collect();
         disagreements.sort_unstable();
-        Ok(CrossCheck { agree, stale_headers: stale, unidentified: unident, last_wins_disagreements: disagreements })
+        Ok(CrossCheck {
+            agree,
+            stale_headers: stale,
+            unidentified: unident,
+            last_wins_disagreements: disagreements,
+        })
     }
 
     /// Compare every mapped page byte-for-byte against a restored copy of the same backup

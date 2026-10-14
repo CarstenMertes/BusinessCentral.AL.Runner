@@ -1,8 +1,8 @@
 //! Port of SymbolTests.cs.
 
 mod common;
-use al_bcdb::symbols::{normalize_sql_name, SymbolStore};
 use al_bcdb::Error;
+use al_bcdb::symbols::{SymbolStore, normalize_sql_name};
 use common::build_zip;
 
 const SAMPLE: &str = r##"
@@ -64,8 +64,14 @@ fn maps_al_names_and_types() {
 fn find_for_sql_table_uses_bc_normalization() {
     let s = from_json(SAMPLE).unwrap();
     // '/' becomes '_' in SQL object names
-    assert!(s.find_for_sql_table("Deep_One", Some("11111111-2222-3333-4444-555555555555")).is_some());
-    assert!(s.find_for_sql_table("Deep_One", Some("99999999-0000-0000-0000-000000000000")).is_none());
+    assert!(
+        s.find_for_sql_table("Deep_One", Some("11111111-2222-3333-4444-555555555555"))
+            .is_some()
+    );
+    assert!(
+        s.find_for_sql_table("Deep_One", Some("99999999-0000-0000-0000-000000000000"))
+            .is_none()
+    );
     assert!(s.find_for_sql_table("deep_one", None).is_some());
 }
 
@@ -83,10 +89,18 @@ fn table_extensions_carry_a_qualified_target() {
     assert_eq!(e.target_table, "Customer");
     assert_eq!(e.target_app_id.as_deref(), Some("437dbf0e-84ff-417a-965d-ed2bb9650972"));
     let (ext, f) = s
-        .find_extension_field("11111111-2222-3333-4444-555555555555", "Customer", Some("437dbf0e-84ff-417a-965d-ed2bb9650972"), "My Field_")
+        .find_extension_field(
+            "11111111-2222-3333-4444-555555555555",
+            "Customer",
+            Some("437dbf0e-84ff-417a-965d-ed2bb9650972"),
+            "My Field_",
+        )
         .unwrap();
     assert_eq!((ext.id, f.id), (50200, 50000));
-    assert!(s.find_extension_field("11111111-2222-3333-4444-555555555555", "Vendor", None, "My Field_").is_none());
+    assert!(
+        s.find_extension_field("11111111-2222-3333-4444-555555555555", "Vendor", None, "My Field_")
+            .is_none()
+    );
 }
 
 #[test]
@@ -108,7 +122,10 @@ fn loads_the_runtime_wrapper_app() {
     inner[..4].copy_from_slice(b"NAVX");
     inner[4..8].copy_from_slice(&40i32.to_le_bytes());
     inner.extend(inner_zip);
-    let wrapper = build_zip(&[("readytorunappmanifest.json".into(), b"{}".to_vec()), ("abc_1.0_28.app".into(), inner)]);
+    let wrapper = build_zip(&[
+        ("readytorunappmanifest.json".into(), b"{}".to_vec()),
+        ("abc_1.0_28.app".into(), inner),
+    ]);
     let mut outer = vec![0u8; 40];
     outer[..4].copy_from_slice(b"NAVX");
     outer[4..8].copy_from_slice(&40i32.to_le_bytes());
@@ -125,7 +142,9 @@ fn missing_app_id_throws() {
 
 #[test]
 fn something_that_is_not_a_package_is_refused() {
-    let e = SymbolStore::load([("junk.app", vec![1, 2, 3, 4, 5, 6, 7, 8, 9])]).err().unwrap();
+    let e = SymbolStore::load([("junk.app", vec![1, 2, 3, 4, 5, 6, 7, 8, 9])])
+        .err()
+        .unwrap();
     assert!(e.message().contains("not a NAVX/zip"), "{e}");
 }
 
@@ -135,7 +154,9 @@ fn something_that_is_not_a_package_is_refused() {
 #[ignore = "needs ~/.bcartifacts.cache/sandbox/28.1.49838.50621 (Microsoft artifact, not in the repo)"]
 fn loads_the_shipped_base_application() {
     let home = std::env::var("HOME").unwrap();
-    let app = format!("{home}/.bcartifacts.cache/sandbox/28.1.49838.50621/w1/Extensions/Microsoft_Base Application_28.1.49838.50621.app");
+    let app = format!(
+        "{home}/.bcartifacts.cache/sandbox/28.1.49838.50621/w1/Extensions/Microsoft_Base Application_28.1.49838.50621.app"
+    );
     let bytes = std::fs::read(&app).unwrap_or_else(|e| panic!("{app}: {e}"));
     let s = SymbolStore::load([(app.as_str(), bytes)]).unwrap();
     let cust = s.find("Customer");

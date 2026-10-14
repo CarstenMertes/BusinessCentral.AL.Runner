@@ -4,8 +4,8 @@
 
 use crate::error::{Error, Result};
 use crate::source::{BcSource, SourceTable};
-use crate::symbols::{eq_ci, normalize_sql_name, AlField, AlTable, AlTableExtension, SymbolStore};
-use crate::types::{type_name, SysColumn};
+use crate::symbols::{AlField, AlTable, AlTableExtension, SymbolStore, eq_ci, normalize_sql_name};
+use crate::types::{SysColumn, type_name};
 use crate::value::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
@@ -38,7 +38,10 @@ pub fn is_guid(s: &str) -> bool {
     }
     let parts: Vec<&str> = inner.split('-').collect();
     parts.len() == 5
-        && [8, 4, 4, 4, 12].iter().zip(&parts).all(|(n, p)| p.len() == *n && hex(p))
+        && [8, 4, 4, 4, 12]
+            .iter()
+            .zip(&parts)
+            .all(|(n, p)| p.len() == *n && hex(p))
 }
 
 /// Takes a SQL object name apart. A name that matches no `<company>$<table>$<appid>` shape
@@ -71,20 +74,91 @@ pub fn parse_table_name(name: &str) -> (Option<String>, String, Option<String>) 
     (company, table_name, app_id)
 }
 
+/// Primary collation weights of a string, approximating what .NET's culture-aware compare
+/// (ICU root collation) gives for the identifiers BC uses: punctuation first in the CLDR
+/// order, then digits, then letters with case and accents ignored. ASCII is exact; Latin-1
+/// accented letters fold to their base letter; anything else sorts after the ASCII letters
+/// by code point. A tie falls to accents, then case (lower before upper), then code points.
+fn primary_weights(s: &str, out: &mut Vec<u32>) {
+    const SYMBOLS: &str = " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
+    for c in s.chars() {
+        let lower = c.to_lowercase().next().unwrap_or(c);
+        if let Some(i) = SYMBOLS.find(c) {
+            out.push(10 + i as u32);
+        } else if lower.is_ascii_digit() {
+            out.push(100 + lower as u32 - '0' as u32);
+        } else if lower.is_ascii_lowercase() {
+            out.push(200 + (lower as u32 - 'a' as u32) * 2);
+        } else {
+            match lower {
+                'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => out.push(200),
+                'æ' => out.extend([200, 200 + 4 * 2]),
+                'ç' => out.push(200 + 2 * 2),
+                'è' | 'é' | 'ê' | 'ë' => out.push(200 + 4 * 2),
+                'ì' | 'í' | 'î' | 'ï' => out.push(200 + 8 * 2),
+                'ñ' => out.push(200 + 13 * 2),
+                'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => out.push(200 + 14 * 2),
+                'ù' | 'ú' | 'û' | 'ü' => out.push(200 + 20 * 2),
+                'ý' | 'ÿ' => out.push(200 + 24 * 2),
+                'ß' => out.extend([200 + 18 * 2, 200 + 18 * 2]),
+                _ => out.push(1000 + lower as u32),
+            }
+        }
+    }
+}
+
+/// Culture-aware string order, as bcdb's `OrderBy(t => t.Company)` sorts.
+pub fn collate_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut pa, mut pb) = (Vec::new(), Vec::new());
+    primary_weights(a, &mut pa);
+    primary_weights(b, &mut pb);
+    pa.cmp(&pb)
+        .then_with(|| {
+            // secondary: an accented or special letter sorts after its plain form
+            let acc = |s: &str| s.chars().map(|c| !c.is_ascii()).collect::<Vec<_>>();
+            acc(a).cmp(&acc(b))
+        })
+        .then_with(|| {
+            // tertiary: lower case before upper case
+            let up = |s: &str| s.chars().map(|c| c.is_uppercase()).collect::<Vec<_>>();
+            up(a).cmp(&up(b))
+        })
+        .then_with(|| a.cmp(b))
+}
+
+/// Sort the way `tables` lists them: company (none first), then table name, culture-aware.
+pub fn sort_tables(tables: &mut [BcTable]) {
+    tables.sort_by(|x, y| match (&x.company, &y.company) {
+        (None, None) => collate_cmp(&x.table_name, &y.table_name),
+        (None, Some(_)) => std::cmp::Ordering::Less,
+        (Some(_), None) => std::cmp::Ordering::Greater,
+        (Some(a), Some(b)) => collate_cmp(a, b).then_with(|| collate_cmp(&x.table_name, &y.table_name)),
+    });
+}
+
 pub fn bc_tables(src: &dyn BcSource) -> Result<Vec<BcTable>> {
     Ok(src
         .tables()?
         .iter()
         .map(|t| {
             let (company, table_name, app_id) = parse_table_name(&t.name);
-            BcTable { table: t.clone(), company, table_name, app_id }
+            BcTable {
+                table: t.clone(),
+                company,
+                table_name,
+                app_id,
+            }
         })
         .collect())
 }
 
 /// The companies: the distinct company segments of per-company table names, ordinal order.
 pub fn companies(src: &dyn BcSource) -> Result<Vec<String>> {
-    let mut v: Vec<String> = bc_tables(src)?.into_iter().filter_map(|t| t.company).filter(|c| !c.is_empty()).collect();
+    let mut v: Vec<String> = bc_tables(src)?
+        .into_iter()
+        .filter_map(|t| t.company)
+        .filter(|c| !c.is_empty())
+        .collect();
     v.sort();
     v.dedup();
     Ok(v)
@@ -118,7 +192,10 @@ pub struct TableSelector {
 }
 
 pub fn resolve_table(src: &dyn BcSource, sel: &TableSelector) -> Result<BcTable> {
-    let want = sel.table.as_deref().ok_or_else(|| Error::Argument("--table is required".into()))?;
+    let want = sel
+        .table
+        .as_deref()
+        .ok_or_else(|| Error::Argument("--table is required".into()))?;
     let norm = normalize_sql_name(want);
     let mut matches: Vec<BcTable> = bc_tables(src)?
         .into_iter()
@@ -151,7 +228,9 @@ pub fn resolve_table(src: &dyn BcSource, sel: &TableSelector) -> Result<BcTable>
                 .map(|c| c.clone().unwrap_or_default())
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(Error::Argument(format!("table '{want}' exists in multiple companies ({list}) — use --company")));
+            return Err(Error::Argument(format!(
+                "table '{want}' exists in multiple companies ({list}) — use --company"
+            )));
         }
     }
     if matches.len() > 1 {
@@ -160,7 +239,11 @@ pub fn resolve_table(src: &dyn BcSource, sel: &TableSelector) -> Result<BcTable>
         } else {
             ""
         };
-        let names = matches.iter().map(|m| m.sql_name().to_string()).collect::<Vec<_>>().join(" | ");
+        let names = matches
+            .iter()
+            .map(|m| m.sql_name().to_string())
+            .collect::<Vec<_>>()
+            .join(" | ");
         return Err(Error::Argument(format!("ambiguous table '{want}': {names}{hint}")));
     }
     Ok(matches.remove(0))
@@ -195,7 +278,9 @@ pub fn extension_columns<'s>(
     let mut out = Vec::new();
     let Some(c) = companion else { return Ok((None, out)) };
     for col in src.columns(&c.table)? {
-        let Some((base, app)) = split_ext_column(&col.name) else { continue }; // base-key mirror / timestamp
+        let Some((base, app)) = split_ext_column(&col.name) else {
+            continue;
+        }; // base-key mirror / timestamp
         let hit = sym.and_then(|s| s.find_extension_field(app, strip_ext(&t.table_name), t.app_id.as_deref(), base));
         out.push(ExtColumn {
             ext_app_id: app.to_string(),
@@ -216,7 +301,9 @@ pub fn base_extension_columns<'s>(
 ) -> Result<Vec<ExtColumn<'s>>> {
     let mut out = Vec::new();
     for col in src.columns(&t.table)? {
-        let Some((base, app)) = split_ext_column(&col.name) else { continue };
+        let Some((base, app)) = split_ext_column(&col.name) else {
+            continue;
+        };
         let hit = sym.and_then(|s| s.find_extension_field(app, strip_ext(&t.table_name), t.app_id.as_deref(), base));
         out.push(ExtColumn {
             ext_app_id: app.to_string(),
@@ -231,8 +318,20 @@ pub fn base_extension_columns<'s>(
 /// `(max)` / `(n)` / `(p,s)` after a SQL type name.
 pub fn length_suffix(c: &SysColumn) -> String {
     match c.xtype {
-        231 | 239 => if c.max_length < 0 { "(max)".into() } else { format!("({})", c.max_length / 2) },
-        167 | 175 | 165 | 173 => if c.max_length < 0 { "(max)".into() } else { format!("({})", c.max_length) },
+        231 | 239 => {
+            if c.max_length < 0 {
+                "(max)".into()
+            } else {
+                format!("({})", c.max_length / 2)
+            }
+        }
+        167 | 175 | 165 | 173 => {
+            if c.max_length < 0 {
+                "(max)".into()
+            } else {
+                format!("({})", c.max_length)
+            }
+        }
         106 | 108 => format!("({},{})", c.precision, c.scale),
         _ => String::new(),
     }
@@ -273,18 +372,24 @@ pub struct Describe {
 /// The AL schema of one table: field ids, AL names and types, and the SQL columns they map to.
 pub fn describe(src: &dyn BcSource, sym: &SymbolStore, sel: &TableSelector) -> Result<Describe> {
     let t = resolve_table(src, sel)?;
-    let al = sym.find_for_sql_table(strip_ext(&t.table_name), t.app_id.as_deref()).ok_or_else(|| {
-        Error::Argument(format!(
-            "table '{}' (app {}) is not defined in the provided symbols — pass the app that defines it",
-            t.table_name,
-            t.app_id.as_deref().unwrap_or("-")
-        ))
-    })?;
+    let al = sym
+        .find_for_sql_table(strip_ext(&t.table_name), t.app_id.as_deref())
+        .ok_or_else(|| {
+            Error::Argument(format!(
+                "table '{}' (app {}) is not defined in the provided symbols — pass the app that defines it",
+                t.table_name,
+                t.app_id.as_deref().unwrap_or("-")
+            ))
+        })?;
     let cols = src.columns(&t.table)?;
     let mut fields = Vec::new();
     for f in &al.fields {
         if f.field_class != "Normal" {
-            fields.push(DescField { field: f.clone(), sql_column: None, sql_type: None });
+            fields.push(DescField {
+                field: f.clone(),
+                sql_column: None,
+                sql_type: None,
+            });
             continue;
         }
         let norm = normalize_sql_name(&f.name);
@@ -349,7 +454,9 @@ struct Avail {
 fn resolve_column<'a>(name: &str, pool: &'a [Avail], what: &str) -> Result<&'a Avail> {
     let find = |token: &str| -> Vec<&'a Avail> {
         let n = normalize_sql_name(token);
-        pool.iter().filter(|a| eq_ci(&a.col.name, &n) || eq_ci(&normalize_sql_name(&a.header), &n)).collect()
+        pool.iter()
+            .filter(|a| eq_ci(&a.col.name, &n) || eq_ci(&normalize_sql_name(&a.header), &n))
+            .collect()
     };
     let mut hits = find(name);
     if hits.is_empty() && name != name.trim() {
@@ -448,11 +555,9 @@ pub fn plan_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadReques
             }
             for n in key {
                 comp_key.push(
-                    comp_cols
-                        .iter()
-                        .find(|c| eq_ci(&c.name, &n))
-                        .cloned()
-                        .ok_or_else(|| crate::invalid!("key column {n} of {} is not among its columns", c.sql_name()))?,
+                    comp_cols.iter().find(|c| eq_ci(&c.name, &n)).cloned().ok_or_else(|| {
+                        crate::invalid!("key column {n} of {} is not among its columns", c.sql_name())
+                    })?,
                 );
                 key_cols.push(cols.iter().find(|c| eq_ci(&c.name, &n)).cloned().ok_or_else(|| {
                     crate::invalid!(
@@ -483,14 +588,25 @@ pub fn plan_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadReques
             })
             .or_else(|| base_ext.get(&c.name.to_uppercase()).cloned().flatten())
             .unwrap_or_else(|| c.name.clone());
-        all.push(Avail { col: c.clone(), from_ext: false, header });
+        all.push(Avail {
+            col: c.clone(),
+            from_ext: false,
+            header,
+        });
     }
     for e in &ext_cols {
-        all.push(Avail { col: e.column.clone(), from_ext: true, header: e.field.map(|f| f.name.clone()).unwrap_or_else(|| e.column.name.clone()) });
+        all.push(Avail {
+            col: e.column.clone(),
+            from_ext: true,
+            header: e.field.map(|f| f.name.clone()).unwrap_or_else(|| e.column.name.clone()),
+        });
     }
 
     let selected_av: Vec<&Avail> = match &req.select {
-        Some(sel) => sel.split(',').map(|n| resolve_column(n, &all, "")).collect::<Result<_>>()?,
+        Some(sel) => sel
+            .split(',')
+            .map(|n| resolve_column(n, &all, ""))
+            .collect::<Result<_>>()?,
         None => all.iter().collect(),
     };
     let headers: Vec<String> = selected_av.iter().map(|s| s.header.clone()).collect();
@@ -500,7 +616,11 @@ pub fn plan_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadReques
         None => usize::MAX,
         Some(ts) => match ts.trim().trim_start_matches('+').parse::<i64>() {
             Ok(n) if n >= 0 && !ts.trim().starts_with("++") => n as usize,
-            _ => return Err(Error::Argument(format!("top expects a whole number of rows, got '{ts}'"))),
+            _ => {
+                return Err(Error::Argument(format!(
+                    "top expects a whole number of rows, got '{ts}'"
+                )));
+            }
         },
     };
 
@@ -509,7 +629,14 @@ pub fn plan_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadReques
     // value where a hash was asked for.
     let mut sha_cols: HashSet<String> = HashSet::new();
     if let Some(sh) = &req.sha256 {
-        let pool: Vec<Avail> = selected_av.iter().map(|a| Avail { col: a.col.clone(), from_ext: a.from_ext, header: a.header.clone() }).collect();
+        let pool: Vec<Avail> = selected_av
+            .iter()
+            .map(|a| Avail {
+                col: a.col.clone(),
+                from_ext: a.from_ext,
+                header: a.header.clone(),
+            })
+            .collect();
         for n in sh.split(',') {
             sha_cols.insert(resolve_column(n, &pool, "--sha256 ")?.col.name.clone());
         }
@@ -519,23 +646,40 @@ pub fn plan_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadReques
     // joining a companion, the join key. Selecting one column of a table with blobs must
     // not pay for the blobs.
     let base_wanted = distinct_by_name(
-        selected_av.iter().filter(|s| !s.from_ext).map(|s| s.col.clone()).chain(if companion.is_some() { key_cols.clone() } else { vec![] }),
+        selected_av
+            .iter()
+            .filter(|s| !s.from_ext)
+            .map(|s| s.col.clone())
+            .chain(if companion.is_some() { key_cols.clone() } else { vec![] }),
     );
     let comp_plan = companion.as_ref().map(|c| {
         let comp_wanted = distinct_by_name(
-            comp_key.iter().cloned().chain(selected_av.iter().filter(|s| s.from_ext).map(|s| s.col.clone())),
+            comp_key
+                .iter()
+                .cloned()
+                .chain(selected_av.iter().filter(|s| s.from_ext).map(|s| s.col.clone())),
         );
         CompanionPlan {
             table: c.table.clone(),
-            key_in_comp: comp_key.iter().map(|k| position_ci(&comp_wanted, &k.name).unwrap()).collect(),
-            key_in_base: key_cols.iter().map(|k| position_ci(&base_wanted, &k.name).unwrap()).collect(),
+            key_in_comp: comp_key
+                .iter()
+                .map(|k| position_ci(&comp_wanted, &k.name).unwrap())
+                .collect(),
+            key_in_base: key_cols
+                .iter()
+                .map(|k| position_ci(&base_wanted, &k.name).unwrap())
+                .collect(),
             needs_rows: selected_av.iter().any(|s| s.from_ext),
             wanted: comp_wanted,
         }
     });
     let mut selected = Vec::new();
     for s in &selected_av {
-        let pool = if s.from_ext { &comp_plan.as_ref().expect("ext column without companion").wanted } else { &base_wanted };
+        let pool = if s.from_ext {
+            &comp_plan.as_ref().expect("ext column without companion").wanted
+        } else {
+            &base_wanted
+        };
         selected.push(Selected {
             name: s.col.name.clone(),
             from_ext: s.from_ext,
@@ -553,7 +697,15 @@ pub fn plan_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadReques
             format!("--merge-extensions: {} has no $ext companion and no extension columns; nothing to merge", t.sql_name())
         }
     });
-    Ok(ReadPlan { headers, note, top, base: t.table.clone(), base_wanted, companion: comp_plan, selected })
+    Ok(ReadPlan {
+        headers,
+        note,
+        top,
+        base: t.table.clone(),
+        base_wanted,
+        companion: comp_plan,
+        selected,
+    })
 }
 
 impl ReadPlan {
@@ -598,7 +750,7 @@ impl ReadPlan {
                             return Err(Error::Argument(format!(
                                 "--sha256 column '{}' did not decode to binary data",
                                 s.name
-                            )))
+                            )));
                         }
                     }
                 } else {

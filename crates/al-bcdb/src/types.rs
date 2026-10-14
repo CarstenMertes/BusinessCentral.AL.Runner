@@ -18,7 +18,15 @@ pub struct SysColumn {
 
 impl SysColumn {
     pub fn new(col_id: i32, name: &str, xtype: u8, max_length: i16, precision: u8, scale: u8) -> Self {
-        SysColumn { col_id, name: name.to_string(), xtype, max_length, precision, scale, is_nullable: true }
+        SysColumn {
+            col_id,
+            name: name.to_string(),
+            xtype,
+            max_length,
+            precision,
+            scale,
+            is_nullable: true,
+        }
     }
     pub fn type_name(&self) -> String {
         type_name(self.xtype)
@@ -118,7 +126,10 @@ pub fn decode(
         Cell::Value(b) => b,
         Cell::Complex(pointer) => {
             let Some(lob) = lob else {
-                return Err(crate::unsupported!("column {}: off-row value but no LOB reader available", col.name));
+                return Err(crate::unsupported!(
+                    "column {}: off-row value but no LOB reader available",
+                    col.name
+                ));
             };
             let Some(resolved) = lob.resolve(pointer, &col.name)? else {
                 return Ok(Value::Null); // type-8 NULL root: the value is SQL NULL
@@ -126,7 +137,11 @@ pub fn decode(
             // Off-row bytes are the plain value; MAX/LOB types are never SCSU-compressed.
             return match col.xtype {
                 231 | 99 => Ok(Value::Text(utf16le(&resolved))),
-                167 | 35 => Ok(Value::Text(if text_is_utf16 { utf16le(&resolved) } else { latin1(&resolved) })),
+                167 | 35 => Ok(Value::Text(if text_is_utf16 {
+                    utf16le(&resolved)
+                } else {
+                    latin1(&resolved)
+                })),
                 165 | 34 => Ok(Value::Binary(resolved)),
                 _ => Err(crate::unsupported!(
                     "column {}: off-row value for type {} — not derived, refusing to guess",
@@ -177,7 +192,12 @@ pub fn decode(
                 _ => 8,
             };
             if b.len() < need {
-                return Err(crate::invalid!("{} cell of {} bytes in {}", type_name(col.xtype), b.len(), col.name));
+                return Err(crate::invalid!(
+                    "{} cell of {} bytes in {}",
+                    type_name(col.xtype),
+                    b.len(),
+                    col.name
+                ));
             }
             Ok(Value::Int(match col.xtype {
                 48 => b[0] as i64,
@@ -208,9 +228,17 @@ pub fn decode(
         }
         106 | 108 => {
             if col.scale > 38 {
-                return Err(crate::invalid!("decimal scale {} in {} is beyond 38", col.scale, col.name));
+                return Err(crate::invalid!(
+                    "decimal scale {} in {} is beyond 38",
+                    col.scale,
+                    col.name
+                ));
             }
-            if compressed { decode_vardecimal(b, col) } else { decode_decimal(b, col) }
+            if compressed {
+                decode_vardecimal(b, col)
+            } else {
+                decode_decimal(b, col)
+            }
         }
         61 => {
             if compressed {
@@ -230,11 +258,18 @@ pub fn decode(
             check_days(days, col)?;
             Ok(Value::Date { days })
         }
-        41 => Ok(Value::Time { units: read_le_uint(b, time_width(col.scale), col, "time")?, scale: col.scale }),
+        41 => Ok(Value::Time {
+            units: read_le_uint(b, time_width(col.scale), col, "time")?,
+            scale: col.scale,
+        }),
         42 => {
             let tw = time_width(col.scale);
             if b.is_empty() {
-                return Ok(Value::DateTime2 { days: 0, units: 0, scale: col.scale });
+                return Ok(Value::DateTime2 {
+                    days: 0,
+                    units: 0,
+                    scale: col.scale,
+                });
             }
             if b.len() != tw + 3 {
                 return Err(crate::invalid!(
@@ -248,7 +283,11 @@ pub fn decode(
             let units = b[..tw].iter().rev().fold(0i64, |u, &x| (u << 8) | x as i64);
             let days = b[tw] as i64 | (b[tw + 1] as i64) << 8 | (b[tw + 2] as i64) << 16;
             check_days(days, col)?;
-            Ok(Value::DateTime2 { days, units, scale: col.scale })
+            Ok(Value::DateTime2 {
+                days,
+                units,
+                scale: col.scale,
+            })
         }
         59 => Ok(Value::Real(f32::from_le_bytes(pad_float::<4>(b, compressed, col)?))),
         62 => Ok(Value::Float(f64::from_le_bytes(pad_float::<8>(b, compressed, col)?))),
@@ -276,7 +315,11 @@ const MAX_DAYS: i64 = 3_652_058;
 
 pub(crate) fn check_days(days: i64, col: &SysColumn) -> Result<()> {
     if !(0..=MAX_DAYS).contains(&days) {
-        return Err(crate::invalid!("date value {} in {} is outside 0001-01-01..9999-12-31", days, col.name));
+        return Err(crate::invalid!(
+            "date value {} in {} is outside 0001-01-01..9999-12-31",
+            days,
+            col.name
+        ));
     }
     Ok(())
 }
@@ -310,7 +353,11 @@ fn decode_decimal(b: &[u8], col: &SysColumn) -> Result<Value> {
     }
     let mut mag = [0u8; 16];
     mag[..b.len() - 1].copy_from_slice(&b[1..]);
-    Ok(Value::Decimal { negative: b[0] == 0, magnitude: u128::from_le_bytes(mag), scale: col.scale })
+    Ok(Value::Decimal {
+        negative: b[0] == 0,
+        magnitude: u128::from_le_bytes(mag),
+        scale: col.scale,
+    })
 }
 
 /// Row-compression decimal (the vardecimal form): `[u8: bit 0x80 = positive, low 7 bits =
@@ -320,7 +367,11 @@ fn decode_decimal(b: &[u8], col: &SysColumn) -> Result<Value> {
 fn decode_vardecimal(b: &[u8], col: &SysColumn) -> Result<Value> {
     let scale = col.scale;
     if b.is_empty() {
-        return Ok(Value::Decimal { negative: false, magnitude: 0, scale });
+        return Ok(Value::Decimal {
+            negative: false,
+            magnitude: 0,
+            scale,
+        });
     }
     let negative = (b[0] & 0x80) == 0;
     let exp = (b[0] & 0x7f) as i32 - 64 + 1;
@@ -333,7 +384,11 @@ fn decode_vardecimal(b: &[u8], col: &SysColumn) -> Result<Value> {
         let mut val = 0u32;
         for bit in 0..10 {
             let idx = g * 10 + bit;
-            let bv = if idx < bits { (b[1 + idx / 8] >> (7 - idx % 8)) & 1 } else { 0 };
+            let bv = if idx < bits {
+                (b[1 + idx / 8] >> (7 - idx % 8)) & 1
+            } else {
+                0
+            };
             val = (val << 1) | bv as u32;
         }
         if val > 999 {
@@ -349,13 +404,21 @@ fn decode_vardecimal(b: &[u8], col: &SysColumn) -> Result<Value> {
         let drop = (-pow) as usize;
         if drop > digits.len() {
             if digits.iter().any(|&d| d != 0) {
-                return Err(crate::invalid!("vardecimal value in {} does not fit scale {}", col.name, scale));
+                return Err(crate::invalid!(
+                    "vardecimal value in {} does not fit scale {}",
+                    col.name,
+                    scale
+                ));
             }
             digits.clear();
         } else {
             let keep = digits.len() - drop;
             if digits[keep..].iter().any(|&d| d != 0) {
-                return Err(crate::invalid!("vardecimal value in {} does not fit scale {}", col.name, scale));
+                return Err(crate::invalid!(
+                    "vardecimal value in {} does not fit scale {}",
+                    col.name,
+                    scale
+                ));
             }
             digits.truncate(keep);
         }
@@ -367,7 +430,11 @@ fn decode_vardecimal(b: &[u8], col: &SysColumn) -> Result<Value> {
             .and_then(|v| v.checked_add(d as u128))
             .ok_or_else(|| crate::invalid!("vardecimal value in {} does not fit 128 bits", col.name))?;
     }
-    Ok(Value::Decimal { negative, magnitude: scaled, scale })
+    Ok(Value::Decimal {
+        negative,
+        magnitude: scaled,
+        scale,
+    })
 }
 
 fn read_le_uint(b: &[u8], width: usize, col: &SysColumn, what: &str) -> Result<i64> {
@@ -375,7 +442,13 @@ fn read_le_uint(b: &[u8], width: usize, col: &SysColumn, what: &str) -> Result<i
         return Ok(0);
     }
     if b.len() != width {
-        return Err(crate::invalid!("{} cell of {} bytes in {} (expected {})", what, b.len(), col.name, width));
+        return Err(crate::invalid!(
+            "{} cell of {} bytes in {} (expected {})",
+            what,
+            b.len(),
+            col.name,
+            width
+        ));
     }
     Ok(b.iter().rev().fold(0i64, |v, &x| (v << 8) | x as i64))
 }
@@ -385,13 +458,23 @@ fn pad_float<const N: usize>(b: &[u8], compressed: bool, col: &SysColumn) -> Res
     let mut full = [0u8; N];
     if !compressed {
         if b.len() != N {
-            return Err(crate::invalid!("{} cell of {} bytes in {}", type_name(col.xtype), b.len(), col.name));
+            return Err(crate::invalid!(
+                "{} cell of {} bytes in {}",
+                type_name(col.xtype),
+                b.len(),
+                col.name
+            ));
         }
         full.copy_from_slice(b);
         return Ok(full);
     }
     if b.len() > N {
-        return Err(crate::invalid!("{} cell of {} bytes in {}", type_name(col.xtype), b.len(), col.name));
+        return Err(crate::invalid!(
+            "{} cell of {} bytes in {}",
+            type_name(col.xtype),
+            b.len(),
+            col.name
+        ));
     }
     full[N - b.len()..].copy_from_slice(b);
     Ok(full)

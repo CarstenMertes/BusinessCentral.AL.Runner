@@ -15,8 +15,8 @@
 use crate::error::{Error, Result};
 use crate::io::le;
 use crate::mtf::PAGE_SIZE;
-use crate::pagefile::{header, PageFile, GAM_INTERVAL_EXTENTS, GAM_INTERVAL_PAGES, PAGES_PER_EXTENT};
-use crate::records::{is_ghost_type, live_slot, record_type, FixedVar};
+use crate::pagefile::{GAM_INTERVAL_EXTENTS, GAM_INTERVAL_PAGES, PAGES_PER_EXTENT, PageFile, header};
+use crate::records::{FixedVar, is_ghost_type, live_slot, record_type};
 use crate::types::SysColumn;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -139,7 +139,9 @@ fn walk_chain(pf: &PageFile, file_id: u16, page_id: i32, f: &mut dyn FnMut(&[u8]
     while pid != 0 && seen.insert((fid, pid)) {
         let p = pf.page(fid as i32, pid)?;
         for s in 0..header::checked_slot_count(&p)? {
-            let Some(so) = live_slot(header::slot_offset(&p, s))? else { continue };
+            let Some(so) = live_slot(header::slot_offset(&p, s))? else {
+                continue;
+            };
             let rt = record_type(&p, so);
             if is_ghost_type(rt) {
                 continue; // ghost records: deleted, not yet cleaned up
@@ -208,7 +210,10 @@ impl Catalog {
             }
             let id = le::i32(fx, 0);
             let (name, _) = if r.var_count() > 0 { r.var(0)? } else { (&[][..], false) };
-            let obj = SysObject { object_id: id, name: utf16(name) };
+            let obj = SysObject {
+                object_id: id,
+                name: utf16(name),
+            };
             match by_id.get(&id) {
                 Some(&i) => objects[i] = obj,
                 None => {
@@ -261,7 +266,9 @@ impl Catalog {
             if iam_fid != 1 {
                 break;
             }
-            let Some(iam) = pf.try_page(iam_fid as i32, iam_pid)? else { break };
+            let Some(iam) = pf.try_page(iam_fid as i32, iam_pid)? else {
+                break;
+            };
             if header::page_type(&iam) != 10 || header::slot_count(&iam) != 2 {
                 break;
             }
@@ -353,15 +360,22 @@ impl Catalog {
             return Ok(m.clone());
         }
         let mut meta = ObjectMeta::default();
-        self.walk_keyed(pf, SYSCOLPARS_ID, object_id as i64, 4, "syscolpars", &mut |page, slot| {
-            if le::i32(page, slot + 4) != object_id {
-                return Ok(());
-            }
-            if let Some(c) = parse_colpar(page, slot, object_id)? {
-                meta.columns.push(c);
-            }
-            Ok(())
-        })?;
+        self.walk_keyed(
+            pf,
+            SYSCOLPARS_ID,
+            object_id as i64,
+            4,
+            "syscolpars",
+            &mut |page, slot| {
+                if le::i32(page, slot + 4) != object_id {
+                    return Ok(());
+                }
+                if let Some(c) = parse_colpar(page, slot, object_id)? {
+                    meta.columns.push(c);
+                }
+                Ok(())
+            },
+        )?;
         meta.columns.sort_by_key(|c| c.col_id);
         self.walk_keyed(pf, SYSISCOLS_ID, object_id as i64, 4, "sysiscols", &mut |page, slot| {
             if le::i32(page, slot + 4) != object_id {
@@ -441,7 +455,10 @@ fn parse_alloc_unit(page: &[u8], slot: usize) -> Result<AllocUnit> {
     let r = FixedVar::parse(page, slot)?;
     let fx = r.fixed;
     if fx.len() < 41 {
-        return Err(crate::invalid!("sysallocunits record of {} fixed bytes — refusing to guess", fx.len()));
+        return Err(crate::invalid!(
+            "sysallocunits record of {} fixed bytes — refusing to guess",
+            fx.len()
+        ));
     }
     Ok(AllocUnit {
         auid: le::i64(fx, 0),
@@ -457,7 +474,10 @@ fn parse_rowset(page: &[u8], slot: usize) -> Result<RowSet> {
     let r = FixedVar::parse(page, slot)?;
     let fx = r.fixed;
     if fx.len() < 36 {
-        return Err(crate::invalid!("sysrowsets record of {} fixed bytes — refusing to guess", fx.len()));
+        return Err(crate::invalid!(
+            "sysrowsets record of {} fixed bytes — refusing to guess",
+            fx.len()
+        ));
     }
     Ok(RowSet {
         rowset_id: le::i64(fx, 0),
@@ -473,7 +493,10 @@ fn parse_colpar(page: &[u8], slot: usize, obj_id: i32) -> Result<Option<SysColum
     let r = FixedVar::parse(page, slot)?;
     let fx = r.fixed;
     if fx.len() < 19 {
-        return Err(crate::invalid!("syscolpars record for object {obj_id} is {} fixed bytes — refusing to guess", fx.len()));
+        return Err(crate::invalid!(
+            "syscolpars record for object {obj_id} is {} fixed bytes — refusing to guess",
+            fx.len()
+        ));
     }
     let number = le::i16(fx, 4);
     if number != 0 {
@@ -494,7 +517,11 @@ fn parse_colpar(page: &[u8], slot: usize, obj_id: i32) -> Result<Option<SysColum
     }
     let status = le::u32(fx, 23);
     let name_bytes = if r.var_count() > 0 { r.var(0)?.0 } else { &[][..] };
-    let name = if name_bytes.is_empty() { format!("col{col_id}") } else { utf16(name_bytes) };
+    let name = if name_bytes.is_empty() {
+        format!("col{col_id}")
+    } else {
+        utf16(name_bytes)
+    };
     Ok(Some(SysColumn {
         col_id,
         name,
@@ -510,9 +537,16 @@ fn parse_iscol(page: &[u8], slot: usize) -> Result<SysIndexCol> {
     let r = FixedVar::parse(page, slot)?;
     let fx = r.fixed;
     if fx.len() < 20 {
-        return Err(crate::invalid!("sysiscols record of {} fixed bytes — refusing to guess", fx.len()));
+        return Err(crate::invalid!(
+            "sysiscols record of {} fixed bytes — refusing to guess",
+            fx.len()
+        ));
     }
-    Ok(SysIndexCol { index_id: le::i32(fx, 4), key_ordinal: le::i32(fx, 8), col_id: le::i32(fx, 16) })
+    Ok(SysIndexCol {
+        index_id: le::i32(fx, 4),
+        key_ordinal: le::i32(fx, 8),
+        col_id: le::i32(fx, 16),
+    })
 }
 
 fn decimal_storage_bytes(precision: u8) -> i16 {
@@ -520,7 +554,13 @@ fn decimal_storage_bytes(precision: u8) -> i16 {
 }
 
 fn fixed_width(xtype: u8, ti_len: u8) -> i16 {
-    let time_w = if ti_len <= 2 { 3 } else if ti_len <= 4 { 4 } else { 5 };
+    let time_w = if ti_len <= 2 {
+        3
+    } else if ti_len <= 4 {
+        4
+    } else {
+        5
+    };
     match xtype {
         48 | 104 => 1,
         52 => 2,
@@ -541,7 +581,10 @@ fn parse_rowset_column(page: &[u8], slot: usize) -> Result<(i64, PhysColumn)> {
     let r = FixedVar::parse(page, slot)?;
     let fx = r.fixed;
     if fx.len() < 50 {
-        return Err(crate::invalid!("sysrscols record of {} fixed bytes — refusing to guess", fx.len()));
+        return Err(crate::invalid!(
+            "sysrscols record of {} fixed bytes — refusing to guess",
+            fx.len()
+        ));
     }
     let rsid = le::i64(fx, 0);
     let rscolid = le::u32(fx, 8);
@@ -558,7 +601,11 @@ fn parse_rowset_column(page: &[u8], slot: usize) -> Result<(i64, PhysColumn)> {
     let max_len = match xtype {
         106 | 108 => decimal_storage_bytes(b1),
         231 | 239 | 167 | 175 | 165 | 173 | 34 | 35 | 99 | 241 => {
-            if str_len == 0 { -1 } else { str_len as i16 }
+            if str_len == 0 {
+                -1
+            } else {
+                str_len as i16
+            }
         }
         _ => fixed_width(xtype, b1),
     };
@@ -635,7 +682,9 @@ fn find_leaf(
             ));
         }
         if depth > MAX_DEPTH {
-            return Err(crate::invalid!("{what}: clustered index deeper than {MAX_DEPTH} levels — refusing to guess"));
+            return Err(crate::invalid!(
+                "{what}: clustered index deeper than {MAX_DEPTH} levels — refusing to guess"
+            ));
         }
         // Ghosted index records are a shape this has not been derived for.
         if header::ghost_records(&page) != 0 {
@@ -663,13 +712,19 @@ fn child_for(page: &[u8], pminlen: usize, key: i64, lead_width: usize, what: &st
     for s in 0..slots {
         let off = header::slot_offset(page, s);
         if off < 96 || off + pminlen > PAGE_SIZE {
-            return Err(crate::invalid!("{what}: index slot offset {off} does not hold a {pminlen}-byte record — refusing to guess"));
+            return Err(crate::invalid!(
+                "{what}: index slot offset {off} does not hold a {pminlen}-byte record — refusing to guess"
+            ));
         }
         if s == 0 {
             chosen = off; // leftmost pointer: no key
             continue;
         }
-        let slot_key = if lead_width == 8 { le::i64(page, off + 1) } else { le::i32(page, off + 1) as i64 };
+        let slot_key = if lead_width == 8 {
+            le::i64(page, off + 1)
+        } else {
+            le::i32(page, off + 1) as i64
+        };
         // Keys ascend with the slot array. If they do not, this is not reading keys where
         // the keys are, and every answer built on it would be wrong.
         if let Some(p) = previous {
@@ -688,7 +743,9 @@ fn child_for(page: &[u8], pminlen: usize, key: i64, lead_width: usize, what: &st
     let child_off = chosen + pminlen - CHILD_POINTER_BYTES;
     let (cpid, cfid) = read_page_ptr(page, child_off);
     if cfid != 1 || cpid <= 0 {
-        return Err(crate::invalid!("{what}: clustered index child pointer ({cfid}:{cpid}) is not a page of this file — refusing to guess"));
+        return Err(crate::invalid!(
+            "{what}: clustered index child pointer ({cfid}:{cpid}) is not a page of this file — refusing to guess"
+        ));
     }
     Ok(cpid)
 }
@@ -710,18 +767,28 @@ fn walk_leaf_run(
         let page = pf.page(1, pid)?;
         let mut previous: Option<i64> = None;
         for s in 0..header::checked_slot_count(&page)? {
-            let Some(so) = live_slot(header::slot_offset(&page, s))? else { continue };
+            let Some(so) = live_slot(header::slot_offset(&page, s))? else {
+                continue;
+            };
             let rt = record_type(&page, so);
             if is_ghost_type(rt) {
                 continue;
             }
             if rt != 0 {
-                return Err(crate::unsupported!("{what}: record type {rt} not supported in a catalog leaf walk"));
+                return Err(crate::unsupported!(
+                    "{what}: record type {rt} not supported in a catalog leaf walk"
+                ));
             }
-            let k = if lead_width == 8 { le::i64(&page, so + 4) } else { le::i32(&page, so + 4) as i64 };
+            let k = if lead_width == 8 {
+                le::i64(&page, so + 4)
+            } else {
+                le::i32(&page, so + 4) as i64
+            };
             if let Some(p) = previous {
                 if k < p {
-                    return Err(crate::invalid!("{what}: leaf keys are not ascending ({k} after {p}) — refusing to guess"));
+                    return Err(crate::invalid!(
+                        "{what}: leaf keys are not ascending ({k} after {p}) — refusing to guess"
+                    ));
                 }
             }
             previous = Some(k);
@@ -743,7 +810,9 @@ fn walk_leaf_run(
             ));
         }
         if !seen.insert(np) {
-            return Err(crate::invalid!("{what}: leaf chain revisits page 1:{np} — refusing to loop"));
+            return Err(crate::invalid!(
+                "{what}: leaf chain revisits page 1:{np} — refusing to loop"
+            ));
         }
         pid = np;
     }

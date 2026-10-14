@@ -7,7 +7,7 @@
 mod common;
 use al_bcdb::source::read_all;
 use al_bcdb::value::Value;
-use al_bcdb::{open, BcSource};
+use al_bcdb::{BcSource, open};
 use common::*;
 
 fn src() -> Box<dyn BcSource> {
@@ -33,11 +33,36 @@ fn non_nullable_columns_match_oracle() {
     // Nullability decides the BCP prefix width: a non-nullable fixed-length column is
     // written raw with no prefix at all, so getting this wrong misaligns every later column.
     let cols = [
-        "id", "n_tinyint", "n_smallint", "n_int", "n_bigint", "n_bit", "n_dec38_20", "n_dec18_2", "n_dec5_0",
-        "n_datetime", "n_datetime2_7", "n_datetime2_0", "n_date", "n_time7", "n_time0", "n_guid", "n_nvarchar",
-        "n_varchar", "n_nchar", "n_char", "n_binary", "n_varbinary", "n_vbmax", "n_nvmax", "n_ver",
+        "id",
+        "n_tinyint",
+        "n_smallint",
+        "n_int",
+        "n_bigint",
+        "n_bit",
+        "n_dec38_20",
+        "n_dec18_2",
+        "n_dec5_0",
+        "n_datetime",
+        "n_datetime2_7",
+        "n_datetime2_0",
+        "n_date",
+        "n_time7",
+        "n_time0",
+        "n_guid",
+        "n_nvarchar",
+        "n_varchar",
+        "n_nchar",
+        "n_char",
+        "n_binary",
+        "n_varbinary",
+        "n_vbmax",
+        "n_nvmax",
+        "n_ver",
     ];
-    assert_eq!(fixture("typeprobe-probe-notnull.tsv"), read_table(&*src(), "probe_notnull", &cols));
+    assert_eq!(
+        fixture("typeprobe-probe-notnull.tsv"),
+        read_table(&*src(), "probe_notnull", &cols)
+    );
 }
 
 #[test]
@@ -47,9 +72,18 @@ fn non_nullable_floats_decode_exactly() {
     let sel = pick(&s.columns(t).unwrap(), &["id", "n_real", "n_float"]);
     let rows = read_all(&*s, t, &sel).unwrap();
     let by_id = |id: i64| rows.iter().find(|r| r[0] == Value::Int(id)).unwrap().clone();
-    assert_eq!((by_id(1)[1].clone(), by_id(1)[2].clone()), (Value::Real(0.0), Value::Float(0.0)));
-    assert_eq!((by_id(2)[1].clone(), by_id(2)[2].clone()), (Value::Real(1.5), Value::Float(2.25)));
-    assert_eq!((by_id(3)[1].clone(), by_id(3)[2].clone()), (Value::Real(-1.5), Value::Float(-2.25)));
+    assert_eq!(
+        (by_id(1)[1].clone(), by_id(1)[2].clone()),
+        (Value::Real(0.0), Value::Float(0.0))
+    );
+    assert_eq!(
+        (by_id(2)[1].clone(), by_id(2)[2].clone()),
+        (Value::Real(1.5), Value::Float(2.25))
+    );
+    assert_eq!(
+        (by_id(3)[1].clone(), by_id(3)[2].clone()),
+        (Value::Real(-1.5), Value::Float(-2.25))
+    );
 }
 
 #[test]
@@ -66,7 +100,11 @@ fn legacy_and_max_lobs_are_inline() {
     // probe_lob row 4 is a 160,000-byte value
     assert_eq!(
         fixture("typeprobe-probe-lob.tsv"),
-        read_table(&*src(), "probe_lob", &["id", "c_image", "c_text", "c_ntext", "c_vbmax", "c_nvmax"])
+        read_table(
+            &*src(),
+            "probe_lob",
+            &["id", "c_image", "c_text", "c_ntext", "c_vbmax", "c_nvmax"]
+        )
     );
 }
 
@@ -80,7 +118,10 @@ fn lobs_from_the_page_compressed_table() {
 
 #[test]
 fn multi_link_lobs() {
-    assert_eq!(fixture("typeprobe-probe-lob2.tsv"), read_table(&*src(), "probe_lob2", &["id", "c_image", "c_vbmax"]));
+    assert_eq!(
+        fixture("typeprobe-probe-lob2.tsv"),
+        read_table(&*src(), "probe_lob2", &["id", "c_image", "c_vbmax"])
+    );
 }
 
 #[test]
@@ -93,14 +134,21 @@ fn nulled_and_updated_lobs() {
 
 #[test]
 fn ghost_rows_are_not_in_the_export() {
-    assert_eq!(fixture("typeprobe-probe-ghost.tsv"), read_table(&*src(), "probe_ghost", &["id", "val", "amt"]));
+    assert_eq!(
+        fixture("typeprobe-probe-ghost.tsv"),
+        read_table(&*src(), "probe_ghost", &["id", "val", "amt"])
+    );
 }
 
 #[test]
 fn wide_table() {
     assert_eq!(
         fixture("typeprobe-probe-wide.tsv"),
-        read_table(&*src(), "probe_wide", &["id", "c1", "c100", "c199", "c200", "wtext", "wdec"])
+        read_table(
+            &*src(),
+            "probe_wide",
+            &["id", "c1", "c100", "c199", "c200", "wtext", "wdec"]
+        )
     );
 }
 
@@ -120,7 +168,10 @@ fn altered_tables() {
 
 #[test]
 fn heap() {
-    assert_eq!(fixture("typeprobe-probe-heap.tsv"), read_table(&*src(), "probe_heap", &["id", "txt", "amt"]));
+    assert_eq!(
+        fixture("typeprobe-probe-heap.tsv"),
+        read_table(&*src(), "probe_heap", &["id", "txt", "amt"])
+    );
 }
 
 #[test]
@@ -144,7 +195,12 @@ fn row_overflow() {
 fn table_list_matches_the_probe_database() {
     let s = src();
     let names: Vec<&str> = s.tables().unwrap().iter().map(|t| t.name.as_str()).collect();
-    for n in ["probe", "probe_notnull", "$probe$platform", "TP$exttest$aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa$ext"] {
+    for n in [
+        "probe",
+        "probe_notnull",
+        "$probe$platform",
+        "TP$exttest$aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa$ext",
+    ] {
         assert!(names.contains(&n), "missing {n}");
     }
     // sqlpackage does not export change tracking's internal side tables
@@ -168,7 +224,10 @@ fn compression_column_reads_dash() {
 #[test]
 fn clustered_key_comes_from_the_primary_key() {
     let s = src();
-    assert_eq!(s.row_key_columns(table(&*s, "probe_dense")).unwrap(), vec!["id".to_string()]);
+    assert_eq!(
+        s.row_key_columns(table(&*s, "probe_dense")).unwrap(),
+        vec!["id".to_string()]
+    );
 }
 
 #[test]
@@ -177,7 +236,10 @@ fn column_metadata_carries_sql_types_and_widths() {
     let cols = s.columns(table(&*s, "probe")).unwrap();
     let c = |n: &str| cols.iter().find(|c| c.name == n).unwrap().clone();
     assert_eq!((c("c_nvarchar").xtype, c("c_nvarchar").max_length), (231, 200)); // nvarchar(100): bytes
-    assert_eq!((c("c_dec38_20").xtype, c("c_dec38_20").precision, c("c_dec38_20").scale), (106, 38, 20));
+    assert_eq!(
+        (c("c_dec38_20").xtype, c("c_dec38_20").precision, c("c_dec38_20").scale),
+        (106, 38, 20)
+    );
     assert_eq!((c("c_time7").xtype, c("c_time7").scale), (41, 7));
     assert_eq!(c("c_varbinary").max_length, 100);
     let lob = s.columns(table(&*s, "probe_lob")).unwrap();
@@ -215,5 +277,8 @@ fn top_stops_the_read() {
 #[test]
 fn banner_names_database_and_producer() {
     let b = src().banner().unwrap();
-    assert!(b.contains("typeprobe") && b.contains("170.5.76.0") && b.contains("tables in model.xml"), "{b}");
+    assert!(
+        b.contains("typeprobe") && b.contains("170.5.76.0") && b.contains("tables in model.xml"),
+        "{b}"
+    );
 }

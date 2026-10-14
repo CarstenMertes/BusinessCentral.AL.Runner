@@ -14,8 +14,8 @@ use crate::source::{BcSource, SourceTable};
 use crate::types::SysColumn;
 use crate::value::Value;
 use crate::zip::ZipIndex;
-use quick_xml::events::Event;
 use quick_xml::Reader;
+use quick_xml::events::Event;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{BufReader, Read};
@@ -100,7 +100,11 @@ fn start_node(e: &quick_xml::events::BytesStart<'_>, what: &str) -> Result<Node>
         let v = a.unescape_value().map_err(|x| xml_err(what, x))?.into_owned();
         attrs.push((k, v));
     }
-    Ok(Node { name, attrs, children: Vec::new() })
+    Ok(Node {
+        name,
+        attrs,
+        children: Vec::new(),
+    })
 }
 
 /// Read the subtree whose start tag was just consumed.
@@ -179,9 +183,9 @@ fn parse_table(el: &Node) -> Result<(String, String, Vec<BacpacColumn>)> {
             crate::invalid!("model.xml: column identifier '{qualified}' does not name a column of a table")
         })?;
         let nullable = col.prop("IsNullable") != Some("False");
-        let spec = col
-            .first_under("TypeSpecifier", "Element")
-            .ok_or_else(|| crate::invalid!("model.xml: column [{schema}].[{table}].[{col_name}] has no type specifier"))?;
+        let spec = col.first_under("TypeSpecifier", "Element").ok_or_else(|| {
+            crate::invalid!("model.xml: column [{schema}].[{table}].[{col_name}] has no type specifier")
+        })?;
         let type_name = spec
             .first_under("Type", "References")
             .and_then(|r| r.attr("Name"))
@@ -191,9 +195,12 @@ fn parse_table(el: &Node) -> Result<(String, String, Vec<BacpacColumn>)> {
         for p in spec.children.iter().filter(|c| c.name == "Property") {
             let v = p.attr("Value");
             let num = |what: &str| -> Result<i64> {
-                v.unwrap_or("0")
-                    .parse::<i64>()
-                    .map_err(|_| crate::invalid!("model.xml: column {col_name}: {what} '{}' is not a number", v.unwrap_or("")))
+                v.unwrap_or("0").parse::<i64>().map_err(|_| {
+                    crate::invalid!(
+                        "model.xml: column {col_name}: {what} '{}' is not a number",
+                        v.unwrap_or("")
+                    )
+                })
             };
             match p.attr("Name") {
                 Some("IsMax") => is_max = v == Some("True"),
@@ -203,13 +210,18 @@ fn parse_table(el: &Node) -> Result<(String, String, Vec<BacpacColumn>)> {
                 _ => {}
             }
         }
-        cols.push(BacpacColumn::from_model(&col_name, &type_name, nullable, is_max, length, precision, scale));
+        cols.push(BacpacColumn::from_model(
+            &col_name, &type_name, nullable, is_max, length, precision, scale,
+        ));
     }
     Ok((schema, table, cols))
 }
 
 fn parse_key(el: &Node) -> Result<Option<(String, Vec<String>)>> {
-    let Some(target) = el.first_under("DefiningTable", "References").and_then(|r| r.attr("Name")) else {
+    let Some(target) = el
+        .first_under("DefiningTable", "References")
+        .and_then(|r| r.attr("Name"))
+    else {
         return Ok(None);
     };
     let (schema, table, _) = split_name(target)?;
@@ -219,7 +231,11 @@ fn parse_key(el: &Node) -> Result<Option<(String, Vec<String>)>> {
             cols.push(split_name(n)?.2.unwrap_or_default());
         }
     }
-    Ok(if cols.is_empty() { None } else { Some((format!("{schema}.{table}"), cols)) })
+    Ok(if cols.is_empty() {
+        None
+    } else {
+        Some((format!("{schema}.{table}"), cols))
+    })
 }
 
 /// A reader that hashes every byte that passes through it.
@@ -253,12 +269,20 @@ fn scan_small(xml: &[u8], what: &str) -> Result<Vec<XmlEl>> {
         match reader.read_event_into(&mut buf).map_err(|e| xml_err(what, e))? {
             Event::Start(e) => {
                 let n = start_node(&e, what)?;
-                out.push(XmlEl { name: n.name, attrs: n.attrs, text: String::new() });
+                out.push(XmlEl {
+                    name: n.name,
+                    attrs: n.attrs,
+                    text: String::new(),
+                });
                 open.push(out.len() - 1);
             }
             Event::Empty(e) => {
                 let n = start_node(&e, what)?;
-                out.push(XmlEl { name: n.name, attrs: n.attrs, text: String::new() });
+                out.push(XmlEl {
+                    name: n.name,
+                    attrs: n.attrs,
+                    text: String::new(),
+                });
             }
             Event::Text(t) => {
                 if let Some(&i) = open.last() {
@@ -301,9 +325,7 @@ impl BacpacSource {
         let origin = scan_small(&zip.read(&*src, "Origin.xml")?, "Origin.xml")?;
         let data_version = origin
             .iter()
-            .find(|e| {
-                e.name == "Version" && e.attrs.iter().any(|(k, v)| k == "StreamName" && v == "Data")
-            })
+            .find(|e| e.name == "Version" && e.attrs.iter().any(|(k, v)| k == "StreamName" && v == "Data"))
             .map(|e| e.text.trim().to_string());
         let Some(data_version) = data_version else {
             return Err(Error::InvalidData(
@@ -345,7 +367,10 @@ impl BacpacSource {
     }
 
     fn model(&self) -> Result<&Model> {
-        self.model.get_or_init(|| self.load_model()).as_ref().map_err(|e| e.clone())
+        self.model
+            .get_or_init(|| self.load_model())
+            .as_ref()
+            .map_err(|e| e.clone())
     }
 
     pub fn bacpac_tables(&self) -> Result<&[BacpacTable]> {
@@ -361,7 +386,10 @@ impl BacpacSource {
             .find("model.xml")
             .ok_or_else(|| Error::InvalidData("the package has no model.xml — not a bacpac?".into()))?;
         let raw = self.zip.open(&*self.src, entry)?;
-        let hashing = HashingRead { inner: raw, hasher: Sha256::new() };
+        let hashing = HashingRead {
+            inner: raw,
+            hasher: Sha256::new(),
+        };
         let mut reader = Reader::from_reader(BufReader::with_capacity(256 * 1024, hashing));
         reader.config_mut().check_end_names = false;
 
@@ -438,7 +466,11 @@ impl BacpacSource {
             .iter()
             .enumerate()
             .map(|(i, t)| SourceTable {
-                name: if t.schema == "dbo" { t.name.clone() } else { format!("{}.{}", t.schema, t.name) },
+                name: if t.schema == "dbo" {
+                    t.name.clone()
+                } else {
+                    format!("{}.{}", t.schema, t.name)
+                },
                 compression: "-".into(), // a bacpac stores logical rows: no storage compression
                 handle: i,
             })
@@ -459,12 +491,20 @@ impl BacpacSource {
                 return Err(crate::invalid!("unexpected data entry '{n}'"));
             };
             let Some(nums) = file.strip_prefix("TableData-").and_then(|f| f.strip_suffix(".BCP")) else {
-                return Err(crate::invalid!("unexpected data entry '{n}' — expected TableData-NNN-MMMMM.BCP"));
+                return Err(crate::invalid!(
+                    "unexpected data entry '{n}' — expected TableData-NNN-MMMMM.BCP"
+                ));
             };
             let parts: Vec<&str> = nums.split('-').collect();
-            let parsed = if parts.len() == 2 { (parts[0].parse::<i64>().ok(), parts[1].parse::<i64>().ok()) } else { (None, None) };
+            let parsed = if parts.len() == 2 {
+                (parts[0].parse::<i64>().ok(), parts[1].parse::<i64>().ok())
+            } else {
+                (None, None)
+            };
             let (Some(batch), Some(seq)) = parsed else {
-                return Err(crate::invalid!("cannot read the batch/sequence numbers of data entry '{n}'"));
+                return Err(crate::invalid!(
+                    "cannot read the batch/sequence numbers of data entry '{n}'"
+                ));
             };
             let Some((schema, table)) = folder.split_once('.') else {
                 return Err(crate::invalid!("data folder '{folder}' is not <schema>.<table>"));
@@ -509,7 +549,12 @@ impl BcSource for BacpacSource {
     }
 
     fn columns(&self, t: &SourceTable) -> Result<Vec<SysColumn>> {
-        Ok(self.model()?.tables[t.handle].columns.iter().enumerate().map(|(i, c)| c.to_sys_column(i as i32 + 1)).collect())
+        Ok(self.model()?.tables[t.handle]
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, c)| c.to_sys_column(i as i32 + 1))
+            .collect())
     }
 
     /// The primary-key constraint model.xml declares.

@@ -182,9 +182,13 @@ impl SymbolStore {
         } else {
             extract_symbol_reference(bytes, origin, 0)?
         };
-        let json: &[u8] = if json.starts_with(&[0xEF, 0xBB, 0xBF]) { &json[3..] } else { &json };
-        let root: RawRoot =
-            serde_json::from_slice(json).map_err(|e| crate::invalid!("{origin}: SymbolReference.json is not valid: {e}"))?;
+        let json: &[u8] = if json.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            &json[3..]
+        } else {
+            &json
+        };
+        let root: RawRoot = serde_json::from_slice(json)
+            .map_err(|e| crate::invalid!("{origin}: SymbolReference.json is not valid: {e}"))?;
         let app_id = root.app_id.unwrap_or_default();
         let app_name = root.name.unwrap_or_default();
         if app_id.is_empty() {
@@ -204,20 +208,24 @@ impl SymbolStore {
             });
         }
         for e in ns.table_extensions.unwrap_or_default() {
-            let mut target = e.target.ok_or_else(|| crate::invalid!("{origin}: a tableextension has no TargetObject"))?;
+            let mut target = e
+                .target
+                .ok_or_else(|| crate::invalid!("{origin}: a tableextension has no TargetObject"))?;
             let mut target_app_id = None;
             // qualified form "#<32-hex app id>#Name" (observed in shipped Base Application symbols)
             let tb = target.as_bytes();
             if tb.len() > 34 && tb[0] == b'#' && tb[33] == b'#' {
-                target_app_id = Some(
-                    guid_from_32_hex(&target[1..33])
-                        .ok_or_else(|| crate::invalid!("{origin}: target app id '{}' is not a GUID", &target[1..33]))?,
-                );
+                target_app_id =
+                    Some(guid_from_32_hex(&target[1..33]).ok_or_else(|| {
+                        crate::invalid!("{origin}: target app id '{}' is not a GUID", &target[1..33])
+                    })?);
                 target = target[34..].to_string();
             }
             self.table_extensions.push(AlTableExtension {
                 id: e.id.unwrap_or(0),
-                name: e.name.ok_or_else(|| crate::invalid!("{origin}: a tableextension has no Name"))?,
+                name: e
+                    .name
+                    .ok_or_else(|| crate::invalid!("{origin}: a tableextension has no Name"))?,
                 target_table: target,
                 target_app_id,
                 app_id: app_id.to_string(),
@@ -272,9 +280,9 @@ impl SymbolStore {
 
     /// The AL table whose name and app id match a SQL object's parsed name parts.
     pub fn find_for_sql_table(&self, normalized_table_name: &str, app_id: Option<&str>) -> Option<&AlTable> {
-        self.tables
-            .iter()
-            .find(|t| name_compat(&t.name, normalized_table_name) && app_id.is_none_or(|a| t.app_id.eq_ignore_ascii_case(a)))
+        self.tables.iter().find(|t| {
+            name_compat(&t.name, normalized_table_name) && app_id.is_none_or(|a| t.app_id.eq_ignore_ascii_case(a))
+        })
     }
 }
 
@@ -292,7 +300,13 @@ fn name_compat(al_name: &str, sql_name: &str) -> bool {
 pub fn normalize_sql_name(al_name: &str) -> String {
     al_name
         .chars()
-        .map(|c| if matches!(c, '.' | '"' | '\\' | '/' | '\'' | '%' | '[' | ']') { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '.' | '"' | '\\' | '/' | '\'' | '%' | '[' | ']') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect()
 }
 
@@ -302,13 +316,22 @@ fn guid_from_32_hex(s: &str) -> Option<String> {
         return None;
     }
     let l = s.to_ascii_lowercase();
-    Some(format!("{}-{}-{}-{}-{}", &l[..8], &l[8..12], &l[12..16], &l[16..20], &l[20..]))
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &l[..8],
+        &l[8..12],
+        &l[12..16],
+        &l[16..20],
+        &l[20..]
+    ))
 }
 
 /// Unwrap .app packaging until SymbolReference.json is found.
 fn extract_symbol_reference(mut bytes: Vec<u8>, origin: &str, depth: usize) -> Result<Vec<u8>> {
     if depth > 3 {
-        return Err(crate::invalid!("{origin}: nested deeper than any observed .app packaging"));
+        return Err(crate::invalid!(
+            "{origin}: nested deeper than any observed .app packaging"
+        ));
     }
     // NAVX header: magic "NAVX", u32 header length at +4; the zip follows.
     if bytes.len() > 8 && &bytes[..4] == b"NAVX" {
@@ -319,22 +342,34 @@ fn extract_symbol_reference(mut bytes: Vec<u8>, origin: &str, depth: usize) -> R
         bytes.drain(..hdr_len as usize);
     }
     if bytes.len() < 4 || &bytes[..2] != b"PK" {
-        return Err(crate::invalid!("{origin}: not a NAVX/zip .app package and not a .json file"));
+        return Err(crate::invalid!(
+            "{origin}: not a NAVX/zip .app package and not a .json file"
+        ));
     }
     let zip = ZipIndex::parse(&bytes)?;
     let base = |n: &str| n.rsplit('/').next().unwrap_or(n).to_string();
-    if let Some(sr) = zip.entries.iter().find(|e| base(&e.name).eq_ignore_ascii_case("SymbolReference.json")) {
+    if let Some(sr) = zip
+        .entries
+        .iter()
+        .find(|e| base(&e.name).eq_ignore_ascii_case("SymbolReference.json"))
+    {
         let mut out = Vec::with_capacity(sr.size as usize);
         zip.open(&bytes, sr)?.read_to_end(&mut out).map_err(Error::from)?;
         return Ok(out);
     }
     // runtime wrapper: exactly one inner .app entry
-    let inner: Vec<_> = zip.entries.iter().filter(|e| base(&e.name).to_ascii_lowercase().ends_with(".app")).collect();
+    let inner: Vec<_> = zip
+        .entries
+        .iter()
+        .filter(|e| base(&e.name).to_ascii_lowercase().ends_with(".app"))
+        .collect();
     if inner.len() == 1 {
         let mut out = Vec::with_capacity(inner[0].size as usize);
         zip.open(&bytes, inner[0])?.read_to_end(&mut out).map_err(Error::from)?;
         let name = base(&inner[0].name);
         return extract_symbol_reference(out, &format!("{origin} -> {name}"), depth + 1);
     }
-    Err(crate::invalid!("{origin}: no SymbolReference.json and no single inner .app in the package"))
+    Err(crate::invalid!(
+        "{origin}: no SymbolReference.json and no single inner .app in the package"
+    ))
 }

@@ -22,10 +22,14 @@ pub fn live_slot(so: usize) -> Result<Option<usize>> {
         return Ok(None); // empty slot (deleted / never completed): SQL Server's own scan skips it
     }
     if so < 96 {
-        return Err(crate::invalid!("slot offset {so} inside the page header — page corrupt?"));
+        return Err(crate::invalid!(
+            "slot offset {so} inside the page header — page corrupt?"
+        ));
     }
     if so + 4 > PAGE_SIZE {
-        return Err(crate::invalid!("slot offset {so} leaves no room for a record — page corrupt?"));
+        return Err(crate::invalid!(
+            "slot offset {so} leaves no room for a record — page corrupt?"
+        ));
     }
     Ok(Some(so))
 }
@@ -55,7 +59,9 @@ impl<'a> FixedVar<'a> {
         let has_var = a & 0x20 != 0;
         let fixed_end = le::u16(page, off + 2) as usize;
         if fixed_end < 4 || off + fixed_end + 2 > PAGE_SIZE {
-            return Err(crate::invalid!("record at offset {off}: fixed part ends at {fixed_end} — page corrupt?"));
+            return Err(crate::invalid!(
+                "record at offset {off}: fixed part ends at {fixed_end} — page corrupt?"
+            ));
         }
         let mut pos = off + fixed_end;
         let ncols = le::u16(page, pos) as usize;
@@ -64,7 +70,9 @@ impl<'a> FixedVar<'a> {
         if has_null_bmp {
             let nb = ncols.div_ceil(8);
             if pos + nb > PAGE_SIZE {
-                return Err(crate::invalid!("record at offset {off}: null bitmap runs past the page"));
+                return Err(crate::invalid!(
+                    "record at offset {off}: null bitmap runs past the page"
+                ));
             }
             null_bmp = &page[pos..pos + nb];
             pos += nb;
@@ -72,17 +80,30 @@ impl<'a> FixedVar<'a> {
         let (mut nvar, mut var_offsets_at, mut data_start) = (0, 0, 0);
         if has_var {
             if pos + 2 > PAGE_SIZE {
-                return Err(crate::invalid!("record at offset {off}: variable column count runs past the page"));
+                return Err(crate::invalid!(
+                    "record at offset {off}: variable column count runs past the page"
+                ));
             }
             nvar = le::u16(page, pos) as usize;
             pos += 2;
             if pos + 2 * nvar > PAGE_SIZE {
-                return Err(crate::invalid!("record at offset {off}: variable offset array runs past the page"));
+                return Err(crate::invalid!(
+                    "record at offset {off}: variable offset array runs past the page"
+                ));
             }
             var_offsets_at = pos;
             data_start = pos + 2 * nvar - off;
         }
-        Ok(FixedVar { page, off, fixed: &page[off + 4..off + fixed_end], ncols, null_bmp, nvar, var_offsets_at, data_start })
+        Ok(FixedVar {
+            page,
+            off,
+            fixed: &page[off + 4..off + fixed_end],
+            ncols,
+            null_bmp,
+            nvar,
+            var_offsets_at,
+            data_start,
+        })
     }
 
     pub fn var_count(&self) -> usize {
@@ -95,7 +116,11 @@ impl<'a> FixedVar<'a> {
         let raw = le::u16(self.page, self.var_offsets_at + 2 * i) as usize;
         let complex = raw & 0x8000 != 0;
         let end = raw & 0x7fff;
-        let prev = if i == 0 { self.data_start } else { le::u16(self.page, self.var_offsets_at + 2 * (i - 1)) as usize & 0x7fff };
+        let prev = if i == 0 {
+            self.data_start
+        } else {
+            le::u16(self.page, self.var_offsets_at + 2 * (i - 1)) as usize & 0x7fff
+        };
         if end < prev || self.off + end > PAGE_SIZE {
             return Err(crate::invalid!(
                 "variable column {i} of the record at offset {} spans {prev}..{end} — refusing to guess",
@@ -118,7 +143,9 @@ impl<'a> FixedVar<'a> {
 /// (absolute start, length) of every variable column of the FixedVar record at `off`.
 pub fn fixed_var_var_columns(page: &[u8], off: usize) -> Result<Vec<(usize, usize)>> {
     let r = FixedVar::parse(page, off)?;
-    (0..r.var_count()).map(|i| r.var_span(i).map(|(s, l, _)| (s, l))).collect()
+    (0..r.var_count())
+        .map(|i| r.var_span(i).map(|(s, l, _)| (s, l)))
+        .collect()
 }
 
 // ---- compressed (CD) records ------------------------------------------------------------
@@ -139,9 +166,19 @@ const K_ARENA: u8 = 2;
 const K_ONE: u8 = 3;
 
 impl CellLoc {
-    pub const NULL: CellLoc = CellLoc { kind: K_NULL, complex: false, start: 0, len: 0 };
+    pub const NULL: CellLoc = CellLoc {
+        kind: K_NULL,
+        complex: false,
+        start: 0,
+        len: 0,
+    };
     fn page(start: usize, len: usize) -> CellLoc {
-        CellLoc { kind: K_PAGE, complex: false, start: start as u32, len: len as u32 }
+        CellLoc {
+            kind: K_PAGE,
+            complex: false,
+            start: start as u32,
+            len: len as u32,
+        }
     }
     fn is_null(&self) -> bool {
         self.kind == K_NULL
@@ -153,7 +190,11 @@ impl CellLoc {
             K_ARENA => &arena[self.start as usize..(self.start + self.len) as usize],
             _ => &[1u8],
         };
-        if self.complex { Cell::Complex(bytes) } else { Cell::Value(bytes) }
+        if self.complex {
+            Cell::Complex(bytes)
+        } else {
+            Cell::Value(bytes)
+        }
     }
 }
 
@@ -193,7 +234,9 @@ pub fn is_cd_ghost(p: &[u8], off: usize) -> Result<bool> {
 
 fn bounds(p: &[u8], pos: usize, n: usize) -> Result<()> {
     if pos + n > p.len() {
-        return Err(crate::invalid!("compressed record runs past the page (offset {pos}+{n})"));
+        return Err(crate::invalid!(
+            "compressed record runs past the page (offset {pos}+{n})"
+        ));
     }
     Ok(())
 }
@@ -223,7 +266,12 @@ fn resolve(
     let at = arena.len();
     arena.extend_from_slice(&p[a_start..a_start + plen]);
     arena.extend_from_slice(&p[start + 1..start + len]);
-    Ok(CellLoc { kind: K_ARENA, complex: false, start: at as u32, len: (plen + len - 1) as u32 })
+    Ok(CellLoc {
+        kind: K_ARENA,
+        complex: false,
+        start: at as u32,
+        len: (plen + len - 1) as u32,
+    })
 }
 
 /// Parse one CD record into `scratch.cells` (cleared first). CD codes: 0 = NULL, 1 =
@@ -275,7 +323,12 @@ pub fn parse_cd(p: &[u8], off: usize, ci: Option<&PageCi>, scratch: &mut CdScrat
                 scratch.long_cols.push(i);
                 CellLoc::NULL
             }
-            0xB => CellLoc { kind: K_ONE, complex: false, start: 0, len: 1 },
+            0xB => CellLoc {
+                kind: K_ONE,
+                complex: false,
+                start: 0,
+                len: 1,
+            },
             0xC => {
                 bounds(p, pos, 1)?;
                 let sym = p[pos] as usize;
@@ -292,14 +345,17 @@ pub fn parse_cd(p: &[u8], off: usize, ci: Option<&PageCi>, scratch: &mut CdScrat
     if has_long {
         bounds(p, pos, 3)?;
         if p[pos] != 1 {
-            return Err(crate::unsupported!("long data region header 0x{:02x} not implemented", p[pos]));
+            return Err(crate::unsupported!(
+                "long data region header 0x{:02x} not implemented",
+                p[pos]
+            ));
         }
         let cnt = le::u16(p, pos + 1) as usize;
         if cnt != scratch.long_cols.len() {
             return Err(Error::InvalidData("long region count mismatch".into()));
         }
         let ends_off = pos + 3;
-        let data_base = ends_off + 2 * cnt + if clusters > 1 { clusters - 1 } else { 0 }; // per-cluster long-value counts
+        let data_base = ends_off + 2 * cnt + clusters.saturating_sub(1); // per-cluster long-value counts
         bounds(p, ends_off, 2 * cnt)?;
         let mut prev = 0usize;
         for i in 0..cnt {

@@ -81,7 +81,11 @@ pub fn decode(b: &[u8]) -> Result<String> {
                     need(b, i, 1)?;
                     let q = b[i + 1];
                     let n = (c - 1) as usize;
-                    let cp = if q < 0x80 { STATIC_OFFSETS[n] + q as u32 } else { dynamic[n] + q as u32 - 0x80 };
+                    let cp = if q < 0x80 {
+                        STATIC_OFFSETS[n] + q as u32
+                    } else {
+                        dynamic[n] + q as u32 - 0x80
+                    };
                     push_cp(&mut out, cp)?;
                     i += 2;
                 }

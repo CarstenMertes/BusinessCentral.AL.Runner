@@ -4,7 +4,7 @@
 //! written with a trailing data descriptor read the same.
 
 use crate::error::{Error, Result};
-use crate::io::{le, ByteSource};
+use crate::io::{ByteSource, le};
 use flate2::read::DeflateDecoder;
 use std::io::{self, BufReader, Read};
 
@@ -82,8 +82,11 @@ impl ZipIndex {
             let method = le::u16(&cd, p + 10);
             let mut csize = le::u32(&cd, p + 20) as u64;
             let mut size = le::u32(&cd, p + 24) as u64;
-            let (nlen, xlen, clen) =
-                (le::u16(&cd, p + 28) as usize, le::u16(&cd, p + 30) as usize, le::u16(&cd, p + 32) as usize);
+            let (nlen, xlen, clen) = (
+                le::u16(&cd, p + 28) as usize,
+                le::u16(&cd, p + 30) as usize,
+                le::u16(&cd, p + 32) as usize,
+            );
             let mut off = le::u32(&cd, p + 42) as u64;
             if p + 46 + nlen + xlen + clen > cd.len() {
                 return Err(not_a_zip("damaged central directory"));
@@ -112,7 +115,13 @@ impl ZipIndex {
                 }
                 x += 4 + sz;
             }
-            entries.push(ZipEntry { name, method, compressed_size: csize, size, local_offset: off });
+            entries.push(ZipEntry {
+                name,
+                method,
+                compressed_size: csize,
+                size,
+                local_offset: off,
+            });
             p += 46 + nlen + xlen + clen;
         }
         Ok(ZipIndex { entries })
@@ -133,7 +142,11 @@ impl ZipIndex {
         if data.checked_add(e.compressed_size).is_none_or(|end| end > src.len()) {
             return Err(crate::invalid!("zip entry {}: data lies outside the file", e.name));
         }
-        let raw = SourceRead { src, pos: data, end: data + e.compressed_size };
+        let raw = SourceRead {
+            src,
+            pos: data,
+            end: data + e.compressed_size,
+        };
         match e.method {
             0 => Ok(Box::new(raw)),
             8 => Ok(Box::new(DeflateDecoder::new(BufReader::with_capacity(64 * 1024, raw)))),
@@ -163,7 +176,9 @@ impl Read for SourceRead<'_> {
         if n == 0 {
             return Ok(0);
         }
-        self.src.read_at(self.pos, &mut buf[..n]).map_err(|e| io::Error::other(e.to_string()))?;
+        self.src
+            .read_at(self.pos, &mut buf[..n])
+            .map_err(|e| io::Error::other(e.to_string()))?;
         self.pos += n as u64;
         Ok(n)
     }

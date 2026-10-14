@@ -8,7 +8,7 @@ use al_bcdb::bak::BakSource;
 use al_bcdb::catalog::Catalog;
 use al_bcdb::pagefile::PageFile;
 use al_bcdb::source::read_all;
-use al_bcdb::{open, BcSource, Error};
+use al_bcdb::{BcSource, Error, open};
 use common::*;
 use std::sync::atomic::Ordering;
 
@@ -48,7 +48,11 @@ fn page_compression_with_anchors_and_dictionary() {
 fn legacy_and_max_lobs() {
     assert_eq!(
         fixture("typeprobe-probe-lob.tsv"),
-        read_table(&*src(), "probe_lob", &["id", "c_image", "c_text", "c_ntext", "c_vbmax", "c_nvmax"])
+        read_table(
+            &*src(),
+            "probe_lob",
+            &["id", "c_image", "c_text", "c_ntext", "c_vbmax", "c_nvmax"]
+        )
     );
 }
 
@@ -62,14 +66,20 @@ fn lobs_under_page_compression() {
 
 #[test]
 fn multi_link_lob_roots() {
-    assert_eq!(fixture("typeprobe-probe-lob2.tsv"), read_table(&*src(), "probe_lob2", &["id", "c_image", "c_vbmax"]));
+    assert_eq!(
+        fixture("typeprobe-probe-lob2.tsv"),
+        read_table(&*src(), "probe_lob2", &["id", "c_image", "c_vbmax"])
+    );
 }
 
 #[test]
 fn ghost_records_in_compressed_pages_are_skipped() {
     // 500 rows inserted, 166 deleted right before BACKUP: the page carries 166 ghost CD
     // records that SELECT does not return, and neither must the reader.
-    assert_eq!(fixture("typeprobe-probe-ghost.tsv"), read_table(&*src(), "probe_ghost", &["id", "val", "amt"]));
+    assert_eq!(
+        fixture("typeprobe-probe-ghost.tsv"),
+        read_table(&*src(), "probe_ghost", &["id", "val", "amt"])
+    );
 }
 
 #[test]
@@ -77,7 +87,11 @@ fn wide_table_uses_two_byte_column_count() {
     // 203 columns: the CD column count takes the two-byte form (BC tables reach 216 columns).
     assert_eq!(
         fixture("typeprobe-probe-wide.tsv"),
-        read_table(&*src(), "probe_wide", &["id", "c1", "c100", "c199", "c200", "wtext", "wdec"])
+        read_table(
+            &*src(),
+            "probe_wide",
+            &["id", "c1", "c100", "c199", "c200", "wtext", "wdec"]
+        )
     );
 }
 
@@ -101,7 +115,10 @@ fn altered_tables_decode_by_physical_layout() {
 fn heap_with_empty_slots_and_churn() {
     // 99 slot-array entries are 0 (empty slots) and must be skipped the way SQL Server's
     // own scan skips them; a production heap first exposed this as phantom all-NULL rows.
-    assert_eq!(fixture("typeprobe-probe-heap.tsv"), read_table(&*src(), "probe_heap", &["id", "txt", "amt"]));
+    assert_eq!(
+        fixture("typeprobe-probe-heap.tsv"),
+        read_table(&*src(), "probe_heap", &["id", "txt", "amt"])
+    );
 }
 
 #[test]
@@ -133,11 +150,36 @@ fn row_overflow() {
 #[test]
 fn non_nullable_columns() {
     let cols = [
-        "id", "n_tinyint", "n_smallint", "n_int", "n_bigint", "n_bit", "n_dec38_20", "n_dec18_2", "n_dec5_0",
-        "n_datetime", "n_datetime2_7", "n_datetime2_0", "n_date", "n_time7", "n_time0", "n_guid", "n_nvarchar",
-        "n_varchar", "n_nchar", "n_char", "n_binary", "n_varbinary", "n_vbmax", "n_nvmax", "n_ver",
+        "id",
+        "n_tinyint",
+        "n_smallint",
+        "n_int",
+        "n_bigint",
+        "n_bit",
+        "n_dec38_20",
+        "n_dec18_2",
+        "n_dec5_0",
+        "n_datetime",
+        "n_datetime2_7",
+        "n_datetime2_0",
+        "n_date",
+        "n_time7",
+        "n_time0",
+        "n_guid",
+        "n_nvarchar",
+        "n_varchar",
+        "n_nchar",
+        "n_char",
+        "n_binary",
+        "n_varbinary",
+        "n_vbmax",
+        "n_nvmax",
+        "n_ver",
     ];
-    assert_eq!(fixture("typeprobe-probe-notnull.tsv"), read_table(&*src(), "probe_notnull", &cols));
+    assert_eq!(
+        fixture("typeprobe-probe-notnull.tsv"),
+        read_table(&*src(), "probe_notnull", &cols)
+    );
 }
 
 #[test]
@@ -145,8 +187,13 @@ fn a_bak_and_a_bacpac_of_one_database_read_identically() {
     let bak = src();
     let bacpac = open(Box::new(fixture_bytes("typeprobe.bacpac"))).unwrap();
     for t in ["probe_dense", "probe_lob", "probe_overflow", "probe_notnull"] {
-        let cols: Vec<String> =
-            bacpac.columns(table(&*bacpac, t)).unwrap().iter().map(|c| c.name.clone()).filter(|n| n != "n_ver").collect();
+        let cols: Vec<String> = bacpac
+            .columns(table(&*bacpac, t))
+            .unwrap()
+            .iter()
+            .map(|c| c.name.clone())
+            .filter(|n| n != "n_ver")
+            .collect();
         let names: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
         assert_eq!(read_table(&*bak, t, &names), read_table(&*bacpac, t, &names), "{t}");
     }
@@ -162,7 +209,10 @@ fn row_counts_come_from_the_catalog() {
 #[test]
 fn clustered_key_comes_from_the_clustered_index() {
     let s = src();
-    assert_eq!(s.row_key_columns(table(&*s, "probe_dense")).unwrap(), vec!["id".to_string()]);
+    assert_eq!(
+        s.row_key_columns(table(&*s, "probe_dense")).unwrap(),
+        vec!["id".to_string()]
+    );
 }
 
 #[test]
@@ -246,7 +296,12 @@ fn derived_file_length_covers_every_mapped_page() {
     // FileSizeBoundTests): the derived length must cover every page the map placed.
     let pf = pagefile();
     assert!(pf.page_count() > 0);
-    assert!(pf.file_pages() >= pf.page_count(), "{} < {}", pf.file_pages(), pf.page_count());
+    assert!(
+        pf.file_pages() >= pf.page_count(),
+        "{} < {}",
+        pf.file_pages(),
+        pf.page_count()
+    );
     assert_eq!(pf.file_pages() % 8, 0);
 }
 
@@ -277,7 +332,11 @@ fn clustered_key_seek_agrees_with_the_full_scan_for_every_object() {
         assert_eq!(&want.columns, &got.columns, "columns of {obj}");
         assert_eq!(&want.index_columns, &got.index_columns, "index columns of {obj}");
     }
-    assert_eq!(seeking.clustered_seek_declines.load(Ordering::Relaxed), 0, "a seek fell back to a scan");
+    assert_eq!(
+        seeking.clustered_seek_declines.load(Ordering::Relaxed),
+        0,
+        "a seek fell back to a scan"
+    );
     assert!(seeking.clustered_seeks.load(Ordering::Relaxed) > 0);
 }
 
@@ -287,7 +346,9 @@ fn rowset_layout_seek_agrees_with_the_full_scan() {
     let cat = Catalog::open(&pf).unwrap();
     let mut compared = 0;
     for o in &cat.objects {
-        let Ok(rs) = cat.rowset_for(o.object_id, &[1, 0]) else { continue };
+        let Ok(rs) = cat.rowset_for(o.object_id, &[1, 0]) else {
+            continue;
+        };
         assert_eq!(
             cat.rowset_columns_by_scan(&pf, rs.rowset_id).unwrap(),
             *cat.rowset_columns(&pf, rs.rowset_id).unwrap(),
@@ -319,12 +380,17 @@ fn alloc_unit_pages_cover_every_page_the_iam_chain_yields() {
     let bak = BakSource::open(Box::new(fixture_bytes("typeprobe.bak"))).unwrap();
     let cat = bak.catalog();
     let obj = cat.objects.iter().find(|o| o.name == "probe_dense").unwrap();
-    let au = cat.au_for_rowset(cat.rowset_for(obj.object_id, &[1, 0]).unwrap().rowset_id).unwrap();
+    let au = cat
+        .au_for_rowset(cat.rowset_for(obj.object_id, &[1, 0]).unwrap().rowset_id)
+        .unwrap();
     let candidates: std::collections::HashSet<i32> =
         cat.alloc_unit_pages(bak.page_file(), au).unwrap().into_iter().collect();
     let mut seen = 0;
     bak.for_each_data_page(au, &mut |pid, _| {
-        assert!(candidates.contains(&pid), "data page {pid} missing from the alloc-unit page list");
+        assert!(
+            candidates.contains(&pid),
+            "data page {pid} missing from the alloc-unit page list"
+        );
         seen += 1;
         Ok(true)
     })
@@ -336,7 +402,10 @@ fn alloc_unit_pages_cover_every_page_the_iam_chain_yields() {
 fn something_that_is_not_a_backup_is_refused() {
     let e = open(Box::new(vec![0u8; 4096])).err().expect("must refuse");
     assert!(matches!(e, Error::InvalidData(_)), "{e}");
-    assert!(e.message().contains("not a SQL Server native backup") || e.message().contains("MQDA"), "{e}");
+    assert!(
+        e.message().contains("not a SQL Server native backup") || e.message().contains("MQDA"),
+        "{e}"
+    );
 }
 
 #[test]

@@ -23,11 +23,13 @@
 //! SPAD stream pads to the next block boundary and ends the chain.
 
 use crate::error::{Error, Result};
-use crate::io::{le, ByteSource};
+use crate::io::{ByteSource, le};
 
 pub const PAGE_SIZE: usize = 8192;
 
-const KNOWN_DBLKS: [&str; 10] = ["TAPE", "SSET", "VOLB", "ESET", "EOTM", "SFMB", "MSCI", "MSDA", "MSTL", "MSLS"];
+const KNOWN_DBLKS: [&str; 10] = [
+    "TAPE", "SSET", "VOLB", "ESET", "EOTM", "SFMB", "MSCI", "MSDA", "MSTL", "MSLS",
+];
 
 /// A data-bearing stream extracted from the container (past its 2-byte lead).
 #[derive(Debug, Clone)]
@@ -77,7 +79,9 @@ impl MtfFile {
             while spos + 22 <= size {
                 src.read_at(spos, &mut sh)?;
                 if sh[..4].iter().any(|&c| !(b' '..=b'~').contains(&c)) {
-                    return Err(crate::invalid!("invalid stream id at offset 0x{spos:x} inside {tag} block"));
+                    return Err(crate::invalid!(
+                        "invalid stream id at offset 0x{spos:x} inside {tag} block"
+                    ));
                 }
                 let sid = String::from_utf8_lossy(&sh[..4]).into_owned();
                 let slen = le::u64(&sh, 8);
@@ -101,11 +105,14 @@ impl MtfFile {
                     if lead != [0, 0] {
                         return Err(crate::invalid!(
                             "stream {sid} at 0x{spos:x}: lead bytes {:02x}{:02x} != 0000 — layout differs from every observed backup, refusing to guess",
-                            lead[0], lead[1]
+                            lead[0],
+                            lead[1]
                         ));
                     }
                     if (slen - 2) % PAGE_SIZE as u64 != 0 {
-                        return Err(crate::invalid!("stream {sid}: data length {slen}-2 is not a multiple of 8192"));
+                        return Err(crate::invalid!(
+                            "stream {sid}: data length {slen}-2 is not a multiple of 8192"
+                        ));
                     }
                     if sid == "MQDA" {
                         regions.push(DataRegion {
@@ -134,8 +141,13 @@ impl MtfFile {
             pos = next;
         }
         if regions.is_empty() {
-            return Err(Error::InvalidData("no MQDA data stream found — not a SQL Server full database backup".into()));
+            return Err(Error::InvalidData(
+                "no MQDA data stream found — not a SQL Server full database backup".into(),
+            ));
         }
-        Ok(MtfFile { mqda_regions: regions, log_stream_bytes: log_bytes })
+        Ok(MtfFile {
+            mqda_regions: regions,
+            log_stream_bytes: log_bytes,
+        })
     }
 }

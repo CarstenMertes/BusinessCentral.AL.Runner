@@ -1,12 +1,14 @@
 #![allow(dead_code)]
 //! Shared helpers for the integration tests.
 
-use al_bcdb::source::{read_all, BcSource, SourceTable};
+use al_bcdb::source::{BcSource, SourceTable, read_all};
 use al_bcdb::types::SysColumn;
 use std::path::PathBuf;
 
 pub fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
 }
 
 pub fn fixture_bytes(name: &str) -> Vec<u8> {
@@ -27,13 +29,22 @@ pub fn fixture(file: &str) -> Vec<String> {
 }
 
 pub fn table<'a>(src: &'a dyn BcSource, name: &str) -> &'a SourceTable {
-    src.tables().unwrap().iter().find(|t| t.name == name).unwrap_or_else(|| panic!("no table {name}"))
+    src.tables()
+        .unwrap()
+        .iter()
+        .find(|t| t.name == name)
+        .unwrap_or_else(|| panic!("no table {name}"))
 }
 
 pub fn pick(meta: &[SysColumn], names: &[&str]) -> Vec<SysColumn> {
     names
         .iter()
-        .map(|n| meta.iter().find(|c| c.name == *n).unwrap_or_else(|| panic!("no column {n}")).clone())
+        .map(|n| {
+            meta.iter()
+                .find(|c| c.name == *n)
+                .unwrap_or_else(|| panic!("no column {n}"))
+                .clone()
+        })
         .collect()
 }
 
@@ -52,9 +63,29 @@ pub fn read_table(src: &dyn BcSource, name: &str, cols: &[&str]) -> Vec<String> 
 }
 
 pub const PROBE_COLS: &[&str] = &[
-    "id", "c_tinyint", "c_smallint", "c_int", "c_bigint", "c_bit", "c_dec38_20", "c_dec18_2", "c_dec5_0",
-    "c_datetime", "c_datetime2_7", "c_datetime2_3", "c_datetime2_0", "c_date", "c_time7", "c_time0", "c_guid",
-    "c_nvarchar", "c_varchar", "c_nchar", "c_char", "c_binary", "c_varbinary",
+    "id",
+    "c_tinyint",
+    "c_smallint",
+    "c_int",
+    "c_bigint",
+    "c_bit",
+    "c_dec38_20",
+    "c_dec18_2",
+    "c_dec5_0",
+    "c_datetime",
+    "c_datetime2_7",
+    "c_datetime2_3",
+    "c_datetime2_0",
+    "c_date",
+    "c_time7",
+    "c_time0",
+    "c_guid",
+    "c_nvarchar",
+    "c_varchar",
+    "c_nchar",
+    "c_char",
+    "c_binary",
+    "c_varbinary",
 ];
 
 /// A stored (uncompressed) zip with the given entries, for tests that edit a package.

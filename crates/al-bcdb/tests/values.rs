@@ -1,12 +1,15 @@
 //! Cell bytes observed in the typeprobe database with their SQL Server SELECT values
 //! (bcdb PROVENANCE.md "Type encodings"). Port of ValueTests.cs.
 
-use al_bcdb::types::{decode, Cell, SysColumn};
-use al_bcdb::value::Value;
 use al_bcdb::Error;
+use al_bcdb::types::{Cell, SysColumn, decode};
+use al_bcdb::value::Value;
 
 fn hex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 fn col(xtype: u8, max_len: i16, prec: u8, scale: u8) -> SysColumn {
@@ -34,8 +37,18 @@ fn compressed_decimal() {
         ("3ff780", 18, 2, "-0.99"),
         ("ac19", 38, 20, "0.00000000000000000001"),
         ("3f7d", 38, 20, "-0.50000000000000000000"),
-        ("d0f9fe7f9fe7f9fe7f9fe7f9fe7f9fe7e1", 38, 20, "99999999999999999.99999999999999999999"),
-        ("50f9fe7f9fe7f9fe7f9fe7f9fe7f9fe7e1", 38, 20, "-99999999999999999.99999999999999999999"),
+        (
+            "d0f9fe7f9fe7f9fe7f9fe7f9fe7f9fe7e1",
+            38,
+            20,
+            "99999999999999999.99999999999999999999",
+        ),
+        (
+            "50f9fe7f9fe7f9fe7f9fe7f9fe7f9fe7e1",
+            38,
+            20,
+            "-99999999999999999.99999999999999999999",
+        ),
         ("c51edc8c540c566a6e14ea8e80", 38, 20, "123456.78901234567890123457"),
         ("", 38, 20, "0.00000000000000000000"),
     ] {
@@ -103,7 +116,7 @@ fn datetime2() {
 
 #[test]
 fn compressed_real_and_float() {
-    for (h, expected) in [("c03f", 1.5f32), ("c0bf", -1.5), ("6042a20d", 1.0000000031710769e-30), ("", 0.0)] {
+    for (h, expected) in [("c03f", 1.5f32), ("c0bf", -1.5), ("6042a20d", 1.0e-30), ("", 0.0)] {
         assert_eq!(d(h, &col(59, 0, 0, 0), true).unwrap(), Value::Real(expected), "{h}");
     }
     for (h, expected) in [("0240", 2.25f64), ("2059c0", -100.5), ("59f3f8c21f6ea501", 1e-300)] {
@@ -113,7 +126,13 @@ fn compressed_real_and_float() {
 
 #[test]
 fn compressed_integers() {
-    for (h, xtype, expected) in [("81", 56, 1i64), ("", 56, 0), ("7f", 56, -1), ("80", 56, 0), ("ff", 48, 255)] {
+    for (h, xtype, expected) in [
+        ("81", 56, 1i64),
+        ("", 56, 0),
+        ("7f", 56, -1),
+        ("80", 56, 0),
+        ("ff", 48, 255),
+    ] {
         assert_eq!(d(h, &col(xtype, 0, 0, 0), true).unwrap(), Value::Int(expected), "{h}");
     }
 }
@@ -122,13 +141,22 @@ fn compressed_integers() {
 fn uncompressed_integers_are_little_endian() {
     assert_eq!(d("ff", &col(48, 1, 0, 0), false).unwrap(), Value::Int(255));
     assert_eq!(d("0080", &col(52, 2, 0, 0), false).unwrap(), Value::Int(-32768));
-    assert_eq!(d("ffffff7f", &col(56, 4, 0, 0), false).unwrap(), Value::Int(i32::MAX as i64));
-    assert_eq!(d("0000000000000080", &col(127, 8, 0, 0), false).unwrap(), Value::Int(i64::MIN));
+    assert_eq!(
+        d("ffffff7f", &col(56, 4, 0, 0), false).unwrap(),
+        Value::Int(i32::MAX as i64)
+    );
+    assert_eq!(
+        d("0000000000000080", &col(127, 8, 0, 0), false).unwrap(),
+        Value::Int(i64::MIN)
+    );
 }
 
 #[test]
 fn compressed_binary_pads_to_declared_width() {
-    assert_eq!(d("80", &col(173, 8, 0, 0), true).unwrap().to_string(), "0x8000000000000000");
+    assert_eq!(
+        d("80", &col(173, 8, 0, 0), true).unwrap().to_string(),
+        "0x8000000000000000"
+    );
 }
 
 #[test]
@@ -152,14 +180,19 @@ fn text_types() {
     assert_eq!(d("78", &col(175, 4, 0, 0), false).unwrap().to_string(), "x   ");
     // a .bacpac writes char/varchar as UTF-16
     assert_eq!(
-        decode(Cell::Value(&hex("4800")), &col(167, 10, 0, 0), false, None, true).unwrap().to_string(),
+        decode(Cell::Value(&hex("4800")), &col(167, 10, 0, 0), false, None, true)
+            .unwrap()
+            .to_string(),
         "H"
     );
 }
 
 #[test]
 fn rowversion_is_big_endian() {
-    assert_eq!(d("00000000000007e9", &col(189, 8, 0, 0), false).unwrap().to_string(), "0x00000000000007E9");
+    assert_eq!(
+        d("00000000000007e9", &col(189, 8, 0, 0), false).unwrap().to_string(),
+        "0x00000000000007E9"
+    );
 }
 
 #[test]
@@ -185,7 +218,10 @@ fn unknown_type_names_column_and_type() {
 
 #[test]
 fn guid_wrong_length_throws() {
-    assert!(matches!(d("0102", &col(36, 16, 0, 0), false), Err(Error::InvalidData(_))));
+    assert!(matches!(
+        d("0102", &col(36, 16, 0, 0), false),
+        Err(Error::InvalidData(_))
+    ));
 }
 
 #[test]
@@ -196,7 +232,10 @@ fn off_row_value_without_lob_reader_throws() {
 
 #[test]
 fn null_cell_is_null() {
-    assert_eq!(decode(Cell::Null, &col(56, 4, 0, 0), false, None, false).unwrap(), Value::Null);
+    assert_eq!(
+        decode(Cell::Null, &col(56, 4, 0, 0), false, None, false).unwrap(),
+        Value::Null
+    );
 }
 
 #[test]
@@ -211,5 +250,5 @@ fn float_text_matches_dotnet_round_trip_form() {
     assert_eq!(format_float(0.0001), "0.0001");
     assert_eq!(format_float(0.00001), "1E-05");
     assert_eq!(format_real(1.5), "1.5");
-    assert_eq!(format_real(1.0000000031710769e-30), "1E-30");
+    assert_eq!(format_real(1.0e-30), "1E-30");
 }

@@ -3,9 +3,9 @@
 //! oracle-known data the fixture tests use. Port of ServeTests.cs and RequestSurfaceTests.cs.
 
 mod common;
+use al_bcdb::open;
 use al_bcdb::serve::serve;
 use al_bcdb::symbols::SymbolStore;
-use al_bcdb::open;
 use common::*;
 use serde_json::Value as J;
 use std::io::Cursor;
@@ -50,11 +50,21 @@ fn error(r: &J) -> String {
 }
 
 fn headers(r: &J) -> Vec<String> {
-    r["headers"].as_array().unwrap().iter().map(|h| h.as_str().unwrap().to_string()).collect()
+    r["headers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h.as_str().unwrap().to_string())
+        .collect()
 }
 
 fn rows_by_first(r: &J) -> std::collections::HashMap<i64, Vec<J>> {
-    r["rows"].as_array().unwrap().iter().map(|x| (x[0].as_i64().unwrap(), x.as_array().unwrap().clone())).collect()
+    r["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| (x[0].as_i64().unwrap(), x.as_array().unwrap().clone()))
+        .collect()
 }
 
 #[test]
@@ -94,7 +104,15 @@ fn tables_and_companies_and_quit() {
         r#"{"cmd": "read", "table": "probe"}"#, // after quit: must not be answered
     ]);
     assert_eq!(res.len(), 3);
-    let t = |name: &str| res[0]["tables"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap().clone();
+    let t = |name: &str| {
+        res[0]["tables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap()
+            .clone()
+    };
     assert_eq!(t("probe")["rows"], 8);
     assert_eq!(t("probe_ghost")["compression"], "page");
     assert!(t("probe")["company"].is_null());
@@ -106,7 +124,10 @@ fn dollar_prefixed_platform_table_keeps_its_raw_name() {
     // "$probe$platform".split('$') matches no <company>$<table>$<appid> shape; the listing
     // must fall back to the raw object name so platform tables ($ndo$... in real
     // databases) stay discoverable.
-    let res = run(&[r#"{"cmd": "tables"}"#, r#"{"cmd": "read", "table": "$probe$platform", "select": "id,v"}"#]);
+    let res = run(&[
+        r#"{"cmd": "tables"}"#,
+        r#"{"cmd": "read", "table": "$probe$platform", "select": "id,v"}"#,
+    ]);
     let tables = res[0]["tables"].as_array().unwrap();
     let t = tables.iter().find(|t| t["name"] == "$probe$platform").expect("listed");
     assert_eq!(t["rows"], 2);
@@ -131,11 +152,21 @@ fn app_selector_disambiguates_same_named_tables() {
 #[test]
 fn describe_lists_table_extension_fields() {
     let sym = exttest_symbols();
-    let res = run_on("typeprobe.bak", Some(&sym), &[r#"{"cmd": "describe", "table": "exttest"}"#]);
+    let res = run_on(
+        "typeprobe.bak",
+        Some(&sym),
+        &[r#"{"cmd": "describe", "table": "exttest"}"#],
+    );
     let r = &res[0];
     assert!(ok(r), "{r}");
     let f = |name: &str| {
-        r["fields"].as_array().unwrap().iter().find(|f| f["sqlColumn"].is_string() && f["name"] == name).unwrap().clone()
+        r["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["sqlColumn"].is_string() && f["name"] == name)
+            .unwrap()
+            .clone()
     };
     assert_eq!(f("own")["id"], 2);
     assert_eq!(f("extra")["id"], 50120);
@@ -149,7 +180,11 @@ fn merged_read_joins_extension_companion() {
     // One AL record = base row + $ext companion row joined on the key. Base row 3 has no
     // companion row: its extension fields are NULL.
     let sym = exttest_symbols();
-    let res = run_on("typeprobe.bak", Some(&sym), &[r#"{"cmd": "read", "table": "exttest", "merge-extensions": true}"#]);
+    let res = run_on(
+        "typeprobe.bak",
+        Some(&sym),
+        &[r#"{"cmd": "read", "table": "exttest", "merge-extensions": true}"#],
+    );
     let r = &res[0];
     assert!(ok(r), "{r}");
     assert_eq!(headers(r), ["id", "own", "extra", "num"]);
@@ -169,7 +204,11 @@ fn read_maps_base_table_extension_columns_to_al_names() {
     // exttest4 is the BC 29 shape: extension fields are columns of the base table itself,
     // "<field>$<extending app id>", and there is no $ext companion.
     let sym = exttest_symbols();
-    let r = &run_on("typeprobe.bak", Some(&sym), &[r#"{"cmd": "read", "table": "exttest4"}"#])[0];
+    let r = &run_on(
+        "typeprobe.bak",
+        Some(&sym),
+        &[r#"{"cmd": "read", "table": "exttest4"}"#],
+    )[0];
     assert!(ok(r), "{r}");
     assert_eq!(headers(r), ["id", "own", "extra", "num"]);
     let rows = rows_by_first(r);
@@ -178,17 +217,31 @@ fn read_maps_base_table_extension_columns_to_al_names() {
     assert!(rows[&2][2].is_null());
     assert_eq!(rows[&2][3], 22);
     assert!(r.get("note").is_none());
-    let sel = &run_on("typeprobe.bak", Some(&sym), &[r#"{"cmd": "read", "table": "exttest4", "select": "id,extra"}"#])[0];
+    let sel = &run_on(
+        "typeprobe.bak",
+        Some(&sym),
+        &[r#"{"cmd": "read", "table": "exttest4", "select": "id,extra"}"#],
+    )[0];
     assert_eq!(headers(sel), ["id", "extra"]);
 }
 
 #[test]
 fn describe_lists_base_table_extension_fields() {
     let sym = exttest_symbols();
-    let r = &run_on("typeprobe.bak", Some(&sym), &[r#"{"cmd": "describe", "table": "exttest4"}"#])[0];
+    let r = &run_on(
+        "typeprobe.bak",
+        Some(&sym),
+        &[r#"{"cmd": "describe", "table": "exttest4"}"#],
+    )[0];
     assert!(ok(r), "{r}");
     let f = |name: &str| {
-        r["fields"].as_array().unwrap().iter().find(|f| f["sqlColumn"].is_string() && f["name"] == name).unwrap().clone()
+        r["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["sqlColumn"].is_string() && f["name"] == name)
+            .unwrap()
+            .clone()
     };
     assert_eq!(f("extra")["id"], 50122);
     assert_eq!(f("extra")["sqlColumn"], "extra$bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
@@ -199,10 +252,17 @@ fn describe_lists_base_table_extension_fields() {
 #[test]
 fn merge_extensions_without_a_companion_says_so_instead_of_silently_doing_nothing() {
     let sym = exttest_symbols();
-    let r = &run_on("typeprobe.bak", Some(&sym), &[r#"{"cmd": "read", "table": "exttest4", "merge-extensions": true}"#])[0];
+    let r = &run_on(
+        "typeprobe.bak",
+        Some(&sym),
+        &[r#"{"cmd": "read", "table": "exttest4", "merge-extensions": true}"#],
+    )[0];
     assert!(ok(r), "{r}");
     let note = r["note"].as_str().unwrap();
-    assert!(note.contains("no $ext companion") && note.contains("base table"), "{note}");
+    assert!(
+        note.contains("no $ext companion") && note.contains("base table"),
+        "{note}"
+    );
     assert_eq!(headers(r), ["id", "own", "extra", "num"]);
     let plain = &run(&[r#"{"cmd": "read", "table": "probe", "select": "id", "merge-extensions": true}"#])[0];
     assert!(plain["note"].as_str().unwrap().contains("nothing to merge"));
@@ -215,10 +275,21 @@ fn assert_exttest2_merged(r: &J) {
     assert!(ok(r), "{r}");
     assert_eq!(
         headers(r),
-        ["tmpl", "id", "own", "batch", "extra$bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "num$bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"]
+        [
+            "tmpl",
+            "id",
+            "own",
+            "batch",
+            "extra$bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            "num$bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        ]
     );
-    let rows: std::collections::HashMap<i64, Vec<J>> =
-        r["rows"].as_array().unwrap().iter().map(|x| (x[1].as_i64().unwrap(), x.as_array().unwrap().clone())).collect();
+    let rows: std::collections::HashMap<i64, Vec<J>> = r["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| (x[1].as_i64().unwrap(), x.as_array().unwrap().clone()))
+        .collect();
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[&1][0], "GENERAL");
     assert_eq!(rows[&1][2], "base-one");
@@ -234,26 +305,42 @@ fn assert_exttest2_merged(r: &J) {
 
 #[test]
 fn merged_read_joins_on_the_companion_key_not_the_base_clustered_key() {
-    assert_exttest2_merged(&one("typeprobe.bak", r#"{"cmd": "read", "table": "exttest2", "merge-extensions": true}"#));
+    assert_exttest2_merged(&one(
+        "typeprobe.bak",
+        r#"{"cmd": "read", "table": "exttest2", "merge-extensions": true}"#,
+    ));
 }
 
 #[test]
 fn bacpac_merged_read_joins_on_the_same_companion_key() {
-    assert_exttest2_merged(&one("typeprobe.bacpac", r#"{"cmd": "read", "table": "exttest2", "merge-extensions": true}"#));
+    assert_exttest2_merged(&one(
+        "typeprobe.bacpac",
+        r#"{"cmd": "read", "table": "exttest2", "merge-extensions": true}"#,
+    ));
 }
 
 #[test]
 fn merged_read_refuses_when_the_companion_key_is_not_in_the_base_table() {
     // exttest3's companion is keyed on "stranger", which its base table does not have.
-    let e = error(&one("typeprobe.bak", r#"{"cmd": "read", "table": "exttest3", "merge-extensions": true}"#));
-    for needle in ["stranger", "TP$exttest3$aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa$ext", "refusing to guess"] {
+    let e = error(&one(
+        "typeprobe.bak",
+        r#"{"cmd": "read", "table": "exttest3", "merge-extensions": true}"#,
+    ));
+    for needle in [
+        "stranger",
+        "TP$exttest3$aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa$ext",
+        "refusing to guess",
+    ] {
         assert!(e.contains(needle), "{e}");
     }
 }
 
 #[test]
 fn malformed_request_reports_error_and_continues() {
-    let res = run(&["this is not json", r#"{"id": "x", "cmd": "read", "table": "probe", "select": "id", "top": 2}"#]);
+    let res = run(&[
+        "this is not json",
+        r#"{"id": "x", "cmd": "read", "table": "probe", "select": "id", "top": 2}"#,
+    ]);
     assert_eq!(res.len(), 2);
     assert!(!ok(&res[0]));
     assert!(ok(&res[1]));
@@ -263,7 +350,10 @@ fn malformed_request_reports_error_and_continues() {
 
 #[test]
 fn bacpac_serve_answers_the_same_values() {
-    let r = one("typeprobe.bacpac", r#"{"id": 7, "cmd": "read", "table": "probe", "select": "id,c_bigint,c_nvarchar"}"#);
+    let r = one(
+        "typeprobe.bacpac",
+        r#"{"id": 7, "cmd": "read", "table": "probe", "select": "id,c_bigint,c_nvarchar"}"#,
+    );
     assert!(ok(&r));
     let rows = rows_by_first(&r);
     assert_eq!(rows[&2][1].as_i64(), Some(i64::MAX));
@@ -291,7 +381,13 @@ fn bacpac_serve_merges_extension_companions() {
 #[test]
 fn bacpac_serve_lists_tables_and_reports_no_storage_compression() {
     let r = one("typeprobe.bacpac", r#"{"id": 1, "cmd": "tables"}"#);
-    let dense = r["tables"].as_array().unwrap().iter().find(|t| t["name"] == "probe_dense").unwrap().clone();
+    let dense = r["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "probe_dense")
+        .unwrap()
+        .clone();
     assert_eq!(dense["rows"], 4000);
     assert_eq!(dense["compression"], "-");
 }
@@ -305,7 +401,10 @@ fn column_name_with_a_trailing_space_can_be_selected() {
     for f in BOTH {
         // probe_oddnames has the columns [pad ] and [ pad]. A token is matched as written
         // before it is trimmed, so "pad " reaches the trailing-space column.
-        let r = one(f, r#"{"id":1,"cmd":"read","table":"probe_oddnames","select":"id,pad "}"#);
+        let r = one(
+            f,
+            r#"{"id":1,"cmd":"read","table":"probe_oddnames","select":"id,pad "}"#,
+        );
         assert!(ok(&r), "{f}: {r}");
         let rows = rows_by_first(&r);
         assert_eq!(rows[&1][1], "trailing-one", "{f}");
@@ -316,7 +415,10 @@ fn column_name_with_a_trailing_space_can_be_selected() {
 #[test]
 fn column_name_with_a_leading_space_can_be_selected() {
     for f in BOTH {
-        let r = one(f, r#"{"id":1,"cmd":"read","table":"probe_oddnames","select":"id, pad"}"#);
+        let r = one(
+            f,
+            r#"{"id":1,"cmd":"read","table":"probe_oddnames","select":"id, pad"}"#,
+        );
         assert!(ok(&r), "{f}: {r}");
         let rows = rows_by_first(&r);
         assert_eq!(rows[&1][1], "leading-one");
@@ -328,7 +430,10 @@ fn column_name_with_a_leading_space_can_be_selected() {
 fn space_after_a_comma_still_means_nothing() {
     for f in BOTH {
         for sel in ["id,amt", "id, amt"] {
-            let r = one(f, &format!(r#"{{"id":1,"cmd":"read","table":"probe_oddnames","select":"{sel}"}}"#));
+            let r = one(
+                f,
+                &format!(r#"{{"id":1,"cmd":"read","table":"probe_oddnames","select":"{sel}"}}"#),
+            );
             assert!(ok(&r), "{f}: {r}");
             assert_eq!(headers(&r), ["id", "amt"]);
         }
@@ -337,56 +442,83 @@ fn space_after_a_comma_still_means_nothing() {
 
 #[test]
 fn unknown_column_still_reports_the_name_as_written() {
-    let e = error(&one("typeprobe.bak", r#"{"id":1,"cmd":"read","table":"probe","select":"c_nosuch"}"#));
+    let e = error(&one(
+        "typeprobe.bak",
+        r#"{"id":1,"cmd":"read","table":"probe","select":"c_nosuch"}"#,
+    ));
     assert!(e.contains("c_nosuch") && e.contains("not found"), "{e}");
 }
 
 #[test]
 fn sha256_naming_no_selected_column_is_refused() {
     for f in BOTH {
-        let e = error(&one(f, r#"{"id":1,"cmd":"read","table":"probe_lob","select":"id,c_vbmax","sha256":"NoSuchColumn"}"#));
+        let e = error(&one(
+            f,
+            r#"{"id":1,"cmd":"read","table":"probe_lob","select":"id,c_vbmax","sha256":"NoSuchColumn"}"#,
+        ));
         assert!(e.contains("NoSuchColumn") && e.contains("sha256"), "{e}");
     }
 }
 
 #[test]
 fn sha256_naming_a_column_that_is_not_selected_is_refused() {
-    let e = error(&one("typeprobe.bak", r#"{"id":1,"cmd":"read","table":"probe_lob","select":"id","sha256":"c_vbmax"}"#));
+    let e = error(&one(
+        "typeprobe.bak",
+        r#"{"id":1,"cmd":"read","table":"probe_lob","select":"id","sha256":"c_vbmax"}"#,
+    ));
     assert!(e.contains("c_vbmax"), "{e}");
 }
 
 #[test]
 fn sha256_still_hashes_the_column_it_names() {
     for f in BOTH {
-        let r = one(f, r#"{"id":1,"cmd":"read","table":"probe_lob","select":"id,c_vbmax","sha256":"c_vbmax"}"#);
+        let r = one(
+            f,
+            r#"{"id":1,"cmd":"read","table":"probe_lob","select":"id,c_vbmax","sha256":"c_vbmax"}"#,
+        );
         assert!(ok(&r), "{r}");
         // oracle-known: row 1 is the empty value, so its SHA-256 is the empty-input hash
-        assert_eq!(rows_by_first(&r)[&1][1], "sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855");
+        assert_eq!(
+            rows_by_first(&r)[&1][1],
+            "sha256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        );
     }
 }
 
 #[test]
 fn unknown_request_key_is_refused() {
-    let e = error(&one("typeprobe.bak", r#"{"id":1,"cmd":"read","table":"probe","select":"id","totallyBogusKey":"xyz"}"#));
+    let e = error(&one(
+        "typeprobe.bak",
+        r#"{"id":1,"cmd":"read","table":"probe","select":"id","totallyBogusKey":"xyz"}"#,
+    ));
     assert!(e.contains("totallyBogusKey") && e.contains("select"), "{e}"); // lists what is accepted
 }
 
 #[test]
 fn misspelled_option_is_refused_rather_than_dropped() {
     // "tpo" for "top" used to answer ok:true with every row.
-    let e = error(&one("typeprobe.bak", r#"{"id":1,"cmd":"read","table":"probe","tpo":2}"#));
+    let e = error(&one(
+        "typeprobe.bak",
+        r#"{"id":1,"cmd":"read","table":"probe","tpo":2}"#,
+    ));
     assert!(e.contains("tpo"), "{e}");
 }
 
 #[test]
 fn misspelled_company_key_is_refused_rather_than_reading_every_company() {
-    let e = error(&one("typeprobe.bak", r#"{"id":1,"cmd":"read","table":"ambig","compayn":"ProbeCo"}"#));
+    let e = error(&one(
+        "typeprobe.bak",
+        r#"{"id":1,"cmd":"read","table":"ambig","compayn":"ProbeCo"}"#,
+    ));
     assert!(e.contains("compayn"), "{e}");
 }
 
 #[test]
 fn camel_case_merge_extensions_is_refused_and_the_real_key_is_named() {
-    let e = error(&one("typeprobe.bak", r#"{"id":1,"cmd":"read","table":"exttest","mergeExtensions":true}"#));
+    let e = error(&one(
+        "typeprobe.bak",
+        r#"{"id":1,"cmd":"read","table":"exttest","mergeExtensions":true}"#,
+    ));
     assert!(e.contains("mergeExtensions") && e.contains("merge-extensions"), "{e}");
 }
 
@@ -427,7 +559,10 @@ fn quit_takes_no_other_keys() {
 #[test]
 fn top_refuses_a_value_that_is_not_a_row_count() {
     for f in BOTH {
-        let e = error(&one(f, r#"{"id":1,"cmd":"read","table":"probe","select":"id","top":"abc"}"#));
+        let e = error(&one(
+            f,
+            r#"{"id":1,"cmd":"read","table":"probe","select":"id","top":"abc"}"#,
+        ));
         assert!(e.contains("top") && e.contains("abc"), "{e}");
     }
 }

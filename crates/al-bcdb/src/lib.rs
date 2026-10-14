@@ -18,8 +18,8 @@ pub mod serve;
 pub mod source;
 pub mod symbols;
 pub mod types;
-pub mod zip;
 pub mod value;
+pub mod zip;
 
 pub use error::{Error, Result};
-pub use source::{open, BcSource, SourceTable};
+pub use source::{BcSource, SourceTable, open};

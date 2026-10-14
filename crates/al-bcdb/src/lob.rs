@@ -23,7 +23,7 @@
 
 use crate::error::Result;
 use crate::io::le;
-use crate::pagefile::{header, PageFile};
+use crate::pagefile::{PageFile, header};
 use crate::types::LobResolver;
 
 pub struct LobReader<'a> {
@@ -107,11 +107,15 @@ impl LobReader<'_> {
         let page = self.pf.page(file_id, page_id)?;
         let pt = header::page_type(&page);
         if pt != 3 && pt != 4 {
-            return Err(crate::invalid!("LOB pointer of {column} leads to page 1:{page_id} of type {pt} (expected a LOB page)"));
+            return Err(crate::invalid!(
+                "LOB pointer of {column} leads to page 1:{page_id} of type {pt} (expected a LOB page)"
+            ));
         }
         let n = header::checked_slot_count(&page)?;
         if slot >= n {
-            return Err(crate::invalid!("LOB pointer of {column}: slot {slot} beyond {n} slots on page 1:{page_id}"));
+            return Err(crate::invalid!(
+                "LOB pointer of {column}: slot {slot} beyond {n} slots on page 1:{page_id}"
+            ));
         }
         let r = header::slot_offset(&page, slot);
         if r < 96 {
@@ -120,7 +124,9 @@ impl LobReader<'_> {
             ));
         }
         if r + 24 > page.len() {
-            return Err(crate::invalid!("LOB record of {column} at offset {r} on page 1:{page_id} runs past the page"));
+            return Err(crate::invalid!(
+                "LOB record of {column} at offset {r} on page 1:{page_id} runs past the page"
+            ));
         }
         let rec_len = le::u16(&page, r + 2) as usize;
         let ty = le::u16(&page, r + 12);
@@ -138,7 +144,9 @@ impl LobReader<'_> {
             3 => {
                 // DATA: one chunk
                 if rec_len < 14 || r + rec_len > page.len() {
-                    return Err(crate::invalid!("DATA LOB record of {column} on page 1:{page_id} slot {slot}: length {rec_len} out of range"));
+                    return Err(crate::invalid!(
+                        "DATA LOB record of {column} on page 1:{page_id} slot {slot}: length {rec_len} out of range"
+                    ));
                 }
                 out.extend_from_slice(&page[r + 14..r + rec_len]);
             }
@@ -200,7 +208,7 @@ impl LobReader<'_> {
             t => {
                 return Err(crate::unsupported!(
                     "LOB record type {t} on page 1:{page_id} slot {slot} (column {column}) — layout not derived, refusing to guess"
-                ))
+                ));
             }
         }
         Ok(true)

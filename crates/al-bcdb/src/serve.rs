@@ -11,7 +11,7 @@
 //! reading every company, is a wrong answer reported as success.
 
 use crate::error::{Error, Result};
-use crate::query::{self, bc_tables, plan_read, ReadRequest, TableSelector};
+use crate::query::{self, ReadRequest, TableSelector, bc_tables, plan_read};
 use crate::source::BcSource;
 use crate::symbols::SymbolStore;
 use crate::value::json_string;
@@ -20,7 +20,10 @@ use std::fmt::Write as _;
 use std::io::{BufRead, Write};
 
 const KEYS: &[(&str, &[&str])] = &[
-    ("read", &["table", "company", "app", "top", "select", "sha256", "merge-extensions"]),
+    (
+        "read",
+        &["table", "company", "app", "top", "select", "sha256", "merge-extensions"],
+    ),
     ("describe", &["table", "company", "app"]),
     ("tables", &[]),
     ("companies", &[]),
@@ -67,7 +70,9 @@ enum Reply {
 
 fn handle(src: &dyn BcSource, sym: Option<&SymbolStore>, line: &str, id_json: &mut String) -> Result<Reply> {
     let root: J = serde_json::from_str(line).map_err(|e| Error::Argument(e.to_string()))?;
-    let obj = root.as_object().ok_or_else(|| Error::Argument("a request must be a JSON object".into()))?;
+    let obj = root
+        .as_object()
+        .ok_or_else(|| Error::Argument("a request must be a JSON object".into()))?;
     *id_json = obj.get("id").map(|v| v.to_string()).unwrap_or_else(|| "null".into());
     let cmd = obj.get("cmd").and_then(|v| v.as_str()).unwrap_or("");
     let Some((_, accepted)) = KEYS.iter().find(|(k, _)| *k == cmd) else {
@@ -96,7 +101,11 @@ fn handle(src: &dyn BcSource, sym: Option<&SymbolStore>, line: &str, id_json: &m
             Some(v) => Some(v.to_string()),
         }
     };
-    let sel = TableSelector { table: opt("table"), company: opt("company"), app: opt("app") };
+    let sel = TableSelector {
+        table: opt("table"),
+        company: opt("company"),
+        app: opt("app"),
+    };
     let s = match cmd {
         "read" => {
             let req = ReadRequest {
@@ -164,7 +173,7 @@ fn serve_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadRequest, 
 
 fn serve_tables(src: &dyn BcSource, sym: Option<&SymbolStore>, id_json: &str) -> Result<String> {
     let mut tables = bc_tables(src)?;
-    tables.sort_by(|a, b| (&a.company, &a.table_name).cmp(&(&b.company, &b.table_name)));
+    query::sort_tables(&mut tables);
     let mut s = format!("{{\"id\": {id_json}, \"ok\": true, \"tables\": [");
     for (i, t) in tables.iter().enumerate() {
         if i > 0 {
@@ -195,10 +204,15 @@ fn serve_tables(src: &dyn BcSource, sym: Option<&SymbolStore>, id_json: &str) ->
 
 fn serve_describe(src: &dyn BcSource, sym: Option<&SymbolStore>, sel: &TableSelector, id_json: &str) -> Result<String> {
     let sym = sym.ok_or_else(|| {
-        Error::Argument("describe requires serve to be started with --symbols (a .app package or SymbolReference.json)".into())
+        Error::Argument(
+            "describe requires serve to be started with --symbols (a .app package or SymbolReference.json)".into(),
+        )
     })?;
     let d = query::describe(src, sym, sel)?;
-    let mut s = format!("{{\"id\": {id_json}, \"ok\": true, \"table\": {{\"id\": {}, \"name\": ", d.al.id);
+    let mut s = format!(
+        "{{\"id\": {id_json}, \"ok\": true, \"table\": {{\"id\": {}, \"name\": ",
+        d.al.id
+    );
     json_string(&d.al.name, &mut s);
     s.push_str(", \"app\": ");
     json_string(&d.al.app_name, &mut s);

@@ -14,6 +14,7 @@ use al_builtins::value::{ControlRef, ControlTarget, Cursor, PageMode, PageState,
 use al_ir as ir;
 use std::cell::RefCell;
 use std::rc::Rc;
+use rust_decimal::prelude::ToPrimitive;
 use std::sync::Arc;
 
 type St = Rc<RefCell<PageState>>;
@@ -1422,22 +1423,49 @@ impl Session {
         };
         use rust_decimal::Decimal as D;
         let step = D::from(10000);
+        let is_decimal = matches!(ty, RtType::Decimal);
         let number = match (lower, upper) {
             // An empty grid burns one interval on the blank placeholder row.
             (None, _) => D::from(20000),
+            // Appended after the last line (handlers/TestPageAutoSplitKeyMoreShapes.al:104-117,
+            // corpus handlers/TestPageAutoSplitKeyRanges_Tests.al): last + 10000. After a negative
+            // line the corpus pins exactly these values; the rule behind them is not known, so
+            // any other negative last line is refused.
             (Some(l), None) if l >= D::ZERO => l + step,
-            (Some(l), None) if l == D::from(-10000) => l + (-l / D::from(3)).trunc(),
-            (Some(l), Some(u)) if l >= D::ZERO && u > l => {
-                if matches!(ty, RtType::Decimal) {
-                    return unsupported("AutoSplitKey between two lines of a Decimal key");
-                }
-                let half = ((u - l) / D::from(2)).trunc();
-                if half < D::ONE {
-                    return unsupported("AutoSplitKey between two adjacent lines");
-                }
-                l + half.min(step)
+            (Some(l), None) if !is_decimal && [-30000, -20000, -10000, -5, -1].contains(&ToPrimitive::to_i64(&l).unwrap_or(0)) => {
+                D::from(match ToPrimitive::to_i64(&l).unwrap_or(0) {
+                    -30000 => -22500,
+                    -20000 => -15000,
+                    -10000 => -6667,
+                    -5 => -4,
+                    _ => 1,
+                })
             }
-            (Some(l), Some(u)) if l == D::from(-10000) && u == D::from(10000) => D::from(-1),
+            // Between two lines (handlers/TestPageAutoSplitKeyMoreShapes.al:119-166 and
+            // :186-205 for Decimal; handlers/TestPageAutoSplitKeyRanges_Tests.al for the cap): the
+            // lower line plus half the gap, at most 10000. A gap that crosses zero gives one less
+            // (the number zero is reserved: -10000 and 10000 give -1, -1 and 1 give -0.5), and a
+            // result that lands on zero by the cap goes to 1. No whole number between two adjacent
+            // lines raises "The line cannot be split." (code TestWrapped).
+            (Some(l), Some(u)) if u > l => {
+                let crossing = l < D::ZERO && u > D::ZERO;
+                let gap = if crossing { u - l - D::ONE } else { u - l };
+                let mut half = gap / D::from(2);
+                if !is_decimal {
+                    half = half.trunc();
+                    if half < D::ONE {
+                        return Err(error_code("The line cannot be split.", "TestWrapped"));
+                    }
+                }
+                let mut n = l + half.min(step);
+                if n.is_zero() {
+                    if is_decimal {
+                        return unsupported("AutoSplitKey landing on zero in a Decimal key (not pinned)");
+                    }
+                    n = D::ONE;
+                }
+                n
+            }
             (l, u) => {
                 return unsupported(format!(
                     "AutoSplitKey between {l:?} and {u:?} (the corpus does not pin it)"

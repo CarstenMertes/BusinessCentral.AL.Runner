@@ -11,8 +11,6 @@ use al_ir as ir;
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
 use std::collections::HashMap;
 
-/// (lower-case attribute name, argument constants) per attribute.
-
 /// Wall time of the parts of a compile (`--timings`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CompileTimings {
@@ -571,6 +569,7 @@ pub fn lower_with_workers(
                     .expect("spawn a lowering worker")
             })
             .collect();
+        #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
         for oi in 0..n {
             if shared.active[oi] && !ws.is_dependency(oi) {
                 pieces[oi] = Some(lower_object(
@@ -595,6 +594,7 @@ pub fn lower_with_workers(
         pieces[oi] = Some(piece);
     }
     // Objects nothing compiled are shells.
+    #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
     for oi in 0..n {
         if pieces[oi].is_none() {
             pieces[oi] = Some(lower_object(
@@ -701,12 +701,15 @@ impl<'a> Nodes<'a> {
     }
 }
 
+/// Routines as (object, routine) pairs, shared.
+type Calls = std::rc::Rc<Vec<(usize, usize)>>;
+
 /// What one thread keeps while it lowers objects.
 struct Local<'a> {
     nodes: Nodes<'a>,
     memo: Memo,
     /// `compiled_routines` memo.
-    compiled: std::cell::RefCell<HashMap<usize, std::rc::Rc<Vec<(usize, usize)>>>>,
+    compiled: std::cell::RefCell<HashMap<usize, Calls>>,
 }
 
 impl<'a> Local<'a> {
@@ -720,7 +723,7 @@ impl<'a> Local<'a> {
 
     /// The routines of object `q` that exist in the compiled program: all of a workspace object's,
     /// the reached ones of a dependency's. What a variable can drive is limited to those.
-    fn compiled_routines(&self, sh: &Shared<'_>, q: usize) -> std::rc::Rc<Vec<(usize, usize)>> {
+    fn compiled_routines(&self, sh: &Shared<'_>, q: usize) -> Calls {
         if let Some(hit) = self.compiled.borrow().get(&q) {
             return hit.clone();
         }
@@ -1205,7 +1208,7 @@ fn lower_object<'a>(
         // file that does not parse) has no members, so it has no schema: the Field and Key
         // tables report it as not compiled instead of reading fields it does not have.
         table: (o.kind == ObjKind::Table && ws.usable(oi))
-            .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), &routine_at)),
+            .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at)),
         rec_slot,
         xrec_slot,
         page,

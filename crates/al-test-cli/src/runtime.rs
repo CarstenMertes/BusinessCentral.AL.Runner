@@ -536,7 +536,7 @@ impl CorpusRuntime {
                 )
             })
             .collect();
-        codeunit_times.sort_by(|a, b| b.2.cmp(&a.2));
+        codeunit_times.sort_by_key(|c| std::cmp::Reverse(c.2));
         codeunit_times.truncate(SLOWEST);
         let suites = suites.iter().map(|s| s.name.clone()).collect();
         // The workspace and the lowered program are big: dropping them takes as long as lowering

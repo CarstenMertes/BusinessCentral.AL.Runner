@@ -421,3 +421,60 @@ fn var_parameters_set_before_an_error_are_visible_to_the_catching_caller() {
     );
     assert_eq!(text(run(&src, "F", vec![])), "No42|7");
 }
+
+// ------------------------------------------------------------------ the `this` keyword
+// Not in a corpus test of its own. Base Application's "Base64 Convert Impl." calls
+// `this.EmitLengthWarning(...)` on its own procedure (reached by the media tests 60130, 68120 and
+// 69934); `this` is the current object (Microsoft Learn, "this keyword").
+
+#[test]
+fn this_calls_a_procedure_of_the_same_object() {
+    let src = cu("procedure Add(A: Integer): Integer begin exit(A + 1); end;
+         procedure F(): Integer begin exit(this.Add(41)); end;");
+    assert_eq!(int(run(&src, "F", vec![])), 42);
+}
+
+#[test]
+fn this_reads_and_writes_a_global_variable_and_calls_in_statement_position() {
+    let src = cu("var G: Integer;
+         procedure Bump(N: Integer) begin G := G + N; end;
+         procedure F(): Integer begin this.G := 5; this.Bump(2); exit(this.G); end;");
+    assert_eq!(int(run(&src, "F", vec![])), 7);
+}
+
+#[test]
+fn a_member_reached_through_this_can_be_a_var_argument() {
+    let src = cu("var G: Integer;
+         procedure Twice(var N: Integer) begin N := N * 2; end;
+         procedure F(): Integer begin this.G := 4; this.Twice(this.G); exit(G); end;");
+    assert_eq!(int(run(&src, "F", vec![])), 8);
+}
+
+// ------------------------------------------------------- property forms of builtin members
+// `Notif.Id := x`, `Rec.ReadIsolation := x` and `Text[1]` of a call result are plain AL.
+// Corpus handlers/TestNotificationHandler.al:55-56 (Notification.Id round trip),
+// json/TestJsonXmlDeepContracts.al:71 (`Format(10, 0, '<Integer>')[1]`); the record form is
+// used all over Base Application (CostAdjmtSignals.Codeunit.al: `Item.ReadIsolation := ...`).
+
+#[test]
+fn a_notification_id_assigned_reads_back() {
+    let src = cu("procedure F(): Text var N: Notification; G: Guid; begin
+            G := CreateGuid(); N.Id := G; exit(Format(N.Id = G)); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "Yes");
+}
+
+#[test]
+fn a_record_read_isolation_can_be_assigned_and_read() {
+    let src = "table 50101 T { fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
+        codeunit 50100 C { procedure F(): Text var R: Record T; RR: RecordRef; begin
+            R.ReadIsolation := IsolationLevel::ReadUncommitted;
+            RR.Open(50101); RR.ReadIsolation := IsolationLevel::UpdLock;
+            exit(Format(R.ReadIsolation) + '/' + Format(RR.ReadIsolation)); end; }";
+    assert_eq!(text(run(src, "F", vec![])), "ReadUncommitted/UpdLock");
+}
+
+#[test]
+fn a_character_of_a_call_result_can_be_indexed() {
+    let src = cu("procedure F(): Text begin exit('a' + Format(10, 0, '<Integer>')[1] + 'b'); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "a1b");
+}

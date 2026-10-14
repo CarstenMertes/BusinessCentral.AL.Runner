@@ -889,6 +889,20 @@ impl Session {
                 self.query_column(q, *column)
             }
             E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
+            E::CharAt(text, index) => {
+                let t = self.eval(text, f)?;
+                let Some(t) = al_builtins::native::text_of(&t) else {
+                    return Err(Signal::Unsupported(format!("indexing {t:?} as a text")));
+                };
+                let i = int(&self.eval(index, f)?)?;
+                usize::try_from(i - 1)
+                    .ok()
+                    .and_then(|i| t.encode_utf16().nth(i))
+                    .map(Value::Char)
+                    .ok_or_else(|| {
+                        Signal::Unsupported("a text indexed outside its length (error text not pinned)".into())
+                    })
+            }
             E::DotNetCoerce(t, e) => {
                 let v = self.eval(e, f)?;
                 self.dotnet_coerce(v, t)

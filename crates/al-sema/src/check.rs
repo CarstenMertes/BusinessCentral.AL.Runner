@@ -300,6 +300,16 @@ struct ObjCtx {
     base_items: HashMap<String, String>,
 }
 
+/// The `this` keyword: the object whose code is running (Microsoft Learn, "this keyword").
+pub(crate) fn is_this_keyword(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::NameRef && name_of(node).eq_ignore_ascii_case("this")
+}
+
+/// Whether a variable of this name is in scope, whatever frame.
+fn sc_has_var(sc: &Scope, name: &str) -> bool {
+    sc.vars.iter().any(|frame| frame.contains_key(name))
+}
+
 fn name_of(node: &SyntaxNode) -> String {
     node.children_with_tokens()
         .filter_map(|e| e.into_token())
@@ -907,6 +917,16 @@ impl<'a> Checker<'a> {
                 }
             }
             MemberExpr => {
+                // `this.Member` in a codeunit: the codeunit's own procedure or global variable. It
+                // resolves like the bare name does, without the implicit record's members.
+                if is_this_keyword(&kids[0])
+                    && self.ws.objects[sc.oi].kind == ObjKind::Codeunit
+                    && !sc_has_var(sc, "this")
+                {
+                    if let Some(e) = kids.get(1).and_then(|m| self.this_member(sc, node, m)) {
+                        return e;
+                    }
+                }
                 let base = self.infer(sc, &kids[0]);
                 let mname = kids.get(1).map(name_of).unwrap_or_default();
                 if let E::PartialObj(k, mut parts) = base {
@@ -1094,6 +1114,23 @@ impl<'a> Checker<'a> {
             c = self.global_cands(n);
         }
         (!c.is_empty()).then_some(c)
+    }
+
+    /// `this.Name` in a codeunit: a global variable, else a procedure of the codeunit. The
+    /// resolution is recorded on the member expression, as a member access would.
+    fn this_member(&mut self, sc: &mut Scope, node: &SyntaxNode, member: &SyntaxNode) -> Option<E> {
+        let n = name_of(member);
+        let key = n.to_lowercase();
+        if let Some(t) = sc.vars.first().and_then(|globals| globals.get(&key)).cloned() {
+            self.record(sc, node, Res::Global(key));
+            return Some(E::Val(t));
+        }
+        let own: Vec<Cand> = self.members[sc.self_obj]
+            .procedures_named(&n)
+            .iter()
+            .map(|p| proc_cand(p))
+            .collect();
+        (!own.is_empty()).then_some(E::Callable(own))
     }
 
     /// Name lookup without reporting: None if the name does not resolve.

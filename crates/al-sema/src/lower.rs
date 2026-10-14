@@ -1225,6 +1225,31 @@ fn is_stmt(k: SyntaxKind) -> bool {
     )
 }
 
+/// The builtin members AL writes as a property: `X.Name := v` is the call `X.Name(v)`. Each is a
+/// property of its type in the AL language, so valid code assigns it. Listed by name, not by
+/// shape: a method with one optional parameter is not a property (`Rec.Find(Which)`).
+///
+/// - `FieldRef.Value`: corpus recordref/TestRecordRefCRUD.al:20-23.
+/// - `Page.Editable`, `Page.PromptMode`: handlers/TestPageModalNewRowLine_Objects.al:69;
+///   `Page.Caption`: handlers/TestPageCaption_Page.al:44; `Page.LookupMode`: the property of the
+///   same name on a page.
+/// - `Notification.Id`, `.Message`, `.Scope`: handlers/TestNotificationHandler.al:21 and :55.
+/// - `Record.ReadIsolation`, `RecordRef.ReadIsolation` and `.SecurityFiltering`: Base
+///   Application (`Item.ReadIsolation := IsolationLevel::ReadUncommitted`).
+/// - `HttpRequestMessage.Method`: network/TestHttpRequestMessage.al:23.
+/// - `File.TextMode`, `File.WriteMode`: Base Application's "Export Consolidation" report.
+fn is_property_setter(receiver: &str, name: &str) -> bool {
+    matches!(
+        (receiver, name),
+        ("FieldRef", "Value")
+            | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
+            | ("Notification", "Id" | "Message" | "Scope")
+            | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
+            | ("HttpRequestMessage", "Method")
+            | ("File", "TextMode" | "WriteMode")
+    )
+}
+
 fn sig_tokens(n: &SyntaxNode) -> Vec<al_syntax::SyntaxToken> {
     n.children_with_tokens()
         .filter_map(|e| e.into_token())
@@ -2686,15 +2711,10 @@ impl Lowerer<'_> {
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
-            let setter = self.catalog.by_id(&id).is_some_and(|s| {
-                (s.receiver == "FieldRef" && s.name == "Value")
-                        // `CurrPage.Editable := true` is the setter form of `CurrPage.Editable(true)`
-                        // (corpus handlers/TestPageModalNewRowLine_Objects.al:69).
-                        || (s.receiver == "Page" && matches!(s.name.as_str(), "Editable" | "PromptMode"))
-                        // The documented property forms of the File data type (Export Consolidation:
-                        // `GLEntryFile.TextMode := true; GLEntryFile.WriteMode := true;`).
-                        || (s.receiver == "File" && matches!(s.name.as_str(), "TextMode" | "WriteMode"))
-            });
+            let setter = self
+                .catalog
+                .by_id(&id)
+                .is_some_and(|s| is_property_setter(&s.receiver, &s.name));
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));
@@ -2956,6 +2976,17 @@ impl Lowerer<'_> {
             }
             TernaryExpr if kids.iter().any(|k| matches!(self.ty_of(k), Ty::DotNet(_))) => {
                 Err("a DotNet value in a conditional expression: its type is only known at run time".into())
+            }
+            // `Text[i]` read: the character at i. The base is any text, a call result included
+            // (corpus json/TestJsonXmlDeepContracts.al:71 `Format(10, 0, '<Integer>')[1]`).
+            IndexExpr
+                if matches!(kids.first().map(|k| self.ty_of(k)), Some(Ty::Text(_) | Ty::Code(_)))
+                    && kids.len() == 2 =>
+            {
+                Ok(ir::Expr::CharAt(
+                    Box::new(self.expr(&kids[0])?),
+                    Box::new(self.expr(&kids[1])?),
+                ))
             }
             IndexExpr if matches!(kids.first().map(|k| self.ty_of(k)), Some(Ty::DotNet(_))) => {
                 Err("indexing a DotNet value is not lowered yet (call get_Item / GetValue instead)".into())
@@ -3229,9 +3260,11 @@ impl Lowerer<'_> {
             };
             return self.dotnet_member(node, callee, &name, op, args);
         }
+        // `this.Proc(...)` calls on the running instance, as the bare call does.
         let receiver_node = (callee.kind() == SyntaxKind::MemberExpr)
             .then(|| callee.children().next())
-            .flatten();
+            .flatten()
+            .filter(|r| !crate::check::is_this_keyword(r));
         match self.res(node).cloned() {
             Some(Res::Proc { object, offset }) if self.ws.objects[object].kind == ObjKind::Interface => {
                 self.interface_call(object, offset, receiver_node.as_ref(), args)

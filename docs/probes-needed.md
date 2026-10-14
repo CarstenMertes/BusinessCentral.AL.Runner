@@ -598,21 +598,21 @@ refused (or assumed, where the row says so) until its probe is in the corpus.
    text (separator, which fields, FlowFields calculated or not), and whether two records that differ in
    only one field format differently.
 5. **Variables of a table object persist per record variable.** DONE (ADR-021). Probed on BC 27.5
-   (corpus branch `al-runtime-rs`, head `eb46da5`, `tests/al-language/tableglobals/`, 58 tests) and
+   (corpus `tests/al-language/tableglobals/`, 58 tests, in the submodule since `eb46da5`) and
    modelled; the two `T043` tests of Tests-ERM pass. What the probes did not pin is in "Table globals
    (ADR-021)" below.
 
 ## Table globals (ADR-021)
 
-Assumptions and open points beside the 58 probe tests (corpus branch `al-runtime-rs`, head `eb46da5`, folder
-`tests/al-language/tableglobals/`; cited by path until the corpus bump).
+Assumptions and open points beside the 58 probe tests (corpus folder `tests/al-language/tableglobals/`, in the
+submodule since `eb46da5`; `Holders` is TestTableGlobalsHolders.al, `Record` is TestTableGlobalsRecordVariable.al).
 
 | Area | Assumption | Pinned by | Where |
 |---|---|---|---|
-| Page Insert and Modify | A page `Insert` or `Modify` that follows no field validation (a draft row from `New()` and `Close()`, a modify after an action changed `Rec`) runs the triggers and subscribers on the page record's own globals. After a validation they see fresh globals (pinned) | TableGlobals_PageInsert_*, TableGlobals_PageModify_* (after a validation only) | `pages.rs` |
-| Page validation | The page client sets the page record's globals back to their initial values before and after each field validation. Measured: the trigger starts fresh and the record is fresh afterwards. Validations the client runs for other reasons (filter-stamped defaults on a new row) are not reset | TableGlobals_PageFieldValidate_*, TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation | `pages.rs` |
+| Page Insert and Modify | A page `Insert` or `Modify` that follows no field validation (a draft row from `New()` and `Close()`, a modify after an action changed `Rec`) runs the triggers and subscribers on the page record's own globals. After a validation they see fresh globals (pinned) | Holders:202 TableGlobals_PageInsert_OnInsertSeesTheValidateGlobals, Holders:219 TableGlobals_PageModify_OnModifySeesTheValidateGlobals (after a validation only) | `pages.rs` |
+| Page validation | The page client sets the page record's globals back to their initial values before and after each field validation. Measured: the trigger starts fresh and the record is fresh afterwards. Validations the client runs for other reasons (filter-stamped defaults on a new row) are not reset | Holders:140 TableGlobals_PageFieldValidate_ThenAction_SeesTheTriggerGlobals, Holders:238 TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation, Holders:280 _PageFieldValidate_WhatTheTriggerSeesOfThePageRecGlobals | `pages.rs` |
 | xRec in a plain procedure | In a procedure called on a record variable (no trigger), `xRec` here holds a copy of `Rec`'s fields taken at the call and the variable's xRec globals. Its field values are not pinned | none | `records.rs` `enter_record` |
-| Reset of record-typed globals | `Clear` and `Reset` set every global of the table back to its initial value, record variables included (pinned for Integer and Text) | TableGlobals_Clear_*, TableGlobals_Reset_* | `records.rs` `reset_table_globals` |
+| Reset of record-typed globals | `Clear` and `Reset` set every global of the table back to its initial value, record variables included (pinned for Integer and Text) | Record:272 TableGlobals_Clear_WhatHappensToTheGlobals, Record:302 TableGlobals_Reset_WhatHappensToTheGlobals | `records.rs` `reset_table_globals` |
 | Records in arrays and `SetTable` targets | Same per-state rules by construction; not probed | none | |
 | `Rename` | `OnRename` runs on the variable's instance like the other write triggers; not probed | none | `records.rs` |
 | RecordRef keys | `KeyCount` counts the declared keys and the hidden key on SystemId last; `CurrentKeyIndex(n)` selects key n (the hidden one is `System ID` in `CurrentKey()` and `$systemId` as the name of its field through `KeyRef.FieldIndex`); an index outside 1..KeyCount raises `The <table> table does not have an active key at index <n>.` / `DB:KeyNotFound`; a current key of fields no declared key starts with reports -1. Not pinned: the name `RecordRef.Field(SystemIdNo).Name()` gives | recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:75-176 | `refs.rs`, `recmeta.rs` |

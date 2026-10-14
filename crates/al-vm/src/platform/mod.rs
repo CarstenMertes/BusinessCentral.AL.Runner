@@ -70,11 +70,48 @@ impl Ident {
     }
 }
 
+/// Listings that sessions of one engine share. A listed table's rows depend on the program (and,
+/// for three tables, on the host's identity: see [`Providers::shares`]), never on a session's
+/// data, so a session that needs a table another session of the same engine listed takes that
+/// listing. The Field table alone is 37,000 rows, listed in 0.2 s; a corpus run's test codeunits
+/// each have a session of their own and several of them read it.
+///
+/// Per thread, because the rows hold `Rc`s; a session never leaves its thread. Only the engine
+/// used last keeps its listings, which bounds the memory. The engine is named by its `uid`, not
+/// held: a held `Arc` or `Weak` would stop `Arc::get_mut` on the engine, which the runner uses.
+#[derive(Default)]
+struct SharedListings {
+    engine: u64,
+    tables: HashMap<Virtual, Rc<mat::Mat>>,
+}
+
+thread_local! {
+    static SHARED: RefCell<SharedListings> = RefCell::default();
+}
+
+impl SharedListings {
+    fn get(&self, engine: u64, kind: Virtual) -> Option<Rc<mat::Mat>> {
+        (self.engine == engine)
+            .then(|| self.tables.get(&kind).cloned())
+            .flatten()
+    }
+
+    fn put(&mut self, engine: u64, kind: Virtual, m: Rc<mat::Mat>) {
+        if self.engine != engine {
+            self.engine = engine;
+            self.tables.clear();
+        }
+        self.tables.insert(kind, m);
+    }
+}
+
 /// The rows of every virtual platform table, computed on read.
 pub(crate) struct Providers {
     /// Weak: the engine owns nothing of the session, and a baseline snapshot of the store (which
     /// holds this provider) must not keep the engine shared.
     engine: std::sync::Weak<Engine>,
+    /// `Engine::uid` of that engine.
+    engine_uid: u64,
     ident: Ident,
     /// Per object index: the provider of that table, if it is a virtual platform table.
     served: Vec<Option<Virtual>>,
@@ -102,6 +139,7 @@ impl Providers {
             .collect();
         Providers {
             engine: Arc::downgrade(engine),
+            engine_uid: engine.uid,
             ident,
             served,
             listed: RefCell::default(),
@@ -129,6 +167,12 @@ impl Providers {
         Ok(m)
     }
 
+    /// Whether the listing of `kind` is the same for every session of the engine. Session, Active
+    /// Session and Time Zone list the host's identity of this session.
+    fn shares(kind: Virtual) -> bool {
+        !matches!(kind, Virtual::Session | Virtual::ActiveSession | Virtual::TimeZone)
+    }
+
     fn kind(&self, t: &TableDef) -> Virtual {
         self.served[t.object as usize].expect("serves() was true")
     }
@@ -137,6 +181,12 @@ impl Providers {
     fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Rc<mat::Mat>, StoreError> {
         if let Some(m) = self.listed.borrow().get(&kind) {
             return Ok(m.clone());
+        }
+        if Self::shares(kind) {
+            if let Some(m) = SHARED.with(|s| s.borrow().get(self.engine_uid, kind)) {
+                self.listed.borrow_mut().insert(kind, m.clone());
+                return Ok(m);
+            }
         }
         let rows = match kind {
             Virtual::ApiWebhookEntity => {
@@ -172,6 +222,9 @@ impl Providers {
             Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage => unreachable!("generated, never listed"),
         };
         let m = Rc::new(mat::Mat::new(t, rows));
+        if Self::shares(kind) {
+            SHARED.with(|s| s.borrow_mut().put(self.engine_uid, kind, m.clone()));
+        }
         self.listed.borrow_mut().insert(kind, m.clone());
         Ok(m)
     }
@@ -273,6 +326,84 @@ impl VirtualTables for Providers {
             Virtual::Date => date::count(t, filters),
             Virtual::WindowsLanguage => host_tables::windows_language_count(t, filters),
             k => self.listed(t, k)?.count(t, filters),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn engine() -> Arc<Engine> {
+        Engine::new(Default::default(), Vec::new())
+    }
+
+    fn some_mat() -> Rc<mat::Mat> {
+        let t = TableDef {
+            object: 0,
+            name: "T".into(),
+            fields: Vec::new(),
+            keys: vec![Vec::new()],
+            per_company: false,
+        };
+        Rc::new(mat::Mat::new(&t, Vec::new()))
+    }
+
+    #[test]
+    fn engines_have_their_own_uid() {
+        assert_ne!(engine().uid, engine().uid);
+    }
+
+    #[test]
+    fn sessions_of_one_engine_share_a_listing_and_other_engines_do_not() {
+        let mut shared = SharedListings::default();
+        assert!(shared.get(1, Virtual::Field).is_none());
+        let m = some_mat();
+        shared.put(1, Virtual::Field, m.clone());
+        assert!(Rc::ptr_eq(&shared.get(1, Virtual::Field).unwrap(), &m));
+        assert!(shared.get(1, Virtual::AllObj).is_none());
+        assert!(shared.get(2, Virtual::Field).is_none());
+    }
+
+    #[test]
+    fn only_the_engine_used_last_keeps_its_listings() {
+        let mut shared = SharedListings::default();
+        shared.put(1, Virtual::Field, some_mat());
+        shared.put(2, Virtual::AllObj, some_mat());
+        assert!(shared.get(1, Virtual::Field).is_none(), "engine 1 was replaced");
+        assert!(shared.get(2, Virtual::AllObj).is_some());
+    }
+
+    #[test]
+    fn a_listing_does_not_stop_arc_get_mut_on_its_engine() {
+        // The runner sets `unseeded` on the engine after the install baseline listed tables.
+        let mut a = engine();
+        let t = TableDef {
+            object: 0,
+            name: "T".into(),
+            fields: Vec::new(),
+            keys: vec![Vec::new()],
+            per_company: false,
+        };
+        SHARED.with(|s| {
+            s.borrow_mut()
+                .put(a.uid, Virtual::Field, Rc::new(mat::Mat::new(&t, Vec::new())))
+        });
+        assert!(Arc::get_mut(&mut a).is_some());
+    }
+
+    #[test]
+    fn what_depends_on_the_host_is_not_shared() {
+        for kind in [Virtual::Session, Virtual::ActiveSession, Virtual::TimeZone] {
+            assert!(!Providers::shares(kind));
+        }
+        for kind in [
+            Virtual::Field,
+            Virtual::AllObj,
+            Virtual::PermissionSet,
+            Virtual::PageMetadata,
+        ] {
+            assert!(Providers::shares(kind));
         }
     }
 }

@@ -44,6 +44,8 @@ mod xmlports;
 pub use transactions::TxModel;
 pub use ui::{UiHandler, UiKind};
 
+static NEXT_ENGINE_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 pub struct Engine {
     pub program: ir::Program,
     /// Per object, per routine: why it cannot run, if it cannot.
@@ -62,6 +64,9 @@ pub struct Engine {
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
+    /// Names this engine among all those the process built: state shared between sessions of one
+    /// engine is keyed by it.
+    pub uid: u64,
 }
 
 impl Engine {
@@ -135,6 +140,7 @@ impl Engine {
             dotnet,
             unseeded: Default::default(),
             unevaluable_init,
+            uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         })
     }
 }

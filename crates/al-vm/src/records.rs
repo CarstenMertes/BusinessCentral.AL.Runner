@@ -46,7 +46,8 @@ impl Session {
 
     /// Field values of a fresh record: `InitValue` where declared, else the type default.
     pub(crate) fn initial_fields(&mut self, table: usize) -> Vec<Value> {
-        let Some(t) = self.engine.program.objects[table].table.clone() else {
+        let engine = self.engine.clone();
+        let Some(t) = engine.program.objects[table].table.as_ref() else {
             return Vec::new();
         };
         t.fields

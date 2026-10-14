@@ -506,6 +506,15 @@ fn secret_is_empty(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> N
     }
 }
 
+/// `Unwrap()`: the text the secret carries, "the one API that returns the plain text"
+/// (types/TestSecretText.al:43); a never-assigned secret is empty.
+fn secret_unwrap(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    match r {
+        Some(v) => Ok(Value::Text(secret_content(v)?)),
+        None => unsupported("SecretText.Unwrap without a receiver"),
+    }
+}
+
 fn secret_str_subst_no(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let template = text(a, 0)?;
     let args: Vec<Value> = a[1..]
@@ -704,6 +713,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("Text", "InsStr", [_, _, _]) => ins_str,
         ("Text", "SelectStr", [_, _]) => select_str,
         ("SecretText", "IsEmpty", []) => secret_is_empty,
+        ("SecretText", "Unwrap", []) => secret_unwrap,
         ("SecretText", "SecretStrSubstNo", _) => secret_str_subst_no,
         ("TextBuilder", "Append", [_]) => tb_append,
         ("TextBuilder", "AppendLine", _) => tb_append_line,

@@ -232,6 +232,8 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
+    /// `Database.CurrentTransactionType`: a member index of the TransactionType option.
+    pub(crate) transaction_type: i32,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
@@ -336,6 +338,7 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
+            transaction_type: 1,
             media: Default::default(),
             dotnet: Default::default(),
             application_areas: String::new(),
@@ -931,6 +934,23 @@ impl Session {
                         return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
                     };
                     return Ok(Value::Integer(self.curr_field_of(&rec)));
+                }
+                // `ClearAll()` resets every global variable of the running object to its default;
+                // locals are untouched (docs/probes-needed.md "ClearAll"). A codeunit has nothing
+                // else in its globals; an object with an implicit Rec or page state is refused.
+                if id == "System.ClearAll#1" {
+                    let object = f.instance.borrow().object as usize;
+                    let o = &self.engine.program.objects[object];
+                    if o.kind != "codeunit" || o.rec_slot.is_some() {
+                        return Err(Signal::Unsupported(
+                            "ClearAll outside a codeunit without a source table (the implicit record is not pinned)"
+                                .into(),
+                        ));
+                    }
+                    let tys: Vec<RtType> = o.globals.iter().map(|g| g.ty.clone()).collect();
+                    let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
+                    f.instance.borrow_mut().globals = fresh;
+                    return Ok(Value::Null);
                 }
                 if id == "Session.ApplicationArea#1" {
                     // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them

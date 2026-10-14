@@ -478,3 +478,18 @@ fn a_character_of_a_call_result_can_be_indexed() {
     let src = cu("procedure F(): Text begin exit('a' + Format(10, 0, '<Integer>')[1] + 'b'); end;");
     assert_eq!(text(run(&src, "F", vec![])), "a1b");
 }
+
+// ------------------------------------------------------------------------------- ClearAll
+// types/TestClearContracts.al:ClearAll_ResetsCodeunitLevelVars and session/TestSystemComplete.al:
+// System_ClearAll_DoesNotThrow pin that the call works. That it resets the object's global variables
+// and leaves locals alone is the documented meaning (docs/probes-needed.md).
+
+#[test]
+fn clear_all_resets_the_global_variables_and_not_the_locals() {
+    let src = cu("var G: Integer; T: Text; L: List of [Integer];
+         procedure F(): Text var Loc: Integer; begin
+            G := 5; T := 'x'; L.Add(1); Loc := 7;
+            ClearAll();
+            exit(Format(G) + '/' + T + '/' + Format(L.Count()) + '/' + Format(Loc)); end;");
+    assert_eq!(text(run(&src, "F", vec![])), "0//0/7");
+}

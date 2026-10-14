@@ -253,6 +253,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // Event subscriptions are session state; the VM intercepts these ids
     // (al-vm dispatch.rs). Registered so lowering accepts them.
     ("Session.ApplicationArea#1", vm_only),
+    // ClearAll resets the running object's globals: the VM runs it (al-vm lib.rs).
+    ("System.ClearAll#1", vm_only),
     ("Session.BindSubscription#1", vm_only),
     ("Session.UnbindSubscription#1", vm_only),
     // Codeunit.Run runs a codeunit and `IsInWriteTransaction` reads the transaction: both are

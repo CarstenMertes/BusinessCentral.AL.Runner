@@ -8,6 +8,7 @@
 use crate::pages::RequestClosed;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{Session, Signal};
+use al_builtins::ops;
 use al_builtins::value::{Instance, Value};
 use al_ir as ir;
 use std::cell::RefCell;
@@ -20,6 +21,31 @@ type Rec = Rc<RefCell<al_builtins::value::RecordState>>;
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
+
+/// What a report trigger asked for with `CurrReport.Skip`, `Break` or `Quit`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Flow {
+    Skip,
+    Break,
+    Quit,
+}
+
+/// Which kind of report trigger is running: what `CurrReport.Skip`, `Break` and `Quit` may do there.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum TrigKind {
+    /// A data item's `OnAfterGetRecord`: Skip, Break and Quit are pinned
+    /// (handlers/TestReportRuntimeContracts.al:322-368).
+    Row,
+    /// `OnPreReport`: Quit is pinned (:355-358).
+    Pre,
+    /// Every other trigger: what the calls do there is not pinned.
+    Other,
+}
+
+/// The filter group a `DataItemLink` filter lives in. `GetFilters` reads group 0 and does not show
+/// it (handlers/TestReportRuntimeContracts.al:62-90, :279-290: `Child.GetFilters()` is empty in the
+/// child's triggers and after the parent). Group 4 is where a part's `SubPageLink` lives.
+const LINK_GROUP: i32 = 4;
 
 /// Which method started the run: they differ in whether the request page can open.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -59,6 +85,8 @@ impl Session {
     ) -> Result<Value, Signal> {
         match id {
             "Report.Quit#1" => self.report_quit_builtin(&running),
+            "Report.Skip#1" => self.report_flow_builtin(&running, Flow::Skip),
+            "Report.Break#1" => self.report_flow_builtin(&running, Flow::Break),
             "Report.SetTableView#1" => {
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
@@ -68,24 +96,19 @@ impl Session {
             "Report.UseRequestPage#1" => {
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
+                let slot = schema.report().request_flag_slot;
+                // The getter answers what the next Run does; the setter overrides the report's own
+                // property in both directions (handlers/TestReportRuntimeContracts.al:416-440).
                 let Some(Value::Boolean(b)) = args.first() else {
-                    return unsupported("Report.UseRequestPage read as a getter (its default is not pinned)");
+                    return Ok(Value::Boolean(Self::report_shows_page(&inst, &schema)));
                 };
-                if *b && schema.report().use_request_page == Some(false) {
-                    return unsupported(
-                        "Report.UseRequestPage(true) on a report declaring UseRequestPage = false (not pinned)",
-                    );
-                }
-                inst.borrow_mut().globals[schema.report().request_flag_slot] = Value::Integer(if *b { 1 } else { 2 });
+                inst.borrow_mut().globals[slot] = Value::Integer(if *b { 1 } else { 2 });
                 Ok(Value::Null)
             }
             "Report.Run#1" | "Report.RunModal#1" => {
                 let (inst, quit) = self.report_instance(receiver, true)?;
                 let schema = self.report_schema(&inst)?;
-                let window = !matches!(
-                    inst.borrow().globals[schema.report().request_flag_slot],
-                    Value::Integer(2)
-                );
+                let window = Self::report_shows_page(&inst, &schema);
                 let result = if quit {
                     Ok(())
                 } else {
@@ -105,7 +128,7 @@ impl Session {
                     None => true,
                     Some(Value::Boolean(b)) => *b,
                     Some(other) => return unsupported(format!("{id} with RequestWindow {other:?}")),
-                };
+                } && schema.report().use_request_page != Some(false);
                 match args.get(2) {
                     None | Some(Value::Boolean(false)) => {}
                     Some(other) => {
@@ -126,6 +149,13 @@ impl Session {
                 let (inst, quit) = self.report_instance(receiver, true)?;
                 let schema = self.report_schema(&inst)?;
                 self.report_execute_args(id, args.first(), args.get(1))?;
+                // handlers/TestReportRuntimeContracts.al:395-414: Execute keeps the globals, and a
+                // second Execute on the same variable is refused.
+                if self.report_executed.iter().any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst))) {
+                    return Err(al_error("The object has been run. Use the function CLEAR(Report)."));
+                }
+                self.report_executed.retain(|w| w.strong_count() > 0);
+                self.report_executed.push(Rc::downgrade(&inst));
                 if quit {
                     return Ok(Value::Null);
                 }
@@ -298,22 +328,77 @@ impl Session {
         Ok(quit)
     }
 
-    /// `CurrReport.Quit`. Only the call straight from `OnInitReport` is pinned.
+    /// `CurrReport.Quit`: from `OnInitReport` (handlers/TestReportOnInitReportTiming.al:88-98),
+    /// `OnPreReport` and `OnAfterGetRecord` (handlers/TestReportRuntimeContracts.al:355-368); it is
+    /// not pinned anywhere else.
     fn report_quit_builtin(&mut self, running: &Inst) -> Result<Value, Signal> {
         let object = running.borrow().object as usize;
-        if self.engine.program.objects[object].kind != "report" || self.report_init_depth != Some(self.depth) {
-            return unsupported("CurrReport.Quit outside the OnInitReport trigger (what it does there is not pinned)");
+        if self.engine.program.objects[object].kind == "report" && self.report_init_depth == Some(self.depth) {
+            self.report_quit = true;
+            // Leaves the trigger; `report_init` sees the flag.
+            return Err(Signal::Exit(None));
         }
-        self.report_quit = true;
-        // Leaves the trigger; `report_init` sees the flag.
+        self.report_flow_builtin(running, Flow::Quit)
+    }
+
+    /// `CurrReport.Skip`, `Break` and `Quit` called straight from a report trigger: the trigger
+    /// ends and the run reads the request (`report_trigger_call`).
+    fn report_flow_builtin(&mut self, running: &Inst, flow: Flow) -> Result<Value, Signal> {
+        let object = running.borrow().object as usize;
+        let on_report = matches!(self.engine.program.objects[object].kind.as_str(), "report" | "reportextension");
+        let allowed = match self.report_trigger {
+            Some((depth, kind)) if on_report && depth == self.depth => match flow {
+                Flow::Skip | Flow::Break => kind == TrigKind::Row,
+                Flow::Quit => kind != TrigKind::Other,
+            },
+            _ => false,
+        };
+        if !allowed {
+            return unsupported(format!(
+                "CurrReport.{flow:?} outside the triggers where it is pinned (what it does there is not pinned)"
+            ));
+        }
+        self.report_flow = Some(flow);
         Err(Signal::Exit(None))
     }
 
-    /// The variable is cleared after `Run`: the next use makes a new instance.
+    /// Runs a report trigger and returns what it asked for with Skip, Break or Quit.
+    fn report_trigger_call(
+        &mut self,
+        object: usize,
+        routine: usize,
+        inst: Inst,
+        kind: TrigKind,
+    ) -> Result<Option<Flow>, Signal> {
+        let saved = self.report_trigger.replace((self.depth + 1, kind));
+        self.report_flow = None;
+        let r = self.call(object, routine, inst, Vec::new());
+        self.report_trigger = saved;
+        let flow = self.report_flow.take();
+        r?;
+        Ok(flow)
+    }
+
+    /// Whether a `Run` of `inst` opens the request page: the variable's own `UseRequestPage(..)`
+    /// first, else the report's property, which is true when it is not declared
+    /// (handlers/TestReportRuntimeContracts.al:416-440).
+    fn report_shows_page(inst: &Inst, schema: &Schema) -> bool {
+        match inst.borrow().globals[schema.report().request_flag_slot] {
+            Value::Integer(1) => true,
+            Value::Integer(2) => false,
+            _ => schema.report().use_request_page != Some(false),
+        }
+    }
+
+    /// The variable is reset after `Run`: its globals go back to their defaults, and
+    /// `OnInitReport` does not run again (handlers/TestReportRuntimeContracts.al:395-414; a global
+    /// read afterwards is a default: handlers/TestReportSetTableView.al:17-22,
+    /// handlers/TestReportRunWithRequestPage.al:32-36).
     fn report_clear(&mut self, inst: &Inst) {
-        let mut i = inst.borrow_mut();
-        i.globals.clear();
-        i.initialized = false;
+        let object = inst.borrow().object as usize;
+        let fresh = self.instance(object);
+        let globals = std::mem::take(&mut fresh.borrow_mut().globals);
+        inst.borrow_mut().globals = globals;
     }
 
     // ------------------------------------------------------------------ table views
@@ -376,9 +461,20 @@ impl Session {
         let differs = match schema.report().transaction_type.as_deref() {
             None => false,
             Some("update") => true,
+            // Snapshot runs when no write is pending (handlers/TestReportRuntimeContracts.al:
+            // 468-482); with a pending write what BC does is not pinned.
+            Some("snapshot") => {
+                if self.in_write_transaction() {
+                    return unsupported(format!(
+                        "TransactionType = snapshot on report \"{}\" with a pending write (not pinned)",
+                        schema.name()
+                    ));
+                }
+                true
+            }
             Some(other) => {
                 return unsupported(format!(
-                    "TransactionType = {other} on report \"{}\" (only Update is pinned)",
+                    "TransactionType = {other} on report \"{}\" (only Update and Snapshot are pinned)",
                     schema.name()
                 ));
             }
@@ -409,13 +505,11 @@ impl Session {
     // ------------------------------------------------------------------ the run
 
     fn report_run(&mut self, inst: &Inst, schema: &Schema, entry: Entry, window: bool) -> Result<(), Signal> {
-        let report = schema.report();
-        // The request page opens when the caller asks for it (an instance's UseRequestPage flag, a
-        // static call's RequestWindow, both true by default) and the report does not declare
-        // UseRequestPage = false (record/TestTxModelReportRun.al:11, :60-61: a report with a
-        // request page "defaults to true"). A report without a requestpage section is treated the
-        // same: no corpus test runs one without switching the page off.
-        let shows_page = entry == Entry::Run && window && report.use_request_page != Some(false);
+        // `window` says whether the request page opens: the instance's UseRequestPage, which falls
+        // back on the report's property (record/TestTxModelReportRun.al:11, :60-61: a report with a
+        // request page "defaults to true"), or a static call's RequestWindow. A report without a
+        // requestpage section opens its page as well (handlers/TestReportRuntimeContracts.al:416-440).
+        let shows_page = entry == Entry::Run && window;
         let enters = self.report_enter_world(schema, shows_page)?;
         self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page))
     }
@@ -561,17 +655,32 @@ impl Session {
                 ));
             }
         }
+        // A filter an item gets in OnPreReport is discarded: OnPreDataItem sees the view the item
+        // had before it (handlers/TestReportRuntimeContracts.al:371-390).
+        let mut kept = Vec::new();
+        for r in run.all_items() {
+            let rec = self.report_item_record(&run, r)?;
+            let filters = rec.borrow().filters.clone();
+            kept.push((rec, filters));
+        }
         if let Some(r) = report.on_pre {
-            self.call(run.object, r, run.base.clone(), Vec::new())?;
+            if self.report_trigger_call(run.object, r, run.base.clone(), TrigKind::Pre)? == Some(Flow::Quit) {
+                return Ok(());
+            }
         }
         if let Some((ext_inst, e)) = &run.ext {
             if let Some(r) = run.ext_ir().and_then(|x| x.on_pre) {
-                self.call(*e, r, ext_inst.clone(), Vec::new())?;
+                if self.report_trigger_call(*e, r, ext_inst.clone(), TrigKind::Pre)? == Some(Flow::Quit) {
+                    return Ok(());
+                }
             }
         }
+        for (rec, filters) in kept {
+            rec.borrow_mut().filters = filters;
+        }
         for i in 0..report.items.len() {
-            if report.items[i].parent.is_none() {
-                self.report_item(&run, ItemRef::Base(i), None)?;
+            if report.items[i].parent.is_none() && self.report_item(&run, ItemRef::Base(i), None)? {
+                return Ok(());
             }
         }
         if let Some(r) = report.on_post {
@@ -601,15 +710,28 @@ impl Session {
     /// handlers/TestReportNestedLinkImplicitParent.al:113-134 for the link). A reportextension's
     /// `modify` triggers bracket the base item's `OnAfterGetRecord`, row by row (:262-268), and
     /// the items it adds run after the item's own nested items.
-    fn report_item(&mut self, run: &Run, r: ItemRef, parent_rec: Option<Rec>) -> Result<(), Signal> {
+    ///
+    /// Returns whether the report was quit. `CurrReport.Skip` in `OnAfterGetRecord` leaves out the
+    /// nested items of that row, `Break` ends this item (its `OnPostDataItem` and the later items
+    /// still run), `Quit` ends the whole report without `OnPostDataItem` and `OnPostReport`
+    /// (handlers/TestReportRuntimeContracts.al:322-368).
+    fn report_item(&mut self, run: &Run, r: ItemRef, parent_rec: Option<Rec>) -> Result<bool, Signal> {
         let item = run.item(r);
         let (owner, object) = run.owner(r);
         let rec = self.report_item_record(run, r)?;
         if let Some(parent) = parent_rec {
+            // The link filter is hidden from GetFilters (handlers/TestReportRuntimeContracts.al:62-90).
+            let table = self.table(&rec)?;
             for &(own, other) in &item.link {
-                let v = parent.borrow().fields[other].clone();
-                self.ret_used = false;
-                self.record_op("SetRange", &rec, &mut [Value::Integer(own as i32), v])?;
+                let ty = table.fields[own].ty.clone();
+                let v = ops::convert(parent.borrow().fields[other].clone(), &ty)?;
+                let mut t = rec.borrow_mut();
+                t.filters.retain(|f| !(f.group == LINK_GROUP && f.field == own));
+                t.filters.push(al_builtins::filter::FieldFilter {
+                    field: own,
+                    expr: al_builtins::filter::FilterExpr::Range(Some(v.clone()), Some(v)),
+                    group: LINK_GROUP,
+                });
             }
         }
         if let Some(t) = item.on_pre {
@@ -621,18 +743,28 @@ impl Session {
         };
         self.ret_used = true;
         let mut more = matches!(self.record_op("FindSet", &rec, &mut [])?, Value::Boolean(true));
-        while more {
+        'rows: while more {
             if let (Some(t), Some((ext_inst, e))) = (modify.and_then(|m| m.before), &run.ext) {
                 self.call(*e, t, ext_inst.clone(), Vec::new())?;
             }
+            let mut flow = None;
             if let Some(t) = item.on_after_get {
-                self.call(object, t, owner.clone(), Vec::new())?;
+                flow = self.report_trigger_call(object, t, owner.clone(), TrigKind::Row)?;
             }
-            if let (Some(t), Some((ext_inst, e))) = (modify.and_then(|m| m.after), &run.ext) {
-                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            match flow {
+                Some(Flow::Quit) => return Ok(true),
+                Some(Flow::Break) => break 'rows,
+                _ => {}
             }
-            for child in run.children(r) {
-                self.report_item(run, child, Some(rec.clone()))?;
+            if flow.is_none() {
+                if let (Some(t), Some((ext_inst, e))) = (modify.and_then(|m| m.after), &run.ext) {
+                    self.call(*e, t, ext_inst.clone(), Vec::new())?;
+                }
+                for child in run.children(r) {
+                    if self.report_item(run, child, Some(rec.clone()))? {
+                        return Ok(true);
+                    }
+                }
             }
             self.ret_used = true;
             more = !matches!(self.record_op("Next", &rec, &mut [])?, Value::Integer(0));
@@ -640,7 +772,7 @@ impl Session {
         if let Some(t) = item.on_post {
             self.call(object, t, owner.clone(), Vec::new())?;
         }
-        Ok(())
+        Ok(false)
     }
 }
 

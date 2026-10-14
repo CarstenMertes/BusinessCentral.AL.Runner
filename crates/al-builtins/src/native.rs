@@ -113,6 +113,12 @@ pub trait Ctx: FormatCtx {
     fn collect_error(&mut self, _info: &Value) -> bool {
         false
     }
+    /// `Clear` of a report variable that has been used: the next use makes a new instance and runs
+    /// `OnInitReport` again (corpus handlers/TestReportRuntimeContracts.al:395-414). Returns false
+    /// when `inst` is not a report.
+    fn clear_report(&mut self, _inst: &Rc<std::cell::RefCell<crate::value::Instance>>) -> bool {
+        false
+    }
     /// The session's media objects and media sets (`Media` and `MediaSet` fields).
     fn media_store(&mut self) -> Option<&mut crate::media::MediaStore> {
         None
@@ -267,6 +273,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
     ("Report.Quit#1", vm_only),
+    ("Report.Skip#1", vm_only),
+    ("Report.Break#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
@@ -768,6 +776,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`
         // before `Probe.Run()`). Clearing one in use is not pinned.
         Value::Codeunit(rc) if !rc.borrow().initialized => return Ok(Value::Null),
+        Value::Codeunit(rc) if ctx.clear_report(rc) => return Ok(Value::Null),
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)

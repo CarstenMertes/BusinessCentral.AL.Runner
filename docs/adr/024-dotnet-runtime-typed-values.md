@@ -1,6 +1,6 @@
 # ADR-024: DotNet values whose type is known only at run time
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-14): option A. Build deferred until the blockers in front of these tests are gone; probes go into the existing OnPrem corpus app (`corpus/tests/al-language-onprem`, target OnPrem), so decision 2 below is moot.
 - Date: 2026-10-14
 - Amends (on acceptance): ADR-014 section 4 (the `foreach` bullet) and section 8 item 7 (gaps)
 

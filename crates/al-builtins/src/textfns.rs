@@ -6,7 +6,7 @@
 //! TestTextBuilder.al, TestBigText.al); cases outside the pinned ones, and every
 //! error whose text is not pinned, raise `Signal::Unsupported`.
 
-use crate::native::{Ctx, NativeFn, Signal, text_of};
+use crate::native::{Ctx, NativeFn, Signal, raise, text_of};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, Value};
 use std::cell::RefCell;
@@ -63,34 +63,25 @@ fn find(hay: &[u16], needle: &[u16], from: usize) -> Option<usize> {
 
 fn contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (recv_text(&r)?, text(a, 0)?);
-    if sub.is_empty() {
-        return unsupported("Contains of an empty text (not pinned)");
-    }
+    // An empty text is found (types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne).
     Ok(Value::Boolean(s.contains(&sub)))
 }
 
 fn starts_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (recv_text(&r)?, text(a, 0)?);
-    if sub.is_empty() {
-        return unsupported("StartsWith of an empty text (not pinned)");
-    }
+    // types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
     Ok(Value::Boolean(s.starts_with(&sub)))
 }
 
 fn ends_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (recv_text(&r)?, text(a, 0)?);
-    if sub.is_empty() {
-        return unsupported("EndsWith of an empty text (not pinned)");
-    }
+    // types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
     Ok(Value::Boolean(s.ends_with(&sub)))
 }
 
 /// 1-based, 0 when absent (TestTextExtended.al TextIndexOf_*).
 fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (u16s(&recv_text(&r)?), u16s(&text(a, 0)?));
-    if sub.is_empty() {
-        return unsupported("IndexOf of an empty text (not pinned)");
-    }
     let from = if a.len() > 1 {
         let n = int(a, 1)?;
         if n < 1 {
@@ -100,18 +91,38 @@ fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
     } else {
         0
     };
+    // The empty text is found at the start (types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne: IndexOf('') = 1).
+    if sub.is_empty() {
+        if a.len() > 1 {
+            return unsupported("IndexOf of an empty text with a start index (not pinned)");
+        }
+        return Ok(Value::Integer(1));
+    }
     Ok(Value::Integer(find(&s, &sub, from).map_or(0, |p| p as i32 + 1)))
 }
 
+/// `LastIndexOf(Value [, StartIndex])`. The empty text is found one past the end
+/// (`'hello'.LastIndexOf('') = 6`); with a 1-based start index the match lies within the first
+/// `StartIndex` characters (`'hello'.LastIndexOf('l', 3) = 3`), both in
+/// types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
 fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("LastIndexOf with a start index (not pinned)");
-    }
     let (s, sub) = (u16s(&recv_text(&r)?), u16s(&text(a, 0)?));
+    let limit = if a.len() > 1 {
+        let n = int(a, 1)?;
+        if n < 1 || n as usize > s.len() {
+            return unsupported("LastIndexOf with a start index outside the text (not pinned)");
+        }
+        n as usize
+    } else {
+        s.len()
+    };
     if sub.is_empty() {
-        return unsupported("LastIndexOf of an empty text (not pinned)");
+        if a.len() > 1 {
+            return unsupported("LastIndexOf of an empty text with a start index (not pinned)");
+        }
+        return Ok(Value::Integer(s.len() as i32 + 1));
     }
-    let pos = s.windows(sub.len()).rposition(|w| w == sub.as_slice());
+    let pos = s[..limit].windows(sub.len()).rposition(|w| w == sub.as_slice());
     Ok(Value::Integer(pos.map_or(0, |p| p as i32 + 1)))
 }
 
@@ -185,7 +196,11 @@ fn trim_end(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
 fn replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, old, new) = (recv_text(&r)?, text(a, 0)?, text(a, 1)?);
     if old.is_empty() {
-        return unsupported("Replace of an empty text (not pinned)");
+        // types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
+        return raise(
+            "The value cannot be an empty string. (Parameter 'oldValue')",
+            "Argument",
+        );
     }
     Ok(Value::Text(s.replace(&old, &new)))
 }
@@ -195,15 +210,24 @@ fn substring(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     let s = u16s(&recv_text(&r)?);
     let start = int(a, 0)?;
     let count = if a.len() > 1 { Some(int(a, 1)?) } else { None };
-    if start < 1 || start as usize > s.len() + 1 {
-        return unsupported("Substring with a start index outside the text (error text not pinned)");
+    if start > s.len() as i64 + 1 {
+        // types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments.
+        return raise(
+            "startIndex cannot be larger than length of string. (Parameter 'startIndex')",
+            "ArgumentOutOfRange",
+        );
+    }
+    if start < 1 {
+        return unsupported("Substring with a start index below 1 (error text not pinned)");
     }
     let from = start as usize - 1;
     let to = match count {
-        Some(c) if c < 0 || from + c as usize > s.len() => {
-            return unsupported("Substring with a count outside the text (error text not pinned)");
+        Some(c) if c < 0 => {
+            return unsupported("Substring with a negative count (error text not pinned)");
         }
-        Some(c) => from + c as usize,
+        // A count past the end is clamped (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments:
+        // 'hello'.Substring(2, 10) = 'ello').
+        Some(c) => s.len().min(from + c as usize),
         None => s.len(),
     };
     Ok(Value::Text(from_u16(&s[from..to])))
@@ -261,14 +285,16 @@ fn split(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             })
             .collect::<Result<_, _>>()?,
     };
-    if seps.iter().any(Vec::is_empty) {
-        return unsupported("Split with an empty separator (not pinned)");
-    }
+    // An empty separator never matches; a list of only empty separators does not split at all
+    // (types/TestFormatEvaluateTextContracts.al:Text_Split_TriesSeparatorsInOrderAndKeepsEmptyParts:
+    // 'hello'.Split('') has one part).
+    let whitespace = seps.is_empty();
+    let seps: Vec<Vec<u16>> = seps.into_iter().filter(|s| !s.is_empty()).collect();
     let is_ws = |c: u16| char::from_u32(u32::from(c)).is_some_and(char::is_whitespace);
     let mut parts: Vec<Value> = Vec::new();
     let (mut start, mut i) = (0usize, 0usize);
     while i < s.len() {
-        let hit = if seps.is_empty() {
+        let hit = if whitespace {
             is_ws(s[i]).then_some(1)
         } else {
             seps.iter().find(|sep| s[i..].starts_with(sep)).map(|sep| sep.len())
@@ -293,7 +319,15 @@ fn split(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
 fn convert_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, from, to) = (text(a, 0)?, u16s(&text(a, 1)?), u16s(&text(a, 2)?));
     if from.len() != to.len() {
-        return unsupported("ConvertStr with different lengths of From and To (not pinned)");
+        // types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments.
+        return raise(
+            format!(
+                "ALConvertStr expects 2 strings in the conversion to be of equal length: Converting from {} to {}.",
+                from_u16(&from),
+                from_u16(&to)
+            ),
+            "InvalidStringFormat",
+        );
     }
     let mapped: Vec<u16> = u16s(&s)
         .into_iter()
@@ -323,22 +357,25 @@ fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     }))
 }
 
-/// Increments the number the text ends with, keeping its width; no trailing number gives an
-/// empty text (TestTextExtended.al IncStr_*, TestTextProcessingContracts.al IncStr_*).
+/// Increments the last block of digits, keeping its width; no digit gives an empty text
+/// (TestTextExtended.al IncStr_*, TestTextProcessingContracts.al IncStr_*; digits that are not at
+/// the end: types/TestFormatEvaluateTextContracts.al:IncStr_IncrementsTheLastDigitBlock,
+/// `IncStr('A1B') = 'A2B'`).
 fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     if a.len() > 1 {
         return unsupported("IncStr with an increment (not pinned)");
     }
     let s = text(a, 0)?;
     let chars: Vec<char> = s.chars().collect();
-    let digits = chars.iter().rev().take_while(|c| c.is_ascii_digit()).count();
-    if digits == 0 {
-        if chars.iter().any(char::is_ascii_digit) {
-            return unsupported("IncStr of a text with digits that are not at the end (not pinned)");
-        }
+    let Some(last) = chars.iter().rposition(char::is_ascii_digit) else {
         return Ok(Value::Text(String::new()));
-    }
-    let (head, num) = chars.split_at(chars.len() - digits);
+    };
+    let first = chars[..=last]
+        .iter()
+        .rposition(|c| !c.is_ascii_digit())
+        .map_or(0, |p| p + 1);
+    let (head, rest) = chars.split_at(first);
+    let (num, tail) = rest.split_at(last + 1 - first);
     let mut digs: Vec<u8> = num.iter().map(|c| *c as u8 - b'0').collect();
     let mut carry = true;
     for d in digs.iter_mut().rev() {
@@ -356,6 +393,7 @@ fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
         out.push('1');
     }
     out.extend(digs.iter().map(|d| char::from(b'0' + d)));
+    out.extend(tail.iter());
     Ok(Value::Text(out))
 }
 
@@ -381,8 +419,12 @@ fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = u16s(&text(a, 0)?);
     let pos = int(a, 1)?;
-    if pos < 1 || pos as usize > s.len() {
-        return unsupported("DelStr with a position outside the text (not pinned)");
+    if pos < 1 {
+        return unsupported("DelStr with a position below 1 (not pinned)");
+    }
+    // A position past the end deletes nothing (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments).
+    if pos as usize > s.len() {
+        return Ok(Value::Text(from_u16(&s)));
     }
     let from = pos as usize - 1;
     let to = if a.len() > 2 {
@@ -403,25 +445,29 @@ fn ins_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = u16s(&text(a, 0)?);
     let sub = u16s(&text(a, 1)?);
     let pos = int(a, 2)?;
-    if pos < 1 || pos as usize > s.len() {
-        return unsupported("InsStr with a position outside the text (not pinned)");
+    if pos < 1 {
+        return unsupported("InsStr with a position below 1 (not pinned)");
     }
-    let at = pos as usize - 1;
+    // A position past the end appends (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments).
+    let at = (pos as usize - 1).min(s.len());
     let mut out = s[..at].to_vec();
     out.extend_from_slice(&sub);
     out.extend_from_slice(&s[at..]);
     Ok(Value::Text(from_u16(&out)))
 }
 
-/// Success only: the error for an index outside the list has a text the corpus pins only in part
-/// (TestTextProcessingContracts.al `does not contain a value for index`).
+/// An index outside the list raises with the text and code of
+/// types/TestFormatEvaluateTextContracts.al:SelectStr_IndexOutsideTheList_Throws (indexes 4, 0 and -1).
 fn select_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let n = int(a, 0)?;
     let list = text(a, 1)?;
     let parts: Vec<&str> = list.split(',').collect();
     match usize::try_from(n - 1).ok().and_then(|i| parts.get(i)) {
         Some(p) => Ok(Value::Text((*p).to_string())),
-        None => unsupported("SelectStr with an index outside the list (error text only partly pinned)"),
+        None => raise(
+            format!("The SELECTSTR comma-string {list} does not contain a value for index {n}."),
+            "InvalidStringFormat",
+        ),
     }
 }
 
@@ -499,13 +545,13 @@ fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(true))
 }
 
-/// The line terminator is not pinned (docs/probes-needed.md): CRLF.
+/// The line terminator is a line feed only (types/TestFormatEvaluateTextContracts.al:TextBuilder_AppendLine_EndsWithLineFeedOnly).
 fn tb_append_line(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let t = if a.is_empty() { String::new() } else { text(a, 0)? };
     with_string(&h, |s| {
         s.push_str(&t);
-        s.push_str("\r\n");
+        s.push('\n');
     });
     Ok(Value::Boolean(true))
 }

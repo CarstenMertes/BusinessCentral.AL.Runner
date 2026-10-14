@@ -232,8 +232,11 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         Arith::Sub => a.checked_sub(b),
         Arith::Mul => a.checked_mul(b),
         Arith::Div => {
+            // A quotient keeps 18 significant digits, rounded at the last one
+            // (types/TestDateRoundFormatStringContracts.al:Decimal_Division_KeepsEighteenSignificantDigits).
             return Ok(V::Decimal(
                 a.checked_div(b)
+                    .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
                     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?,
             ));
         }
@@ -273,6 +276,17 @@ fn int_of(v: &Value) -> Option<i64> {
     }
 }
 
+/// Ordering for `<`, `<=`, `>` and `>=`: as [`compare`], except that text follows the culture order
+/// (types/TestFormatEvaluateTextContracts.al:Operators_TextComparison_IsCultureOrderAndCaseSensitiveEquality).
+pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    if let (Value::Text(_) | Value::Code(_), Value::Text(_) | Value::Code(_)) = (l, r) {
+        if let (Some(a), Some(b)) = (crate::native::text_of(l), crate::native::text_of(r)) {
+            return crate::collation::compare(&a, &b).map_err(Signal::Unsupported);
+        }
+    }
+    compare(l, r)
+}
+
 /// Ordering for `=`, `<>`, `<`, ... ; `None` when the values are not comparable.
 /// Text compares ordinally (case-sensitive): docs/probes-needed.md.
 pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
@@ -298,7 +312,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Duration(a), V::BigInteger(b)) => a.cmp(b),
         (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
-        (V::DateFormula(a), V::DateFormula(b)) => a.cmp(b),
+        (V::DateFormula(a), V::DateFormula(b)) => crate::datefns::formula_text(a).cmp(&crate::datefns::formula_text(b)),
         // SessionSettings compare by value (session/TestSessionSettings.al:513-545).
         (V::Library(na, a), V::Library(nb, b)) if na == "SessionSettings" && nb == "SessionSettings" => {
             use crate::value::LibraryValue as L;

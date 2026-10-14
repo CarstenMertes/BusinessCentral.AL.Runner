@@ -2903,7 +2903,9 @@ impl Lowerer<'_> {
             }
             SyntaxKind::TimeLit => {
                 let d = &text[..text.len() - 1];
-                if d.chars().all(|c| c == '0') {
+                // `0T` is the blank time, `000000T` is midnight
+                // (types/TestFormatEvaluateTextContracts.al:Format_Time_StandardFormats).
+                if d.chars().all(|c| c == '0') && d.len() < 6 {
                     ir::Const::Time(0)
                 } else {
                     let (hms, frac) = d.split_once('.').unwrap_or((d, "0"));
@@ -3330,7 +3332,12 @@ impl Lowerer<'_> {
                         _ => return Err("ArrayLen with a dimension that is not a constant".into()),
                     },
                     None if dims.len() == 1 => Some(1),
-                    None => return Err("ArrayLen without a dimension on a multi-dimensional array (not pinned)".into()),
+                    // Without a dimension the total number of elements
+                    // (streams/TestStreamsRuntimeContracts.al:ArrayLen_MultiDimensional_WithAndWithoutDimension).
+                    None => {
+                        let total: u32 = dims.iter().product();
+                        return Ok(ir::Expr::Const(ir::Const::Integer(total as i32)));
+                    }
                 };
                 match dim.and_then(|k| usize::try_from(k - 1).ok()).and_then(|k| dims.get(k)) {
                     Some(n) => Ok(ir::Expr::Const(ir::Const::Integer(*n as i32))),

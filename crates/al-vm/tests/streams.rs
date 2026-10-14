@@ -220,12 +220,106 @@ fn calc_fields_keeps_an_uncommitted_in_memory_write() {
 
 #[test]
 fn what_the_corpus_does_not_pin_about_streams_is_refused() {
-    // Reading from an unloaded blob's Length, WriteText with no text, binary types other than Integer.
+    // The binary form of a Date and of a Decimal were measured once each and no rule is known.
     assert!(refused(
         BASE,
-        "B.Code := 'X'; B.Data.CreateOutStream(O); O.WriteText('a'); B.Insert(); B.Get('X'); exit(Format(B.Data.Length()));"
+        "B.Data.CreateOutStream(O); O.Write(20240305D); exit('');"
     ));
-    assert!(refused(BASE, "B.Data.CreateOutStream(O); O.WriteText(); exit('');"));
+    assert!(refused(BASE, "B.Data.CreateOutStream(O); O.Write(1.5); exit('');"));
+    // An empty blob that was not loaded has no measured length.
+    assert!(refused(
+        BASE,
+        "B.Code := 'X'; B.Insert(); B.Get('X'); exit(Format(B.Data.Length()));"
+    ));
+}
+
+#[test]
+fn write_text_without_a_text_writes_carriage_return_line_feed() {
+    // streams/TestStreamsRuntimeContracts.al:OutStream_WriteText_WithoutArgument_WritesCarriageReturnLineFeed.
+    let t = text(
+        base!("V: Byte; H: Text;"),
+        "B.Data.CreateOutStream(O); O.WriteText('abc'); O.WriteText(); O.WriteText('def'); B.Data.CreateInStream(I);
+         while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);",
+    );
+    assert_eq!(t, "97,98,99,13,10,100,101,102,");
+}
+
+#[test]
+fn the_default_encoding_is_windows_1252() {
+    // streams/TestStreamsRuntimeContracts.al:WriteText_DefaultEncodingIsWindows1252_NotUtf8 and
+    // :WriteText_ExplicitEncodings_Bytes: e acute is one byte by default, two in UTF8, and UTF16 is
+    // two bytes per character with no byte order mark.
+    let vars = base!("V: Byte; H: Text; E: Char;");
+    let bytes = |enc: &str| {
+        format!(
+            "E := 233; B.Data.CreateOutStream(O{enc}); O.WriteText('h' + Format(E)); B.Data.CreateInStream(I{enc});
+             while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);"
+        )
+    };
+    assert_eq!(text(vars, &bytes("")), "104,233,");
+    assert_eq!(text(vars, &bytes(", TextEncoding::UTF8")), "104,195,169,");
+    assert_eq!(text(vars, &bytes(", TextEncoding::UTF16")), "104,0,233,0,");
+    assert_eq!(text(vars, &bytes(", TextEncoding::MSDos")), "104,233,");
+}
+
+#[test]
+fn read_text_ends_at_a_line_feed_and_drops_carriage_returns() {
+    // streams/TestStreamsRuntimeContracts.al:InStream_ReadText_SplitsAtLineFeed_AndDropsALoneCarriageReturn.
+    let lines = |content: &str| {
+        text(
+            base!("Cr: Text[1]; Lf: Text[1]; L: Text;"),
+            &format!(
+                "Cr[1] := 13; Lf[1] := 10; B.Data.CreateOutStream(O); O.WriteText({content}); B.Data.CreateInStream(I);
+                 while not I.EOS() do begin I.ReadText(T); L += '[' + T + ']'; end; exit(L);"
+            ),
+        )
+    };
+    assert_eq!(lines("'a' + Lf + 'b'"), "[a][b]");
+    assert_eq!(lines("'a' + Cr + Lf + 'b'"), "[a][b]");
+    assert_eq!(lines("'a' + Lf + Cr + 'b'"), "[a][b]");
+    assert_eq!(lines("'a' + Cr + 'b'"), "[ab]");
+    assert_eq!(lines("'a' + Lf + Lf + 'b'"), "[a][][b]");
+    assert_eq!(lines("'a' + Lf"), "[a]");
+    assert_eq!(lines("'a' + Cr"), "[a]");
+}
+
+#[test]
+fn create_out_stream_keeps_the_content_and_an_in_stream_is_live() {
+    // streams/TestStreamsRuntimeContracts.al:BlobField_CreateOutStream_DoesNotEmptyExistingData and
+    // :InStream_CreatedBeforeAWrite_SeesTheWrite.
+    let t = text(
+        base!("C: Text;"),
+        "B.Code := 'S'; B.Insert(); B.Data.CreateOutStream(O); O.WriteText('first-long-text'); B.Modify();
+         B.Data.CreateOutStream(O); O.WriteText('x'); B.Modify(); B.CalcFields(Data); B.Data.CreateInStream(I); I.ReadText(C);
+         exit(C + '|' + Format(B.Data.Length()));",
+    );
+    assert_eq!(t, "xirst-long-text|15");
+    let t = text(
+        base!("C: Text;"),
+        "B.Code := 'S'; B.Insert(); B.Data.CreateOutStream(O); O.WriteText('first-long-text');
+         B.Data.CreateInStream(I); B.Data.CreateOutStream(O); O.WriteText('later'); I.ReadText(C); exit(C);",
+    );
+    assert_eq!(t, "later-long-text");
+}
+
+#[test]
+fn binary_forms_of_the_types_the_probe_measured() {
+    // streams/TestStreamsRuntimeContracts.al:OutStream_Write_BinaryFormsOfEachType (Integer, Boolean,
+    // BigInteger, Time and Text).
+    let hex = |write: &str| {
+        text(
+            base!("V: Byte; H: Text; Big: BigInteger;"),
+            &format!(
+                "Evaluate(Big, '5000000000'); B.Data.CreateOutStream(O); {write}; B.Data.CreateInStream(I);
+                 while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);"
+            ),
+        )
+    };
+    assert_eq!(hex("O.Write(258)"), "2,1,0,0,");
+    assert_eq!(hex("O.Write(true)"), "1,0,0,0,");
+    assert_eq!(hex("O.Write(Big)"), "0,242,5,42,1,0,0,0,");
+    assert_eq!(hex("O.Write(143005T)"), "201,149,28,3,");
+    assert_eq!(hex("O.Write('text')"), "116,101,120,116,0,");
 }
 
 #[test]
@@ -254,8 +348,9 @@ fn array_helpers() {
         "exit(Format(ArrayLen(A, 1)) + Format(ArrayLen(A, 2)));",
     );
     assert_eq!(t, "34");
-    // Without a dimension the answer for a multi-dimensional array is not pinned.
-    assert!(refused("A: array[3, 4] of Integer;", "exit(Format(ArrayLen(A)));"));
+    // streams/TestStreamsRuntimeContracts.al:ArrayLen_MultiDimensional_WithAndWithoutDimension: the total.
+    let t = text("A: array[2, 3] of Integer;", "exit(Format(ArrayLen(A)));");
+    assert_eq!(t, "6");
     assert!(refused("A: array[3, 4] of Integer;", "exit(Format(ArrayLen(A, 3)));"));
 }
 
@@ -311,6 +406,6 @@ fn text_encodings_decide_the_bytes_per_character() {
     };
     assert_eq!(text(vars, &write("Windows")), "6|Yes");
     assert_eq!(text(vars, &write("UTF8")), "12|Yes");
-    // Encodings other than these two are not pinned.
-    assert!(refused(vars, &write("UTF16")));
+    // UTF16 is two bytes per character (streams/TestStreamsRuntimeContracts.al:WriteText_ExplicitEncodings_Bytes).
+    assert_eq!(text(vars, &write("UTF16")), "12|Yes");
 }

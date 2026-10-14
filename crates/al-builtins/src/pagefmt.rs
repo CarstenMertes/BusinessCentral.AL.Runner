@@ -257,7 +257,7 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
         }
         Value::Duration(ms) => duration_text(*ms),
         Value::Guid(g) => guid_text(g),
-        Value::DateFormula(s) => s.clone(),
+        Value::DateFormula(s) => crate::datefns::formula_text(s),
         other => {
             let _ = Ordering::Equal;
             format!("{other:?}")

@@ -91,7 +91,7 @@ fn the_default_host_clock_is_frozen_at_a_known_instant() {
     assert_eq!(text("", "exit(Format(Today(), 0, 9));"), "2024-01-15");
     assert_eq!(
         text("", "exit(Format(CurrentDateTime(), 0, 9));"),
-        "2024-01-15T12:00:00.000Z"
+        "2024-01-15T12:00:00Z"
     );
 }
 
@@ -216,7 +216,7 @@ fn insert_stamps_all_four_fields() {
     let Value::Text(t) = v else { panic!() };
     assert_eq!(
         t,
-        "2024-01-15T12:00:00.000Z|2024-01-15T12:00:00.000Z|{C0A1BDFA-0000-0000-0000-545553545553}|{C0A1BDFA-0000-0000-0000-545553545553}"
+        "2024-01-15T12:00:00Z|2024-01-15T12:00:00Z|{C0A1BDFA-0000-0000-0000-545553545553}|{C0A1BDFA-0000-0000-0000-545553545553}"
     );
 }
 

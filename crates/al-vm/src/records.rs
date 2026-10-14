@@ -396,7 +396,10 @@ impl Session {
                 .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
             // The row being rewritten matches itself when its key values do not change.
             if let Some(old) = &current {
-                if t.keys[k].iter().all(|&f| ops::compare_keys(&[old[f].clone()], &[row[f].clone()])) {
+                if t.keys[k]
+                    .iter()
+                    .all(|&f| ops::compare_keys(&[old[f].clone()], &[row[f].clone()]))
+                {
                     n = n.saturating_sub(1);
                 }
             }
@@ -599,7 +602,10 @@ impl Session {
 
     /// Whether the record last read the row with primary key `pk` (see `RecordState::position`).
     fn on_own_row(rec: &Rec, pk: &[Value]) -> bool {
-        rec.borrow().position.as_deref().is_some_and(|p| ops::compare_keys(p, pk))
+        rec.borrow()
+            .position
+            .as_deref()
+            .is_some_and(|p| ops::compare_keys(p, pk))
     }
 
     fn is_marked(rec: &Rec, t: &TableDef, row: &[Value]) -> bool {
@@ -736,10 +742,28 @@ impl Session {
         // The next access of the table raises a deferred duplicate-key Insert.
         if matches!(
             method,
-            "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate" | "Get" | "Find"
-                | "FindFirst" | "FindLast" | "FindSet" | "Next" | "Count" | "IsEmpty" | "CalcFields" | "CalcSums"
+            "Insert"
+                | "Modify"
+                | "Delete"
+                | "DeleteAll"
+                | "ModifyAll"
+                | "Rename"
+                | "Truncate"
+                | "Get"
+                | "Find"
+                | "FindFirst"
+                | "FindLast"
+                | "FindSet"
+                | "Next"
+                | "Count"
+                | "IsEmpty"
+                | "CalcFields"
+                | "CalcSums"
         ) && !rec.borrow().temporary
-            && self.deferred_insert.as_ref().is_some_and(|(o, _)| *o == t.object as usize)
+            && self
+                .deferred_insert
+                .as_ref()
+                .is_some_and(|(o, _)| *o == t.object as usize)
         {
             let (_, e) = self.deferred_insert.take().expect("checked");
             return Err(Signal::Error(e));
@@ -954,7 +978,11 @@ impl Session {
                         let has_blob = self.engine.program.objects[t.object as usize]
                             .table
                             .as_ref()
-                            .is_some_and(|s| s.fields.iter().any(|f| matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Blob"))));
+                            .is_some_and(|s| {
+                                s.fields
+                                    .iter()
+                                    .any(|f| matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Blob")))
+                            });
                         // A table with an AutoIncrement field needs the platform's answer at once
                         // (record/TestAutoIncrementContracts.al:AutoIncrement_SecondInsert_...).
                         if !self.ret_used
@@ -1217,8 +1245,16 @@ impl Session {
                                 let pos = position(&t, 0, &rec.borrow().fields);
                                 let up = matches!(w, ">=" | "=>" | "=><");
                                 let down = matches!(w, "<=" | "=<" | "=><");
-                                let next = if up { self.scan(rec, &t, asc, Some(pos.clone()))? } else { None };
-                                let prev = if down { self.scan(rec, &t, !asc, Some(pos))? } else { None };
+                                let next = if up {
+                                    self.scan(rec, &t, asc, Some(pos.clone()))?
+                                } else {
+                                    None
+                                };
+                                let prev = if down {
+                                    self.scan(rec, &t, !asc, Some(pos))?
+                                } else {
+                                    None
+                                };
                                 match (next, prev) {
                                     (Some(_), Some(_)) if w == "=><" => {
                                         return unsupported(

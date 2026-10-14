@@ -913,6 +913,10 @@ mod tests {
                     Ok := Codeunit.Run(Codeunit::Inserter);
                     if not Ok then Error('guarded run refused'); end;
                 [Test] procedure DefaultWrites() var R: Record S; begin
+                    // The guarded run of NextStartsClean committed its row 'RUN': it survives an
+                    // AutoRollback test (codeunit/TestCodeunitRunErrorTextsAndModels.al:
+                    // AutoRollback_Test04, corpus branch al-runtime-rs, probe on BC 27.5).
+                    R.DeleteAll();
                     R.K := 'D'; R.Insert();
                     if not Database.IsInWriteTransaction() then Error('no write transaction after an insert'); end;
                 [Test] procedure GuardedRunAfterDefaultWrite() var R: Record S; Ok: Boolean; begin
@@ -953,8 +957,13 @@ mod tests {
         assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
         assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
         assert_eq!(o[2].1, Outcome::Pass, "{o:?}");
-        // DeleteAll under None: the refusal is not pinned.
-        assert!(matches!(&o[3].1, Outcome::NotRun(r) if r.contains("None")), "{o:?}");
+        // DeleteAll under None is refused with the Insert text
+        // (codeunit/TestWriteTxNoneModelContracts.al:Test04, corpus branch al-runtime-rs, BC 27.5).
+        assert_eq!(
+            o[3].1,
+            Outcome::Fail("A transaction must be started before changes can be made to the database.".into()),
+            "{o:?}"
+        );
     }
 
     // codeunit/TestWriteTxTestBoundary.al:Test10_ARunCodeunitMayWriteUnderNone

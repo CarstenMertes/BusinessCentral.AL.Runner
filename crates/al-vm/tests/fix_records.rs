@@ -104,7 +104,6 @@ fn failing_writes_run_before_event_and_trigger_then_raise() {
     );
 }
 
-
 // ---- batch 2: filters, views, Copy, Mark (corpus branch al-runtime-rs, pending push:
 // record/TestFilterTextBooleanFindContracts.al, record/TestRecordViewCopyMarkContracts.al) ----
 
@@ -138,8 +137,7 @@ fn uni(body: &str) -> String {
 
 #[test]
 fn text_filter_is_case_sensitive_unless_it_starts_with_at() {
-    let src = uni(
-        "procedure F(): Text var U: Record Uni; R: Text; begin Seed();
+    let src = uni("procedure F(): Text var U: Record Uni; R: Text; begin Seed();
             U.SetFilter(\"Text Field\", 'apple'); R += Format(U.Count()) + ',';
             U.SetFilter(\"Text Field\", '@apple'); R += Format(U.Count()) + ',';
             U.SetFilter(\"Text Field\", 'ap*'); R += Format(U.Count()) + ',';
@@ -148,8 +146,7 @@ fn text_filter_is_case_sensitive_unless_it_starts_with_at() {
             U.SetFilter(\"Text Field\", '''@home'''); R += Format(U.Count()) + ',';
             U.SetFilter(\"Code Field\", 'ap*'); R += Format(U.Count()) + ',';
             U.Reset(); U.SetFilter(\"Code Field\", 'apple'); R += Format(U.Count());
-            exit(R); end;",
-    );
+            exit(R); end;");
     // corpus branch al-runtime-rs (pending push): record/TestFilterTextBooleanFindContracts.al:
     // SetFilter_TextField_IsCaseSensitive_UnlessItStartsWithAt, ..._QuotedValue_..., ..._CodeField_...
     assert_eq!(text(run(&src, "F")), "1,2,1,2,1,0,0,1");
@@ -172,16 +169,14 @@ fn boolean_filter_words_and_error() {
 
 #[test]
 fn find_honours_the_active_filters() {
-    let src = uni(
-        "procedure F(): Text var U: Record Uni; R: Text; begin Seed();
+    let src = uni("procedure F(): Text var U: Record Uni; R: Text; begin Seed();
             U.SetRange(\"Code Field\", 'APPLE');
             U.\"Entry No.\" := 2; R += Format(U.Find()) + ',';
             U.\"Entry No.\" := 2; R += Format(U.Find('=')) + ',';
             U.\"Entry No.\" := 2; R += Format(U.Find('>=')) + ',';
             U.\"Entry No.\" := 0; R += Format(U.Find('>')) + ',' + Format(U.\"Entry No.\") + ',';
             U.\"Entry No.\" := 1; R += Format(U.Find());
-            exit(R); end;",
-    );
+            exit(R); end;");
     assert_eq!(text(run(&src, "F")), "No,No,No,Yes,1,Yes");
 }
 
@@ -208,14 +203,15 @@ fn kd(body: &str) -> String {
 fn set_rec_filter_keeps_filters_on_other_fields() {
     // corpus branch al-runtime-rs (pending push): record/TestRecordViewCopyMarkContracts.al:
     // SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey
-    let src = kd(
-        "procedure F(): Text var K: Record Kd; R: Text; begin Seed();
+    let src = kd("procedure F(): Text var K: Record Kd; R: Text; begin Seed();
             K.Get(1); K.SetRange(Name, 'zzz'); K.SetRecFilter();
             R += K.GetFilters() + '|' + Format(K.Count()) + '|';
             K.Reset(); K.SetRange(Amount, 5); K.Get(2); K.SetRecFilter();
-            exit(R + K.GetFilters()); end;",
+            exit(R + K.GetFilters()); end;");
+    assert_eq!(
+        text(run(&src, "F")),
+        "Entry No.: 1, Name: zzz|0|Entry No.: 2, Amount: 5"
     );
-    assert_eq!(text(run(&src, "F")), "Entry No.: 1, Name: zzz|0|Entry No.: 2, Amount: 5");
 }
 
 #[test]
@@ -244,11 +240,9 @@ fn copy_carries_filters_of_all_groups_and_checks_share_table() {
 #[test]
 fn mark_returns_the_new_state() {
     // record/TestRecordViewCopyMarkContracts.al:Mark_ReturnsTheNewState
-    let src = kd(
-        "procedure F(): Text var K: Record Kd; R: Text; begin Seed(); K.Get(1);
+    let src = kd("procedure F(): Text var K: Record Kd; R: Text; begin Seed(); K.Get(1);
             R += Format(K.Mark(true)) + Format(K.Mark(true)) + Format(K.Mark(false)) + Format(K.Mark());
-            K.Reset(); K.MarkedOnly(true); exit(R + Format(K.Count())); end;",
-    );
+            K.Reset(); K.MarkedOnly(true); exit(R + Format(K.Count())); end;");
     assert_eq!(text(run(&src, "F")), "YesYesNoNo0");
 }
 
@@ -273,45 +267,44 @@ fn set_view_replaces_filters_keeps_direction_and_rejects_garbage() {
 fn a_validate_that_raises_restores_the_whole_record() {
     // corpus branch al-runtime-rs (pending push): record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
     // Validate_ThatRaises_RestoresTheWholeRecord
-    let src = format!(
-        "table 50420 VR
-        {{
+    let src = "table 50420 VR
+        {
             fields
-            {{
-                field(1; Id; Integer) {{ }}
-                field(2; A; Text[20]) {{ trigger OnValidate() begin B := 'set-by-A-trigger'; C := C + 1; if A = 'bad' then Error('A rejected'); end; }}
-                field(3; B; Text[20]) {{ }}
-                field(4; C; Integer) {{ }}
-            }}
-            keys {{ key(PK; Id) {{ }} }}
-        }}
-        codeunit 50421 C {{ procedure F(): Text var R: Record VR; begin
+            {
+                field(1; Id; Integer) { }
+                field(2; A; Text[20]) { trigger OnValidate() begin B := 'set-by-A-trigger'; C := C + 1; if A = 'bad' then Error('A rejected'); end; }
+                field(3; B; Text[20]) { }
+                field(4; C; Integer) { }
+            }
+            keys { key(PK; Id) { } }
+        }
+        codeunit 50421 C { procedure F(): Text var R: Record VR; begin
             R.Id := 1; R.A := 'old'; R.B := 'orig-B'; R.C := 10;
             asserterror R.Validate(A, 'bad');
-            exit(GetLastErrorText() + '|' + R.A + '|' + R.B + '|' + Format(R.C)); end; }}"
-    );
-    assert_eq!(text(run(&src, "F")), "A rejected|old|orig-B|10");
+            exit(GetLastErrorText() + '|' + R.A + '|' + R.B + '|' + Format(R.C)); end; }";
+    assert_eq!(text(run(src, "F")), "A rejected|old|orig-B|10");
 }
 
 #[test]
 fn a_temporary_record_has_no_system_id_and_the_duplicate_texts_are_pinned() {
     // record/TestSystemFieldStampsContracts.al:TemporaryRecord_HasNoStampsAndNoSystemId,
     // SystemId_Duplicate_And_ModifyAll_Texts
-    let src = format!(
-        "table 50430 SF
-        {{
-            fields {{ field(1; Id; Integer) {{ }} field(2; Txt; Text[20]) {{ }} }}
-            keys {{ key(PK; Id) {{ }} }}
-        }}
-        codeunit 50431 C {{ procedure F(): Text var T: Record SF temporary; S: Record SF; Rows: Record SF; G: Guid; R: Text; begin
+    let src = "table 50430 SF
+        {
+            fields { field(1; Id; Integer) { } field(2; Txt; Text[20]) { } }
+            keys { key(PK; Id) { } }
+        }
+        codeunit 50431 C { procedure F(): Text var T: Record SF temporary; S: Record SF; Rows: Record SF; G: Guid; R: Text; begin
             T.Id := 1; T.Insert(true); T.Get(1); R += Format(IsNullGuid(T.SystemId)) + '|';
             G := CreateGuid(); S.Id := 3; S.SystemId := G; S.Insert(false, true); Commit();
             Clear(S); S.Id := 4; S.SystemId := G;
             asserterror S.Insert(false, true); R += GetLastErrorText() + '|' + GetLastErrorCode() + '|';
             asserterror Rows.ModifyAll(SystemId, CreateGuid()); R += GetLastErrorText();
-            exit(R); end; }}"
-    );
-    let r = text(run(&src, "F"));
+            exit(R); end; }";
+    let r = text(run(src, "F"));
     assert!(r.starts_with("Yes|There is already a record in table SF that has the same values in a unique index for the following fields: System ID='{"), "{r}");
-    assert!(r.ends_with("}'|DB:RecordExists|You cannot change the value of the SystemId field.\r\\\r\\Table: SF"), "{r}");
+    assert!(
+        r.ends_with("}'|DB:RecordExists|You cannot change the value of the SystemId field.\r\\\r\\Table: SF"),
+        "{r}"
+    );
 }

@@ -501,6 +501,7 @@ pub fn lower_with_positions(
         reports: &report_irs,
         attrs: Default::default(),
         ret_ty: None,
+        ret_decl: None,
         routine_nodes: &routine_nodes,
         ext_slots: &ext_slots,
         page_extensions: &page_extensions,
@@ -1137,6 +1138,8 @@ struct Lowerer<'a> {
     attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
     ret_ty: Option<RtType>,
+    /// The declared return type of the routine being lowered (an interface result converts in `exit`).
+    ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.
     routine_nodes: &'a [Vec<ast::Routine>],
     /// The global slot of each variable of a page extension (see `lower`).
@@ -1210,16 +1213,6 @@ fn significant_span(n: &SyntaxNode) -> Option<(usize, usize)> {
         usize::from(first.text_range().start()),
         usize::from(last.text_range().end()).max(usize::from(first.text_range().start())),
     ))
-}
-
-/// An interface type anywhere inside a collection type.
-fn holds_interface(t: &Ty) -> bool {
-    match t {
-        Ty::Object(ObjKind::Interface, _) => true,
-        Ty::List(t) | Ty::Array(_, t) => holds_interface(t),
-        Ty::Dictionary(k, v) => holds_interface(k) || holds_interface(v),
-        _ => false,
-    }
 }
 
 fn key(file: usize, n: &SyntaxNode) -> (usize, usize, usize) {
@@ -2134,17 +2127,7 @@ impl Lowerer<'_> {
             }
             Ty::Object(ObjKind::Interface, n) => {
                 let i = self.resolve_obj(ObjKind::Interface, n)?;
-                // Which procedures an extending interface inherits is not pinned by the corpus.
-                if self.ws.object_ast(i).extends_parts().is_some() {
-                    return Err(format!(
-                        "interface \"{}\" extends another interface (`extends` is not lowered yet)",
-                        crate::types::display_name(n)
-                    ));
-                }
                 RtType::Interface(i as u32)
-            }
-            Ty::List(_) | Ty::Dictionary(..) | Ty::Array(..) if holds_interface(t) => {
-                return Err("an interface inside a List, Dictionary or array is not lowered yet (not pinned)".into());
             }
             Ty::List(t) => RtType::List(Box::new(self.rt(t)?)),
             Ty::Dictionary(k, v) => RtType::Dictionary(Box::new(self.rt(k)?), Box::new(self.rt(v)?)),
@@ -2189,14 +2172,16 @@ impl Lowerer<'_> {
         })
     }
 
-    /// Whether codeunit `cu` lists interface `iface` after `implements`.
+    /// Whether codeunit `cu` implements interface `iface`: it lists `iface`, or an interface that
+    /// extends it, after `implements` (codeunit/TestInterfaceRuntimeContracts.al:
+    /// Interface_ExtendedInterface_IsAndAs: a codeunit that implements `Probe IBar` answers a call
+    /// through a `Probe IFoo` variable, and `is "Probe IFoo"` holds).
     fn implements(&self, cu: usize, iface: usize) -> bool {
         let file = self.ws.objects[cu].file;
-        self.ws
-            .object_ast(cu)
-            .implements_parts()
-            .iter()
-            .any(|p| matches!(self.ws.resolve_ref(file, ObjKind::Interface, p), Resolution::Found(i) if i == iface))
+        let family = self.ws.interface_family(iface);
+        self.ws.object_ast(cu).implements_parts().iter().any(
+            |p| matches!(self.ws.resolve_ref(file, ObjKind::Interface, p), Resolution::Found(i) if family.contains(&i)),
+        )
     }
 
     /// `value` (of type `src`) converted for a slot of type `target`. An interface slot takes a
@@ -2215,8 +2200,16 @@ impl Lowerer<'_> {
         let iface = iface as usize;
         let iname = &self.ws.objects[iface].name;
         match src {
-            Ty::Object(ObjKind::Interface, n) if self.rt(src)? == slot => {
-                let _ = n;
+            // The same interface, or one it extends: the value is the same instance
+            // (codeunit/TestInterfaceRuntimeContracts.al:Interface_ExtendedInterface_IsAndAs).
+            Ty::Object(ObjKind::Interface, n) => {
+                let from = self.resolve_obj(ObjKind::Interface, n)?;
+                if from != iface && !self.ws.interface_bases(from).contains(&iface) {
+                    return Err(format!(
+                        "interface \"{}\" into interface \"{iname}\", which it does not extend",
+                        crate::types::display_name(n)
+                    ));
+                }
                 Ok(ir::Expr::Convert(slot, Box::new(value)))
             }
             Ty::Object(ObjKind::Codeunit, n) => {
@@ -2274,6 +2267,29 @@ impl Lowerer<'_> {
             value: Box::new(value),
             by_ordinal,
             unknown,
+        })
+    }
+
+    /// `x is I` and `x as I` on an interface value: whether the codeunit instance the variable
+    /// holds implements `I` (corpus codeunit/TestInterfaceRuntimeContracts.al:
+    /// Interface_ExtendedInterface_IsAndAs pins both for an implementing instance). The
+    /// implementing codeunits are known here, so the test is a set of object indexes.
+    fn interface_test(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Expr> {
+        let is = sig_tokens(n)[0].text().eq_ignore_ascii_case("is");
+        if !matches!(self.ty_of(&kids[0]), Ty::Object(ObjKind::Interface, _)) {
+            return Err("`is` and `as` on a value that is not an interface variable are not lowered yet".into());
+        }
+        let name = crate::check::type_name_text(&kids[1]);
+        let iface = self.resolve_obj(ObjKind::Interface, &name)?;
+        let objects: Vec<u32> = (0..self.ws.objects.len())
+            .filter(|&cu| self.ws.objects[cu].kind == ObjKind::Codeunit && self.implements(cu, iface))
+            .map(|cu| cu as u32)
+            .collect();
+        let value = Box::new(self.expr(&kids[0])?);
+        Ok(ir::Expr::InterfaceTest {
+            value,
+            objects,
+            cast: !is,
         })
     }
 
@@ -2378,22 +2394,12 @@ impl Lowerer<'_> {
         for p in r.params() {
             by_var.push(p.is_var());
             let ty = p.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
-            if p.is_var() && matches!(ty, Ty::Object(ObjKind::Interface, _)) {
-                self.reasons.push(format!(
-                    "`{}`: a var interface parameter is not lowered yet (not pinned)",
-                    p.name()
-                ));
-            }
             add(self, p.name(), ty, &mut locals);
         }
         let params = locals.len();
         let ret_ty = r.return_type().map(|t| Ty::from_type_ref(&t));
+        self.ret_decl = ret_ty.clone();
         let ret = match &ret_ty {
-            Some(Ty::Object(ObjKind::Interface, _)) => {
-                self.reasons
-                    .push("return type: an interface return value is not lowered yet (not pinned)".into());
-                None
-            }
             Some(t) => match self.rt(t) {
                 Ok(rt) => Some(rt),
                 Err(e) => {
@@ -2649,14 +2655,22 @@ impl Lowerer<'_> {
             CaseStmt => self.case(&kids),
             ExitStmt => match kids.first() {
                 None => Ok(ir::Stmt::Exit(None)),
-                Some(e) => self.expr(e).map(|v| {
-                    // A DotNet result must fit the return type exactly (ADR-014).
-                    ir::Stmt::Exit(Some(match (&self.ty_of(e), &self.ret_ty) {
+                Some(e) => self.expr(e).and_then(|v| {
+                    // A DotNet result must fit the return type exactly (ADR-014). An interface
+                    // result takes what an interface variable takes: a codeunit that implements
+                    // it, an enum, or an interface it extends (codeunit/TestInterfaceRuntimeContracts.al:
+                    // Interface_VarParameterAndReturnValue_CarryTheReference, `exit(Impl)`).
+                    if let Some(decl @ Ty::Object(ObjKind::Interface, _)) = self.ret_decl.clone() {
+                        return self
+                            .convert_to(&decl, &self.ty_of(e), v)
+                            .map(|v| ir::Stmt::Exit(Some(v)));
+                    }
+                    Ok(ir::Stmt::Exit(Some(match (&self.ty_of(e), &self.ret_ty) {
                         (Ty::DotNet(a), Some(rt)) if a.is_empty() && !matches!(rt, RtType::DotNet(_)) => {
                             ir::Expr::DotNetCoerce(rt.clone(), Box::new(v))
                         }
                         _ => v,
-                    }))
+                    })))
                 }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
@@ -2889,7 +2903,9 @@ impl Lowerer<'_> {
             }
             SyntaxKind::TimeLit => {
                 let d = &text[..text.len() - 1];
-                if d.chars().all(|c| c == '0') {
+                // `0T` is the blank time, `000000T` is midnight
+                // (types/TestFormatEvaluateTextContracts.al:Format_Time_StandardFormats).
+                if d.chars().all(|c| c == '0') && d.len() < 6 {
                     ir::Const::Time(0)
                 } else {
                     let (hms, frac) = d.split_once('.').unwrap_or((d, "0"));
@@ -2922,6 +2938,9 @@ impl Lowerer<'_> {
                     _ => ir::UnOp::Plus,
                 };
                 Ok(ir::Expr::Unary(op, Box::new(self.expr(&kids[0])?)))
+            }
+            BinExpr if matches!(sig_tokens(n)[0].text().to_ascii_lowercase().as_str(), "is" | "as") => {
+                self.interface_test(n, &kids)
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
@@ -3313,7 +3332,12 @@ impl Lowerer<'_> {
                         _ => return Err("ArrayLen with a dimension that is not a constant".into()),
                     },
                     None if dims.len() == 1 => Some(1),
-                    None => return Err("ArrayLen without a dimension on a multi-dimensional array (not pinned)".into()),
+                    // Without a dimension the total number of elements
+                    // (streams/TestStreamsRuntimeContracts.al:ArrayLen_MultiDimensional_WithAndWithoutDimension).
+                    None => {
+                        let total: u32 = dims.iter().product();
+                        return Ok(ir::Expr::Const(ir::Const::Integer(total as i32)));
+                    }
                 };
                 match dim.and_then(|k| usize::try_from(k - 1).ok()).and_then(|k| dims.get(k)) {
                     Some(n) => Ok(ir::Expr::Const(ir::Const::Integer(*n as i32))),

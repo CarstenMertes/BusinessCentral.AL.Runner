@@ -5,7 +5,7 @@
 //! 2. `not` unary `-` unary `+`
 //! 3. `*` `/` `div` `mod` `and` `xor`
 //! 4. `+` `-` `or`
-//! 5. `>` `>=` `<` `<=` `=` `<>` `in`
+//! 5. `>` `>=` `<` `<=` `=` `<>` `in` `is` `as`
 //! 6. `..`                          — only inside set literals and case labels
 //!
 //! The conditional `c ? a : b` is not in that table; it is parsed below level 5
@@ -76,10 +76,34 @@ pub(crate) fn expr(p: &mut Parser) {
 fn relational(p: &mut Parser) {
     let cp = p.checkpoint();
     additive(p);
-    while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_kw("in") {
+    while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_kw("in") || p.at_kw("is") || p.at_kw("as") {
+        let type_operator = p.at_kw("is") || p.at_kw("as");
         p.start_at(cp, BinExpr);
         p.bump_any();
-        additive(p);
+        if type_operator {
+            type_name(p);
+        } else {
+            additive(p);
+        }
+        p.finish();
+    }
+}
+
+/// The right operand of `is` and `as`: an interface name, `A`, `"A B"` or `Ns.A`. It is a name,
+/// not a value, so a call or an index does not continue it: `(X as I).Name()` takes parentheses.
+fn type_name(p: &mut Parser) {
+    if !matches!(p.current(), Ident | QuotedIdent) {
+        p.error("expected a type name");
+        return;
+    }
+    let cp = p.checkpoint();
+    p.start(NameRef);
+    p.bump_any();
+    p.finish();
+    while p.at(Dot) && matches!(p.nth(1), Ident | QuotedIdent) {
+        p.start_at(cp, MemberExpr);
+        p.bump_any();
+        member_name(p);
         p.finish();
     }
 }
@@ -357,6 +381,29 @@ mod tests {
     #[test]
     fn empty_set() {
         assert_eq!(e("x in []"), "(BinExpr (NameRef x) in (SetExpr [ ]))");
+    }
+
+    #[test]
+    fn is_and_as_take_a_type_name_and_bind_like_comparisons() {
+        assert_eq!(e("X is \"Y Z\""), "(BinExpr (NameRef X) is (NameRef \"Y Z\"))");
+        assert_eq!(
+            e("X as Ns.I"),
+            "(BinExpr (NameRef X) as (MemberExpr (NameRef Ns) . (NameRef I)))"
+        );
+        assert_eq!(
+            e("a + b is I"),
+            "(BinExpr (BinExpr (NameRef a) + (NameRef b)) is (NameRef I))"
+        );
+        assert_eq!(
+            e("(X as I).Name()"),
+            "(CallExpr (MemberExpr (ParenExpr ( (BinExpr (NameRef X) as (NameRef I)) )) . (NameRef Name)) (ArgList ( )))"
+        );
+    }
+
+    #[test]
+    fn is_without_a_type_name_is_an_error() {
+        assert!(errors("X is", expr) > 0);
+        assert!(errors("X as 5", expr) > 0);
     }
 
     #[test]

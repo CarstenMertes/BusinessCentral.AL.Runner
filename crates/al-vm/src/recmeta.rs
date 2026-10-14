@@ -708,7 +708,11 @@ impl Session {
         let row = rec.borrow().fields.clone();
         let mut parts = Vec::new();
         for &i in &t.keys[0] {
-            parts.push(format!("{}='{}'", self.field_caption(t, i), self.message_value(&row[i])?));
+            parts.push(format!(
+                "{}='{}'",
+                self.field_caption(t, i),
+                self.message_value(&row[i])?
+            ));
         }
         let key = parts.join(",");
         let what = match args.get(1) {

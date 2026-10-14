@@ -129,7 +129,10 @@ impl Session {
             // Captions, not names, and code DB:Ok (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
             // CalcFields_OnANormalField_UsesTheFieldAndTableCaptions_CodeDbOk).
             let fcap = self.field_caption(&self.engine.tables[table].clone().expect("table"), pos);
-            return error_code(format!("The {fcap} field in the {tcap} table must be a FlowField."), "DB:Ok");
+            return error_code(
+                format!("The {fcap} field in the {tcap} table must be a FlowField."),
+                "DB:Ok",
+            );
         }
         if let Some(reason) = &f.calc_refusal {
             return unsupported(reason.clone());

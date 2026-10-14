@@ -130,7 +130,10 @@ impl Session {
     /// Record and RecordRef views start with `VERSION(1) ` (corpus
     /// record/TestRecordRuntimeTextsAndViews.al:Record_GetView_And_GetFilters_Texts).
     pub(crate) fn get_view(&self, rec: &Rec, t: &TableDef, use_names: bool) -> Result<String, Signal> {
-        Ok(format!("VERSION(1) {}", self.get_view_with(rec, t, use_names, false, true)?))
+        Ok(format!(
+            "VERSION(1) {}",
+            self.get_view_with(rec, t, use_names, false, true)?
+        ))
     }
 
     /// `get_view`; with `option_ordinals` an Option or Enum filter value is written as its
@@ -165,7 +168,11 @@ impl Session {
             t.keys[key].iter().map(|&p| name(p)).collect::<Vec<_>>().join(",")
         );
         if !ascending {
-            out.push_str(if use_names || !record_form { " ORDER(Descending)" } else { " ORDER(1)" });
+            out.push_str(if use_names || !record_form {
+                " ORDER(Descending)"
+            } else {
+                " ORDER(1)"
+            });
         }
         let filters = Self::filters_in_field_order(rec);
         if !filters.is_empty() {

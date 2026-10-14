@@ -6,7 +6,7 @@ reviewed it.
 
 ## Open questions (not decided)
 
-- Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
+- (answered 2026-10-14, see below) Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
   - It is about 60 tests in 8 files, at local head b06fdc0 in corpus-probes.
   - All of them pass on the local BC 27.5 container, and the corpus gate
     scripts pass.
@@ -43,6 +43,32 @@ reviewed it.
   `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
 
 ## Decided by the owner (recorded)
+
+- 2026-10-14, performance phase: run tests in parallel at the test runner's
+  isolation unit.
+  - BC's test isolation can be per codeunit or per test procedure.
+  - Units share one common data store. A copy per unit or per thread would
+    cost too much memory.
+  - Design direction: every unit forks from one shared baseline snapshot, using
+    the persistent maps of ADR-003 and ADR-004, so a fork costs O(1) and
+    memory grows only with each unit's own changes.
+  - Within a session, execution stays single-threaded, as in BC.
+
+- 2026-10-14, performance goal: first close the remaining gaps, then work on
+  performance.
+  - The target is a corpus run WITH Microsoft's apps in under a second, and
+    then further until nothing is left to squeeze.
+  - Caching comes only after that, as the last step.
+  - This overrides ADR-013's "persistent cache if the warm budget is missed".
+- 2026-10-14: the Rust port of bcdb (BusinessCentral.BakReader) starts now, on
+  branch `bcdb`, as a new crate.
+
+- 2026-10-14, ADR-016: release path is "separate now, decide later". The runtime
+  gets a new binary name, stays in this repo, and has a clean CLI. The cutover
+  decision is made at the preview gate. Questions 1, 2 and 4 are answered;
+  the binary name itself is still to pick.
+- 2026-10-14: push all probe tests to the corpus branch. Done: 348a744, with
+  the BC29PLUS dispatch fix.
 
 - 2026-10-13, ADR-016: server mode, watch mode and `--affected` are deferred
   while start-up is not a concern. Revisit after dependency loading is

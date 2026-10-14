@@ -803,7 +803,10 @@ codeunit 50100 C
 #[test]
 fn table_events_on_temporary_records_fire() {
     assert_eq!(
-        text(trace_with("T2: Record ET temporary;", "T2.\"No.\" := 1; T2.Insert(true);")),
+        text(trace_with(
+            "T2: Record ET temporary;",
+            "T2.\"No.\" := 1; T2.Insert(true);"
+        )),
         "BIYes,OnInsert,AI1"
     );
 }

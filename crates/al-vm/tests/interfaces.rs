@@ -148,20 +148,6 @@ fn run_with(fixtures: &str, body: &str, routine: &str, enums: &[(&str, i32)]) ->
     s.call(oi, ri, inst, args).map(|(v, _)| v)
 }
 
-/// The refusal reason of routine `routine` of codeunit T, if any.
-fn refusal(fixtures: &str, body: &str, routine: &str) -> Option<String> {
-    let src = format!("{fixtures}\ncodeunit 50100 T {{ {body} }}");
-    let (ws, l) = compile(&src);
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-    let oi = l.program.objects.iter().position(|o| o.name == "T").expect("object");
-    let ri = l.program.objects[oi]
-        .routines
-        .iter()
-        .position(|r| r.name == routine)
-        .expect("routine");
-    l.unsupported[oi][ri].first().cloned()
-}
-
 fn int(r: Result<Value, Signal>) -> i32 {
     match r {
         Ok(Value::Integer(i)) => i,
@@ -297,45 +283,83 @@ enum 60370 StateKind implements IState { value(0; V) { Implementation = IState =
     assert_eq!(int(r), 2);
 }
 
+// corpus branch al-runtime-rs (probe on BC 27.5) codeunit/TestInterfaceRuntimeContracts.al:
+// Interface_CallOnUnassignedVariable_Throws_InterfaceNotInitialized
 #[test]
-fn an_unassigned_interface_is_refused_at_run_time() {
+fn a_call_on_an_unassigned_interface_raises_interface_not_initialized() {
     let r = run(
         COMPUTE,
         "procedure P(): Integer var C: Interface IALTCompute; begin exit(C.Compute(1)); end;",
         "P",
     );
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    let Err(Signal::Error(e)) = r else { panic!("{r:?}") };
+    assert_eq!(
+        (e.message.as_str(), e.code.as_str()),
+        ("Interface not initialized", "InvalidOperation")
+    );
 }
 
+// ...Interface_CastUndeclaredEnumOrdinalWithoutUnknownImplementation_Throws
 #[test]
-fn interfaces_inside_collections_are_refused() {
-    let why = refusal(
-        COMPUTE,
-        "procedure P() var L: List of [Interface IALTCompute]; begin end;",
+fn an_undeclared_ordinal_without_an_unknown_implementation_raises_argument_out_of_range() {
+    let fixtures = r#"
+interface IPlain { procedure A(): Integer; }
+codeunit 60381 PlainImpl implements IPlain { procedure A(): Integer begin exit(1); end; }
+enum 60380 PlainKind implements IPlain { value(0; V) { Implementation = IPlain = PlainImpl; } }
+"#;
+    let r = run_with(
+        fixtures,
+        "procedure P(K: Enum PlainKind): Integer var G: Interface IPlain; begin G := K; exit(G.A()); end;",
+        "P",
+        &[("PlainKind", 99)],
+    );
+    let Err(Signal::Error(e)) = r else { panic!("{r:?}") };
+    assert_eq!(
+        (e.message.as_str(), e.code.as_str()),
+        ("Enum does not contain value 99.", "ArgumentOutOfRange")
+    );
+}
+
+// ...Interface_InListDictionaryAndArray_ShareTheInstance
+#[test]
+fn interfaces_inside_collections_share_the_instance() {
+    let fixtures = "interface IBump { procedure Bump(): Integer; } codeunit 60390 BumpImpl implements IBump { var N: Integer; procedure Bump(): Integer begin N += 1; exit(N); end; }";
+    let r = run(
+        fixtures,
+        "procedure P(): Text var Impl: Codeunit BumpImpl; F: Interface IBump; L: List of [Interface IBump]; D: Dictionary of [Text, Interface IBump]; A: array[2] of Interface IBump; begin \
+         F := Impl; L.Add(F); D.Add('k', F); A[1] := F; \
+         exit(Format(L.Get(1).Bump()) + Format(D.Get('k').Bump()) + Format(A[1].Bump()) + Format(F.Bump())); end;",
         "P",
     );
-    assert!(why.is_some_and(|w| w.contains("interface")), "refused");
+    assert_eq!(text(r), "1234");
 }
 
+// ...Interface_VarParameterAndReturnValue_CarryTheReference
 #[test]
-fn interface_return_values_are_refused() {
-    let why = refusal(
-        COMPUTE,
-        "procedure P(): Interface IALTCompute var D: Codeunit ALTDouble; begin exit(D); end;",
+fn var_parameters_and_return_values_carry_the_reference() {
+    let fixtures = "interface IBump { procedure Bump(): Integer; } codeunit 60390 BumpImpl implements IBump { var N: Integer; procedure Bump(): Integer begin N += 1; exit(N); end; }";
+    let r = run(
+        fixtures,
+        "procedure Fill(var F: Interface IBump) var Impl: Codeunit BumpImpl; begin F := Impl; F.Bump(); end; \
+         procedure Make(): Interface IBump var Impl: Codeunit BumpImpl; begin exit(Impl); end; \
+         procedure P(): Text var F: Interface IBump; O: Interface IBump; begin Fill(F); O := Make(); \
+         exit(Format(F.Bump()) + Format(O.Bump()) + Format(O.Bump())); end;",
         "P",
     );
-    assert!(why.is_some_and(|w| w.contains("interface")), "refused");
+    assert_eq!(text(r), "212");
 }
 
+// ...Interface_ExtendedInterface_IsAndAs
 #[test]
-fn var_interface_parameters_are_refused() {
-    let why = refusal(COMPUTE, "procedure P(var C: Interface IALTCompute) begin end;", "P");
-    assert!(why.is_some_and(|w| w.contains("interface")), "refused");
-}
-
-#[test]
-fn extended_interfaces_are_refused() {
-    let fixtures = "interface IBase { procedure A(); } interface IMore extends IBase { procedure B(); }";
-    let why = refusal(fixtures, "procedure P() var M: Interface IMore; begin end;", "P");
-    assert!(why.is_some_and(|w| w.contains("extends")), "refused");
+fn an_extended_interface_converts_to_its_base_and_answers_is_and_as() {
+    let fixtures = "interface IBase { procedure A(): Integer; } interface IMore extends IBase { procedure B(): Text; } \
+        codeunit 60391 MoreImpl implements IMore { var N: Integer; procedure A(): Integer begin N += 10; exit(N); end; procedure B(): Text begin exit('b'); end; }";
+    let r = run(
+        fixtures,
+        "procedure P(): Text var Impl: Codeunit MoreImpl; M: Interface IMore; B: Interface IBase; begin \
+         M := Impl; B := M; \
+         exit(Format(B.A()) + Format(B is IMore) + Format(B is IBase) + Format(M.A()) + (B as IMore).B()); end;",
+        "P",
+    );
+    assert_eq!(text(r), "10YesYes20b");
 }

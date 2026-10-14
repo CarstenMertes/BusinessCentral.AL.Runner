@@ -132,27 +132,6 @@ impl Session {
             .position(|o| o.table.is_some() && o.id == Some(no))
     }
 
-    /// BC's error for an object id nothing declares: the calling object and the emit version
-    /// fill the glue; code `AL:MetadataNotFound` (corpus recordref/TestRecordRefRuntimeContracts.al:
-    /// RecordRef_Open_MissingTable_FullTextShapeAndCode). The emit version is 27025 on BC 27.5; the
-    /// digits after the major are not known for other versions (docs/probes-needed.md).
-    pub(crate) fn missing_object_error(&self, kind: &str, id: i64) -> Signal {
-        let caller = self
-            .frames
-            .last()
-            .map_or_else(String::new, |&o| self.engine.program.objects[o].name.clone());
-        let major = self.engine.target.as_ref().map_or(27, |t| i64::from(t.bc.major));
-        Signal::Error(AlError {
-            message: format!(
-                "You tried to invoke the {kind} object with the ID {id} from the object {caller}. \
-                 An object with that ID does not exist in the current application compiled with emit version {}.",
-                major * 1000 + 25
-            ),
-            code: "AL:MetadataNotFound".into(),
-            call_stack: String::new(),
-        })
-    }
-
     /// `RecordRef.Open(No, Temp, CompanyName)`.
     fn rr_open(&mut self, lib: &Lib, args: &[Value]) -> Result<Value, Signal> {
         let no = int_arg(args, 0)?;
@@ -192,9 +171,10 @@ impl Session {
                         "RecordRef.Open on table {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
                     ))
                 }
-                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; how
-                // BC names the calling object is not pinned (docs/probes-needed.md).
-                n => Err(self.missing_object_error("Table", n)),
+                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; the full
+                // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30
+                // (corpus branch al-runtime-rs, probe on BC 27.5).
+                n => Err(self.missing_object("Table", n)),
             };
         };
         let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, temp)) else {

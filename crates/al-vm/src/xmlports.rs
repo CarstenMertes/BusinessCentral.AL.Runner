@@ -348,11 +348,10 @@ impl Session {
         let LibraryValue::InStream(st) = &mut *g else {
             return unsupported("XmlPort import without SetSource (a file dialog is not supported)");
         };
-        if st.enc != Encoding::Utf8 {
+        if !matches!(st.enc, Encoding::Utf8 | Encoding::Windows) {
             return unsupported("XmlPort import from a stream that is not UTF-8 (not pinned)");
         }
-        let bytes = st.data[st.pos.min(st.data.len())..].to_vec();
-        st.pos = st.data.len();
+        let bytes = st.drain();
         match String::from_utf8(bytes) {
             Ok(t) => Ok(t),
             Err(_) => import_failure("the document is not valid UTF-8"),
@@ -589,7 +588,9 @@ impl Session {
         let xp = schema.xp();
         let blob = match inst.borrow().globals[xp.destination_slot].clone() {
             Value::Library(_, h) => match &*h.borrow() {
-                LibraryValue::OutStream(blob, Encoding::Utf8) => blob.clone(),
+                // A stream without an encoding argument is Windows-1252 now; the document is written in
+                // its own encoding whatever the stream's (the owner of xmlports to revisit).
+                LibraryValue::OutStream(blob, Encoding::Utf8 | Encoding::Windows) => blob.clone(),
                 LibraryValue::OutStream(..) => {
                     return unsupported("XmlPort export to a stream that is not UTF-8 (not pinned)");
                 }
@@ -624,7 +625,7 @@ impl Session {
                 ));
             }
         };
-        blob.borrow_mut().bytes.extend_from_slice(text.as_bytes());
+        al_builtins::stream::write_bytes(&blob, text.as_bytes());
         Ok(if guarded { Value::Boolean(true) } else { Value::Null })
     }
 

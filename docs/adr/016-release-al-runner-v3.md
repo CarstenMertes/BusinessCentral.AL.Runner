@@ -480,6 +480,22 @@ asked to defer features like these while startup is not a problem for v3.
      the server is the interface, not a speed feature. Supporting them needs
      the protocol even when start-up is fast.
 
+## Owner decision (2026-10-14): separate now, decide the cutover later
+
+- The runtime ships under a new binary name, and the work stays in the
+  al-runtime-rs repository.
+- The CLI is designed cleanly. It does not mirror v2's flags.
+- The goal is unchanged: full feature parity with AL Runner v2.
+- At the preview gate the owner decides, with parity numbers and real-project
+  runs in hand, between two paths:
+  - stay a separate product;
+  - cut over the BusinessCentral.AL.Runner repository. v2 then moves to a
+    branch, and a thin launcher that accepts v2 syntax is added.
+
+This answers open questions 1 (binary name: a new one, still to be picked),
+2 (no compatibility launcher for now) and 4 (the repository is al-runtime-rs
+for now).
+
 ## Consequences
 
 - A new crate set (`alrunner-cli`, `al-testrun`, `al-host-std`, `al-deps`) appears.

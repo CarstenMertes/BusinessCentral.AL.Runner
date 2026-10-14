@@ -208,6 +208,10 @@ pub struct Workspace {
     subscribers_of: HashMap<(ObjKind, String), Vec<(usize, usize)>>,
     /// Scanned objects that implement an interface, by lower-case interface name.
     implementers_of: HashMap<String, Vec<usize>>,
+    /// For an interface that `extends` another, the interface it extends.
+    iface_base: HashMap<usize, usize>,
+    /// For an interface, the interfaces that extend it directly, in object order.
+    iface_derived: HashMap<usize, Vec<usize>>,
     /// Per object: whether it can be used (see `usable`); filled on first ask.
     usable_cache: Vec<OnceLock<bool>>,
     /// Once set, the dependency objects that take part in the compile (see `restrict_to`).
@@ -240,6 +244,8 @@ impl Workspace {
             ext_of: HashMap::new(),
             subscribers_of: HashMap::new(),
             implementers_of: HashMap::new(),
+            iface_base: HashMap::new(),
+            iface_derived: HashMap::new(),
             usable_cache: Vec::new(),
             compiled: OnceLock::new(),
         };
@@ -349,6 +355,16 @@ impl Workspace {
                 }
             }
         }
+        for i in 0..self.objects.len() {
+            let o = &self.objects[i];
+            if let (ObjKind::Interface, Some(parts)) = (o.kind, &o.extends) {
+                // Like the extension targets above: no parse of the base interface's file.
+                if let Resolution::Found(b) = self.resolve_in_scope(o.file, ObjKind::Interface, parts, false, false) {
+                    self.iface_base.insert(i, b);
+                    self.iface_derived.entry(b).or_default().push(i);
+                }
+            }
+        }
         for (i, o) in self.objects.iter().enumerate() {
             for (si, sub) in o.subscribers.iter().enumerate() {
                 let kind = ObjKind::from_keyword(&sub.publisher_kind);
@@ -361,6 +377,37 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    /// The interfaces interface `i` extends, nearest first (`interface I extends J`, and J's own
+    /// base after it). A cycle ends the list. Pinned by codeunit/TestInterfaceRuntimeContracts.al:
+    /// `Probe IBar extends Probe IFoo` (corpus branch al-runtime-rs, probe on BC 27.5).
+    pub fn interface_bases(&self, i: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut at = i;
+        while let Some(&b) = self.iface_base.get(&at) {
+            if b == i || out.contains(&b) {
+                break;
+            }
+            out.push(b);
+            at = b;
+        }
+        out
+    }
+
+    /// Interface `i` and every interface that extends it, directly or through others.
+    pub fn interface_family(&self, i: usize) -> Vec<usize> {
+        let mut out = vec![i];
+        let mut next = 0;
+        while next < out.len() {
+            for &d in self.iface_derived.get(&out[next]).map_or(&[][..], Vec::as_slice) {
+                if !out.contains(&d) {
+                    out.push(d);
+                }
+            }
+            next += 1;
+        }
+        out
     }
 
     /// The object `i` extends, if it is an extension and the target is in the workspace.

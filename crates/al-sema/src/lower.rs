@@ -3768,11 +3768,11 @@ impl Lowerer<'_> {
     /// The control `name` of the test page (or part, or request page) that `recv` evaluates to.
     fn control_named(&mut self, recv: &SyntaxNode, name: &str) -> L<ir::Expr> {
         let (Ty::TestPage(page) | Ty::TestPart(page) | Ty::Object(ObjKind::Page, page) | Ty::TestRequestPage(page)) =
-            self.ty_of(&recv)
+            self.ty_of(recv)
         else {
             return Err("control of a non-page".into());
         };
-        let kind = if matches!(self.ty_of(&recv), Ty::TestRequestPage(_)) {
+        let kind = if matches!(self.ty_of(recv), Ty::TestRequestPage(_)) {
             ObjKind::Report
         } else {
             ObjKind::Page
@@ -3782,7 +3782,7 @@ impl Lowerer<'_> {
         let control = layout
             .controls
             .iter()
-            .position(|c| c.name.eq_ignore_ascii_case(&name))
+            .position(|c| c.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("control `{name}` is not in the page layout"))?;
         Ok(ir::Expr::Control {
             page: Box::new(self.expr(recv)?),

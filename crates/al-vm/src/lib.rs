@@ -483,6 +483,10 @@ impl Session {
                     temporary: *temporary,
                     temp_id,
                     company: None,
+                    crm: self.engine.program.objects[*table as usize]
+                        .properties
+                        .iter()
+                        .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("CRM")),
                     fields: self.initial_fields(*table as usize),
                     filters: Vec::new(),
                     filter_group: 0,
@@ -657,6 +661,24 @@ impl Session {
         }
         for (i, a) in args.into_iter().enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
+                // A temporary record with rows handed to a Variant parameter: a by-value copy is an empty
+                // buffer (record/TestTempTableContracts.al:141-148), but Microsoft's Assert.RecordCount
+                // counts the caller's rows through a Variant, so the Variant is not a plain by-value copy.
+                // What it is is not pinned by the corpus (docs/probes-needed.md).
+                (Value::Record(rc), false)
+                    if matches!(r.locals[i].ty, RtType::Variant) && {
+                        let s = rc.borrow();
+                        s.temporary
+                            && s.temp_id
+                                .and_then(|id| self.temps.get(&id))
+                                .is_some_and(|store| store.has_rows(s.table))
+                    } =>
+                {
+                    return Err(Signal::Unsupported(
+                        "a temporary record with rows handed to a Variant parameter (whether the Variant shares its table is not pinned)"
+                            .into(),
+                    ));
+                }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
@@ -1147,6 +1169,7 @@ impl Session {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
                     }
                     if id.starts_with("Report.") {
+                        self.ret_used = *ret_used;
                         return self.report_builtin(id, recv, &values, f.instance.clone());
                     }
                     if id.starts_with("FilterPageBuilder.") {
@@ -1289,6 +1312,7 @@ impl Session {
             }
             ir::Place::Field(base, pos) => match self.read(base, f)? {
                 Value::Record(rc) => {
+                    self.connection_check(&rc)?;
                     let r = rc.borrow();
                     if !self.engine.unevaluable_init.is_empty() && !r.touched {
                         // The buffer of a record nothing has written is built by this read, which
@@ -1360,6 +1384,7 @@ impl Session {
             let v = ops::convert(v, &ty)?;
             return match self.read(base, f)? {
                 Value::Record(rc) => {
+                    self.connection_check(&rc)?;
                     let mut r = rc.borrow_mut();
                     r.fields[*pos] = v;
                     r.touched = true;

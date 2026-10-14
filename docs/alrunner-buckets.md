@@ -88,6 +88,48 @@ Without test data Tests-ERM failed 121 tests; the first 30 failures are missing 
 must contain records, `Sales & Receivables Setup`, `Tax Setup` and `Purchases & Payables Setup` do not exist, a date
 calculation on an undefined date).
 
+## Alone and together (issue 3, 2026-10-14)
+
+The 32 buckets that hold tests, run one at a time and all in one `alrunner test` process, do not give the same
+counts. Measured on BC 27.5 build 46862.56320 (the build of the first measurement, 46862.48827, is no longer on
+the artifact feed), without test data, `tools/bucket_diff.py` over the JUnit files of both:
+
+| | Passed | Failed | Not run | Tests |
+|---|---:|---:|---:|---:|
+| Sum of the 32 runs | 1109 | 890 | 38327 | 40326 |
+| One process, 32 buckets | 1102 | 852 | 38372 | 40326 |
+
+The same 40326 tests are in both. 39 pass or fail alone and are not run together, 7 pass alone and are not run together, 1 is not run alone
+and fails together. Everything else has the same outcome. No test is nondeterministic: the same selection gives the same
+result twice.
+
+Every difference has one cause: **what is compiled and reached depends on the selection.** Compilation is demand
+driven (ADR-013), and whatever one test reaches is active for all tests of the run: the reportextensions that change a
+report, the page extension code of a base page, the subscribers of an event, the install code a baseline root
+reaches. A refusal that depends on that set (more than one reportextension, a page control kind, a report property) hits a
+test only when some test of the run activates the other part. In BC every installed app is active whatever a test uses,
+so the combined run is the closer one, and a test that passes alone only because a part was not active is an accident of the selection.
+
+| Codeunit (bucket) | Tests | Alone | Together | Why |
+|---|---:|---|---|---|
+| 134485 (Dimension) | 30 | failed (`The General Ledger Setup does not exist`, no test data) | not run | `Document Entries` has two reportextensions that change a run (`Mfg. Document Entries`, `Serv. Document Entries`, both in Base Application). Alone only one is active (`lower.rs`, "more than one reportextension changes the run"). Any second bucket I paired with Dimension made both active, except Tests-SCM-Manufacturing. Which test activates the second one is not pinned down |
+| 137101 (SCM-Assembly) | 5 | failed (no setup data) | not run | `Mfg. ItemAvailByLocationLines` (page extension code on base page members, not lowered yet) is active only together |
+| 136212 (Marketing) | 3 | failed (no setup data) | not run | column 9 of `Table Relations Metadata` is reached only together |
+| 134821 (Cost Accounting) | 1 | failed | not run | page control kind `fixed` of `Apply Employee Entries` is reached only together |
+| 134930 | 1 | passed | not run | `Mfg. Adjust Add. Rep. Currency` (reportextension `addafter(Job Ledger Entry)`) is active only together |
+| 137462 (Physical Inventory) | 2 | passed | not run | report `Lot No Label` (property `wordmergedataitem`) is active only together |
+| 135952 (Upgrade) | 4 | passed | not run | Tests-Upgrade depends on Library Assert only. Alone the baseline runs further (10 of 16 install roots, 49 tables hold rows, 20 unseeded); with any other bucket it is the 5 of 17 roots, 8 tables, 58 unseeded that every other run shows, because `Global Triggers` events are enabled for the tables the install code inserts into (`globaltriggers.rs`; the `GetGlobalTableTriggerMask` subscribers are in Base Application). Alone the Retention Policy install roots reach a different closure, the tables they would fill are not marked unseeded, and an empty table passes where BC holds rows |
+| 134562 (Misc) | 1 | not run (`report 'Chart of Accounts' was not compiled`) | failed | the report is compiled only together; it then runs and fails on missing data |
+
+Not found out: which test or bucket activates each part (only the pairing with Dimension was tried), and why alone the
+`GetGlobalTableTriggerMask` subscribers are not active in Tests-Upgrade. No code was changed: making activation
+independent of the selection (an extended object always activates its extensions at the level of a test that reaches it, as BC
+does, or a stable "activate every extension of an activated object") changes which tests of the corpus
+pass or are refused, and belongs in its own task with the baselines as the check.
+
+`tools/bucket_diff.py --a <JUnit of each bucket> --b <JUnit of the combined run>` prints the table above for any two
+sets of runs. A bucket name with a space needs quoting in the shell.
+
 ## Measured (4 threads each for check, lowering and tests; one run per bucket; under `MemoryMax=3G`; 2026-10-14, afternoon, main after `fixes-8`)
 
 The first measurement of the morning of the same day is in the git history of this file. Since then the platform-table

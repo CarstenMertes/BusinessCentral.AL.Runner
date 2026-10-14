@@ -134,7 +134,7 @@ impl Session {
                 "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed. Please remove the events subscriptions or use DeleteAll.",
             );
         }
-        if self.global_enabled(t, crate::globaltriggers::GlobalOp::Delete)? {
+        if !rec.borrow().temporary && self.global_enabled(t, crate::globaltriggers::GlobalOp::Delete)? {
             return unsupported(format!(
                 "Truncate on {}, which has the OnDatabaseDelete event enabled (whether BC refuses it is not pinned)",
                 t.name

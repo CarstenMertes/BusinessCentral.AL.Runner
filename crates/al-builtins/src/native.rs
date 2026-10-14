@@ -926,6 +926,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 top: None,
                 security_filtering: None,
                 run: None,
+                instance: None,
             })))
         }
         // A codeunit or report variable nothing has used yet has no instance to release, so

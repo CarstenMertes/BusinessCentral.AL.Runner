@@ -89,6 +89,15 @@ fn key_fields(t: &TableDef, k: usize) -> Option<Vec<usize>> {
     None
 }
 
+/// The table as the program declares it: without the ad hoc key a record may have appended.
+impl Session {
+    fn base_table(&self, t: &TableDef) -> std::sync::Arc<TableDef> {
+        self.engine.tables[t.object as usize]
+            .clone()
+            .expect("a record's table has a schema")
+    }
+}
+
 fn key_count(t: &TableDef) -> usize {
     t.keys.len() + usize::from(key_fields(t, t.keys.len()).is_some())
 }
@@ -127,7 +136,10 @@ impl Session {
 
     fn open_ref(lib: &Lib, what: &str) -> Result<Rec, Signal> {
         match &*lib.borrow() {
-            LibraryValue::RecordRef(r) | LibraryValue::FieldRef(r, _) | LibraryValue::KeyRef(r, _) => Ok(r.clone()),
+            LibraryValue::RecordRef(r)
+            | LibraryValue::FieldRef(r, _)
+            | LibraryValue::KeyFieldRef(r, _)
+            | LibraryValue::KeyRef(r, _) => Ok(r.clone()),
             LibraryValue::SystemTable(n) => unsupported(format!(
                 "{what} on a RecordRef opened on system table {n} (the platform's system tables are not modelled)"
             )),
@@ -389,10 +401,48 @@ impl Session {
                     )),
                 }
             }
-            "KeyCount" => Ok(Value::Integer(key_count(&t) as i32)),
+            "KeyCount" => Ok(Value::Integer(key_count(&self.base_table(&t)) as i32)),
+            "CurrentKey" => self.record_meta_op("CurrentKey", &rec, &t, args),
+            // recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:75-176. Keys number from 1 in
+            // declaration order and the hidden SystemId key is last; an index outside them raises
+            // DB:KeyNotFound; a current key of fields no declared key starts with reports -1.
+            "CurrentKeyIndex" => {
+                let bt = self.base_table(&t);
+                let base = bt.keys.len();
+                if let Some(v) = args.first() {
+                    let i = int_arg(std::slice::from_ref(v), 0)?;
+                    let count = key_count(&bt) as i64;
+                    if i < 1 || i > count {
+                        return Err(Signal::Error(AlError {
+                            message: format!("The {} table does not have an active key at index {i}.", t.name),
+                            code: "DB:KeyNotFound".into(),
+                            call_stack: String::new(),
+                        }));
+                    }
+                    let mut r = rec.borrow_mut();
+                    if (i as usize) <= base {
+                        r.key = i as usize - 1;
+                        r.adhoc = None;
+                    } else {
+                        let fields = key_fields(&bt, base).expect("a counted key");
+                        r.key = base;
+                        r.adhoc = Some((base, fields));
+                    }
+                    return Ok(Value::Integer(i as i32));
+                }
+                let r = rec.borrow();
+                Ok(Value::Integer(match &r.adhoc {
+                    _ if r.key < base => r.key as i32 + 1,
+                    Some((_, f)) if r.key == base && key_fields(&bt, base).as_ref() == Some(f) => base as i32 + 1,
+                    _ => -1,
+                }))
+            }
             "KeyIndex" => {
                 let i = int_arg(args, 0)?;
-                match usize::try_from(i - 1).ok().filter(|k| *k < key_count(&t)) {
+                match usize::try_from(i - 1)
+                    .ok()
+                    .filter(|k| *k < key_count(&self.base_table(&t)))
+                {
                     Some(k) => Ok(handle("KeyRef", LibraryValue::KeyRef(rec, k))),
                     None => unsupported(format!(
                         "RecordRef.KeyIndex({i}) out of range (error text not pinned yet)"
@@ -415,9 +465,7 @@ impl Session {
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
-                    if s.company != dst.borrow().company {
-                        return unsupported("RecordRef.SetTable between records of different companies (not pinned)");
-                    }
+                    // SetTable does not move the target either (:123-127); GetTable takes the company.
                     if s.field_descending {
                         return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
                     }
@@ -455,7 +503,7 @@ impl Session {
                     .ok()
                     .and_then(|i| key_fields(&t, k).and_then(|f| f.get(i).copied()))
                 {
-                    Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
+                    Some(pos) => Ok(handle("FieldRef", LibraryValue::KeyFieldRef(rec, pos))),
                     // types/TestTypeSystemContracts.al:261 pins the fragment "Index out of bounds"
                     // (recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws).
                     None => Err(Signal::Error(AlError {
@@ -470,8 +518,9 @@ impl Session {
     }
 
     fn fieldref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
-        let (rec, pos) = match &*lib.borrow() {
-            LibraryValue::FieldRef(r, p) => (r.clone(), *p),
+        let (rec, pos, via_key) = match &*lib.borrow() {
+            LibraryValue::FieldRef(r, p) => (r.clone(), *p, false),
+            LibraryValue::KeyFieldRef(r, p) => (r.clone(), *p, true),
             _ => return unsupported(format!("FieldRef.{method} on a FieldRef that was never assigned")),
         };
         let t = self.table(&rec)?;
@@ -487,6 +536,7 @@ impl Session {
                 }
             },
             "Number" => Ok(Value::Integer(al_field_no(field.id))),
+            "Name" if via_key && field.id == SYSTEM_FIELD_BASE => Ok(Value::Text("$systemId".into())),
             "Name" => Ok(Value::Text(field.name.clone())),
             "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
             "Type" => self.field_type(&t, pos),
@@ -609,7 +659,7 @@ impl Session {
     }
 
     /// The members of an Option or Enum field as (ordinal, name, caption), in declared order.
-    fn members_of_field(&self, t: &TableDef, pos: usize) -> Result<Option<FieldMembers>, Signal> {
+    pub(crate) fn members_of_field(&self, t: &TableDef, pos: usize) -> Result<Option<FieldMembers>, Signal> {
         match &t.fields[pos].ty {
             RtType::Enum(id) => {
                 let o = &self.engine.program.objects[*id as usize];

@@ -275,6 +275,12 @@ pub struct ReportColumn {
     /// The position of the table field the source names, when the source is just that field.
     #[serde(default)]
     pub field: Option<usize>,
+    /// `IncludeCaption = true`: the dataset's Labels block carries `<Name>Caption`.
+    #[serde(default)]
+    pub include_caption: bool,
+    /// The `DecimalPlaces` property as written (`1 : 1`); it decides the `decimalformatter`.
+    #[serde(default)]
+    pub decimal_places: Option<String>,
 }
 
 /// What a reportextension adds to a run of the report it extends.
@@ -315,32 +321,36 @@ pub struct ReportExtModify {
     pub after: Option<usize>,
 }
 
-/// A data item added by `addlast`, `addfirst`, `addbefore` or `addafter`: under a base item, or
-/// (`item.parent`) under another added item.
+/// A data item added by `addlast`: under a base item, or (`item.parent`) under another added item.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AddedItem {
     /// `item.parent` indexes `ReportExt::added`.
     pub item: ReportItem,
     /// The base item it is added under (top-level added items).
     pub base_parent: Option<usize>,
-    /// Where it runs among the children of `base_parent`.
+    /// Where it sits among its siblings (`addlast` unless the extension says otherwise).
     #[serde(default)]
     pub place: AddedPlace,
 }
 
-/// Where an added data item sits among the data items nested under its parent (corpus
-/// reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al).
+/// A data item of a report or of the extension, as a sibling anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ItemAnchor {
+    /// Index into `Report::items`.
+    Base(usize),
+    /// Index into `ReportExt::added`.
+    Added(usize),
+}
+
+/// `addfirst`, `addlast`, `addbefore` and `addafter`
+/// (reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AddedPlace {
-    /// After the base item's own children (`addlast(Parent)`).
     #[default]
     Last,
-    /// Before them (`addfirst(Parent)`).
     First,
-    /// Right before the base child with this index (`addbefore(Child)`).
-    Before(usize),
-    /// Right after the base child with this index (`addafter(Child)`).
-    After(usize),
+    Before(ItemAnchor),
+    After(ItemAnchor),
 }
 
 /// A `dataitem` of a report.
@@ -414,6 +424,10 @@ pub struct XmlPort {
     pub record_separator: Option<String>,
     #[serde(default)]
     pub utf8: bool,
+    /// `FormatEvaluate = Xml`: values export and import in their XML forms. The default and
+    /// `Legacy` use the display text (xmlport/TestXmlPortFormatEvaluateContracts.al).
+    #[serde(default)]
+    pub format_evaluate_xml: bool,
     /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
     pub nodes: Vec<XmlNode>,
     /// Global slots of the source `InStream` and destination `OutStream` set by
@@ -569,6 +583,9 @@ pub enum ControlKind {
     /// `systemaction(OK)` and friends.
     SystemAction,
     ActionGroup,
+    /// A `cuegroup`: a group whose fields take `SetValue` without effect
+    /// (corpus handlers/TestPageCueGroupFixedGridContracts.al).
+    CueGroup,
     Part,
     /// A data item of a report's request page: its `binding` is the global slot of the item's
     /// record, and the test client reads and writes that record's filters.
@@ -588,6 +605,9 @@ pub enum Binding {
     BaseVar(usize),
     /// A read-only expression: a routine returning the value.
     Expr(usize),
+    /// A `label` control: its value is its caption and it is not editable
+    /// (corpus handlers/TestPageLabelControlContracts.al).
+    Caption,
 }
 
 impl Binding {

@@ -427,8 +427,20 @@ pub fn lower_with_workers(
             .get(&oi)
             .map(|v| v.iter().map(|&e| (e, ws.object_ast(e))).collect())
             .unwrap_or_default();
-        let (request, _) = crate::reports::request_layout(&obj, &l.items, &exts);
+        let (request, request_section) = crate::reports::request_layout(&obj, &l.items, &exts);
         page_reasons[oi].extend(request.reasons.iter().cloned());
+        // A request page that declares `SourceTable` has a `Rec` of that table (corpus
+        // handlers/TestReportRequestPageSourceTableCompiledContracts.al).
+        if let Some(t) = request_section
+            .as_ref()
+            .and_then(|s| s.properties().find(|p| p.name().eq_ignore_ascii_case("SourceTable")))
+            .map(|p| p.value_text())
+        {
+            match ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()]) {
+                Resolution::Found(t) => table_of[oi] = Some(t),
+                _ => page_reasons[oi].push(format!("source table: {}", ws.outside_workspace(ObjKind::Table, &t))),
+            }
+        }
         // Its variables would follow the base items' records in the extension's globals, which the
         // slots the request page binds to do not account for.
         for (e, _) in &exts {
@@ -1084,6 +1096,9 @@ fn lower_object<'a>(
     // the VM fills when it makes the instance (`Session::query_instance`).
     if o.kind == ObjKind::Query {
         rec_slot = Some(globals.len());
+        // `CurrQuery` in the query's triggers and procedures
+        // (query/TestQueryOnBeforeOpenVariablesContracts.al:75-77).
+        lw.globals.insert("currquery".into(), globals.len());
         globals.push(ir::Slot {
             name: "__query".into(),
             ty: RtType::Query(oi as u32),
@@ -1137,6 +1152,16 @@ fn lower_object<'a>(
                 })
                 .and_then(|s| s.args().into_iter().next())
                 .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
+            // A trigger of the request page runs with the page's `Rec`.
+            if lw.rec_slot.is_none()
+                && o.kind == ObjKind::Report
+                && r.syntax()
+                    .ancestors()
+                    .filter_map(ast::Section::cast)
+                    .any(|s| s.name().eq_ignore_ascii_case("requestpage"))
+            {
+                lw.rec_slot = rec_slot;
+            }
         }
         // A dependency routine nothing reached was never checked: a stub that refuses.
         let reached = !checked.is_skipped(oi)
@@ -1278,6 +1303,10 @@ const EXTENSION_PAGE_TRIGGERS: &[&str] = &[
     "onaftergetrecord",
     "onaftergetcurrrecord",
     "onnewrecord",
+    // Both the page's and the extensions' answers count, and both must be true to close
+    // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+    // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose).
+    "onqueryclosepage",
 ];
 
 /// The triggers a `modify` block can add to a control, which the client runs.
@@ -2210,7 +2239,9 @@ impl Lowerer<'_> {
                 }
             }
             let mut binding = ir::Binding::None;
-            if raw.kind == ir::ControlKind::Field {
+            if raw.kind == ir::ControlKind::Field && sec.name().eq_ignore_ascii_case("label") {
+                binding = ir::Binding::Caption;
+            } else if raw.kind == ir::ControlKind::Field {
                 let args = sec.args();
                 match args.get(1).map(|a| crate::pages::classify_source(a, &ow.names)) {
                     Some(crate::pages::Source::RecField(f)) => {
@@ -2753,9 +2784,12 @@ impl Lowerer<'_> {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
                 // A table of another type (CRM, ExternalSQL, ...) is served by a table connection.
                 let kind = self.table_types(t).first().cloned();
-                if let Some(k) =
-                    kind.filter(|k| !k.eq_ignore_ascii_case("normal") && !k.eq_ignore_ascii_case("temporary"))
-                {
+                // A CRM table is lowered: the VM refuses its first use (`Session::connection_check`).
+                if let Some(k) = kind.filter(|k| {
+                    !k.eq_ignore_ascii_case("normal")
+                        && !k.eq_ignore_ascii_case("temporary")
+                        && !k.eq_ignore_ascii_case("crm")
+                }) {
                     return Err(format!(
                         "table \"{}\" has TableType = {k}: it is served by a table connection, which the runtime does not model",
                         crate::types::display_name(table)
@@ -5266,10 +5300,11 @@ table 50912 \"ALT Head\"
 
     #[test]
     fn a_record_of_a_table_that_is_not_normal_or_temporary_is_refused() {
-        // session/TestDatabaseTableConnectionCrm.al:162-176: a TableType = CRM table is served
-        // by a table connection, which the runtime does not model.
+        // A table served by a table connection the runtime does not model (ExternalSQL here) is refused.
+        // A CRM table is lowered: its first use fails at run time while no connection is registered
+        // (session/TestCrmTableNoConnectionContracts.al), and with one it is refused there.
         let (_, l) = lower_src(
-            "table 50960 Crm { TableType = CRM; fields { field(1; Id; Guid) { } } }
+            "table 50960 Crm { TableType = ExternalSQL; fields { field(1; Id; Guid) { } } }
              table 50961 Plain { TableType = Normal; fields { field(1; Id; Integer) { } } }
              codeunit 50962 C {
                 procedure A() var R: Record Crm; begin R.Init(); end;
@@ -5282,7 +5317,7 @@ table 50912 \"ALT Head\"
             l.unsupported[oi][ri].clone()
         };
         assert!(
-            reasons("A").iter().any(|r| r.contains("TableType = CRM")),
+            reasons("A").iter().any(|r| r.contains("TableType = ExternalSQL")),
             "{:?}",
             reasons("A")
         );

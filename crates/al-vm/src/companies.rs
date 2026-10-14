@@ -139,11 +139,16 @@ impl Session {
         Ok(Value::Boolean(true))
     }
 
-    /// Before a Company row goes: the session company's row stays (not pinned); the company's rows
-    /// go with it (BC drops a company's data with it; not pinned, docs/probes-needed.md).
-    pub(crate) fn before_company_row_delete(&mut self, name: &str) -> Result<(), Signal> {
-        if !self.cx.company.is_empty() && name.eq_ignore_ascii_case(&self.cx.company) {
+    /// Before a Company row goes: the session company's row stays (not pinned). A company deleted
+    /// with triggers takes its data with it and a new company of the name starts empty
+    /// (record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212); without triggers what happens
+    /// to its data is not pinned, so a company that holds rows is refused.
+    pub(crate) fn before_company_row_delete(&mut self, name: &str, run_trigger: bool) -> Result<(), Signal> {
+        if !self.cx.company.is_empty() && name == self.cx.company {
             return unsupported("Delete of the session company's row in the Company table (not pinned)");
+        }
+        if !run_trigger && self.store.has_company_rows(name) {
+            return unsupported("Delete(false) of a company that holds rows (not pinned)");
         }
         Ok(())
     }

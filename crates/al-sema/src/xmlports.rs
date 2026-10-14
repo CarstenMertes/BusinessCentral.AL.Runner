@@ -38,6 +38,7 @@ pub struct Layout {
     pub field_delimiter: Option<String>,
     pub record_separator: Option<String>,
     pub utf8: bool,
+    pub format_evaluate_xml: bool,
     pub reasons: Vec<String>,
     /// Reasons only running the port refuses (see `ir::XmlPort::run_unsupported`).
     pub run_reasons: Vec<String>,
@@ -105,6 +106,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         field_delimiter: None,
         record_separator: None,
         utf8: false,
+        format_evaluate_xml: false,
         reasons: Vec::new(),
         run_reasons: Vec::new(),
     };
@@ -132,12 +134,14 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "fieldseparator" => out.field_separator = Some(unquote(&value)),
             "fielddelimiter" => out.field_delimiter = Some(unquote(&value)),
             "recordseparator" => out.record_separator = Some(unquote(&value)),
-            // No corpus test sets FormatEvaluate: whether `Xml` changes the text a field exports or
-            // imports (dates, decimals, booleans) is not pinned, so running the port is refused.
-            "formatevaluate" => out.run_reasons.push(format!(
-                "xmlport property formatevaluate = {} is not pinned",
-                value.trim()
-            )),
+            // xmlport/TestXmlPortFormatEvaluateContracts.al: Legacy is the display text, Xml the XML forms.
+            "formatevaluate" => match value.trim().to_ascii_lowercase().as_str() {
+                "legacy" => {}
+                "xml" => out.format_evaluate_xml = true,
+                other => out
+                    .run_reasons
+                    .push(format!("xmlport property formatevaluate = {other} is not pinned")),
+            },
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             other => out
                 .run_reasons
@@ -451,6 +455,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         field_delimiter: layout.field_delimiter.clone(),
         record_separator: layout.record_separator.clone(),
         utf8: layout.utf8,
+        format_evaluate_xml: layout.format_evaluate_xml,
         nodes,
         source_slot: cx.source_slot,
         destination_slot: cx.destination_slot,
@@ -735,10 +740,18 @@ xmlport 50010 X
     }
 
     #[test]
-    fn format_evaluate_is_a_run_reason_not_a_declaration_reason() {
-        let src = SRC.replace("Direction = Export;", "FormatEvaluate = Xml; Direction = Export;");
-        assert!(!reasons_of(src.clone()).contains("formatevaluate"));
-        assert!(run_reasons_of(src).contains("formatevaluate = Xml"));
+    fn format_evaluate_xml_and_legacy_are_understood_and_others_are_run_reasons() {
+        // xmlport/TestXmlPortFormatEvaluateContracts.al
+        for v in ["Xml", "Legacy"] {
+            let src = SRC.replace(
+                "Direction = Export;",
+                &format!("FormatEvaluate = {v}; Direction = Export;"),
+            );
+            assert!(!reasons_of(src.clone()).contains("formatevaluate"));
+            assert!(!run_reasons_of(src).contains("formatevaluate"), "{v}");
+        }
+        let src = SRC.replace("Direction = Export;", "FormatEvaluate = Other; Direction = Export;");
+        assert!(run_reasons_of(src).contains("formatevaluate = other"));
     }
 
     #[test]

@@ -1002,6 +1002,7 @@ fn runner_frames(program: &al_ir::Program, engine: &Engine) -> String {
 
 /// [`run_codeunit_observed`] that also collects, for each test that failed with an AL error, the AL
 /// call stack of that error as `(test name, stack)` (`GetLastErrorCallStack` form, innermost first).
+#[allow(clippy::too_many_arguments)]
 pub fn run_codeunit_full(
     engine: &Arc<Engine>,
     lowered: &Lowered,

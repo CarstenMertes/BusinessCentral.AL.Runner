@@ -363,3 +363,34 @@ fn an_extended_interface_converts_to_its_base_and_answers_is_and_as() {
     );
     assert_eq!(text(r), "10YesYes20b");
 }
+
+// codeunit/TestInterfaceIsAsContracts.al:61-102: `is` is false, not an error, for an interface the
+// instance does not implement and for an unassigned variable; `as` to such an interface, or on an
+// unassigned variable, raises "The expression cannot be the target interface." / UnableToCast.
+#[test]
+fn is_is_false_and_as_raises_unable_to_cast_for_a_missing_implementation() {
+    let fixtures = "interface IA { procedure A(): Text; } interface IB { procedure B(): Text; } \
+        codeunit 60392 ImplA implements IA { procedure A(): Text begin exit('a'); end; } \
+        codeunit 60393 ImplAB implements IA, IB { procedure A(): Text begin exit('ab-a'); end; procedure B(): Text begin exit('ab-b'); end; }";
+    let body = |stmt: &str| {
+        format!(
+            "procedure P(): Text var Un: Interface IA; IA: Interface IA; IB: Interface IB; \
+             A: Codeunit ImplA; AB: Codeunit ImplAB; begin IA := A; {stmt} end;"
+        )
+    };
+    let r = run(
+        fixtures,
+        &body("exit(Format(IA is IA) + Format(IA is IB) + Format(Un is IA) + Format(Un is IB));"),
+        "P",
+    );
+    assert_eq!(text(r), "YesNoNoNo");
+    for stmt in ["IB := IA as IB;", "IB := Un as IB;", "IA := Un as IA;"] {
+        let r = run(fixtures, &body(&format!("{stmt} exit('');")), "P");
+        let Err(Signal::Error(e)) = r else { panic!("{stmt}: {r:?}") };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            ("The expression cannot be the target interface.", "UnableToCast"),
+            "{stmt}"
+        );
+    }
+}

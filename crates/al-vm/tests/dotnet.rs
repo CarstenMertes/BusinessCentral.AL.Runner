@@ -21,6 +21,7 @@ enum Req {
     Get(DotNetTarget, String),
     Set(DotNetTarget, String, DotNetValue),
     Release(Vec<u64>),
+    StreamWrite(u64, Vec<u8>),
     Close,
 }
 
@@ -74,6 +75,14 @@ impl DotNetSession for FakeSession {
     }
     fn set_property(&mut self, t: DotNetTarget, n: &str, v: DotNetValue) -> Result<DotNetReply, DotNetFailure> {
         self.go(Req::Set(t, n.into(), v))
+    }
+    fn stream_write(&mut self, handle: DotNetHandle, bytes: &[u8]) -> Result<(), DotNetFailure> {
+        self.0
+            .log
+            .lock()
+            .unwrap()
+            .push(Req::StreamWrite(handle, bytes.to_vec()));
+        Ok(())
     }
     fn release(&mut self, handles: &[DotNetHandle]) {
         self.0.log.lock().unwrap().push(Req::Release(handles.to_vec()));
@@ -431,6 +440,26 @@ fn a_null_string_is_empty_a_null_object_is_refused_and_ordering_a_string_is_refu
     );
     let r = run(&host, "C: DotNet Convert;", "exit(C.Name() < 'b');", ": Boolean");
     assert!(unsupported(&r).contains("not pinned"));
+}
+
+#[test]
+fn copystream_into_a_dotnet_stream_hands_the_unread_bytes_to_the_host_and_ends_the_source() {
+    let host = Fake::new(|r| match r {
+        Req::Construct(..) => reply(handle(9, "System.IO.MemoryStream")),
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "M: DotNet MemoryStream; B: Record \"ALT Blob\" temporary; O: OutStream; I: InStream;",
+        "B.Data.CreateOutStream(O); O.WriteText('abc'); B.Data.CreateInStream(I); M := M.MemoryStream(); CopyStream(M, I); exit(I.EOS());",
+        ": Boolean",
+    );
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
+    assert!(
+        host.log().contains(&Req::StreamWrite(9, b"abc".to_vec())),
+        "{:?}",
+        host.log()
+    );
 }
 
 // ---- policy ------------------------------------------------------------------------------

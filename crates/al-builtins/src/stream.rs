@@ -634,7 +634,19 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
 }
 
 /// `CopyStream(OutStream, InStream [, BytesToRead])`: copies what remains of the source.
-fn copy_stream(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn copy_stream(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    // One side is a .NET stream: the context copies the bytes through its host (ADR-024).
+    if matches!(&a[0], Value::DotNet(_)) || matches!(&a[1], Value::DotNet(_)) {
+        let count = match a.get(2) {
+            None => None,
+            Some(Value::Integer(n)) if *n >= 0 => Some(i64::from(*n)),
+            Some(other) => return unsupported(format!("CopyStream with a byte count of {}", other.describe())),
+        };
+        return match ctx.copy_stream_dotnet(&a[0], &a[1], count) {
+            Some(r) => r.map(|()| Value::Boolean(true)),
+            None => unsupported("CopyStream with a DotNet stream needs a .NET host"),
+        };
+    }
     if a.len() > 2 {
         return unsupported("CopyStream with a byte count (not pinned)");
     }

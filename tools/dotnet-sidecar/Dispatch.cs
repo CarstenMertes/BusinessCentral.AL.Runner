@@ -44,6 +44,39 @@ public sealed class Server
                 return Ok(null);
             case "count":
                 return Ok(marshal.HandleCount);
+            case "stream_write":
+            {
+                // CopyStream from an AL InStream into a .NET stream (ADR-024).
+                var stream = StreamOf(req["handle"]!.GetValue<long>());
+                if (!stream.CanWrite) throw new Refusal($"'{stream.GetType().FullName}' is a Stream that cannot be written");
+                var bytes = Convert.FromBase64String(req["data"]!.GetValue<string>());
+                stream.Write(bytes, 0, bytes.Length);
+                return Ok(null);
+            }
+            case "stream_read":
+            {
+                // CopyStream from a .NET stream into an AL OutStream (ADR-024). Only a MemoryStream is
+                // pinned (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit
+                // 61400, CopyStream_WithAMemoryStream): without a count the WHOLE stream whatever its
+                // position, position 0 afterwards; with a count from the position, which follows.
+                var stream = StreamOf(req["handle"]!.GetValue<long>());
+                if (stream is not MemoryStream ms)
+                    throw new Refusal($"reading '{stream.GetType().FullName}' for CopyStream is not pinned (only a MemoryStream is)");
+                byte[] data;
+                if (req["count"] is JsonNode c)
+                {
+                    long want = c.GetValue<long>();
+                    long left = Math.Max(0, ms.Length - ms.Position);
+                    data = new byte[Math.Min(want, left)];
+                    ms.ReadExactly(data, 0, data.Length);
+                }
+                else
+                {
+                    data = ms.ToArray();
+                    ms.Position = 0;
+                }
+                return Ok(new JsonObject { ["t"] = "ins", ["v"] = Convert.ToBase64String(data) });
+            }
             case "bye":
                 return Ok(null);
             case "construct":
@@ -112,6 +145,10 @@ public sealed class Server
                 throw new Refusal("unknown op " + req["op"]);
         }
     }
+
+    Stream StreamOf(long handle) =>
+        marshal.Handle(handle) as Stream
+        ?? throw new Refusal($"'{marshal.Handle(handle).GetType().FullName}' is not a System.IO.Stream");
 
     // ---- replies ----
 

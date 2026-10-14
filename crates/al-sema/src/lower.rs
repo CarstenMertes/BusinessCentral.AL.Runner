@@ -4765,6 +4765,11 @@ impl Lowerer<'_> {
                         };
                         let value = match p.ty.as_str() {
                             "DotNet" => self.expr(a)?,
+                            // CopyStream takes a DotNet stream as it is; the VM copies the bytes
+                            // through the host (ADR-024 section 3).
+                            "InStream" | "OutStream" if !p.by_var && id.starts_with("System.CopyStream#") => {
+                                self.expr(a)?
+                            }
                             "Any" | "Variant" if !p.by_var => {
                                 ir::Expr::DotNetOperand(Box::new(self.expr(a)?), ir::OperandUse::Variant)
                             }

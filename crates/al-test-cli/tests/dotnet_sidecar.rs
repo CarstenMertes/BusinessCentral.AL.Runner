@@ -354,7 +354,7 @@ fn assemblies_come_from_the_assembly_dir_by_simple_name() {
     t.culture = None;
     t.public_key_token = None;
     let r = sess.get_property(DotNetTarget::Static(t), "ProtocolVersion");
-    assert_eq!(r.unwrap().value, DotNetValue::Int32(2));
+    assert_eq!(r.unwrap().value, DotNetValue::Int32(3));
     sess.close();
 }
 
@@ -632,7 +632,7 @@ fn a_protocol_mismatch_is_a_refusal_naming_both_versions() {
     let mut sess = h.open_session(&DotNetSessionConfig::default());
     let why = refused(sess.invoke(st("System.Convert"), "ToInt32", vec![s("1")]));
     assert!(
-        why.contains("protocol mismatch") && why.contains("99") && why.contains('2'),
+        why.contains("protocol mismatch") && why.contains("99") && why.contains('3'),
         "{why}"
     );
     sess.close();
@@ -887,4 +887,54 @@ fn a_standby_that_cannot_start_leaves_the_session_to_report_the_reason() {
     assert_eq!(h.stats().from_standby, 0);
     a.close();
     h.shutdown();
+}
+
+// ---- ADR-024: CopyStream with a .NET stream ----------------------------------------------
+
+#[test]
+fn stream_write_appends_to_a_stream_and_stream_read_returns_the_whole_memory_stream() {
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    let m = sess.construct(&ty("System.IO.MemoryStream"), vec![]).unwrap();
+    let m = handle_of(&m);
+    sess.stream_write(m, b"hello world").unwrap();
+    let len = sess.get_property(DotNetTarget::Instance(m), "Position").unwrap();
+    assert_eq!(len.value, DotNetValue::Int64(11), "the position is at the end");
+    sess.invoke(
+        DotNetTarget::Instance(m),
+        "Seek",
+        vec![arg(DotNetValue::Int64(6)), arg(DotNetValue::Int32(0))],
+    )
+    .unwrap();
+    // Whatever the position, the whole stream; the position is 0 afterwards.
+    assert_eq!(sess.stream_read(m, None).unwrap(), b"hello world");
+    let pos = sess.get_property(DotNetTarget::Instance(m), "Position").unwrap();
+    assert_eq!(pos.value, DotNetValue::Int64(0));
+    // With a count: from the current position, which then follows the count.
+    assert_eq!(sess.stream_read(m, Some(5)).unwrap(), b"hello");
+    let pos = sess.get_property(DotNetTarget::Instance(m), "Position").unwrap();
+    assert_eq!(pos.value, DotNetValue::Int64(5));
+    sess.close();
+}
+
+#[test]
+fn stream_ops_refuse_a_handle_that_is_not_a_stream_and_a_read_of_a_stream_that_is_not_a_memory_stream() {
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    let b = sess.construct(&ty("System.Text.StringBuilder"), vec![]).unwrap();
+    let why = refused_text(sess.stream_write(handle_of(&b), b"x"));
+    assert!(
+        why.contains("System.Text.StringBuilder") && why.contains("Stream"),
+        "{why}"
+    );
+    let why = refused_text(sess.stream_read(handle_of(&b), None).map(|_| ()));
+    assert!(why.contains("System.Text.StringBuilder"), "{why}");
+    sess.close();
+}
+
+fn refused_text(r: Result<(), DotNetFailure>) -> String {
+    match r {
+        Err(DotNetFailure::Refused(s)) => s,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
 }

@@ -289,6 +289,80 @@ impl Session {
         }
     }
 
+    /// `CopyStream` where the target or the source is a `DotNet` stream (ADR-024 section 3). The
+    /// bytes go through the host: the sidecar cannot see Rust memory.
+    ///
+    /// - AL `InStream` into a .NET stream: all the unread bytes; the AL position goes to the end
+    ///   (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
+    ///   `CopyStream_WithAMemoryStream`, with the same codeunit pinning the .NET position at the end
+    ///   and a stream read by one byte copying the remaining 10). A byte count is not pinned for
+    ///   this direction.
+    /// - .NET `MemoryStream` into an AL `OutStream`: the whole stream whatever its position, position 0
+    ///   afterwards; with a count, from the position, which follows the count (same test).
+    pub(crate) fn copy_stream_with_dotnet(
+        &mut self,
+        out: &Value,
+        src: &Value,
+        count: Option<i64>,
+    ) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let host_stream = |v: &Value| -> Result<Option<(DotNetHandle, String)>, Signal> {
+            match v {
+                Value::DotNet(o) => match &o.kind {
+                    DotNetKind::Host { handle, clr_type } => Ok(Some((*handle, clr_type.clone()))),
+                    _ => unsupported("CopyStream with a .NET value that is not a stream the host holds"),
+                },
+                _ => Ok(None),
+            }
+        };
+        match (host_stream(out)?, host_stream(src)?) {
+            (Some(_), Some(_)) => unsupported("CopyStream between two DotNet streams (not pinned)"),
+            (Some((handle, clr_type)), None) => {
+                let Value::Library(_, h) = src else {
+                    return unsupported(format!("CopyStream from {} into a DotNet stream", src.describe()));
+                };
+                if count.is_some() {
+                    return unsupported("CopyStream with a byte count into a DotNet stream (not pinned)");
+                }
+                if let Err(why) = engine.dotnet.policy.check(None, &clr_type, Access::Member("Write")) {
+                    return unsupported(format!("DotNet {clr_type}: {why}"));
+                }
+                let bytes = match &*h.borrow() {
+                    LibraryValue::InStream(st) => st.rest(),
+                    other => return unsupported(format!("CopyStream from {} into a DotNet stream", other.describe())),
+                };
+                self.dotnet_ready(&clr_type)?;
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                stream_failure(&clr_type, session.stream_write(handle, &bytes))?;
+                if let LibraryValue::InStream(st) = &mut *h.borrow_mut() {
+                    st.pos = st.len();
+                }
+                Ok(())
+            }
+            (None, Some((handle, clr_type))) => {
+                let Value::Library(_, h) = out else {
+                    return unsupported(format!("CopyStream from a DotNet stream into {}", out.describe()));
+                };
+                if let Err(why) = engine.dotnet.policy.check(None, &clr_type, Access::Member("Read")) {
+                    return unsupported(format!("DotNet {clr_type}: {why}"));
+                }
+                let blob = match &*h.borrow() {
+                    LibraryValue::OutStream(blob, _) => blob.clone(),
+                    other => {
+                        return unsupported(format!("CopyStream from a DotNet stream into {}", other.describe()));
+                    }
+                };
+                self.dotnet_ready(&clr_type)?;
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                let max = count.map(|n| n as usize);
+                let bytes = stream_failure(&clr_type, session.stream_read(handle, max))?;
+                al_builtins::stream::write_bytes(&blob, &bytes);
+                Ok(())
+            }
+            (None, None) => unsupported("CopyStream without a DotNet stream reached the DotNet path"),
+        }
+    }
+
     /// `Format` of a `DotNet` object: its `ToString()`; of an enum, its member name.
     pub(crate) fn format_dotnet_value(&mut self, v: &Value) -> Option<Result<String, Signal>> {
         let Value::DotNet(o) = v else { return None };
@@ -602,6 +676,17 @@ pub(crate) fn dotnet_equal(l: &Value, r: &Value) -> Result<bool, Signal> {
     match (l, r) {
         (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) => Ok(a == b),
         _ => Ok(ops::compare(l, r)? == std::cmp::Ordering::Equal),
+    }
+}
+
+fn stream_failure<T>(clr_type: &str, r: Result<T, DotNetFailure>) -> Result<T, Signal> {
+    match r {
+        Ok(v) => Ok(v),
+        Err(DotNetFailure::Refused(why)) => unsupported(format!("DotNet CopyStream on {clr_type}: {why}")),
+        Err(DotNetFailure::Exception(e)) => unsupported(format!(
+            "DotNet CopyStream on {clr_type} raised the .NET exception {}: {}; the text AL would see is not pinned (ADR-014 section 7)",
+            e.clr_type, e.message
+        )),
     }
 }
 

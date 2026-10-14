@@ -26,6 +26,7 @@ dotnet
         type("System.DateTime"; DnDateTime) { }
         type("System.IO.Path"; DnPath) { }
         type("System.TimeSpan"; DnTimeSpan) { }
+        type("System.IO.MemoryStream"; DnMemoryStream) { }
     }
     assembly("System")
     {
@@ -33,8 +34,115 @@ dotnet
     }
 }
 
+table 60008 "ALT Blob"
+{
+    fields
+    {
+        field(1; "Code"; Code[20]) { }
+        field(3; Data; Blob) { }
+    }
+    keys { key(PK; "Code") { } }
+}
+
 codeunit 50100 C
 {
+    local procedure Fill(var Blob: Record "ALT Blob"; Text: Text)
+    var
+        O: OutStream;
+    begin
+        Blob.Data.CreateOutStream(O);
+        O.WriteText(Text);
+    end;
+
+    local procedure ReadBlob(var Blob: Record "ALT Blob"): Text
+    var
+        I: InStream;
+        Result: Text;
+    begin
+        Blob.Data.CreateInStream(I);
+        I.ReadText(Result);
+        exit(Result);
+    end;
+
+    // CopyStream_WithAMemoryStream (probe codeunit 61400)
+    procedure CopyIntoMemory(): Text
+    var
+        Memory: DotNet DnMemoryStream;
+        Source: Record "ALT Blob" temporary;
+        I: InStream;
+    begin
+        Fill(Source, 'hello world');
+        Source.Data.CreateInStream(I);
+        Memory := Memory.MemoryStream();
+        CopyStream(Memory, I);
+        exit(Format(Memory.Length) + ':' + Format(Memory.Position) + ':' + Format(I.EOS()));
+    end;
+
+    procedure CopyIntoMemoryAfterOneByteRead(): Text
+    var
+        Memory: DotNet DnMemoryStream;
+        Source: Record "ALT Blob" temporary;
+        I: InStream;
+        First: Byte;
+    begin
+        Fill(Source, 'hello world');
+        Source.Data.CreateInStream(I);
+        I.Read(First);
+        Memory := Memory.MemoryStream();
+        CopyStream(Memory, I);
+        exit(Format(Memory.Length));
+    end;
+
+    local procedure LoadedMemory(var Memory: DotNet DnMemoryStream)
+    var
+        Source: Record "ALT Blob" temporary;
+        I: InStream;
+    begin
+        Fill(Source, 'hello world');
+        Source.Data.CreateInStream(I);
+        Memory := Memory.MemoryStream();
+        CopyStream(Memory, I);
+    end;
+
+    procedure CopyOutWholeFromPositionSix(): Text
+    var
+        Memory: DotNet DnMemoryStream;
+        Target: Record "ALT Blob" temporary;
+        O: OutStream;
+    begin
+        LoadedMemory(Memory);
+        Memory.Position := 6;
+        Target.Data.CreateOutStream(O);
+        CopyStream(O, Memory);
+        exit(ReadBlob(Target) + '|' + Format(Memory.Position));
+    end;
+
+    procedure CopyOutWithACount(): Text
+    var
+        Memory: DotNet DnMemoryStream;
+        Target: Record "ALT Blob" temporary;
+        O: OutStream;
+    begin
+        LoadedMemory(Memory);
+        Memory.Position := 0;
+        Target.Data.CreateOutStream(O);
+        CopyStream(O, Memory, 5);
+        exit(ReadBlob(Target) + '|' + Format(Memory.Position));
+    end;
+
+    procedure CopyIntoMemoryWithACountIsRefused(): Text
+    var
+        Memory: DotNet DnMemoryStream;
+        Source: Record "ALT Blob" temporary;
+        I: InStream;
+    begin
+        Fill(Source, 'hello world');
+        Source.Data.CreateInStream(I);
+        Memory := Memory.MemoryStream();
+        CopyStream(Memory, I, 3);
+        exit('copied');
+    end;
+
     // tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al (codeunit 61400), IntegerProperties_...
     procedure LengthMinusOne(): Integer
     var
@@ -465,4 +573,29 @@ fn datetime_now_today_and_datetimeoffset_local_time_agree_with_current_datetime(
     assert!(matches!(boolean("DateTimeNowIsTheClock"), Some(true) | None));
     assert!(matches!(boolean("DateTimeTodayIsToday"), Some(true) | None));
     assert!(matches!(boolean("LocalMinusOffsetEqualsClock"), Some(true) | None));
+}
+
+#[test]
+fn copystream_into_a_memorystream_copies_all_bytes_and_leaves_the_position_at_the_end() {
+    assert!(matches!(txt("CopyIntoMemory").as_deref(), Some("11:11:Yes") | None));
+    assert!(matches!(
+        txt("CopyIntoMemoryAfterOneByteRead").as_deref(),
+        Some("10") | None
+    ));
+}
+
+#[test]
+fn copystream_out_of_a_memorystream_copies_the_whole_stream_or_the_count_from_the_position() {
+    assert!(matches!(
+        txt("CopyOutWholeFromPositionSix").as_deref(),
+        Some("hello world|0") | None
+    ));
+    assert!(matches!(txt("CopyOutWithACount").as_deref(), Some("hello|5") | None));
+}
+
+#[test]
+fn copystream_with_a_count_into_a_dotnet_stream_is_refused() {
+    if let Some(w) = refusal("CopyIntoMemoryWithACountIsRefused") {
+        assert!(w.contains("CopyStream") && w.contains("not pinned"), "{w}");
+    }
 }

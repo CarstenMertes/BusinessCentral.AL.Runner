@@ -80,6 +80,11 @@ pub trait Ctx: FormatCtx {
     fn format_dotnet(&mut self, _v: &Value) -> Option<Result<String, Signal>> {
         None
     }
+    /// `CopyStream` where one side is a `DotNet` stream (ADR-024). `None` where the context has no
+    /// .NET host.
+    fn copy_stream_dotnet(&mut self, _out: &Value, _src: &Value, _count: Option<i64>) -> Option<Result<(), Signal>> {
+        None
+    }
     /// The declared values of enum object `id` as (ordinal, name), in declaration order with
     /// extension values after them. `None` when the context has no program.
     fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {

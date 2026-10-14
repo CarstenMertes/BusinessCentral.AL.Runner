@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// The protocol version the sidecar must speak.
-pub const PROTOCOL: u64 = 2;
+pub const PROTOCOL: u64 = 3;
 
 /// Where the sidecar and .NET are found and how a call is bounded.
 #[derive(Debug, Clone)]
@@ -905,6 +905,22 @@ impl DotNetSession for SidecarSession {
         self.request(json!({"op":"set","target":target_json(&target),"member":name,"value":encode(&value)}))
             .and_then(reply_of)
     }
+    fn stream_write(&mut self, handle: DotNetHandle, bytes: &[u8]) -> Result<(), DotNetFailure> {
+        self.request(json!({"op":"stream_write","handle":handle,"data":base64(bytes)}))
+            .map(|_| ())
+    }
+    fn stream_read(&mut self, handle: DotNetHandle, max: Option<usize>) -> Result<Vec<u8>, DotNetFailure> {
+        let mut req = json!({"op":"stream_read","handle":handle});
+        if let Some(n) = max {
+            req["count"] = json!(n);
+        }
+        let v = self.request(req)?;
+        let bad = |e: String| DotNetFailure::Refused(format!("unreadable reply from the sidecar: {e}"));
+        match decode(&v["value"]).map_err(bad)? {
+            DotNetValue::InStream(b) => Ok(b),
+            other => Err(bad(format!("expected bytes, got {other:?}"))),
+        }
+    }
     fn release(&mut self, handles: &[DotNetHandle]) {
         if self.proc.is_some() && self.dead.is_none() {
             let _ = self.request(json!({"op":"release","handles":handles}));
@@ -992,6 +1008,7 @@ pub fn decode(v: &Value) -> Result<DotNetValue, String> {
             handle: v["v"].as_u64().ok_or("handle without a number")?,
             ty: v["type"].as_str().unwrap_or("").to_string(),
         },
+        "ins" => DotNetValue::InStream(unbase64(text()?)),
         other => return Err(format!("unknown value tag {other}")),
     })
 }

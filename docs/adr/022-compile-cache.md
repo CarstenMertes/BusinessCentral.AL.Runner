@@ -1,6 +1,6 @@
 # ADR-022: Compile cache: one entry per dependency app version
 
-- Status: Proposed (owner answered the open questions on 2026-10-14; building waits for the measurement below)
+- Status: Proposed (owner answered the open questions on 2026-10-14; the measurement below is done; decision 2 does not work as written, see "Proposed amendments"; building waits for the owner)
 - Date: 2026-10-14
 - Amends: ADR-013 (decision 6: its "persistent cache only if the warm start needs it" becomes a design; its
   "lowered IR is not cached" is lifted for dependency apps), ADR-016 (the deferral of persistent dependency
@@ -37,7 +37,7 @@ runtime has no SQL schema step, so a cache can be opened by reading an index and
      compile of ADR-013 stays as it is. It is the reference path and the fallback.
    - Only dependency apps are cached. The workspace apps (the code under test) compile on every run.
 
-2. **One entry per app id + version**, not per stack. Base Application is shared by all projects, and a customer
+2. **One entry per app id + version**, not per stack. (The measurement below found this cannot work as written: the IR refers to other objects by position in one global list. See "Can lowering be done per app?" and the proposed amendments.) Base Application is shared by all projects, and a customer
    extension, which depends on Base Application and is not part of its entry, never invalidates it. An entry holds:
    - a header: magic, format integer, the key (decision 4), a checksum of the index;
    - an object index: object type + id -> offset and length of its block;
@@ -112,29 +112,228 @@ runtime has no SQL schema step, so a cache can be opened by reading an index and
    existing demand-versus-eager comparison (ADR-013, "The permanent check": `tools/compare_junit.py` over a second run
    with `AL_EAGER_DEPENDENCIES=1`). That comparison stays, and gains a third leg: cached against uncached.
 
-## Measurement before building
+## Measurement (spike done 2026-10-14)
 
-A throwaway spike, an `examples/` program in `al-test-cli` next to `phases` and `compile_dump`. It serializes the
-lowered program of a full corpus run with Microsoft's apps and reads it back. It replaces these estimates (owner,
-unmeasured): load 50-150 ms for about 35 000 reached routines; corpus run about 1 s; single test about 0.3 s;
-32 buckets 6-8 s.
+A throwaway branch (`cache-spike`, not merged) serialized the lowered program of an eager compile of the whole
+dependency stack and read it back. Nothing here is a design; it is what the numbers are. Method notes:
 
-Measure, with the load average noted (`flock /tmp/al-perf.lock`):
+- **Stacks.** BC 29.0.54011.56262: System, System Application, Business Foundation, Base Application,
+  Application (the corpus `.alpackages`). 9 683 dependency objects, 148 860 routines, 4 201 of them refused.
+  The Tests-ERM closure is BC 27.5.46862.48827 (the only artifact here with the `Tests-*` sources): 9 919
+  dependency objects, 153 326 routines.
+- **Machine.** 12 cores shared with other agents. Check, lowering and test threads: 4 each. Load average is
+  noted per number. Run time depends strongly on load (the same all-32-buckets run took 31.5 s at load 20 and
+  12.7 s at load 7), so only numbers from one session are compared. CPU time (`user`) is the steadier figure.
+- **Codec.** `postcard` for the IR. Round trip checked: 0 of 9 683 objects differ after decode.
 
-1. Size of the serialized program, raw, per-object zstd, per-object LZ4, whole-file zstd. Per-object overhead.
-2. Time to read it all back (full decode), and time for lazy decode of only the objects that run reached.
-3. Time to open (header + index), with and without the stored event index and member tables, against rebuilding them.
-4. The eager compile time for Base Application and for the full Microsoft stack (estimate: 10-30 s per Base App
-   version), and the peak memory of it.
-5. Peak memory of a cached run against an uncached one.
-6. The cost of the executable hash and of the central-directory hash (decision 4).
-7. Whether IR refers to fields by field number or by position in a table layout that other apps' extensions change.
-   If by position, the entry cannot be shared across projects until that changes. This decides whether decision 2
-   works as written.
+### 1. Size (BC 29 stack, dependency objects only)
 
-**Go / no-go.** Build only if a warm cached run with Microsoft's apps is clearly faster than the best uncached run
-after the performance work, on the corpus and on one bucket run. If the uncached run is already near the cached
-one, reject this ADR. The owner's rule stands: never add a cache to hit a number the work itself could reach.
+| What | Size |
+|---|---:|
+| postcard, raw | 52.4 MB |
+| bincode 1.3, raw | 113.2 MB |
+| postcard, per-object zstd level 3 | 15.6 MB |
+| postcard, per-object zstd level 19 | 14.3 MB |
+| postcard, per-object LZ4 | 21.4 MB |
+| postcard, whole stream zstd 3 (no per-object split) | 9.3 MB |
+| per-object zstd 3 with one shared 512 KB dictionary | 12.3 MB (+0.25 MB dictionary) |
+| call graph (`Lowered::calls`), raw / per-object zstd 3 | 151.2 MB / 6.3 MB |
+| object index (`ObjectSym` of all dependency objects, with 3 375 event subscribers) | 3.09 MB raw, 0.49 MB zstd |
+| member tables (44 254 fields, 97 549 procedures) | 13.4 MB raw, 2.35 MB zstd |
+
+- **The call graph is three quarters of the raw bytes and does not belong in the blocks.** It is derivable from the
+  IR. Its consumers are `baseline.rs` (static reach of the install roots) and the refusal explanations. Without it
+  the blocks are 52 MB raw instead of 204 MB. The numbers above leave it out unless stated.
+- **Level 19 saves 8 % over level 3 and is not worth it.** LZ4 is 37 % bigger than zstd 3.
+- **Per-object compression costs 67 % against one stream** (median object 2 KB, p90 13 KB, largest 246 KB). A
+  shared dictionary takes back most of it. The cost is an index entry per block (0.52 MB for 9 683 blocks).
+- **Strings are two thirds of the raw bytes.** 1.94 million strings, 35.2 MB, in the blocks; 252 469 distinct
+  strings, 10.5 MB (2.0 MB zstd 3). A shared string table would give about 20 MB of blocks plus the 10.5 MB table
+  before compression. It would not make decode faster (decode time is allocation, see 2). The dictionary reaches
+  nearly the same size with no format change. Recommendation: dictionary, no string table.
+- **Dependency IR carries no source positions** (0 of 53 376 positions in the program belong to a dependency
+  object). `Program::positions` and `sources` are workspace-only and stay out of the entries.
+- **One entry (blocks with dictionary, object index, member tables, block index) is about 16 to 19 MB per BC build.**
+  The Tests-ERM closure is the same size (15.9 MB blocks).
+
+### 2. Decode time (one thread, warm file cache, cold process)
+
+| What decoded | Blocks | Postcard bytes | Time | Of which zstd | Of which postcard decode |
+|---|---:|---:|---:|---:|---:|
+| Open: block index (9 683 entries) | | 0.52 MB | 1.2 to 1.3 ms | | |
+| Corpus run: objects the demand compile activates | 3 601 | 28.9 MB | 269 to 283 ms | 62 to 65 ms | 201 to 213 ms |
+| One corpus test file (`--file`) | 3 176 | 26.3 MB | 239 to 248 ms | 54 to 56 ms | 181 to 187 ms |
+| Small app, one test (install baseline reach) | 3 105 | 26.1 MB | 239 ms | 54 ms | 180 ms |
+| Tests-ERM (27.5) | 5 415 | 39.0 MB | 361 ms | 89 ms | 264 ms |
+| Everything, one thread | 9 683 | 52.4 MB | 471 to 488 ms | 129 to 133 ms | 330 to 343 ms |
+| Everything, 4 threads | 9 683 | 52.4 MB | 188 to 190 ms | | |
+
+- The earlier estimate (load 50 to 150 ms for about 35 000 routines) was low by a factor of two to three on one
+  thread. The 35 298 routines of a corpus run sit in 3 601 objects, and an object decodes whole.
+- **Decode is allocation work, not decompression.** zstd is a quarter of the time. About 28.9 MB of postcard becomes
+  280 MB of heap (the uncached corpus run peaks at 1 394 MB in total).
+- **A single test of a small app reaches 3 105 objects**, the same as a whole corpus run, because the install
+  baseline (`Company-Initialize` and the install codeunits) is a root of every run. So the cost of a small run is
+  the baseline's reach: 0.24 s decode on one thread, then 0.2 s to run the baseline.
+- The "reached" objects are the demand compile's active set (`SCHEMA`, `READ` and `FULL` levels). A cached run
+  that decodes at first touch decodes at most this many.
+- Object index decode: 15 to 22 ms; rebuilding `by_name`, `by_id` and `subscribers_of` from it: 6 to 12 ms.
+  Member tables decode: 42 to 69 ms for all objects, against 400 to 785 ms to compute them today (measured
+  warm, after the files were parsed; cold it includes the parse). The event index is a by-name list per object
+  (0.21 MB); the global map is rebuilt in a few milliseconds and is not stored.
+
+### 3. Open time
+
+Index 1.3 ms, object index 15 to 22 ms plus maps 6 to 12 ms, member tables 42 to 69 ms (or lazily per object):
+**25 to 35 ms with the member tables lazy, 70 to 100 ms with everything decoded.** Today a run with dependencies
+reads and inflates the dependency sources ("load apps and dependencies", 0.11 to 0.18 s) and scans 108 MB of source
+(62 to 180 ms wall, 9 746 files). A cache hit skips both.
+The member tables and the event index can be stored, but not "as is": `FieldInfo::declared_in`, `ProcSig::declared_in`
+and `EnumImpl::declared_in` are object indices, and `on_validate`, `on_lookup` and `ProcSig::offset` are byte offsets
+into source files. Types (`Ty`) refer to objects by name, so they store as they are. The offsets are used only
+when an object is lowered from source.
+
+### 4. Eager compile (the one-time cost)
+
+| Run | Compile wall | Peak memory | Load |
+|---|---:|---:|---:|
+| Corpus stack, BC 29, 4 threads | 8.1 to 8.8 s | 3.3 GB | 8 |
+| Corpus stack, BC 29, 1 thread (`AL_CHECK_THREADS=1 AL_LOWER_THREADS=1 RAYON_NUM_THREADS=1`) | 9.5 s | 3.2 GB | 6 |
+| Corpus stack, BC 29, 4 threads | 13.4 s | 3.3 GB | 18 |
+| Tests-ERM closure, 27.5, 4 threads | 9.6 s | 3.8 GB | 11 |
+| Tests-SMB closure, 27.5, 4 threads | 9.2 s | 3.4 GB | about 8 |
+
+The estimate was 10 to 30 s per Base Application version; it is **about 9 s on a quiet machine and 13 s on a busy
+one**, and it is almost the same on one thread (the eager check is serial; lowering is parallel). Serializing and
+compressing the blocks adds roughly 2 s (the spike's pass, which does five codecs, takes 3.3 s on 4 threads). Memory:
+3.3 to 3.8 GB, so the builder needs a cap of at least 5 GB.
+
+### 5. Peak memory of a cached run
+
+Not measured as one run (no cached run exists). From the parts: decoded IR of the objects a corpus run reaches
+280 MB (measured in the reader), plus the workspace compile (197 MB for the corpus alone, measured with `--no-deps`),
+plus the object index and member tables (about 50 MB decoded). About 0.5 to 0.6 GB against 1.4 GB uncached
+(corpus), 1.2 GB for the small app. Estimate, not a measurement.
+
+### 6. Hash costs
+
+| Hash | Time |
+|---|---:|
+| sha256 of the running executable (14.8 MB, file cache warm) | 6.4 to 8.4 ms (read 2.6 to 12 ms) |
+| blake3 of the same | 2.5 to 5.1 ms |
+| central directory of `Base Application.app` (38.4 MB file, 8 350 entries, 0.83 MB directory): read, parse, sha256 | 3.7 ms + 1.1 ms |
+
+Decision 4.5 stands: **hash the executable; the build-script fallback is not needed.** Total key cost for the
+five apps is under 20 ms.
+
+### 7. Can lowering be done per app? (the go / no-go question)
+
+**No, not as decision 2 is written.** The IR refers to other objects by position in the one global
+`Program::objects` list, and to table fields by position in a list that other apps' extensions grow. It also holds
+facts about the whole program. Findings, each measured or shown by a test:
+
+1. **Object references are positions in `Program::objects`.** `Expr::Call::object`, `InterfaceCall::targets`,
+   `RtType::{Record, Codeunit, Page, TestPage, Query, Interface, Enum}`, `Const::Enum`, `Table::extensions`,
+   `Field::on_validate` and friends, `Page::extensions`, `Control::owner`, `Control::part_page`,
+   `RunObject::object`, `SrcPos::object`, report, query and xmlport `table`/`base`/`extension` fields: about 35 places
+   in `al-ir`. The workspace apps come first in the list today, so **every dependency object moves by the size of the
+   workspace**: Tests-ERM against Tests-SMB on the same artifact moves all 9 919 dependency objects by 245, and only
+   1 628 of them (16 %: enums, permission sets, profiles, `object` placeholders) have byte-identical IR. A table's
+   IR differed in 936 places for Customer (table 18), a codeunit's in 4 717 (Sales-Post). In the 26 objects
+   diffed field by field (codeunits, tables, pages, reports, queries, an xmlport), **every difference was a shift by
+   245**; nothing else changed.
+2. **Field references are positions in the table's merged field list.** `Place::Field(place, usize)`,
+   `Const::FieldPos`, `Table::keys`, relation arms, `DataItemLink`, page control bindings. The order is: the table's
+   own fields, the six system fields, then the fields of extensions in workspace object order
+   (`members.rs`, `merged_members`). A test on the spike branch compiles app B (a table extension that adds `BF`,
+   plus a codeunit that assigns `Rec.BF`) alone and next to app X, which extends the same table first: `BF` is
+   field 7 in one and field 8 in the other, and the codeunit's IR differs
+   (`Assign(Field(Local(0), 7), ..)` against `Field(Local(0), 8)`). `Place::Field` does not name the table, so a remap
+   has to type the place from the slot it starts at.
+3. **Other apps' contributions are merged into an object's IR**, so an object block is not a function of its own
+   app: `Table::fields` and `keys` (extension fields), `Table::extensions`, `Field::ext_before_validate` and
+   `ext_after_validate`, `Page::controls` (page extension controls are inserted into the base page's list, which
+   shifts the control indices that `Expr::Control` uses), `Page::extensions` and `ext_triggers`, enum values,
+   report extensions. And some **dependency routines embed the fan-out over all apps**: `InterfaceCall::targets`
+   (every implementer), `InterfaceTest::objects`, `EnumImpl::by_ordinal` (every enum value, extensions included).
+4. **How much of this exists in the stack.** In the Tests-ERM closure there are 67 extension objects that cross an
+   app boundary (11 page and 4 table extensions of Base Application on Business Foundation objects, 17 page, 3 table,
+   10 enum and 2 permission set extensions on System Application, plus the test apps), and 315 extensions inside their
+   own app (these are fine). Dependency IR contains 537 `InterfaceCall`, 13 `InterfaceTest` and 156 `EnumImpl` sites in
+   about 200 objects, and 210 tables and pages list extensions. **About 400 of 9 919 objects (4 %) carry whole-program
+   facts.** Every other block depends only on object positions and on field positions of base fields.
+
+What it would take:
+
+| Design | What changes | Estimate (mine) |
+|---|---|---|
+| **A. One entry per dependency set** (all non-workspace apps of a run, in dependency order). Workspace apps are ordered after them. | Dependency object indices and base field positions are then the same in every run with that set, so **no remap**. Needs the app order changed (workspace last; `runs[0].app = Some(1)` and the app index logic move), blocks that list the objects whose extension or implementer set they embed, and a load step that re-lowers (demand path, from source) the blocks whose listed objects the workspace extends or implements. Fallback to lazy parse of the source for the few objects the workspace checker reads directly. | 2 weeks |
+| **B. One entry per app** (decision 2 as written). | All of A, plus: stable references (a typed remap visitor over about 80 IR enum variants for object indices and field positions, with a field-id table per table), a canonical extension order, and a merge step for fields, controls, enum values and subscribers contributed by other entries. | 4 to 5 weeks, with a risk of subtle wrong-field bugs that the corpus would catch only partly |
+
+**Per app buys little here.** Microsoft's apps move together per BC build. Base Application is 7 853 of 9 919
+objects (79 %), System Application 1 244 (13 %). A hotfix of Base Application rebuilds 79 % of the set under A as
+well. The only gain of B is keeping System Application and Business Foundation (14 %) across a Base Application hotfix.
+
+### 8. Projected run times
+
+"Today" is origin/main (3c35b4e) in one session at load 6 to 7, two runs each, `Time:` line of
+`--timings`; the spike's cached figures are built from measured parts as shown. Cached = workspace compile
+(measured as the same run without dependencies, or the workspace share of check and lowering) + open + decode +
+install baseline + tests. The workspace share is the measured share of check and lowering thread-seconds spent on
+workspace objects (corpus: not separable, taken from `--no-deps`; Tests-ERM: 24 %; 32 buckets: 53 %).
+
+| Run | Today (total, user CPU) | Cached, projected | Factor |
+|---|---|---|---:|
+| Small app, one test (`alrunner test`, BC 29) | 2.10, 2.12 s; 6.0 s CPU | 0.35 to 0.55 s: open 0.03 + decode 0.07 (4 threads) to 0.24 (1 thread) + baseline 0.20 + test | 4 to 6 |
+| Corpus, BC 29, with Microsoft's apps | 2.92, 3.88 s; 9.3 and 11.9 s CPU | 1.7 to 2.1 s: workspace compile 0.35 to 0.5 + open 0.03 + decode 0.1 to 0.25 + baseline 0.2 + tests 0.86 to 1.09 | 1.4 to 2.3 |
+| Tests-ERM (27.5) | 6.13, 5.01 s; 17.6 and 14.3 s CPU | 2.3 to 2.8 s | about 2 |
+| All 32 buckets, one process | 13.17, 12.69 s; 38.3 and 34.8 s CPU; 5.9 GB | 8.3 to 9.5 s (test apps are 91 MB of source and stay) | 1.4 |
+
+The earlier estimates (corpus 1 s, single test 0.3 s, 32 buckets 6 to 8 s) are not reached. The floors are the
+tests that run only with Microsoft's apps (0.86 to 1.09 s in the corpus), the workspace compile, and the baseline run.
+The corpus without Microsoft's apps takes 0.45 to 0.53 s in total. The break-even is 6 to 12 runs: the build is
+about 12 s, the saving 1 to 2 s per corpus run or about 1.6 s per small run.
+
+Uncached numbers will drop when `perf-3` merges (-18 % instructions at 4 threads, -29 % at 12), which narrows the
+corpus gap more than the small-app gap, because the small-app cost is the dependency work perf-3 does not remove.
+
+### Go / no-go
+
+The rule was: build only if a warm cached run is clearly faster than the best uncached run, on the corpus and one
+bucket. Read against the numbers:
+
+- **Clearly faster:** a small app with one test (4 to 6 times) and Tests-ERM (about 2 times).
+- **Faster, less clearly:** the corpus (1.4 to 2.3 times, the two runs differ by 1 s; closer after perf-3 merges) and all 32 buckets (1.4 times).
+- **Per-app entries (decision 2): no-go as written.** The unit has to be the dependency set (design A) or the work
+  grows to design B.
+- Not tried here: making the uncached path cheaper for a small app. Its cost is the install baseline's reach (3 105
+  objects, about 6 CPU-seconds), so a cheaper baseline would help the uncached path and the cached one alike.
+
+### How to reproduce
+
+Branch `cache-spike` (commit "SPIKE (do not merge)", worktree `wt-cache-spike`). Environment variables, all read by
+`al-testrun/src/runtime.rs` and `spike.rs`: `AL_EAGER_DEPENDENCIES=1` with `AL_SPIKE_WRITE=FILE` runs the eager
+compile, prints every size above, writes the blocks, and exits; `AL_SPIKE_DEMAND=FILE` writes the demand compile's
+active objects of a normal run; `AL_SPIKE_NS=1` prints thread-seconds of check and lowering split by workspace and
+dependency; `AL_SPIKE_LOADSPLIT=1` times the workspace load per app kind; `AL_SPIKE_HASHES=FILE` writes a hash per
+dependency object (to compare two closures). `cargo run --release -p al-test-cli --example cache_spike_read -- FILE
+DEMAND.json...` opens a written file and times the decode. The corpus run is
+`al-test-cli --root . --bc-version 29`; the bucket runs are the recipe in `docs/alrunner-buckets.md`.
+
+## Proposed amendments to this ADR (need the owner's decision; the accepted answers above stay as they are)
+
+1. **Decision 2: the entry is per dependency set, not per app** (design A). Key: the ordered list of the per-app
+   inputs of decision 4, plus the other inputs. Workspace apps are ordered after the dependency apps in the program.
+2. **Decision 2: add to each block the list of objects whose extension or implementer set it embeds.** At load, a block
+   whose listed object is extended or implemented by a workspace object is lowered from source with the demand path
+   instead of being loaded.
+3. **Decision 2: leave the call graph out of the blocks**; derive it where `baseline.rs` and the explanations need it.
+4. **Decision 2: per-object zstd level 3 with one shared dictionary per entry**; no string table; no level 19.
+5. **Decision 3: decode the objects the baseline reaches in parallel at start (4 threads: 70 to 90 ms).** Per-object
+   laziness stays; per-routine laziness is not needed (decode of everything is 0.19 s on 4 threads).
+6. **Decision 4.5: hash the executable.** Measured 6 to 8 ms; drop the build-script fallback.
+7. **Consequences:** the first-run cost is 9 to 13 s and 5 GB of memory (builder), not 10 to 30 s. Entry size is
+   16 to 19 MB per BC build.
 
 ## Open questions for the project owner
 
@@ -163,6 +362,16 @@ Each is one decision. The recommendation comes first.
      the host has no agreed storage. WebAssembly keeps the demand-driven compile.
    - Alternative: the host hands the format code a byte source (`ByteSource`, as in `al-bcdb`), with a pure Rust
      decoder (`ruzstd`, slower, or LZ4). The format code is already core and OS-free, so this stays possible.
+
+5. **What is the unit of an entry?** (added after the measurement)
+   - Recommended: **the dependency set** (all non-workspace apps of a run, in dependency order, workspace apps ordered
+     after them). No remap of object or field positions, about 2 weeks, and a Base Application hotfix rebuilds 79 % of the
+     set under either unit.
+   - Alternative: **one entry per app** with stable references and a merge of other apps' contributions. About 4 to 5
+     weeks, riskier, and it keeps only System Application and Business Foundation (14 % of the objects) across a Base
+     Application hotfix.
+   - Alternative: **do not build.** Pick this if a corpus run 1.4 to 2.3 times faster and a bucket run 1.4 to 2 times
+     faster is not worth the second path (decision "Two paths stay"). The small-app run is 4 to 6 times faster.
 
 ## Owner decisions (2026-10-14)
 

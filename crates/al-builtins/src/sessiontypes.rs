@@ -258,8 +258,31 @@ fn n_add_action(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     with_notification(r, |n| n.actions.push((caption, codeunit, method, description))).map(|()| Value::Null)
 }
 
-fn n_send_refused(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Out {
-    unsupported("Notification.Send/Recall go to a [SendNotificationHandler], which is not implemented")
+/// A copy of the notification for a handler, which gets its own (handlers/TestNotificationHandler.al:
+/// 74-79 read the message from the parameter).
+fn notification_copy(r: Option<&mut Value>) -> Result<(Value, Option<[u8; 16]>), Signal> {
+    let state = with_notification(r, |n| n.clone())?;
+    let id = state.id;
+    Ok((
+        Value::Library(
+            "Notification".into(),
+            std::rc::Rc::new(std::cell::RefCell::new(LibraryValue::Notification(state))),
+        ),
+        id,
+    ))
+}
+
+/// `Send()` goes to the test's `[SendNotificationHandler]` (handlers/TestNotificationHandler.al:15-26).
+fn n_send(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    let (copy, id) = notification_copy(r)?;
+    c.ui_send_notification(copy, id).map(|()| Value::Null)
+}
+
+/// `Recall()` after a handled `Send` does not throw with only a send handler bound
+/// (handlers/TestNotificationHandler.al:60-72).
+fn n_recall(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    let id = with_notification(r, |n| n.id)?;
+    c.ui_recall_notification(id).map(|()| Value::Null)
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
@@ -280,7 +303,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("Notification", "HasData") => n_has_data,
         ("Notification", "GetData") => n_get_data,
         ("Notification", "AddAction") => n_add_action,
-        ("Notification", "Send" | "Recall") => n_send_refused,
+        ("Notification", "Send") => n_send,
+        ("Notification", "Recall") => n_recall,
         _ => return None,
     })
 }

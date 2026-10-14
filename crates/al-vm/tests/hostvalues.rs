@@ -422,4 +422,79 @@ fn hyperlink_lowers_and_is_refused_only_when_it_runs() {
         Err(Signal::Unsupported(why)) => assert!(why.contains("Hyperlink"), "{why}"),
         other => panic!("{other:?}"),
     }
+// ---------------------------------------------------------------- randomness
+// No corpus test pins `Random` or `Randomize`; the range 1..MaxNumber is the documented one
+// (corpus/scripts/al-surface.json, system-random-method) and the rest is recorded in
+// docs/probes-needed.md ("Probe batch 4"). The reference sequences are .NET's `new Random(seed)`.
+
+#[test]
+fn random_stays_in_the_documented_range() {
+    assert_eq!(
+        text(
+            "I: Integer; N: Integer; Bad: Integer;",
+            "for I := 1 to 500 do begin N := Random(10); if (N < 1) or (N > 10) then Bad += 1; end; exit(Format(Bad));"
+        ),
+        "0"
+    );
+    assert_eq!(text("", "exit(Format(Random(1)));"), "1");
+}
+
+#[test]
+fn a_seeded_sequence_repeats_and_follows_dotnets_random() {
+    // `new Random(42)`: Next(100)+1, Next(1000)+1, Next(7)+1 = 67, 141, 1.
+    assert_eq!(
+        text(
+            "",
+            "Randomize(42); exit(Format(Random(100)) + ',' + Format(Random(1000)) + ',' + Format(Random(7)));"
+        ),
+        "67,141,1"
+    );
+    assert_eq!(
+        text(
+            "",
+            "Randomize(1); exit(Format(Random(100)) + ',' + Format(Random(1000)) + ',' + Format(Random(7)));"
+        ),
+        "25,111,4"
+    );
+    assert_eq!(
+        text(
+            "A: Integer; B: Integer;",
+            "Randomize(7); A := Random(1000000); Randomize(7); B := Random(1000000); exit(Format(A = B));"
+        ),
+        "Yes"
+    );
+}
+
+#[test]
+fn the_sequence_without_a_seed_is_the_same_in_every_session() {
+    // ADR-009: determinism where BC's unseeded sequence is not observable.
+    let first = text("", "exit(Format(Random(1000000)) + ',' + Format(Random(1000000)));");
+    let second = text("", "exit(Format(Random(1000000)) + ',' + Format(Random(1000000)));");
+    assert_eq!(first, second);
+}
+
+#[test]
+fn randomize_without_a_seed_moves_to_a_new_sequence() {
+    // BC draws a fresh seed from the clock, so two calls differ; here the seed is a counter.
+    assert_eq!(
+        text(
+            "A: Integer; B: Integer;",
+            "Randomize(); A := Random(1000000); Randomize(); B := Random(1000000); exit(Format(A <> B));"
+        ),
+        "Yes"
+    );
+}
+
+#[test]
+fn zero_and_negative_bounds_follow_the_service_tier() {
+    // Not pinned by the corpus (docs/probes-needed.md): 0 acts as 1, a negative bound as its
+    // absolute value, as in ALSystemNumeric.ALRandom.
+    assert_eq!(text("", "exit(Format(Random(0)));"), "1");
+    assert_eq!(
+        text(
+            "I: Integer; N: Integer; Bad: Integer;",
+            "for I := 1 to 300 do begin N := Random(-5); if (N < 1) or (N > 5) then Bad += 1; end; exit(Format(Bad));"
+        ),
+        "0"
+    );
 }

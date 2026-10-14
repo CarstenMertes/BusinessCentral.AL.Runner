@@ -29,6 +29,8 @@ pub struct TestArgs {
     pub junit: Option<PathBuf>,
     /// `--top-refusals [N]`: how many refusal reasons to list (default 10).
     pub top_refusals: Option<usize>,
+    /// `--refusal-detail TEXT`: the reasons that contain TEXT, grouped finer than `--top-refusals`.
+    pub refusal_detail: Option<String>,
     pub allow_not_run: bool,
     pub verbose: bool,
     pub quiet: bool,
@@ -77,6 +79,8 @@ OUTPUT
     --verbose            One line per test (PASS, FAIL, NOT RUN with its reason).
     --quiet              Summary only.
     --top-refusals [N]   List the N most common reasons tests were not run (default 10).
+    --refusal-detail TEXT  List the not-run reasons that contain TEXT (site and call arguments
+                         folded, names kept), most common first (default 30 lines).
     --junit FILE         Write JUnit XML. A test that did not run is <skipped> with its reason.
     --timings            Compile phases and the slowest test codeunits.
 
@@ -161,6 +165,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                     .push(v.parse().map_err(|_| format!("{flag} needs an object id, got `{v}`"))?);
             }
             "--filter" | "--test" => a.filters.push(text()?),
+            "--refusal-detail" => a.refusal_detail = Some(text()?),
             "--junit" => a.junit = Some(text()?.into()),
             "--allow-not-run" => a.allow_not_run = true,
             "--verbose" | "-v" => a.verbose = true,
@@ -230,6 +235,16 @@ mod tests {
         assert_eq!(a.package_caches, vec![PathBuf::from("pc")]);
         assert_eq!(a.codeunits, vec![5, 6]);
         assert_eq!(a.filters, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn refusal_detail_takes_a_text() {
+        assert_eq!(
+            test_args("test A --refusal-detail is_not_lowered")
+                .refusal_detail
+                .as_deref(),
+            Some("is_not_lowered")
+        );
     }
 
     #[test]

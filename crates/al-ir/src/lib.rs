@@ -235,6 +235,46 @@ pub struct Report {
     pub output: Vec<String>,
     /// Why the runtime cannot run this report yet; empty = it can.
     pub unsupported: Vec<String>,
+    /// The `Caption` property when it is a plain text literal.
+    #[serde(default)]
+    pub caption: Option<String>,
+    /// The request page's `AboutTitle` and `AboutText` when they are plain text literals.
+    #[serde(default)]
+    pub about_title: Option<String>,
+    #[serde(default)]
+    pub about_text: Option<String>,
+    /// The kind of the layout the report renders with by default.
+    #[serde(default)]
+    pub layout: ReportLayout,
+    /// Why `Report.SaveAs(.., Xml, ..)` cannot write this report's dataset (a section or property
+    /// whose effect on the dataset no test pins); empty = it can.
+    #[serde(default)]
+    pub dataset_unsupported: Vec<String>,
+}
+
+/// The layout a report renders with by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ReportLayout {
+    /// The report declares no layout.
+    #[default]
+    None,
+    /// `DefaultLayout = RDLC`, or `DefaultRenderingLayout` naming a layout of `Type = RDLC`.
+    Rdlc,
+    /// Any other layout, or one the runtime cannot tell the kind of.
+    Other,
+}
+
+/// A `column(Name; Source)` of a data item. The source is an expression of the item's record, or
+/// of the report: `routine` evaluates it, as a routine of the object that declares the column.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReportColumn {
+    pub name: String,
+    pub routine: Option<usize>,
+    /// Why the dataset cannot carry this column; set when it states a property no test pins.
+    pub unsupported: Option<String>,
+    /// The position of the table field the source names, when the source is just that field.
+    #[serde(default)]
+    pub field: Option<usize>,
 }
 
 /// What a reportextension adds to a run of the report it extends.
@@ -251,6 +291,18 @@ pub struct ReportExt {
     pub modifies: Vec<ReportExtModify>,
     /// Data items the extension adds with `addlast`.
     pub added: Vec<AddedItem>,
+    /// Columns the extension adds to base items with `add(Item)`.
+    #[serde(default)]
+    pub adds: Vec<ReportExtAdd>,
+}
+
+/// The columns an `add(Item)` block of a reportextension gives a base item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReportExtAdd {
+    /// Index of the base item.
+    pub item: usize,
+    /// Routines of the extension.
+    pub columns: Vec<ReportColumn>,
 }
 
 /// The triggers of a `modify(Item)` block of a reportextension.
@@ -291,6 +343,9 @@ pub struct ReportItem {
     /// `RequestFilterFields` as written (`"No.", Status`).
     #[serde(default)]
     pub request_filter_fields: Option<String>,
+    /// The columns the dataset writes for each row, in source order.
+    #[serde(default)]
+    pub columns: Vec<ReportColumn>,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).
@@ -829,6 +884,41 @@ fn no_pos() -> u32 {
     NO_POS
 }
 
+impl Routine {
+    /// Moves every source position id of the routine (its own and its `Stmt::Pos` markers) up by
+    /// `by`: the object was lowered with positions numbered from 0 and now follows `by` positions
+    /// of other objects in `Program::positions`. [`NO_POS`] stays.
+    pub fn shift_positions(&mut self, by: u32) {
+        if self.pos != NO_POS {
+            self.pos += by;
+        }
+        shift_stmts(&mut self.body, by);
+    }
+}
+
+fn shift_stmts(stmts: &mut [Stmt], by: u32) {
+    for s in stmts {
+        match s {
+            Stmt::Pos(id) => *id += by,
+            Stmt::If(_, then, otherwise) => {
+                shift_stmts(then, by);
+                shift_stmts(otherwise, by);
+            }
+            Stmt::While(_, body) | Stmt::Repeat(body, _) | Stmt::AssertError(body) => shift_stmts(body, by),
+            Stmt::For { body, .. } | Stmt::Foreach { body, .. } => shift_stmts(body, by),
+            Stmt::Case {
+                branches, otherwise, ..
+            } => {
+                for (_, body) in branches {
+                    shift_stmts(body, by);
+                }
+                shift_stmts(otherwise, by);
+            }
+            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break => {}
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attribute {
     pub name: String,
@@ -1030,6 +1120,68 @@ pub enum Stmt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn routine_with(body: Vec<Stmt>, pos: u32) -> Routine {
+        Routine {
+            name: "R".into(),
+            field: None,
+            is_trigger: false,
+            attributes: vec![],
+            params: 0,
+            by_var: vec![],
+            locals: vec![],
+            ret: None,
+            ret_local: None,
+            pos,
+            body,
+        }
+    }
+
+    #[test]
+    fn shifting_positions_reaches_every_nested_marker_and_leaves_no_position_alone() {
+        let t = Expr::Const(Const::Boolean(true));
+        let marked = |id| vec![Stmt::Pos(id), Stmt::Break];
+        let mut r = routine_with(
+            vec![
+                Stmt::Pos(0),
+                Stmt::If(t.clone(), marked(1), marked(2)),
+                Stmt::While(t.clone(), marked(3)),
+                Stmt::Repeat(marked(4), t.clone()),
+                Stmt::For {
+                    var: Place::Local(0),
+                    from: t.clone(),
+                    to: t.clone(),
+                    down: false,
+                    body: marked(5),
+                },
+                Stmt::Foreach {
+                    var: Place::Local(0),
+                    collection: t.clone(),
+                    body: marked(6),
+                },
+                Stmt::Case {
+                    scrutinee: t.clone(),
+                    branches: vec![(vec![], marked(7)), (vec![], marked(8))],
+                    otherwise: marked(9),
+                },
+                Stmt::AssertError(vec![Stmt::If(t.clone(), marked(10), vec![])]),
+            ],
+            11,
+        );
+        r.shift_positions(100);
+        assert_eq!(r.pos, 111);
+        let json = serde_json::to_string(&r.body).unwrap();
+        let mut ids: Vec<u32> = json
+            .split("{\"Pos\":")
+            .skip(1)
+            .map(|rest| rest.split('}').next().unwrap().parse().unwrap())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, (100..=110).collect::<Vec<u32>>());
+        let mut none = routine_with(vec![Stmt::Break], NO_POS);
+        none.shift_positions(5);
+        assert_eq!(none.pos, NO_POS);
+    }
 
     #[test]
     fn program_round_trips_through_serde() {

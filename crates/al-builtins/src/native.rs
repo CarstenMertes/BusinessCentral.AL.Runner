@@ -177,6 +177,17 @@ pub trait Ctx: FormatCtx {
     fn ui_confirm(&mut self, _question: String, _default: bool) -> Result<bool, Signal> {
         Err(Signal::Unsupported("Confirm: this context has no UI".into()))
     }
+    /// `Notification.Send()`: hands a copy of the notification (and its id, when set) to the bound
+    /// `[SendNotificationHandler]`.
+    fn ui_send_notification(&mut self, _notification: Value, _id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Err(Signal::Unsupported("Notification.Send: this context has no UI".into()))
+    }
+    /// `Notification.Recall()` for the notification with this id.
+    fn ui_recall_notification(&mut self, _id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Err(Signal::Unsupported(
+            "Notification.Recall: this context has no UI".into(),
+        ))
+    }
     /// `SessionSettings.RequestSessionUpdate(false)`: hands a copy of the settings to the bound
     /// `[SessionSettingsHandler]`.
     fn ui_session_settings(&mut self, _settings: Value) -> Result<(), Signal> {
@@ -340,7 +351,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.SetDestination#1", vm_only),
     ("Xmlport.SetTableView#1", vm_only),
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
-    // ids not listed (SaveAs, SaveAsPdf, Preview, the layout accessors, Skip, Break, ...) need
+    // ids not listed (SaveAsPdf, SaveAsXml and the other file forms, Preview, the layout accessors, Skip, Break, ...) need
     // output or behaviour the corpus does not pin and are refused in lowering.
     // A FilterPageBuilder keeps record buffers and renders views: the VM runs it (al-vm filterpage.rs).
     ("FilterPageBuilder.AddTable#1", vm_only),
@@ -367,6 +378,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunRequestPage#2", vm_only),
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
+    // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
+    // name (SaveAsXml, SaveAsPdf, ...) writes a file no corpus test pins and stays refused.
+    ("Report.SaveAs#1", vm_only),
+    ("Report.SaveAs#2", vm_only),
     ("Report.Quit#1", vm_only),
     ("Report.Skip#1", vm_only),
     ("Report.Break#1", vm_only),

@@ -74,6 +74,10 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // The members in the order the documentation lists them (TransactionType option type); the
         // ordinals are not pinned and nothing may print them as numbers.
         "transactiontype" => Some(&["UpdateNoLocks", "Update", "Snapshot", "Browse", "Report"]),
+        // The members in the order the documentation lists them. The corpus names Xml, Pdf and Html
+        // (handlers/TestReportSaveAsDatasetContracts.al) and never prints or compares the number,
+        // so the ordinals are not pinned and nothing may print them.
+        "reportformat" => Some(&["Pdf", "Word", "Excel", "Html", "Xml"]),
         "errortype" => Some(&["Client", "Internal"]),
         // The ordinals are not pinned: the corpus only calls `Session.CurrentClientType()` and
         // `DefaultClientType()` (session/TestSessionExtended.al:21,31) and names Default and Web
@@ -92,6 +96,8 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "Web",
             "Desktop",
             "ChildSession",
+            // Named by Microsoft's code (Price List Lines); the position is not pinned either.
+            "ODataV4",
         ]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).

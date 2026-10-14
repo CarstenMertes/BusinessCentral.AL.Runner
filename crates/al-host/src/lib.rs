@@ -16,6 +16,7 @@
 //! configure, so the date part of `CurrentDateTime` always equals `Today`.
 
 pub mod dotnet;
+pub mod random;
 
 /// The wall clock.
 pub trait Clock {
@@ -261,7 +262,13 @@ pub struct Host {
     pub clock: Box<dyn Clock>,
     pub identity: Box<dyn Identity>,
     pub files: Box<dyn FileSystem>,
+    /// The seed of the session's `Random` before AL calls `Randomize(seed)`. BC seeds it from the
+    /// clock; AL sees only the range of the numbers, so the host fixes it (ADR-009).
+    pub random_seed: i32,
 }
+
+/// The seed a session's `Random` starts from on the default host.
+pub const DEFAULT_RANDOM_SEED: i32 = 1;
 
 impl Host {
     pub fn new(clock: impl Clock + 'static, identity: impl Identity + 'static) -> Host {
@@ -269,6 +276,7 @@ impl Host {
             clock: Box::new(clock),
             identity: Box::new(identity),
             files: Box::new(MemFileSystem::default()),
+            random_seed: DEFAULT_RANDOM_SEED,
         }
     }
 

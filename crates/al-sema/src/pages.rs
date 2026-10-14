@@ -147,7 +147,7 @@ fn needed(
         }
     }
     if section.name().eq_ignore_ascii_case("field") {
-        let args = section.args();
+        let args = section.args_raw();
         if let Some(src) = args.get(1) {
             let names_a_base_variable = extension_routines
                 .is_some_and(|routines| plain_name(src).is_some_and(|n| !routines.contains(&n.to_lowercase())));
@@ -213,10 +213,28 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
         if !text.is_empty() {
             inserts.push((close, text));
         }
+        // The source of a dataset column is an expression of the data item's record: its routine
+        // goes right after the column, inside the data item, so that the record is in scope.
+        if kind.starts_with("report") {
+            for (ordinal, sec) in column_sections(&obj).iter().enumerate() {
+                let Some(expr) = sec.args_raw().get(1).cloned() else {
+                    continue;
+                };
+                let at = usize::from(sec.syntax().text_range().end());
+                inserts.push((
+                    at,
+                    format!(
+                        "\nprocedure {}(): Variant begin exit({expr}); end;",
+                        column_name(ordinal)
+                    ),
+                ));
+            }
+        }
     }
     if inserts.is_empty() {
         return None;
     }
+    inserts.sort_by_key(|(at, _)| *at);
     let mut out = src.to_string();
     for (at, text) in inserts.iter().rev() {
         out.insert_str(*at, text);
@@ -232,6 +250,20 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
         })
         .collect();
     Some((out, ranges))
+}
+
+/// The `column` sections of a report or reportextension dataset, in source order.
+pub fn column_sections(obj: &ast::Object) -> Vec<ast::Section> {
+    ast::sections_in(obj.syntax())
+        .into_iter()
+        .filter(|s| s.name().eq_ignore_ascii_case("column"))
+        .collect()
+}
+
+/// Name of the synthetic routine that evaluates the `ordinal`-th column of a report (counted in
+/// source order over the whole object, so inserting routines does not rename it).
+pub fn column_name(ordinal: usize) -> String {
+    format!("__column_{ordinal}")
 }
 
 /// A control found in the page's source, before bindings and routines are resolved.
@@ -1038,6 +1070,19 @@ mod tests {
         assert_eq!(l.controls[1].kind, al_ir::ControlKind::Action);
         assert!(l.controls[1].section.name().eq_ignore_ascii_case("actionref"));
         assert_eq!(l.controls[1].section.args(), ["Act_Promoted", "Act"]);
+    }
+
+    // A page field whose source is a lone quoted name with spaces or punctuation
+    // (`field("Assign-to No."; "Assign-to No.")` in Base Application) keeps its quotes in the routine
+    // that reads it; unquoted, `exit(Assign-to No.)` parses as a subtraction. The quotes of the
+    // control's name are not part of the name (handlers/TestPageActionRunPageView.al names controls
+    // the same way).
+    #[test]
+    fn a_lone_quoted_field_source_keeps_its_quotes_in_the_routine() {
+        let src = "page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"; \"Assign-to No.\") { Visible = Show; } } } var Show: Boolean; }";
+        let out = expand(src, &Default::default()).expect("a field with an expression source");
+        assert!(out.contains("exit(\"Assign-to No.\")"), "{out}");
+        assert!(!out.contains("exit(Assign-to"), "{out}");
     }
 
     // Corpus pageextensioncontrol/TestPageExtensionModifyEditable_Tests.al: `Editable = not PXMSLocked;` in a

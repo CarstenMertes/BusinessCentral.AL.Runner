@@ -33,7 +33,7 @@ pub enum Gate {
     NotSaaSInfrastructure,
     /// The header of the dataset XML that `Report.SaveAs(..., ReportFormat::Xml, ...)` writes has a
     /// `ReportCaption` element after `ReportName` and, after `Minute`, the company information
-    /// block. Before, it has neither. Not consumed yet: `Report.SaveAs` is not implemented.
+    /// block. Before, it has neither.
     ReportSaveAsXmlHeaderHasCompanyBlock,
 }
 

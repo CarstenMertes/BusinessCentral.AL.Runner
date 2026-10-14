@@ -575,7 +575,10 @@ impl Session {
             // A duplicate key raises the table's own error, as an AL Insert does.
             self.ret_used = false;
             let method = if modify { "Modify" } else { "Insert" };
-            self.record_op(method, &rec, &mut [Value::Boolean(false)])?;
+            self.immediate_errors = true;
+            let written = self.record_op(method, &rec, &mut [Value::Boolean(false)]);
+            self.immediate_errors = false;
+            written?;
         }
         self.xp_run_trigger(inst, schema, node, after)
     }

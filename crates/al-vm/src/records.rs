@@ -214,12 +214,8 @@ impl Session {
         if !self.listened(t, event, element)? {
             return Ok(());
         }
-        if rec.borrow().temporary {
-            return unsupported(format!(
-                "{event} of temporary records on {}: whether table events fire for them is not pinned",
-                t.name
-            ));
-        }
+        // A temporary record raises the table events and runs the triggers like any other
+        // (corpus record/TestTableEventSequenceContracts.al:TemporaryRecord_RaisesTheEventsAndRunsTheTriggers).
         let (names, tail): (&[&str], Value) = match event {
             "onbeforeinsertevent" | "onafterinsertevent" | "onbeforedeleteevent" | "onafterdeleteevent" => {
                 (&["Rec", "RunTrigger"], Value::Boolean(run_trigger))
@@ -299,20 +295,6 @@ impl Session {
     /// delete, After event.
     fn delete_row(&mut self, t: &TableDef, rec: &Rec, run: bool) -> Result<Value, Signal> {
         let cx = self.cx.clone();
-        if self.listened(t, "onbeforedeleteevent", None)? || self.listened(t, "onafterdeleteevent", None)? {
-            let pk = t.primary_key(&rec.borrow().fields);
-            if self
-                .store_for(rec)
-                .get(&cx, t, &pk)
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
-                .is_none()
-            {
-                return unsupported(format!(
-                    "Delete of a missing row of {}, which has delete event subscribers (the order of the error and the Before event is not pinned)",
-                    t.name
-                ));
-            }
-        }
         self.table_event(t, "onbeforedeleteevent", rec, None, run, None)?;
         if run {
             let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
@@ -719,6 +701,17 @@ impl Session {
             self.unseeded_read(&t, temporary, method)?;
         }
         let cx = self.cx.clone();
+        // The next access of the table raises a deferred duplicate-key Insert.
+        if matches!(
+            method,
+            "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate" | "Get" | "Find"
+                | "FindFirst" | "FindLast" | "FindSet" | "Next" | "Count" | "IsEmpty" | "CalcFields" | "CalcSums"
+        ) && !rec.borrow().temporary
+            && self.deferred_insert.as_ref().is_some_and(|(o, _)| *o == t.object as usize)
+        {
+            let (_, e) = self.deferred_insert.take().expect("checked");
+            return Err(Signal::Error(e));
+        }
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             if let Some(f) = schema.fields.iter().find(|f| f.init_text.is_some() && f.init.is_none()) {
                 // An InitValue BC accepts at compile time and cannot evaluate when it builds the
@@ -830,20 +823,9 @@ impl Session {
                     self.auto_increment_field(&t)?
                 };
                 let run = arg_bool(args, 0)?;
-                if self.listened(&t, "onbeforeinsertevent", None)? || self.listened(&t, "onafterinsertevent", None)? {
-                    let pk = t.primary_key(&rec.borrow().fields);
-                    if self
-                        .store_for(rec)
-                        .get(&cx, &t, &pk)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
-                        .is_some()
-                    {
-                        return unsupported(format!(
-                            "Insert of an existing key into {}, which has insert event subscribers (the order of the error and the Before event is not pinned)",
-                            t.name
-                        ));
-                    }
-                }
+                // A duplicate key does not skip the Before event and the trigger: they run, then
+                // the write fails and the After event does not (corpus record/TestTableEventSequenceContracts.al:
+                // FailingWrites_RaiseTheBeforeEventAndTheTrigger_ThenTheError).
                 // Before event, then the trigger, then the write, then the After event
                 // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
                 self.table_event(&t, "onbeforeinsertevent", rec, None, run, None)?;
@@ -932,6 +914,36 @@ impl Session {
                         if let (Some(a), true) = (auto, taken) {
                             rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
                         }
+                        // Without a Blob field the platform defers the failure of an unguarded
+                        // Insert to the next access of the table or Commit; a guarded Insert
+                        // answers false at once, and a Blob field makes it fail at once (corpus
+                        // record/TestRecordRuntimeTextsAndViews.al:Record_Insert_DuplicateKey_*).
+                        // A temporary table's behaviour is not pinned: it fails at once.
+                        let has_blob = self.engine.program.objects[t.object as usize]
+                            .table
+                            .as_ref()
+                            .is_some_and(|s| s.fields.iter().any(|f| matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Blob"))));
+                        // A table with an AutoIncrement field needs the platform's answer at once
+                        // (record/TestAutoIncrementContracts.al:AutoIncrement_SecondInsert_...).
+                        if !self.ret_used
+                            && !has_blob
+                            && auto.is_none()
+                            && !self.immediate_errors
+                            && !rec.borrow().temporary
+                        {
+                            if (run && self.ext_trigger(&t, "OnAfterInsert")?.is_some())
+                                || self.listened(&t, "onafterinsertevent", None)?
+                            {
+                                return unsupported(format!(
+                                    "deferred duplicate-key Insert into {}, which has an After insert event or trigger (whether it runs is not pinned)",
+                                    t.name
+                                ));
+                            }
+                            if let Err(Signal::Error(e)) = self.fail(&t, &row, true) {
+                                self.deferred_insert.get_or_insert((t.object as usize, e));
+                            }
+                            return Ok(Value::Boolean(true));
+                        }
                         self.fail(&t, &row, true)
                     }
                 }
@@ -943,15 +955,6 @@ impl Session {
                     .store_for(rec)
                     .get(&cx, &t, &pk)
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                if stored.is_none()
-                    && (self.listened(&t, "onbeforemodifyevent", None)?
-                        || self.listened(&t, "onaftermodifyevent", None)?)
-                {
-                    return unsupported(format!(
-                        "Modify of a missing row of {}, which has modify event subscribers (the order of the error and the Before event is not pinned)",
-                        t.name
-                    ));
-                }
                 // A buffer older than a committed change to its row cannot be saved
                 // (record/TestRecordStaleBufferWrite.al); before a commit the last writer wins.
                 if let (Some(row), Some(i)) = (&stored, t.fields.iter().position(|f| f.id == 2_000_000_005)) {
@@ -984,21 +987,20 @@ impl Session {
                         .collect(),
                     None => Vec::new(),
                 };
-                // xRec is the stored row (the page's own xRec for a row a page saves), one handle
-                // for the events and the trigger.
+                // One xRec handle for the events, the triggers and the global trigger, so a change a
+                // subscriber makes to it reaches the rest. When code drives the Modify, xRec equals
+                // Rec (record/TestXRecContracts.al:69-87 OnModify_xRec_MirrorsRecValues_WhenCalledFromCode;
+                // record/TestTableEventSequenceContracts.al:ModifyRenameDelete_EventsAndTrigger pins the
+                // same for the events). A row a page saves carries the page's own previous row
+                // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
-                let from_page = self.page_xrec.is_some();
-                let xrec = self.page_xrec.take().or(stored).map(|f| Self::xrec_handle(rec, f));
+                let before_image = self.page_xrec.take().unwrap_or_else(|| rec.borrow().fields.clone());
+                let xrec = Some(Self::xrec_handle(rec, before_image));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {
                     self.run_ext_trigger(&t, "OnBeforeModify", rec, xrec.as_ref())?;
                     if let Some(tr) = self.table_trigger(&t, "OnModify") {
-                        // The table's own OnModify sees xRec equal to Rec when code drove the
-                        // Modify, and the previous row when a page did
-                        // (record/TestXRecContracts.al:69-87 OnModify_xRec_MirrorsRecValues_WhenCalledFromCode,
-                        // record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
-                        let code_xrec = (!from_page).then(|| Self::xrec_handle(rec, rec.borrow().fields.clone()));
-                        self.run_trigger(t.object as usize, tr, rec, code_xrec.as_ref().or(xrec.as_ref()))?;
+                        self.run_trigger(t.object as usize, tr, rec, xrec.as_ref())?;
                     }
                     self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
@@ -1362,23 +1364,6 @@ impl Session {
                 }
                 self.check_rename_auto_increment(&t, &old, &new)?;
                 let old_pk = t.primary_key(&old);
-                if self.listened(&t, "onbeforerenameevent", None)? || self.listened(&t, "onafterrenameevent", None)? {
-                    let new_pk = t.primary_key(&new);
-                    let from = self
-                        .store_for(rec)
-                        .get(&cx, &t, &old_pk)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                    let to = self
-                        .store_for(rec)
-                        .get(&cx, &t, &new_pk)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                    if from.is_none() || (to.is_some() && key_cmp(&new_pk, &old_pk) != std::cmp::Ordering::Equal) {
-                        return unsupported(format!(
-                            "Rename of {} to a missing or taken key, which has rename event subscribers (the order of the error and the Before event is not pinned)",
-                            t.name
-                        ));
-                    }
-                }
                 // Rec carries the new key and xRec the old row in the events and the trigger
                 // (record/TestTableEventDispatch.al:TableEvent_OnAfterRename_Subscriber_FiresWithOldAndNewKeys).
                 let old_fields = old.clone();

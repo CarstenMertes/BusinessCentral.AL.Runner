@@ -49,6 +49,9 @@ pub enum Virtual {
     MetadataPermission,
     ExpandedPermission,
     Permission,
+    ReportLayoutList,
+    ReportMetadata,
+    ReportDataItems,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -148,6 +151,9 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     ),
     (2_000_000_005, "Permission", Provider::Virtual(Virtual::Permission)),
     (2_000_000_178, "All Profile", Provider::Stored),
+    (2_000_000_234, "Report Layout List", Provider::Virtual(Virtual::ReportLayoutList)),
+    (2_000_000_139, "Report Metadata", Provider::Virtual(Virtual::ReportMetadata)),
+    (2_000_000_203, "Report Data Items", Provider::Virtual(Virtual::ReportDataItems)),
     (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
     (2_000_000_121, "User Property", Provider::Stored),
     (2_000_000_175, "Scheduled Task", Provider::Stored),
@@ -213,6 +219,11 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_005, &[1, 3, 4, 6, 7, 8, 9, 10]),
     // All Profile: profile/TestAllProfileTable.al, TestCopyProfile.al. The obsolete columns and "Disable Personalization" are not read.
     (2_000_000_178, &[1, 2, 3, 4, 5, 6, 14, 15, 16, 17]),
+    // Report Layout List: handlers/TestSourceReportLayoutFlags.al, TestPrecompiledReportLayouts.al.
+    (2_000_000_234, &[1, 2, 7, 16, 17]),
+    // Report Metadata, Report Data Items: handlers/TestReportMetadataColumns.al.
+    (2_000_000_139, &[1, 4, 9, 17, 18]),
+    (2_000_000_203, &[1, 2, 3, 4, 5, 6, 7, 8]),
     // Windows Language: record/TestWindowsLanguageTable.al.
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.

@@ -171,6 +171,8 @@ pub struct ObjectSym {
     /// The properties written directly in the body of an object of a scanned file, as
     /// (name, value text). Empty for an object of a parsed file.
     pub scanned_properties: Vec<(String, String)>,
+    /// The layouts a scanned report declares.
+    pub scanned_layouts: Vec<al_syntax::scan::ScannedLayout>,
     /// A codeunit with `Subtype = Install` (known for objects of scanned files only).
     pub install: bool,
     /// The object declares `EventSubscriberInstance = Manual` (known for objects of scanned files
@@ -332,6 +334,7 @@ impl Workspace {
                     implements: o.implements,
                     subscribers: o.subscribers,
                     scanned_properties: o.properties,
+                    scanned_layouts: o.layouts,
                     install: o.install,
                     manual_subscribers: o.manual_subscribers,
                 });
@@ -915,6 +918,7 @@ struct FileObject {
     implements: Vec<Vec<String>>,
     subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
     properties: Vec<(String, String)>,
+    layouts: Vec<al_syntax::scan::ScannedLayout>,
     install: bool,
     manual_subscribers: bool,
 }
@@ -936,6 +940,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 implements: o.implements_parts(),
                 subscribers: Vec::new(),
                 properties: Vec::new(),
+                layouts: Vec::new(),
                 install: false,
                 manual_subscribers: false,
             })
@@ -977,6 +982,7 @@ fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
                 implements: o.implements,
                 subscribers: o.subscribers,
                 properties: o.properties,
+                layouts: o.layouts,
                 install: o.install,
                 manual_subscribers: o.manual_subscribers,
             })

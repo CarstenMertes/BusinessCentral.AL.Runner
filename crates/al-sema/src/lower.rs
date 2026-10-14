@@ -544,6 +544,14 @@ pub fn lower_with_positions(
                 report_ext: None,
                 namespace: o.namespace.clone(),
                 extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
+                layouts: o
+                    .scanned_layouts
+                    .iter()
+                    .map(|l| ir::LayoutDecl {
+                        name: l.name.clone(),
+                        properties: l.properties.clone(),
+                    })
+                    .collect(),
             });
             out.unsupported.push(Vec::new());
             out.calls.push(Vec::new());
@@ -839,6 +847,11 @@ pub fn lower_with_positions(
             report_ext: ext_irs[oi].clone(),
             namespace: o.namespace.clone(),
             extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
+            layouts: if o.kind == ObjKind::Report {
+                crate::reports::layouts_of(&obj)
+            } else {
+                Vec::new()
+            },
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.program.positions = std::mem::take(&mut lw.positions);

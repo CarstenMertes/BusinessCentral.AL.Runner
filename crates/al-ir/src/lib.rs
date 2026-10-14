@@ -193,6 +193,17 @@ pub struct Object {
     /// workspace (the metadata tables report it).
     #[serde(default)]
     pub extends_id: Option<u32>,
+    /// For a report: the layouts its `rendering` section declares.
+    #[serde(default)]
+    pub layouts: Vec<LayoutDecl>,
+}
+
+/// `layout(Name) { Type = Word; ... }` of a report.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutDecl {
+    pub name: String,
+    /// The properties as written (`Type`, `LayoutFile`, `ObsoleteState`, ...).
+    pub properties: Vec<(String, String)>,
 }
 
 /// A report as the runtime sees it: processing only, with no layout.
@@ -277,6 +288,9 @@ pub struct ReportItem {
     pub on_pre: Option<usize>,
     pub on_after_get: Option<usize>,
     pub on_post: Option<usize>,
+    /// `RequestFilterFields` as written (`"No.", Status`).
+    #[serde(default)]
+    pub request_filter_fields: Option<String>,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).
@@ -1012,6 +1026,7 @@ mod tests {
                 report_ext: None,
                 namespace: None,
                 extends_id: None,
+                layouts: Vec::new(),
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

@@ -21,6 +21,7 @@ mod mat;
 mod objects;
 mod pages;
 mod permissions;
+mod reports;
 pub(crate) mod profiles;
 pub(crate) mod ranges;
 mod seed;
@@ -150,6 +151,9 @@ impl Providers {
                     "Tenant Media: media live in the session's media store, which this table does not read yet (ADR-017)",
                 ));
             }
+            Virtual::ReportLayoutList => reports::layout_list_rows(self, t),
+            Virtual::ReportMetadata => reports::report_metadata_rows(self, t),
+            Virtual::ReportDataItems => reports::report_data_item_rows(self, t),
             Virtual::MetadataPermissionSet => permissions::metadata_permission_set_rows(self, t),
             Virtual::PermissionSet => permissions::permission_set_rows(self, t, false),
             Virtual::PermissionSetAssignable => permissions::permission_set_rows(self, t, true),

@@ -1829,6 +1829,7 @@ impl Lowerer<'_> {
             unsupported,
             extensions,
             ext_triggers,
+            action_areas: layout.action_areas.clone(),
         }
     }
 

@@ -469,6 +469,17 @@ pub struct Page {
     /// They run after the page's own trigger of that name.
     #[serde(default)]
     pub ext_triggers: Vec<(String, usize, usize)>,
+    /// The `area(...)` sections of `actions` (what the Page Action table lists as action containers).
+    #[serde(default)]
+    pub action_areas: Vec<ActionArea>,
+}
+
+/// An `area(Name)` of a page's `actions` section.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionArea {
+    pub name: String,
+    /// The controls written directly in the area, as indices into [`Page::controls`].
+    pub roots: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

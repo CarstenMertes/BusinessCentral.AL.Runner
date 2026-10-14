@@ -207,3 +207,118 @@ fn is_trigger_event(event: &str) -> bool {
         })
     })
 }
+
+// ---- Page Action ------------------------------------------------------------------------------------
+
+/// Page Action: "Page ID" (1), "Action Index" (2), "Action ID" (3), Indentation (4), "Parent Action ID" (5),
+/// "Action Type" (6), Name (8), RunObjectID (16). One row per `area(...)` of `actions` (an action
+/// container, type 0), then one per action (1) and action group (3) below it, depth first
+/// (record/TestPageActionVirtualTable.al).
+///
+/// The corpus pins that a group's parent is a row of the table at indentation 0, that its
+/// actions sit one level deeper with the group as parent, and that the three types differ. It does
+/// not pin the numbers: the index and the id both count from 1 in this order, and a container has
+/// parent 0 (docs/probes-needed.md).
+pub(super) fn page_action_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
+    let mut out = Vec::new();
+    for o in c.objects {
+        let (Some(id), "page") = (o.id, base_kind(o)) else {
+            continue;
+        };
+        let mut key = blank(t);
+        key[pos(t, 1)] = Value::Integer(id as i32);
+        let Some(page) = &o.page else {
+            out.push(Entry::poisoned(
+                key,
+                format!("page '{}' was not compiled, so its actions are not known", o.name),
+            ));
+            continue;
+        };
+        match page_actions(&c, o, page, t, &key) {
+            Ok(rows) => out.extend(rows.into_iter().map(Entry::ok)),
+            Err(why) => out.push(Entry::poisoned(key, why)),
+        }
+    }
+    out
+}
+
+fn page_actions(
+    c: &Catalog,
+    o: &Object,
+    page: &al_ir::Page,
+    t: &TableDef,
+    key: &al_data::Row,
+) -> Result<Vec<al_data::Row>, String> {
+    use al_ir::ControlKind as K;
+    let mut rows = Vec::new();
+    let mut next = 1;
+    for area in &page.action_areas {
+        if area.name.is_empty() {
+            return Err(format!("page '{}': actions written outside an area are not pinned", o.name));
+        }
+        let container = next;
+        let mut r = key.clone();
+        r[pos(t, 2)] = Value::Integer(next);
+        r[pos(t, 3)] = Value::Integer(next);
+        r[pos(t, 4)] = Value::Integer(0);
+        r[pos(t, 5)] = Value::Integer(0);
+        r[pos(t, 6)] = option(t, 6, 0);
+        r[pos(t, 8)] = Value::Text(truncate(&area.name, 120));
+        rows.push(r);
+        next += 1;
+        // Depth first below the container.
+        let mut stack: Vec<(usize, i32, i32)> = area.roots.iter().rev().map(|&i| (i, 1, container)).collect();
+        while let Some((ci, depth, parent)) = stack.pop() {
+            let ctl = &page.controls[ci];
+            let kind = match ctl.kind {
+                K::Action if ctl.action_ref.is_none() => 1,
+                K::ActionGroup => 3,
+                _ => {
+                    return Err(format!(
+                        "page '{}': the action '{}' is a {:?}{}, whose row is not pinned",
+                        o.name,
+                        ctl.name,
+                        ctl.kind,
+                        if ctl.action_ref.is_some() { " reference" } else { "" }
+                    ));
+                }
+            };
+            let mut r = key.clone();
+            r[pos(t, 2)] = Value::Integer(next);
+            r[pos(t, 3)] = Value::Integer(next);
+            r[pos(t, 4)] = Value::Integer(depth);
+            r[pos(t, 5)] = Value::Integer(parent);
+            r[pos(t, 6)] = option(t, 6, kind);
+            r[pos(t, 8)] = Value::Text(truncate(&ctl.name, 120));
+            let run_id = match &ctl.run_object {
+                None => 0,
+                Some(ro) => match ro.object.and_then(|i| c.objects.get(i)).and_then(|x| x.id) {
+                    Some(id) => id as i32,
+                    None => {
+                        return Err(format!(
+                            "page '{}': action '{}' runs an object that is not compiled",
+                            o.name, ctl.name
+                        ));
+                    }
+                },
+            };
+            r[pos(t, 16)] = Value::Integer(run_id);
+            rows.push(r);
+            let me = next;
+            next += 1;
+            let kids: Vec<usize> = page
+                .controls
+                .iter()
+                .enumerate()
+                .filter(|(_, k)| k.parent == Some(ci))
+                .map(|(i, _)| i)
+                .collect();
+            for k in kids.into_iter().rev() {
+                stack.push((k, depth + 1, me));
+            }
+        }
+    }
+    Ok(rows)
+}

@@ -305,8 +305,8 @@ impl Session {
         if let Some((object, routine)) = field.on_validate {
             if let Err(e) = self.run_trigger(object, routine, rec, Some(xrec)) {
                 // The whole record is back at its values from before the Validate when the
-                // field's OnValidate raises, not only the validated field (corpus branch
-                // al-runtime-rs, pending push: record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
+                // field's OnValidate raises, not only the validated field
+                // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:68,
                 // Validate_ThatRaises_RestoresTheWholeRecord; the validated field alone:
                 // record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
                 if matches!(e, Signal::Error(_)) {
@@ -670,8 +670,8 @@ impl Session {
     /// Gives the row its SystemId: the one in the buffer when `keep` (`Insert(_, true)`) and it is
     /// set, otherwise a fresh one (corpus record/TestRecordInsert.al:84-110).
     fn assign_system_id(&mut self, t: &TableDef, rec: &Rec, keep: bool) {
-        // A temporary record has no SystemId: it stays the null Guid (corpus branch al-runtime-rs,
-        // pending push: record/TestSystemFieldStampsContracts.al:TemporaryRecord_HasNoStampsAndNoSystemId).
+        // A temporary record has no SystemId: it stays the null Guid
+        // (record/TestSystemFieldStampsContracts.al:115, TemporaryRecord_HasNoStampsAndNoSystemId).
         if rec.borrow().temporary {
             return;
         }
@@ -783,8 +783,8 @@ impl Session {
         }
         let shown = al_builtins::format::try_format(&id, 0, 0, self).map_err(Signal::Unsupported)?;
         Err(Signal::Error(AlError {
-            // corpus branch al-runtime-rs (pending push): record/TestSystemFieldStampsContracts.al:
-            // SystemId_Duplicate_And_ModifyAll_Texts (the caption of the field is "System ID").
+            // record/TestSystemFieldStampsContracts.al:153 (SystemId_Duplicate_And_ModifyAll_Texts;
+            // the caption of the field is "System ID").
             message: format!(
                 "There is already a record in table {} that has the same values in a unique index for the following fields: System ID='{}'",
                 self.caption(t),
@@ -1414,8 +1414,8 @@ impl Session {
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
                     "+" => self.scan(rec, &t, !asc, None)?,
-                    // Every form honours the active filters (corpus branch al-runtime-rs, pending push:
-                    // record/TestFilterTextBooleanFindContracts.al:Find_AllForms_HonourTheActiveFilters).
+                    // Every form honours the active filters
+                    // (record/TestFilterTextBooleanFindContracts.al:143, Find_AllForms_HonourTheActiveFilters).
                     // The one exception: a record that moved its own row out of its filter still
                     // finds the row by its key, while a second variable with the old filter does
                     // not (record/TestFindSetSortKeyModify.al:OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow
@@ -1572,8 +1572,7 @@ impl Session {
                 let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
                 let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
                     Ok(e) => e,
-                    // corpus branch al-runtime-rs (pending push): record/TestFilterTextBooleanFindContracts.al:
-                    // SetFilter_BooleanField_UnknownWord_Throws.
+                    // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
                         return Err(Signal::Error(AlError {

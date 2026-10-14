@@ -287,8 +287,8 @@ impl Session {
         if key.is_some() || !keep_unnamed {
             r.key = key.unwrap_or(0);
         }
-        // A view that names no ORDER keeps the direction (corpus branch al-runtime-rs, pending
-        // push: record/TestRecordViewCopyMarkContracts.al:SetView_ReplacesTheFilters_KeepsTheDirection_...).
+        // A view that names no ORDER keeps the direction
+        // (record/TestRecordViewCopyMarkContracts.al:130, SetView_ReplacesTheFilters_KeepsTheDirection_AndRejectsGarbage).
         if let Some(a) = ascending {
             r.ascending = a;
         }
@@ -297,8 +297,8 @@ impl Session {
 }
 
 /// BC's error for a view that does not parse: a carriage return and a backslash join the
-/// sentence to the view text (corpus branch al-runtime-rs, pending push:
-/// record/TestRecordViewCopyMarkContracts.al:SetView_..._RejectsGarbage).
+/// sentence to the view text (record/TestRecordViewCopyMarkContracts.al:130,
+/// SetView_ReplacesTheFilters_KeepsTheDirection_AndRejectsGarbage).
 fn invalid_view(view: &str) -> Signal {
     Signal::Error(al_builtins::native::AlError {
         message: format!("Invalid expression of type: table view.{}{view}", crate::records::BR),

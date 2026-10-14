@@ -343,8 +343,7 @@ fn a_nested_guarded_run_that_fails_leaves_the_outer_run_working() {
     );
 }
 
-// codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196 (corpus branch al-runtime-rs, probe on
-// BC 27.5): text and code of a run of an id no object declares. The emit version is a number.
+// codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196: text and code of a run of an id no object declares. The emit version is a number.
 #[test]
 fn running_a_codeunit_id_that_does_not_exist_raises_the_metadata_error() {
     let r = run("procedure F(): Text begin Codeunit.Run(99990); exit(''); end;");
@@ -553,8 +552,7 @@ fn codeunit_run_hands_the_record_to_a_tableno_codeunit_as_rec() {
     );
 }
 
-// codeunit/TestCodeunitRunErrorTextsAndModels.al:198-220 (corpus branch al-runtime-rs, probe on
-// BC 27.5): the record is passed by reference, so a change OnRun makes to Rec reaches the caller.
+// codeunit/TestCodeunitRunErrorTextsAndModels.al:198-220: the record is passed by reference, so a change OnRun makes to Rec reaches the caller.
 #[test]
 fn a_tableno_codeunit_that_changes_rec_changes_the_callers_record() {
     assert_eq!(

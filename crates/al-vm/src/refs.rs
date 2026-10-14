@@ -208,8 +208,7 @@ impl Session {
                     ))
                 }
                 // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; the full
-                // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30
-                // (corpus branch al-runtime-rs, probe on BC 27.5).
+                // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30.
                 n => Err(self.missing_object("Table", n)),
             };
         };

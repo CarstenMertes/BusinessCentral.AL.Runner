@@ -266,8 +266,8 @@ impl Parser<'_> {
             T::BigInteger => Value::BigInteger(text.parse().map_err(|_| format!("`{text}` is not a BigInteger"))?),
             T::Decimal => Value::Decimal(text.parse().map_err(|_| format!("`{text}` is not a Decimal"))?),
             // Format(false) = 'No' is used as a filter value in the corpus. The words BC accepts,
-            // in any case, are Yes, True, 1 and No, False, 0 (corpus branch al-runtime-rs, pending
-            // push: record/TestFilterTextBooleanFindContracts.al:SetFilter_BooleanField_AcceptedWords).
+            // in any case, are Yes, True, 1 and No, False, 0
+            // (record/TestFilterTextBooleanFindContracts.al:103, SetFilter_BooleanField_AcceptedWords).
             T::Boolean if ["yes", "true", "1"].contains(&text.to_lowercase().as_str()) => Value::Boolean(true),
             T::Boolean if ["no", "false", "0"].contains(&text.to_lowercase().as_str()) => Value::Boolean(false),
             T::Boolean => return Err(format!("{INVALID_BOOLEAN}{text}")),

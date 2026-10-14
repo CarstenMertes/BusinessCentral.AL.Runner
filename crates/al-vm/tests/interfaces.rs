@@ -283,8 +283,8 @@ enum 60370 StateKind implements IState { value(0; V) { Implementation = IState =
     assert_eq!(int(r), 2);
 }
 
-// corpus branch al-runtime-rs (probe on BC 27.5) codeunit/TestInterfaceRuntimeContracts.al:
-// Interface_CallOnUnassignedVariable_Throws_InterfaceNotInitialized
+// codeunit/TestInterfaceRuntimeContracts.al:76
+// (Interface_CallOnUnassignedVariable_Throws_InterfaceNotInitialized)
 #[test]
 fn a_call_on_an_unassigned_interface_raises_interface_not_initialized() {
     let r = run(

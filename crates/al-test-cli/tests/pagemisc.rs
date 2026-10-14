@@ -494,8 +494,8 @@ fn a_commit_in_a_worker_is_refused() {
     );
 }
 
-// corpus branch al-runtime-rs (pending push): record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
-// Asserterror_InAModalHandler_RollsBackToTheLastCommit (probe on BC 27.5). An asserterror inside a
+// record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143
+// (Asserterror_InAModalHandler_RollsBackToTheLastCommit). An asserterror inside a
 // modal handler rolls back everything since the last Commit: the write pending before the page
 // opened, the handler's own earlier write and the write inside the asserterror.
 #[test]

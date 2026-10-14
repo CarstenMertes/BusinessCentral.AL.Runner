@@ -1049,3 +1049,53 @@ synthetic dependency apps (`al-test-cli/src/runtime.rs` tests).
 7. **Table extension field triggers.** `modify(Field) { trigger OnBeforeValidate/OnAfterValidate }` run around the field's
    own OnValidate (corpus order); they are needed by the 31 Global Triggers tests that were next in line, and the old refusal
    is gone. Dependency extensions' such triggers are reached by the demand-driven check when the field is validated.
+
+## Demand-driven compile: audit of what BC runs implicitly (2026-10-14)
+
+The owner's concern: a partial compile must never skip business logic silently. Whatever BC
+runs without being called by name is either compiled and run, or the test is refused (hard
+rule 4). Two changes make that hold, and 77 small probe tests pin it
+(`crates/al-test-cli/tests/demand_audit.rs`; each runs a dependency app and a workspace test, in
+the demand-driven compile and in the eager one, and fails on a silent skip).
+
+**The guard (fail closed at dispatch).** `ir::Program::uncompiled_subscribers` lists every
+event subscriber of a dependency object that was not compiled, for events of objects that are
+(and for `Global Triggers` and `Caption Class`, which no app declares). Manual subscribers are
+left out: they fire only on a bound instance, and that is a compiled codeunit. The engine's
+event registry keeps them as `missing`. Raising an event, and asking whether anyone listens
+(`has_listeners`, page events, `Truncate`), refuses when a missing subscriber would receive it
+(by `ElementName` for field events). The list comes from the cheap scan index, so it covers
+every object, compiled or not. Page events the client does not raise (`OnAfterGetRecordEvent`,
+page field validate, action events) refuse when the page opens, whether the subscriber is
+compiled or not.
+
+**Reaching more, so fewer tests are refused.** The checker now reaches: the subscribers of the
+page events the test client raises (`ir::RAISED_PAGE_EVENTS`) and the `OnResolveCaptionClass`
+subscribers when a page or report that declares a `CaptionClass` is used; the table of a
+workspace page (all write operations); `RunObject` codeunits and pages of workspace pages; a
+write without `Rec.` in table, page or report code; `RecordRef` write methods (their
+`Global Triggers` events); the subscribers of events a table extension publishes; a table
+extension's `OnBefore*` and `OnAfter*` triggers; a table field's `OnLookup` for a page over the
+table; a report or XML port that a variable runs or `Report::"X"` names in `Report.Run`.
+
+**Fixed on the way.** A subscriber that names its publisher with a namespace
+(`Codeunit::Microsoft.Foundation.Company."Company-Initialize"`, 7 in Base Application and System
+Application) attached to nothing, in both compiles. The caption class resolvers attached to the
+compiled `Caption Class` codeunit and not to the key the page client raises (a difference between
+the demand-driven and the eager compile, `autoformat/TestCaptionClassResolverFailure.al`).
+`Page.RunModal(0, Rec)` answered "no page has id 0" for a lookup page that was not compiled;
+the report and background task lookups by number name the real reason.
+
+**What stays refused, by design.** A write through a `RecordRef` or `FieldRef` on a table the code
+names only by number or by `Database::` runs the trigger and subscribers of that table as stubs,
+and refuses when one fires. So do `Codeunit.Run`, `Page.Run`, `Report.Run` and
+`RecordRef.Open` with a number nothing names, a background task with a bare codeunit id, and
+the `RunObject` actions of dependency pages. Reaching them all would compile most of Base
+Application. `TaskScheduler.CreateTask` and `StartSession` are refused by the builtins.
+Not modelled, and not a demand-driven matter: the events the platform raises at session start
+and company open; their effects are the state the install baseline stands for.
+
+**The permanent check.** `tools/compare_junit.py` compares two JUnit files test by test. CI runs
+the corpus a second time with `AL_EAGER_DEPENDENCIES=1` for every BC version and fails on any
+difference in outcome (about twice the cost of the first run, 8 s against 15 s of CPU for one
+version, so it runs on every push). `Roots::eager` does the same inside a unit test.

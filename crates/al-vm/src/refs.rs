@@ -144,13 +144,17 @@ impl Session {
                 return unsupported("RecordRef.Open with a company name (ChangeCompany is not implemented yet)");
             }
         }
+        // corpus recordref/TestRecordRefOpenCompilationTarget.al:27-35: an internal system table is
+        // refused for a Cloud-target app (this app is Cloud), whether or not a dependency app
+        // declares an object with that number (the platform's `System.app` does, as
+        // `Object Metadata`; a complete compile of the dependencies must not change the answer).
+        if no == 2_000_000_071 {
+            return Err(al_error(format!(
+                "You cannot open record {no} from a RecordRef data type when you are using target Cloud."
+            )));
+        }
         let Some(table) = self.table_object(no) else {
             return match no {
-                // corpus recordref/TestRecordRefOpenCompilationTarget.al:27-35: an internal
-                // system table is refused for a Cloud-target app (this app is Cloud).
-                2_000_000_071 => Err(al_error(format!(
-                    "You cannot open record {no} from a RecordRef data type when you are using target Cloud."
-                ))),
                 // :37-62: these system tables open for a Cloud-target app and report their number.
                 2_000_000_026 | 2_000_000_187 | 2_000_000_188 => {
                     *lib.borrow_mut() = LibraryValue::SystemTable(no);

@@ -1,0 +1,19 @@
+# Tests whose outcome differs between the demand-driven compile of the dependency apps and the
+# eager one (AL_EAGER_DEPENDENCIES=1), reviewed on 2026-10-14. In every one the demand-driven
+# compile is the one that runs, and the eager compile is the one that is worse. Delete a line when
+# its cause is fixed. A difference not listed here fails CI (tools/compare_junit.py --allow).
+
+# The platform table "Add-in" (2000000069) is lowered with keys and no fields when the whole of
+# System.app is compiled, and crates/al-vm/src/platform/fields.rs `key_rows` indexes its fields:
+# "index out of bounds", reported as not run (a runtime panic). Owner: platform-tables.
+Codeunit 60936::Record_Key_DisabledKey_ReportsEnabledFalse
+Codeunit 60936::Record_Key_OnTheProbeTable_ReturnsOneRowPerDeclaredKey
+Codeunit 60936::Record_Key_PrimaryKey_IsClusteredAndNamesItsField
+Codeunit 60936::Record_Key_SecondaryKey_ListsBothFieldsAndIsNotClustered
+Codeunit 60936::Record_Key_TheFourthKey_IsTheImplicitSystemIdKey
+Codeunit 60936::Record_Key_UnknownTable_ReturnsNoRows
+
+# The static call graph of a page variable holds every routine the compile made. Compiling all of
+# Base Application adds `Video Impl..Play`, which uses a `usercontrol` the runtime refuses, and the
+# test is refused before it runs. Run on its own, the test never reaches that routine.
+Codeunit 67640::PrecompiledPage_PageVariableControl_NoCaption_IsTheControlName

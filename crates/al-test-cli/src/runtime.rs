@@ -197,8 +197,16 @@ impl CorpusRuntime {
     ) -> CorpusRuntime {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
-        let (_ws, mut lowered) =
-            al_sema::lower::compile_apps_with(apps, kinds, symbols, target, al_sema::check::Roots { baseline });
+        let (_ws, mut lowered) = al_sema::lower::compile_apps_with(
+            apps,
+            kinds,
+            symbols,
+            target,
+            al_sema::check::Roots {
+                baseline,
+                ..Default::default()
+            },
+        );
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();

@@ -495,6 +495,45 @@ reportextension 68011 "Empty Ext" extends "RRE ProcessingOnly Report"
 {
 }
 
+// Data items an extension places around nested ones (own fixture; the corpus pins the same rules in
+// reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al).
+report 68020 "RXP Base"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(Parent; "Num Row")
+        {
+            DataItemTableView = sorting(Number) where(Number = const(1));
+            trigger OnAfterGetRecord() begin Log.Add('Place', 'Parent'); end;
+            dataitem(ChildA; "Num Row")
+            {
+                DataItemTableView = sorting(Number) where(Number = const(1));
+                trigger OnAfterGetRecord() begin Log.Add('Place', 'ChildA'); end;
+            }
+            dataitem(ChildB; "Num Row")
+            {
+                DataItemTableView = sorting(Number) where(Number = const(1));
+                trigger OnAfterGetRecord() begin Log.Add('Place', 'ChildB'); end;
+            }
+        }
+    }
+    var Log: Codeunit "RXT Log";
+}
+reportextension 68020 "RXP Ext" extends "RXP Base"
+{
+    dataset
+    {
+        addlast(Parent) { dataitem(ExtLast; "Num Row") { DataItemTableView = sorting(Number) where(Number = const(1)); trigger OnAfterGetRecord() begin Log.Add('Place', 'ExtLast'); end; } }
+        addafter(ChildA) { dataitem(ExtAfterA; "Num Row") { DataItemTableView = sorting(Number) where(Number = const(1)); trigger OnAfterGetRecord() begin Log.Add('Place', 'ExtAfterA'); end; } }
+        addbefore(ChildB) { dataitem(ExtBeforeB; "Num Row") { DataItemTableView = sorting(Number) where(Number = const(1)); trigger OnAfterGetRecord() begin Log.Add('Place', 'ExtBeforeB'); end; } }
+        addfirst(Parent) { dataitem(ExtFirst; "Num Row") { DataItemTableView = sorting(Number) where(Number = const(1)); trigger OnAfterGetRecord() begin Log.Add('Place', 'ExtFirst'); end; } }
+        addbefore(ChildA) { dataitem(ExtBeforeA; "Num Row") { DataItemTableView = sorting(Number) where(Number = const(1)); trigger OnAfterGetRecord() begin Log.Add('Place', 'ExtBeforeA'); end; } }
+    }
+    var Log: Codeunit "RXT Log";
+}
+
 codeunit 50110 Helpers
 {
     procedure Seed()
@@ -1206,6 +1245,20 @@ fn an_error_in_the_extensions_prereport_fails_the_run() {
             exit(GetLastErrorText() + '|' + Log.Read('Report'));
         end;"),
         "RXT extension OnPreReport failed|base-pre|ext-pre"
+    );
+}
+
+// Own fixture (RXP Base/RXP Ext); the order is pinned by
+// reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al:214-257.
+#[test]
+fn added_data_items_run_where_addfirst_addbefore_addafter_and_addlast_put_them() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Log: Codeunit \"RXT Log\"; begin
+            H.Seed();
+            Report.Run(Report::\"RXP Base\", false);
+            exit(Log.Read('Place'));
+        end;"),
+        "Parent|ExtFirst|ExtBeforeA|ChildA|ExtAfterA|ExtBeforeB|ChildB|ExtLast"
     );
 }
 

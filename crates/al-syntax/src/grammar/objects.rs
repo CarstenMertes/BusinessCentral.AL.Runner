@@ -138,6 +138,10 @@ fn member(p: &mut Parser) {
 fn section(p: &mut Parser) {
     p.start(Section);
     let is_event = p.at_kw("event") && matches!(p.nth(1), Ident | QuotedIdent);
+    // `moveafter(A; B)` and its siblings in a layout or actions section.
+    let is_move = ["moveafter", "movebefore", "movefirst", "movelast"]
+        .iter()
+        .any(|k| p.at_kw(k));
     p.bump_any();
     if is_event {
         // `event Name(...)`: the name follows the keyword.
@@ -166,9 +170,11 @@ fn section(p: &mut Parser) {
     }
     if p.at(LBrace) {
         body(p);
-    } else if is_event {
+    } else if is_event || is_move {
         // Microsoft's control add-ins leave the `;` off an event now and then
-        // (`BarcodeScannerProviderAddIn.ControlAddIn.al`), and the AL compiler accepts it.
+        // (`BarcodeScannerProviderAddIn.ControlAddIn.al`), and the AL compiler accepts it. It
+        // accepts two `moveafter(...)` in a row with no `;` as well (a real project's
+        // CustomerCard.PageExt.al), so the move statements share the rule.
         p.eat(Semicolon);
     } else {
         p.expect(Semicolon);
@@ -253,6 +259,23 @@ mod tests {
             f("pageextension 1 P extends Q { layout { moveafter(A; B); addlast(Content) { field(X; Rec.X) { } } } }"),
             "(Object pageextension 1 P extends Q (ObjectBody { (Section layout (ObjectBody { (Section moveafter (SectionArgs ( A ; B )) ;) (Section addlast (SectionArgs ( Content )) (ObjectBody { (Section field (SectionArgs ( X ; Rec . X )) (ObjectBody { })) })) })) }))"
         );
+    }
+
+    #[test]
+    fn page_extension_moves_may_leave_off_the_semicolon() {
+        // NaviPartner's CustomerCard.PageExt.al writes two `moveafter(...)` in a row with no `;`,
+        // and the AL compiler accepts it, as it does for the other move statements.
+        let src = "pageextension 1 P extends Q { layout { moveafter(A; B) moveafter(A; C) movebefore(A; D) movefirst(G; E) movelast(G; F) modify(X) { Caption = 'x'; } } actions { moveafter(A; B) } }";
+        assert_eq!(errors(src, source_file), 0);
+        assert_eq!(
+            f(src),
+            "(Object pageextension 1 P extends Q (ObjectBody { (Section layout (ObjectBody { (Section moveafter (SectionArgs ( A ; B ))) (Section moveafter (SectionArgs ( A ; C ))) (Section movebefore (SectionArgs ( A ; D ))) (Section movefirst (SectionArgs ( G ; E ))) (Section movelast (SectionArgs ( G ; F ))) (Section modify (SectionArgs ( X )) (ObjectBody { (Property Caption = (PropertyValue 'x') ;) })) })) (Section actions (ObjectBody { (Section moveafter (SectionArgs ( A ; B ))) })) }))"
+        );
+    }
+
+    #[test]
+    fn other_sections_still_need_their_semicolon_or_body() {
+        assert!(errors("pageextension 1 P extends Q { layout { addafter(A) } }", source_file) > 0);
     }
 
     #[test]

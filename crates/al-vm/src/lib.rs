@@ -538,6 +538,13 @@ impl Session {
         self.store.guard_backed_rows(on);
     }
 
+    /// Lets install code in scope change the rows of the restored company: used for the install
+    /// codeunits of the app under test, which are the project's own fixture (ADR-020). The
+    /// dependency apps' install roots keep the guard.
+    pub fn allow_restored_rows_to_change(&mut self) {
+        self.store.guard_backed_rows(false);
+    }
+
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
         let tys: Vec<RtType> = self.engine.program.objects[object]
             .globals

@@ -707,3 +707,102 @@ codeunit, to settle the separator there too. With those, implement it beside `al
 the frames of the running stack) and add the corpus citation.
 
 The test of the Error Message table that reads the stored stack, if any, is Base Application's own; no corpus test reads it.
+
+## Probe batch 7 (a real project: NaviPartner npcore-partners)
+
+Found by running NP Retail's tests (4813 tests, 313 test codeunits, `alrunner test <Test> --dep <Application>
+--bc-version 27.5.46862.48827 --test-data`, 2026-10-14, branch `npcore-fixes`). Each stays refused until its
+probe is in the corpus. The counts are the tests of that run that stop on the item (a test can stop on only one
+reason, so a count grows when the reason above it is lifted). Order: biggest first.
+
+1. **`JsonObject.Replace(Key, Value)`.** REFUSED (not implemented). No corpus test calls it (1001 tests, the
+   most of any reason once Active Session is readable). Probe wanted, on an object built with
+   `Add('a',1); Add('b',2); Add('c',3)`: `Replace('b', 20)` as a statement and as a Boolean (result), then
+   `WriteTo` and `Keys()` (does `b` stay second or move last), and `Get('b')`; `Replace('zz', 1)` (missing key:
+   `false` as a value, and what the statement form raises, with the full `GetLastErrorText()` and code); `Replace`
+   with a value of another type than the old one; `Replace('b', ChildObject)` and then `ChildObject.Add(..)` (is the
+   value copied or shared); `Replace` with a `JsonToken` and with a `JsonValue`; a key that differs only by case.
+2. **`JsonObject.Keys()`.** REFUSED (not implemented). Pinned only for `Dictionary.Keys()`
+   (collections/TestCollectionIdentityContracts.al:98-101, insertion order). 555 tests. Probe wanted: `Keys()` of
+   `Add('b',..); Add('a',..); Add('c',..)` (order: insertion, sorted, other), of an empty object, after
+   `Remove` and after `Replace`; the returned `List of [Text]` after a later `Add` (a copy or a view); keys that
+   differ only by case (pinned for `Contains`: json/TestJsonXmlDeepContracts.al:84).
+3. **`XmlDocument.WriteTo(OutStream)` and the `XmlWriteOptions` overloads.** REFUSED (not implemented). The
+   `WriteTo(var Text)` form is pinned (xml/TestXmlDocument.al:43-58, xml/TestXmlRuntimeContracts.al: declaration and
+   two-space indentation); no corpus test writes an XML document to an `OutStream` (50 tests). Probe wanted:
+   `XmlDocument.WriteTo(OutStr)` on a `UTF8`, a `UTF16` and an unencoded `OutStream` (`TempBlob.CreateOutStream`):
+   the bytes (is there a byte order mark, which encoding is the declaration `encoding="..."` text, is it the same
+   text as `WriteTo(Text)`); `WriteTo(XmlWriteOptions, OutStr)` with `PreserveWhitespace` true and false; the same
+   for `XmlElement.WriteTo`.
+4. **`RoundDateTime(DateTime [, Precision [, Direction]])`.** REFUSED (not implemented). 100 tests. Probe wanted:
+   `RoundDateTime(dt, 1000)`, `(dt, 60000)`, `(dt, 180000, '<')`, `(dt, 180000, '>')`, `(dt, 180000, '=')` for a
+   `dt` that is below, on and above a multiple, and exactly half way (does `=` round up on a tie); the default
+   `Precision` and `Direction`; a `Precision` given as `Duration` (`MinutesToDuration(3)`), as `BigInteger`, `0`,
+   negative; the undefined `DateTime` (`0DT`); which epoch the multiples count from for a precision that does not
+   divide a day (`180000` divides it; `700000` does not).
+5. **`RecordId.GetRecord()`.** REFUSED (not implemented). 79 tests. Probe wanted: for a `RecordId` of an existing
+   row, the returned `RecordRef` (is `Number()` the table, are the field values loaded or only the primary key,
+   `IsEmpty()`); for a row that does not exist (error text and code, or an empty ref); for a `RecordId` of a
+   table that does not exist; for a null `RecordId`; and whether the ref is the same buffer on a second call.
+6. **`EncryptionEnabled()`** (also `EncryptionKeyExists`, `CreateEncryptionKey`, `Encrypt`, `Decrypt`). REFUSED
+   (not implemented). 45 tests. Probe wanted: in a test with no key created: `EncryptionEnabled()` and
+   `EncryptionKeyExists()` (on the cloud and on-prem images, which differ); after `CreateEncryptionKey()`; after
+   `DeleteEncryptionKey()`; `Encrypt('x')` without a key (error text and code); `Decrypt(Encrypt('x'))`.
+7. **`Version.Create`, `Version.ToText`, comparison of two `Version`s, `ApplicationInfo.DataVersion()`.** REFUSED.
+   `Evaluate(V, '1.2.3.4')` and the four part accessors are pinned (session/TestMiscTypes.al:44-80). One install
+   root of the project (`AppInfo.DataVersion() <> Version.Create(0, 0, 0, 0)`) stops on it, and so does every test
+   that needs what that root creates. Probe wanted: `Version.Create(1,2)` and `(1,2,3)` (do `Build` and `Revision`
+   read `0` or `-1`), `Version.Create('1.2.3.4')`, a text with fewer or more parts or with letters (error text),
+   `Format(V)` / `V.ToText()` of each, `=`, `<>`, `<` between two versions, and `DataVersion()` of an app that has
+   never been installed with data (is it `0.0.0.0`).
+8. **Active Session columns `Server Instance Name` (4), `Server Computer Name` (5) and `Client Computer Name` (8).**
+   REFUSED to read (platform.rs `PINNED_COLUMNS` pins 1, 2, 3, 6, 7, 9, 10 and 11). 877 tests, because the project's
+   install roots and its front-end error path read them for telemetry dimensions. The values are the host's, so a
+   test can pin only their shape. AL Runner v2 fills `Server Computer Name` with the host name and leaves the other
+   two blank (`RecordPatches.ActiveSessionSystemTable.cs`). Probe wanted: `ActiveSession.Get(ServiceInstanceId(),
+   SessionId())` in a test: `Assert.AreNotEqual('', ...)` for each of the three columns, on the cloud and on-prem
+   images. Measured with the three columns allowed (not committed): the install roots run further and 0 tests
+   more pass, because the next reasons (items 1 and 2) stop them; allowing them is safe to do together with
+   items 1 and 2.
+9. **Query property `ReadState`.** REFUSED (`HARMLESS_QUERY_PROPERTIES` in `al-sema/src/queries.rs`). 106 tests. A
+   single-session in-memory store reads its own writes under every isolation level, so the property cannot change
+   a row here unless a second session or a lock is observed, but no corpus test shows it. Probe wanted: a query with
+   `ReadState = ReadUncommitted`, `ReadCommitted`, `RepeatableRead` and `UpdLock`, run after the test wrote a row
+   without committing (is the row returned?), and after a `Commit()`.
+10. **`Record.SetFilter(Field, '%1', Text)` with a text that holds a filter character.** REFUSED (`@ * ? & | ( ) = < > '`
+    and `..`; before this batch the value was matched literally, which is wrong where `@` or a wildcard stays active).
+    The project filters e-mail addresses with `SetFilter("E-Mail", '%1', '@' + Email)` and expects the match to
+    ignore case, to keep `*` and `?` active, and to quote `& | ( ) = < > ' ..` (its helper sends text with a wildcard
+    through `SetRange` for that reason). 4 tests failed on it (they now stop). Probe wanted, on a Text field holding
+    `John@Example.com`, `a&b@x.com`, `a|b`, `a(b)`, `a<b`, `a=b`, `a'b`, `a..b`, `a*b` and `axb`: `SetFilter(F, '%1',
+    '@john@example.com')` (count), `SetFilter(F, '%1', 'a*b')`, and `SetFilter(F, '%1', X)` for X each of the stored
+    values, with and without a leading `@`; then `GetFilter(F)` (the text BC built, with its quotes).
+11. **The field number of `SystemRowVersion`.** ASSUMED to be `0` for AL code: `FieldNo(SystemRowVersion)`,
+    `FieldRef.Number()` and `RecordRef.Field(0)` agree on it. The corpus pins the equality between
+    `KeyRef.FieldIndex(1).Number()` and `FieldNo(SystemRowVersion)` (recordref/TestKeyMetadataRowVersionRemoved.al:51,
+    :85) and says the rowversion "sits at field id 0" for a table relation
+    (record/TestCalcFormulaSystemFieldsTests.Codeunit.al:213-215); the project's production code reads
+    `KeyRef.FieldIndex(1).Number = 0 //FieldRef 0 is rowversion` and its test of that passes on real BC. The
+    runtime used `2000000005`, which made that test fail. Probe wanted: `Format(Rec.FieldNo(SystemRowVersion))`,
+    `RecordRef.Field(Rec.FieldNo(SystemRowVersion)).Name()`, `RecordRef.FieldExist(0)`, `RecordRef.FieldCount()` and
+    `FieldIndex(FieldCount + 5)` (is the rowversion the sixth system field there), and the same for
+    `SystemModifiedAt` (pinned to `2000000003` only by being equal to the key's number).
+12. **`Record.FieldActive(Field)` of a field with `Enabled = false`.** The enabled field answers `true`
+    (record/TestRecordTriggers.al:223-231); a disabled one is REFUSED. About 1480 tests of the project stopped on
+    `FieldActive` without this (Microsoft's `Library - ERM`.FindPaymentTermsCode calls it). Probe wanted: a table
+    with `field(2; B; Integer) { Enabled = false; }` and one with `ObsoleteState = Removed` (`Pending` too): the
+    answer for each, and whether `Enabled = false` is conditional on a feature (`FieldActive` on a field whose
+    `Enabled` is a constant).
+13. **A reportextension that adds two data items at the same place** (two `addbefore(ChildA)`, two `addfirst(P)`),
+    and `addbefore` / `addafter` of a data item that another extension added. REFUSED. The order of one item per
+    place is pinned (reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al:214-257, built from
+    the declaration order of different places). Probe wanted: two extensions or one with two items at one place:
+    the run order and the dataset order.
+14. **Install code of the app under test and the restored rows.** Decided, not a probe (ADR-020, "Decided without
+    owner review (2026-10-14)"): the app under test's own install codeunits may `Modify`, `Delete` and `Rename`
+    the rows of the restored company. Probe that would confirm it: publish an app whose `OnInstallAppPerCompany`
+    modifies `Sales & Receivables Setup` into a CRONUS database and read the row back.
+15. **`DateTime + Integer`** (and `BigInteger`, `Decimal`; `DateTime - Integer`). REFUSED (`Add of DateTime(n) and
+    Integer(n)`); `DateTime + Duration` is pinned (session/TestDateTimeContracts.al:50-75). 98 tests, from the
+    project's `CurrentDateTime + (Seconds * 1000)`. Probe wanted: `DT + 1000` for an `Integer`, a `BigInteger` and a
+    `Decimal` constant and variable (milliseconds? a compile error?), `DT - 1000`, and `DT + 1000.5` (rounding).

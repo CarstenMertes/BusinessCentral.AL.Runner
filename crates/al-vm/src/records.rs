@@ -107,16 +107,6 @@ impl Session {
         Ok(parts.join(","))
     }
 
-    /// Raises (or, when the result is used, returns false for) a failed write.
-    /// Whether the routine running now belongs to a dependency app.
-    pub(crate) fn in_dependency_code(&self) -> bool {
-        let program = &self.engine.program;
-        self.frames
-            .last()
-            .and_then(|&o| program.apps.get(program.objects[o].app as usize))
-            .is_some_and(|a| a.dependency)
-    }
-
     /// Refuses a read whose answer depends on the rows of table `t` when the install baseline could
     /// not create the rows BC has there (`Engine::unseeded`, ADR-013 decision 5): the answer would
     /// be "empty" or "fewer rows", which is not BC's. Rows this session wrote itself do not make
@@ -134,13 +124,13 @@ impl Session {
     /// Message texts: docs/probes-needed.md (the corpus pins 'already exists'
     /// and 'does not exist' fragments only).
     fn fail(&mut self, t: &TableDef, fields: &[Value], exists: bool) -> Result<Value, Signal> {
-        // A dependency app's code reads rows (setup records, mostly) that installing the app and
+        // Code reads rows (setup records, mostly) that installing a dependency app and
         // initialising a company create. Where the install baseline could not create them
-        // (ADR-013 decision 5), a missing row there is not BC's answer: refuse rather than
-        // report it as one.
-        if !exists && self.in_dependency_code() && self.engine.unseeded.contains(&(t.object as usize)) {
+        // (ADR-013 decision 5), a missing row there is not BC's answer, whoever asks (a dependency
+        // app, or the tests of the project): refuse rather than report it as one.
+        if !exists && self.engine.unseeded.contains(&(t.object as usize)) {
             return unsupported(format!(
-                "{} not found in code of a dependency app: the rows its install and Company-Initialize create could not be created (ADR-013 decision 5)",
+                "{} row not found: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
             ));
         }

@@ -211,6 +211,16 @@ runtime defects, not differences between the restored company and a freshly prep
 - **The country is `w1`.** Other countries are not selectable yet.
 - **`--test-data-company` no longer needs `--test-data`**; it conflicts with `--no-test-data`.
 
+## Decided without owner review (2026-10-14, npcore-fixes)
+
+- The restored-row guard covers the dependency apps' install roots and `Company-Initialize` only. The
+  install codeunits of the app under test run before each test codeunit without the guard (2026-10-14,
+  npcore-fixes): they are the project's own fixture, a real project's seeds and changes the setup tables of
+  the demo company (NaviPartner's `NPR Test Fixture` modifies `Sales & Receivables Setup`), and a published
+  app's install code may change a database that already holds data. With the guard they were all refused
+  (1466 tests not run); the dependency roots keep it because Microsoft's install code must not change what
+  the backup holds.
+
 ## Conformance
 
 `cargo test -p al-host -p al-data -p al-bcdb-std -p alrunner-cli` and

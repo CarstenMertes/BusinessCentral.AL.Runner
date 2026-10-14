@@ -2786,7 +2786,12 @@ impl Session {
                             .map_or(0, |t| t.fields[pos].id as i32)
                     };
                     self.curr_field_no.push((Rc::as_ptr(&rec) as usize, number));
+                    // A validation through the page runs the table's OnValidate on fresh table
+                    // globals, and leaves the page's record with fresh globals (ADR-021 decision 8;
+                    // corpus probes TableGlobals_PageFieldValidate_*, TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation).
+                    self.reset_table_globals(&rec);
                     let validated = self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), parsed.clone()]);
+                    self.reset_table_globals(&rec);
                     self.curr_field_no.pop();
                     validated?;
                 }
@@ -3198,9 +3203,8 @@ impl Session {
         };
         if let Some((object, routine)) = field.on_lookup {
             let rec = self.page_rec(st);
-            let inst = self.record_instance(object, rec, None)?;
             st.borrow_mut().refresh = false;
-            self.call(object, routine, inst, Vec::new())?;
+            self.call_on_record(object, routine, rec, None, Vec::new())?;
             // The control now shows what the trigger wrote, as an edit of the row (assumed,
             // docs/probes-needed.md).
             st.borrow_mut().dirty = true;

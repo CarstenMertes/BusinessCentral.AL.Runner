@@ -1017,7 +1017,7 @@ fn the_declared_result_types_match_the_registry() {
                 m.name
             );
             assert!(
-                matches!(&m.pin, Pin::AlRunner(s) if s.contains("AL Runner v2 AlRunner/"))
+                matches!(&m.pin, Pin::AlRunner(s) if s.starts_with("AL Runner v2 ") && s.contains("AlRunner/"))
                     || matches!(&m.pin, Pin::Probe(s) if s.contains("corpus-probes c542144") && s.contains(".al"))
                     || matches!(&m.pin, Pin::Corpus(s) if s.contains(".al:")),
                 "{}.{}: {:?}",

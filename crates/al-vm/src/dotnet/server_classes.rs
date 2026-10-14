@@ -38,8 +38,9 @@ fn no_args(args: Args, what: &str) -> Result<(), Signal> {
 /// The `ALConfigSettings` flags are measured on real BC 27.5. They equal the `ConfigSetting`
 /// attribute defaults of `ServerUserSettings` (Nav.Types 27.5), which AL Runner v2 answers.
 const CFG_PIN: &str = "probe tests/al-language-onprem/session/TestServerSettingContracts.al:31-48 \
-    (corpus-probes c542144); AL Runner v2 AlRunner/BcRuntime.cs:2167 agrees (no config file in headless \
-    mode: the real ServerUserSettings answers its ConfigSetting attribute default)";
+    (corpus-probes c542144); AL Runner v2 agrees: it patches nothing here (no ALConfigSettings in AlRunner/), \
+    so the real ServerUserSettings answers its attribute default, and AlRunner/Patches/\
+    RecordPatches.AggregatePermissionSetVirtualTable.cs:9 states UsePermissionSetsFromExtensions is true";
 
 macro_rules! config_flag {
     ($name:ident, $what:literal, $value:expr) => {
@@ -247,8 +248,8 @@ pub fn types() -> Vec<RegistryType> {
                 member(
                     "Instance",
                     al_runner(
-                        "AlRunner/BcRuntime.cs:2167 (ALConfigSettings.Instance() is a plain constructor call in \
-                         Nav.Types 27.5; the settings it reads are the members below)",
+                        "unpatched in AlRunner/ (ALConfigSettings.Instance() is a plain constructor call in the \
+                         Nav.Types of the oracle build; the settings it reads are the members below)",
                     ),
                     al_config_instance,
                 ),

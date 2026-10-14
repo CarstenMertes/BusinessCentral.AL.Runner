@@ -27,6 +27,8 @@ pub struct TestArgs {
     /// `--filter TEXT`: select the tests whose name contains TEXT (any case).
     pub filters: Vec<String>,
     pub junit: Option<PathBuf>,
+    /// `--explain TEST`: run one test and say where it was refused or failed.
+    pub explain: Option<String>,
     /// `--top-refusals [N]`: how many refusal reasons to list (default 10).
     pub top_refusals: Option<usize>,
     /// `--top-failures [N]`: how many failure messages to list, ranked (default 10).
@@ -85,6 +87,9 @@ DEPENDENCIES
 SELECTION (a test is selected when any option matches it)
     --codeunit ID        A test codeunit by object id. Repeatable.
     --filter TEXT        Tests whose name contains TEXT, any case. Repeatable.
+    --explain TEST       Run one test (its name, or a part of it that only one test has) and print
+                         its outcome and, for a failure or a refusal, the routines and source
+                         lines it left from. Selects that test like --filter.
     A selected test's codeunit runs whole (tests of a codeunit share state); only the selected
     tests are reported. Only the selected codeunits are compiled.
 
@@ -221,6 +226,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--filter" | "--test" => a.filters.push(text()?),
             "--refusal-detail" => a.refusal_detail = Some(text()?),
             "--junit" => a.junit = Some(text()?.into()),
+            "--explain" => a.explain = Some(text()?),
             "--allow-not-run" => a.allow_not_run = true,
             "--verbose" | "-v" => a.verbose = true,
             "--quiet" | "-q" => a.quiet = true,

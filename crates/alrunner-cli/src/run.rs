@@ -142,7 +142,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
     let selection = Selection {
         codeunits: a.codeunits.clone(),
-        filters: a.filters.clone(),
+        filters: a.filters.iter().chain(&a.explain).cloned().collect(),
     };
     let chosen_units: Vec<&Found> = found
         .iter()
@@ -344,7 +344,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             v.dedup();
             v
         }),
-        trace: false,
+        trace: a.explain.is_some(),
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
     };
     let load_time = started.elapsed();
@@ -370,6 +370,10 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         .collect();
     results.sort_by_key(|r| (r.app, r.codeunit));
     let counts = Counts::of(results.iter().copied());
+
+    if let Some(pattern) = &a.explain {
+        return explain(&rt, &results, pattern, &a.codeunits, &chosen.target.bc.to_string());
+    }
 
     if a.timings {
         let c = &p.compile_parts;
@@ -551,4 +555,61 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         }
     );
     Ok(code)
+}
+
+/// `--explain PATTERN`: the one test the pattern means (a test named exactly so, else the only one
+/// whose name contains it), with where it was refused or failed.
+fn explain(
+    rt: &CorpusRuntime,
+    results: &[&TestResult],
+    pattern: &str,
+    codeunits: &[u32],
+    target: &str,
+) -> Result<u8, String> {
+    // `--codeunit` narrows the candidates here; elsewhere it selects the whole codeunit.
+    let named = |r: &&&TestResult| r.test.to_lowercase().contains(&pattern.to_lowercase());
+    let narrowed: Vec<&&TestResult> = results
+        .iter()
+        .filter(|r| codeunits.is_empty() || codeunits.contains(&r.codeunit))
+        .filter(named)
+        .collect();
+    let exact: Vec<&&TestResult> = narrowed
+        .iter()
+        .copied()
+        .filter(|r| r.test.eq_ignore_ascii_case(pattern))
+        .collect();
+    let candidates = if exact.len() == 1 { exact } else { narrowed };
+    let [r] = candidates.as_slice() else {
+        if candidates.is_empty() {
+            println!("--explain: no test matches `{pattern}`");
+            return Ok(6);
+        }
+        let list: Vec<String> = candidates
+            .iter()
+            .take(10)
+            .map(|r| format!("  {} {}.{}", r.codeunit, r.codeunit_name, r.test))
+            .collect();
+        return Err(format!(
+            "--explain `{pattern}` matches {} tests; give a longer name or add --codeunit ID:\n{}",
+            candidates.len(),
+            list.join("\n")
+        ));
+    };
+    let head = format!(
+        "BC {target}: test {} in codeunit {} ({})",
+        r.test, r.codeunit, r.codeunit_name
+    );
+    let id = CaseId {
+        codeunit: r.codeunit,
+        name: r.test.clone(),
+    };
+    println!(
+        "{}",
+        al_testrun::explain::render_without_oracle(&head, &r.outcome, rt.detail_in("", &id))
+    );
+    Ok(match r.outcome {
+        Outcome::Pass => 0,
+        Outcome::Fail(_) => 1,
+        Outcome::NotRun(_) => 7,
+    })
 }

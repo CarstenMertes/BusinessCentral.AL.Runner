@@ -20,7 +20,7 @@ table 60860 "Num Row"
 table 60866 "RRE Row"
 {
     fields { field(1; "Entry No."; Integer) { } field(2; Name; Text[50]) { } }
-    keys { key(PK; "Entry No.") { } }
+    keys { key(PK; "Entry No.") { } key(ByName; Name) { } }
 }
 
 table 60867 "RRE Log"
@@ -284,6 +284,30 @@ report 60029 "TxRpt Error Marker"
 // Not from the corpus: a parent and a child over real tables, linked.
 table 60870 "Link Parent" { fields { field(1; No; Integer) { } } keys { key(PK; No) { } } }
 table 60871 "Link Child" { fields { field(1; Id; Integer) { } field(2; ParentNo; Integer) { } } keys { key(PK; Id) { } } }
+
+report 60880 "MX Link Filter"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    dataset
+    {
+        dataitem(Parent; "Link Parent")
+        {
+            dataitem(Child; "Link Child")
+            {
+                DataItemLink = ParentNo = field(No);
+                DataItemTableView = where(ParentNo = const(1));
+            }
+        }
+    }
+}
+
+report 60881 "MX Quit In Pre"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    trigger OnPreReport() begin CurrReport.Quit(); end;
+}
 
 report 60872 "Link Report"
 {
@@ -1215,4 +1239,138 @@ fn an_empty_extension_changes_nothing() {
         end;"),
         "3"
     );
+}
+
+// ---- mutation-testing additions (docs/status.md debt) ----
+
+// UseRequestPage(true) on a report that declares UseRequestPage = false is not pinned; on a report
+// with a request page, and UseRequestPage(false) anywhere, it is accepted.
+#[test]
+fn use_request_page_true_is_refused_only_on_a_report_that_declares_false() {
+    let why = refusal("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(true); exit('set'); end;");
+    assert!(
+        why.contains("UseRequestPage(true) on a report declaring UseRequestPage = false"),
+        "{why}"
+    );
+    assert_eq!(
+        f(
+            "var R: Report \"TxRpt ReqPage Marker\"; begin R.UseRequestPage(true); R.UseRequestPage(false); exit('set'); end;"
+        ),
+        "set"
+    );
+    assert_eq!(
+        f("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(false); exit('set'); end;"),
+        "set"
+    );
+}
+
+// Execute takes only the empty parameter string and no RecordRef (record/TestTxModelReportExec.al:138-211).
+#[test]
+fn execute_with_parameters_or_a_record_ref_is_refused() {
+    let why = refusal("var R: Report \"TxRpt Plain Marker\"; begin R.Execute('<xml/>'); exit('ran'); end;");
+    assert!(why.contains("only '' is pinned"), "{why}");
+    let why =
+        refusal("var R: Report \"TxRpt Plain Marker\"; RR: RecordRef; begin R.Execute('', RR); exit('ran'); end;");
+    assert!(why.contains("RecordRef"), "{why}");
+    let why = refusal("begin Report.Execute(Report::\"TxRpt Plain Marker\", '<xml/>'); exit('ran'); end;");
+    assert!(why.contains("only '' is pinned"), "{why}");
+}
+
+// "With the Run method, the variable is automatically cleared after the method is run"
+// (handlers/TestReportSetTableView.al:17-22): the next Run is a new instance, whose marker is 0.
+#[test]
+fn a_report_variable_is_cleared_after_run() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt Plain Marker\"; begin
+            H.Seed(); Commit();
+            R.SetMarker(60050001);
+            R.Run();
+            R.Run();
+            exit(Format(H.Has(60050001)) + '|' + Format(H.Has(0)));
+        end;"),
+        "Yes|Yes"
+    );
+}
+
+// Only the call straight from OnInitReport is pinned for CurrReport.Quit.
+#[test]
+fn quit_outside_oninitreport_is_refused() {
+    let why =
+        refusal("var H: Codeunit Helpers; R: Report \"MX Quit In Pre\"; begin H.Seed(); R.Run(); exit('ran'); end;");
+    assert!(why.contains("outside the OnInitReport trigger"), "{why}");
+}
+
+// A table view that is more than filters (marked only, re-sorted, descending, temporary) is
+// refused; a plain one is taken.
+#[test]
+fn set_table_view_refuses_a_view_that_is_more_than_filters() {
+    for (setup, plain) in [
+        ("", true),
+        ("V.MarkedOnly(true);", false),
+        ("V.SetCurrentKey(Name);", false),
+        ("V.Ascending(false);", false),
+    ] {
+        let r = run_model(
+            &format!(
+                "procedure F(): Text
+                var R: Report \"STV Counting Report\"; V: Record \"RRE Row\";
+                begin V.SetRange(\"Entry No.\", 1); {setup} R.SetTableView(V); exit('set'); end;"
+            ),
+            TxModel::AutoCommit,
+        );
+        if plain {
+            assert!(matches!(r, Ok(Value::Text(ref t)) if t == "set"), "{r:?}");
+        } else {
+            match r {
+                Err(Signal::Unsupported(m)) => assert!(m.contains("temporary, marked or re-sorted"), "{setup}: {m}"),
+                other => panic!("{setup}: {other:?}"),
+            }
+        }
+    }
+    let why = refusal(
+        "var R: Report \"STV Counting Report\"; V: Record \"RRE Row\" temporary; begin R.SetTableView(V); exit(''); end;",
+    );
+    assert!(why.contains("temporary, marked or re-sorted"), "{why}");
+}
+
+// A report run that enters a transaction world inside a TryFunction is not pinned.
+#[test]
+fn a_world_entering_run_inside_a_try_function_is_refused() {
+    let r = run_model(
+        "[TryFunction] procedure T() var R: Report \"TxRpt Update Marker\"; begin R.Run(); end;
+         procedure F(): Text var H: Codeunit Helpers; begin H.Seed(); Commit(); if T() then exit('ok'); exit('failed'); end;",
+        TxModel::AutoCommit,
+    );
+    match r {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("inside a TryFunction"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+// codeunit/TestWriteTxTestBoundary.al:WriteTxBoundary_Test11 (:259-279): the transaction a report
+// begins under None ends with the run, and a direct write from the test is refused again.
+#[test]
+fn after_a_report_under_none_a_direct_write_is_refused_again() {
+    assert_eq!(
+        text_after_setup(
+            "var H: Codeunit Helpers; R: Report \"TxRpt Plain Marker\"; begin
+                R.SetMarker(9413);
+                R.UseRequestPage(false);
+                R.RunModal();
+                asserterror H.Insert(9414);
+                exit(GetLastErrorText());
+            end;",
+            TxModel::None
+        ),
+        "A transaction must be started before changes can be made to the database."
+    );
+}
+
+// How a filter on a field that a DataItemLink joins combines with the link is not pinned.
+#[test]
+fn a_filter_on_a_field_the_data_item_link_joins_is_refused() {
+    let why = refusal(
+        "var H: Codeunit Helpers; begin H.Seed(); Report.Run(Report::\"MX Link Filter\", false, false); exit('ran'); end;",
+    );
+    assert!(why.contains("DataItemLink joins"), "{why}");
 }

@@ -1218,3 +1218,184 @@ fn duration_sources_sum_into_duration_flow_fields() {
     );
     assert_eq!(text(r), "YesYes");
 }
+
+// Mutation-testing additions (docs/status.md debt): checks that were only ever seen green.
+
+const FFX: &str = r#"
+enum 60460 "FFX E1" { value(0; A) { } value(1; B) { } }
+enum 60461 "FFX E2" { value(0; A) { } value(1; B) { } }
+table 60462 "FFX Src"
+{
+    fields
+    {
+        field(1; "No."; Integer) { }
+        field(2; Grp; Code[10]) { }
+        field(3; Txt; Text[30]) { }
+        field(4; Cd; Code[30]) { }
+        field(5; Big; BigInteger) { }
+        field(6; E1; Enum "FFX E1") { }
+        field(7; Amount; Decimal) { }
+        field(8; Dur; Duration) { }
+    }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+table 60463 "FFX Head"
+{
+    fields
+    {
+        field(1; "No."; Code[10]) { }
+        field(2; FilterInt; Integer) { FieldClass = FlowFilter; }
+        field(3; FilterDec; Decimal) { FieldClass = FlowFilter; }
+        field(10; TxtFromCode; Text[30]) { FieldClass = FlowField; CalcFormula = lookup("FFX Src".Cd where(Grp = field("No."))); }
+        field(11; CodeFromTxt; Code[30]) { FieldClass = FlowField; CalcFormula = lookup("FFX Src".Txt where(Grp = field("No."))); }
+        field(12; EnumSame; Enum "FFX E1") { FieldClass = FlowField; CalcFormula = lookup("FFX Src".E1 where(Grp = field("No."))); }
+        field(13; EnumOther; Enum "FFX E2") { FieldClass = FlowField; CalcFormula = lookup("FFX Src".E1 where(Grp = field("No."))); }
+        field(14; MinWrong; Integer) { FieldClass = FlowField; CalcFormula = min("FFX Src".Amount where(Grp = field("No."))); }
+        field(15; SumBig; BigInteger) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Big where(Grp = field("No."))); }
+        field(16; NegCount; Integer) { FieldClass = FlowField; CalcFormula = -count("FFX Src" where(Grp = field("No."))); }
+        field(17; ByIntFilter; Decimal) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Amount where(Grp = field("No."), "No." = field(FilterInt))); }
+        field(18; ByDecFilter; Decimal) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Amount where(Grp = field("No."), "No." = field(FilterDec))); }
+        field(19; LookupAmt; Decimal) { FieldClass = FlowField; CalcFormula = lookup("FFX Src".Amount where(Grp = field("No."))); }
+        field(20; SumDur; Duration) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Dur where(Grp = field("No."))); }
+    }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+"#;
+
+const FFX_SEED: &str = "
+    procedure Add(N: Integer; G: Code[10]; T: Text[30]; C: Code[30]; B: BigInteger; A: Decimal)
+    var S: Record \"FFX Src\";
+    begin
+        S.\"No.\" := N; S.Grp := G; S.Txt := T; S.Cd := C; S.Big := B; S.Amount := A; S.E1 := S.E1::B;
+        S.Insert();
+    end;
+    procedure Seed()
+    var H: Record \"FFX Head\"; Big: BigInteger;
+    begin
+        H.\"No.\" := 'H'; H.Insert();
+        Big := 2147483647; Big := Big * 2;
+        Add(1, 'H', 'tx', 'CD', Big, 2.5);
+        Add(2, 'H', 'tx', 'CD', 7, 4);
+    end;
+";
+
+fn run_ffx(body: &str) -> Result<Value, Signal> {
+    run_with(FFX, &format!("{FFX_SEED}\n{body}"), "F")
+}
+
+fn calc_one(field: &str) -> Result<Value, Signal> {
+    run_ffx(&format!(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.Get('H');
+            H.CalcFields({field});
+            exit(Format(H.{field}));
+        end;"
+    ))
+}
+
+// corpus record/TestCalcFormulaMinMaxAvgTests.Codeunit.al:97 pins min/max/lookup into the very
+// same type; Text and Code count as one kind, so does the same enum, other types are refused.
+#[test]
+fn min_max_and_lookup_accept_text_for_code_and_the_same_enum() {
+    assert_eq!(text(calc_one("TxtFromCode")), "CD");
+    assert_eq!(text(calc_one("CodeFromTxt")), "TX");
+    assert_eq!(text(calc_one("EnumSame")), "B");
+}
+
+#[test]
+fn min_max_and_lookup_into_another_type_or_another_enum_are_refused() {
+    assert!(unsupported(calc_one("MinWrong")).contains("another type"));
+    assert!(unsupported(calc_one("EnumOther")).contains("another type"));
+}
+
+// A sum over a BigInteger source works past the Int32 range.
+#[test]
+fn sum_over_a_big_integer_source_goes_past_int32() {
+    assert_eq!(text(calc_one("SumBig")), "4294967301");
+}
+
+// A leading minus on count negates the number of rows (corpus record/TestCalcFormulaSignFiltersTests.Codeunit.al
+// pins the sign for sum and exist; count takes the same code path).
+#[test]
+fn a_negated_count_is_minus_the_row_count() {
+    assert_eq!(text(calc_one("NegCount")), "-2");
+}
+
+// corpus record/TestCalcFormulaFlowFiltersTests.Codeunit.al:107: a flow filter of the same kind as
+// the source field narrows the formula; one of another type is refused (the match is not pinned).
+#[test]
+fn a_flow_filter_of_the_source_fields_type_applies_and_another_type_is_refused() {
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.Get('H');
+            H.SetRange(FilterInt, 2);
+            H.CalcFields(ByIntFilter);
+            exit(Format(H.ByIntFilter));
+        end;",
+    );
+    assert_eq!(text(r), "4");
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.Get('H');
+            H.SetRange(FilterDec, 2);
+            H.CalcFields(ByDecFilter);
+            exit(Format(H.ByDecFilter));
+        end;",
+    );
+    assert!(unsupported(r).contains("flow filter of another type"));
+}
+
+// A lookup over several rows that agree is the value they agree on; only disagreeing rows are
+// refused (see lookup_over_rows_that_disagree_is_refused).
+#[test]
+fn lookup_over_rows_that_agree_returns_their_value() {
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\"; S: Record \"FFX Src\";
+        begin
+            Seed();
+            S.ModifyAll(Amount, 9);
+            H.Get('H');
+            H.CalcFields(LookupAmt);
+            exit(Format(H.LookupAmt));
+        end;",
+    );
+    assert_eq!(text(r), "9");
+}
+
+// CalcSums only takes stored number fields; both a stored non-number and a FlowField are refused.
+#[test]
+fn calcsums_refuses_stored_non_numbers_and_flow_fields() {
+    for field in ["Txt", "Dur"] {
+        let r = run_ffx(&format!(
+            "procedure F(): Text
+            var S: Record \"FFX Src\";
+            begin
+                Seed();
+                S.CalcSums({field});
+            end;"
+        ));
+        assert!(
+            unsupported(r).contains("only stored number fields are implemented"),
+            "{field}"
+        );
+    }
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.CalcSums(ByIntFilter);
+        end;",
+    );
+    assert!(unsupported(r).contains("only stored number fields are implemented"));
+}

@@ -60,7 +60,6 @@ fn same_kind(a: &RtType, b: &RtType) -> bool {
     use RtType as T;
     match (a, b) {
         (T::Text(_) | T::Code(_), T::Text(_) | T::Code(_)) => true,
-        (T::Option(_), T::Option(_)) => true,
         (T::Enum(x), T::Enum(y)) => x == y,
         _ => std::mem::discriminant(a) == std::mem::discriminant(b),
     }

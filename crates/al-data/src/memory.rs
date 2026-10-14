@@ -187,7 +187,10 @@ impl MemStore {
         self.virtuals.as_deref().filter(|v| v.serves(t))
     }
 
-    fn read_only(t: &TableDef, what: &str) -> StoreError {
+    fn read_only(&self, t: &TableDef, what: &str) -> StoreError {
+        if let Some(why) = self.virtuals.as_deref().and_then(|v| v.write_refusal(t)) {
+            return StoreError::Refused(why);
+        }
         StoreError::Refused(format!(
             "{what} on virtual table '{}': its rows are computed, not stored",
             t.name
@@ -306,7 +309,7 @@ impl MemStore {
 impl Store for MemStore {
     fn insert(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<InsertOutcome, StoreError> {
         if self.virtual_of(t).is_some() {
-            return Err(Self::read_only(t, "Insert"));
+            return Err(self.read_only(t, "Insert"));
         }
         let k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
@@ -327,7 +330,7 @@ impl Store for MemStore {
 
     fn modify(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<WriteOutcome, StoreError> {
         if self.virtual_of(t).is_some() {
-            return Err(Self::read_only(t, "Modify"));
+            return Err(self.read_only(t, "Modify"));
         }
         let k = Key(t.primary_key(&row));
         if self.guarded(cx, t, &k) {
@@ -344,7 +347,7 @@ impl Store for MemStore {
 
     fn delete(&mut self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<WriteOutcome, StoreError> {
         if self.virtual_of(t).is_some() {
-            return Err(Self::read_only(t, "Delete"));
+            return Err(self.read_only(t, "Delete"));
         }
         if self.guarded(cx, t, &Key(pk.to_vec())) {
             return Err(Self::refuse_guarded(t, "Delete"));
@@ -366,7 +369,7 @@ impl Store for MemStore {
         row: Row,
     ) -> Result<RenameOutcome, StoreError> {
         if self.virtual_of(t).is_some() {
-            return Err(Self::read_only(t, "Rename"));
+            return Err(self.read_only(t, "Rename"));
         }
         let new_k = Key(t.primary_key(&row));
         if self.guarded(cx, t, &Key(old.to_vec())) {
@@ -432,7 +435,7 @@ impl Store for MemStore {
 
     fn delete_all(&mut self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
         if self.virtual_of(t).is_some() {
-            return Err(Self::read_only(t, "DeleteAll"));
+            return Err(self.read_only(t, "DeleteAll"));
         }
         let doomed: Vec<Key> = self
             .table(cx, t)

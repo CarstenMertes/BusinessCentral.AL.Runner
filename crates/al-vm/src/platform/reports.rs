@@ -41,6 +41,8 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 1)] = Value::Integer(id as i32);
             r[pos(t, 2)] = Value::Text(l.name.chars().take(250).collect());
             r[pos(t, 5)] = Value::Guid(pkg);
+            // The app that owns the report (the layout is published with it; probe batch 5).
+            r[pos(t, 11)] = Value::Guid(c.owner(o));
             match layout_row(o, l, t, &mut r) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {

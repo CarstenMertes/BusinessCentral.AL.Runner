@@ -73,7 +73,7 @@ Time Zone, Windows Language, NAV App Installed App, Published Application, the p
 List, Report Metadata, Report Data Items, XmlPort Metadata, Query Metadata, Event Subscription (compiled
 subscribers) and Table Relations Metadata. Company, User, Access Control, All Profile, Record Link, the code
 coverage tables and a few tenant tables are stored (the session seeds the first four). Everything else in the
-System app is refused with `platform table 'X' (id) has no provider`. Still open: Feature Key and Tenant License
+System app lowers, works as a temporary record, and has its persistent rows refused with `platform table 'X' (id) has no provider`. Still open: Feature Key and Tenant License
 State, a coverage recorder (the coverage tables are refused after a recording), and Event Subscription rows for
 uncompiled codeunits.
 

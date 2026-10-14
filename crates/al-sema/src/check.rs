@@ -2130,7 +2130,18 @@ fn fits(arg: &Ty, param: &str) -> bool {
             matches!(p, "text" | "code" | "string" | "any" | "joker" | "variant" | "label")
         }
         Ty::Boolean => matches!(p, "boolean" | "any" | "joker" | "variant"),
-        other => p == "any" || p == "joker" || p == "variant" || other.to_string().to_ascii_lowercase().starts_with(p),
+        other => {
+            if p == "any" || p == "joker" || p == "variant" {
+                return true;
+            }
+            let arg = other.to_string().to_ascii_lowercase();
+            // A parameter that names an object (`Record "Price Asset"`) fits only an argument of
+            // that object: overloads that differ in the table are told apart by it.
+            if param.contains('"') {
+                return arg == param.to_ascii_lowercase();
+            }
+            arg.starts_with(p)
+        }
     }
 }
 

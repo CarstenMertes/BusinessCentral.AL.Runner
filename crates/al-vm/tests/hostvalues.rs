@@ -471,3 +471,90 @@ fn zero_and_negative_bounds_follow_the_service_tier() {
         "0"
     );
 }
+
+// ---------------------------------------------------------------- Guids
+// The corpus pins that CreateGuid is not null and differs on each call (types/TestGuid.al:12-45).
+// Microsoft's Tests-ERM take the first 20 characters of `Format(CreateGuid())` as a key
+// (Pos. Pay Test Unit, ERM Delete Documents), so the first bytes must differ too. The version and
+// variant bits are an assumption (docs/probes-needed.md, "Probe batch 5"): BC's CreateGuid is
+// the platform's random (version 4, RFC 4122) Guid.
+
+const GUID_SCAN: &str = "I: Integer; G: Text; Seen: List of [Text]; Bad: Integer; Dup: Integer;";
+
+/// 300 Guids: how many break the `{xxxxxxxx-xxxx-4xxx-[89AB]xxx-...}` form, how many repeat the
+/// first 20 characters of an earlier one.
+fn guid_scan(body_after: &str) -> String {
+    text(
+        GUID_SCAN,
+        &format!(
+            "for I := 1 to 300 do begin G := Format({body_after}); \
+             if (StrLen(G) <> 38) or (CopyStr(G, 16, 1) <> '4') or (StrPos('89AB', CopyStr(G, 21, 1)) = 0) then Bad += 1; \
+             if Seen.Contains(CopyStr(G, 1, 20)) then Dup += 1 else Seen.Add(CopyStr(G, 1, 20)); end; \
+             exit(Format(Bad) + '/' + Format(Dup));"
+        ),
+    )
+}
+
+#[test]
+fn create_guid_is_random_looking_in_every_byte_with_version_4_bits() {
+    assert_eq!(guid_scan("CreateGuid()"), "0/0");
+}
+
+#[test]
+fn create_sequential_guid_has_the_same_form() {
+    assert_eq!(guid_scan("Guid.CreateSequentialGuid()"), "0/0");
+}
+
+#[test]
+fn the_system_id_of_an_inserted_row_is_random_looking_too() {
+    assert_eq!(
+        text(
+            "I: Integer; T: Record \"ALT T\"; Seen: List of [Text]; Bad: Integer; Dup: Integer; G: Text;",
+            "for I := 1 to 300 do begin T.Init(); T.\"No.\" := I; T.Insert(); G := Format(T.SystemId); \
+             if (CopyStr(G, 16, 1) <> '4') or (StrPos('89AB', CopyStr(G, 21, 1)) = 0) then Bad += 1; \
+             if Seen.Contains(CopyStr(G, 1, 20)) then Dup += 1 else Seen.Add(CopyStr(G, 1, 20)); end; \
+             exit(Format(Bad) + '/' + Format(Dup));"
+        ),
+        "0/0"
+    );
+}
+
+fn first_guids(seed: Option<i32>) -> String {
+    let (engine, oi) = compile("procedure F(): Text begin exit(Format(CreateGuid()) + Format(CreateGuid())); end;");
+    let mut host = al_host::Host::deterministic();
+    if let Some(s) = seed {
+        host.random_seed = s;
+    }
+    match call(&mut Session::with_host(engine, host), oi, "F") {
+        Ok(Value::Text(t)) => t,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_guid_sequence_is_the_same_in_every_session_and_follows_the_host_seed() {
+    // ADR-009: BC's Guids are random, which AL cannot tell from a seeded sequence.
+    assert_eq!(first_guids(None), first_guids(None));
+    assert_eq!(first_guids(Some(5)), first_guids(Some(5)));
+    assert_ne!(first_guids(Some(5)), first_guids(Some(6)));
+}
+
+// ---------------------------------------------------------------- refusal texts
+
+#[test]
+fn format_of_a_value_without_a_text_form_names_its_type_not_its_contents() {
+    // Tests-ERM refused 198 tests with a message that dumped the whole record (`Format of
+    // Record(RefCell { value: RecordState { ... } })`). The reason is a type name: it groups, and
+    // it fits on a line.
+    for (vars, body, kind) in [
+        ("R: Record \"ALT T\";", "exit(Format(R));", "a Record"),
+        ("L: List of [Integer];", "exit(Format(L));", "a List"),
+        ("D: Dictionary of [Integer, Integer];", "exit(Format(D));", "a Dictionary"),
+    ] {
+        let r = run(&format!("procedure F(): Text var {vars} begin {body} end;"));
+        let Err(Signal::Unsupported(m)) = r else {
+            panic!("{kind}: {r:?}");
+        };
+        assert!(m.contains(kind) && !m.contains("RefCell") && !m.contains('{'), "{kind}: {m}");
+    }
+}

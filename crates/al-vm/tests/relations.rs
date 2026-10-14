@@ -34,6 +34,20 @@ table 50952 "Rel Child" {
     }
     keys { key(PK; Id) { } }
 }
+table 50953 "Rel Setup" {
+    fields {
+        field(1; Code; Code[20]) { }
+        field(3; Direction; Option) { OptionMembers = Export,Import,"Export-Positive Pay"; }
+    }
+    keys { key(PK; Code) { } }
+}
+table 50954 "Rel Bank" {
+    fields {
+        field(1; Id; Integer) { }
+        field(2; PosPay; Code[20]) { TableRelation = "Rel Setup".Code where(Direction = const("Export-Positive Pay")); }
+    }
+    keys { key(PK; Id) { } }
+}
 "#;
 
 fn run(body: &str) -> Result<Value, Signal> {
@@ -225,4 +239,22 @@ codeunit 50100 C { procedure F(): Text var L: Record "RV Line"; H: Record "RV He
     let inst = s.instance(oi);
     let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
     assert!(text(r).contains("cannot be found in the related table"));
+}
+
+#[test]
+fn a_where_const_naming_an_option_member_with_a_hyphen_is_enforced() {
+    // The shape of Bank Account."Positive Pay Export Code" (Base Application table 270). Tests-ERM
+    // Pos. Pay Test Unit.TestPositivePayExportCodeInvalid expects the error; the member name is
+    // "Export-Positive Pay".
+    let r = run(
+        "procedure F(): Text var S: Record \"Rel Setup\"; B: Record \"Rel Bank\"; Wrong: Text; Right: Text; begin
+            S.Code := 'X'; S.Direction := S.Direction::Export; S.Insert();
+            S.Code := 'P'; S.Direction := S.Direction::\"Export-Positive Pay\"; S.Insert(); Commit();
+            asserterror B.Validate(PosPay, 'X'); Wrong := GetLastErrorText();
+            B.Validate(PosPay, 'P'); Right := B.PosPay;
+            exit(Wrong + '|' + Right);
+        end;",
+    );
+    let t = text(r);
+    assert!(t.contains("cannot be found in the related table") && t.ends_with("|P"), "{t}");
 }

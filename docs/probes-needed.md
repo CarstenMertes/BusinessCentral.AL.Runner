@@ -467,3 +467,49 @@ Microsoft's code compiles on real BC, so the syntax below is valid AL. What it m
 | Test data | A non-empty `RecordId` or `TableFilter` cell is REFUSED. v2 reads them as a 448-byte and a 504-byte buffer padded with zeros; this runtime has no pinned stored form for either | none | `al-vm/src/testdata.rs` `Kind::Unsupported` |
 | Test data | `SystemRowVersion` of a restored row is its `timestamp`, but new rows still count from 1 in a session, so they sort before restored rows. BC's counter is database wide. Not modelled; no probe can pin it without a restored database | none | `al-vm/src/records.rs` `bump_row_version` |
 | Test data | The Company table is a platform table the runtime keeps itself, so `CompanyId` is the runtime's fixed id, not the `Id` of the restored company's row, and a second company of the backup (`My Company`) is not a company of the session | none | `al-vm/src/testdata.rs` |
+
+## Probe batch 5 (from Microsoft buckets with test data)
+
+Gaps found by running Tests-SMB and Tests-ERM with `--test-data` (2026-10-14, branch `fixes-8`). Each stays
+refused (or assumed, where the row says so) until its probe is in the corpus.
+
+1. **Guid form.** `CreateGuid`, `CreateSequentialGuid` and a row's SystemId are version 4 Guids (version nibble
+   4, variant bits `10`) whose bytes come from a seeded generator (the host's `random_seed` and a counter),
+   so a run repeats. The corpus pins only that they are not null and differ on each call (types/TestGuid.al:12-45);
+   Tests-ERM takes `CopyStr(Format(CreateGuid()), 1, 20)` as a key, which needs the first bytes to differ
+   too. **Assumed:** BC's `CreateGuid` is the platform's random Guid (RFC 4122 version 4). Probe wanted: 50
+   `CreateGuid()` values, `Format(G)` characters 15 and 20 (version and variant), the number of distinct
+   20-character prefixes; the same for `CreateSequentialGuid` (does it keep the version nibble, does the
+   prefix change between calls) and for `SystemId` of 50 inserted rows. `CreateSequentialGuid` is not
+   ordered here; BC's is ascending in SQL order.
+2. **`TestField` on an Option or Enum field holding its zero member.** REFUSED. Microsoft's tests expect
+   `<field> must not be <member> in <table>` (Payment Registration UT: `Bal. Account Type must not be   in
+   Payment Registration Setup` for the blank member, Price List Line UT: `Product Type must not be (All)`
+   for an Enum whose zero member has the caption `(All)`), not the "must have a value" text. Not in the
+   corpus. Probe wanted, for an Option with a blank first member, an Option with a named first member,
+   an Enum with a blank zero member with and without a `Caption`, and an Enum with a named zero member:
+   the full `GetLastErrorText()` of `TestField(F)` (is the key list `: key=value` appended, is the member
+   the caption or the name), `GetLastErrorCode()`, and whether `TestField(F, Value)` on the same fields
+   changes. 7 tests of Tests-ERM (Payment Registration UT, Price List Line UT, Price Worksheet Line UT).
+3. **User Personalization row of the session user.** A `Get` of that row that finds nothing is REFUSED:
+   BC creates the row when a user signs in to a client, and the corpus pins neither that nor its
+   columns (session/TestSessionSettings.al:402-407 says what it holds "depends on tenant data"). Probe
+   wanted: `Get(UserSecurityId())` in a test on the cloud and on-prem images (does the row exist, which
+   `Profile ID`, `Language ID`, `Locale ID`, `Time Zone`, `Company`), and whether
+   `SessionSettings.RequestSessionUpdate(true)` creates it. 1 test of Tests-ERM (Reminder Automation Tests).
+4. **`Format(Record)`.** REFUSED (the text of a record variable as a whole). Base Application's Global
+   Triggers subscribers compare `Format(Rec) = Format(xRec)`, which made 213 Tests-ERM tests not run
+   (plus 1 for `Format(FieldRef)`). Probe wanted: `Format(Rec)` of a record with a Code, a Text, an
+   Integer, a Decimal, a Boolean, a Date, an Option and an Enum field, a FlowField and a Blob: the exact
+   text (separator, which fields, FlowFields calculated or not), and whether two records that differ in
+   only one field format differently.
+5. **Variables of a table object persist per record variable.** NOT MODELLED (a gap, not a refusal): a
+   `var` section of a table holds state that lives as long as the record variable (a trigger sets
+   `Hold := 10`, a later trigger or procedure of the same variable reads it). Each trigger and each
+   procedure call here gets a fresh table instance, so the state is lost. Price List Line relies on
+   it (the global `PriceAsset` set in the Asset Type trigger is read in the Amount Type trigger), and
+   Tests-ERM's `T043_AmountTypeMustBeDiscountForItemDiscGroup` (two tests) fails on it. Probe wanted:
+   a table with `var Hold: Integer; Buf: Record X temporary`, field A's OnValidate sets both, field B's
+   OnValidate reads them, and a procedure reads them: on the same record variable, on a copy made by
+   `:=`, by `Copy`, by value parameter, on `TransferFields`, after `Init()` and `Clear()`, and a
+   second variable of the same table.

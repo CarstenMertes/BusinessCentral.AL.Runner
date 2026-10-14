@@ -236,6 +236,9 @@ struct Node {
     owner: Option<usize>,
     modifies: Vec<(usize, ast::Section)>,
     children: Vec<usize>,
+    /// The control is only an anchor for extensions: it is not part of the page the test client sees
+    /// (a `systempart`).
+    anchor_only: bool,
 }
 
 /// An `area(...)` of the `layout` or `actions` section: where extensions attach controls by name.
@@ -344,6 +347,25 @@ impl Tree {
             "action" | "actionref" => K::Action,
             "systemaction" => K::SystemAction,
             "part" => K::Part,
+            // The TestPage has no member for a system part (Notes, Links, MyNotes, ...), and the corpus
+            // tests that open Base App pages declaring one (for example
+            // handlers/TestPagePlatformPageSourceTable_Tests.al:77, handlers/TestReportRunFromPrecompiledCaller.al:31)
+            // never reach it. It stays in the tree so that `addafter`/`modify` can name it, and is dropped
+            // from the controls the page lowers.
+            "systempart" => {
+                let idx = self.nodes.len();
+                self.nodes.push(Node {
+                    name: arg0,
+                    kind: K::Part,
+                    section: s.clone(),
+                    owner,
+                    modifies: Vec::new(),
+                    children: Vec::new(),
+                    anchor_only: true,
+                });
+                into.push(idx);
+                return;
+            }
             // A separator carries no behaviour of its own.
             "separator" => return,
             other => {
@@ -360,6 +382,7 @@ impl Tree {
             owner,
             modifies: Vec::new(),
             children: Vec::new(),
+            anchor_only: false,
         });
         into.push(idx);
         if matches!(kind, K::Group | K::Repeater | K::ActionGroup) {
@@ -514,6 +537,9 @@ impl Tree {
         let mut controls = Vec::new();
         fn emit(slots: &mut [Option<Node>], idx: usize, parent: Option<usize>, out: &mut Vec<RawControl>) {
             let Some(n) = slots[idx].take() else { return };
+            if n.anchor_only {
+                return;
+            }
             let here = out.len();
             out.push(RawControl {
                 name: n.name,
@@ -854,6 +880,18 @@ mod tests {
         assert_eq!(l.reasons.len(), 2, "{:?}", l.reasons);
         assert!(l.reasons.iter().any(|r| r.contains("Nowhere")));
         assert!(l.reasons.iter().any(|r| r.contains("movefirst")));
+    }
+
+    // Corpus handlers/TestPagePlatformPageSourceTable_Tests.al:77 (ReadsTheWholePositionedRow) and the other tests that open a
+    // Base App page declaring `systempart(Control; Notes)`: the TestPage has no member for a system part, so
+    // it is not a control of the page. An extension can still anchor on it.
+    #[test]
+    fn a_systempart_is_not_a_control_but_still_an_anchor() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } area(FactBoxes) { systempart(Control1; Notes) { } systempart(Control2; Links) { } } } }";
+        let ext = "pageextension 50101 E extends P { layout { addafter(Control1) { field(AfterNotes; Rec.F) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(names(&l), ["A", "AfterNotes"]);
     }
 
     // Corpus handlers/TestPagePromotedActionref_Page.al: an actionref is a control that names its target.

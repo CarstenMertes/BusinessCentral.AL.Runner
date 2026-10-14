@@ -118,6 +118,7 @@ const DOTNET: &str = "dotnet { assembly(\"netstandard\") {
     type(\"System.IO.MemoryStream\"; \"MemoryStream\") { }
     type(\"System.Text.Encoding\"; \"Encoding\") { }
     type(\"System.DateTime\"; \"ClrDateTime\") { }
+    type(\"System.Byte\"; \"ClrByte\") { }
     type(\"System.IO.File\"; \"File\") { }
     type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper\"; \"NavTenantSettingsHelper\") { }
     type(\"System.Base64FormattingOptions\"; \"Base64FormattingOptions\") { }
@@ -513,6 +514,36 @@ fn clear_of_an_unassigned_dotnet_variable_changes_nothing_and_of_an_object_is_re
         why.contains("Clear") && why.contains("System.IO.MemoryStream") && why.contains("not pinned"),
         "{why}"
     );
+}
+
+// ---- a primitive held in a DotNet variable -----------------------------------------------
+
+#[test]
+fn a_dotnet_variable_can_hold_a_primitive_and_a_member_of_it_is_called_on_the_boxed_value() {
+    // NPR BloomFilterTests: `ConversionOfByte255ToDotNet`: an AL Byte stored in a `DotNet Byte` variable.
+    let host = Fake::new(|r| match r {
+        Req::Get(DotNetTarget::Value(DotNetValue::DateTime(t)), n) if n == "Year" => {
+            assert!(*t > 600_000_000_000_000_000, "{t}");
+            reply(DotNetValue::Int32(2022))
+        }
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "B: DotNet ClrByte; I: Integer;",
+        "B := 255; I := B; exit(I);",
+        ": Integer",
+    );
+    assert!(matches!(r.result, Ok(Value::Integer(255))), "{:?}", r.result);
+    let r = run(&host, "B: DotNet ClrByte;", "B := 7; exit(Format(B));", ": Text");
+    assert_eq!(text(r), "7");
+    let r = run(
+        &host,
+        "D: DotNet ClrDateTime; V: DateTime; Y: Integer;",
+        "V := CreateDateTime(DMY2Date(1, 1, 2022), 0T); D := V; Y := D.Year; exit(Y);",
+        ": Integer",
+    );
+    assert!(matches!(r.result, Ok(Value::Integer(2022))), "{:?}", r.result);
 }
 
 // ---- policy ------------------------------------------------------------------------------

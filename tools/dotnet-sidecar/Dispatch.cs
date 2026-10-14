@@ -94,6 +94,16 @@ public sealed class Server
                 var args = DecodeArgs(req);
                 var flags = BindingFlags.Public | BindingFlags.Static | BindingFlags.FlattenHierarchy | (target != null ? BindingFlags.Instance : 0);
                 var cands = type.GetMethods(flags).Where(m => m.Name == name && !m.IsGenericMethodDefinition).ToArray();
+                if (cands.Length == 0 && args.Length == 0)
+                {
+                    // AL lets a property be written as a call: `Encoding.UTF8()`.
+                    var p = type.GetProperty(name, flags, null, null, Type.EmptyTypes, null);
+                    if (p != null && p.GetMethod != null)
+                        return Done(p.GetValue(p.GetMethod.IsStatic ? null : target), null, null, null, p.PropertyType);
+                    var fld = type.GetField(name, flags);
+                    if (fld != null)
+                        return Done(fld.GetValue(fld.IsStatic ? null : target), null, null, null, fld.FieldType);
+                }
                 if (cands.Length == 0)
                     throw new Refusal(target == null && type.GetMethods(BindingFlags.Public | BindingFlags.Instance).Any(m => m.Name == name)
                         ? $"'{type.FullName}.{name}' is an instance member and the variable holds no object"
@@ -222,6 +232,12 @@ public sealed class Server
         {
             var obj = marshal.Handle(h.GetValue<long>());
             return (obj, obj.GetType());
+        }
+        if (o["value"] is JsonNode v)
+        {
+            // A primitive an AL DotNet variable holds (ADR-024): box it for the call.
+            var boxed = marshal.Decode(v, 0) ?? throw new Refusal("a member of a null value");
+            return (boxed, boxed.GetType());
         }
         return (null, DeclaredType(o["static"]!));
     }

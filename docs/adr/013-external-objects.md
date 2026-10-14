@@ -1006,13 +1006,18 @@ in every session). The only other place the baseline shows is `Engine::unseeded`
 consults. Each of those is reached through a record or table, `CreateGuid` (`System` and `Guid`, both left out of the
 whitelist), `IsolatedStorage` or `NumberSequence`, or through an event whose subscribers do one of those.
 
-**Where it runs.** With the compile cache, after the cached compile (every dependency routine is compiled then, so the
-walk can enter any of them). Without it, the demand-driven compile first leaves out the baseline's roots when the
-source of the selected test codeunits holds none of the words `record`, `query`, `page`, `report`, `xmlport`,
-`isolatedstorage`, `numbersequence`, `createguid`, `database`, `dotnet`, `session`, `codeunit.run` (a text check
-that only decides whether to try: `text_looks_pure`), then applies the rule to the lowered program. If the rule says
-"may observe", the workspace is compiled again with the baseline's roots (the loaded apps are reused, nothing is
-read from disk again). So the cost of a wrong guess is one extra compile of what the tests reach, never an outcome.
+**Where it runs.** First a text check of the selected test codeunits (`text_looks_pure`: their source holds none of
+the words `record`, `query`, `page`, `report`, `xmlport`, `isolatedstorage`, `numbersequence`, `createguid`,
+`database`, `dotnet`, `session`, `codeunit.run`). If it passes, the apps are compiled demand-driven, without the
+baseline's roots and without the compile cache (ADR-022): that reaches only what the tests reach, a few routines.
+The rule then runs on the lowered program. If it says "no test can observe the baseline", that compile is the run: no
+baseline, no cache entry read or built (a cold cache costs nothing), and no .NET helper is started ahead of time. If
+it says "may observe", the loaded apps go on to the compile they would have had (cache or demand-driven, with the
+baseline's roots); nothing is read from disk again. So the cost of a wrong guess is one extra compile of what the
+tests reach, never an outcome. A selection that fails the text check (all of the corpus, Microsoft's test buckets)
+compiles as before, and the rule runs on that compile when it is finished (with the cache every dependency routine is
+compiled, so the walk can enter any of them), which costs nothing when the first reached routine already says "may
+observe". `--require-compile-cache` never takes the first path (CI wants its measured run to be a hit).
 `--timings` says which way it went (`install baseline: not run, no selected test can observe it`, or
 `install baseline: ran, a selected test may observe it: <routine and construct>`).
 

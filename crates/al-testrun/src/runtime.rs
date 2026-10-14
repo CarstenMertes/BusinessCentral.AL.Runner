@@ -144,6 +144,9 @@ pub struct Phases {
     /// reaches that could observe it. `None`: the rule was not tried (no dependency app,
     /// `AL_FORCE_BASELINE`, a custom test runner) or the baseline was skipped.
     pub baseline_why: Option<String>,
+    /// The compile cache was asked for and not used, because the selected tests were compiled
+    /// first without the baseline and nothing needed the cache.
+    pub compile_cache_skipped: bool,
     /// The test codeunits (object id, name) that took longest, slowest first (at most
     /// [`SLOWEST`]).
     pub slowest: Vec<CodeunitTime>,
@@ -155,7 +158,14 @@ impl Phases {
     /// `None` when there was nothing to say (no dependency app).
     pub fn baseline_line(&self) -> Option<String> {
         if self.baseline_skipped {
-            Some("install baseline: not run, no selected test can observe it".into())
+            Some(format!(
+                "install baseline: not run, no selected test can observe it{}",
+                if self.compile_cache_skipped {
+                    "; compile cache: not used, compiling what the tests reach was enough"
+                } else {
+                    ""
+                }
+            ))
         } else {
             self.baseline_why
                 .as_ref()
@@ -460,7 +470,7 @@ impl CorpusRuntime {
             && kinds.contains(&al_sema::AppKind::Dependency)
             && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
         let n_apps = apps.len();
-        let (apps, kinds, manifests, suites_in, only, order) = if use_cache {
+        let (apps, mut kinds, manifests, suites_in, only, order) = if use_cache {
             let order: Vec<usize> = (0..n_apps)
                 .filter(|&i| kinds[i] == al_sema::AppKind::Dependency)
                 .chain((0..n_apps).filter(|&i| kinds[i] != al_sema::AppKind::Dependency))
@@ -508,55 +518,75 @@ impl CorpusRuntime {
         // Whether the install baseline runs, and why it does when it was weighed.
         let mut baseline = baseline_wanted;
         let mut baseline_note: Option<String> = None;
-        let (ws, mut lowered, cache_report) = match opts.compile_cache.as_ref().filter(|_| use_cache) {
-            Some(cc) => {
-                let (ws, lowered, report) = compile_with_cache(cc, apps, kinds, manifests, symbols, target, roots)?;
-                if try_skip {
-                    let selected = selected_tests(&lowered, suites, &only);
-                    baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
-                    baseline = baseline_note.is_some();
-                }
-                (ws, lowered, report)
+        let catalog = match target {
+            Some(t) => al_builtins::catalog::Catalog::for_target(t),
+            None => al_builtins::catalog::Catalog::load(),
+        };
+        let mut apps = apps;
+        // Selected tests that look free of data are compiled first the way the demand-driven path
+        // does it, without the baseline's roots and without the compile cache: that touches only what
+        // the tests reach (a few routines), where the cache decodes every dependency object and the
+        // demand-driven compile with the baseline reaches 421 routines of Base Application. If the rule
+        // (`observe.rs`) then says the tests cannot observe the baseline, that is the compile. If it says
+        // they may, the apps go on to the compile they would have had. `--require-compile-cache` (CI:
+        // the measured run must be a hit) never takes this path.
+        let mut compile_cache_skipped = false;
+        let mut weighed = false;
+        let mut compiled: Option<(al_sema::Workspace, Lowered)> = None;
+        let require_cache = opts.compile_cache.as_ref().is_some_and(|c| c.require);
+        if try_skip && !require_cache && crate::observe::text_looks_pure(&apps, &kinds, symbols, only.as_deref()) {
+            let started = std::time::Instant::now();
+            let kinds_again = kinds.clone();
+            let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+            let load = started.elapsed();
+            let first_roots = al_sema::check::Roots {
+                baseline: false,
+                ..roots.clone()
+            };
+            let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
+            let selected = selected_tests(&lowered, suites, &only);
+            weighed = true;
+            baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
+            baseline = baseline_note.is_some();
+            if baseline {
+                // Back to the apps as they were: nothing is read from disk again.
+                apps = std::mem::take(&mut ws.apps);
+                kinds = kinds_again;
+                retire((ws, lowered));
+            } else {
+                compile_cache_skipped = use_cache;
+                compiled = Some((ws, lowered));
+                apps = Vec::new();
+                kinds = Vec::new();
             }
-            None => {
-                let catalog = match target {
-                    Some(t) => al_builtins::catalog::Catalog::for_target(t),
-                    None => al_builtins::catalog::Catalog::load(),
-                };
-                let kinds_again = kinds.clone();
-                let started = std::time::Instant::now();
-                let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
-                let load = started.elapsed();
-                // The demand-driven compile adds the baseline's roots, which is most of its work. Compile
-                // without them first when the selected tests may well not need them; if they do,
-                // compile again with them.
-                let first = try_skip && crate::observe::text_looks_pure(&ws, only.as_deref());
-                let first_roots = al_sema::check::Roots {
-                    baseline: baseline_wanted && !first,
-                    ..roots.clone()
-                };
-                let (mut ws, mut lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
-                if first {
-                    let selected = selected_tests(&lowered, suites, &only);
-                    baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
-                    baseline = baseline_note.is_some();
-                    if baseline {
-                        let apps = std::mem::take(&mut ws.apps);
-                        retire((ws, lowered));
-                        let started = std::time::Instant::now();
-                        let again = al_sema::Workspace::load_apps(apps, kinds_again, symbols);
-                        let load = started.elapsed();
-                        (ws, lowered) = al_sema::lower::compile_loaded(again, load, &catalog, roots);
+        }
+        let (ws, mut lowered, cache_report) = match compiled {
+            Some((ws, lowered)) => (ws, lowered, None),
+            None => match opts.compile_cache.as_ref().filter(|_| use_cache) {
+                Some(cc) => {
+                    let (ws, lowered, report) = compile_with_cache(cc, apps, kinds, manifests, symbols, target, roots)?;
+                    if try_skip && !weighed {
+                        let selected = selected_tests(&lowered, suites, &only);
+                        baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
+                        baseline = baseline_note.is_some();
                     }
-                } else if try_skip {
-                    // Weighed on the compiled program, which has the baseline's roots: the tests cannot
-                    // be told apart from them, but the rule only looks at what the tests reach.
-                    let selected = selected_tests(&lowered, suites, &only);
-                    baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
-                    baseline = baseline_note.is_some();
+                    (ws, lowered, report)
                 }
-                (ws, lowered, None)
-            }
+                None => {
+                    let started = std::time::Instant::now();
+                    let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+                    let load = started.elapsed();
+                    // Without a weighed answer, weigh on the compiled program, which has the baseline's
+                    // roots: the rule only looks at what the tests reach.
+                    let (ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, roots);
+                    if try_skip && !weighed {
+                        let selected = selected_tests(&lowered, suites, &only);
+                        baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
+                        baseline = baseline_note.is_some();
+                    }
+                    (ws, lowered, None)
+                }
+            },
         };
         let opts_only = only;
         // A dependency file that does not parse takes every object in it out of the compile, and the
@@ -853,6 +883,7 @@ impl CorpusRuntime {
                 engine: engine_time,
                 baseline_skipped,
                 baseline_why: baseline_note,
+                compile_cache_skipped,
                 slowest: codeunit_times,
             },
             details,

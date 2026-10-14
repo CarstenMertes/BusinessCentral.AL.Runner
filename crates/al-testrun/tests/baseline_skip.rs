@@ -100,9 +100,12 @@ fn a_pure_test_starts_without_the_baseline() {
         assert!(rt.phases.baseline_skipped, "{:?}", rt.phases.baseline_why);
         assert_eq!(outcome(rt, "Adds"), Outcome::Pass);
         assert_eq!(outcome(rt, "Fails"), Outcome::Fail("on purpose".into()));
-        assert_eq!(
-            rt.phases.baseline_line().as_deref(),
-            Some("install baseline: not run, no selected test can observe it")
+        assert!(
+            rt.phases
+                .baseline_line()
+                .is_some_and(|l| l.starts_with("install baseline: not run, no selected test can observe it")),
+            "{:?}",
+            rt.phases.baseline_line()
         );
     });
 }
@@ -145,4 +148,24 @@ fn an_unselected_run_keeps_the_baseline() {
         assert!(!rt.phases.baseline_skipped);
         assert_eq!(outcome(rt, "SeesTheInstallRow"), Outcome::Pass);
     });
+}
+
+#[test]
+fn a_pure_selection_does_not_build_or_use_the_compile_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let rt = run(&[60101], Some(dir.path()));
+    assert!(rt.phases.baseline_skipped && rt.phases.compile_cache_skipped);
+    assert!(rt.phases.cache.is_none());
+    assert_eq!(al_testrun::compile_cache::list(dir.path()).len(), 0);
+    assert_eq!(outcome(&rt, "Adds"), Outcome::Pass);
+}
+
+#[test]
+fn a_selection_that_needs_the_baseline_still_uses_the_compile_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let rt = run(&[60103], Some(dir.path()));
+    // The helper's table access is found only after the first compile; the second goes through the cache.
+    assert!(!rt.phases.baseline_skipped && !rt.phases.compile_cache_skipped);
+    assert!(rt.phases.cache.as_ref().is_some_and(|c| c.built));
+    assert_eq!(outcome(&rt, "SeesTheInstallRowThroughTheHelper"), Outcome::Pass);
 }

@@ -206,37 +206,48 @@ const DATA_WORDS: &[&str] = &[
 ];
 
 /// A cheap look at the source of the selected test codeunits (`only`: their app and id; `None`:
-/// every file of the workspace) before anything is compiled: `false` when a word shows that they
-/// probably use data. It only decides whether to try compiling without the install baseline; a
-/// wrong answer costs time, never an outcome, because [`may_observe_baseline`] decides.
-pub fn text_looks_pure(ws: &al_sema::Workspace, only: Option<&[(usize, u32)]>) -> bool {
+/// every file of every workspace app) before anything is compiled: `false` when a word shows that
+/// they probably use data, or when a selected codeunit cannot be found. It only decides whether to
+/// try compiling without the install baseline (and without the compile cache) first; a wrong answer
+/// costs time, never an outcome, because [`may_observe_baseline`] decides.
+pub fn text_looks_pure(
+    apps: &[al_sema::AppSource],
+    kinds: &[al_sema::AppKind],
+    symbols: &std::collections::BTreeSet<String>,
+    only: Option<&[(usize, u32)]>,
+) -> bool {
     let looks = |text: &str| {
         let lower = text.to_ascii_lowercase();
         !DATA_WORDS.iter().any(|w| lower.contains(w))
     };
+    let workspace = |app: usize| kinds.get(app) == Some(&al_sema::AppKind::Workspace);
     let Some(only) = only else {
-        return ws
-            .files
-            .iter()
-            .filter(|f| ws.kinds[f.app] == al_sema::AppKind::Workspace)
-            .all(|f| looks(&ws.apps[f.app].files[f.file_in_app].1));
-    };
-    only.iter().all(|&(app, id)| {
-        ws.objects
+        return apps
             .iter()
             .enumerate()
-            .filter(|(_, o)| o.app == app && o.id == Some(id) && o.kind == al_sema::ObjKind::Codeunit)
-            .all(|(_, o)| {
-                let f = &ws.files[o.file];
-                let text = &ws.apps[f.app].files[f.file_in_app].1;
-                let end = ws
-                    .objects
+            .filter(|(i, _)| workspace(*i))
+            .all(|(_, a)| a.files.iter().all(|(_, text)| looks(text)));
+    };
+    only.iter().all(|&(app, id)| {
+        if !workspace(app) {
+            return false;
+        }
+        let needle = id.to_string();
+        // The codeunit is in a file that holds its id; its text runs to the next object.
+        apps[app]
+            .files
+            .iter()
+            .filter(|(_, text)| text.contains(&needle))
+            .any(|(_, text)| {
+                let objects = al_syntax::scan::scan(text, symbols).objects;
+                objects
                     .iter()
-                    .filter(|p| p.file == o.file && p.offset > o.offset)
-                    .map(|p| p.offset)
-                    .min()
-                    .unwrap_or(text.len());
-                text.get(o.offset..end).is_none_or(looks)
+                    .enumerate()
+                    .find(|(_, o)| o.kind == "codeunit" && o.id == Some(id))
+                    .is_some_and(|(i, o)| {
+                        let end = objects.get(i + 1).map_or(text.len(), |n| n.offset);
+                        text.get(o.offset..end).is_some_and(looks)
+                    })
             })
     })
 }

@@ -73,6 +73,9 @@ pub fn parse_filter(text: &str, args: &[crate::value::Value], ty: &crate::value:
 
 /// Like [`parse_filter`], with the (ordinal, name) members of an enum object
 /// so that filters on enum fields can name members.
+/// Prefix of the parse error for a word a Boolean filter does not accept; the rest is the word.
+pub const INVALID_BOOLEAN: &str = "invalid Boolean filter value: ";
+
 pub fn parse_filter_with(
     text: &str,
     args: &[crate::value::Value],
@@ -236,9 +239,12 @@ impl Parser<'_> {
             T::Integer => Value::Integer(text.parse().map_err(|_| format!("`{text}` is not an Integer"))?),
             T::BigInteger => Value::BigInteger(text.parse().map_err(|_| format!("`{text}` is not a BigInteger"))?),
             T::Decimal => Value::Decimal(text.parse().map_err(|_| format!("`{text}` is not a Decimal"))?),
-            // Format(false) = 'No' is used as a filter value in the corpus.
-            T::Boolean if ["yes", "true"].contains(&text.to_lowercase().as_str()) => Value::Boolean(true),
-            T::Boolean if ["no", "false"].contains(&text.to_lowercase().as_str()) => Value::Boolean(false),
+            // Format(false) = 'No' is used as a filter value in the corpus. The words BC accepts,
+            // in any case, are Yes, True, 1 and No, False, 0 (corpus branch al-runtime-rs, pending
+            // push: record/TestFilterTextBooleanFindContracts.al:SetFilter_BooleanField_AcceptedWords).
+            T::Boolean if ["yes", "true", "1"].contains(&text.to_lowercase().as_str()) => Value::Boolean(true),
+            T::Boolean if ["no", "false", "0"].contains(&text.to_lowercase().as_str()) => Value::Boolean(false),
+            T::Boolean => return Err(format!("{INVALID_BOOLEAN}{text}")),
             // The matcher trims both sides and skips zero-length member names (corpus
             // types/TestEnumBlankOptionFilterTests.Codeunit.al:122,188).
             T::Option(m) => match m

@@ -38,6 +38,12 @@ fn handle(name: &str, v: LibraryValue) -> Value {
     Value::Library(name.into(), Rc::new(RefCell::new(v)))
 }
 
+/// A `RecordRef` handle on a copy of the record `rec` (what an event hands its subscriber).
+pub(crate) fn record_ref_value(rec: &crate::records::Rec) -> Value {
+    let copy = rec.borrow().clone();
+    handle("RecordRef", LibraryValue::RecordRef(Rc::new(RefCell::new(copy))))
+}
+
 fn al_error(message: String) -> Signal {
     Signal::Error(AlError {
         message,
@@ -52,6 +58,24 @@ fn int_arg(args: &[Value], i: usize) -> Result<i64, Signal> {
         Some(Value::BigInteger(n)) => Ok(*n),
         other => unsupported(format!("integer argument {i}: {other:?}")),
     }
+}
+
+/// The fields of key `k` of a RecordRef: a declared key, or the implicit key on `SystemId` that
+/// follows them (corpus recordref/TestRecordRefRuntimeContracts.al:KeyRefAndFieldRef_Active_AreTrue_KeyCount
+/// pins two keys for a table that declares only its primary key; tableextension/
+/// TestTableExtKeysAndInitValue.al names it the implicit SystemId key).
+fn key_fields(t: &TableDef, k: usize) -> Option<Vec<usize>> {
+    if let Some(f) = t.keys.get(k) {
+        return Some(f.clone());
+    }
+    if k == t.keys.len() {
+        return t.fields.iter().position(|f| f.id == SYSTEM_FIELD_BASE).map(|p| vec![p]);
+    }
+    None
+}
+
+fn key_count(t: &TableDef) -> usize {
+    t.keys.len() + usize::from(key_fields(t, t.keys.len()).is_some())
 }
 
 /// A table's fields a caller can enumerate (`FieldCount`, `FieldIndex`): in
@@ -147,12 +171,10 @@ impl Session {
                         "RecordRef.Open on table {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
                     ))
                 }
-                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; how
-                // BC names the calling object is not pinned (docs/probes-needed.md).
-                n => Err(al_error(format!(
-                    "You tried to invoke the Table object with the ID {n} from the object (caller not recorded). \
-                     An object with that ID does not exist in the current application."
-                ))),
+                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; the full
+                // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30
+                // (corpus branch al-runtime-rs, probe on BC 27.5).
+                n => Err(self.missing_object("Table", n)),
             };
         };
         let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, temp)) else {
@@ -273,20 +295,31 @@ impl Session {
             "FieldCount" => Ok(Value::Integer(enumerable_fields(&t).len() as i32)),
             "FieldIndex" => {
                 let i = int_arg(args, 0)?;
-                match usize::try_from(i - 1)
-                    .ok()
-                    .and_then(|i| enumerable_fields(&t).get(i).copied())
-                {
+                // Past the count the index reaches the system fields in number order: $systemId,
+                // SystemCreatedAt, SystemCreatedBy, SystemModifiedAt, SystemModifiedBy (corpus
+                // recordref/TestRecordRefRuntimeContracts.al:RecordRef_FieldCount_ExcludesSystemFields_...);
+                // what follows them is not pinned.
+                let normal = enumerable_fields(&t);
+                let reached = usize::try_from(i - 1).ok().and_then(|i| match normal.get(i) {
+                    Some(&p) => Some(p),
+                    None => {
+                        let id = SYSTEM_FIELD_BASE + (i - normal.len()) as u32;
+                        (id <= SYSTEM_FIELD_BASE + 4)
+                            .then(|| t.fields.iter().position(|f| f.id == id))
+                            .flatten()
+                    }
+                });
+                match reached {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
                     None => unsupported(format!(
                         "RecordRef.FieldIndex({i}) out of range (error text not pinned yet)"
                     )),
                 }
             }
-            "KeyCount" => Ok(Value::Integer(t.keys.len() as i32)),
+            "KeyCount" => Ok(Value::Integer(key_count(&t) as i32)),
             "KeyIndex" => {
                 let i = int_arg(args, 0)?;
-                match usize::try_from(i - 1).ok().filter(|k| *k < t.keys.len()) {
+                match usize::try_from(i - 1).ok().filter(|k| *k < key_count(&t)) {
                     Some(k) => Ok(handle("KeyRef", LibraryValue::KeyRef(rec, k))),
                     None => unsupported(format!(
                         "RecordRef.KeyIndex({i}) out of range (error text not pinned yet)"
@@ -337,11 +370,14 @@ impl Session {
             // Every key a table declares is enabled: the lowerer does not read key
             // properties, and no corpus key sets Enabled = false.
             "Active" => Ok(Value::Boolean(true)),
-            "FieldCount" => Ok(Value::Integer(t.keys[k].len() as i32)),
+            "FieldCount" => Ok(Value::Integer(key_fields(&t, k).map_or(0, |f| f.len()) as i32)),
             "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
             "FieldIndex" => {
                 let i = int_arg(args, 0)?;
-                match usize::try_from(i - 1).ok().and_then(|i| t.keys[k].get(i).copied()) {
+                match usize::try_from(i - 1)
+                    .ok()
+                    .and_then(|i| key_fields(&t, k).and_then(|f| f.get(i).copied()))
+                {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
                     // types/TestTypeSystemContracts.al:261 pins the fragment "Index out of bounds"
                     // (recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws).
@@ -537,6 +573,9 @@ impl Session {
             return match method {
                 "IsEnum" => Ok(Value::Boolean(false)),
                 "EnumValueCount" => Ok(Value::Integer(0)),
+                // An empty text, not an error (corpus recordref/TestRecordRefRuntimeContracts.al:
+                // FieldRef_EnumMetadata_OnEnumOptionAndOtherFields).
+                "OptionCaption" | "OptionMembers" | "OptionString" => Ok(Value::Text(String::new())),
                 other => unsupported(format!("FieldRef.{other} on a field that is neither Option nor Enum")),
             };
         };

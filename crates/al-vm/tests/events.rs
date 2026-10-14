@@ -629,15 +629,17 @@ fn table_events_fire_even_when_the_trigger_does_not_run() {
 }
 
 // TriggerOrder_Modify_RecordPipeline_IsStable and TableEvent_OnAfterModify_Subscriber_Fires:
-// xRec holds the stored row in both events.
+// xRec equals Rec when code drives the Modify, in both events and the trigger (corpus
+// record/TestTableEventSequenceContracts.al:ModifyRenameDelete_EventsAndTrigger,
+// 'S.BeforeModify(run=Yes,rec=a2,x=a2)').
 #[test]
-fn modify_raises_before_trigger_after_with_the_stored_row_as_xrec() {
+fn modify_raises_before_trigger_after_with_xrec_equal_to_rec() {
     assert_eq!(
         text(trace(
             "R.\"No.\" := 1; R.Name := 'old'; R.Insert(false); T.Clear();
              R.Name := 'new'; R.Modify(true);"
         )),
-        "BMold>new,OnModify,AMold>new"
+        "BMnew>new,OnModify,AMnew>new"
     );
 }
 
@@ -771,16 +773,16 @@ fn delete_all_true_deletes_row_by_row_with_trigger_and_events() {
     );
 }
 
-// DeleteAll(false) raises no trigger. Whether it raises the delete events is not pinned, so
-// it is refused when rows would be deleted from a table with delete subscribers, and runs
-// (it has nothing to do) on an empty one -- that is what the fixture cleanup relies on.
+// DeleteAll(false) raises no trigger, but the delete events fire per row (real BC 27.5, probe
+// codeunit 68212, record/TestTableExtensionTriggerOrderContracts.al:Delete_And_DeleteAll_...;
+// the citation is pending until the corpus bump). A table without delete subscribers just deletes.
 #[test]
-fn delete_all_false_is_refused_only_when_it_would_delete_rows_that_have_delete_subscribers() {
+fn delete_all_false_raises_the_delete_events_per_row() {
     assert_eq!(text(trace("R.DeleteAll(false);")), "");
-    assert!(matches!(
-        trace("R.\"No.\" := 1; R.Insert(false); R.DeleteAll(false);"),
-        Err(Signal::Unsupported(r)) if r.contains("DeleteAll(false)")
-    ));
+    assert_eq!(
+        text(trace("R.\"No.\" := 1; R.Insert(false); R.DeleteAll(false);")),
+        "BINo,AI1,BD1,AD1"
+    );
     let src = format!(
         "{TABLE}
 codeunit 50100 C
@@ -796,14 +798,17 @@ codeunit 50100 C
     assert_eq!(int(run(&src, "F")), 0);
 }
 
-// Whether table events fire for temporary records is not pinned (the one corpus case,
-// record/TestTableEventAsyncSubscriberError.al, is Base App): refused, not guessed.
+// Temporary records raise the table events and run the triggers (corpus
+// record/TestTableEventSequenceContracts.al:TemporaryRecord_RaisesTheEventsAndRunsTheTriggers).
 #[test]
-fn table_events_on_temporary_records_are_refused() {
-    assert!(matches!(
-        trace_with("T2: Record ET temporary;", "T2.\"No.\" := 1; T2.Insert(true);"),
-        Err(Signal::Unsupported(r)) if r.contains("temporary")
-    ));
+fn table_events_on_temporary_records_fire() {
+    assert_eq!(
+        text(trace_with(
+            "T2: Record ET temporary;",
+            "T2.\"No.\" := 1; T2.Insert(true);"
+        )),
+        "BIYes,OnInsert,AI1"
+    );
 }
 
 fn trace_with(vars: &str, body: &str) -> Result<Value, Signal> {
@@ -858,41 +863,169 @@ codeunit 50100 C
     assert_eq!(text(run(src, "F")), "0|1|2");
 }
 
-// record/TestTriggerDispatchOrder.al: subscribers to the Base App's Global Triggers codeunit
-// log from OnDatabaseInsert etc. in BC; that codeunit is not here, so a write to the table
-// they name is refused, while tables they do not name, and a DeleteAll with nothing to
-// delete, are not.
-#[test]
-fn writes_to_tables_watched_by_global_triggers_subscribers_are_refused() {
-    let src = r#"
+/// A table `Watched` with an OnInsert/OnModify/OnDelete/OnRename trigger that logs, a `Log`
+/// table, and subscribers to the platform codeunit `Global Triggers` (2000000002, System.app:
+/// all events are body-less business events the runtime raises itself) that log too.
+/// `mask` is what `GetGlobalTableTriggerMask` answers for Watched; `db` whether
+/// `GetDatabaseTableTriggerSetup` enables the four database triggers.
+fn global_triggers_src(mask: i32, db: bool, extra: &str) -> String {
+    format!(
+        r#"
 table 50301 Watched
-{
-    fields { field(1; "No."; Integer) { } }
-    keys { key(PK; "No.") { } }
-}
+{{
+    fields {{ field(1; "No."; Integer) {{ }} field(2; V; Integer) {{ }} }}
+    keys {{ key(PK; "No.") {{ }} }}
+    trigger OnInsert() begin Logger.Add('ONINSERT'); end;
+    trigger OnModify() begin Logger.Add('ONMODIFY'); end;
+    trigger OnDelete() begin Logger.Add('ONDELETE'); end;
+    trigger OnRename() begin Logger.Add('ONRENAME'); end;
+    var Logger: Codeunit Logger;
+}}
 table 50302 Free
-{
-    fields { field(1; "No."; Integer) { } }
-    keys { key(PK; "No.") { } }
-}
+{{
+    fields {{ field(1; "No."; Integer) {{ }} }}
+    keys {{ key(PK; "No.") {{ }} }}
+}}
+codeunit 50309 Logger
+{{
+    SingleInstance = true;
+    var Text: Text;
+    procedure Add(What: Text) begin if Text <> '' then Text += ','; Text += What; end;
+    procedure Get(): Text begin exit(Text); end;
+    procedure Clear() begin Text := ''; end;
+}}
 codeunit 50310 GT
-{
+{{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'GetGlobalTableTriggerMask', '', false, false)]
+    local procedure Mask(TableId: Integer; var TableTriggerMask: Integer)
+    begin
+        if TableId <> Database::Watched then exit;
+        TableTriggerMask := {mask};
+    end;
+
     [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'GetDatabaseTableTriggerSetup', '', false, false)]
     local procedure Setup(TableId: Integer; var OnDatabaseInsert: Boolean; var OnDatabaseModify: Boolean; var OnDatabaseDelete: Boolean; var OnDatabaseRename: Boolean)
     begin
         if TableId <> Database::Watched then exit;
-        OnDatabaseInsert := true;
+        OnDatabaseInsert := {db};
+        OnDatabaseModify := {db};
+        OnDatabaseDelete := {db};
+        OnDatabaseRename := {db};
     end;
-}
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnGlobalInsert', '', false, false)]
+    local procedure GI(RecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONGLOBALINSERT'); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnGlobalModify', '', false, false)]
+    local procedure GM(RecRef: RecordRef; xRecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONGLOBALMODIFY'); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnGlobalDelete', '', false, false)]
+    local procedure GD(RecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONGLOBALDELETE'); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnGlobalRename', '', false, false)]
+    local procedure GR(RecRef: RecordRef; xRecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONGLOBALRENAME:' + Format(xRecRef.Field(1).Value) + '>' + Format(RecRef.Field(1).Value)); end;
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnDatabaseInsert', '', false, false)]
+    local procedure DI(RecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONDATABASEINSERT:' + Format(RecRef.Field(1).Value)); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnDatabaseModify', '', false, false)]
+    local procedure DM(RecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONDATABASEMODIFY:' + Format(RecRef.Field(2).Value)); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnDatabaseDelete', '', false, false)]
+    local procedure DD(RecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONDATABASEDELETE'); end;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::"Global Triggers", 'OnDatabaseRename', '', false, false)]
+    local procedure DR(RecRef: RecordRef; xRecRef: RecordRef) var L: Codeunit Logger; begin if RecRef.Number = Database::Watched then L.Add('ONDATABASERENAME:' + Format(xRecRef.Field(1).Value) + '>' + Format(RecRef.Field(1).Value)); end;
+
+    [EventSubscriber(ObjectType::Table, Database::Watched, 'OnBeforeInsertEvent', '', false, false)]
+    local procedure BI() var L: Codeunit Logger; begin L.Add('BEFOREINSERT'); end;
+    [EventSubscriber(ObjectType::Table, Database::Watched, 'OnAfterInsertEvent', '', false, false)]
+    local procedure AI() var L: Codeunit Logger; begin L.Add('AFTERINSERT'); end;
+    [EventSubscriber(ObjectType::Table, Database::Watched, 'OnBeforeRenameEvent', '', false, false)]
+    local procedure BR() var L: Codeunit Logger; begin L.Add('BEFORERENAME'); end;
+    [EventSubscriber(ObjectType::Table, Database::Watched, 'OnAfterRenameEvent', '', false, false)]
+    local procedure AR() var L: Codeunit Logger; begin L.Add('AFTERRENAME'); end;
+}}
 codeunit 50100 C
-{
-    procedure Free(): Integer var R: Record Free; begin R."No." := 1; R.Insert(); exit(R.Count()); end;
-    procedure Empty() var R: Record Watched; begin R.DeleteAll(false); end;
-    procedure Write() var R: Record Watched; begin R."No." := 1; R.Insert(); end;
-}"#;
-    assert_eq!(int(run(src, "Free")), 1);
-    assert!(run(src, "Empty").is_ok());
-    assert!(matches!(run(src, "Write"), Err(Signal::Unsupported(r)) if r.contains("Global Triggers")));
+{{
+{extra}
+}}"#
+    )
+}
+
+// record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable (:44-58), _Modify_
+// (:60-80), _Delete_ (:82-100): the database trigger comes after the table's own trigger and before
+// the After event; the subscriber sees the record (RecRef.Number, its fields).
+#[test]
+fn database_triggers_run_between_the_table_trigger_and_the_after_event() {
+    let src = global_triggers_src(
+        0,
+        true,
+        r#"procedure Insert(): Text var R: Record Watched; L: Codeunit Logger; begin L.Clear(); R."No." := 1; R.V := 5; R.Insert(true); exit(L.Get()); end;
+    procedure Modify(): Text var R: Record Watched; L: Codeunit Logger; begin R.Get(1); L.Clear(); R.V := 7; R.Modify(true); exit(L.Get()); end;
+    procedure Delete(): Text var R: Record Watched; L: Codeunit Logger; begin R.Get(1); L.Clear(); R.Delete(true); exit(L.Get()); end;
+    procedure All(): Text var R: Record Watched; L: Codeunit Logger; begin R."No." := 1; R.Insert(true); L.Clear(); R.V := 7; R.Modify(true); R.Delete(true); exit(L.Get()); end;"#,
+    );
+    assert_eq!(
+        text(run(&src, "Insert")),
+        "BEFOREINSERT,ONINSERT,ONDATABASEINSERT:1,AFTERINSERT"
+    );
+    assert_eq!(
+        text(run(&src, "All")),
+        "ONMODIFY,ONDATABASEMODIFY:7,ONDELETE,ONDATABASEDELETE"
+    );
+}
+
+// record/TestTriggerDispatchOrder.al:TriggerOrder_Rename_RecordPipeline_IsStable (:102-123): the
+// global rename event comes before the database one, both after the table's OnRename and before the
+// After event. xRecRef holds the old key.
+#[test]
+fn rename_raises_the_global_event_then_the_database_event() {
+    let src = global_triggers_src(
+        15,
+        true,
+        r#"procedure Rename(): Text var R: Record Watched; L: Codeunit Logger; begin R."No." := 105; R.Insert(false); L.Clear(); R.Rename(205); exit(L.Get()); end;"#,
+    );
+    assert_eq!(
+        text(run(&src, "Rename")),
+        "BEFORERENAME,ONRENAME,ONGLOBALRENAME:105>205,ONDATABASERENAME:105>205,AFTERRENAME"
+    );
+}
+
+// record/TestTriggerDispatchOrder.al:TriggerOrder_GlobalTriggerDispatch_MatchesObservedRuntime
+// (:125-165): even with every global bit set, Insert, Modify and Delete do not publish
+// OnGlobalInsert, OnGlobalModify or OnGlobalDelete (BC 27.5 and 28.1); only Rename publishes
+// OnGlobalRename.
+#[test]
+fn only_rename_raises_a_global_event() {
+    let src = global_triggers_src(
+        15,
+        true,
+        r#"procedure All(): Text var R: Record Watched; L: Codeunit Logger; begin R."No." := 1; R.Insert(true); R.V := 7; R.Modify(true); R.Delete(true); exit(L.Get()); end;"#,
+    );
+    let log = text(run(&src, "All"));
+    assert!(!log.contains("ONGLOBAL"), "{log}");
+    assert!(log.contains("ONDATABASEINSERT") && log.contains("ONDATABASEMODIFY") && log.contains("ONDATABASEDELETE"));
+}
+
+// record/TestTriggerDispatchOrder.al:TriggerOrder_GlobalTriggerDispatch_...: "OnDatabaseInsert when
+// database triggers are enabled" -- by GetDatabaseTableTriggerSetup, per table. Without it no
+// database event is raised, and a table the setup does not name is not affected.
+#[test]
+fn database_events_follow_the_setup_event_per_table() {
+    let src = global_triggers_src(
+        0,
+        false,
+        r#"procedure Off(): Text var R: Record Watched; L: Codeunit Logger; begin R."No." := 1; R.Insert(true); exit(L.Get()); end;
+    procedure Other(): Integer var R: Record Free; begin R."No." := 1; R.Insert(true); exit(R.Count()); end;"#,
+    );
+    assert_eq!(text(run(&src, "Off")), "BEFOREINSERT,ONINSERT,AFTERINSERT");
+    assert_eq!(int(run(&src, "Other")), 1);
+}
+
+// A write that touches no row (DeleteAll on an empty table) raises nothing, as before.
+#[test]
+fn deleteall_with_nothing_to_delete_raises_no_global_trigger_event() {
+    let src = global_triggers_src(
+        15,
+        true,
+        r#"procedure Empty(): Text var R: Record Watched; L: Codeunit Logger; begin R.DeleteAll(false); exit(L.Get()); end;"#,
+    );
+    assert_eq!(text(run(&src, "Empty")), "");
 }
 
 // record/TestManualTableIntegrationEvent.al and record/TestManualTableIncludeSenderEvent.al: an
@@ -970,7 +1103,7 @@ codeunit 50100 C
         T."No." := 1; T.Insert(true);
         R."No." := 1; R.Insert(true);
         Commit();
-        asserterror R.Insert(true);
+        asserterror begin R.Insert(true); R.Count(); end;
         exit(Format(T.Count()) + Format(R.Count()) + GetLastErrorText());
     end;
 }"#;
@@ -1080,7 +1213,7 @@ fn table_extension_modify_delete_rename_triggers_run_with_xrec() {
             "R.\"No.\" := 1; R.Name := 'a'; R.Insert(false); T.Clear(); R.Name := 'b'; R.Modify(true);
              R.Modify(false);"
         )),
-        "ExtBeforeModifya>b,ExtAfterModify"
+        "ExtBeforeModifyb>b,ExtAfterModify"
     );
     assert_eq!(
         text(ext_trace(
@@ -1123,17 +1256,62 @@ codeunit 50100 C
     assert!(matches!(run(&src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
 }
 
-// Field triggers an extension attaches (modify(Field) { trigger OnBeforeValidate }) are still refused.
+// record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable (:21-37): the
+// triggers a table extension attaches to a field (`modify(Field) { trigger OnBeforeValidate }`)
+// bracket the field's own OnValidate, inside the Before and After events. A field of another
+// name runs none of them, and neither does the extension's own added field.
 #[test]
-fn table_extension_validate_triggers_are_still_refused() {
+fn table_extension_field_validate_triggers_bracket_the_fields_own_on_validate() {
     let src = r#"
-table 50301 ET { fields { field(1; "No."; Integer) { } field(2; Name; Text[30]) { } } keys { key(PK; "No.") { } } }
+codeunit 50300 Trace
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(S: Text) begin if Log <> '' then Log += ','; Log += S; end;
+    procedure Get(): Text begin exit(Log); end;
+    procedure Clear() begin Log := ''; end;
+}
+table 50301 ET
+{
+    fields
+    {
+        field(1; "No."; Integer) { }
+        field(2; Name; Text[30]) { trigger OnValidate() var T: Codeunit Trace; begin T.Add('ONVALIDATE:' + xRec.Name + '>' + Rec.Name); end; }
+        field(3; Other; Text[30]) { }
+    }
+    keys { key(PK; "No.") { } }
+}
 tableextension 50302 ETExt extends ET
 {
-    fields { modify(Name) { trigger OnBeforeValidate() begin end; } }
+    fields
+    {
+        field(50; Extra; Text[30]) { trigger OnValidate() var T: Codeunit Trace; begin T.Add('EXTFIELD'); end; }
+        modify(Name)
+        {
+            trigger OnBeforeValidate() var T: Codeunit Trace; begin T.Add('EXTBEFORE:' + xRec.Name + '>' + Rec.Name); end;
+            trigger OnAfterValidate() var T: Codeunit Trace; begin T.Add('EXTAFTER'); end;
+        }
+    }
 }
-codeunit 50100 C { procedure F() var R: Record ET; begin R.Validate(Name, 'x'); end; }"#;
-    assert!(matches!(run(src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
+codeunit 50310 Subs
+{
+    [EventSubscriber(ObjectType::Table, Database::ET, 'OnBeforeValidateEvent', 'Name', false, false)]
+    local procedure B() var T: Codeunit Trace; begin T.Add('BEFOREEVENT'); end;
+    [EventSubscriber(ObjectType::Table, Database::ET, 'OnAfterValidateEvent', 'Name', false, false)]
+    local procedure A() var T: Codeunit Trace; begin T.Add('AFTEREVENT'); end;
+}
+codeunit 50100 C
+{
+    procedure Name(): Text var R: Record ET; T: Codeunit Trace; begin T.Clear(); R.Validate(Name, 'x'); exit(T.Get()); end;
+    procedure Other(): Text var R: Record ET; T: Codeunit Trace; begin T.Clear(); R.Validate(Other, 'x'); exit(T.Get()); end;
+    procedure Extra(): Text var R: Record ET; T: Codeunit Trace; begin T.Clear(); R.Validate(Extra, 'x'); exit(T.Get()); end;
+}"#;
+    assert_eq!(
+        text(run(src, "Name")),
+        "BEFOREEVENT,EXTBEFORE:>x,ONVALIDATE:>x,EXTAFTER,AFTEREVENT"
+    );
+    assert_eq!(text(run(src, "Other")), "");
+    assert_eq!(text(run(src, "Extra")), "EXTFIELD");
 }
 
 // record/TestXRecContracts.al:OnValidate_Nested_InnerTrigger_SeesPreOuterValidateBeforeImage -- a
@@ -1173,4 +1351,132 @@ codeunit 50100 C
     // Nested: xRec.Kind is the value before the outer call (1), not its new value (2);
     // the later plain Validate(Ref) sees the record as it was then (Kind 2, Ref 0).
     assert_eq!(text(run(src, "F")), "xKind=1,xRef=5,Ref=0;xKind=2,xRef=0,Ref=9;");
+}
+
+// Mutation-testing additions (docs/status.md debt): these pin behaviour the corpus tests above
+// reach only by accident. Each names the code it guards.
+
+// A subscriber parameter that matches no event parameter is refused, with or without
+// IncludeSender. Without a sender there is nothing to bind to the unmatched parameter.
+#[test]
+fn a_subscriber_parameter_matching_no_event_parameter_is_refused() {
+    let src = format!(
+        "{PUB}
+codeunit 50201 Sub
+{{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure H(Input: Integer; Stranger: Integer) begin end;
+}}
+codeunit 50100 C
+{{
+    procedure F(): Integer var P: Codeunit Pub; Log: Text; begin exit(P.Raise(1, Log)); end;
+}}"
+    );
+    match run(&src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("`Stranger` matches no parameter"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+// Only one unmatched parameter can take the sender; a second one is refused.
+#[test]
+fn a_second_unmatched_subscriber_parameter_is_refused_even_with_a_sender() {
+    let src = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(true, false)] procedure OnWork(Input: Integer) begin end;
+    procedure Raise() begin OnWork(1); end;
+}
+codeunit 50201 Sub
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure H(Input: Integer; S: Codeunit Pub; Extra: Integer) begin end;
+}
+codeunit 50100 C
+{
+    procedure F() var P: Codeunit Pub; begin P.Raise(); end;
+}"#;
+    match run(src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("`Extra` matches no parameter"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+const STATEFUL_SUB: &str = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(false, false)] procedure OnTick() begin end;
+    procedure Tick() begin OnTick(); end;
+}
+codeunit 50201 Sub
+{
+    SingleInstance = true;
+    var Count: Integer;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnTick', '', false, false)]
+    local procedure H() begin Count += 1; end;
+    procedure Seen(): Integer begin exit(Count); end;
+}
+codeunit 50100 C
+{
+    procedure F(): Integer var P: Codeunit Pub; S: Codeunit Sub; begin P.Tick(); P.Tick(); exit(S.Seen()); end;
+}"#;
+
+// A static subscriber on a SingleInstance codeunit runs on that one instance: its global
+// state survives from one event to the next and is what the codeunit's callers see.
+// (Corpus: codeunit/TestEventContracts.al uses SingleInstance trace codeunits the same way.)
+#[test]
+fn a_single_instance_static_subscriber_keeps_its_globals_between_events() {
+    assert_eq!(int(run(STATEFUL_SUB, "F")), 2);
+}
+
+// A non-single-instance static subscriber that keeps globals is refused, because its instance
+// lifetime is not pinned. `SingleInstance = false` is not SingleInstance.
+#[test]
+fn a_static_subscriber_with_globals_and_single_instance_false_is_refused() {
+    let src = STATEFUL_SUB.replace("SingleInstance = true;", "SingleInstance = false;");
+    match run(&src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("keeps global variables"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+// Only a *Manual* EventSubscriberInstance is manual. Naming the default, StaticAutomatic,
+// still fires the subscriber without a binding, and BindSubscription on it is false.
+// (codeunit/TestEventManualBinding.al Contract 5 covers the property being absent.)
+#[test]
+fn an_explicit_static_automatic_subscriber_fires_unbound_and_cannot_be_bound() {
+    let src = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(false, false)] procedure OnBefore(var Handled: Boolean) begin end;
+    procedure Fire(): Boolean var Handled: Boolean; begin OnBefore(Handled); exit(Handled); end;
+}
+codeunit 50201 Auto
+{
+    EventSubscriberInstance = StaticAutomatic;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnBefore', '', false, false)]
+    local procedure H(var Handled: Boolean) begin Handled := true; end;
+}
+codeunit 50100 C
+{
+    procedure Fires(): Boolean var P: Codeunit Pub; begin exit(P.Fire()); end;
+    procedure Bind(): Boolean var A: Codeunit Auto; begin exit(BindSubscription(A)); end;
+}"#;
+    assert!(boolean(run(src, "Fires")));
+    assert!(!boolean(run(src, "Bind")));
+}
+
+// Unbinding a static subscriber raises nothing; as a value it is false (only "no error" is
+// pinned by codeunit/TestEventContracts.al Contract 6, the value is in docs/probes-needed.md).
+#[test]
+fn unbinding_a_static_subscriber_does_not_raise_and_is_false_as_a_value() {
+    let src = r#"
+codeunit 50201 Auto { }
+codeunit 50100 C
+{
+    procedure Stmt(): Boolean var A: Codeunit Auto; begin UnbindSubscription(A); exit(true); end;
+    procedure Value(): Boolean var A: Codeunit Auto; begin exit(UnbindSubscription(A)); end;
+}"#;
+    assert!(boolean(run(src, "Stmt")));
+    assert!(!boolean(run(src, "Value")));
 }

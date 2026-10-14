@@ -97,7 +97,7 @@ Each test is counted under the first thing that stops it.
 | 121 | Query objects | Not started |
 | 80 | Request pages and filter pages, done except what waits on others: Base App reports and pages, enums and the Temp Blob codeunit (53, ADR-013); the Integer system table (27, `deps`) | ADR-012 follow-up, built on branch `requestpages` |
 | 94 | Page extensions | ADR-012 follow-up |
-| 73 | Global Triggers codeunit events (Base App) | Arrives with ADR-013 |
+| 73 | Global Triggers events are raised by the runtime, but Base Application's own subscribers to them cannot run yet (`API Webhook Subscription` and `Database::User` need providers), so a write on a table whose database events are enabled is refused | `platform-tables`, then the skip in `global_triggers_find_unavailable` goes |
 | 73 | RunObject actions | ADR-012 follow-up |
 | 58 | `[TransactionModel]` | Not started; corpus pins it (record/TestTransactionModelAutoRollback.al) |
 | 43 | Guarded `Codeunit.Run` (`if Codeunit.Run(...)`) | Not started |
@@ -133,10 +133,18 @@ Answered on 2026-10-13 and recorded in ADR-013:
   measured on BC. The frame text beyond what the corpus pins is an assumption
   (`docs/probes-needed.md`). Frames of pages, reports, queries, xmlports, extensions and field
   triggers are still refused. `ErrorInfo.Callstack()` is not implemented.
-- Red/green discipline slipped in places during the parallel build-out (the
-  first cut of event dispatch, later FlowField formula tests, some TestPage
-  fixes). Those tests were checked by mutation, but were never seen red.
-  Review them when the code is next touched.
+- Red/green discipline slipped in places during the parallel build-out. A
+  mutation-testing pass (cargo-mutants, 2026-10-14) covered event dispatch,
+  FlowFields and CalcFormula, transactions, XmlPorts (runtime and sema), queries,
+  reports, host values, the TestPage parts, and the Format, date, math and
+  ErrorInfo builtins. Every surviving mutant was either killed by a new test or
+  recorded as equivalent or unpinned. What is left: `al-vm/src/pages.rs` (the
+  TestPage core, 520 mutants) and the rest of `datefns.rs` were not swept; of the 47
+  `pages/*` survivors only 14 were rechecked against the corpus ratchet (9 caught, 5
+  survive both: `pages/areas.rs` check_areas_pinned, `pages/parts.rs`
+  resync_parts_linked_by, `pages/runobject.rs` run_object_codeunit); and
+  `Power` with an exponent that carries a scale (`Power(2, 3.0)` answers 1) is a
+  known bug with an `#[ignore]`d test (`al-builtins/src/mathfns.rs`).
 - About 135 assumptions in `docs/probes-needed.md` wait for probes on real BC.
   They include the exact "Unhandled UI" text, JSON and XML `WriteTo`
   formatting, and the `Format` of Time and DateTime.

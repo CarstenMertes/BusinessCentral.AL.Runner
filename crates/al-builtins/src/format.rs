@@ -553,4 +553,62 @@ mod tests {
         assert_eq!(f2(dec("5")), "5");
         assert_eq!(f2(dec("1.50")), "1.5");
     }
+    // Mutation-testing additions (docs/status.md debt).
+
+    #[test]
+    fn a_length_that_is_not_positive_or_not_longer_changes_nothing() {
+        assert_eq!(pad("42".into(), 0), "42");
+        assert_eq!(pad("42".into(), -1), "42");
+        assert_eq!(pad("42".into(), -100), "42");
+        assert_eq!(pad("42".into(), 2), "42");
+        assert_eq!(pad("42".into(), 1), "42");
+        assert_eq!(pad("42".into(), 3), " 42");
+    }
+
+    #[test]
+    fn thousands_are_grouped_by_threes_from_the_right() {
+        for (d, want) in [
+            ("1", "1"),
+            ("12", "12"),
+            ("123", "123"),
+            ("1234", "1,234"),
+            ("12345", "12,345"),
+            ("123456", "123,456"),
+            ("1234567.89", "1,234,567.89"),
+            ("-1234", "-1,234"),
+            ("-999", "-999"),
+        ] {
+            assert_eq!(f(dec(d)), want, "{d}");
+        }
+        // Formats 2 and 9 never group.
+        assert_eq!(f2(dec("1234567.5")), "1234567.5");
+    }
+
+    #[test]
+    fn a_datetime_shows_its_milliseconds_exactly() {
+        // The value is one more than the milliseconds since the start of 0001-01-01.
+        let at = |ms: i64| format(&Value::DateTime(ms + 1), 0, 9, &Ctx);
+        assert!(at(0).ends_with("00:00:00Z"), "{}", at(0));
+        assert!(at(7).ends_with("00:00:00.007Z"), "{}", at(7));
+        assert!(at(86_399_999).ends_with("23:59:59.999Z"), "{}", at(86_399_999));
+        assert!(at(86_400_000).ends_with("00:00:00Z"), "{}", at(86_400_000));
+    }
+
+    #[test]
+    fn a_library_value_without_a_pinned_format_is_refused() {
+        let v = Value::Library("Foo".into(), Rc::default());
+        assert!(try_format(&v, 0, 0, &Ctx).is_err());
+        // A RecordId that holds nothing is empty, not an error.
+        let r = Value::Library("RecordId".into(), Rc::default());
+        assert_eq!(try_format(&r, 0, 0, &Ctx).unwrap(), "");
+    }
+
+    #[test]
+    fn a_time_is_one_more_than_its_milliseconds_since_midnight() {
+        // 12:00:00.000 is Time(43_200_001); the millisecond before it is still 11:59 AM.
+        assert_eq!(f2(Value::Time(43_200_000)), "115959.999T");
+        assert_eq!(f2(Value::Time(43_200_001)), "120000T");
+        assert_eq!(f2(Value::Time(1)), "000000T");
+        assert_eq!(f2(Value::Time(86_400_000)), "235959.999T");
+    }
 }

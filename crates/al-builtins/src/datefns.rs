@@ -459,6 +459,39 @@ mod tests {
     }
 
     #[test]
+    fn dmy2date_knows_the_length_of_every_month_and_the_leap_year_rules() {
+        let d = |a: i32, b: i32, c: i32| {
+            call(
+                "System.DMY2Date#1",
+                vec![Value::Integer(a), Value::Integer(b), Value::Integer(c)],
+            )
+        };
+        for (month, days) in [
+            (1, 31),
+            (2, 28),
+            (3, 31),
+            (4, 30),
+            (5, 31),
+            (6, 30),
+            (7, 31),
+            (8, 31),
+            (9, 30),
+            (10, 31),
+            (11, 30),
+            (12, 31),
+        ] {
+            is_date(d(days, month, 2023), 2023, month as u32, days as u32);
+            refused(d(days + 1, month, 2023));
+        }
+        // Leap years: divisible by 4, not by 100 unless by 400.
+        is_date(d(29, 2, 2024), 2024, 2, 29);
+        is_date(d(29, 2, 2000), 2000, 2, 29);
+        refused(d(29, 2, 1900));
+        refused(d(29, 2, 2023));
+        refused(d(30, 2, 2024));
+    }
+
+    #[test]
     fn dmy2date_builds_a_date() {
         // fieldref/TestFieldRefValue.al:122 `DMY2Date(1, 1, 2024)`; record/TestDateVirtualTableFlowField.al:65
         // `DMY2Date(3, 1, 1)` and :83 `DMY2Date(31, 12, 9999)` are the ends of the range.

@@ -33,26 +33,52 @@ pub struct Publisher {
     pub isolated: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Registry {
     /// (publisher object, lower-case event name) → subscribers, in program order.
     pub subscribers: HashMap<(usize, String), Vec<Subscriber>>,
     /// (object, routine) → the event the routine publishes.
     pub publishers: HashMap<(usize, usize), Publisher>,
-    /// Whether any subscriber of the platform codeunit `Global Triggers` exists.
-    /// That codeunit is not in the workspace, so those subscribers never fire
-    /// here; writes to the tables they name are refused instead.
+    /// The object key under which subscribers to the platform codeunit `Global Triggers`
+    /// (2000000002) are registered: the codeunit itself when a loaded app declares it
+    /// (the platform `System.app`), else [`GLOBAL_TRIGGERS`].
+    pub global_key: usize,
+    /// Whether any subscriber of `Global Triggers` exists.
     pub has_global_triggers: bool,
-    /// Tables named by the subscribers that enable those platform triggers
-    /// (`GetGlobalTableTriggerMask`, `GetDatabaseTableTriggerSetup`). When no
-    /// table can be read off them, every table counts.
-    pub global_trigger_tables: std::collections::HashSet<usize>,
+    /// Subscribers (object, routine) of `Global Triggers` in a dependency app that cannot run
+    /// (they reach something refused, such as a platform table with no provider), and what they
+    /// read. Raising an event one of them would receive is refused (`dispatch.rs`), except for the
+    /// two setup events while the tables the subscriber reads hold no row.
+    pub unavailable_global: std::collections::HashMap<(usize, usize), UnavailableGlobal>,
+}
+
+impl Default for Registry {
+    fn default() -> Self {
+        Registry {
+            subscribers: HashMap::new(),
+            publishers: HashMap::new(),
+            global_key: GLOBAL_TRIGGERS,
+            has_global_triggers: false,
+            unavailable_global: Default::default(),
+        }
+    }
 }
 
 fn is_manual(o: &ir::Object) -> bool {
     o.properties
         .iter()
         .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"))
+}
+
+/// A subscriber of `Global Triggers` in a dependency app that cannot run.
+#[derive(Debug, Clone, Default)]
+pub struct UnavailableGlobal {
+    /// Why it cannot run.
+    pub why: String,
+    /// The configuration tables its decision reads: the record variables of the routines it calls
+    /// within two levels. While none holds a row, the setup events find nothing configured and a
+    /// subscriber that cannot run would have answered "no" (see `dispatch.rs`).
+    pub config: Vec<u32>,
 }
 
 fn flag(args: &[String], i: usize) -> bool {
@@ -62,6 +88,15 @@ fn flag(args: &[String], i: usize) -> bool {
 /// The object key under which subscribers to the Caption Class codeunit's OnResolveCaptionClass
 /// are registered (the codeunit itself is not in the workspace).
 pub const CAPTION_CLASS: usize = usize::MAX;
+
+/// The object key under which subscribers to the platform codeunit `Global Triggers` are
+/// registered while no loaded app declares that codeunit. Its events have no body: the runtime
+/// raises them itself (`globaltriggers.rs`).
+pub const GLOBAL_TRIGGERS: usize = usize::MAX - 1;
+
+fn is_global_triggers(target: &str) -> bool {
+    target.eq_ignore_ascii_case("Global Triggers") || target == "2000000002"
+}
 
 impl Registry {
     pub fn build(program: &ir::Program) -> Registry {
@@ -91,6 +126,12 @@ impl Registry {
             if let Some(id) = o.id {
                 by_id.entry((o.kind.as_str(), id)).or_insert(oi);
             }
+        }
+        if let Some(&gt) = by_name
+            .get(&("codeunit", "global triggers".to_string()))
+            .or_else(|| by_id.get(&("codeunit", 2_000_000_002)))
+        {
+            reg.global_key = gt;
         }
         for (oi, o) in program.objects.iter().enumerate() {
             for (ri, r) in o.routines.iter().enumerate() {
@@ -160,20 +201,17 @@ impl Registry {
                                             element: String::new(),
                                         })
                                 }
-                                None if kind == "codeunit" && target.eq_ignore_ascii_case("Global Triggers") => {
+                                None if kind == "codeunit" && is_global_triggers(&target) => {
                                     reg.has_global_triggers = true;
-                                    if matches!(
-                                        event.as_str(),
-                                        "getglobaltabletriggermask" | "getdatabasetabletriggersetup"
-                                    ) {
-                                        let mut ids = Vec::new();
-                                        int_consts(&r.body, &mut ids);
-                                        let tables: Vec<usize> = ids
-                                            .iter()
-                                            .filter_map(|&id| by_id.get(&("table", id as u32)).copied())
-                                            .collect();
-                                        reg.global_trigger_tables.extend(tables);
-                                    }
+                                    reg.subscribers
+                                        .entry((reg.global_key, event))
+                                        .or_default()
+                                        .push(Subscriber {
+                                            object: oi,
+                                            routine: ri,
+                                            manual: is_manual(o),
+                                            element: String::new(),
+                                        })
                                 }
                                 None => {}
                             }
@@ -191,131 +229,6 @@ impl Registry {
         self.subscribers
             .get(&(object, event.to_string()))
             .is_some_and(|v| !v.is_empty())
-    }
-
-    /// Whether a write to table `object` would raise `Global Triggers` events in BC.
-    pub fn global_triggers_apply(&self, object: usize) -> bool {
-        // Without a table named by a setup subscriber, any table could be affected.
-        self.has_global_triggers
-            && (self.global_trigger_tables.is_empty() || self.global_trigger_tables.contains(&object))
-    }
-}
-
-/// Integer literals anywhere in `stmts` (object ids written as `Database::X`
-/// lower to integers).
-fn int_consts(stmts: &[ir::Stmt], out: &mut Vec<i64>) {
-    use ir::Stmt as S;
-    for s in stmts {
-        match s {
-            S::Assign(_, e) | S::Expr(e) => int_consts_expr(e, out),
-            S::If(c, t, e) => {
-                int_consts_expr(c, out);
-                int_consts(t, out);
-                int_consts(e, out);
-            }
-            S::While(c, b) | S::Repeat(b, c) => {
-                int_consts_expr(c, out);
-                int_consts(b, out);
-            }
-            S::For { from, to, body, .. } => {
-                int_consts_expr(from, out);
-                int_consts_expr(to, out);
-                int_consts(body, out);
-            }
-            S::Foreach { collection, body, .. } => {
-                int_consts_expr(collection, out);
-                int_consts(body, out);
-            }
-            S::Case {
-                scrutinee,
-                branches,
-                otherwise,
-            } => {
-                int_consts_expr(scrutinee, out);
-                for (labels, b) in branches {
-                    for l in labels {
-                        match l {
-                            ir::SetElem::One(e) => int_consts_expr(e, out),
-                            ir::SetElem::Range(a, b) => {
-                                a.iter().chain(b).for_each(|e| int_consts_expr(e, out));
-                            }
-                        }
-                    }
-                    int_consts(b, out);
-                }
-                int_consts(otherwise, out);
-            }
-            S::Exit(e) => e.iter().for_each(|e| int_consts_expr(e, out)),
-            S::Break | S::Pos(_) => {}
-            S::AssertError(b) => int_consts(b, out),
-        }
-    }
-}
-
-fn int_consts_expr(e: &ir::Expr, out: &mut Vec<i64>) {
-    use ir::Expr as E;
-    match e {
-        E::Const(ir::Const::Integer(i)) => out.push(i64::from(*i)),
-        E::Const(ir::Const::BigInteger(i)) => out.push(*i),
-        E::Const(_) | E::Load(_) => {}
-        E::Unary(_, e)
-        | E::Convert(_, e)
-        | E::Control { page: e, .. }
-        | E::QueryColumn { query: e, .. }
-        | E::DotNetCoerce(_, e)
-        | E::EnumImpl { value: e, .. } => int_consts_expr(e, out),
-        E::DotNet { receiver, args, .. } => {
-            receiver.iter().for_each(|e| int_consts_expr(e, out));
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
-        E::Binary(_, a, b) => {
-            int_consts_expr(a, out);
-            int_consts_expr(b, out);
-        }
-        E::In(v, set) => {
-            int_consts_expr(v, out);
-            for s in set {
-                match s {
-                    ir::SetElem::One(e) => int_consts_expr(e, out),
-                    ir::SetElem::Range(a, b) => a.iter().chain(b).for_each(|e| int_consts_expr(e, out)),
-                }
-            }
-        }
-        E::Ternary(a, b, c) => {
-            int_consts_expr(a, out);
-            int_consts_expr(b, out);
-            int_consts_expr(c, out);
-        }
-        E::InterfaceCall { receiver, args, .. } => {
-            int_consts_expr(receiver, out);
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
-        E::Call { instance, args, .. } => {
-            instance.iter().for_each(|e| int_consts_expr(e, out));
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
-        E::Builtin { receiver, args, .. } => {
-            if let Some(ir::Arg::Value(e)) = receiver.as_deref() {
-                int_consts_expr(e, out);
-            }
-            for a in args {
-                if let ir::Arg::Value(e) = a {
-                    int_consts_expr(e, out);
-                }
-            }
-        }
     }
 }
 
@@ -404,5 +317,101 @@ mod tests {
         );
         assert_eq!(split_args("[Test]"), Vec::<String>::new());
         assert_eq!(split_args("[Foo()]"), Vec::<String>::new());
+    }
+    #[test]
+    fn nested_brackets_protect_their_commas_and_single_arguments_survive() {
+        assert_eq!(split_args("[X(f(a, b), c)]"), vec!["f(a, b)", "c"]);
+        assert_eq!(split_args("[X(f(a), b)]"), vec!["f(a)", "b"]);
+        assert_eq!(split_args("[X(g[1, 2], h)]"), vec!["g[1, 2]", "h"]);
+        assert_eq!(split_args("[X(a)]"), vec!["a"]);
+        assert_eq!(split_args("[X(a,)]"), vec!["a", ""]);
+        // A closing bracket with nothing open does not underflow.
+        assert_eq!(split_args("[X(a), b)]"), vec!["a)", "b"]);
+    }
+
+    #[test]
+    fn a_close_before_the_open_yields_no_arguments_instead_of_panicking() {
+        assert_eq!(split_args("[Foo)("), Vec::<String>::new());
+    }
+
+    fn registry(src: &str) -> Registry {
+        let (_ws, l) = al_sema::lower::compile(
+            vec![al_sema::workspace::AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        Registry::build(&l.program)
+    }
+
+    #[test]
+    fn a_subscriber_attribute_with_fewer_than_three_arguments_is_ignored() {
+        let reg = registry(
+            "codeunit 50200 Pub { [IntegrationEvent(false, false)] procedure OnX() begin end; }
+             codeunit 50201 Sub { [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub)] local procedure H() begin end; }",
+        );
+        assert!(reg.subscribers.is_empty());
+        assert_eq!(reg.publishers.len(), 1);
+    }
+
+    #[test]
+    fn subscribers_attach_to_every_object_kind_they_name() {
+        // The registry resolves each target by (kind, name); a kind it does not know is skipped.
+        let reg = registry(
+            "report 50300 Rep { }
+             query 50301 Qry { elements { dataitem(Dummy; Integer) { } } }
+             xmlport 50302 Xml { schema { textelement(Root) { } } }
+             page 50303 Pg { }
+             table 50304 Tbl { fields { field(1; \"No.\"; Integer) { } } keys { key(PK; \"No.\") { } } }
+             codeunit 50305 Cu { }
+             codeunit 50310 Sub
+             {
+                 [EventSubscriber(ObjectType::Report, Report::Rep, 'OnR', '', false, false)] local procedure R() begin end;
+                 [EventSubscriber(ObjectType::Query, Query::Qry, 'OnQ', '', false, false)] local procedure Q() begin end;
+                 [EventSubscriber(ObjectType::XmlPort, XmlPort::Xml, 'OnX', '', false, false)] local procedure X() begin end;
+                 [EventSubscriber(ObjectType::Page, Page::Pg, 'OnP', '', false, false)] local procedure P() begin end;
+                 [EventSubscriber(ObjectType::Table, Database::Tbl, 'OnT', '', false, false)] local procedure T() begin end;
+                 [EventSubscriber(ObjectType::Codeunit, Codeunit::Cu, 'OnC', '', false, false)] local procedure C() begin end;
+             }",
+        );
+        for (name, event) in [
+            ("Rep", "onr"),
+            ("Qry", "onq"),
+            ("Xml", "onx"),
+            ("Pg", "onp"),
+            ("Tbl", "ont"),
+            ("Cu", "onc"),
+        ] {
+            let target = reg.subscribers.keys().find(|(_, e)| e == event).unwrap_or_else(|| {
+                panic!(
+                    "no subscriber for {name}: {:?}",
+                    reg.subscribers.keys().collect::<Vec<_>>()
+                )
+            });
+            assert_eq!(reg.subscribers[target].len(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn only_a_missing_global_triggers_codeunit_sets_the_global_triggers_flag() {
+        let other = registry(
+            "codeunit 50310 Sub
+             { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Not There\", 'OnX', '', false, false)] local procedure H() begin end; }",
+        );
+        assert!(!other.has_global_triggers);
+        let global = registry(
+            "codeunit 50310 Sub
+             { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }",
+        );
+        assert!(global.has_global_triggers);
+        // A different object kind named like the platform codeunit is not it.
+        let table = registry(
+            "codeunit 50310 Sub
+             { [EventSubscriber(ObjectType::Table, Database::\"Global Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }",
+        );
+        assert!(!table.has_global_triggers);
     }
 }

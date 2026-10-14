@@ -47,3 +47,13 @@ These must match real BC, settled by the oracle (ADR-007) and by probes
 Reviews ask two questions of every change: does any observable outcome
 differ from BC (then it is a bug, whatever its other merits), and if not,
 is it simpler or better than the obvious copy of BC (then prefer it).
+
+## Decided without owner review (2026-10-13/14)
+
+Record fixes after the corpus bump (branch `fix-records`). Each item is also a row in `docs/probes-needed.md`.
+
+- **Deferred duplicate Insert.** BC defers the failure of a duplicate-key Insert on a table without a Blob field. The probe pins that for persistent tables with an unused result. Decided: only AL-called Inserts on persistent tables without Blob and AutoIncrement fields defer. The page client, the XmlPort import, temporary records and AutoIncrement tables raise at once, because their own corpus tests pin that. Options: defer everywhere (breaks those tests), or never defer (fails the probe).
+- **Refused tests roll back.** A test that stops with `Unsupported` leaves its writes in the store. Decided: the runner rolls them back, as it does for a failed test. Option: leave them (a later test then sees rows BC's run of the earlier test would also have left, but only partly).
+- **Emit version.** `major*1000+25` for BC majors other than 27. Option: refuse for other majors.
+- **xRec of table extension triggers** is the same handle as the events' and the table trigger's (equal to Rec for a Modify from code). No test pins the extension triggers.
+- **Baseline removal.** `60013 CalcFields_TableExtensionFlowFieldOnStockkeepingUnit_WithNoMatchingRows_IsZero` passed because the sibling test before it was refused, so no row existed to delete. Once that sibling passes, the test deletes rows and reaches Base App subscribers that need `TaskScheduler.CanCreateTask`, which is not implemented or pinned. The case is removed from the three baselines as a pass by accident (hard rule 2). It returns when the builtin is pinned.

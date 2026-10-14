@@ -432,4 +432,81 @@ mod tests {
             assert!(parse(bad).is_err(), "`{bad}` should be refused");
         }
     }
+    // Mutation-testing additions (docs/status.md debt): the raw text of const() and filter() runs
+    // to the closing parenthesis, and quotes and nesting decide which one that is.
+
+    fn filter_text(inner: &str) -> String {
+        match &parse(&format!("count(T where(A = filter({inner})))")).unwrap().conds[0].value {
+            CondValue::Filter(t) => t.clone(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn nested_parentheses_stay_in_the_raw_text() {
+        assert_eq!(filter_text("(A|B)&C"), "(A|B)&C");
+        assert_eq!(filter_text("((1..2)|3)"), "((1..2)|3)");
+        assert_eq!(filter_text("a(b)c"), "a(b)c");
+    }
+
+    #[test]
+    fn a_quote_hides_the_parentheses_inside_it() {
+        assert_eq!(filter_text("\"a)b\""), "\"a)b\"");
+        assert_eq!(filter_text("\"a(b\""), "\"a(b\"");
+        assert_eq!(filter_text("'a)b'"), "'a)b'");
+        assert_eq!(filter_text("'a(b'"), "'a(b'");
+        // A doubled apostrophe is one apostrophe inside the string, so the string goes on.
+        assert_eq!(filter_text("'it''s ) fine'"), "'it''s ) fine'");
+        // After the string closes, a parenthesis counts again.
+        assert_eq!(filter_text("'x'|(y)"), "'x'|(y)");
+    }
+
+    #[test]
+    fn an_unterminated_filter_or_quote_is_an_error() {
+        assert!(parse("count(T where(A = filter(x)").is_err());
+        assert!(parse("count(T where(A = filter('x)))").is_err());
+        assert!(parse("count(T where(A = filter(\"x)))").is_err());
+        assert!(parse("count(T where(A = filter((x)))").is_err());
+    }
+
+    #[test]
+    fn formulas_that_end_early_are_errors_not_panics() {
+        for bad in ["sum(T", "count(T", "sum(T.", "exist(T"] {
+            assert!(parse(bad).is_err(), "`{bad}`");
+        }
+    }
+
+    #[test]
+    fn count_and_exist_take_no_field_and_the_others_need_one() {
+        for bad in ["count(T.F)", "exist(T.F where(A = field(B)))"] {
+            let e = parse(bad).unwrap_err();
+            assert!(e.contains("take no field"), "{bad}: {e}");
+        }
+        for bad in [
+            "sum(T)",
+            "lookup(T where(A = field(B)))",
+            "min(T)",
+            "max(T)",
+            "average(T)",
+        ] {
+            let e = parse(bad).unwrap_err();
+            assert!(e.contains("needs a source field"), "{bad}: {e}");
+        }
+    }
+
+    #[test]
+    fn upperlimit_and_filter_are_flow_filter_functions_only_with_parentheses() {
+        // A field that is simply called UpperLimit or Filter.
+        let f = parse("sum(T.F where(A = field(UpperLimit), B = field(Filter), C = field(\"filter\")))").unwrap();
+        assert_eq!(
+            f.conds,
+            vec![
+                c("A", CondValue::Field("UpperLimit".into())),
+                c("B", CondValue::Field("Filter".into())),
+                c("C", CondValue::Field("filter".into())),
+            ]
+        );
+        // A quoted name is never the function, even with parentheses after it.
+        assert!(parse("sum(T.F where(A = field(\"upperlimit\"(X))))").is_err());
+    }
 }

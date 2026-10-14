@@ -199,6 +199,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Dialog.Update#1", |_, _, _| Ok(Value::Null)),
     ("Dialog.Close#1", |_, _, _| Ok(Value::Null)),
     // Reading the latest committed data is what this runtime always does (session/TestBCDatabaseContracts.al:170-187).
+    // Telemetry goes to the server's log, which AL cannot read (ADR-009).
+    ("Session.LogMessage#1", |_, _, _| Ok(Value::Null)),
+    ("Session.LogMessage#2", |_, _, _| Ok(Value::Null)),
     ("Database.SelectLatestVersion#1", |_, _, _| Ok(Value::Null)),
     ("Database.SelectLatestVersion#2", |_, _, _| Ok(Value::Null)),
     // Unique and not null is all the corpus asks (session/TestSystemExtended.al:306-328).

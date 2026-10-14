@@ -322,9 +322,14 @@ impl Session {
         recv: Option<&mut Value>,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
-        // A TestPage begins a transaction of its own (see `in_page_transaction`); running a page
-        // with no TestPage, from a test with no transaction, is not pinned.
+        // A TestPage begins a transaction of its own (see `in_page_transaction`). Page.Run and Page.RunModal with a handler that writes are allowed under None, and the
+        // transaction the page began has ended afterwards
+        // (codeunit/TestWriteTxNoneModelContracts.al:200-216 and :163-185, corpus branch
+        // al-runtime-rs, probe on BC 27.5).
         if recv.is_none() && self.no_transaction() {
+            if matches!(method, "Page.RunStatic" | "Page.RunModalStatic") {
+                return self.in_page_transaction(|s| s.page_op_inner(method, recv, args));
+            }
             return unsupported(format!("{method} under TransactionModel::None (not pinned)"));
         }
         if recv.is_some() && self.no_transaction() {
@@ -1060,7 +1065,10 @@ impl Session {
             let rec = self.page_rec(st);
             rec.borrow_mut().fields = fields;
             self.ret_used = false;
-            self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
+            self.immediate_errors = true;
+            let inserted = self.record_op("Insert", &rec, &mut [Value::Boolean(true)]);
+            self.immediate_errors = false;
+            inserted?;
         }
         match self.save_row(st) {
             Err(Signal::Error(e)) if swallow_save_errors => {
@@ -2248,7 +2256,10 @@ impl Session {
         }
         self.auto_split_key(st)?;
         self.ret_used = false;
-        self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
+        self.immediate_errors = true;
+        let inserted = self.record_op("Insert", &rec, &mut [Value::Boolean(true)]);
+        self.immediate_errors = false;
+        inserted?;
         {
             let mut s = st.borrow_mut();
             s.draft = false;

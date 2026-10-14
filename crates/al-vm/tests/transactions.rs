@@ -92,7 +92,13 @@ codeunit 50918 Outer
 "#;
 
 fn run(body: &str) -> Result<Value, Signal> {
-    let src = format!("{FIXTURES}\ncodeunit 50100 C {{ {body} }}");
+    run_in("", body, |_| {})
+}
+
+/// Like `run`, with extra objects and a hook that sets the session up the way the test runner
+/// does (`tx_model`, `in_test_codeunit`) before F is called.
+fn run_in(extra: &str, body: &str, setup: impl FnOnce(&mut Session)) -> Result<Value, Signal> {
+    let src = format!("{FIXTURES}\n{extra}\ncodeunit 50100 C {{ {body} }}");
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),
@@ -119,6 +125,7 @@ fn run(body: &str) -> Result<Value, Signal> {
     }
     let engine = Engine::new(l.program, blocked);
     let mut s = Session::new(engine);
+    setup(&mut s);
     let inst = s.instance(oi);
     s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
 }
@@ -216,7 +223,7 @@ fn a_guarded_run_is_refused_while_the_caller_has_an_uncommitted_write() {
             R.Reset();
             exit(GetLastErrorText() + '|' + Format(Ok) + Format(R.Get('M')));
         end;"),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|NoNo"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|NoNo"
     );
 }
 
@@ -336,12 +343,28 @@ fn a_nested_guarded_run_that_fails_leaves_the_outer_run_working() {
     );
 }
 
-// codeunit/TestCodeunitRunMissing.al: the text is only pinned in two fragments, so a run of an
-// id no object declares is refused rather than given a made-up text.
+// codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196 (corpus branch al-runtime-rs, probe on
+// BC 27.5): text and code of a run of an id no object declares. The emit version is a number.
 #[test]
-fn running_a_codeunit_id_that_does_not_exist_is_unsupported() {
+fn running_a_codeunit_id_that_does_not_exist_raises_the_metadata_error() {
     let r = run("procedure F(): Text begin Codeunit.Run(99990); exit(''); end;");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    let Err(Signal::Error(e)) = r else { panic!("{r:?}") };
+    assert!(
+        e.message.starts_with("You tried to invoke the CodeUnit object with the ID 99990 from the object C. An object with that ID does not exist in the current application compiled with emit version "),
+        "{}",
+        e.message
+    );
+    assert!(
+        e.message.ends_with('.')
+            && e.message
+                .trim_end_matches('.')
+                .rsplit(' ')
+                .next()
+                .unwrap()
+                .parse::<u32>()
+                .is_ok()
+    );
+    assert_eq!(e.code, "AL:MetadataNotFound");
 }
 
 // ---- [CommitBehavior] (error-handling/TestCommitBehaviorAttribute.al) ----
@@ -409,7 +432,7 @@ fn an_error_scope_makes_commit_raise() {
         g(
             "var R: Record \"TX T\"; begin asserterror InsertThenCommitUnderError('4'); exit(Format(R.Get('4')) + GetLastErrorText()); end;"
         ),
-        "NoCommit is prohibited in the current scope"
+        "NoCommit is prohibited in the current scope. The operation cannot continue. Contact your system administrator."
     );
 }
 
@@ -422,6 +445,85 @@ fn the_scope_ends_when_the_attributed_procedure_fails() {
         ),
         "Yes"
     );
+}
+
+// ---- mutation-testing additions (docs/status.md debt) ----
+
+// An unguarded Codeunit.Run in the default model does not commit the caller's pending write
+// (codeunit/TestCodeunitRunWriteTransaction.al:UnguardedRun_WithUncommittedWrite_IsAllowed_AndCodeunitRuns
+// shows the write is still there afterwards; only a guarded run commits, see
+// a_successful_guarded_run_commits_its_own_transaction).
+#[test]
+fn an_unguarded_run_under_autocommit_leaves_the_callers_write_uncommitted() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; begin
+            R.K := 'P'; R.Insert();
+            Codeunit.Run(Codeunit::Probe);
+            exit(Format(Database.IsInWriteTransaction()));
+        end;"),
+        "Yes"
+    );
+}
+
+// codeunit/TestWriteTxTestBoundary.al:Test09 (a direct Insert under None is refused) and
+// :Test10_ARunCodeunitMayWriteUnderNone (the run opens a transaction of its own, which ends
+// with the run -- and the refusal applies again afterwards).
+#[test]
+fn under_transaction_model_none_a_run_may_write_and_the_refusal_returns_after_it() {
+    let r = run_in(
+        "",
+        "procedure F(): Text
+        var R: Record \"TX T\"; Seen: Text;
+        begin
+            asserterror begin R.K := 'A'; R.Insert(); end;
+            Seen := GetLastErrorText();
+            Codeunit.Run(Codeunit::DirtyInserter);
+            Seen += '|' + Format(Database.IsInWriteTransaction());
+            asserterror begin R.K := 'B'; R.Insert(); end;
+            exit(Seen + '|' + GetLastErrorText());
+        end;",
+        |s| s.tx_model = al_vm::TxModel::None,
+    );
+    let none = "A transaction must be started before changes can be made to the database.";
+    assert_eq!(text(r), format!("{none}|No|{none}"));
+}
+
+// codeunit/TestCodeunitRunNestedTestCodeunit.al:CodeunitRun_TestCodeunitFromTest_Guarded_StillThrows:
+// only a codeunit with Subtype = Test counts as a test codeunit.
+#[test]
+fn only_a_test_codeunit_is_refused_when_run_from_a_test() {
+    let extra = "codeunit 50930 NormalCu { Subtype = Normal; trigger OnRun() begin end; }
+                 codeunit 50931 TestCu { Subtype = Test; trigger OnRun() begin end; }";
+    let body = "procedure F(): Text
+        begin
+            Codeunit.Run(Codeunit::NormalCu);
+            asserterror Codeunit.Run(Codeunit::TestCu);
+            exit(GetLastErrorText());
+        end;";
+    let r = run_in(extra, body, |s| s.in_test_codeunit = true);
+    assert!(
+        text(r).starts_with("You cannot nest the execution of test codeunits. Test codeunit 50931 TestCu was called"),
+    );
+}
+
+// Only the OnRun *trigger* runs: a procedure that happens to be called OnRun is not it, and
+// neither is another trigger. The codeunit without a trigger is a no-op that succeeds
+// (types/TestLanguageEdgeCases.al:CodeunitRun_Success_ReturnsTrue).
+#[test]
+fn only_the_on_run_trigger_is_run() {
+    let extra = "codeunit 50932 NamedOnRun { procedure OnRun() begin Error('procedure ran'); end; }
+                 codeunit 50933 OtherTrigger { Subtype = Install; trigger OnInstallAppPerCompany() begin Error('other trigger ran'); end; }";
+    let r = run_in(
+        extra,
+        "procedure F(): Text
+        var Ok: Boolean;
+        begin
+            Ok := Codeunit.Run(Codeunit::NamedOnRun);
+            exit(Format(Ok) + Format(Codeunit.Run(Codeunit::OtherTrigger)));
+        end;",
+        |_| {},
+    );
+    assert_eq!(text(r), "YesYes");
 }
 
 // handlers/TestPageActionRunObjectKinds_Tests.al:ProbeControlEachTargetRecordsItsOwnExecution
@@ -451,16 +553,16 @@ fn codeunit_run_hands_the_record_to_a_tableno_codeunit_as_rec() {
     );
 }
 
-// Whether a change OnRun makes to Rec reaches the caller's variable is not pinned: refused.
+// codeunit/TestCodeunitRunErrorTextsAndModels.al:198-220 (corpus branch al-runtime-rs, probe on
+// BC 27.5): the record is passed by reference, so a change OnRun makes to Rec reaches the caller.
 #[test]
-fn a_tableno_codeunit_that_changes_rec_is_refused() {
-    match run("procedure F(): Text var R: Record \"TX T\"; begin
+fn a_tableno_codeunit_that_changes_rec_changes_the_callers_record() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; begin
         R.K := 'B'; R.V := 'Bravo'; R.Insert();
         Codeunit.Run(Codeunit::RecWriter, R);
         exit(R.V);
-    end;")
-    {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("RecWriter") && why.contains("changed Rec"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    end;"),
+        "changed"
+    );
 }

@@ -11,6 +11,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod autoinc;
+mod baseline;
+pub use baseline::Baseline;
 mod callstack;
 mod dispatch;
 pub mod dotnet;
@@ -18,6 +20,7 @@ mod errorcollect;
 pub mod events;
 mod filterpage;
 mod flowfields;
+mod globaltriggers;
 mod hostvalues;
 mod interfaces;
 mod pages;
@@ -49,6 +52,9 @@ pub struct Engine {
     pub target: Option<al_version::Target>,
     /// The .NET host, the registry of runtime-provided classes and the policy (ADR-014).
     pub dotnet: dotnet::DotNetConfig,
+    /// Table objects whose rows the install baseline should have created and did not (ADR-013
+    /// decision 5): a `Get` that finds nothing in dependency code is not BC's answer for them.
+    pub unseeded: std::collections::HashSet<usize>,
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
@@ -123,6 +129,7 @@ impl Engine {
             events,
             target,
             dotnet,
+            unseeded: Default::default(),
             unevaluable_init,
         })
     }
@@ -154,6 +161,8 @@ pub struct Session {
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
+    /// What the subscribers of `Global Triggers` answered, per table object (globaltriggers.rs).
+    pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
     /// Private tables of temporary records, by temp id.
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
@@ -194,6 +203,14 @@ pub struct Session {
     /// page saving a row passes its own xRec (corpus
     /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
     pub(crate) page_xrec: Option<Vec<Value>>,
+    /// A duplicate-key Insert into a table without a Blob field does not fail where it is
+    /// called: the table (object index) and the error come out at the next access to the table
+    /// or at Commit (corpus record/TestRecordRuntimeTextsAndViews.al:
+    /// Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_AndSurfacesAtTheNextAccess).
+    pub(crate) deferred_insert: Option<(usize, AlError)>,
+    /// Set while the page client or an XmlPort import writes a record: their duplicate-key
+    /// errors are raised at once (their own tests pin it), not deferred like an AL `Insert`.
+    pub(crate) immediate_errors: bool,
     /// The transaction model of the running test method (set by the test runner).
     pub tx_model: TxModel,
     /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
@@ -260,6 +277,7 @@ impl Session {
             depth: 0,
             singletons: Default::default(),
             store: Default::default(),
+            global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
@@ -287,6 +305,8 @@ impl Session {
             trap: None,
             bg_worker: None,
             page_xrec: None,
+            deferred_insert: None,
+            immediate_errors: false,
             tx_model: TxModel::default(),
             tx_world: 0,
             commit_behavior: Default::default(),
@@ -304,6 +324,7 @@ impl Session {
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
     pub fn commit_transaction(&mut self) {
+        self.deferred_insert = None;
         al_data::Store::commit(&mut self.store);
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
@@ -314,6 +335,7 @@ impl Session {
     /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
     /// those a Truncate of this transaction changed.
     pub fn rollback_transaction(&mut self) {
+        self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
@@ -448,11 +470,15 @@ impl Session {
             )));
         }
         self.depth += 1;
+        // The builtin being run (a record write that runs triggers and events) keeps its own
+        // `ret_used`: the callee's builtins must not change it.
+        let ret_used = self.ret_used;
         let r = if self.engine.events.publishers.contains_key(&(object, routine)) {
             self.publish(object, routine, instance, args)
         } else {
             self.call_inner(object, routine, instance, args)
         };
+        self.ret_used = ret_used;
         self.depth -= 1;
         r
     }
@@ -660,19 +686,12 @@ impl Session {
                 Ok(())
             }
             S::AssertError(body) => {
-                // Inside a UI handler, with writes pending from before the page opened, the extent
-                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
-                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
-                // Initialize() without a Commit, runs a modal page whose handler does
-                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
-                // real BC. Rolling back to the last commit would undo it.
-                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                // A caught error rolls the transaction back to the last commit, also inside a modal
+                // page handler: the write pending before the page opened and the handler's own
+                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
+                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
                 match self.exec_block(body, f) {
-                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
-                        "asserterror in a UI handler with writes pending from before it ran: the extent \
-                         of the rollback is not pinned"
-                            .into(),
-                    )),
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
@@ -821,6 +840,10 @@ impl Session {
             } => {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
                 self.finish_call(object, routine, inst, args, false, f)
+            }
+            E::InterfaceTest { value, objects, cast } => {
+                let v = self.eval(value, f)?;
+                self.interface_test(v, objects, *cast)
             }
             E::EnumImpl {
                 value,

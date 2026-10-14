@@ -161,6 +161,8 @@ impl Session {
         if found > 0 {
             return Ok(());
         }
+        // A related table the baseline could not fill may hold the row in BC.
+        self.unseeded_read(&related, false, "the TableRelation check")?;
         Err(Signal::Error(AlError {
             message: format!(
                 "The field {} of table {} contains a value ({}) that cannot be found in the related table ({}).",
@@ -169,7 +171,7 @@ impl Session {
                 self.message_value(&value)?,
                 self.caption(&related)
             ),
-            code: "Dialog".into(),
+            code: "DB:PrimRecordNotFound".into(),
             call_stack: String::new(),
         }))
     }

@@ -6,7 +6,7 @@ reviewed it.
 
 ## Open questions (not decided)
 
-- Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
+- (answered 2026-10-14, see below) Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
   - It is about 60 tests in 8 files, at local head b06fdc0 in corpus-probes.
   - All of them pass on the local BC 27.5 container, and the corpus gate
     scripts pass.
@@ -43,6 +43,32 @@ reviewed it.
   `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
 
 ## Decided by the owner (recorded)
+
+- 2026-10-14, performance phase: run tests in parallel at the test runner's
+  isolation unit.
+  - BC's test isolation can be per codeunit or per test procedure.
+  - Units share one common data store. A copy per unit or per thread would
+    cost too much memory.
+  - Design direction: every unit forks from one shared baseline snapshot, using
+    the persistent maps of ADR-003 and ADR-004, so a fork costs O(1) and
+    memory grows only with each unit's own changes.
+  - Within a session, execution stays single-threaded, as in BC.
+
+- 2026-10-14, performance goal: first close the remaining gaps, then work on
+  performance.
+  - The target is a corpus run WITH Microsoft's apps in under a second, and
+    then further until nothing is left to squeeze.
+  - Caching comes only after that, as the last step.
+  - This overrides ADR-013's "persistent cache if the warm budget is missed".
+- 2026-10-14: the Rust port of bcdb (BusinessCentral.BakReader) starts now, on
+  branch `bcdb`, as a new crate.
+
+- 2026-10-14, ADR-016: release path is "separate now, decide later". The runtime
+  gets a new binary name, stays in this repo, and has a clean CLI. The cutover
+  decision is made at the preview gate. Questions 1, 2 and 4 are answered;
+  the binary name itself is still to pick.
+- 2026-10-14: push all probe tests to the corpus branch. Done: 348a744, with
+  the BC29PLUS dispatch fix.
 
 - 2026-10-13, ADR-016: server mode, watch mode and `--affected` are deferred
   while start-up is not a concern. Revisit after dependency loading is
@@ -157,6 +183,17 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
+- 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
+  `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
+- 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that
+  stops is rolled back; the tables they would have written and that hold no row are `unseeded`, and a `Get` that finds
+  nothing in dependency code is refused only for those.
+- 2026-10-14, ADR-013 (Global Triggers): an event that a dependency subscriber which cannot run (Base Application's
+  `GlobalTriggerManagement`, platform tables with no provider) would receive is refused; the setup events skip it while
+  the configuration tables it reads are empty. The 73 tests behind `ALT Triggered` stay not run until `API Webhook
+  Subscription` and `Database::User` exist.
+- 2026-10-14, ADR-013 (baseline): every read of a table the baseline could not fill is refused, not only a missing `Get`.
+- 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).
 - 2026-10-14, ADR-007: an oracle may be recorded for an older corpus commit when the corpus diff since then
   only adds files under `tests/` (checked by the CLI). BC 29 stays on `cf6e546` for that reason; 27 and 28 are
   on `cdf315a`.
@@ -167,3 +204,7 @@ reviewed it.
 - 2026-10-14, ADR-018, SessionSettings: `RequestSessionUpdate(false)` hands a copy to the handler and needs true back; `(true)` and a missing handler are refused.
 - 2026-10-14, ADR-018, InitValue: `0DT` and closing-date literals raise in `Init()` of a written record and on the first read of an untouched one.
 - 2026-10-14, ADR-018, held branch: the narrower static-subscriber global check is not merged (net zero) until the `DeleteAll(false)` probe is in.
+- 2026-10-14, ADR-009, fix-records: a duplicate-key Insert from AL code is deferred to the next table access or Commit only for persistent tables without Blob and AutoIncrement fields; the page client, XmlPort import, temporary records and AutoIncrement tables raise at once.
+- 2026-10-14, ADR-009, fix-records: a test refused midway rolls back what it wrote, so a later test of the codeunit cannot see the leftovers.
+- 2026-10-14, ADR-009, fix-records: the emit version in "object does not exist" errors is major*1000+25 for BC majors other than 27 (27025 is measured).
+- 2026-10-14, ADR-009, fix-records: baseline case 60013 `CalcFields_TableExtensionFlowFieldOnStockkeepingUnit_WithNoMatchingRows_IsZero` removed from all three baselines as a pass by accident (see the commit message).

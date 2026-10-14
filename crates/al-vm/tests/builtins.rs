@@ -1175,3 +1175,44 @@ fn a_connection_string_other_than_the_test_connection_is_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+// Session.LogMessage writes to the server's telemetry, which AL cannot observe (ADR-009): it
+// returns, whatever it is given. Base Application's `Upgrade Tag` calls it from Company-Initialize.
+#[test]
+fn log_message_is_a_telemetry_write_that_changes_nothing() {
+    let src = r#"codeunit 50100 C
+{
+    procedure Log(): Integer
+    var D: Dictionary of [Text, Text]; N: Integer;
+    begin
+        Session.LogMessage('0000AAA', 'one', Verbosity::Normal, DataClassification::SystemMetadata, TelemetryScope::ExtensionPublisher, D);
+        Session.LogMessage('0000AAB', 'two', Verbosity::Warning, DataClassification::SystemMetadata, TelemetryScope::All, 'Key', 'Value');
+        N := 7;
+        exit(N);
+    end;
+}"#;
+    assert!(matches!(run(src, "Log"), Ok(Value::Integer(7))));
+}
+
+// A table with a DateFormula field inserts with the field blank. Base Application's setup tables
+// (General Ledger Setup, Sales & Receivables Setup) have such fields and Company-Initialize
+// inserts them as `Init(); Insert();`.
+#[test]
+fn a_blank_date_formula_field_inserts() {
+    let src = r#"table 50301 Setup
+{
+    fields { field(1; "Primary Key"; Code[10]) { } field(2; Grace; DateFormula) { } }
+    keys { key(PK; "Primary Key") { } }
+}
+codeunit 50100 C
+{
+    procedure Go(): Integer
+    var S: Record Setup;
+    begin
+        S.Init();
+        S.Insert();
+        exit(S.Count());
+    end;
+}"#;
+    assert!(matches!(run(src, "Go"), Ok(Value::Integer(1))));
+}

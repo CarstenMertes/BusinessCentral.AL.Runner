@@ -87,9 +87,8 @@ impl Session {
     }
 
     /// Whether the part control that shows `st` says `Editable = false`. What that does to the
-    /// part's rows is not pinned (TestPart.Editable() ignores it, corpus testpart/TestTestPart.al:
-    /// TestPart_Editable_IsNotDrivenByTheHostControlsEditableProperty), so writing through such a
-    /// part is refused.
+    /// part's rows is pinned only for SetValue, which writes; New() and Next() onto the new-row line
+    /// of such a part are refused.
     pub(super) fn part_control_read_only(&self, st: &St) -> bool {
         let Some((host, idx)) = st.borrow().host.clone() else {
             return false;

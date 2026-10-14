@@ -276,22 +276,6 @@ pub fn lower_with_positions(
     for _ in 0..3 {
         for oi in 0..ws.objects.len() {
             for &p in &page_parts[oi].clone() {
-                // What a part page's close triggers do when the host closes is not pinned.
-                let closes = std::iter::once(p)
-                    .chain(page_extensions.get(&p).cloned().unwrap_or_default())
-                    .any(|q| {
-                        ws.object_ast(q).triggers().any(|t| {
-                            let n = t.name();
-                            n.eq_ignore_ascii_case("OnClosePage") || n.eq_ignore_ascii_case("OnQueryClosePage")
-                        })
-                    });
-                let reason = format!(
-                    "part page `{}` declares a close trigger (what it does when the host closes is not pinned)",
-                    ws.objects[p].name
-                );
-                if closes && !page_reasons[oi].contains(&reason) {
-                    page_reasons[oi].push(reason);
-                }
                 if let Some(why) = page_reasons[p].first().cloned() {
                     let reason = format!("part page `{}`: {why}", ws.objects[p].name);
                     if !page_reasons[oi].contains(&reason) {

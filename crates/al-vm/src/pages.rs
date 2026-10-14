@@ -1122,6 +1122,38 @@ impl Session {
             .iter()
             .position(|m| *m == action)
             .unwrap_or(0) as i32;
+        // The parts are asked first, with the action None; the host's own OnQueryClosePage follows
+        // (corpus branch al-runtime-rs (pending push): testpart/TestPartCloseLinkEditableContracts.al:
+        // Parts_CloseTriggers_AllPartsQueryClose_ThenHost_ThenPartsClose_ThenHost).
+        let open_parts: Vec<St> = st
+            .borrow()
+            .parts
+            .iter()
+            .map(|(_, c)| c.clone())
+            .filter(|c| c.borrow().open)
+            .collect();
+        let none_ordinal = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == "None")
+            .unwrap_or(0) as i32;
+        for part in &open_parts {
+            if !part.borrow().parts.is_empty() {
+                return unsupported("closing a host whose part page has parts of its own (close order not pinned)");
+            }
+            let answer = match self.page_trigger_answer(
+                part,
+                "onqueryclosepage",
+                vec![Value::Option(none_ordinal, members.clone())],
+            ) {
+                Err(Signal::Error(_)) => {
+                    return unsupported("an error in a part's OnQueryClosePage (not pinned)");
+                }
+                other => other?,
+            };
+            if answer == Some(false) || !self.page_event(part, "onqueryclosepageevent", Some(true), None)? {
+                return unsupported("a part's OnQueryClosePage that refuses the close (not pinned)");
+            }
+        }
         // An AL error raised in OnQueryClosePage is shown as a message and refuses the close
         // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
         let veto = match self.page_trigger_answer(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
@@ -1138,6 +1170,10 @@ impl Session {
         }
         if !self.page_event(st, "onqueryclosepageevent", Some(true), None)? {
             return Ok(Value::Null);
+        }
+        for part in &open_parts {
+            self.page_trigger(part, "onclosepage", vec![])?;
+            self.page_event(part, "onclosepageevent", None, None)?;
         }
         self.page_trigger(st, "onclosepage", vec![])?;
         self.page_event(st, "onclosepageevent", None, None)?;
@@ -2392,7 +2428,10 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
-        self.refuse_read_only_part(st, "SetValue")?;
+        // SetValue through a part whose control says Editable = false writes anyway (corpus branch
+        // al-runtime-rs (pending push): testpart/TestPartCloseLinkEditableContracts.al:
+        // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites). New() and Next() onto the
+        // new-row line of such a part are not pinned and stay refused.
         self.activate(st, idx)?;
         // Only an Update() requested by this call's triggers refreshes at its end.
         st.borrow_mut().refresh = false;
@@ -3178,6 +3217,10 @@ impl Session {
             return Ok(());
         }
         if !self.is_list(st) {
+            let parts: Vec<St> = st.borrow().parts.iter().map(|(_, c)| c.clone()).collect();
+            if parts.iter().any(|c| self.declares(c, "onclosepage") || self.declares(c, "onqueryclosepage")) {
+                return unsupported("a card closed by a deleted row whose parts declare close triggers (not pinned)");
+            }
             self.page_trigger(st, "onclosepage", vec![])?;
             self.mark_closed(st);
             return Ok(());

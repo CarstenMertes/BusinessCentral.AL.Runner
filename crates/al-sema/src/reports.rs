@@ -355,7 +355,7 @@ pub fn request_layout(
             // has them is not pinned, so a literal value passes here and the test client refuses to touch a
             // data item of a page that says `false` (docs/probes-needed.md).
             let show_filter = name == "showfilter" && bool_prop(&p.value_text()).is_some();
-            if !["caption", "savevalues"].contains(&name.as_str())
+            if !["caption", "savevalues", "sourcetable"].contains(&name.as_str())
                 && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
                 && !show_filter
             {

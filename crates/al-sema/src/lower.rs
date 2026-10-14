@@ -427,8 +427,20 @@ pub fn lower_with_workers(
             .get(&oi)
             .map(|v| v.iter().map(|&e| (e, ws.object_ast(e))).collect())
             .unwrap_or_default();
-        let (request, _) = crate::reports::request_layout(&obj, &l.items, &exts);
+        let (request, request_section) = crate::reports::request_layout(&obj, &l.items, &exts);
         page_reasons[oi].extend(request.reasons.iter().cloned());
+        // A request page that declares `SourceTable` has a `Rec` of that table (corpus
+        // handlers/TestReportRequestPageSourceTableCompiledContracts.al).
+        if let Some(t) = request_section
+            .as_ref()
+            .and_then(|s| s.properties().find(|p| p.name().eq_ignore_ascii_case("SourceTable")))
+            .map(|p| p.value_text())
+        {
+            match ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()]) {
+                Resolution::Found(t) => table_of[oi] = Some(t),
+                _ => page_reasons[oi].push(format!("source table: {}", ws.outside_workspace(ObjKind::Table, &t))),
+            }
+        }
         // Its variables would follow the base items' records in the extension's globals, which the
         // slots the request page binds to do not account for.
         for (e, _) in &exts {
@@ -1137,6 +1149,16 @@ fn lower_object<'a>(
                 })
                 .and_then(|s| s.args().into_iter().next())
                 .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
+            // A trigger of the request page runs with the page's `Rec`.
+            if lw.rec_slot.is_none()
+                && o.kind == ObjKind::Report
+                && r.syntax()
+                    .ancestors()
+                    .filter_map(ast::Section::cast)
+                    .any(|s| s.name().eq_ignore_ascii_case("requestpage"))
+            {
+                lw.rec_slot = rec_slot;
+            }
         }
         // A dependency routine nothing reached was never checked: a stub that refuses.
         let reached = !checked.is_skipped(oi)

@@ -275,8 +275,15 @@ impl Session {
             }
         }
         let id = o.id.map_or(String::new(), |i| i.to_string());
+        // A page with no option control has no `Options` element
+        // (handlers/TestReportRequestPageSourceTableCompiledContracts.al:RunRequestPage_RequestPageRecIsUnfiltered).
+        let options = if options.is_empty() {
+            String::new()
+        } else {
+            format!("<Options>{options}</Options>")
+        };
         Ok(format!(
-            "<?xml version=\"1.0\" standalone=\"yes\"?><ReportParameters name=\"{}\" id=\"{id}\"><Options>{options}</Options><DataItems>{items}</DataItems></ReportParameters>",
+            "<?xml version=\"1.0\" standalone=\"yes\"?><ReportParameters name=\"{}\" id=\"{id}\">{options}<DataItems>{items}</DataItems></ReportParameters>",
             xml_escape(&o.name)
         ))
     }

@@ -223,9 +223,10 @@ pub struct Report {
     pub on_init: Option<usize>,
     pub on_pre: Option<usize>,
     pub on_post: Option<usize>,
-    /// The one reportextension (object index) that changes what a run does, if any.
+    /// The reportextensions (object indices) that change what a run does, in the order they apply:
+    /// by object id (ADR-025). Empty: none does.
     #[serde(default)]
-    pub extension: Option<usize>,
+    pub extensions: Vec<usize>,
     /// Global slot of the hidden flag `Report.UseRequestPage(x)` sets: 0 = not set, 1 = true, 2 = false.
     pub request_flag_slot: usize,
     /// Why running the report would render output (it is not `ProcessingOnly`, or it declares a

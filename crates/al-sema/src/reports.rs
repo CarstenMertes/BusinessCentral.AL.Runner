@@ -644,8 +644,8 @@ pub struct Context<'a> {
     pub routine_at: &'a crate::lower::RoutineAt,
     /// Reportextensions that change what a run does: why the report cannot run yet.
     pub extension_reasons: Vec<String>,
-    /// The one reportextension (object index) that changes what a run does.
-    pub extension: Option<usize>,
+    /// The reportextensions (object indices) that change what a run does, in object id order.
+    pub extensions: Vec<usize>,
 }
 
 fn table_object(ws: &Workspace, file: usize, name: &str) -> Option<usize> {
@@ -886,7 +886,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         on_init: object_trigger(&o, obj, "OnInitReport"),
         on_pre: object_trigger(&o, obj, "OnPreReport"),
         on_post: object_trigger(&o, obj, "OnPostReport"),
-        extension: cx.extension,
+        extensions: cx.extensions.clone(),
         request_flag_slot: cx.request_flag_slot,
         output: layout.output.clone(),
         unsupported: reasons,
@@ -1031,9 +1031,11 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
             place,
         });
     }
-    // Items added at one place (the same position under the same parent) run in an order no test pins.
+    // Items added at one place (the same position under the same parent) run in declaration order
+    // for `addfirst` and `addbefore` (corpus reportextensiontrigger/TestReportExtensionSamePlaceContracts.al:251,
+    // X1 X2 ChildA and G1 F1 F2). After the anchor, and last under a parent, no test pins it.
     for (i, a) in added.iter().enumerate() {
-        if a.place != ir::AddedPlace::Last
+        if matches!(a.place, ir::AddedPlace::After(_))
             && added[..i]
                 .iter()
                 .any(|b| b.place == a.place && b.base_parent == a.base_parent && b.item.parent == a.item.parent)

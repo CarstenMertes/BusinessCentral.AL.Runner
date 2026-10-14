@@ -165,6 +165,25 @@ R2. A public (non-protected) procedure of the base report from the extension, an
 R3. A `protected var` of type Dialog, Record and List in the base report, used from the extension (`Window.Open`, `Update`, `Close`).
 R4. Two reportextensions of one report that both change the run: today refused; whether they share the base variable (they would, under this ADR).
 
+## Pinned (2026-10-14, BC 27.5 container; corpus branch `al-runtime-rs`, cite by path until the submodule bump)
+
+`base_access::PINNED` holds P1, P2, P4, P5, P9, P10, R1, R3, citing
+`handlers/TestPageExtensionBaseAccessContracts.al` (275, 288, 310, 326),
+`handlers/TestPageExtensionBaseMembersContracts.al` (197) and
+`reportextensiontrigger/TestReportExtensionBaseMembersContracts.al` (256).
+- P6: an extension variable named like a base variable is a separate variable (the extension's own
+  wins; base keeps its value). An extension procedure named like a base procedure is compile error
+  AL0440: refused. A `local` base procedure or a base variable that is not `protected` is AL0161
+  (`'<name>' is inaccessible due to its protection level`): refused with that text, because BC
+  never runs such code.
+- R2: a public base report procedure is callable, like a protected one.
+- Several extensions share the base's variables; triggers run base first, then the extensions in
+  object id order. Not probed: order across apps.
+- The refusal "more than one reportextension changes the run" stays. Running several needs `Report::extension`
+  (one object) and `Run::ext` to become lists, the data item placement of
+  `TestReportExtensionSamePlaceContracts.al` (later extension nearest the anchor), and a rule for
+  request pages; that changes the IR seam and is a separate ADR.
+
 ## Decided by the owner (2026-10-14)
 
 1. **Option B accepted**: instance link, `Place::BaseGlobal`, `Expr::BaseInstance`.
@@ -182,7 +201,7 @@ R4. Two reportextensions of one report that both change the run: today refused; 
   pinned, or `AL_UNPINNED_BASE_ACCESS` is set). Before that the compile reaches what it reached
   before. A variable resolves to `Res::BaseGlobal`; a procedure resolves to `Res::Proc` of the base
   routine, so the existing call edge reaches the base routine and nothing else in demand changes.
-- Gates: `P1/P2` variable access on a page, `P4` base procedure call, `P5` a record, list or
+- Gates (all pinned now, see above; the text is kept for the refusal reasons): `P1/P2` variable access on a page, `P4` base procedure call, `P5` a record, list or
   other reference variable, `P9` a control's source expression, `R1` variable or procedure of a
   report, `R3` the reference types on a report. `P6` (a name declared twice) and `P8` (a `local`
   member, a variable that is not `protected`), `R2` (a public report procedure) are refusals that

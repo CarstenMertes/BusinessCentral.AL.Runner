@@ -61,7 +61,7 @@ impl Session {
         inst: &Inst,
         object: usize,
         seed: Option<&str>,
-        run_ext: Option<(usize, Inst)>,
+        run_ext: Vec<(usize, Inst)>,
         want_parameters: bool,
     ) -> Result<(RequestClosed, Option<String>), Signal> {
         let engine = self.engine();
@@ -92,9 +92,9 @@ impl Session {
         // writes into the extension's variables is what its triggers read.
         let mut exts = Vec::new();
         for &e in &page.extensions {
-            let ext = match &run_ext {
-                Some((re, i)) if *re == e => i.clone(),
-                _ => self.instance(e),
+            let ext = match run_ext.iter().find(|(re, _)| *re == e) {
+                Some((_, i)) => i.clone(),
+                None => self.instance(e),
             };
             exts.push((e, ext));
         }
@@ -158,13 +158,20 @@ impl Session {
         if schema.report().transaction_type.is_some() {
             return unsupported("SaveAsXml of a report that declares a TransactionType (not pinned)");
         }
-        let ext = {
-            let want = schema.report().extension;
-            st.borrow()
-                .ext_instances
+        let ext: Vec<(Inst, usize)> = {
+            let state = st.borrow();
+            schema
+                .report()
+                .extensions
                 .iter()
-                .find(|(e, _)| Some(*e) == want)
-                .map(|(e, i)| (i.clone(), *e))
+                .filter_map(|want| {
+                    state
+                        .ext_instances
+                        .iter()
+                        .find(|(e, _)| e == want)
+                        .map(|(e, i)| (i.clone(), *e))
+                })
+                .collect()
         };
         let run = self.report_run_for(object, &inst, ext, true);
         let outer = self.dataset.replace(crate::dataset::Dataset::default());

@@ -500,6 +500,9 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "BigText.Read#1" => {
             "BigText.Read is in no corpus test, so the encoding it reads with and whether it replaces or appends to the text are not pinned"
         }
+        "Xmlport.Run#1" | "Xmlport.Run#2" => {
+            "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
+        }
         "Media.ImportStream#2" => {
             "Media.ImportStream with a file name: what the file name is stored as (the Tenant Media row) is not pinned; only the form with a description and a MIME type is (media/TestMediaPngImport.al)"
         }

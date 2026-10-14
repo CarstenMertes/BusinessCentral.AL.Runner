@@ -427,6 +427,9 @@ impl Cand {
 struct Scope {
     oi: usize,
     file: usize,
+    /// The object's variables, shared by the routines of the object.
+    globals: std::rc::Rc<HashMap<String, Ty>>,
+    /// The routine's own frames (parameters and locals), the last first.
     vars: Vec<HashMap<String, Ty>>,
     /// The implicit record of table/page code (and `Rec` in codeunits with TableNo).
     rec: Option<Ty>,
@@ -467,7 +470,7 @@ struct Checker<'a> {
 struct ObjCtx {
     oi: usize,
     file: usize,
-    globals: HashMap<String, Ty>,
+    globals: std::rc::Rc<HashMap<String, Ty>>,
     rec: Option<Ty>,
     rec_unqualified: bool,
     self_obj: usize,
@@ -481,7 +484,7 @@ pub(crate) fn is_this_keyword(node: &SyntaxNode) -> bool {
 
 /// Whether a variable of this name is in scope, whatever frame.
 fn sc_has_var(sc: &Scope, name: &str) -> bool {
-    sc.vars.iter().any(|frame| frame.contains_key(name))
+    sc.globals.contains_key(name) || sc.vars.iter().any(|frame| frame.contains_key(name))
 }
 
 fn name_of(node: &SyntaxNode) -> String {
@@ -790,7 +793,7 @@ impl<'a> Checker<'a> {
         ObjCtx {
             oi,
             file,
-            globals,
+            globals: std::rc::Rc::new(globals),
             rec,
             rec_unqualified,
             self_obj,
@@ -856,7 +859,8 @@ impl<'a> Checker<'a> {
             let mut sc = Scope {
                 oi,
                 file,
-                vars: vec![globals.clone()],
+                globals: globals.clone(),
+                vars: Vec::new(),
                 rec,
                 rec_unqualified,
                 self_obj,
@@ -1481,7 +1485,7 @@ impl<'a> Checker<'a> {
     fn this_member(&mut self, sc: &mut Scope, node: &SyntaxNode, member: &SyntaxNode) -> Option<E> {
         let n = name_of(member);
         let key = n.to_lowercase();
-        if let Some(t) = sc.vars.first().and_then(|globals| globals.get(&key)).cloned() {
+        if let Some(t) = sc.globals.get(&key).cloned() {
             self.record(sc, node, Res::Global(key));
             return Some(E::Val(t));
         }
@@ -1497,12 +1501,15 @@ impl<'a> Checker<'a> {
     fn lookup_name(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Option<E> {
         let n = name_of(node);
         let key = n.to_lowercase();
-        for (depth, frame) in sc.vars.iter().enumerate().rev() {
-            if let Some(t) = frame.get(&key) {
-                let t = t.clone();
-                self.record(sc, node, if depth == 0 { Res::Global(key) } else { Res::Local(key) });
-                return Some(E::Val(t));
-            }
+        if let Some(t) = sc.vars.iter().rev().find_map(|frame| frame.get(&key)) {
+            let t = t.clone();
+            self.record(sc, node, Res::Local(key));
+            return Some(E::Val(t));
+        }
+        if let Some(t) = sc.globals.get(&key) {
+            let t = t.clone();
+            self.record(sc, node, Res::Global(key));
+            return Some(E::Val(t));
         }
         // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
         if key == "this" && self.ws.objects[sc.oi].kind == ObjKind::Codeunit && sc.self_obj == sc.oi {

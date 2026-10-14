@@ -85,16 +85,33 @@ impl Session {
     /// After the row at `old` became `new`: rewrites every referencing row.
     pub(crate) fn propagate_rename(
         &mut self,
+        rec: &crate::records::Rec,
         t: &TableDef,
         refs: &[RenameRef],
         old: &[Value],
         new: &[Value],
     ) -> Result<(), Signal> {
-        let cx = self.cx.clone();
         for r in refs {
             let Some(child) = self.engine.tables[r.table].clone() else {
                 continue;
             };
+            let cx = self.cx_for(rec, &child)?;
+            // The rename of a row of a table that is not per company reaches the referencing rows of
+            // every company (record/TestRenamePropagationCompany.al:5-8); only the record's own
+            // company is walked here, so rows of another company are refused.
+            if !t.per_company
+                && child.per_company
+                && self
+                    .store
+                    .companies_with_rows(child.object)
+                    .iter()
+                    .any(|c| !c.eq_ignore_ascii_case(&cx.company))
+            {
+                return unsupported(format!(
+                    "Rename of {}: {} holds rows in another company, which the rename must also walk (not modelled)",
+                    t.name, child.name
+                ));
+            }
             let engine = self.engine.clone();
             let schema = engine.program.objects[r.table].table.as_ref().expect("table");
             let field = &schema.fields[r.pos];

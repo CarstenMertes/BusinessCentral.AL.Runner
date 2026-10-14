@@ -26,6 +26,9 @@ impl Session {
     /// per-company table, every row of another table (record/TestRecordLinkColumns.al
     /// `Rename_OnAPerCompanyTable_MovesOnlyTheCurrentCompanysRows`).
     pub(crate) fn move_record_links(&mut self, t: &TableDef, rec: &Rec, old_fields: &[Value]) -> Result<(), Signal> {
+        if rec.borrow().company.is_some() && self.compiled_table(RECORD_LINK).is_some() {
+            return unsupported("Rename of a record in another company moves its record links (not pinned)");
+        }
         let Some(link_obj) = self.compiled_table(RECORD_LINK) else {
             return Ok(());
         };
@@ -80,6 +83,9 @@ impl Session {
         t: &TableDef,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        if rec.borrow().company.is_some() {
+            return unsupported(format!("{method} on a record in another company (not pinned)"));
+        }
         let Some(link_obj) = self.compiled_table(RECORD_LINK) else {
             return unsupported(format!("{method}: the Record Link table was not compiled"));
         };

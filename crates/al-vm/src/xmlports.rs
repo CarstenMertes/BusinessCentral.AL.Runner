@@ -226,6 +226,7 @@ impl Session {
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
         t.key = v.key;
+        t.adhoc = v.adhoc.clone();
         t.ascending = v.ascending;
         t.field_descending = v.field_descending;
         Ok(())
@@ -248,6 +249,11 @@ impl Session {
                 ));
             }
             _ => {}
+        }
+        // Constructs no corpus test pins are refused when the port runs, not when it is declared
+        // (`ir::XmlPort::run_unsupported`).
+        if let Some(why) = schema.xp().run_unsupported.first() {
+            return unsupported(format!("XmlPort \"{}\": {why}", schema.name()));
         }
         // OnPreXmlPort runs when the port starts, in both directions
         // (handlers/TestPageActionRunObjectKinds_Tests.al:ProbeControlEachTargetRecordsItsOwnExecution pins

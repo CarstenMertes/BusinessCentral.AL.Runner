@@ -634,6 +634,15 @@ impl Session {
                 }
                 other => unsupported(format!("Page.SetRecord with {other:?}")),
             },
+            // What rows `SetSelectionFilter` selects on a page driven by the test client is not pinned: no corpus
+            // test reads the filter it sets (docs/probes-needed.md). Reaching it is refused at run time, so the
+            // many tests that open a page which merely declares a routine calling it still run.
+            "SetSelectionFilter" => unsupported(
+                "Page.SetSelectionFilter: which rows a test client page has selected is not pinned by the corpus",
+            ),
+            // Which record a page variable reports after it ran is not pinned: no corpus test calls GetRecord
+            // (docs/probes-needed.md). Refused when reached, like SetSelectionFilter.
+            "GetRecord" => unsupported("Page.GetRecord: which record a page reports is not pinned by the corpus"),
             // `P.SetTableView(Rec)` hands the page variable the view of Rec (filters and sorting) but not its
             // position, so the page opens on its first row (corpus handlers/TestPageModalNewRowLine_Tests.al:
             // ReEditable_LookupModeTrue_HasNoNewRowLine, Plain_LookupModeFalse_HasTheNewRowLine).
@@ -878,6 +887,8 @@ impl Session {
             s.dirty = false;
             s.frozen_visible = Vec::new();
             s.window = Vec::new();
+            s.window_from_start = false;
+            s.window_eof = false;
             s.focus = None;
             s.focus_in_row = false;
             s.errors = Vec::new();
@@ -931,6 +942,7 @@ impl Session {
             dst.fields = src.fields.clone();
             dst.filters = src.filters.clone();
             dst.key = src.key;
+            dst.adhoc = src.adhoc.clone();
             dst.temporary = src.temporary;
             dst.temp_id = src.temp_id;
             dst.ascending = src.ascending;
@@ -1330,7 +1342,11 @@ impl Session {
     fn page_first_row(&mut self, st: &St) -> Result<(), Signal> {
         if self.nav_find(st, "-")? {
             st.borrow_mut().cursor = Cursor::Row;
-            self.arrive(st)
+            self.arrive(st)?;
+            // The window starts at the first row of the view.
+            let from_start = self.is_list(st);
+            st.borrow_mut().window_from_start = from_start;
+            Ok(())
         } else if st.borrow().new_line {
             self.land_on_new_line(st)?;
             self.populate_expressions(st)
@@ -1724,6 +1740,8 @@ impl Session {
     const WINDOW: usize = 20;
 
     fn populate_window(&mut self, st: &St) -> Result<(), Signal> {
+        st.borrow_mut().window_from_start = false;
+        st.borrow_mut().window_eof = false;
         let rec = self.page_rec(st);
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
@@ -1767,6 +1785,85 @@ impl Session {
         // raises OnAfterGetRecord 21 times when it opens, rows 1 to 20 and then row 1 again
         // (corpus handlers/TestPageRuntimeContracts.al:121-136 TestPage_List_OpenReads21Rows).
         self.page_trigger(st, "onaftergetrecord", vec![])?;
+        Ok(())
+    }
+
+    /// A GoToKey that goes past the rows a list has read reads on in blocks: the last two rows of the
+    /// block before, then 20 new rows (fewer at the end of the view). The cursor stands on the first
+    /// unread row `X` and the window holds every row before it. Returns whether the block was full, the key
+    /// of its last row, and leaves the cursor on `X` again with the whole block in the window.
+    /// Pinned on a real service tier by corpus handlers/TestPageSystemPartListWindowContracts.al:194
+    /// (List_Window_AfterGoToKeyOutsideTheRowsRead), :210 (List_Window_SmallTable) and
+    /// handlers/TestPageRuntimeContracts.al:331.
+    fn read_window_block(&mut self, st: &St) -> Result<(bool, Vec<Value>), Signal> {
+        let rec = self.page_rec(st);
+        let start = self.row_key(&rec)?;
+        let prefix = st.borrow().window.len().min(2);
+        let trigger_rows = self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord");
+        if prefix > 0 && !self.nav_next(st, -(prefix as i32))? {
+            return unsupported("a list that cannot step back over the rows it has read");
+        }
+        let mut walked = 0usize;
+        let mut new_rows = 0usize;
+        let mut last_key = start.clone();
+        for i in 0..prefix + Self::WINDOW {
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            self.populate_current(st)?;
+            let row = al_builtins::value::WindowRow {
+                key: key.clone(),
+                stored,
+                shown: rec.borrow().fields.clone(),
+            };
+            {
+                let mut s = st.borrow_mut();
+                match s.window.iter().position(|w| Self::same_key(&w.key, &key)) {
+                    Some(at) => s.window[at] = row,
+                    None => s.window.push(row),
+                }
+            }
+            if i >= prefix {
+                new_rows += 1;
+                last_key = key;
+            }
+            if i + 1 == prefix + Self::WINDOW {
+                break;
+            }
+            if !self.nav_next(st, 1)? {
+                break;
+            }
+            walked += 1;
+        }
+        // Back on `X`, which is `prefix` rows into the walk.
+        if trigger_rows {
+            for _ in prefix..walked {
+                if !self.nav_next(st, -1)? {
+                    return unsupported("OnNextRecord did not step back over the rows it served");
+                }
+            }
+        } else {
+            self.ret_used = true;
+            self.record_op("Get", &rec, &mut start.clone())?;
+        }
+        Ok((new_rows == Self::WINDOW, last_key))
+    }
+
+    /// The last two rows of the window are read once more: what a read that reached the end of the view
+    /// does (corpus handlers/TestPageSystemPartListWindowContracts.al:194, handlers/TestPageRuntimeContracts.al:331).
+    /// The cursor is on the last row of the view and stays there.
+    fn reread_last_rows(&mut self, st: &St) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let n = st.borrow().window.len();
+        if n >= 2 {
+            if !self.nav_next(st, -1)? {
+                return unsupported("a list that cannot step back over its last row");
+            }
+            self.populate_current(st)?;
+            self.nav_next(st, 1)?;
+        }
+        self.populate_current(st)?;
+        let _ = rec;
+        st.borrow_mut().window_eof = true;
         Ok(())
     }
 
@@ -1925,8 +2022,17 @@ impl Session {
         let (before_cursor, before_draft) = (st.borrow().cursor, st.borrow().draft);
         let mut at = self.nav_find(st, "-")?;
         let mut found = false;
+        // The last block this scan read: whether it was full and the key of its last row.
+        let mut block: Option<(bool, Vec<Value>)> = None;
         while at {
             st.borrow_mut().cursor = Cursor::Row;
+            if self.is_list(st) && st.borrow().window_from_start && !st.borrow().window.is_empty() {
+                let key = self.row_key(&rec)?;
+                if !self.in_window(st, &key) {
+                    let r = self.read_window_block(st);
+                    block = Some(self.torn_down_on_error(st, r)?);
+                }
+            }
             let r = self.arrive(st);
             self.torn_down_on_error(st, r)?;
             let here = self.row_key(&rec)?;
@@ -1941,7 +2047,30 @@ impl Session {
             }
             at = self.nav_next(st, 1)?;
         }
+        if found {
+            // A full block whose last row is the target: the read goes on. At the end of the view it reads
+            // the last two rows once more (handlers/TestPageRuntimeContracts.al:331, row 60). Where more
+            // rows follow, nothing pins what is read.
+            if let Some((true, last)) = &block {
+                if Self::same_key(&self.row_key(&rec)?, last) {
+                    if self.nav_next(st, 1)? {
+                        self.nav_next(st, -1)?;
+                        return unsupported(
+                            "GoToKey onto the last row of a full block of rows read, with more rows after it (not pinned)",
+                        );
+                    }
+                    let r = self.reread_last_rows(st);
+                    self.torn_down_on_error(st, r)?;
+                }
+            }
+        }
         if !found {
+            // A miss reads on to the end of the view and then the last two rows once more
+            // (handlers/TestPageSystemPartListWindowContracts.al:194, key 100).
+            if block.is_some() && !st.borrow().window_eof {
+                let r = self.reread_last_rows(st);
+                self.torn_down_on_error(st, r)?;
+            }
             rec.borrow_mut().fields = before_fields;
             let mut s = st.borrow_mut();
             s.cursor = before_cursor;
@@ -2609,8 +2738,9 @@ impl Session {
                     self.curr_field_no.pop();
                     validated?;
                 }
-                ir::Binding::Var(slot) => {
-                    let inst = self.owner_instance(st, ctl.owner);
+                ir::Binding::Var(_) | ir::Binding::BaseVar(_) => {
+                    let (slot, owner) = ctl.binding.var_slot(ctl.owner).expect("a variable binding");
+                    let inst = self.owner_instance(st, owner);
                     inst.borrow_mut().globals[slot] = parsed.clone();
                 }
                 _ => return unsupported("SetValue on a read-only control"),
@@ -2638,8 +2768,8 @@ impl Session {
                 // SetValue_TrueFalseSpelling_IsRefused: the stored value is untouched).
                 if let (Some(rec), Some(before)) = (&rec, before) {
                     rec.borrow_mut().fields = before;
-                } else if let ir::Binding::Var(slot) = ctl.binding {
-                    let inst = self.owner_instance(st, ctl.owner);
+                } else if let Some((slot, owner)) = ctl.binding.var_slot(ctl.owner) {
+                    let inst = self.owner_instance(st, owner);
                     inst.borrow_mut().globals[slot] = current.clone();
                 }
                 Err(refuse(self, e.message))
@@ -3344,6 +3474,7 @@ impl Session {
                 return unsupported("OnFindRecord does not find the row the client settled on");
             }
             st.borrow_mut().window = Vec::new();
+            st.borrow_mut().window_from_start = false;
             st.borrow_mut().cursor = Cursor::Row;
             let r = self.arrive(st);
             return self.torn_down_on_error(st, r);
@@ -3361,6 +3492,7 @@ impl Session {
         rec.borrow_mut().fields = fresh;
         st.borrow_mut().cursor = Cursor::None;
         st.borrow_mut().window = Vec::new();
+        st.borrow_mut().window_from_start = false;
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
         self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         if self.nav_find(st, "=>")? || self.nav_find(st, "=><")? {
@@ -3424,8 +3556,11 @@ impl Session {
                 }
                 Ok(self.page_rec(st).borrow().fields[pos].clone())
             }
-            ir::Binding::Var(slot) => {
-                let inst = self.owner_instance(st, page_of(&engine, st).controls[idx].owner);
+            b @ (ir::Binding::Var(_) | ir::Binding::BaseVar(_)) => {
+                let (slot, owner) = b
+                    .var_slot(page_of(&engine, st).controls[idx].owner)
+                    .expect("a variable binding");
+                let inst = self.owner_instance(st, owner);
                 let v = inst.borrow().globals[slot].clone();
                 Ok(v)
             }
@@ -3570,8 +3705,8 @@ impl Session {
         }
         let engine = self.engine();
         let ctl = &page_of(&engine, st).controls[idx];
-        if let ir::Binding::Var(slot) = ctl.binding {
-            let object = ctl.owner.unwrap_or(st.borrow().object as usize);
+        if let Some((slot, owner)) = ctl.binding.var_slot(ctl.owner) {
+            let object = owner.unwrap_or(st.borrow().object as usize);
             return Some(engine.program.objects[object].globals[slot].ty.clone());
         }
         let _ = v;
@@ -3688,8 +3823,10 @@ impl Session {
         // A control bound to a page variable stays editable on a read-only page (corpus
         // handlers/TestPageReadOnlySetValue.al:365 OpenView_PageVariableControl_StaysEditable).
         let engine = self.engine();
-        let rec_bound = !matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Var(_))
-            || (st.borrow().lookup && self.is_list_page(st))
+        let rec_bound = !matches!(
+            page_of(&engine, st).controls[idx].binding,
+            ir::Binding::Var(_) | ir::Binding::BaseVar(_)
+        ) || (st.borrow().lookup && self.is_list_page(st))
             || st.borrow().editable_off;
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }

@@ -186,6 +186,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `autoinc.rs` (198): AutoIncrement fields: taking the next value, explicit keys. Entry: `auto_increment_field` 28, `take_auto_increment` 58.
 - `baseline.rs` (66): The install baseline (ADR-013 decision 5, ADR-004). Entry: `Baseline` 12.
 - `callstack.rs` (78): The AL call stack of an error (`GetLastErrorCallStack`). Entry: `add_frame` 36, `add_top_frame` 29, `frame_line` 48.
+- `companies.rs` (147): The company a record works in, ChangeCompany, the Company table's rows per company. Entry: `find_company`, `cx_for`, `change_company`.
 - `dispatch.rs` (338): Event dispatch: publishers run their subscribers; EventCall; isolated events. Entry: `publish` 69, `raise` 117, `event_targets` 183, `has_listeners` 249, `subscription` 279.
 - `dotnet/mod.rs` (488): `DotNet` calls (ADR-014). Entry: `DotNetConfig` 33, `DotNetState` 58, `fit` 455.
 - `dotnet/policy.rs` (269): What is refused before a `DotNet` request is sent (ADR-014 section 8). Entry: `Access` 6, `Policy` 14.

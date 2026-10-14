@@ -615,18 +615,18 @@ fn company_name_is_the_company_of_the_session() {
 }
 
 #[test]
-fn change_company_to_the_session_company_succeeds_and_other_companies_are_refused() {
+fn change_company_to_the_session_company_succeeds_and_an_unknown_company_is_false() {
     // record/TestSecurityFilteringContracts.al:108-138, record/TestRecordChangeCompanyRows.al:115:
-    // `Rec.ChangeCompany(CompanyName())` is true and the rows stay visible. Another company needs
-    // the Company table (outside the workspace).
+    // `Rec.ChangeCompany(CompanyName())` is true and the rows stay visible. A name nobody made is
+    // false (record/TestSecurityFilteringContracts.al:149-160; tests/companies.rs has the rest).
     let src = "table 50900 \"ALT Row\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
         codeunit 50100 C { procedure F(): Text var R: Record \"ALT Row\"; B: Record \"ALT Row\"; ok: Boolean; begin
             R.Id := 1; R.Insert();
             ok := B.ChangeCompany(CompanyName());
             exit(Format(ok) + Format(B.Count()) + B.CurrentCompany());
-        end; procedure G() var R: Record \"ALT Row\"; ok: Boolean; begin ok := R.ChangeCompany('Some Other Company'); end; }";
+        end; procedure G(): Text var R: Record \"ALT Row\"; ok: Boolean; begin ok := R.ChangeCompany('Some Other Company'); exit(Format(ok)); end; }";
     assert!(matches!(run(src, "F"), Ok(Value::Text(ref s)) if s.starts_with("Yes1")));
-    assert!(matches!(run(src, "G"), Err(Signal::Unsupported(_))));
+    assert!(matches!(run(src, "G"), Ok(Value::Text(ref s)) if s == "No"));
 }
 
 #[test]

@@ -61,6 +61,18 @@ const HARMLESS_QUERY_PROPERTIES: &[&str] = &[
     "dataaccessintent",
 ];
 
+/// The text inside `raw` when `raw` is exactly one single-quoted AL string.
+fn whole_literal(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    let inner = t.strip_prefix('\'')?.strip_suffix('\'')?;
+    // A quote inside must be doubled, or the literal ended early.
+    let mut rest = inner;
+    while let Some(i) = rest.find('\'') {
+        rest = rest[i + 1..].strip_prefix('\'')?;
+    }
+    Some(inner.replace("''", "'"))
+}
+
 pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayout {
     let obj = ws.object_ast(oi);
     let mut b = Builder {
@@ -72,27 +84,12 @@ pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayo
         columns: Vec::new(),
         tys: Vec::new(),
     };
-    // Procedures run on the query they are called on (query/TestQueryDataItemTableFilterDatabaseConst.al:
-    // 96-107, handlers/TestManualObjectIntegrationEvent.al:69-89). What no corpus test pins is
-    // refused for code that uses the query: variables (whether they persist across calls) and an
-    // OnBeforeOpen with statements (when it runs relative to the filters). An empty OnBeforeOpen,
-    // as Base App's query 1302 has, can show nothing.
-    if obj.var_decls().next().is_some() {
-        b.reasons
-            .push("query variables are not supported yet (their persistence across calls is not pinned)".into());
-    }
+    // Procedures, variables and OnBeforeOpen run on the query they belong to
+    // (query/TestQueryDataItemTableFilterDatabaseConst.al:96-107, handlers/TestManualObjectIntegrationEvent.al:69-89,
+    // query/TestQueryOnBeforeOpenVariablesContracts.al:104-140). Only OnBeforeOpen exists as a trigger.
     for r in ast::routines_in(obj.syntax()) {
-        if r.is_trigger() {
-            let empty = r.body().is_none_or(|body| {
-                body.children()
-                    .all(|n| matches!(n.kind(), al_syntax::SyntaxKind::EmptyStmt))
-            });
-            if !empty || !r.name().eq_ignore_ascii_case("OnBeforeOpen") {
-                b.reasons.push(format!(
-                    "query trigger {} with statements is not supported yet (when it runs is not pinned)",
-                    r.name()
-                ));
-            }
+        if r.is_trigger() && !r.name().eq_ignore_ascii_case("OnBeforeOpen") {
+            b.reasons.push(format!("query trigger {} is not supported", r.name()));
         }
     }
     let mut order_by_text = None;
@@ -205,6 +202,7 @@ impl Builder<'_> {
             link: Vec::new(),
             table_filter: Vec::new(),
         });
+        let mut cross = false;
         for p in sec.properties() {
             let value = p.value_text();
             match p.name().to_ascii_lowercase().as_str() {
@@ -217,6 +215,12 @@ impl Builder<'_> {
                     // child, LeftOuterJoin keeps it.
                     "innerjoin" => self.items[idx].left_outer = false,
                     "leftouterjoin" => self.items[idx].left_outer = true,
+                    // query/TestQueryCrossJoinContracts.al:162-226: the product of both tables, an
+                    // inner join whose every inner row matches (no rows when the inner table is empty).
+                    "crossjoin" if parent.is_some() => {
+                        self.items[idx].left_outer = false;
+                        cross = true;
+                    }
                     other => self.reason(format!("dataitem {name}: SqlJoinType = {other} is not supported yet")),
                 },
                 "dataitemtablefilter" => {
@@ -228,7 +232,9 @@ impl Builder<'_> {
                 other => self.reason(format!("dataitem {name}: property {other} is not supported yet")),
             }
         }
-        if parent.is_some() && self.items[idx].link.is_empty() {
+        if cross && !self.items[idx].link.is_empty() {
+            self.reason(format!("dataitem {name}: CrossJoin with a DataItemLink (not pinned)"));
+        } else if parent.is_some() && !cross && self.items[idx].link.is_empty() {
             self.reason(format!("dataitem {name} is nested without a DataItemLink"));
         }
         let mut nested = 0;
@@ -305,7 +311,12 @@ impl Builder<'_> {
                         continue;
                     }
                 },
-                CondValue::Filter(raw) => ir::CalcValue::Filter(rewrite_quotes(raw)),
+                // `filter('>=2')`: a filter written as one AL string is that filter's text
+                // (query/TestQueryCrossJoinContracts.al:187-198 filters Id >= 2 and Qty > 5 this way).
+                CondValue::Filter(raw) => ir::CalcValue::Filter(match whole_literal(raw) {
+                    Some(inner) => inner,
+                    None => rewrite_quotes(raw),
+                }),
                 _ => {
                     self.reason("DataItemTableFilter with field(...) is not supported yet");
                     continue;
@@ -726,18 +737,18 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
                 dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; SqlJoinType = RightOuterJoin; column(X; Amount) { } } } } }",
             "rightouterjoin",
         );
-        // Query code.
-        has(
-            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnBeforeOpen() begin Message('x'); end; }",
-            "with statements",
-        );
-        // An empty OnBeforeOpen shows nothing (Base App's query 1302).
+        // Query code: procedures, variables and an OnBeforeOpen run (query/TestQueryOnBeforeOpenVariablesContracts.al);
+        // another trigger does not exist.
         assert!(
             layout_of(
-                "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnBeforeOpen() begin end; }"
+                "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } var N: Integer; trigger OnBeforeOpen() begin N += 1; end; procedure P() begin end; }"
             )
             .reasons
             .is_empty()
+        );
+        has(
+            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnAfterOpen() begin end; }",
+            "OnAfterOpen",
         );
         // Grouped aggregate without an OrderBy is refused by the VM when a run yields several groups.
         assert!(

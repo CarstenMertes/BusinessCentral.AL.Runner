@@ -484,6 +484,25 @@ xmlport 60048 "ALT Container Trigger XmlPort"
     }
 }
 
+// corpus xmlport/TestXmlPortFormatEvaluateContracts.al (68460..68462)
+table 60060 "FE Table"
+{
+    fields { field(1; Id; Integer) { } field(2; Dt; Date) { } field(3; Dec; Decimal) { } field(4; Bl; Boolean) { } }
+    keys { key(PK; Id) { } }
+}
+xmlport 60061 "FE Legacy"
+{
+    Format = Xml; Direction = Both; FormatEvaluate = Legacy; UseRequestPage = false;
+    schema { textelement(Root) { tableelement(T; "FE Table") {
+        fieldelement(Id; T.Id) { } fieldelement(Dt; T.Dt) { } fieldelement(Dec; T.Dec) { } fieldelement(Bl; T.Bl) { } } } }
+}
+xmlport 60062 "FE Xml"
+{
+    Format = Xml; Direction = Both; FormatEvaluate = Xml; UseRequestPage = false;
+    schema { textelement(Root) { tableelement(T; "FE Table") {
+        fieldelement(Id; T.Id) { } fieldelement(Dt; T.Dt) { } fieldelement(Dec; T.Dec) { } fieldelement(Bl; T.Bl) { } } } }
+}
+
 codeunit 50100 Helpers
 {
     procedure Row(EntryNo: Integer; IntegerValue: Integer; TextValue: Text; Description: Text)
@@ -1305,4 +1324,55 @@ fn a_container_text_element_trigger_is_refused_when_the_port_runs_not_when_it_is
         "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('ran');",
     );
     assert!(why.contains("triggers of the container text element Root"), "{why}");
+}
+
+const FE_ROW: &str = "T: Record \"FE Table\"; B: Record \"ALT Blob\"; OutStr: OutStream; PL: XmlPort \"FE Legacy\"; PX: XmlPort \"FE Xml\"; H: Codeunit Helpers; s: Text;";
+
+// xmlport/TestXmlPortFormatEvaluateContracts.al:131-155: Legacy writes the display text, Xml the XML forms.
+#[test]
+fn format_evaluate_decides_the_text_an_export_writes() {
+    let out = text(
+        FE_ROW,
+        "T.Id := 1; T.Dt := DMY2Date(5, 3, 2024); T.Dec := 1234.5; T.Bl := true; T.Insert();
+         B.Code := 'L'; B.Insert(); B.Data.CreateOutStream(OutStr); PL.SetDestination(OutStr); PL.Export(); B.Modify();
+         s := H.ReadAll(B);
+         B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); PX.SetDestination(OutStr); PX.Export(); B.Modify();
+         exit(s + '#' + H.ReadAll(B));",
+    );
+    let (legacy, xml) = out.split_once('#').unwrap();
+    assert!(
+        legacy.contains("<Dt>03/05/24</Dt><Dec>1,234.50</Dec><Bl>Yes</Bl>") || legacy.contains("<Dt>03/05/24</Dt>"),
+        "{legacy}"
+    );
+    assert!(legacy.contains("1,234.50") && legacy.contains("Yes"), "{legacy}");
+    assert!(
+        xml.contains("<Dt>2024-03-05</Dt>") && xml.contains("1234.50") && xml.contains("<Bl>true</Bl>"),
+        "{xml}"
+    );
+}
+
+// :157-197: an import reads only its own form; the Xml port refuses the display date (the start of BC's text
+// is pinned) and the Legacy port the XML date ("The date is not valid."); neither stores a row.
+#[test]
+fn format_evaluate_decides_the_form_an_import_reads() {
+    let imp = |port: u32, row: &str| {
+        text(
+            "H: Codeunit Helpers; B: Record \"ALT Blob\" temporary; InStr: InStream; T: Record \"FE Table\"; Ok: Boolean;",
+            &format!(
+                "H.Stage(B, InStr, '<Root><T>{row}</T></Root>'); Ok := XmlPort.Import({port}, InStr);
+                 if T.FindFirst() then; exit(Format(Ok) + '|' + GetLastErrorText() + '|' + Format(T.Count()) + '|' + Format(T.Dt, 0, 9) + Format(T.Dec, 0, 9));"
+            ),
+        )
+    };
+    let xml_row = "<Id>1</Id><Dt>2024-03-05</Dt><Dec>1234.5</Dec><Bl>true</Bl>";
+    let display_row = "<Id>1</Id><Dt>03/05/24</Dt><Dec>1,234.5</Dec><Bl>Yes</Bl>";
+    assert_eq!(imp(60062, xml_row), "Yes||1|2024-03-051234.5");
+    let r = imp(60062, display_row);
+    assert!(
+        r.starts_with("No|The format of the Date '03/05/24' does not match your device's date settings."),
+        "{r}"
+    );
+    assert!(r.ends_with("|0|0"), "{r}");
+    assert_eq!(imp(60061, display_row), "Yes||1|2024-03-051234.5");
+    assert_eq!(imp(60061, xml_row), "No|The date is not valid.|0|0");
 }

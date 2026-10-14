@@ -221,6 +221,101 @@ impl Entry {
     }
 }
 
+/// An entry inflated piece by piece, for an entry too big to hold in memory (the demo backup).
+/// Feed the stored bytes with [`EntryDecoder::push`] and end with [`EntryDecoder::finish`], which
+/// checks the recorded size and CRC-32.
+pub struct EntryDecoder {
+    name: String,
+    expected_size: usize,
+    expected_crc: u32,
+    inflate: Option<flate2::Decompress>,
+    crc: crc32fast::Hasher,
+    size: usize,
+}
+
+impl Entry {
+    /// A decoder for this entry's stored bytes (method 0 or 8, like [`Entry::decode`]).
+    pub fn decoder(&self) -> Result<EntryDecoder, ZipError> {
+        let inflate = match self.method {
+            0 => None,
+            8 => Some(flate2::Decompress::new(false)),
+            m => {
+                return Err(ZipError::Unsupported(format!(
+                    "compression method {m} (entry `{}`)",
+                    self.name
+                )));
+            }
+        };
+        Ok(EntryDecoder {
+            name: self.name.clone(),
+            expected_size: self.size,
+            expected_crc: self.crc,
+            inflate,
+            crc: crc32fast::Hasher::new(),
+            size: 0,
+        })
+    }
+}
+
+impl EntryDecoder {
+    /// Takes the next stored bytes and hands every inflated piece to `out`.
+    pub fn push<E>(&mut self, chunk: &[u8], out: &mut dyn FnMut(&[u8]) -> Result<(), E>) -> Result<(), E>
+    where
+        E: From<ZipError>,
+    {
+        let Some(inflate) = self.inflate.as_mut() else {
+            self.crc.update(chunk);
+            self.size += chunk.len();
+            return out(chunk);
+        };
+        let mut buf = vec![0u8; 256 << 10];
+        let mut input = chunk;
+        loop {
+            let (before_in, before_out) = (inflate.total_in(), inflate.total_out());
+            let status = inflate
+                .decompress(input, &mut buf, flate2::FlushDecompress::None)
+                .map_err(|err| ZipError::Inflate {
+                    name: self.name.clone(),
+                    message: err.to_string(),
+                })?;
+            let used = (inflate.total_in() - before_in) as usize;
+            let made = (inflate.total_out() - before_out) as usize;
+            input = &input[used..];
+            if made > 0 {
+                self.crc.update(&buf[..made]);
+                self.size += made;
+                out(&buf[..made])?;
+            }
+            if matches!(status, flate2::Status::StreamEnd) || (input.is_empty() && made < buf.len()) {
+                return Ok(());
+            }
+            if used == 0 && made == 0 {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Checks the size and CRC-32 of everything pushed.
+    pub fn finish(self) -> Result<(), ZipError> {
+        if self.size != self.expected_size {
+            return Err(ZipError::Size {
+                name: self.name,
+                expected: self.expected_size,
+                actual: self.size,
+            });
+        }
+        let actual = self.crc.finalize();
+        if actual != self.expected_crc {
+            return Err(ZipError::Crc {
+                name: self.name,
+                expected: self.expected_crc,
+                actual,
+            });
+        }
+        Ok(())
+    }
+}
+
 impl<'a> Zip<'a> {
     pub fn parse(data: &'a [u8]) -> Result<Zip<'a>, ZipError> {
         let end = find_end_record(data)?;

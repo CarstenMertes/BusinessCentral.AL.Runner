@@ -152,6 +152,12 @@ page 62094 "PM Selection"
     procedure Selected(var Out: Record "PM Row") begin CurrPage.SetSelectionFilter(Out); end;
     procedure Picked(var Out: Record "PM Row") var Other: Page "PM Selection"; begin Other.GetRecord(Out); end;
 }
+page 62095 "PM Bounded"
+{
+    PageType = Card;
+    layout { area(Content) { field(Tol; Tol) { MinValue = 0; MaxValue = 100; } } }
+    var Tol: Decimal;
+}
 page 62091 "PM Kinds"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -599,6 +605,48 @@ fn reaching_set_selection_filter_or_get_record_is_refused() {
     );
     assert!(
         matches!(&o[1].1, Outcome::NotRun(why) if why.contains("GetRecord")),
+        "{o:?}"
+    );
+}
+
+// `P.Editable := false` and `P.Editable(false)` on a Page variable that has not run: Base App's "Reminder Level
+// Communication" does it before `RunModal`. It raised "The TestPage is not open", an error BC does not raise. What BC
+// does with it is in no corpus test, so reaching it is refused (docs/probes-needed.md, "Page variable Editable").
+#[test]
+fn editable_on_a_page_variable_that_has_not_run_is_refused_not_an_error() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Assigns() var P: Page \"PM Selection\"; begin P.Editable := false; end;
+        [Test]
+        procedure Calls() var P: Page \"PM Selection\"; begin P.Editable(false); end;"
+    ));
+    for (name, outcome) in &o {
+        assert!(
+            matches!(outcome, Outcome::NotRun(why) if why.contains("Editable") && why.contains("not pinned")),
+            "{name}: {outcome:?}"
+        );
+    }
+}
+
+// A control bound to a variable with its own MinValue/MaxValue: a value inside the bounds is written, one outside is
+// refused (Base App's "Document Search" page; no corpus test pins the control-level bound).
+#[test]
+fn a_variable_control_with_bounds_takes_inside_values_and_refuses_the_others() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Inside() var P: TestPage \"PM Bounded\"; begin
+            P.OpenEdit(); P.Tol.SetValue(50); Check('50.00', P.Tol.Value()); P.Close(); end;"
+    ));
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Outside() var P: TestPage \"PM Bounded\"; begin
+            P.OpenEdit(); P.Tol.SetValue(150); P.Close(); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("MinValue")),
         "{o:?}"
     );
 }

@@ -9,6 +9,7 @@
 //! Every rule cites the corpus test that pins it; the rest is refused.
 
 use super::*;
+use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
 
 type Inst = Rc<RefCell<al_builtins::value::Instance>>;
@@ -21,6 +22,8 @@ pub(crate) enum RequestClosed {
     /// The handler cancelled: no parameters, and a run stops
     /// (handlers/TestReportRunWithRequestPage.al:Report_Run_CancelledRequestPageRunsNothingAndRaisesNoError).
     Cancel,
+    /// The handler called `SaveAsXml`: the report ran there, and the page is closed.
+    SavedAsXml,
 }
 
 impl Session {
@@ -126,8 +129,97 @@ impl Session {
                 Ok((RequestClosed::Ok, parameters))
             }
             Some("Cancel") => Ok((RequestClosed::Cancel, None)),
-            other => unsupported(format!("a request page closed with {other:?} (not pinned)")),
+            Some("SaveAsXml") => Ok((RequestClosed::SavedAsXml, None)),
+            other => unsupported(format!("a request page closed with {} (not pinned)", other.describe())),
         }
+    }
+
+    /// `TestRequestPage.SaveAsXml(ParametersFileName, ReportDataFileName)` from a request page handler: runs the
+    /// report there and then with the page's values, writes the parameters file and the .NET DataSet of the
+    /// rows, and closes the page. Pinned by al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al
+    /// (a Target = OnPrem app): one run with the request page's filters applied, two files, every later use
+    /// of the handler's page raises "The TestPage is not open.". What the parameters file holds between the
+    /// parts the corpus asserts is assumed (docs/probes-needed.md).
+    pub(super) fn request_save_as_xml(&mut self, st: &St, args: &[Value]) -> Result<Value, Signal> {
+        self.require_open(st)?;
+        if !self.is_request_page(st) {
+            return unsupported("SaveAsXml on a page that is not a request page");
+        }
+        let (Some(Value::Text(parameters_file)), Some(Value::Text(data_file))) = (args.first(), args.get(1)) else {
+            return unsupported("SaveAsXml with file names that are not Text");
+        };
+        let (parameters_file, data_file) = (parameters_file.clone(), data_file.clone());
+        let object = st.borrow().object as usize;
+        let inst = st.borrow().instance.clone().expect("open page");
+        let schema = self.report_schema_of(&inst)?;
+        if let Some(why) = schema.report().dataset_unsupported.first() {
+            return unsupported(format!("SaveAsXml of \"{}\": {why}", schema.name()));
+        }
+        if schema.report().transaction_type.is_some() {
+            return unsupported("SaveAsXml of a report that declares a TransactionType (not pinned)");
+        }
+        let ext = {
+            let want = schema.report().extension;
+            st.borrow()
+                .ext_instances
+                .iter()
+                .find(|(e, _)| Some(*e) == want)
+                .map(|(e, i)| (i.clone(), *e))
+        };
+        let run = self.report_run_for(object, &inst, ext, true);
+        let outer = self.dataset.replace(crate::dataset::Dataset::default());
+        let ran = self.report_after_page(&run, &schema);
+        let written = std::mem::replace(&mut self.dataset, outer);
+        match ran {
+            Ok(true) => {}
+            Ok(false) => return unsupported("CurrReport.Quit during a SaveAsXml (not pinned)"),
+            Err(Signal::Error(e)) => {
+                return unsupported(format!(
+                    "an error in a SaveAsXml run (what the handler sees is not pinned): {}",
+                    e.message
+                ));
+            }
+            Err(other) => return Err(other),
+        }
+        let data = written.expect("a SaveAsXml run has a dataset").finish_data_set()?;
+        let parameters = self.save_as_xml_parameters();
+        self.host
+            .files
+            .write(&parameters_file, &parameters)
+            .map_err(Signal::Unsupported)?;
+        self.host.files.write(&data_file, &data).map_err(Signal::Unsupported)?;
+        st.borrow_mut().result = Some("SaveAsXml".into());
+        self.mark_closed(st);
+        Ok(Value::Null)
+    }
+
+    /// The parameters file of `SaveAsXml`: a byte order mark, then `ArrayOfReportParameter` with the user id
+    /// and the execution time. The corpus asserts the start, the user id value, the second parameter's name
+    /// and the end; the rest (the closing of `Name`, the execution time's spelling) is assumed.
+    fn save_as_xml_parameters(&self) -> Vec<u8> {
+        let ms = self.now_millis();
+        let day = ms.div_euclid(86_400_000) + i64::from(al_builtins::format::day_from_civil(1970, 1, 1));
+        let (y, mo, d) = al_builtins::format::civil_from_day(day as i32);
+        let in_day = ms.rem_euclid(86_400_000);
+        let time = format!(
+            "{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}",
+            in_day / 3_600_000,
+            in_day / 60_000 % 60,
+            in_day / 1000 % 60
+        );
+        let one = |name: &str, value: &str| {
+            format!(
+                "  <ReportParameter>\n    <Name>{name}</Name>\n    <Values>\n      <string>{value}</string>\n    </Values>\n    <Visible>true</Visible>\n  </ReportParameter>\n"
+            )
+        };
+        let text = format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ArrayOfReportParameter xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n{}{}</ArrayOfReportParameter>\n",
+            one("NavUserId", &xml_escape(&self.host.identity.user_id())),
+            one("ExecutionTime", &time)
+        );
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(text.as_bytes());
+        bytes
     }
 
     /// A request page with `ShowFilter = false` hides the filters of its data items. What a TestRequestPage or
@@ -153,7 +245,7 @@ impl Session {
         let v = inst.borrow().globals[slot].clone();
         match v {
             Value::Record(r) => Ok(r),
-            other => unsupported(format!("a data item control holding {other:?}")),
+            other => unsupported(format!("a data item control holding {}", other.describe())),
         }
     }
 
@@ -173,14 +265,14 @@ impl Session {
         let table = self.table(&rec)?;
         let field_arg = |i: usize| match args.get(i) {
             Some(Value::Integer(p)) => Ok(*p as usize),
-            other => unsupported(format!("TestFilter field argument {other:?}")),
+            other => unsupported(format!("TestFilter field argument {}", other.describe())),
         };
         match method {
             "TestFilter.SetFilter" => {
                 let pos = field_arg(0)?;
                 let text = match args.get(1) {
                     Some(Value::Text(t) | Value::Code(t)) => t.clone(),
-                    other => return unsupported(format!("TestFilter.SetFilter with {other:?}")),
+                    other => return unsupported(format!("TestFilter.SetFilter with {}", other.describe())),
                 };
                 let ty = table.fields[pos].ty.clone();
                 let expr = self
@@ -262,7 +354,13 @@ impl Session {
                     self.require_filters_shown(object)?;
                     let rec = match inst.borrow().globals[*slot].clone() {
                         Value::Record(r) => r,
-                        other => return unsupported(format!("data item {} holds {other:?}", c.name)),
+                        other => {
+                            return unsupported(format!(
+                                "data item {} holds {other}",
+                                c.name,
+                                other = other.describe()
+                            ));
+                        }
                     };
                     let view = self.parameter_view(&rec)?;
                     items.push_str(&format!(
@@ -275,8 +373,15 @@ impl Session {
             }
         }
         let id = o.id.map_or(String::new(), |i| i.to_string());
+        // A page with no option control has no `Options` element
+        // (handlers/TestReportRequestPageSourceTableCompiledContracts.al:RunRequestPage_RequestPageRecIsUnfiltered).
+        let options = if options.is_empty() {
+            String::new()
+        } else {
+            format!("<Options>{options}</Options>")
+        };
         Ok(format!(
-            "<?xml version=\"1.0\" standalone=\"yes\"?><ReportParameters name=\"{}\" id=\"{id}\"><Options>{options}</Options><DataItems>{items}</DataItems></ReportParameters>",
+            "<?xml version=\"1.0\" standalone=\"yes\"?><ReportParameters name=\"{}\" id=\"{id}\">{options}<DataItems>{items}</DataItems></ReportParameters>",
             xml_escape(&o.name)
         ))
     }
@@ -353,7 +458,12 @@ impl Session {
                         (Err(_), _) => return unsupported(format!("the parameter {name} = {text}")),
                     }
                 }
-                other => return unsupported(format!("a parameter for the control {name} holding {other:?}")),
+                other => {
+                    return unsupported(format!(
+                        "a parameter for the control {name} holding {}",
+                        other.describe()
+                    ));
+                }
             };
             owner.borrow_mut().globals[slot] = value;
         }

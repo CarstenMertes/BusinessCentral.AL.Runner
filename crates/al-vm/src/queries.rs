@@ -9,6 +9,7 @@
 
 use crate::Session;
 use al_builtins::collation;
+use al_builtins::describe::Describe;
 use al_builtins::filter::{FieldFilter, FilterExpr};
 use al_builtins::native::{AlError, Signal, text_of};
 use al_builtins::ops;
@@ -42,7 +43,7 @@ const COLUMN_NO_BASE: i32 = 4001;
 fn arg_col(args: &[Value], i: usize) -> Result<usize, Signal> {
     match args.get(i) {
         Some(Value::Integer(p)) => Ok(*p as usize),
-        other => unsupported(format!("column argument {other:?}")),
+        other => unsupported(format!("column argument {}", other.describe())),
     }
 }
 
@@ -80,7 +81,7 @@ fn negate(v: Value) -> Result<Value, Signal> {
         Value::Decimal(d) => Value::Decimal(-d),
         Value::Integer(i) => Value::Integer(-i),
         Value::BigInteger(i) => Value::BigInteger(-i),
-        other => return unsupported(format!("ReverseSign on {other:?}")),
+        other => return unsupported(format!("ReverseSign on {}", other.describe())),
     })
 }
 
@@ -113,10 +114,16 @@ impl Session {
         object: usize,
         q: std::rc::Rc<std::cell::RefCell<al_builtins::value::QueryState>>,
     ) -> std::rc::Rc<std::cell::RefCell<al_builtins::value::Instance>> {
+        if let Some(inst) = q.borrow().instance.clone() {
+            return inst;
+        }
+        // Made once per query variable: its variables live as long as it does (`Clear` makes a new
+        // state without an instance). The hidden slot points back at the state.
         let inst = self.instance(object);
         if let Some(slot) = self.engine.program.objects[object].rec_slot {
-            inst.borrow_mut().globals[slot] = Value::Query(q);
+            inst.borrow_mut().globals[slot] = Value::Query(q.clone());
         }
+        q.borrow_mut().instance = Some(inst.clone());
         inst
     }
 
@@ -128,7 +135,7 @@ impl Session {
     ) -> Result<Value, Signal> {
         let qs: Qs = match recv {
             Some(Value::Query(q)) => q.clone(),
-            other => return unsupported(format!("Query.{method} on {other:?}")),
+            other => return unsupported(format!("Query.{method} on {}", other.describe())),
         };
         let engine = self.engine.clone();
         let object = qs.borrow().object as usize;
@@ -139,6 +146,16 @@ impl Session {
                 // Query_StateMisuse_DoesNotThrow); once rows were read what it does is not pinned.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
                     return unsupported("Open on a query that is already open and was read from (not pinned)");
+                }
+                // OnBeforeOpen runs inside Open, after the filters set so far, and a filter it sets
+                // applies to this read (query/TestQueryOnBeforeOpenVariablesContracts.al:104-140).
+                if let Some(ri) = engine.program.objects[object]
+                    .routines
+                    .iter()
+                    .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnBeforeOpen"))
+                {
+                    let inst = self.query_instance(object, qs.clone());
+                    self.call(object, ri, inst, Vec::new())?;
                 }
                 // Open does not run the query; the first Read does.
                 qs.borrow_mut().run = Some(QueryRun {
@@ -231,7 +248,7 @@ impl Session {
                 Some(n) => {
                     let n = match n {
                         Value::Integer(n) => *n,
-                        other => return unsupported(format!("TopNumberOfRows({other:?})")),
+                        other => return unsupported(format!("TopNumberOfRows({})", other.describe())),
                     };
                     if n < 0 {
                         // Corpus query/TestQueryTopProperty.al:178.
@@ -275,7 +292,7 @@ impl Session {
                         };
                         Ok(Value::Option(i, members.into()))
                     }
-                    Some(other) => unsupported(format!("SecurityFiltering({other:?})")),
+                    Some(other) => unsupported(format!("SecurityFiltering({})", other.describe())),
                 }
             }
             "SaveAsXml" | "SaveAsJson" => self.query_save_as(def, &qs, method, args),
@@ -291,7 +308,7 @@ impl Session {
     /// stream's text encoding (not pinned).
     fn query_save_as(&mut self, def: &ir::Query, qs: &Qs, method: &str, args: &[Value]) -> Result<Value, Signal> {
         let Some(Value::Library(_, h)) = args.first() else {
-            return unsupported(format!("{method} with {:?}", args.first()));
+            return unsupported(format!("{method} with {}", args.first().describe()));
         };
         let blob = match &*h.borrow() {
             al_builtins::value::LibraryValue::OutStream(blob, _) => blob.clone(),
@@ -304,8 +321,9 @@ impl Session {
         for &c in &cols {
             if !matches!(def.columns[c].ty, RtType::Integer) {
                 return unsupported(format!(
-                    "{method} of the column {} of type {:?} (only Integer columns are pinned)",
-                    def.columns[c].name, def.columns[c].ty
+                    "{method} of the column {} of type {} (only Integer columns are pinned)",
+                    def.columns[c].name,
+                    def.columns[c].ty.describe()
                 ));
             }
         }
@@ -365,7 +383,7 @@ impl Session {
     /// The value of column `column` in the row `Read` returned last.
     pub(crate) fn query_column(&mut self, q: Value, column: usize) -> Result<Value, Signal> {
         let Value::Query(qs) = q else {
-            return unsupported(format!("a query column of {q:?}"));
+            return unsupported(format!("a query column of {}", q.describe()));
         };
         let qs = qs.borrow();
         match qs.run.as_ref().and_then(|r| r.current.as_ref()) {
@@ -531,9 +549,26 @@ impl Session {
         };
         // Groups with no OrderBy come back in an order no corpus test pins; a single group has none
         // to get wrong (record/TestSalesQuoteVatRounding.al:67-79).
+        // Groups whose grouping columns start with the root item's primary key come in that key's
+        // order (query/TestQueryCrossJoinContracts.al:202-213: `1=12 2=12 3=12`, no OrderBy).
+        let root_key_grouped = def.items.first().is_some_and(|root| {
+            self.engine.tables[root.table].as_ref().is_some_and(|t| {
+                let grouping: Vec<_> = def
+                    .columns
+                    .iter()
+                    .filter(|c| c.method.is_none() && !c.filter_element)
+                    .collect();
+                t.keys[0].len() <= grouping.len()
+                    && t.keys[0]
+                        .iter()
+                        .zip(&grouping)
+                        .all(|(&f, c)| c.item == 0 && c.field == Some(f))
+            })
+        });
         if aggregated
             && def.order_by.is_empty()
             && rows.len() > 1
+            && !root_key_grouped
             && def.columns.iter().any(|c| c.method.is_none() && !c.filter_element)
         {
             return unsupported(
@@ -551,7 +586,7 @@ impl Session {
         // pinned way: grouped rows. Ties under a descending OrderBy still ascend by primary key
         // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus: .
         let k = dirs.len();
-        if aggregated {
+        if aggregated && k > 0 {
             for w in rows.windows(2) {
                 if key_cmp(&w[0].key[..k], &w[1].key[..k], &dirs) == Ordering::Equal {
                     return unsupported(
@@ -809,7 +844,7 @@ impl Session {
                                 Value::Integer(i) => sum += Decimal::from(*i),
                                 Value::BigInteger(i) => sum += Decimal::from(*i),
                                 Value::Duration(i) => sum += Decimal::from(*i),
-                                other => return unsupported(format!("Sum over {other:?}")),
+                                other => return unsupported(format!("Sum over {}", other.describe())),
                             }
                         }
                         // Over no rows both give 0 (query/TestQueryRuntimeContracts.al:
@@ -859,7 +894,7 @@ impl Session {
                                     Err(_) => return unsupported("a Sum that overflows a Duration column"),
                                 }
                             }
-                            other => return unsupported(format!("Sum or Average of a {other:?} column")),
+                            other => return unsupported(format!("Sum or Average of a {} column", other.describe())),
                         }
                     }
                     M::Min | M::Max => {

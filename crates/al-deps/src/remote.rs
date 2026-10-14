@@ -67,6 +67,23 @@ pub trait RangeSource {
     fn tail(&self, n: u64) -> Result<(u64, Vec<u8>), RemoteError>;
     /// Exactly `len` bytes from `start`. Asking past the end is an error.
     fn range(&self, start: u64, len: u64) -> Result<Vec<u8>, RemoteError>;
+    /// Exactly `len` bytes from `start`, handed to `sink` in pieces as they arrive. For an entry
+    /// too big to hold in memory. The default reads the pieces with [`RangeSource::range`].
+    fn stream(
+        &self,
+        start: u64,
+        len: u64,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), RemoteError>,
+    ) -> Result<(), RemoteError> {
+        const PIECE: u64 = 8 << 20;
+        let mut done = 0;
+        while done < len {
+            let n = PIECE.min(len - done);
+            sink(&self.range(start + done, n)?)?;
+            done += n;
+        }
+        Ok(())
+    }
 }
 
 /// A local file as a range source.
@@ -236,6 +253,85 @@ impl RangeSource for HttpSource {
             }),
         }
     }
+
+    /// One request for the whole range, read as it arrives. A broken connection continues from
+    /// the byte reached (up to [`ATTEMPTS`] times in a row without progress).
+    fn stream(
+        &self,
+        start: u64,
+        len: u64,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), RemoteError>,
+    ) -> Result<(), RemoteError> {
+        use std::io::Read;
+        let mut done = 0u64;
+        let mut failures = 0;
+        let mut last = String::new();
+        let http = |message: String| RemoteError::Http {
+            url: self.url.clone(),
+            message,
+        };
+        while done < len {
+            if failures >= ATTEMPTS {
+                return Err(http(format!(
+                    "the download stopped after {done} of {len} bytes: {last}"
+                )));
+            }
+            if failures > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(400 * (1 << failures)));
+            }
+            let from = start + done;
+            let resp = self
+                .agent
+                .get(&self.url)
+                .header("Range", &format!("bytes={from}-{}", start + len - 1))
+                .call();
+            let mut resp = match resp {
+                Ok(r) => r,
+                Err(e) => {
+                    failures += 1;
+                    last = e.to_string();
+                    continue;
+                }
+            };
+            match resp.status().as_u16() {
+                206 => {}
+                404 => return Err(RemoteError::NotFound { url: self.url.clone() }),
+                200 => return Err(RemoteError::NoRangeSupport { url: self.url.clone() }),
+                s if s >= 500 || s == 429 => {
+                    failures += 1;
+                    last = format!("HTTP {s}");
+                    continue;
+                }
+                s => return Err(http(format!("HTTP {s}"))),
+            }
+            let mut body = resp.body_mut().as_reader();
+            let mut buf = vec![0u8; 256 << 10];
+            let before = done;
+            loop {
+                match body.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let n = n.min((len - done) as usize);
+                        sink(&buf[..n])?;
+                        done += n as u64;
+                        if done >= len {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        last = e.to_string();
+                        break;
+                    }
+                }
+            }
+            if done == before {
+                failures += 1;
+            } else {
+                failures = 0;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Fetches a small whole file (the artifact index).
@@ -331,6 +427,32 @@ impl<S: RangeSource> RemoteZip<S> {
             self.src.range(at + header as u64, e.compressed_size() as u64)?
         };
         Ok(e.decode(&raw)?)
+    }
+}
+
+impl<S: RangeSource> RemoteZip<S> {
+    /// Streams the entry's inflated bytes to `sink` without holding them in memory, and checks the
+    /// recorded size and CRC-32 at the end. `progress` gets the stored bytes read so far.
+    pub fn stream_entry(
+        &self,
+        e: &Entry,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), RemoteError>,
+        progress: &mut dyn FnMut(u64),
+    ) -> Result<(), RemoteError> {
+        let at = self.base + e.local_offset() as u64;
+        let guess = (30 + e.name.len() as u64 + HEADER_SLACK).min(self.total.saturating_sub(at));
+        let head = self.src.range(at, guess)?;
+        let header = zip::local_header_len(&head, &e.name)? as u64;
+        let mut decoder = e.decoder()?;
+        let mut read = 0u64;
+        self.src.stream(at + header, e.compressed_size() as u64, &mut |chunk| {
+            decoder.push::<RemoteError>(chunk, sink)?;
+            read += chunk.len() as u64;
+            progress(read);
+            Ok(())
+        })?;
+        decoder.finish()?;
+        Ok(())
     }
 }
 

@@ -61,6 +61,7 @@ page_methods! {
     "Page.Caption#1" => "Page.Caption",
     "Page.PromptMode#1" => "Page.PromptMode",
     "Page.EnqueueBackgroundTask#1" => "Page.EnqueueBackgroundTask",
+    "Page.CancelBackgroundTask#1" => "Page.CancelBackgroundTask",
     "Page.GetBackgroundParameters#1" => "Page.GetBackgroundParameters",
     "Page.SetBackgroundTaskResult#1" => "Page.SetBackgroundTaskResult",
     "TestPage.RunPageBackgroundTask#1" => "TestPage.RunPageBackgroundTask",
@@ -113,6 +114,7 @@ page_methods! {
     "TestFilter.CurrentKey#1" => "TestFilter.CurrentKey",
     "TestFilter.Ascending#1" => "TestFilter.Ascending",
     // A request page is the test client's page of a report; only what the corpus uses is routed.
+    "TestRequestPage.SaveAsXml#1" => "TestRequestPage.SaveAsXml",
     "TestRequestPage.OK#1" => "TestPage.OK",
     "TestRequestPage.Cancel#1" => "TestPage.Cancel",
     "TestRequestPage.Caption#1" => "TestPage.Caption",

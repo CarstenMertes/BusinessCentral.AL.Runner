@@ -1,6 +1,7 @@
 //! Value operations: conversion to a slot type, arithmetic, comparison
 //! (ADR-010: conversions live next to the value model).
 
+use crate::describe::Describe;
 use crate::native::Signal;
 use crate::value::{LibraryValue, RtType, Value};
 use rust_decimal::Decimal;
@@ -36,6 +37,8 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (v @ Value::Codeunit(_), T::Codeunit(_) | T::Interface(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
+        // A query handed on keeps its state: the callee works on the caller's query.
+        (v @ Value::Query(_), T::Query(_)) => v,
         // A DotNet variable shares the object it is assigned (ADR-014; probe pending).
         (v @ Value::DotNet(_), T::DotNet(_)) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
@@ -71,7 +74,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             match t {
                 T::Decimal => Value::Decimal(d),
                 _ if d.fract() != Decimal::ZERO => {
-                    return unsupported(format!("rounding {d} into {t:?} (not pinned by the corpus yet)"));
+                    return unsupported(format!(
+                        "rounding {d} into {} (not pinned by the corpus yet)",
+                        t.describe()
+                    ));
                 }
                 T::Integer => Value::Integer(
                     i32::try_from(d.mantissa() / 10i128.pow(d.scale()))
@@ -116,7 +122,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             Some(g) => Value::Guid(g),
             None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
         },
-        (v, t) => return unsupported(format!("conversion of {v:?} to {t:?}")),
+        (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }
 
@@ -238,7 +244,12 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         _ => {}
     }
     let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) else {
-        return unsupported(format!("{op:?} of {l:?} and {r:?}"));
+        return unsupported(format!(
+            "{} of {l} and {r}",
+            op.describe(),
+            l = l.describe(),
+            r = r.describe()
+        ));
     };
     let both_int =
         matches!(l, V::Integer(_) | V::Byte(_) | V::Char(_)) && matches!(r, V::Integer(_) | V::Byte(_) | V::Char(_));
@@ -366,10 +377,10 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
                     }
                     o.then(ka.len().cmp(&kb.len()))
                 }
-                _ => return unsupported(format!("comparison of {l:?} and {r:?}")),
+                _ => return unsupported(format!("comparison of {} and {r}", l.describe(), r = r.describe())),
             }
         }
-        _ => return unsupported(format!("comparison of {l:?} and {r:?}")),
+        _ => return unsupported(format!("comparison of {} and {r}", l.describe(), r = r.describe())),
     })
 }
 
@@ -384,7 +395,7 @@ pub fn compare_keys(a: &[Value], b: &[Value]) -> bool {
 pub fn truthy(v: &Value) -> Result<bool, Signal> {
     match v {
         Value::Boolean(b) => Ok(*b),
-        other => unsupported(format!("{other:?} used as a condition")),
+        other => unsupported(format!("{} used as a condition", other.describe())),
     }
 }
 

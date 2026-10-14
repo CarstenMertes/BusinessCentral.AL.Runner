@@ -1,6 +1,7 @@
 //! Tree-walking interpreter over the typed IR (ADR-011). `Engine` is the
 //! immutable program (ADR-001); `Session` holds all mutable state.
 
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{Instance, RecordState, RtType, Value};
@@ -170,8 +171,8 @@ pub struct Session {
     pub(crate) page_handler_depth: usize,
     /// `CodeCoverageLog` is recording.
     pub(crate) code_coverage: bool,
-    /// Platform ids of the code coverage tables that recording may have filled (`platform/coverage.rs`).
-    pub(crate) coverage_dirty: Vec<u32>,
+    /// What recording noted (`platform/coverage.rs`).
+    pub(crate) recorder: platform::coverage::Recorder,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
@@ -384,7 +385,7 @@ impl Session {
             committed_row_version: 0,
             page_handler_depth: 0,
             code_coverage: false,
-            coverage_dirty: Vec::new(),
+            recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
             fault_trace: false,
@@ -482,6 +483,10 @@ impl Session {
                     temporary: *temporary,
                     temp_id,
                     company: None,
+                    crm: self.engine.program.objects[*table as usize]
+                        .properties
+                        .iter()
+                        .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("CRM")),
                     fields: self.initial_fields(*table as usize),
                     filters: Vec::new(),
                     filter_group: 0,
@@ -649,6 +654,24 @@ impl Session {
         }
         for (i, a) in args.into_iter().enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
+                // A temporary record with rows handed to a Variant parameter: a by-value copy is an empty
+                // buffer (record/TestTempTableContracts.al:141-148), but Microsoft's Assert.RecordCount
+                // counts the caller's rows through a Variant, so the Variant is not a plain by-value copy.
+                // What it is is not pinned by the corpus (docs/probes-needed.md).
+                (Value::Record(rc), false)
+                    if matches!(r.locals[i].ty, RtType::Variant) && {
+                        let s = rc.borrow();
+                        s.temporary
+                            && s.temp_id
+                                .and_then(|id| self.temps.get(&id))
+                                .is_some_and(|store| store.has_rows(s.table))
+                    } =>
+                {
+                    return Err(Signal::Unsupported(
+                        "a temporary record with rows handed to a Variant parameter (whether the Variant shares its table is not pinned)"
+                            .into(),
+                    ));
+                }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
@@ -683,6 +706,11 @@ impl Session {
             self.error_scopes.open();
         }
         self.try_depth += usize::from(is_try);
+        let test_scope = if self.code_coverage {
+            self.coverage_enter(object, routine)
+        } else {
+            None
+        };
         self.frames.push(object);
         self.call_stack.push(CallFrame {
             routine,
@@ -697,6 +725,9 @@ impl Session {
             self.add_frame(e, object, top);
         }
         self.call_stack.pop();
+        if let Some(scope) = test_scope {
+            self.coverage_leave(scope);
+        }
         self.frames.pop();
         if collecting {
             outcome = self.close_error_scope(outcome);
@@ -803,7 +834,7 @@ impl Session {
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
                     other => match al_builtins::xml::node_list_items(&other) {
                         Some(items) => items,
-                        None => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                        None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
                 };
                 for item in items {
@@ -839,6 +870,9 @@ impl Session {
             S::Pos(p) => {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;
+                }
+                if self.code_coverage {
+                    self.coverage_hit(*p);
                 }
                 Ok(())
             }
@@ -1030,7 +1064,7 @@ impl Session {
             E::CharAt(text, index) => {
                 let t = self.eval(text, f)?;
                 let Some(t) = al_builtins::native::text_of(&t) else {
-                    return Err(Signal::Unsupported(format!("indexing {t:?} as a text")));
+                    return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
                 };
                 let i = int(&self.eval(index, f)?)?;
                 usize::try_from(i - 1)
@@ -1109,7 +1143,7 @@ impl Session {
                                 self.application_areas = t;
                                 Ok(Value::Null)
                             }
-                            other => Err(Signal::Unsupported(format!("ApplicationArea({other:?})"))),
+                            other => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
                         },
                         Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
                     };
@@ -1139,6 +1173,7 @@ impl Session {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
                     }
                     if id.starts_with("Report.") {
+                        self.ret_used = *ret_used;
                         return self.report_builtin(id, recv, &values, f.instance.clone());
                     }
                     if id.starts_with("FilterPageBuilder.") {
@@ -1281,6 +1316,7 @@ impl Session {
             }
             ir::Place::Field(base, pos) => match self.read(base, f)? {
                 Value::Record(rc) => {
+                    self.connection_check(&rc)?;
                     let r = rc.borrow();
                     if !self.engine.unevaluable_init.is_empty() && !r.touched {
                         // The buffer of a record nothing has written is built by this read, which
@@ -1312,7 +1348,7 @@ impl Session {
                     }
                     Ok(v)
                 }
-                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+                other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             },
         }
     }
@@ -1352,6 +1388,7 @@ impl Session {
             let v = ops::convert(v, &ty)?;
             return match self.read(base, f)? {
                 Value::Record(rc) => {
+                    self.connection_check(&rc)?;
                     let mut r = rc.borrow_mut();
                     r.fields[*pos] = v;
                     r.touched = true;
@@ -1360,7 +1397,7 @@ impl Session {
                     }
                     Ok(())
                 }
-                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+                other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             };
         }
         match p {
@@ -1404,7 +1441,8 @@ impl Session {
         let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
         let (Some(unit), true) = (unit, in_range) else {
             return Err(Signal::Unsupported(format!(
-                "assigning {v:?} to character {i} of a text (only the next position within the length is pinned)"
+                "assigning {v} to character {i} of a text (only the next position within the length is pinned)",
+                v = v.describe()
             )));
         };
         let i = i as usize - 1;
@@ -1425,7 +1463,7 @@ impl Session {
         };
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
-            other => return Err(Signal::Unsupported(format!("indexing {other:?}"))),
+            other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),
         };
         let mut flat = 0usize;
         for (d, e) in dims.iter().zip(idx) {
@@ -1465,13 +1503,13 @@ fn int(v: &Value) -> Result<i64, Signal> {
         Value::BigInteger(i) => Ok(*i),
         Value::Byte(b) => Ok(i64::from(*b)),
         Value::Char(c) => Ok(i64::from(*c)),
-        other => Err(Signal::Unsupported(format!("{other:?} used as an integer"))),
+        other => Err(Signal::Unsupported(format!("{} used as an integer", other.describe()))),
     }
 }
 
 /// The kind of a value for a refusal reason: the variant name, never its contents.
 pub(crate) fn value_kind(v: &Value) -> String {
-    let d = format!("{v:?}");
+    let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
@@ -1520,7 +1558,10 @@ impl al_builtins::native::Ctx for Session {
                 let rc = rc.clone();
                 self.record_op(method, &rc, args)
             }
-            other => Err(Signal::Unsupported(format!("record method {method} on {other:?}"))),
+            other => Err(Signal::Unsupported(format!(
+                "record method {method} on {}",
+                other.describe()
+            ))),
         }
     }
     fn page(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {

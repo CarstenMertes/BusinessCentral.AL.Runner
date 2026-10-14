@@ -11,6 +11,7 @@
 
 use crate::Session;
 use crate::records::Rec;
+use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::value::{RtType, Value};
 use al_data::TableDef;
@@ -177,9 +178,9 @@ impl Session {
                     Some(Value::Record(from)) => from.clone(),
                     Some(Value::Library(_, lib)) => match &*lib.borrow() {
                         al_builtins::value::LibraryValue::RecordRef(from) => from.clone(),
-                        other => return unsupported(format!("CopyLinks from {other:?}")),
+                        other => return unsupported(format!("CopyLinks from {}", other.describe())),
                     },
-                    other => return unsupported(format!("CopyLinks from {other:?}")),
+                    other => return unsupported(format!("CopyLinks from {}", other.describe())),
                 };
                 let from_t = self.table(&from)?;
                 let from_scope = from_t.per_company.then_some(own_company.as_str());

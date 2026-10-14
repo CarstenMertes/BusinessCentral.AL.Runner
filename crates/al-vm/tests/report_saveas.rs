@@ -90,6 +90,68 @@ report 68302 "Probe SaveAs Report"
         Prefix: Text;
 }
 
+// corpus reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al (68810..68815)
+table 68810 "Probe Place Parent" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+table 68811 "Probe Place Child" { fields { field(1; Id; Integer) { } field(2; ParentId; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 68814 "Probe Place Log"
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(Entry: Text) begin Log += Entry + ';'; end;
+    procedure Take(): Text var Result: Text; begin Result := Log; Log := ''; exit(Result); end;
+}
+report 68812 "Probe Place Base"
+{
+    UsageCategory = None;
+    DefaultRenderingLayout = Rdlc;
+    dataset
+    {
+        dataitem(Parent; "Probe Place Parent")
+        {
+            dataitem(ChildA; "Probe Place Child")
+            {
+                DataItemLink = ParentId = field(Id);
+                column(AId; Id) { }
+                trigger OnAfterGetRecord() begin PlaceLog.Add('ChildA' + Format(Id)); end;
+            }
+            dataitem(ChildB; "Probe Place Child")
+            {
+                DataItemLink = ParentId = field(Id);
+                column(BId; Id) { }
+                trigger OnAfterGetRecord() begin PlaceLog.Add('ChildB' + Format(Id)); end;
+            }
+            column(PId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('Parent' + Format(Id)); end;
+        }
+    }
+    rendering { layout(Rdlc) { Type = RDLC; LayoutFile = './ProbePlaceLayout.rdl'; Caption = 'Probe layout'; } }
+    var PlaceLog: Codeunit "Probe Place Log";
+}
+reportextension 68813 "Probe Place Ext" extends "Probe Place Base"
+{
+    dataset
+    {
+        addfirst(Parent) { dataitem(ExtFirst; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EFId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtFirst' + Format(Id)); end; } }
+        addafter(ChildA) { dataitem(ExtAfterA; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EAId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtAfterA' + Format(Id)); end; } }
+        addbefore(ChildB) { dataitem(ExtBeforeB; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EBId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtBeforeB' + Format(Id)); end; } }
+        addlast(Parent) { dataitem(ExtLast; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(ELId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtLast' + Format(Id)); end; } }
+        addbefore(ChildA) { dataitem(ExtBeforeA; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EBAId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtBeforeA' + Format(Id)); end; } }
+    }
+    var PlaceLog: Codeunit "Probe Place Log";
+}
+
+report 68399 "Probe Processing Only"
+{
+    UsageCategory = None;
+    ProcessingOnly = true;
+    dataset { dataitem(P; "Probe Rep Parent") { column(PNo; Id) { } } }
+}
+
 // A report without a layout, whose columns are expressions and whose triggers log.
 report 68310 "Probe Plain Report"
 {
@@ -760,32 +822,42 @@ fn a_skipped_row_is_not_written() {
     assert!(text.contains("<Column name=\"PNo\">2</Column>"), "{text}");
 }
 
-// Assumption (docs/probes-needed.md, "Report.SaveAs dataset"): an Option is written as its ordinal, a
-// Decimal expression carries the same decimalformatter attribute as a Decimal field, whatever AutoFormatType says.
+// handlers/TestReportSaveAsColumnTypesContracts.al:174-215: an Option is written as its caption (its
+// name when the field declares none), a Decimal expression keeps its scale (`12.5 * 2` is `25.0`, as
+// `12.345678 * 1.5` is `18.5185170`), and with no DecimalPlaces the formatter is the default.
 #[test]
-fn an_option_is_written_as_its_ordinal_and_a_decimal_expression_gets_the_default_formatter() {
+fn an_option_is_written_as_its_caption_and_a_decimal_expression_keeps_its_scale() {
     let text = dataset_of("Probe Types Report", "");
-    assert!(text.contains("<Column name=\"KindCol\">0</Column>"), "{text}");
+    assert!(text.contains("<Column name=\"KindCol\">Alpha</Column>"), "{text}");
     assert!(
-        text.contains("<Column name=\"DecExpr\" decimalformatter=\"#,##0.00\">25</Column>"),
+        text.contains("<Column name=\"DecExpr\" decimalformatter=\"#,##0.00\">25.0</Column>"),
         "{text}"
     );
 }
 
+// handlers/TestReportSaveAsColumnTypesContracts.al:178-182: a Time is `h:mm:ss`, U+202F, AM or PM; an
+// undefined one is blank (not pinned, docs/probes-needed.md).
 #[test]
-fn a_column_type_nothing_pins_is_refused_when_a_row_carries_it() {
-    let why = refusal(
-        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); end;",
+fn a_time_column_is_written_in_the_en_us_form_with_a_narrow_no_break_space() {
+    let text = f(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; P: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); P.Get(1); P.At := 123456T; P.Modify(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); exit(H.Lines(Buf)); end;",
     );
-    assert!(why.contains("AtCol") && why.contains("no pinned text"), "{why}");
+    assert!(
+        text.contains("<Column name=\"AtCol\">12:34:56\u{202F}PM</Column>"),
+        "{text}"
+    );
+    assert!(text.contains("<Column name=\"AtCol\"></Column>"), "{text}");
 }
 
+// handlers/TestReportSaveAsColumnTypesContracts.al:222-229: IncludeCaption adds a Labels block, between
+// the information block and the data items, with the field's caption.
 #[test]
-fn a_column_property_nothing_pins_is_refused_when_a_row_carries_the_column() {
-    let why = refusal(
-        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Caption Report\", '', ReportFormat::Xml, Out); end;",
+fn include_caption_writes_a_label_for_the_column() {
+    let text = dataset_of("Probe Caption Report", "");
+    assert!(
+        text.contains("</BCReportInformation>|  <Labels>|    <Label name=\"WithCaptionCaption\">Id</Label>|  </Labels>|  <DataItems>|"),
+        "{text}"
     );
-    assert!(why.contains("IncludeCaption"), "{why}");
 }
 
 // handlers/TestReportNestedLinkImplicitParent.al: `Change Log Setup (Table)` is `Change_Log_Setup_Table`.
@@ -931,4 +1003,68 @@ fn from_bc_28_every_data_item_carries_its_table_id_and_a_distinct_guid() {
             seen.push(guid);
         }
     }
+}
+
+// handlers/TestReportSaveAsColumnTypesContracts.al:372-388: a ProcessingOnly report answers false with the
+// text and the code ReportProcessingOnly, and writes nothing; with the answer dropped it is refused.
+#[test]
+fn a_processing_only_report_answers_false_with_its_error_and_writes_nothing() {
+    let out = f(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; Saved: Boolean; begin H.Seed(); Buf.Data.CreateOutStream(Out); Saved := Report.SaveAs(Report::\"Probe Processing Only\", '', ReportFormat::Xml, Out); exit(Format(Saved) + '|' + GetLastErrorText() + '|' + GetLastErrorCode() + '|' + H.Lines(Buf)); end;",
+    );
+    assert_eq!(
+        out,
+        "No|Report 68399 is a processing-only report. Output cannot be rendered and saved to a file.|ReportProcessingOnly|"
+    );
+    let why = refusal(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Processing Only\", '', ReportFormat::Xml, Out); end;",
+    );
+    assert!(why.contains("ProcessingOnly"), "{why}");
+}
+
+// reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al:150-198: the triggers run, and the
+// data items and their columns are written, in position order.
+#[test]
+fn added_data_items_run_and_are_written_in_position_order() {
+    let out = f(
+        "var P: Record \"Probe Place Parent\"; C: Record \"Probe Place Child\"; L: Codeunit \"Probe Place Log\"; Buf: Record \"Probe Rep Parent\"; H: Codeunit Helpers; Out: OutStream; s: Text; begin
+            P.Id := 1; P.Insert(); C.Id := 10; C.ParentId := 1; C.Insert(); L.Take();
+            Buf.Data.CreateOutStream(Out);
+            Report.SaveAs(Report::\"Probe Place Base\", '', ReportFormat::Xml, Out);
+            s := L.Take() + '#' + H.Lines(Buf);
+            exit(s);
+        end;",
+    );
+    let (log, xml) = out.split_once('#').unwrap();
+    assert_eq!(
+        log,
+        "Parent1;ExtFirst10;ExtBeforeA10;ChildA10;ExtAfterA10;ExtBeforeB10;ChildB10;ExtLast10;"
+    );
+    let names: Vec<&str> = xml
+        .split('|')
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("<DataItem "))
+        .filter_map(|l| l.split("name=\"").nth(1))
+        .filter_map(|l| l.split('"').next())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Parent",
+            "ExtFirst",
+            "ExtBeforeA",
+            "ChildA",
+            "ExtAfterA",
+            "ExtBeforeB",
+            "ChildB",
+            "ExtLast"
+        ]
+    );
+    let cols: Vec<&str> = xml
+        .split('|')
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("<Column name=\""))
+        .filter_map(|l| l.split('"').next())
+        .collect();
+    assert_eq!(cols, ["PId", "EFId", "EBAId", "AId", "EAId", "EBId", "BId", "ELId"]);
 }

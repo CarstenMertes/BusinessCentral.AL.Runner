@@ -210,11 +210,55 @@ impl Header {
 /// (docs/probes-needed.md).
 pub(crate) const DECIMAL_FORMATTER: &str = "#,##0.00";
 
+/// The `decimalformatter` of a Decimal column. `places` is the `DecimalPlaces` of the column, else
+/// of the field, as written. `1 : 1` gives `#,##0.0` and `3 : 3` gives `#,##0.000`
+/// (handlers/TestReportSaveAsColumnTypesContracts.al:230-244); no property is the default. A range
+/// with different bounds, a single number and `0` places are not pinned.
+pub(crate) fn decimal_formatter(places: Option<&str>) -> Result<String, Signal> {
+    let Some(places) = places else {
+        return Ok(DECIMAL_FORMATTER.to_string());
+    };
+    let both: Vec<&str> = places.split(':').map(str::trim).collect();
+    match both.as_slice() {
+        [a, b] if a == b => match a.parse::<usize>() {
+            Ok(n) if n > 0 => Ok(format!("#,##0.{}", "0".repeat(n))),
+            _ => unsupported(format!("DecimalPlaces = {places} in a dataset (not pinned)")),
+        },
+        _ => unsupported(format!(
+            "DecimalPlaces = {places} in a dataset (only `n : n` is pinned)"
+        )),
+    }
+}
+
+/// A Time as the dataset writes it: `h:mm:ss`, a narrow no-break space (U+202F), `AM` or `PM`
+/// (handlers/TestReportSaveAsColumnTypesContracts.al:12-14, 12:34:56 PM). The hour is not padded
+/// (the culture's pattern; no single-digit hour is measured) and milliseconds are refused.
+pub(crate) fn time_text(ms_of_day: i64) -> Result<String, Signal> {
+    if ms_of_day % 1000 != 0 {
+        return unsupported("a Time with milliseconds in a dataset (not pinned)");
+    }
+    let (h, m, s) = (ms_of_day / 3_600_000, ms_of_day / 60_000 % 60, ms_of_day / 1000 % 60);
+    let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+    Ok(format!(
+        "{h12}:{m:02}:{s:02}\u{202F}{}",
+        if h < 12 { "AM" } else { "PM" }
+    ))
+}
+
+/// A Date as the dataset writes it: `m/d/yyyy` (the same file, `3/5/2024`).
+pub(crate) fn date_text(day: i32) -> String {
+    let (y, m, d) = al_builtins::format::civil_from_day(day);
+    format!("{m}/{d}/{y}")
+}
+
 /// One column of a row: its name, an attribute written after the name, and its text.
 pub(crate) struct Column {
     pub name: String,
-    pub attribute: Option<(&'static str, &'static str)>,
+    pub attribute: Option<(&'static str, String)>,
     pub text: String,
+    /// The XML Schema type of the column in a .NET DataSet (`TestRequestPage.SaveAsXml`), for the
+    /// column types that probe pins: Integer and Text/Code.
+    pub schema_type: Option<&'static str>,
 }
 
 /// A dataset being written: the `DataItems` block, and who is open.
@@ -226,6 +270,13 @@ pub(crate) struct Dataset {
     root: bool,
     /// An element written, whatever its kind.
     pub rows: usize,
+    /// The `Labels` block: (column name + `Caption`, text), in the order the columns come.
+    pub labels: Vec<(String, String)>,
+    /// The rows of the top-level data items for a .NET DataSet: (name, schema type) of the columns
+    /// of the first row, and the texts of every row.
+    flat: Vec<Vec<(String, Option<&'static str>, String)>>,
+    /// Whether the rows fit one flat table: one data item, no nested row.
+    flat_ok: bool,
 }
 
 impl Dataset {
@@ -238,6 +289,28 @@ impl Dataset {
     /// Opens a row of a data item: `<DataItem ..>` and its `Columns`.
     pub(crate) fn begin(&mut self, name: &str, identity: Option<(u32, &str)>, columns: &[Column]) {
         let depth = self.open.len();
+        if depth == 0 {
+            if self.rows == 0 {
+                self.flat_ok = true;
+            }
+            self.flat.push(
+                columns
+                    .iter()
+                    .map(|c| (c.name.clone(), c.schema_type, c.text.clone()))
+                    .collect(),
+            );
+            // A second data item (its rows have other columns) is not one table.
+            if self.flat.len() > 1
+                && self.flat[0]
+                    .iter()
+                    .map(|c| &c.0)
+                    .ne(self.flat[self.flat.len() - 1].iter().map(|c| &c.0))
+            {
+                self.flat_ok = false;
+            }
+        } else {
+            self.flat_ok = false;
+        }
         if depth == 0 {
             if !self.root {
                 self.root = true;
@@ -266,7 +339,7 @@ impl Dataset {
         for c in columns {
             self.pad(at + 4);
             self.body.push_str(&format!("<Column name=\"{}\"", c.name));
-            if let Some((k, v)) = c.attribute {
+            if let Some((k, v)) = &c.attribute {
                 self.body.push_str(&format!(" {k}=\"{v}\""));
             }
             self.body.push_str(&format!(">{}</Column>\n", c.text));
@@ -289,11 +362,72 @@ impl Dataset {
         self.body.push_str("</DataItem>\n");
     }
 
+    /// The bytes of the .NET DataSet `TestRequestPage.SaveAsXml` writes: the schema of the rows (one
+    /// element per column with its .NET type) and a `Result` element per row, behind a byte order
+    /// mark (corpus al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:
+    /// SaveAs_ReportDataFile_IsADataSet). Pinned for one data item whose columns are Integer or Text;
+    /// anything else is refused.
+    pub(crate) fn finish_data_set(self) -> Result<Vec<u8>, Signal> {
+        if !self.flat_ok || self.flat.is_empty() {
+            return unsupported(
+                "a SaveAsXml data file of a report that is not one flat data item with rows (not pinned)",
+            );
+        }
+        let mut out = String::new();
+        out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\n<DataSet>\n");
+        out.push_str("  <xs:schema id=\"NewDataSet\" xmlns=\"\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:msdata=\"urn:schemas-microsoft-com:xml-msdata\">\n");
+        out.push_str("    <xs:element name=\"NewDataSet\" msdata:IsDataSet=\"true\" msdata:MainDataTable=\"Result\" msdata:Locale=\"en-US\">\n");
+        out.push_str("      <xs:complexType>\n        <xs:choice minOccurs=\"0\" maxOccurs=\"unbounded\">\n");
+        out.push_str("          <xs:element name=\"Result\" msdata:Locale=\"en-US\">\n            <xs:complexType>\n              <xs:sequence>\n");
+        for (name, ty, _) in &self.flat[0] {
+            let Some(ty) = ty else {
+                return unsupported(format!(
+                    "the SaveAsXml data file column {name}, a type with no pinned .NET type"
+                ));
+            };
+            out.push_str(&format!(
+                "                <xs:element name=\"{name}\" type=\"{ty}\" minOccurs=\"0\" />\n"
+            ));
+        }
+        out.push_str("              </xs:sequence>\n            </xs:complexType>\n          </xs:element>\n");
+        out.push_str("        </xs:choice>\n      </xs:complexType>\n    </xs:element>\n  </xs:schema>\n");
+        for row in &self.flat {
+            out.push_str("  <Result>\n");
+            for (name, _, text) in row {
+                // An empty value is no element in a DataSet; the probe has none, so it is refused.
+                if text.is_empty() {
+                    return unsupported(format!(
+                        "an empty value of column {name} in a SaveAsXml data file (not pinned)"
+                    ));
+                }
+                out.push_str(&format!("    <{name}>{text}</{name}>\n"));
+            }
+            out.push_str("  </Result>\n");
+        }
+        out.push_str("</DataSet>\n");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(out.as_bytes());
+        Ok(bytes)
+    }
+
     /// The bytes of the whole dataset: the byte order mark, the header, the data items.
     pub(crate) fn finish(self, header: &Header) -> Result<Vec<u8>, Signal> {
         debug_assert!(self.open.is_empty());
         let mut out = String::new();
         header.write(&mut out)?;
+        // handlers/TestReportSaveAsColumnTypesContracts.al:222-229: between the information block and
+        // the data items.
+        if !self.labels.is_empty() {
+            out.push_str("  <Labels>\n");
+            for (name, text) in &self.labels {
+                out.push_str(&format!(
+                    "    <Label name=\"{}\">{}</Label>\n",
+                    escape_as(name, true)?,
+                    escape(text)?
+                ));
+            }
+            out.push_str("  </Labels>\n");
+        }
         out.push_str(&self.body);
         if self.root {
             out.push_str("  </DataItems>\n");
@@ -308,6 +442,23 @@ impl Dataset {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // handlers/TestReportSaveAsColumnTypesContracts.al:222-244
+    #[test]
+    fn decimal_places_decide_the_formatter() {
+        assert_eq!(decimal_formatter(None).unwrap(), "#,##0.00");
+        assert_eq!(decimal_formatter(Some("1 : 1")).unwrap(), "#,##0.0");
+        assert_eq!(decimal_formatter(Some("3:3")).unwrap(), "#,##0.000");
+        assert!(decimal_formatter(Some("0:5")).is_err());
+        assert!(decimal_formatter(Some("2")).is_err());
+    }
+
+    #[test]
+    fn time_and_date_follow_the_en_us_pattern() {
+        assert_eq!(time_text(45_296_000).unwrap(), "12:34:56\u{202F}PM");
+        assert_eq!(time_text(0).unwrap(), "12:00:00\u{202F}AM");
+        assert!(time_text(1).is_err());
+    }
 
     #[test]
     fn plain_names_are_kept() {

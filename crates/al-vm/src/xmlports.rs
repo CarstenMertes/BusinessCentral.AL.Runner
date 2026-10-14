@@ -9,6 +9,7 @@
 use crate::records::Rec;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{AlError, Session, Signal};
+use al_builtins::describe::Describe;
 use al_builtins::ops;
 use al_builtins::value::{Instance, LibraryValue, RtType, Value};
 use al_builtins::xmlport::{Elem, Node, ReadFailure};
@@ -102,7 +103,7 @@ impl Session {
                         inst.borrow_mut().globals[slot] = v.clone();
                         Ok(Value::Null)
                     }
-                    other => unsupported(format!("{id} with {other:?}")),
+                    other => unsupported(format!("{id} with {}", other.describe())),
                 }
             }
             "Xmlport.SetTableView#1" => {
@@ -150,7 +151,7 @@ impl Session {
                     Some(v @ Value::Library(n, _)) if n.eq_ignore_ascii_case(want) => {
                         inst.borrow_mut().globals[slot] = v.clone();
                     }
-                    other => return unsupported(format!("{id} with the stream {other:?}")),
+                    other => return unsupported(format!("{id} with the stream {}", other.describe())),
                 }
                 // The record only seeds the table view
                 // (xmlport/TestXmlPortObject.al:XmlPort_Import_StaticWithRecord_GivenVariableUnchangedWithoutExplicitGet,
@@ -171,7 +172,7 @@ impl Session {
                 self.ensure_initialized(&rc);
                 Ok(rc)
             }
-            other => unsupported(format!("an XmlPort method on {other:?}")),
+            other => unsupported(format!("an XmlPort method on {}", other.describe())),
         }
     }
 
@@ -194,7 +195,11 @@ impl Session {
     fn xp_record(&self, inst: &Inst, node: &ir::XmlNode) -> Result<Rec, Signal> {
         match node.slot.map(|s| inst.borrow().globals[s].clone()) {
             Some(Value::Record(rc)) => Ok(rc),
-            other => unsupported(format!("table element {} holds {other:?}", node.name)),
+            other => unsupported(format!(
+                "table element {} holds {other}",
+                node.name,
+                other = other.describe()
+            )),
         }
     }
 
@@ -209,7 +214,7 @@ impl Session {
             ));
         };
         let Some(Value::Record(view)) = view else {
-            return unsupported(format!("SetTableView with {view:?}"));
+            return unsupported(format!("SetTableView with {}", view.describe()));
         };
         let target = self.xp_record(inst, first)?;
         let v = view.borrow();
@@ -492,7 +497,7 @@ impl Session {
                 None => return unsupported("XmlPort import into a table without a schema"),
             }
         };
-        let value = self.xp_value(text, &ty)?;
+        let value = self.xp_value(text, &ty, schema.xp().format_evaluate_xml)?;
         rec.borrow_mut().fields[pos] = value;
         self.xp_run_trigger(inst, schema, node, "onafterassignfield")?;
         Ok(pos)
@@ -501,7 +506,18 @@ impl Session {
     /// The value an imported text becomes in a field of type `ty`. An empty text is the type's
     /// default (xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_EmptyIntegerElement_ImportsZero,
     /// and an export writes a blank date as an empty element).
-    fn xp_value(&mut self, text: &str, ty: &RtType) -> Result<Value, Signal> {
+    fn xp_value(&mut self, text: &str, ty: &RtType, xml: bool) -> Result<Value, Signal> {
+        if xml {
+            return self.xp_value_xml(text, ty);
+        }
+        // A Legacy port reads the display text only: the XML date is refused and nothing is stored
+        // (xmlport/TestXmlPortFormatEvaluateContracts.al:Import_LegacyXmlPort_TakesTheDisplayText_AndRefusesTheXmlDate).
+        if matches!(ty, RtType::Date)
+            && al_builtins::iso::parse_date(text).is_some()
+            && text.as_bytes().get(4) == Some(&b'-')
+        {
+            return Err(xerr("The date is not valid.", "DateInvalid"));
+        }
         match ty {
             RtType::Text(len) | RtType::Code(len) => {
                 let n = text.encode_utf16().count();
@@ -541,11 +557,18 @@ impl Session {
                 let Some((date, clock)) = text.split_once(' ') else {
                     return Err(evaluate_error(text, "DateTime"));
                 };
-                let Value::Date(day, _) = self.xp_value(date, &RtType::Date)? else {
+                let Value::Date(day, _) = self.xp_value(date, &RtType::Date, false)? else {
                     return Err(evaluate_error(text, "DateTime"));
                 };
                 let (hm, ampm) = clock.rsplit_once(' ').unwrap_or((clock, ""));
-                let ms = parse_time_12h(&format!("{hm}:00 {ampm}")).ok_or_else(|| evaluate_error(text, "DateTime"))?;
+                // The display text of a DateTime with or without seconds (`03/05/24 12:34:56 PM` is what the
+                // Legacy probe imports, xmlport/TestXmlPortFormatEvaluateContracts.al:167).
+                let clock = if hm.matches(':').count() == 2 {
+                    format!("{hm} {ampm}")
+                } else {
+                    format!("{hm}:00 {ampm}")
+                };
+                let ms = parse_time_12h(&clock).ok_or_else(|| evaluate_error(text, "DateTime"))?;
                 Ok(Value::DateTime((i64::from(day) - 1) * 86_400_000 + ms + 1))
             }
             RtType::Decimal | RtType::Date | RtType::DateTime | RtType::Boolean => {
@@ -601,7 +624,65 @@ impl Session {
                     None => Err(evaluate_error(text, "Enum")),
                 }
             }
-            other => unsupported(format!("XmlPort import into a field of type {other:?} (not pinned)")),
+            other => unsupported(format!(
+                "XmlPort import into a field of type {} (not pinned)",
+                other.describe()
+            )),
+        }
+    }
+
+    /// The value an imported text becomes under `FormatEvaluate = Xml`: the XML forms only
+    /// (xmlport/TestXmlPortFormatEvaluateContracts.al:Import_XmlPort_TakesTheXmlForms_AndRefusesTheDisplayText).
+    /// A Date that is not `yyyy-mm-dd` fails with the beginning of BC's text; the rest of that text is not
+    /// pinned (docs/probes-needed.md). Display text for another type, and the types the probe does not
+    /// cover, are refused.
+    fn xp_value_xml(&mut self, text: &str, ty: &RtType) -> Result<Value, Signal> {
+        match ty {
+            RtType::Text(_) | RtType::Code(_) | RtType::Integer | RtType::BigInteger => self.xp_value(text, ty, false),
+            RtType::Date | RtType::DateTime | RtType::Decimal if text.is_empty() => Ok(self.default_value(ty)),
+            RtType::Date => {
+                match al_builtins::iso::parse_date(text).filter(|_| text.as_bytes().get(4) == Some(&b'-')) {
+                    Some(d) => Ok(Value::Date(d, false)),
+                    None => Err(xerr(
+                        format!("The format of the Date '{text}' does not match your device's date settings."),
+                        "DateInvalid",
+                    )),
+                }
+            }
+            RtType::DateTime => {
+                match al_builtins::iso::parse_datetime(text).filter(|_| text.as_bytes().get(4) == Some(&b'-')) {
+                    Some(v) => Ok(Value::DateTime(v)),
+                    None => unsupported(format!(
+                        "XmlPort import of the DateTime `{text}` with FormatEvaluate = Xml (error text not pinned)"
+                    )),
+                }
+            }
+            RtType::Decimal => {
+                let plain = {
+                    let digits = text.strip_prefix('-').unwrap_or(text);
+                    !digits.is_empty()
+                        && digits.split('.').count() <= 2
+                        && digits.split('.').all(|p| p.bytes().all(|b| b.is_ascii_digit()))
+                        && !digits.starts_with('.')
+                };
+                match text.parse::<rust_decimal::Decimal>() {
+                    Ok(d) if plain => Ok(Value::Decimal(d)),
+                    _ => unsupported(format!(
+                        "XmlPort import of the Decimal `{text}` with FormatEvaluate = Xml (error text not pinned)"
+                    )),
+                }
+            }
+            RtType::Boolean => match text {
+                "true" => Ok(Value::Boolean(true)),
+                "false" => Ok(Value::Boolean(false)),
+                _ => unsupported(format!(
+                    "XmlPort import of the Boolean `{text}` with FormatEvaluate = Xml (error text not pinned)"
+                )),
+            },
+            other => unsupported(format!(
+                "XmlPort import into a field of type {} with FormatEvaluate = Xml (the XML form is not pinned)",
+                other.describe()
+            )),
         }
     }
 
@@ -694,7 +775,7 @@ impl Session {
         let stored = self
             .store_for(&rec)
             .get(&cx, &t, &pk)
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
         let modify = stored.is_some() && (n.auto_update || n.auto_replace);
         let (before, after) = if modify {
             ("onbeforemodifyrecord", "onaftermodifyrecord")
@@ -968,7 +1049,7 @@ impl Session {
         let slot = schema.node(node).slot.expect("text nodes have a slot");
         match &inst.borrow().globals[slot] {
             Value::Text(s) | Value::Code(s) => Ok(s.clone()),
-            other => unsupported(format!("XmlPort export of the variable {other:?}")),
+            other => unsupported(format!("XmlPort export of the variable {}", other.describe())),
         }
     }
 
@@ -982,6 +1063,9 @@ impl Session {
         let n = schema.node(node);
         let rec = self.xp_record(inst, schema.node(n.table_node.expect("field nodes have a table node")))?;
         let v = rec.borrow().fields[n.field.expect("field nodes have a field")].clone();
+        if schema.xp().format_evaluate_xml {
+            return self.xp_field_text_xml(&v);
+        }
         match &v {
             Value::Integer(i) => Ok(i.to_string()),
             Value::Text(s) | Value::Code(s) => Ok(s.clone()),
@@ -996,7 +1080,30 @@ impl Session {
                     .or_else(|why| unsupported(format!("XmlPort export of a value: {why}")))?;
                 Ok(if t.is_empty() { " ".to_string() } else { t })
             }
-            other => unsupported(format!("XmlPort export of {other:?} (the text form is not pinned)")),
+            other => unsupported(format!(
+                "XmlPort export of {} (the text form is not pinned)",
+                other.describe()
+            )),
+        }
+    }
+
+    /// The XML forms `FormatEvaluate = Xml` writes (xmlport/TestXmlPortFormatEvaluateContracts.al:
+    /// Export_Xml_WritesTheXmlForms): `2024-03-05`, `1234.50`, `true`, `2024-03-05T12:34:56Z`. Other
+    /// types are not pinned.
+    fn xp_field_text_xml(&mut self, v: &Value) -> Result<String, Signal> {
+        match v {
+            Value::Integer(i) => Ok(i.to_string()),
+            Value::Text(s) | Value::Code(s) => Ok(s.clone()),
+            Value::Decimal(_) => al_builtins::xmlport::field_text(v)
+                .map(|t| t.replace(',', ""))
+                .or_else(|why| unsupported(format!("XmlPort export of {why} (the text form is not pinned)"))),
+            Value::Boolean(b) => Ok(if *b { "true" } else { "false" }.to_string()),
+            Value::Date(..) | Value::DateTime(_) => al_builtins::format::try_format(v, 0, 9, self)
+                .or_else(|why| unsupported(format!("XmlPort export of a value: {why}"))),
+            other => unsupported(format!(
+                "XmlPort export of {} with FormatEvaluate = Xml (the XML form is not pinned)",
+                other.describe()
+            )),
         }
     }
 

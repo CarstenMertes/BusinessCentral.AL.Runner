@@ -774,8 +774,8 @@ fn delete_all_true_deletes_row_by_row_with_trigger_and_events() {
 }
 
 // DeleteAll(false) raises no trigger, but the delete events fire per row (real BC 27.5, probe
-// codeunit 68212, record/TestTableExtensionTriggerOrderContracts.al:Delete_And_DeleteAll_...;
-// the citation is pending until the corpus bump). A table without delete subscribers just deletes.
+// codeunit 68212, record/TestTableExtensionTriggerOrderContracts.al:102
+// Delete_And_DeleteAll_WithAndWithoutRunTrigger). A table without delete subscribers just deletes.
 #[test]
 fn delete_all_false_raises_the_delete_events_per_row() {
     assert_eq!(text(trace("R.DeleteAll(false);")), "");
@@ -1537,4 +1537,27 @@ codeunit 50100 C
 }"#;
     assert!(boolean(run(src, "Stmt")));
     assert!(!boolean(run(src, "Value")));
+}
+
+// session/TestEnvironmentUserTenantContracts.al:414-444: a write to a temporary record asks for no
+// trigger setup and raises no database event, also when the table's database triggers are enabled;
+// the real table still does.
+#[test]
+fn a_temporary_record_raises_no_database_event() {
+    let src = global_triggers_src(
+        15,
+        true,
+        r#"procedure F(): Text var T: Record Watched temporary; R: Record Watched; L: Codeunit Logger; s: Text;
+        begin
+            L.Clear();
+            T."No." := 1; T.Insert(true); T.V := 2; T.Modify(true); T.Delete(true);
+            s := L.Get() + '|'; L.Clear();
+            R."No." := 5; R.Insert(true);
+            exit(s + L.Get());
+        end;"#,
+    );
+    let log = text(run(&src, "F"));
+    let (temp, real) = log.split_once('|').unwrap();
+    assert!(!temp.contains("ONDATABASE") && !temp.contains("ONGLOBAL"), "{log}");
+    assert!(real.contains("ONDATABASEINSERT:5"), "{log}");
 }

@@ -595,8 +595,20 @@ pub(crate) fn lower_core(
             .get(&oi)
             .map(|v| v.iter().map(|&e| (e, ws.object_ast(e))).collect())
             .unwrap_or_default();
-        let (request, _) = crate::reports::request_layout(&obj, &l.items, &exts);
+        let (request, request_section) = crate::reports::request_layout(&obj, &l.items, &exts);
         page_reasons[oi].extend(request.reasons.iter().cloned());
+        // A request page that declares `SourceTable` has a `Rec` of that table (corpus
+        // handlers/TestReportRequestPageSourceTableCompiledContracts.al).
+        if let Some(t) = request_section
+            .as_ref()
+            .and_then(|s| s.properties().find(|p| p.name().eq_ignore_ascii_case("SourceTable")))
+            .map(|p| p.value_text())
+        {
+            match ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()]) {
+                Resolution::Found(t) => table_of[oi] = Some(t),
+                _ => page_reasons[oi].push(format!("source table: {}", ws.outside_workspace(ObjKind::Table, &t))),
+            }
+        }
         // Its variables would follow the base items' records in the extension's globals, which the
         // slots the request page binds to do not account for.
         for (e, _) in &exts {
@@ -1380,6 +1392,9 @@ fn lower_object<'a>(
     // the VM fills when it makes the instance (`Session::query_instance`).
     if o.kind == ObjKind::Query {
         rec_slot = Some(globals.len());
+        // `CurrQuery` in the query's triggers and procedures
+        // (query/TestQueryOnBeforeOpenVariablesContracts.al:75-77).
+        lw.globals.insert("currquery".into(), globals.len());
         globals.push(ir::Slot {
             name: "__query".into(),
             ty: RtType::Query(oi as u32),
@@ -1434,6 +1449,16 @@ fn lower_object<'a>(
                 })
                 .and_then(|s| s.args().into_iter().next())
                 .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
+            // A trigger of the request page runs with the page's `Rec`.
+            if lw.rec_slot.is_none()
+                && o.kind == ObjKind::Report
+                && r.syntax()
+                    .ancestors()
+                    .filter_map(ast::Section::cast)
+                    .any(|s| s.name().eq_ignore_ascii_case("requestpage"))
+            {
+                lw.rec_slot = rec_slot;
+            }
         }
         // A dependency routine nothing reached was never checked: a stub that refuses.
         let reached = !checked.is_skipped(oi)
@@ -1559,6 +1584,10 @@ const EXTENSION_PAGE_TRIGGERS: &[&str] = &[
     "onaftergetrecord",
     "onaftergetcurrrecord",
     "onnewrecord",
+    // Both the page's and the extensions' answers count, and both must be true to close
+    // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+    // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose).
+    "onqueryclosepage",
 ];
 
 /// The triggers a `modify` block can add to a control, which the client runs.
@@ -2486,7 +2515,9 @@ impl Lowerer<'_> {
                 }
             }
             let mut binding = ir::Binding::None;
-            if raw.kind == ir::ControlKind::Field {
+            if raw.kind == ir::ControlKind::Field && sec.name().eq_ignore_ascii_case("label") {
+                binding = ir::Binding::Caption;
+            } else if raw.kind == ir::ControlKind::Field {
                 let args = sec.args();
                 match args.get(1).map(|a| crate::pages::classify_source(a, &ow.names)) {
                     Some(crate::pages::Source::RecField(f)) => {
@@ -3035,9 +3066,12 @@ impl Lowerer<'_> {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
                 // A table of another type (CRM, ExternalSQL, ...) is served by a table connection.
                 let kind = self.table_types(t).first().cloned();
-                if let Some(k) =
-                    kind.filter(|k| !k.eq_ignore_ascii_case("normal") && !k.eq_ignore_ascii_case("temporary"))
-                {
+                // A CRM table is lowered: the VM refuses its first use (`Session::connection_check`).
+                if let Some(k) = kind.filter(|k| {
+                    !k.eq_ignore_ascii_case("normal")
+                        && !k.eq_ignore_ascii_case("temporary")
+                        && !k.eq_ignore_ascii_case("crm")
+                }) {
                     return Err(format!(
                         "table \"{}\" has TableType = {k}: it is served by a table connection, which the runtime does not model",
                         crate::types::display_name(table)
@@ -3807,20 +3841,24 @@ impl Lowerer<'_> {
                         .into(),
                 ),
                 _ => Err(self
-                    .base_page_member(n)
+                    .base_member(n)
                     .unwrap_or_else(|| format!("`{}` is not assignable", n.text()))),
             },
         }
     }
 
-    /// Why a name cannot be lowered in a page extension: it is a variable or procedure of the
-    /// page the extension extends. Extension code runs on its own object, which holds none of the
-    /// base page's variables or procedures (a bare control name binds to a base variable through
-    /// `Binding::BaseVar`, corpus handlers/TestRequestPageControlErrorName.al).
-    fn base_page_member(&self, n: &SyntaxNode) -> Option<String> {
-        if self.ws.objects[self.oi].kind != ObjKind::PageExtension {
-            return None;
-        }
+    /// Why a name cannot be lowered in a page or report extension: it is a variable or procedure of
+    /// the object the extension extends. Extension code runs on its own object, which holds none of
+    /// the base object's variables or procedures (a bare control name binds to a base variable
+    /// through `Binding::BaseVar`, corpus handlers/TestRequestPageControlErrorName.al). A report
+    /// extension reaches the `protected` ones of its base report (Microsoft's "Mfg. Adjust Add. Rep.
+    /// Currency" calls `Window.Open(..)` and `ExchangeAmtLCYToFCY(..)`).
+    fn base_member(&self, n: &SyntaxNode) -> Option<String> {
+        let noun = match self.ws.objects[self.oi].kind {
+            ObjKind::PageExtension => "page",
+            ObjKind::ReportExtension => "report",
+            _ => return None,
+        };
         let base = self.ws.extension_target(self.oi)?;
         let root = n
             .descendants_with_tokens()
@@ -3833,7 +3871,7 @@ impl Lowerer<'_> {
             .any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)))
             || obj.routines().any(|r| r.name().eq_ignore_ascii_case(&name));
         declared.then(|| {
-            format!("`{name}` is a variable or procedure of the page it extends: page extension code on base page members is not lowered yet")
+            format!("`{name}` is a variable or procedure of the {noun} it extends: {noun} extension code on base {noun} members is not lowered yet")
         })
     }
 
@@ -4476,7 +4514,20 @@ impl Lowerer<'_> {
             }
             // The checker refused a builtin of a newer runtime (ADR-015 3.3): say why.
             None if self.runtime_refusal(node).is_some() => Err(self.runtime_refusal(node).unwrap_or_default()),
-            other => Err(format!("call `{}` ({other:?}) is not lowered yet", node.text())),
+            // `Window.Open(..)` in a report extension, where `Window` is a variable of the base report.
+            None if self.base_member(callee).is_some() => Err(self.base_member(callee).unwrap_or_default()),
+            None => Err(format!("call `{}` has no callee the checker resolved", node.text())),
+            Some(r) => Err(format!(
+                "call `{}` to {} is not lowered yet",
+                node.text(),
+                match r {
+                    Res::Local(_) | Res::Global(_) => "a variable",
+                    Res::Field { .. } | Res::QueryColumn { .. } => "a field",
+                    Res::EnumValue { .. } | Res::OptionValue(_) => "an enum or option value",
+                    Res::ObjectId(_) => "an object id",
+                    _ => "this kind of callee",
+                }
+            )),
         }
     }
 
@@ -4783,6 +4834,33 @@ pageextension 50101 Ext extends Base { layout { addlast(Content) { field(\"X\"; 
                 .any(|r| r.contains("of the page it extends") && !r.contains("not assignable")),
             "{reasons:?}"
         );
+    }
+
+    /// Tests-ERM: the Manufacturing report extensions call `Window.Open(..)` and
+    /// `ExchangeAmtLCYToFCY(..)`, a `protected var` and a `protected procedure` of the report they
+    /// extend (Microsoft's "Adjust Add. Reporting Currency"). Extension code runs on its own object,
+    /// which holds none of the base report's variables, so the routine is refused and the reason says
+    /// why instead of printing an unresolved callee.
+    #[test]
+    fn a_report_extension_naming_a_member_of_its_base_report_is_refused_with_that_reason() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; Id; Integer) { } } }
+report 50100 Base { dataset { dataitem(Item; T) { } } protected var Window: Dialog; protected procedure Conv(A: Decimal): Decimal begin exit(A); end; }
+reportextension 50101 Ext extends Base
+{
+    dataset { modify(Item) { trigger OnPreDataItem() begin Window.Open('x'); end; } }
+    trigger OnPreReport() begin Message(Format(Conv(1))); end;
+}",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert_eq!(reasons.len(), 2, "{reasons:?}");
+        for r in reasons {
+            assert!(r.contains("of the report it extends") && !r.contains("None"), "{r}");
+        }
     }
 
     const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"
@@ -5667,10 +5745,11 @@ table 50912 \"ALT Head\"
 
     #[test]
     fn a_record_of_a_table_that_is_not_normal_or_temporary_is_refused() {
-        // session/TestDatabaseTableConnectionCrm.al:162-176: a TableType = CRM table is served
-        // by a table connection, which the runtime does not model.
+        // A table served by a table connection the runtime does not model (ExternalSQL here) is refused.
+        // A CRM table is lowered: its first use fails at run time while no connection is registered
+        // (session/TestCrmTableNoConnectionContracts.al), and with one it is refused there.
         let (_, l) = lower_src(
-            "table 50960 Crm { TableType = CRM; fields { field(1; Id; Guid) { } } }
+            "table 50960 Crm { TableType = ExternalSQL; fields { field(1; Id; Guid) { } } }
              table 50961 Plain { TableType = Normal; fields { field(1; Id; Integer) { } } }
              codeunit 50962 C {
                 procedure A() var R: Record Crm; begin R.Init(); end;
@@ -5683,7 +5762,7 @@ table 50912 \"ALT Head\"
             l.unsupported[oi][ri].clone()
         };
         assert!(
-            reasons("A").iter().any(|r| r.contains("TableType = CRM")),
+            reasons("A").iter().any(|r| r.contains("TableType = ExternalSQL")),
             "{:?}",
             reasons("A")
         );

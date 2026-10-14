@@ -12,14 +12,14 @@
 //! is a hint; the `app.json` inside decides, by app id.
 
 use crate::build::{BuildId, BuildQuery, Origin, Selection, parse_index, select_build};
-use crate::cache::{BuildDir, Store};
+use crate::cache::{BuildDir, Store, local_builds, local_platform_files};
 use crate::load::{Loaded, Planned, Request, ScanCache, plan_dependencies, read_planned};
 use crate::package::{Vars, read_info_with};
 use crate::remote::{HttpSource, RangeSource, RemoteError, RemoteZip, fetch_all, http_agent};
 use crate::select::{DepDecl, MissingPolicy, SelectError};
 use crate::zip::Entry;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Microsoft's public artifact CDN, sandbox channel (AL Runner's `ArtifactDownloader.CdnBase`).
 pub const DEFAULT_CDN: &str = "https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox";
@@ -33,6 +33,9 @@ pub trait Cdn {
     fn index(&self) -> Result<Vec<u8>, RemoteError>;
     /// The platform artifact of a build: its URL, for messages, and a range source for it.
     fn platform(&self, build: &BuildId) -> (String, Self::Src);
+    /// The country artifact of a build (`w1`): its URL, for messages, and a range source for it.
+    /// It holds the demo database backup (ADR-020).
+    fn country(&self, build: &BuildId, country: &str) -> (String, Self::Src);
 }
 
 pub struct HttpCdn {
@@ -73,6 +76,11 @@ impl Cdn for HttpCdn {
         let url = format!("{}/{build}/platform", self.base);
         (url.clone(), HttpSource::new(self.agent.clone(), url))
     }
+
+    fn country(&self, build: &BuildId, country: &str) -> (String, HttpSource) {
+        let url = format!("{}/{build}/{country}", self.base);
+        (url.clone(), HttpSource::new(self.agent.clone(), url))
+    }
 }
 
 /// How a run uses the feed.
@@ -82,6 +90,11 @@ pub struct Fetch {
     /// False for `--no-download`: only the cache is consulted.
     pub download: bool,
     pub query: BuildQuery,
+    /// A folder of extracted artifacts, one folder per build (`<build>/platform/...`), as
+    /// BcContainerHelper keeps them in `~/.bcartifacts.cache/sandbox`. A build the query names
+    /// exactly is taken from there before the feed is asked, and any matching build there is the
+    /// last resort when the feed has none or cannot be reached.
+    pub local_artifacts: Option<PathBuf>,
 }
 
 /// The build a run took Microsoft's apps from.
@@ -105,15 +118,33 @@ pub struct Provisioned {
 /// The entries of the platform artifact that could hold `dep`, best first. Only Microsoft's apps
 /// are in the artifact, so a dependency by another publisher has none.
 pub fn find_entries<'a>(entries: &'a [Entry], dep: &DepDecl) -> Vec<&'a Entry> {
+    rank_by_name(entries, |e| e.name.as_str(), dep)
+}
+
+/// [`find_entries`] over anything with an entry name: the archive's entries, or the files of an
+/// extracted artifact.
+fn rank_by_name<'a, T>(items: &'a [T], name_of: impl Fn(&T) -> &str, dep: &DepDecl) -> Vec<&'a T> {
     if !dep.publisher.is_empty() && !dep.publisher.eq_ignore_ascii_case("Microsoft") {
         return Vec::new();
     }
-    let base = |e: &Entry| e.name.rsplit('/').next().unwrap_or(&e.name).to_ascii_lowercase();
+    let base = |t: &T| {
+        let n = name_of(t);
+        n.rsplit('/').next().unwrap_or(n).to_ascii_lowercase()
+    };
     let name = dep.name.to_ascii_lowercase();
     let source = format!("{name}.source.zip");
     let compiled = format!("microsoft_{name}.app");
-    let mut out: Vec<&Entry> = entries.iter().filter(|e| base(e) == source).collect();
-    out.extend(entries.iter().filter(|e| base(e) == compiled));
+    let mut out: Vec<&T> = items.iter().filter(|e| base(e) == source).collect();
+    out.extend(items.iter().filter(|e| base(e) == compiled));
+    // The platform itself (`System`) is not an application: its package sits in the archive's
+    // `ModernDev/pfiles/microsoft dynamics nav/<version>/al development environment/` folder.
+    if name == "system" {
+        out.extend(items.iter().filter(|e| {
+            name_of(e)
+                .to_ascii_lowercase()
+                .ends_with("/al development environment/system.app")
+        }));
+    }
     out
 }
 
@@ -123,6 +154,42 @@ fn dep_key(d: &DepDecl) -> String {
     } else {
         d.id.to_ascii_lowercase()
     }
+}
+
+/// Whether the app inside an entry is the one `dep` names (the file name is a hint, the manifest
+/// decides). Says why not in `log`.
+fn entry_is(bytes: &[u8], name: &str, dep: &DepDecl, build: &BuildId, log: &mut Vec<String>) -> bool {
+    match read_info_with(bytes, &Vars::for_build(build.as_str()).unwrap_or_default()) {
+        Ok((m, _)) if dep.id.is_empty() || m.id.eq_ignore_ascii_case(&dep.id) => true,
+        Ok((m, _)) => {
+            log.push(format!(
+                "artifact: `{name}` holds {} ({}), not {} ({}); not used",
+                m.name, m.id, dep.name, dep.id
+            ));
+            false
+        }
+        Err(e) => {
+            log.push(format!("artifact: `{name}` is not a readable package: {e}; not used"));
+            false
+        }
+    }
+}
+
+/// A build of the local artifacts that the query names, with its files.
+struct LocalPlatform {
+    files: Vec<(String, PathBuf)>,
+}
+
+/// The build of `root` that the query picks. With `exact_only`, only a query that names one whole
+/// build (four numbers) picks, and it picks that build or none.
+fn pick_local(root: &Path, q: &BuildQuery, exact_only: bool) -> Option<Selection> {
+    let builds = local_builds(root);
+    if exact_only && !q.exact().is_some_and(|e| builds.contains(&e)) {
+        return None;
+    }
+    let mut sel = select_build(q, &builds, None, &root.display().to_string()).ok()?;
+    sel.origin = Origin::Local;
+    Some(sel)
 }
 
 /// The newest published build that satisfies the query, ignoring the cache. CI uses it to key its
@@ -148,6 +215,9 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
     let mut log: Vec<String> = Vec::new();
     let mut chosen: Option<(BuildDir, Selection)> = None;
     let mut remote: Option<(String, RemoteZip<C::Src>)> = None;
+    // Set when the chosen build is read from the local artifacts instead of the feed.
+    let mut local: Option<LocalPlatform> = None;
+    let mut local_files: Vec<PathBuf> = Vec::new();
     let mut fetched: Vec<String> = Vec::new();
     let mut tried: HashSet<String> = HashSet::new();
     let mut scans = ScanCache::new();
@@ -155,10 +225,13 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
     for _ in 0..ROUNDS {
         let mut dirs = req.search_dirs.to_vec();
         if let Some((bd, _)) = &chosen {
-            let (_, notes) = bd.verify();
-            log.extend(notes);
-            dirs.push(bd.apps_dir());
+            if local.is_none() {
+                let (_, notes) = bd.verify();
+                log.extend(notes);
+                dirs.push(bd.apps_dir());
+            }
         }
+        dirs.extend(local_files.iter().cloned());
         // Only the choice is made here; the sources are read once, after the last round.
         let round = plan_dependencies(
             &Request {
@@ -187,24 +260,98 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             break;
         }
         let cache_dir = store.dir().display().to_string();
+        let local_root = fetch.local_artifacts.as_deref();
+        let choose_local = |sel: Selection, local: &mut Option<LocalPlatform>, root: &Path, log: &mut Vec<String>| {
+            log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
+            *local = Some(LocalPlatform {
+                files: local_platform_files(root, &sel.build),
+            });
+            Some((store.build(&sel.build), sel))
+        };
         if chosen.is_none() {
             // Layer A, first look: the cache. A cached build needs no network to be chosen.
             let cached = store.list_builds();
-            if let Ok(sel) = select_build(&fetch.query, &cached, None, &cache_dir) {
+            // The build of the tests, when the query names one, must itself be cached: another
+            // cached build waits until the build of the tests is looked for on disk and on the feed.
+            let usable = fetch.query.exact().is_none_or(|e| cached.contains(&e));
+            if let Some(sel) = usable
+                .then(|| select_build(&fetch.query, &cached, None, &cache_dir).ok())
+                .flatten()
+            {
                 log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
                 chosen = Some((store.build(&sel.build), sel));
                 continue; // resolve again with the cached build's apps in the pool
             }
+            // A build named exactly and found on disk is used without asking the feed.
+            if let Some((root, sel)) = local_root.and_then(|r| pick_local(r, &fetch.query, true).map(|s| (r, s))) {
+                chosen = choose_local(sel, &mut local, root, &mut log);
+            }
         }
-        if !fetch.download {
+        if chosen.is_none() && !fetch.download {
+            // Offline: any cached build, else any matching build on disk.
+            if let Ok(sel) = select_build(&fetch.query, &store.list_builds(), None, &cache_dir) {
+                log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
+                chosen = Some((store.build(&sel.build), sel));
+                continue;
+            }
+            if let Some((root, sel)) = local_root.and_then(|r| pick_local(r, &fetch.query, false).map(|s| (r, s))) {
+                chosen = choose_local(sel, &mut local, root, &mut log);
+            }
+        }
+        if local.is_none() && !fetch.download {
             break;
         }
         if chosen.is_none() {
-            let published = published_builds(cdn)?;
-            let sel = select_build(&fetch.query, &store.list_builds(), Some(&published), &cache_dir)
-                .map_err(|e| e.to_string())?;
-            log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
-            chosen = Some((store.build(&sel.build), sel));
+            let picked = published_builds(cdn).and_then(|published| {
+                select_build(&fetch.query, &store.list_builds(), Some(&published), &cache_dir)
+                    .map_err(|e| e.to_string())
+            });
+            match picked {
+                Ok(sel) => {
+                    log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
+                    chosen = Some((store.build(&sel.build), sel));
+                }
+                // The feed has no such build (it keeps recent ones) or cannot be reached: a
+                // matching build already on disk still answers.
+                Err(e) => match local_root.and_then(|r| pick_local(r, &fetch.query, false).map(|s| (r, s))) {
+                    Some((root, sel)) => {
+                        log.push(format!("artifact: {e}; using the local artifacts instead"));
+                        chosen = choose_local(sel, &mut local, root, &mut log);
+                    }
+                    None => return Err(e),
+                },
+            }
+        }
+        if let Some(l) = &local {
+            let (_, sel) = chosen.as_ref().expect("a build is chosen");
+            let mut progress = false;
+            for dep in &todo {
+                tried.insert(dep_key(dep));
+                let mut found = false;
+                for (name, path) in rank_by_name(&l.files, |f| f.0.as_str(), dep) {
+                    let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+                    if !entry_is(&bytes, name, dep, &sel.build, &mut log) {
+                        continue;
+                    }
+                    log.push(format!("artifact: using {name} from {}", path.display()));
+                    fetched.push(name.clone());
+                    local_files.push(path.clone());
+                    found = true;
+                    break;
+                }
+                if found {
+                    progress = true;
+                } else {
+                    log.push(format!(
+                        "artifact: BC build {} has no entry for `{}` ({})",
+                        sel.build, dep.name, dep.id
+                    ));
+                }
+            }
+            if !progress {
+                break;
+            }
+            continue;
         }
         let (bd, sel) = chosen.as_ref().expect("a build is chosen");
         if remote.is_none() {
@@ -229,23 +376,8 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                 let bytes = zip
                     .read(entry)
                     .map_err(|e| format!("{url}: entry `{}`: {e}", entry.name))?;
-                // The file name is a hint; the app inside decides.
-                match read_info_with(&bytes, &Vars::for_build(sel.build.as_str()).unwrap_or_default()) {
-                    Ok((m, _)) if dep.id.is_empty() || m.id.eq_ignore_ascii_case(&dep.id) => {}
-                    Ok((m, _)) => {
-                        log.push(format!(
-                            "artifact: `{}` holds {} ({}), not {} ({}); not used",
-                            entry.name, m.name, m.id, dep.name, dep.id
-                        ));
-                        continue;
-                    }
-                    Err(e) => {
-                        log.push(format!(
-                            "artifact: `{}` is not a readable package: {e}; not used",
-                            entry.name
-                        ));
-                        continue;
-                    }
+                if !entry_is(&bytes, &entry.name, dep, &sel.build, &mut log) {
+                    continue;
                 }
                 bd.put_entry(&entry.name, url, &bytes)?;
                 // The directory has a file more than the last look found.
@@ -285,6 +417,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
         let how = match sel.origin {
             Origin::Cache => "cache",
             Origin::Published => "downloaded",
+            Origin::Local => "local artifacts",
         };
         log.insert(0, format!("artifact: BC build {} ({how})", sel.build));
         ArtifactUse {
@@ -339,6 +472,21 @@ mod tests {
     const SATL: &str = "9856ae4f-d1a7-46ef-89bb-6ef056398228";
     const MOCK: &str = "40860557-a18d-42ad-aecb-22b7dd80dc80";
     const ANY: &str = "e7320ebb-08b3-4406-b1ec-b4927d3e280b";
+    const SYS: &str = "8874ed3a-0643-4247-9ced-7a7002f7135d";
+    const SYSTEM_APP_ENTRY: &str = "ModernDev/pfiles/microsoft dynamics nav/270/al development environment/System.app";
+
+    /// The platform's `System.app`: a package with a manifest and a little source.
+    fn system_app() -> Vec<u8> {
+        let manifest = format!(
+            r#"<Package><App Id="{SYS}" Name="System" Publisher="Microsoft" Version="27.0.0.0" /><Dependencies/></Package>"#
+        );
+        navx(
+            &Builder::new()
+                .add("NavxManifest.xml", manifest.as_bytes(), true)
+                .add("src/Sys.al", b"table 2000000000 \"Sys\" { }", true)
+                .finish(),
+        )
+    }
 
     fn app_json(id: &str, name: &str, deps: &[(&str, &str)]) -> String {
         let deps: Vec<String> = deps
@@ -397,6 +545,7 @@ mod tests {
         );
         let base = source_zip(&base_json, &[("T.Table.al", "table 18 Customer { }")]);
         let mut b = Builder::new();
+        b = b.add(SYSTEM_APP_ENTRY, &system_app(), false);
         b = b.add("Applications/BaseApp/Source/Base Application.Source.zip", &base, false);
         for i in 0..40 {
             b = b.add(&format!("filler/{i}.bin"), &vec![i as u8; 4000], false);
@@ -483,6 +632,9 @@ mod tests {
                 .unwrap_or_else(|| PathBuf::from("/nonexistent/platform.zip"));
             (format!("https://cdn.test/{build}/platform"), FileSource(p))
         }
+        fn country(&self, _: &BuildId, _: &str) -> (String, FileSource) {
+            panic!("the country artifact was requested")
+        }
     }
 
     /// A feed nobody may call.
@@ -497,6 +649,9 @@ mod tests {
         }
         fn platform(&self, _: &BuildId) -> (String, FileSource) {
             panic!("the platform artifact was requested")
+        }
+        fn country(&self, _: &BuildId, _: &str) -> (String, FileSource) {
+            panic!("the country artifact was requested")
         }
     }
 
@@ -546,6 +701,7 @@ mod tests {
             cache_root: cache.to_path_buf(),
             download,
             query: BuildQuery::new(requested, 27, Some((27, 0))),
+            local_artifacts: None,
         }
     }
 
@@ -696,6 +852,242 @@ mod tests {
     }
 
     #[test]
+    fn the_platform_system_app_is_fetched_from_the_modern_dev_folder_of_the_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let mut p = project();
+        p.dependencies = vec![dep(SA, "System Application"), dep(SYS, "System")];
+        let out = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(names(&out), ["System", "System Application"]);
+        let used = out.artifact.unwrap();
+        assert_eq!(used.fetched, [SYSTEM_APP_ENTRY]);
+        // Warm: the second run finds it in the cache and asks nobody.
+        let again = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &p,
+        )
+        .unwrap();
+        assert_eq!(names(&again), ["System", "System Application"]);
+    }
+
+    /// An extracted artifact as BcContainerHelper keeps it: `<sandbox>/<build>/platform/<entry>`.
+    fn extracted_artifact(sandbox: &Path, build: &str) {
+        let platform = sandbox.join(build).join("platform");
+        let put = |entry: &str, bytes: &[u8]| {
+            let p = platform.join(entry);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, bytes).unwrap();
+        };
+        let any = source_zip(
+            &app_json(ANY, "Any", &[]),
+            &[("Any.Codeunit.al", "codeunit 130500 Any { }")],
+        );
+        put(
+            "Applications/TestFramework/TestLibraries/Any/Source/Any.Source.zip",
+            &any,
+        );
+        let mock = source_zip(
+            &app_json(MOCK, "Permissions Mock", &[]),
+            &[("M.Codeunit.al", "codeunit 131006 \"Permissions Mock\" { }")],
+        );
+        put(
+            "Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip",
+            &mock,
+        );
+        let satl = source_zip(
+            &app_json(
+                SATL,
+                "System Application Test Library",
+                &[(SA, "System Application"), (ANY, "Any")],
+            ),
+            &[("P.Codeunit.al", "codeunit 132916 \"Azure AD Plan Test Library\" { }")],
+        );
+        put(
+            "Applications/System Application/Test/System Application Test Library.Source.zip",
+            &satl,
+        );
+        put(SYSTEM_APP_ENTRY, &system_app());
+        // Filler a walk must not need to read.
+        put("ServiceTier/big.dll", &[0u8; 100]);
+    }
+
+    #[test]
+    fn an_exact_build_that_the_feed_no_longer_lists_is_taken_from_the_local_artifacts() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = dir.path().join("sandbox");
+        extracted_artifact(&sandbox, "27.5.46862.48827");
+        // The feed lists only newer builds.
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249", "28.1.1.1"]);
+        let alpkg = alpackages(dir.path());
+        let mut f = fetch(&dir.path().join("cache"), true, Some("27.5.46862.48827"));
+        f.local_artifacts = Some(sandbox);
+        let out = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(
+            names(&out),
+            [
+                "System Application",
+                "Any",
+                "System Application Test Library",
+                "Permissions Mock"
+            ]
+        );
+        let used = out.artifact.unwrap();
+        assert_eq!(used.build.to_string(), "27.5.46862.48827");
+        assert_eq!(used.origin, Origin::Local);
+        assert_eq!(cdn.index_calls.get(), 0, "an exact local build needs no feed");
+        assert_eq!(cdn.platform_calls.get(), 0);
+        // The source of an app read from there fills Microsoft's build variables with that build.
+        assert!(
+            out.log
+                .iter()
+                .any(|l| l.contains("27.5.46862.48827") && l.contains("local")),
+            "{:?}",
+            out.log
+        );
+    }
+
+    #[test]
+    fn local_artifacts_are_the_last_resort_for_a_prefix_the_feed_cannot_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = dir.path().join("sandbox");
+        extracted_artifact(&sandbox, "27.5.46862.48827");
+        extracted_artifact(&sandbox, "28.1.49838.50621");
+        let alpkg = alpackages(dir.path());
+        // Offline: the local build of the major is used.
+        let mut f = fetch(&dir.path().join("cache"), false, Some("27"));
+        f.local_artifacts = Some(sandbox.clone());
+        let out = run(&alpkg, &f, &NoNetwork, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(out.artifact.unwrap().build.to_string(), "27.5.46862.48827");
+        // Online and the feed has a match: the feed's newest wins over the local one.
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache2"), true, Some("27"));
+        f.local_artifacts = Some(sandbox);
+        let out = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        let used = out.artifact.unwrap();
+        assert_eq!(
+            (used.build.to_string().as_str(), used.origin),
+            ("27.5.46862.56249", Origin::Published)
+        );
+    }
+
+    #[test]
+    fn the_build_of_the_tests_is_taken_from_the_local_artifacts_before_the_feed() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = dir.path().join("sandbox");
+        extracted_artifact(&sandbox, "27.5.46862.48827");
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache"), true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        f.local_artifacts = Some(sandbox);
+        let out = run(&alpackages(dir.path()), &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        let used = out.artifact.unwrap();
+        assert_eq!(
+            (used.build.to_string().as_str(), used.origin),
+            ("27.5.46862.48827", Origin::Local)
+        );
+        assert_eq!(cdn.index_calls.get(), 0);
+    }
+
+    #[test]
+    fn the_build_of_the_tests_is_taken_from_the_feed_when_it_is_still_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.48827", "27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache"), true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        let out = run(&alpackages(dir.path()), &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(out.artifact.unwrap().build.to_string(), "27.5.46862.48827");
+    }
+
+    #[test]
+    fn a_build_of_the_tests_that_is_gone_is_replaced_by_the_newest_and_the_log_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache"), true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        let out = run(&alpackages(dir.path()), &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(out.artifact.unwrap().build.to_string(), "27.5.46862.56249");
+        assert!(
+            out.log
+                .iter()
+                .any(|l| l.contains("27.5.46862.48827") && l.contains("56249")),
+            "{:?}",
+            out.log
+        );
+    }
+
+    #[test]
+    fn the_build_of_the_tests_is_taken_from_the_local_artifacts_even_when_another_build_is_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = dir.path().join("sandbox");
+        extracted_artifact(&sandbox, "27.5.46862.48827");
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        // A first run without the tests' build caches the newest published one.
+        let cache = dir.path().join("cache");
+        let first = run(
+            &alpkg,
+            &fetch(&cache, true, None),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert_eq!(first.artifact.unwrap().build.to_string(), "27.5.46862.56249");
+        let mut f = fetch(&cache, true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        f.local_artifacts = Some(sandbox);
+        let out = run(&alpkg, &f, &NoNetwork, MissingPolicy::Error, &project()).unwrap();
+        let used = out.artifact.unwrap();
+        assert_eq!(
+            (used.build.to_string().as_str(), used.origin),
+            ("27.5.46862.48827", Origin::Local)
+        );
+    }
+
+    #[test]
+    fn offline_a_cached_build_is_used_when_the_tests_build_is_nowhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        run(
+            &alpkg,
+            &fetch(&cache, true, None),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        let mut f = fetch(&cache, false, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        let out = run(&alpkg, &f, &NoNetwork, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(out.artifact.unwrap().build.to_string(), "27.5.46862.56249");
+    }
+
+    #[test]
+    fn a_build_that_is_nowhere_still_names_the_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = dir.path().join("sandbox");
+        extracted_artifact(&sandbox, "27.5.46862.48827");
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache"), true, Some("27.5.1.1"));
+        f.local_artifacts = Some(sandbox);
+        let e = run(&alpackages(dir.path()), &f, &cdn, MissingPolicy::Error, &project()).unwrap_err();
+        assert!(e.contains("27.5.1.1"), "{e}");
+    }
+
+    #[test]
     fn a_cached_build_wins_over_a_newer_published_one() {
         let dir = tempfile::tempdir().unwrap();
         let old = FixtureCdn::new(dir.path(), &["27.5.46862.55978"]);
@@ -749,6 +1141,7 @@ mod tests {
             cache_root: dir.path().join("cache"),
             download: true,
             query: BuildQuery::new(None, 27, Some((27, 0))),
+            local_artifacts: None,
         };
         let p = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap();
         assert_eq!(p.artifact.unwrap().build.to_string(), "27.5.46862.56249");
@@ -757,6 +1150,7 @@ mod tests {
             cache_root: dir.path().join("cache2"),
             download: true,
             query: BuildQuery::new(None, 27, Some((27, 9))),
+            local_artifacts: None,
         };
         let e = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap_err();
         assert!(e.contains("floor 27.9") && e.contains("27.5.46862.56249"), "{e}");

@@ -45,7 +45,12 @@ const LAYOUT_SECTIONS: &[&str] = &["rendering", "labels", "wordlayout", "rdlclay
 /// `AutoFormatType` on most decimal columns, so a dataset that refused them would refuse nearly every
 /// report; the dataset is taken to carry the same `decimalformatter` for them
 /// (docs/probes-needed.md, "Report.SaveAs dataset").
-const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &["autoformattype", "autoformatexpression", "decimalplaces"];
+const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &[
+    "autoformattype",
+    "autoformatexpression",
+    "decimalplaces",
+    "includecaption",
+];
 
 /// Whether the data item `sec` states `UseTemporary = true`: its record is a temporary one, which
 /// holds only what the report's code inserts.
@@ -61,7 +66,20 @@ pub struct RawItem {
     pub parent: Option<usize>,
     /// For a top-level item of a reportextension: the name of the item it is added under.
     pub target: Option<String>,
+    /// For a top-level item of a reportextension: `addfirst`, `addlast`, `addbefore` or `addafter`
+    /// (`target` then names the sibling for the last two).
+    pub place: Place,
     pub section: ast::Section,
+}
+
+/// Where a reportextension puts the data items one `add...` block declares.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Place {
+    #[default]
+    Last,
+    First,
+    Before,
+    After,
 }
 
 pub struct Layout {
@@ -228,7 +246,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
     }
     for top in obj.sections() {
         match top.name().to_ascii_lowercase().as_str() {
-            "dataset" => visit(&top, None, None, &mut out.items, &mut out.reasons),
+            "dataset" => visit(&top, None, None, &Place::Last, &mut out.items, &mut out.reasons),
             "requestpage" => {
                 out.has_request_page = true;
                 for p in top.properties() {
@@ -355,7 +373,7 @@ pub fn request_layout(
             // has them is not pinned, so a literal value passes here and the test client refuses to touch a
             // data item of a page that says `false` (docs/probes-needed.md).
             let show_filter = name == "showfilter" && bool_prop(&p.value_text()).is_some();
-            if !["caption", "savevalues"].contains(&name.as_str())
+            if !["caption", "savevalues", "sourcetable"].contains(&name.as_str())
                 && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
                 && !show_filter
             {
@@ -416,6 +434,7 @@ fn visit(
     section: &ast::Section,
     parent: Option<usize>,
     target: Option<&str>,
+    place: &Place,
     items: &mut Vec<RawItem>,
     reasons: &mut Vec<String>,
 ) {
@@ -466,9 +485,10 @@ fn visit(
             } else {
                 None
             },
+            place: if parent.is_none() { place.clone() } else { Place::Last },
             section: s.clone(),
         });
-        visit(&s, Some(idx), None, items, reasons);
+        visit(&s, Some(idx), None, &Place::Last, items, reasons);
     }
 }
 
@@ -485,7 +505,8 @@ pub struct ExtLayout {
 
 /// Walks reportextension `obj`. Only what the corpus pins is understood
 /// (reportextension/TestReportExtensionTriggers.al): `OnPreReport` and `OnPostReport`,
-/// `modify(Item)` with its two triggers, `add(Item)` of columns, and `addlast(Item)` of data items.
+/// `modify(Item)` with its two triggers, `add(Item)` of columns, and `addfirst`, `addlast`, `addbefore` and
+/// `addafter` of data items.
 pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
     let mut out = ExtLayout {
         modifies: Vec::new(),
@@ -543,13 +564,29 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                         "add" if s.sections().all(|c| c.name().eq_ignore_ascii_case("column")) => {
                             out.adds.push((target, s.clone()));
                         }
-                        "addlast" => {
+                        // The compiler allows addbefore and addafter on a nested data item only; addfirst and
+                        // addlast name the parent (reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al).
+                        "addlast" | "addfirst" | "addbefore" | "addafter" => {
                             if s.properties().next().is_some() || s.triggers().next().is_some() {
                                 out.reasons.push(format!(
-                                    "addlast({target}) with properties or triggers is not supported yet"
+                                    "{kind}({target}) with properties or triggers is not supported yet"
                                 ));
                             }
-                            visit(&s, None, Some(&target), &mut out.items, &mut out.reasons);
+                            let place = match kind.as_str() {
+                                "addlast" => Place::Last,
+                                "addfirst" => Place::First,
+                                "addbefore" => Place::Before,
+                                _ => Place::After,
+                            };
+                            // Columns added next to a column, or first or last among the columns of an item,
+                            // land at a place in the dataset no test pins; only `addlast(Item)` has been
+                            // silently ignoring them so far.
+                            if kind != "addlast" && s.sections().any(|c| c.name().eq_ignore_ascii_case("column")) {
+                                out.reasons.push(format!(
+                                    "{kind}({target}) adds columns, whose place in the dataset is not pinned"
+                                ));
+                            }
+                            visit(&s, None, Some(&target), &place, &mut out.items, &mut out.reasons);
                         }
                         other => out.reasons.push(format!(
                             "reportextension dataset element {other}({target}) is not supported yet"
@@ -676,7 +713,25 @@ impl<'a> Owner<'a> {
                 let ordinal = self.column_starts.iter().position(|&s| s == start);
                 let routine = ordinal.and_then(|o| self.column_routines.get(&o).copied());
                 let mut unsupported = None;
-                if args.len() != 2 {
+                let mut include_caption = false;
+                let mut decimal_places = None;
+                for p in c.properties() {
+                    let value = p.value_text();
+                    match p.name().to_ascii_lowercase().as_str() {
+                        // handlers/TestReportSaveAsColumnTypesContracts.al:222-248: `true` adds the label.
+                        "includecaption" => match value.trim().to_ascii_lowercase().as_str() {
+                            "true" => include_caption = true,
+                            "false" => {}
+                            other => {
+                                unsupported.get_or_insert(format!("column {name}: IncludeCaption = {other}"));
+                            }
+                        },
+                        "decimalplaces" => decimal_places = Some(value.trim().to_string()),
+                        _ => {}
+                    }
+                }
+                if unsupported.is_some() {
+                } else if args.len() != 2 {
                     unsupported = Some(format!("column {name} does not state exactly a name and a source"));
                 } else if routine.is_none() {
                     unsupported = Some(format!("column {name} has no routine"));
@@ -705,6 +760,8 @@ impl<'a> Owner<'a> {
                     routine,
                     unsupported,
                     field,
+                    include_caption,
+                    decimal_places,
                 }
             })
             .collect()
@@ -892,27 +949,92 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
     for (j, raw) in cx.layout.items.iter().enumerate() {
         let mut base_parent = None;
         let mut parent = raw.parent;
+        let mut place = ir::AddedPlace::Last;
         let parent_table = if let Some(target) = &raw.target {
-            if let Some(i) = base_index(target) {
-                base_parent = Some(i);
-                cx.base_items[i].table
-            } else if let Some(k) = cx.layout.items[..j]
-                .iter()
-                .position(|x| x.name.eq_ignore_ascii_case(target))
-            {
-                parent = Some(k);
-                added[k].item.table
+            let anchor = if let Some(i) = base_index(target) {
+                Some(ir::ItemAnchor::Base(i))
             } else {
-                reasons.push(format!(
-                    "addlast({target}): the report has no such data item (an item added by another extension is not supported)"
-                ));
-                None
+                cx.layout.items[..j]
+                    .iter()
+                    .position(|x| x.name.eq_ignore_ascii_case(target))
+                    .map(ir::ItemAnchor::Added)
+            };
+            match (&raw.place, anchor) {
+                // `addfirst(Parent)` and `addlast(Parent)` name the parent.
+                (Place::First | Place::Last, Some(ir::ItemAnchor::Base(i))) => {
+                    base_parent = Some(i);
+                    if raw.place == Place::First {
+                        place = ir::AddedPlace::First;
+                    }
+                    cx.base_items[i].table
+                }
+                (Place::First | Place::Last, Some(ir::ItemAnchor::Added(k))) => {
+                    parent = Some(k);
+                    if raw.place == Place::First {
+                        place = ir::AddedPlace::First;
+                    }
+                    added[k].item.table
+                }
+                // `addbefore(Sibling)` and `addafter(Sibling)` name a sibling and sit under its parent.
+                (Place::Before | Place::After, Some(a)) => {
+                    place = if raw.place == Place::Before {
+                        ir::AddedPlace::Before(a)
+                    } else {
+                        ir::AddedPlace::After(a)
+                    };
+                    match a {
+                        ir::ItemAnchor::Base(i) => match cx.base_items[i].parent {
+                            Some(p) => {
+                                base_parent = Some(p);
+                                cx.base_items[p].table
+                            }
+                            None => {
+                                reasons.push(format!(
+                                    "{target} is a top-level data item: addbefore and addafter cannot name it"
+                                ));
+                                None
+                            }
+                        },
+                        ir::ItemAnchor::Added(k) => {
+                            base_parent = added[k].base_parent;
+                            parent = added[k].item.parent;
+                            match (base_parent, parent) {
+                                (Some(p), _) => cx.base_items[p].table,
+                                (None, Some(q)) => added[q].item.table,
+                                (None, None) => None,
+                            }
+                        }
+                    }
+                }
+                (_, None) => {
+                    reasons.push(format!(
+                        "add...({target}): the report has no such data item (an item added by another extension is not supported)"
+                    ));
+                    None
+                }
             }
         } else {
             raw.parent.and_then(|p| added.get(p).and_then(|a| a.item.table))
         };
         let item = item_ir(&o, raw, Some(n + j), parent, parent_table, &mut reasons);
-        added.push(ir::AddedItem { item, base_parent });
+        added.push(ir::AddedItem {
+            item,
+            base_parent,
+            place,
+        });
+    }
+    // Items added at one place (the same position under the same parent) run in an order no test pins.
+    for (i, a) in added.iter().enumerate() {
+        if a.place != ir::AddedPlace::Last
+            && added[..i]
+                .iter()
+                .any(|b| b.place == a.place && b.base_parent == a.base_parent && b.item.parent == a.item.parent)
+        {
+            reasons.push(format!(
+                "two data items added at the same place ({}): their order is not pinned",
+                a.item.name
+            ));
+        }
     }
     let aliases = (0..n)
         .filter(|&i| cx.base_items[i].slot.is_some())
@@ -1004,13 +1126,21 @@ mod tests {
     }
 
     #[test]
-    fn addafter_stays_refused_because_the_dataset_order_is_not_pinned() {
-        // `add` columns land in the dataset a SaveAs writes (report-saveas); where `addafter`
-        // puts them, and where it puts a data item, is pinned by no corpus test.
+    fn columns_added_next_to_a_column_stay_refused_but_data_items_are_placed() {
+        // Where `addafter` puts a column is pinned by no corpus test.
         let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { column(X; No) { } } } }");
         assert!(l.reasons.join(";").contains("addafter(A)"), "{:?}", l.reasons);
-        let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { dataitem(B; Ledger) { } } } }");
-        assert!(l.reasons.join(";").contains("addafter(A)"), "{:?}", l.reasons);
+        // A data item is placed (reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al).
+        for kind in ["addfirst", "addlast", "addbefore", "addafter"] {
+            let l = ext_layout_of(&format!(
+                "reportextension 1 E extends R {{ dataset {{ {kind}(A) {{ dataitem(B; Ledger) {{ }} }} }} }}"
+            ));
+            assert!(l.reasons.is_empty(), "{kind}: {:?}", l.reasons);
+            assert_eq!(l.items.len(), 1);
+        }
+        let l = ext_layout_of("reportextension 1 E extends R { dataset { addbefore(A) { dataitem(B; Ledger) { } } } }");
+        assert_eq!(l.items[0].place, Place::Before);
+        assert_eq!(l.items[0].target.as_deref(), Some("A"));
     }
 
     #[test]
@@ -1051,7 +1181,7 @@ mod tests {
     #[test]
     fn what_an_extension_may_not_do_becomes_a_reason() {
         let l = ext_layout_of(
-            "reportextension 1 E extends R { dataset { addfirst(A) { dataitem(B; Ledger) { } } modify(A) { Caption = 'x'; trigger OnFoo() begin end; } } procedure P() begin end; var G: Integer; trigger OnInitReport() begin end; }",
+            "reportextension 1 E extends R { dataset { addfirst(A) { column(X; No) { } } modify(A) { Caption = 'x'; trigger OnFoo() begin end; } } procedure P() begin end; var G: Integer; trigger OnInitReport() begin end; }",
         );
         let all = l.reasons.join("; ");
         assert!(all.contains("addfirst(A)"), "{all}");

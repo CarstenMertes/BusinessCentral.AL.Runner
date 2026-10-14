@@ -5,37 +5,37 @@
 # (ADR-007).
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
-corpus_commit = "337859e7007337a0bf52ae2d82c6b802c2b5fba0"
+corpus_commit = "eb46da5b2f5a4fe2068d496945a68d5b81ecb3be"
 
 [[version]]
 major = 27
 bc_version = "27.5"
-workflow_run = 38564280267
-artifact_id = 11895492179
+workflow_run = 38583619641
+artifact_id = 11905068073
 junit = "27/junit.xml"
 baseline = "metrics/27/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 38564280267
-artifact_id = 11894245312
+workflow_run = 38583619641
+artifact_id = 11903774055
 oracle = "27/junit-onprem.xml"
 baseline = "metrics/27/passing-onprem.txt"
 
 [[version]]
 major = 28
 bc_version = "28.5"
-workflow_run = 38566708821
-artifact_id = 11897001202
+workflow_run = 38586532873
+artifact_id = 11908075368
 junit = "28/junit.xml"
 baseline = "metrics/28/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 38566708821
-artifact_id = 11896561384
+workflow_run = 38586532873
+artifact_id = 11905897498
 oracle = "28/junit-onprem.xml"
 baseline = "metrics/28/passing-onprem.txt"
 
@@ -72,15 +72,15 @@ baseline = "metrics/28/passing-isolation-codeunit.txt"
 [[version]]
 major = 29
 bc_version = "29.0"
-workflow_run = 38569781950
-artifact_id = 11898113141
+workflow_run = 38589877227
+artifact_id = 11907389368
 junit = "29/junit.xml"
 baseline = "metrics/29/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 38569781950
-artifact_id = 11896847119
+workflow_run = 38589877227
+artifact_id = 11907271672
 oracle = "29/junit-onprem.xml"
 baseline = "metrics/29/passing-onprem.txt"

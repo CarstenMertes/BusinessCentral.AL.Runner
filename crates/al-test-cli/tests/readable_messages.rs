@@ -1,0 +1,142 @@
+//! Refusal reasons and internal errors read as AL, not as Rust. A message that formats a value with
+//! `{:?}` prints internal structure (`Record(RefCell { .. })`) into the text a user reads, and the
+//! reasons stop grouping in `--top-refusals`. Describe a value with `al_builtins::describe::Describe`.
+//!
+//! This scan covers the production code of every crate (the part of a file before its
+//! `#[cfg(test)]` module). A debug format that stays must be listed in `KEPT` with the reason.
+
+use std::path::{Path, PathBuf};
+
+/// `(file suffix, the trimmed source line, why the debug format is fine here)`.
+const KEPT: &[(&str, &str, &str)] = &[
+    (
+        "al-data/src/contract.rs",
+        r#"other => panic!("{other:?}"),"#,
+        "the conformance suite asserts on a store outcome; a failing test prints it",
+    ),
+    (
+        "al-host/src/testdata.rs",
+        r#"let key = format!("{}|{:?}|{}", table.name.to_lowercase(), table.app_id, table.per_company);"#,
+        "a cache key, never shown",
+    ),
+    (
+        "al-sema/src/queries.rs",
+        r#""column {name}: a {class:?} field in this position (or with Method) is not supported yet""#,
+        "`class` is a unit enum: the debug text is the variant name (Normal, FlowField)",
+    ),
+    (
+        "al-sema/src/lower.rs",
+        r#"other => Err(format!("statement {other:?} is not lowered yet")),"#,
+        "`other` is a syntax kind: the debug text is its name",
+    ),
+    (
+        "al-sema/src/lower.rs",
+        r#"other => Err(format!("expression {other:?} `{}` is not lowered yet", n.text())),"#,
+        "`other` is a syntax kind: the debug text is its name",
+    ),
+    (
+        "al-syntax/src/parser.rs",
+        r#"self.error(&format!("expected {kind:?}"));"#,
+        "a syntax kind: the debug text is its name",
+    ),
+    (
+        "al-syntax/src/parser.rs",
+        r#"s.push_str(&format!("{:?}", node.kind()));"#,
+        "the tree dump of the parser tests: a syntax kind name",
+    ),
+    (
+        "al-testrun/src/runtime.rs",
+        r#""{} and {} are both {kind:?} handlers; which one BC would bind is not pinned","#,
+        "`kind` is a unit enum (UiKind): the debug text is the variant name",
+    ),
+    (
+        "al-vm/src/globaltriggers.rs",
+        r#""{op:?} of a temporary record of {}, which has Global Triggers events enabled (whether BC raises them is not pinned)","#,
+        "`op` is a unit enum (Insert, Modify, Delete, Rename)",
+    ),
+    (
+        "al-vm/src/partial.rs",
+        r#"format!("{:?}", t.primary_key(row))"#,
+        "a comparison key, never shown",
+    ),
+    (
+        "al-vm/src/partial.rs",
+        r#"if format!("{:?}", fresh) != format!("{:?}", r.fields) {"#,
+        "a comparison of two buffers, never shown",
+    ),
+    (
+        "al-vm/src/platform/metadata.rs",
+        r#""page '{}': the action '{}' is a {:?}{}, whose row is not pinned","#,
+        "the argument is a control kind: a unit enum, the debug text is the variant name",
+    ),
+    (
+        "al-vm/src/reports.rs",
+        r#""CurrReport.{flow:?} outside the triggers where it is pinned (what it does there is not pinned)""#,
+        "`flow` is a unit enum (Skip, Break, Quit): the debug text is the variant name",
+    ),
+    (
+        "al-builtins/src/value.rs",
+        r#""PageState(page {}, open {}, mode {:?})","#,
+        "the Debug impl of PageState prints facts only; `mode` is a unit enum",
+    ),
+];
+
+fn root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
+
+fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            rust_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            out.push(p);
+        }
+    }
+}
+
+#[test]
+fn no_message_formats_a_value_with_the_debug_format() {
+    let mut files = Vec::new();
+    for k in std::fs::read_dir(root().join("crates")).unwrap().flatten() {
+        let src = k.path().join("src");
+        if src.is_dir() {
+            rust_files(&src, &mut files);
+        }
+    }
+    assert!(files.len() > 100, "found {} source files", files.len());
+    let mut found = Vec::new();
+    for f in &files {
+        let rel = f.strip_prefix(root()).unwrap().to_string_lossy().replace('\\', "/");
+        if rel.ends_with("tests.rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(f).unwrap();
+        for (i, line) in text.lines().enumerate() {
+            if line.starts_with("#[cfg(test)]") {
+                break;
+            }
+            let t = line.trim();
+            if t.starts_with("//") || !(t.contains("?}") && (t.contains("{:") || t.contains(":?}"))) {
+                continue;
+            }
+            if !(t.contains(":?}") || t.contains(":#?}")) {
+                continue;
+            }
+            if KEPT.iter().any(|(file, l, _)| rel.ends_with(file) && t == *l) {
+                continue;
+            }
+            found.push(format!("{rel}:{}: {t}", i + 1));
+        }
+    }
+    assert!(
+        found.is_empty(),
+        "{} message(s) use the debug format; use `Describe::describe` or list the line in KEPT:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+}

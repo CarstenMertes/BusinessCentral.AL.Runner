@@ -2,6 +2,7 @@
 //! `Dictionary.Get` of a missing key; the other out-of-range indexes and `Dictionary.Add` of an
 //! existing key raise Unsupported.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::ops::compare;
 use crate::value::Value;
@@ -260,14 +261,14 @@ fn count(v: &Value) -> Result<usize, Signal> {
 fn list_items(v: &Value) -> Result<Vec<Value>, Signal> {
     match v {
         Value::List(l) => Ok(l.borrow().clone()),
-        other => Err(Signal::Unsupported(format!("{other:?} is not a list"))),
+        other => Err(Signal::Unsupported(format!("{} is not a list", other.describe()))),
     }
 }
 
 fn with_list<T>(r: Option<&mut Value>, f: impl FnOnce(&mut Vec<Value>) -> Result<T, Signal>) -> Result<T, Signal> {
     match r {
         Some(Value::List(l)) => f(&mut l.borrow_mut()),
-        other => Err(Signal::Unsupported(format!("list method on {other:?}"))),
+        other => Err(Signal::Unsupported(format!("list method on {}", other.describe()))),
     }
 }
 
@@ -277,7 +278,10 @@ fn with_dict<T>(
 ) -> Result<T, Signal> {
     match r {
         Some(Value::Dictionary(d)) => f(&mut d.borrow_mut()),
-        other => Err(Signal::Unsupported(format!("dictionary method on {other:?}"))),
+        other => Err(Signal::Unsupported(format!(
+            "dictionary method on {}",
+            other.describe()
+        ))),
     }
 }
 

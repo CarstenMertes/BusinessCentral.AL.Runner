@@ -134,7 +134,7 @@ impl Session {
                 "Truncate is not supported when the OnBeforeDelete and/or OnAfterDelete event is subscribed. Please remove the events subscriptions or use DeleteAll.",
             );
         }
-        if self.global_enabled(t, crate::globaltriggers::GlobalOp::Delete)? {
+        if !rec.borrow().temporary && self.global_enabled(t, crate::globaltriggers::GlobalOp::Delete)? {
             return unsupported(format!(
                 "Truncate on {}, which has the OnDatabaseDelete event enabled (whether BC refuses it is not pinned)",
                 t.name
@@ -145,7 +145,7 @@ impl Session {
             return error("Truncate does not support filters on FlowFields.");
         }
         let cx = self.cx_for(rec, t)?;
-        let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e:?}"));
+        let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e}"));
         // A filter on a normal field limits what Truncate deletes (corpus
         // record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_WithFilterOnANormalField_RemovesOnlyTheFilteredRows).
         let slot = Self::counter_slot(t, &cx.company);

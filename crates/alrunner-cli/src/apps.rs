@@ -126,3 +126,26 @@ pub fn combined_project(apps: &[AppInput]) -> AppJson {
         dependencies,
     }
 }
+
+/// Whether `publisher` is Microsoft.
+pub fn is_microsoft(publisher: &str) -> bool {
+    publisher.eq_ignore_ascii_case("Microsoft")
+}
+
+/// The build the tests themselves come from: Microsoft's test archives and packages carry it in
+/// the folder they lie in (`.../<build>/platform/...`) or as their version. Ahead of the feed's
+/// newest build, the apps, `System.app` and the demo data should come from this one.
+pub fn own_build(inputs: &[AppInput]) -> Option<al_deps::build::BuildId> {
+    use al_deps::build::BuildId;
+    inputs
+        .iter()
+        .filter(|i| is_microsoft(&i.manifest.publisher))
+        .find_map(|i| {
+            i.path
+                .components()
+                .rev()
+                .filter_map(|c| c.as_os_str().to_str())
+                .find_map(|c| BuildId::parse(c).ok())
+                .or_else(|| BuildId::parse(&i.manifest.version).ok())
+        })
+}

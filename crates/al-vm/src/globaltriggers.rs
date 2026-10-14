@@ -23,6 +23,7 @@
 use crate::Session;
 use crate::dispatch::EventCall;
 use crate::records::Rec;
+use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::value::Value;
 use al_data::TableDef;
@@ -89,7 +90,7 @@ impl Session {
                 Value::Integer(m) => *m,
                 other => {
                     self.global_setups.remove(&table);
-                    return unsupported(format!("Global Triggers: mask {other:?}"));
+                    return unsupported(format!("Global Triggers: mask {}", other.describe()));
                 }
             };
             if mask != 0 && mask != MASK_ALL {
@@ -172,6 +173,11 @@ impl Session {
         if !self.engine.events.has_global_triggers {
             return Ok(());
         }
+        // A temporary record asks for no setup and raises nothing
+        // (session/TestEnvironmentUserTenantContracts.al:GlobalTriggers_TemporaryRecord_RaisesNoDatabaseEventAndAsksNoSetup).
+        if rec.borrow().temporary {
+            return Ok(());
+        }
         let setup = self.global_setup(t)?;
         let any = match op {
             GlobalOp::Insert => setup.insert,
@@ -181,12 +187,6 @@ impl Session {
         };
         if !any {
             return Ok(());
-        }
-        if rec.borrow().temporary {
-            return unsupported(format!(
-                "{op:?} of a temporary record of {}, which has Global Triggers events enabled (whether BC raises them is not pinned)",
-                t.name
-            ));
         }
         let key = self.engine.events.global_key;
         let handle = |r: &Rec| crate::refs::record_ref_value(r);

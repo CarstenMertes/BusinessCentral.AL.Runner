@@ -9,6 +9,7 @@ use crate::dataset::{self, Column, Dataset};
 use crate::pages::RequestClosed;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{Session, Signal};
+use al_builtins::describe::Describe;
 use al_builtins::ops;
 use al_builtins::value::{Instance, Value};
 use al_ir as ir;
@@ -59,19 +60,19 @@ enum Entry {
 }
 
 /// The report instance's object, kept alive independently of the session.
-struct Schema {
+pub(crate) struct Schema {
     engine: Arc<crate::Engine>,
     object: usize,
 }
 
 impl Schema {
-    fn report(&self) -> &ir::Report {
+    pub(crate) fn report(&self) -> &ir::Report {
         self.engine.program.objects[self.object]
             .report
             .as_ref()
             .expect("checked by Session::report_schema")
     }
-    fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.engine.program.objects[self.object].name
     }
 }
@@ -128,12 +129,15 @@ impl Session {
                 let window = match args.get(1) {
                     None => true,
                     Some(Value::Boolean(b)) => *b,
-                    Some(other) => return unsupported(format!("{id} with RequestWindow {other:?}")),
+                    Some(other) => return unsupported(format!("{id} with RequestWindow {}", other.describe())),
                 } && schema.report().use_request_page != Some(false);
                 match args.get(2) {
                     None | Some(Value::Boolean(false)) => {}
                     Some(other) => {
-                        return unsupported(format!("{id} with SystemPrinter {other:?} (printing is not supported)"));
+                        return unsupported(format!(
+                            "{id} with SystemPrinter {} (printing is not supported)",
+                            other.describe()
+                        ));
                     }
                 }
                 let quit = self.report_init(&inst)?;
@@ -209,7 +213,7 @@ impl Session {
                     None => None,
                     Some(Value::Text(s)) if s.is_empty() => None,
                     Some(Value::Text(s)) => Some(s.clone()),
-                    Some(other) => return unsupported(format!("{id} seeded with {other:?}")),
+                    Some(other) => return unsupported(format!("{id} seeded with {}", other.describe())),
                 };
                 // RunRequestPage always shows the page, so it always enters a transaction world
                 // (record/TestTxModelReportExec.al:77-102, Test02 and Test03).
@@ -235,7 +239,7 @@ impl Session {
                 }
                 Ok((rc, quit))
             }
-            other => unsupported(format!("a Report method on {other:?}")),
+            other => unsupported(format!("a Report method on {}", other.describe())),
         }
     }
 
@@ -300,7 +304,12 @@ impl Session {
     ) -> Result<(), Signal> {
         match parameters {
             Some(Value::Text(s)) if s.is_empty() => {}
-            other => return unsupported(format!("{id} with the parameters {other:?} (only '' is pinned)")),
+            other => {
+                return unsupported(format!(
+                    "{id} with the parameters {} (only '' is pinned)",
+                    other.describe()
+                ));
+            }
         }
         if record_ref.is_some() {
             return unsupported(format!("{id} with a RecordRef (not pinned)"));
@@ -427,7 +436,11 @@ impl Session {
     fn base_item_record(&self, inst: &Inst, item: &ir::ReportItem) -> Result<Rec, Signal> {
         match item.slot.map(|s| inst.borrow().globals[s].clone()) {
             Some(Value::Record(rc)) => Ok(rc),
-            other => unsupported(format!("dataitem {} holds {other:?}", item.name)),
+            other => unsupported(format!(
+                "dataitem {} holds {other}",
+                item.name,
+                other = other.describe()
+            )),
         }
     }
 
@@ -441,9 +454,9 @@ impl Session {
             Some(Value::Record(view)) => view.clone(),
             Some(Value::Library(_, h)) => match &*h.borrow() {
                 al_builtins::value::LibraryValue::RecordRef(rec) => rec.clone(),
-                _ => return unsupported(format!("a table view of {:?}", h.borrow())),
+                _ => return unsupported(format!("a table view of {}", h.borrow().describe())),
             },
-            other => return unsupported(format!("a table view of {other:?}")),
+            other => return unsupported(format!("a table view of {}", other.describe())),
         };
         let table = view.borrow().table;
         let items: Vec<&ir::ReportItem> = schema
@@ -602,6 +615,9 @@ impl Session {
         match closed? {
             (RequestClosed::Cancel, _) => Ok(String::new()),
             (RequestClosed::Ok, parameters) => Ok(parameters.expect("parameters were asked for")),
+            (RequestClosed::SavedAsXml, _) => {
+                unsupported("SaveAsXml in the request page of a RunRequestPage (not pinned)")
+            }
         }
     }
 
@@ -610,6 +626,23 @@ impl Session {
     /// (handlers/TestReportMultiLineDataItemView.al: "the request page applies those views to the
     /// data items before the handler runs") and before OnPreReport, which may refine them
     /// (handlers/TestReportGetFilterInTriggers.al:43-52 reads the view there).
+    /// The `Schema` of the report `inst` is an instance of.
+    pub(crate) fn report_schema_of(&self, inst: &Inst) -> Result<Schema, Signal> {
+        self.report_schema(inst)
+    }
+
+    /// A `Run` over instances that already exist and whose items already have their views (the request
+    /// page is open): `SaveAsXml` finishes the report from there.
+    pub(crate) fn report_run_for(&self, object: usize, base: &Inst, ext: Option<(Inst, usize)>, dataset: bool) -> Run {
+        Run {
+            engine: self.engine.clone(),
+            object,
+            base: base.clone(),
+            ext,
+            dataset,
+        }
+    }
+
     fn report_prepare(&mut self, inst: &Inst, schema: &Schema) -> Result<Run, Signal> {
         let report = schema.report();
         // A reportextension that changes the run gets an instance of its own for this run, whose
@@ -667,7 +700,6 @@ impl Session {
         shows_page: bool,
         save_as: Option<&str>,
     ) -> Result<bool, Signal> {
-        let report = schema.report();
         let mut run = self.report_prepare(inst, schema)?;
         run.dataset = save_as.is_some();
         if let Some(xml) = save_as.filter(|x| !x.is_empty()) {
@@ -679,10 +711,21 @@ impl Session {
         // Report_Run_CancelledRequestPageRunsNothingAndRaisesNoError).
         if shows_page {
             let ext = run.ext.as_ref().map(|(i, e)| (*e, i.clone()));
-            if self.run_request_page(inst, schema.object, None, ext, false)?.0 == RequestClosed::Cancel {
-                return Ok(false);
+            match self.run_request_page(inst, schema.object, None, ext, false)?.0 {
+                RequestClosed::Cancel => return Ok(false),
+                // The handler's `SaveAsXml` ran the report there and then
+                // (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:
+                // SaveAsXml_RunsTheReportOnce_AndClosesTheRequestPage): it does not run a second time.
+                RequestClosed::SavedAsXml => return Ok(true),
+                RequestClosed::Ok => {}
             }
         }
+        self.report_after_page(&run, schema)
+    }
+
+    /// Everything of a run after its request page: the triggers and the data items.
+    pub(crate) fn report_after_page(&mut self, run: &Run, schema: &Schema) -> Result<bool, Signal> {
+        let report = schema.report();
         // A report that renders output runs up to its request page and no further: there is no
         // renderer (docs/probes-needed.md). The dataset a `SaveAs` writes is not rendered output.
         if let Some(why) = report.output.first().filter(|_| !run.dataset) {
@@ -697,7 +740,7 @@ impl Session {
             if item.link.is_empty() {
                 continue;
             }
-            let rec = self.report_item_record(&run, r)?;
+            let rec = self.report_item_record(run, r)?;
             if rec
                 .borrow()
                 .filters
@@ -714,7 +757,7 @@ impl Session {
         // had before it (handlers/TestReportRuntimeContracts.al:371-390).
         let mut kept = Vec::new();
         for r in run.all_items() {
-            let rec = self.report_item_record(&run, r)?;
+            let rec = self.report_item_record(run, r)?;
             let filters = rec.borrow().filters.clone();
             kept.push((rec, filters));
         }
@@ -734,7 +777,7 @@ impl Session {
             rec.borrow_mut().filters = filters;
         }
         for i in 0..report.items.len() {
-            if report.items[i].parent.is_none() && self.report_item(&run, ItemRef::Base(i), None)? {
+            if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None)? {
                 return Ok(false);
             }
         }
@@ -754,7 +797,11 @@ impl Session {
         let (owner, _) = run.owner(r);
         match item.slot.map(|s| owner.borrow().globals[s].clone()) {
             Some(Value::Record(rc)) => Ok(rc),
-            other => unsupported(format!("dataitem {} holds {other:?}", item.name)),
+            other => unsupported(format!(
+                "dataitem {} holds {other}",
+                item.name,
+                other = other.describe()
+            )),
         }
     }
 
@@ -848,7 +895,7 @@ enum ItemRef {
 }
 
 /// The instances a run executes: the report, and the reportextension that changes it (if any).
-struct Run {
+pub(crate) struct Run {
     engine: Arc<crate::Engine>,
     /// The report's object index.
     object: usize,
@@ -908,13 +955,57 @@ impl Run {
             );
         }
         if let Some(x) = self.ext_ir() {
+            let mine: Vec<usize> = (0..x.added.len())
+                .filter(|&c| match r {
+                    ItemRef::Base(i) => x.added[c].base_parent == Some(i),
+                    ItemRef::Added(k) => x.added[c].item.parent == Some(k),
+                })
+                .collect();
+            // Position order (reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al):
+            // the items added first, those before a sibling, the sibling, those after it, the items
+            // added last. Items next to an item the extension added are placed once that is.
+            let at = |out: &[ItemRef], a: ir::ItemAnchor| {
+                out.iter().position(|c| match (c, a) {
+                    (ItemRef::Base(x), ir::ItemAnchor::Base(y)) => *x == y,
+                    (ItemRef::Added(x), ir::ItemAnchor::Added(y)) => *x == y,
+                    _ => false,
+                })
+            };
+            let mut pending: Vec<usize> = mine
+                .iter()
+                .copied()
+                .filter(|&c| matches!(x.added[c].place, ir::AddedPlace::Before(_) | ir::AddedPlace::After(_)))
+                .collect();
+            while !pending.is_empty() {
+                let before = pending.len();
+                pending.retain(|&c| {
+                    let (anchor, after) = match x.added[c].place {
+                        ir::AddedPlace::Before(a) => (a, false),
+                        ir::AddedPlace::After(a) => (a, true),
+                        _ => unreachable!("pending holds only relative places"),
+                    };
+                    match at(&out, anchor) {
+                        Some(p) => {
+                            out.insert(p + usize::from(after), ItemRef::Added(c));
+                            false
+                        }
+                        None => true,
+                    }
+                });
+                if pending.len() == before {
+                    break;
+                }
+            }
+            let firsts: Vec<ItemRef> = mine
+                .iter()
+                .filter(|&&c| x.added[c].place == ir::AddedPlace::First)
+                .map(|&c| ItemRef::Added(c))
+                .collect();
+            out.splice(0..0, firsts);
             out.extend(
-                (0..x.added.len())
-                    .filter(|&c| match r {
-                        ItemRef::Base(i) => x.added[c].base_parent == Some(i),
-                        ItemRef::Added(k) => x.added[c].item.parent == Some(k),
-                    })
-                    .map(ItemRef::Added),
+                mine.iter()
+                    .filter(|&&c| x.added[c].place == ir::AddedPlace::Last)
+                    .map(|&c| ItemRef::Added(c)),
             );
         }
         out
@@ -935,21 +1026,22 @@ impl Session {
     /// is the one refusal BC answers with `false` that a test pins; Pdf, Word and Excel render a
     /// layout, which this runtime does not do (docs/probes-needed.md).
     fn report_save_as(&mut self, id: &str, receiver: Option<Value>, args: &[Value]) -> Result<Value, Signal> {
+        let result_used = self.ret_used;
         let at = usize::from(id == "Report.SaveAs#2");
         let parameters = match args.get(at) {
             Some(Value::Text(s)) => s.clone(),
-            other => return unsupported(format!("{id} with the parameters {other:?}")),
+            other => return unsupported(format!("{id} with the parameters {}", other.describe())),
         };
         let format = match args.get(at + 1) {
             Some(Value::Option(n, names)) => names.get(*n as usize).cloned().unwrap_or_default(),
-            other => return unsupported(format!("{id} with the format {other:?}")),
+            other => return unsupported(format!("{id} with the format {}", other.describe())),
         };
         let blob = match args.get(at + 2) {
             Some(Value::Library(_, h)) => match &*h.borrow() {
                 al_builtins::value::LibraryValue::OutStream(blob, _) => blob.clone(),
-                other => return unsupported(format!("{id} to {other:?}, which is not an OutStream")),
+                other => return unsupported(format!("{id} to {}, which is not an OutStream", other.describe())),
             },
-            other => return unsupported(format!("{id} to {other:?}")),
+            other => return unsupported(format!("{id} to {}", other.describe())),
         };
         let record_ref = args.get(at + 3);
         let (inst, schema, quit) = if at == 0 {
@@ -981,14 +1073,28 @@ impl Session {
                 ));
             }
         }
+        // handlers/TestReportSaveAsColumnTypesContracts.al:372-388: false with the text and the code
+        // `ReportProcessingOnly`, no trigger runs and nothing is written. With the answer dropped
+        // BC's behaviour is not pinned.
+        if schema.report().processing_only {
+            if !result_used {
+                return unsupported(format!(
+                    "Report.SaveAs of \"{}\", which is ProcessingOnly, with the result unused (not pinned)",
+                    schema.name()
+                ));
+            }
+            self.last_error = al_builtins::native::AlError {
+                message: format!(
+                    "Report {} is a processing-only report. Output cannot be rendered and saved to a file.",
+                    self.object_id_of(schema.object as u32)
+                ),
+                code: "ReportProcessingOnly".into(),
+                call_stack: String::new(),
+            };
+            return Ok(Value::Boolean(false));
+        }
         if let Some(why) = schema.report().dataset_unsupported.first() {
             return unsupported(format!("Report.SaveAs of \"{}\": {why}", schema.name()));
-        }
-        if schema.report().processing_only {
-            return unsupported(format!(
-                "Report.SaveAs of \"{}\", which is ProcessingOnly (what SaveAs writes for it is not pinned)",
-                schema.name()
-            ));
         }
         if schema.report().transaction_type.is_some() {
             return unsupported(format!(
@@ -1118,14 +1224,15 @@ impl Session {
         let name = dataset::dataset_name(&item.name)?;
         let (owner, object) = run.owner(r);
         let owner = owner.clone();
+        let table = rec.borrow().table as usize;
         let mut columns = Vec::new();
         for c in &item.columns {
-            columns.push(self.dataset_column(c, &owner, object)?);
+            columns.push(self.dataset_column(c, &owner, object, table)?);
         }
         if let (ItemRef::Base(i), Some((ext_inst, e)), Some(x)) = (r, &run.ext, run.ext_ir()) {
             for add in x.adds.iter().filter(|a| a.item == i) {
                 for c in &add.columns {
-                    columns.push(self.dataset_column(c, ext_inst, *e)?);
+                    columns.push(self.dataset_column(c, ext_inst, *e, table)?);
                 }
             }
         }
@@ -1175,41 +1282,121 @@ impl Session {
         ))
     }
 
-    /// One column of a row: the value of its source, as the dataset writes it. The types the probe
-    /// pins are Integer, Text, Code, Date, Boolean and Decimal
-    /// (handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText); an Option is
-    /// written as its ordinal, which docs/probes-needed.md lists as an assumption. Every other type is
-    /// refused.
-    fn dataset_column(&mut self, c: &ir::ReportColumn, owner: &Inst, object: usize) -> Result<Column, Signal> {
+    /// One column of a row: the value of its source, as the dataset writes it
+    /// (handlers/TestReportSaveAsColumnTypesContracts.al:12-22 and :167-248, probed on BC 27.5): digits for
+    /// Integer, BigInteger and Code, escaped text, `True`/`False`, `m/d/yyyy` for a Date (blank when
+    /// undefined), `h:mm:ss` plus U+202F plus AM/PM for a Time, both for a DateTime, an Option and an Enum
+    /// as their captions, a Duration as words, a Guid without braces, and a Decimal in full with a
+    /// `decimalformatter` attribute from `DecimalPlaces` of the column, else of the field. Every other
+    /// type is refused. A column that asks for its caption adds to the Labels block.
+    fn dataset_column(
+        &mut self,
+        c: &ir::ReportColumn,
+        owner: &Inst,
+        object: usize,
+        table: usize,
+    ) -> Result<Column, Signal> {
         let name = dataset::dataset_name(&c.name)?;
         if let Some(why) = &c.unsupported {
             return unsupported(format!("report column {}: {why}", c.name));
         }
         let routine = c.routine.expect("a column without a routine is unsupported");
         let (value, _) = self.call(object, routine, owner.clone(), Vec::new())?;
+        let t = self.engine.tables[table].clone();
+        if c.include_caption {
+            // The caption of the field the column reads (the corpus label is the field's Caption).
+            let (Some(t), Some(pos)) = (&t, c.field) else {
+                return unsupported(format!(
+                    "report column {}: IncludeCaption on a column that is not one field (not pinned)",
+                    c.name
+                ));
+            };
+            let label = (format!("{name}Caption"), self.field_caption(t, pos));
+            let ds = self.dataset.as_mut().expect("a SaveAs run has a dataset");
+            if !ds.labels.contains(&label) {
+                ds.labels.push(label);
+            }
+        }
         let mut attribute = None;
+        let mut schema_type = None;
         let text = match &value {
-            Value::Integer(n) => n.to_string(),
-            Value::Text(s) | Value::Code(s) => dataset::escape(s)?,
+            Value::Integer(n) => {
+                schema_type = Some("xs:int");
+                n.to_string()
+            }
+            Value::BigInteger(n) => n.to_string(),
+            Value::Text(s) | Value::Code(s) => {
+                schema_type = Some("xs:string");
+                dataset::escape(s)?
+            }
             Value::Boolean(b) => if *b { "True" } else { "False" }.to_string(),
             Value::Date(0, false) => String::new(),
-            Value::Date(d, false) => {
-                let (y, m, day) = al_builtins::format::civil_from_day(*d);
-                format!("{m}/{day}/{y}")
+            Value::Date(d, false) => dataset::date_text(*d),
+            // An undefined Time or DateTime is blank like an undefined Date (docs/probes-needed.md).
+            Value::Time(0) | Value::DateTime(0) => String::new(),
+            Value::Time(t) => dataset::time_text(t - 1)?,
+            Value::DateTime(t) => {
+                let ms = t - 1;
+                let day = ms.div_euclid(86_400_000) as i32 + 1;
+                format!(
+                    "{} {}",
+                    dataset::date_text(day),
+                    dataset::time_text(ms.rem_euclid(86_400_000))?
+                )
             }
             Value::Decimal(_) => {
-                attribute = Some(("decimalformatter", dataset::DECIMAL_FORMATTER));
-                al_builtins::format::try_format(&value, 0, 9, self).map_err(Signal::Unsupported)?
+                let from_field = match (&t, c.field) {
+                    (Some(t), Some(pos)) => self.field_property(t, pos, "DecimalPlaces"),
+                    _ => None,
+                };
+                let places = c.decimal_places.clone().or(from_field);
+                attribute = Some(("decimalformatter", dataset::decimal_formatter(places.as_deref())?));
+                // The decimal as it is, scale and all: `12.345678 * 1.5` is `18.5185170`
+                // (handlers/TestReportSaveAsColumnTypesContracts.al:174-180); Format would trim the zero.
+                let Value::Decimal(d) = &value else {
+                    unreachable!("matched a Decimal")
+                };
+                d.to_string()
             }
-            Value::Option(n, _) => n.to_string(),
+            // An Option field shows its OptionCaption (`Beta cap`), the way Format(Opt) does.
+            Value::Option(n, _) if t.is_some() && c.field.is_some() => {
+                let (t, pos) = (t.as_ref().expect("checked"), c.field.expect("checked"));
+                match self.members_of_field(t, pos)? {
+                    Some((_, members)) => match members.iter().find(|(ord, _, _)| ord == n) {
+                        Some((_, _, caption)) => dataset::escape(caption)?,
+                        None => n.to_string(),
+                    },
+                    None => n.to_string(),
+                }
+            }
+            Value::Option(..) | Value::Enum(..) | Value::Duration(_) => {
+                dataset::escape(&al_builtins::format::try_format(&value, 0, 0, self).map_err(Signal::Unsupported)?)?
+            }
+            Value::Guid(_) => {
+                let g = al_builtins::format::try_format(&value, 0, 0, self).map_err(Signal::Unsupported)?;
+                let g = g.trim_matches(|ch| ch == '{' || ch == '}');
+                if g.chars().any(|ch| ch.is_ascii_alphabetic()) {
+                    return unsupported(format!(
+                        "report column {}: a Guid with hex letters in a dataset (their case is not pinned)",
+                        c.name
+                    ));
+                }
+                g.to_string()
+            }
             other => {
                 return unsupported(format!(
-                    "report column {} holds {other:?}, a type the dataset has no pinned text for",
-                    c.name
+                    "report column {} holds {other}, a type the dataset has no pinned text for",
+                    c.name,
+                    other = other.describe()
                 ));
             }
         };
-        Ok(Column { name, attribute, text })
+        Ok(Column {
+            name,
+            attribute,
+            text,
+            schema_type,
+        })
     }
 
     /// The header of the dataset: what the report, its app, the session and the clock say.

@@ -160,7 +160,7 @@ fn run_version(
     .map_err(|e| format!("BC {}: {e}", version.bc_version))?;
     let started = Instant::now();
     let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
-    let all_cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
+    let all_cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
     // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
     let mut suite_data = Vec::new();
@@ -180,7 +180,7 @@ fn run_version(
             config::OracleFormat::Junit => oracle::parse_junit(&text),
             config::OracleFormat::Xunit => oracle::parse_xunit(&text).map(|v| v.into_iter().map(|c| c.case).collect()),
         }
-        .map_err(|e| format!("{}: {e:?}", path.display()))?;
+        .map_err(|e| format!("{}: {e}", path.display()))?;
         let suite_index = corpus::discover(&root.join(&suite.app)).map_err(|e| format!("{}: {e}", suite.app))?;
         suite_data.push((cases, suite_index));
     }
@@ -290,6 +290,7 @@ fn run_version(
             cache_dir: args.cache_dir.clone(),
             download: !args.no_download,
             query: target::build_query(Some(&leg.to_string()), &chosen, &app_versions),
+            local_artifacts: None,
         };
         let deps = deps::load_with(
             &root.join(&cfg.corpus_app),
@@ -850,6 +851,7 @@ fn origin_word(o: al_deps::build::Origin) -> &'static str {
     match o {
         al_deps::build::Origin::Cache => "from the artifact cache",
         al_deps::build::Origin::Published => "newest published, downloaded",
+        al_deps::build::Origin::Local => "from the local artifacts, ~/.bcartifacts.cache",
     }
 }
 
@@ -898,6 +900,7 @@ fn fetch_project(args: &Args, root: &Path, project: &Path) -> Result<ExitCode, S
         cache_dir: args.cache_dir.clone(),
         download: !args.no_download,
         query: target::build_query(args.bc_version.as_deref(), &chosen, &app_versions),
+        local_artifacts: None,
     };
     let deps = deps::load_with(project, &[], &args.deps, Some(&provision))?;
     for line in &deps.log {

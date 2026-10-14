@@ -12,6 +12,7 @@
 //! was there (:BlobField_CreateOutStream_DoesNotEmptyExistingData). Text is written in
 //! Windows-1252 unless an encoding says otherwise (:WriteText_DefaultEncodingIsWindows1252_NotUtf8).
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, Value};
@@ -163,7 +164,7 @@ impl Encoding {
             Some(Value::Option(1, _)) => Ok(Encoding::Utf8),
             Some(Value::Option(2, _)) => Ok(Encoding::Utf16),
             Some(Value::Option(3, _)) => Ok(Encoding::Windows),
-            Some(other) => unsupported(format!("text encoding {other:?}")),
+            Some(other) => unsupported(format!("text encoding {}", other.describe())),
         }
     }
 }
@@ -244,7 +245,7 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 fn blob_of(r: Option<&mut Value>) -> Result<BlobRef, Signal> {
     match r {
         Some(Value::Blob(b)) => Ok(b.clone()),
-        other => unsupported(format!("Blob method on {other:?}")),
+        other => unsupported(format!("Blob method on {}", other.describe())),
     }
 }
 
@@ -254,7 +255,7 @@ fn set_stream(slot: &Value, content: LibraryValue) -> Result<(), Signal> {
             *h.borrow_mut() = content;
             Ok(())
         }
-        other => unsupported(format!("a stream variable was expected, got {other:?}")),
+        other => unsupported(format!("a stream variable was expected, got {}", other.describe())),
     }
 }
 
@@ -301,7 +302,7 @@ fn blob_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResu
 fn in_state<'a>(r: Option<&'a mut Value>) -> Result<std::cell::RefMut<'a, LibraryValue>, Signal> {
     match r {
         Some(Value::Library(_, h)) => Ok(h.borrow_mut()),
-        other => unsupported(format!("InStream method on {other:?}")),
+        other => unsupported(format!("InStream method on {}", other.describe())),
     }
 }
 
@@ -343,14 +344,18 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         return unsupported("InStream.ReadText with a length (not pinned)");
     }
     let text = with_in(r, |s| {
-        // A byte order mark at the start decides the encoding, whatever the stream was created with,
-        // as .NET's StreamReader does: the XmlPort export is UTF-16 with a mark, and the corpus reads
-        // it back with the default encoding (xmlport/TestXmlPortObject.al:ReadBlobText).
+        // A UTF-16 byte order mark at the start decides the encoding, whatever the stream was created with:
+        // the XmlPort export is UTF-16 with a mark, and the corpus reads it back with the default encoding
+        // (xmlport/TestXmlPortObject.al:ReadBlobText). A UTF-8 mark is taken as one only by a stream created with
+        // `TextEncoding::UTF8` (handlers/TestReportSaveAsDatasetContracts.al:DatasetLines); a stream with the default
+        // encoding reads it as the three characters 239, 187, 191 (al-language-onprem/handlers/
+        // TestRequestPageSaveAsXmlContracts.al:FileText).
         if s.pos == 0 {
+            let utf8 = s.enc == Encoding::Utf8;
             let bom = s.with_data(|d| {
                 if d.starts_with(&[0xFF, 0xFE]) {
                     Some((Encoding::Utf16, 2))
-                } else if d.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                } else if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
                     Some((Encoding::Utf8, 3))
                 } else {
                     None
@@ -440,8 +445,8 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
         Value::Decimal(_) => 12,
         _ => {
             return unsupported(format!(
-                "InStream.Read into {:?} (only Integer, Byte and Decimal are pinned)",
-                a[0]
+                "InStream.Read into {} (only Integer, Byte and Decimal are pinned)",
+                a[0].describe()
             ));
         }
     };
@@ -467,7 +472,7 @@ fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
             LibraryValue::OutStream(b, e) => Ok((b.clone(), *e)),
             _ => unsupported("use of an OutStream that was never created"),
         },
-        other => unsupported(format!("OutStream method on {other:?}")),
+        other => unsupported(format!("OutStream method on {}", other.describe())),
     }
 }
 
@@ -617,7 +622,12 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
             v.extend(std::iter::repeat_n(0, enc.unit()));
             v
         }
-        other => return unsupported(format!("OutStream.Write of {other:?} (its binary form is not pinned)")),
+        other => {
+            return unsupported(format!(
+                "OutStream.Write of {} (its binary form is not pinned)",
+                other.describe()
+            ));
+        }
     };
     write_bytes(&b, &bytes);
     Ok(Value::Integer(bytes.len() as i32))
@@ -639,7 +649,7 @@ fn copy_stream(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
 fn array_of(v: &Value) -> Result<Rc<RefCell<Vec<Value>>>, Signal> {
     match v {
         Value::Array(a) => Ok(a.clone()),
-        other => unsupported(format!("{other:?} used as an array")),
+        other => unsupported(format!("{} used as an array", other.describe())),
     }
 }
 
@@ -679,7 +689,7 @@ fn copy_array(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResul
             usize::try_from(*n).map_err(|_| Signal::Unsupported("CopyArray negative length".into()))?
         }
         None => src.len().saturating_sub(pos),
-        Some(other) => return unsupported(format!("CopyArray length {other:?}")),
+        Some(other) => return unsupported(format!("CopyArray length {}", other.describe())),
     };
     let mut dst = dst.borrow_mut();
     if pos + len > src.len() || len > dst.len() {

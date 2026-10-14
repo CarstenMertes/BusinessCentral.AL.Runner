@@ -9,9 +9,9 @@
 use crate::records::Rec;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{AlError, Session, Signal};
-use al_builtins::stream::Encoding;
-use al_builtins::value::{Instance, LibraryValue, Value};
-use al_builtins::xmlport::{Elem, FieldFailure, Node, ReadFailure};
+use al_builtins::ops;
+use al_builtins::value::{Instance, LibraryValue, RtType, Value};
+use al_builtins::xmlport::{Elem, Node, ReadFailure};
 use al_data::{Store, position};
 use al_ir as ir;
 use std::cell::RefCell;
@@ -20,23 +20,32 @@ use std::sync::Arc;
 
 type Inst = Rc<RefCell<Instance>>;
 
-/// Code of the error an import raises when its document does not fit the xmlport. BC's text is
-/// not pinned, so the message says so; the code lets the statement form refuse instead.
-const IMPORT_FAILURE: &str = "AL-RUNTIME:XmlPortImport";
-
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
-fn import_failure<T>(what: impl AsRef<str>) -> Result<T, Signal> {
-    Err(Signal::Error(AlError {
-        message: format!(
-            "XmlPort import failed (the message text is not pinned): {}",
-            what.as_ref()
-        ),
-        code: IMPORT_FAILURE.into(),
+fn xerr(message: impl Into<String>, code: &str) -> Signal {
+    Signal::Error(AlError {
+        message: message.into(),
+        code: code.into(),
         call_stack: String::new(),
-    }))
+    })
+}
+
+/// xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_SchemaMismatch_ThrowsXmlPortInvalidXml
+fn schema_error(why: impl AsRef<str>) -> Signal {
+    xerr(
+        format!("Imported XML cannot validate with the schema: {}", why.as_ref()),
+        "XmlPortInvalidXml",
+    )
+}
+
+/// xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_BadInteger_ThrowsEvaluate
+fn evaluate_error(text: &str, type_name: &str) -> Signal {
+    xerr(
+        format!("The value \"{text}\" can't be evaluated into type {type_name}."),
+        "Evaluate",
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -207,30 +216,57 @@ impl Session {
         if v.table != target.borrow().table {
             return unsupported("SetTableView with a record of another table (error text not pinned)");
         }
-        if v.temporary || v.marked_only || v.key != 0 || !v.ascending {
-            return unsupported("SetTableView with a temporary, marked or re-sorted record (not pinned)");
+        if v.temporary || v.marked_only {
+            return unsupported("SetTableView with a temporary or marked record (not pinned)");
         }
+        // The view's key and direction order the export, ties included
+        // (xmlport/TestXmlPortTriggersReplaceViewContracts.al:Export_OnBeforePassField_Runs_AndSetTableViewFiltersAndOrders,
+        // corpus: .
         let mut t = target.borrow_mut();
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
+        t.key = v.key;
+        t.ascending = v.ascending;
+        t.field_descending = v.field_descending;
         Ok(())
     }
 
     fn xp_run(&mut self, inst: &Inst, dir: Dir, ret_used: bool, static_form: bool) -> Result<Value, Signal> {
         let schema = self.xp_schema(inst)?;
-        let declared = schema.xp().direction;
-        let refused = match (dir, declared) {
-            (Dir::Import, ir::XmlDirection::Export) => Some(("Import", "Export")),
-            (Dir::Export, ir::XmlDirection::Import) => Some(("Export", "Import")),
-            _ => None,
-        };
-        if let Some((what, has)) = refused {
-            // The platform refuses with a message the corpus does not pin
-            // (xmlport/TestXmlPortPrecompiledObject.al only checks that it is not empty).
-            return unsupported(format!(
-                "{what} of XmlPort \"{}\", which declares Direction = {has} (error text not pinned)",
-                schema.name()
-            ));
+        // xmlport/TestXmlPortExportImportContracts.al:XmlPort_WrongDirection_Throws
+        match (dir, schema.xp().direction) {
+            (Dir::Import, ir::XmlDirection::Export) => {
+                return Err(xerr(
+                    format!("The XMLPort '{}' is designed for export only.", schema.name()),
+                    "XmlPortExportDirection",
+                ));
+            }
+            (Dir::Export, ir::XmlDirection::Import) => {
+                return Err(xerr(
+                    format!("The XMLPort '{}' is designed for import only.", schema.name()),
+                    "XmlPortImportDirection",
+                ));
+            }
+            _ => {}
+        }
+        // OnPreXmlPort runs when the port starts, in both directions
+        // (handlers/TestPageActionRunObjectKinds_Tests.al:ProbeControlEachTargetRecordsItsOwnExecution pins
+        // it for an export); the other object triggers are not pinned and refused.
+        let routines = &schema.engine.program.objects[schema.object].routines;
+        let mut pre = None;
+        for (i, r) in routines.iter().enumerate().filter(|(_, r)| r.is_trigger) {
+            if r.name.eq_ignore_ascii_case("OnPreXmlPort") {
+                pre = Some(i);
+            } else if r.name.eq_ignore_ascii_case("OnInitXmlPort") || r.name.eq_ignore_ascii_case("OnPostXmlPort") {
+                return unsupported(format!(
+                    "XmlPort \"{}\": trigger {} is not supported yet",
+                    schema.name(),
+                    r.name
+                ));
+            }
+        }
+        if let Some(r) = pre {
+            self.call(schema.object, r, inst.clone(), Vec::new())?;
         }
         match dir {
             Dir::Export => self.xp_export(inst, &schema, ret_used),
@@ -287,24 +323,14 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            // A guarded import that fails returns false and loses its writes
-            // (xmlport/TestXmlPortImportWriteTx.al:StaticGuardedImport_FailingSecondElement_ReturnsFalse_AndRollsBackTheFirstRow).
+            // A guarded import that fails returns false and loses its writes; the error stays
+            // readable (xmlport/TestXmlPortImportWriteTx.al:StaticGuardedImport_FailingSecondElement_ReturnsFalse_AndRollsBackTheFirstRow).
             Err(Signal::Error(e)) if guarded => {
                 self.rollback_transaction();
                 self.error_finals = None;
-                // An error of ours has no BC text to give; an error raised by AL code inside a
-                // trigger keeps its own.
-                self.last_error = if e.code == IMPORT_FAILURE {
-                    al_builtins::native::unpinned_error()
-                } else {
-                    e
-                };
+                self.last_error = e;
                 Ok(Value::Boolean(false))
             }
-            Err(Signal::Error(e)) if e.code == IMPORT_FAILURE => unsupported(format!(
-                "a failing XmlPort import used as a statement: its error text is not pinned ({})",
-                e.message
-            )),
             Err(other) => Err(other),
         }
     }
@@ -312,11 +338,13 @@ impl Session {
     fn xp_import_document(&mut self, inst: &Inst, schema: &Schema) -> Result<(), Signal> {
         let xp = schema.xp();
         let text = self.xp_read_source(inst, xp)?;
-        let root = match al_builtins::xmlport::parse(&text) {
-            Ok(r) => r,
-            Err(ReadFailure::Malformed) => return import_failure("the document is not well-formed XML"),
-            Err(ReadFailure::Unsupported(why)) => return unsupported(format!("XmlPort import of {why}")),
-        };
+        // xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_MalformedXml_Throws
+        if text.is_empty() {
+            return Err(xerr(
+                "Cannot import the specified XML document because the file is empty.",
+                "XmlPortData",
+            ));
+        }
         let tops: Vec<usize> = (0..xp.nodes.len()).filter(|&i| xp.nodes[i].parent.is_none()).collect();
         let [top] = tops[..] else {
             return unsupported("XmlPort import with more than one top-level element (not pinned)");
@@ -330,16 +358,25 @@ impl Session {
                 return unsupported("XmlPort import into a table element with a table view filter (not pinned)");
             }
         }
+        if xp.format != ir::XmlFormat::Xml {
+            return self.xp_import_text(inst, schema, top, &text);
+        }
+        let root = match al_builtins::xmlport::parse(&text) {
+            Ok(r) => r,
+            Err(ReadFailure::Malformed(Some(message))) => return Err(xerr(message, "XmlPortImport:Xml")),
+            Err(ReadFailure::Malformed(None)) => {
+                return unsupported("XmlPort import of a malformed document whose error text is not pinned");
+            }
+            Err(ReadFailure::Unsupported(why)) => return unsupported(format!("XmlPort import of {why}")),
+        };
         if root.name != xp.nodes[top].xml_name {
-            return import_failure(format!(
-                "the root element is <{}>, the schema expects <{}>",
-                root.name, xp.nodes[top].xml_name
-            ));
+            return Err(schema_error(format!("The '{}' element is not declared.", root.name)));
         }
         self.xp_import_container(inst, schema, top, &root)
     }
 
-    /// The text of the source stream from its read position, which moves to the end.
+    /// The text of the source stream from its read position, which moves to the end. A byte order
+    /// mark decides the encoding, else the text is UTF-8; the stream's own encoding does not matter.
     fn xp_read_source(&mut self, inst: &Inst, xp: &ir::XmlPort) -> Result<String, Signal> {
         let Value::Library(_, h) = inst.borrow().globals[xp.source_slot].clone() else {
             return unsupported("XmlPort import without SetSource (a file dialog is not supported)");
@@ -348,13 +385,15 @@ impl Session {
         let LibraryValue::InStream(st) = &mut *g else {
             return unsupported("XmlPort import without SetSource (a file dialog is not supported)");
         };
-        if !matches!(st.enc, Encoding::Utf8 | Encoding::Windows) {
-            return unsupported("XmlPort import from a stream that is not UTF-8 (not pinned)");
-        }
         let bytes = st.drain();
-        match String::from_utf8(bytes) {
-            Ok(t) => Ok(t),
-            Err(_) => import_failure("the document is not valid UTF-8"),
+        if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+            let units: Vec<u16> = rest.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+            return Ok(String::from_utf16_lossy(&units));
+        }
+        let rest = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+        match std::str::from_utf8(rest) {
+            Ok(t) => Ok(t.to_string()),
+            Err(_) => unsupported("XmlPort import of a source that is not UTF-8 or UTF-16 (not pinned)"),
         }
     }
 
@@ -376,15 +415,16 @@ impl Session {
 
     fn xp_import_container(&mut self, inst: &Inst, schema: &Schema, node: usize, elem: &Elem) -> Result<(), Signal> {
         self.xp_import_attrs(inst, schema, node, elem, None)?;
+        let mut seq = Sequence::new(schema, node);
+        let mut linked: Vec<usize> = Vec::new();
         for ce in elem.elements() {
-            let Some(child) = Self::xp_child_named(schema, node, &ce.name, false) else {
-                return unsupported(format!(
-                    "XmlPort import of an element <{}> the schema does not have (error not pinned)",
-                    ce.name
-                ));
-            };
+            let child = seq.accept(schema, &ce.name)?;
             match schema.node(child).kind {
-                ir::XmlNodeKind::Table => self.xp_import_record(inst, schema, child, ce)?,
+                ir::XmlNodeKind::Table => {
+                    let first = !linked.contains(&child);
+                    linked.push(child);
+                    self.xp_import_record(inst, schema, child, ce, first)?
+                }
                 ir::XmlNodeKind::Text if !schema.children(child).is_empty() => {
                     self.xp_import_container(inst, schema, child, ce)?
                 }
@@ -392,7 +432,7 @@ impl Session {
                 _ => return unsupported("XmlPort import of a field element outside a table element"),
             }
         }
-        Ok(())
+        seq.finish(schema)
     }
 
     /// Reads the attributes of `elem` into the schema's attribute nodes under `node`.
@@ -446,21 +486,132 @@ impl Session {
                 None => return unsupported("XmlPort import into a table without a schema"),
             }
         };
-        let value = match al_builtins::xmlport::field_value(text, &ty) {
-            Ok(v) => v,
-            Err(FieldFailure::Invalid(why)) => return import_failure(format!("field {}: {why}", n.name)),
-            Err(FieldFailure::Unsupported(why)) => {
-                return unsupported(format!("XmlPort import into field {} of {why} (not pinned)", n.name));
-            }
-        };
+        let value = self.xp_value(text, &ty)?;
         rec.borrow_mut().fields[pos] = value;
         self.xp_run_trigger(inst, schema, node, "onafterassignfield")?;
         Ok(pos)
     }
 
+    /// The value an imported text becomes in a field of type `ty`. An empty text is the type's
+    /// default (xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_EmptyIntegerElement_ImportsZero,
+    /// and an export writes a blank date as an empty element).
+    fn xp_value(&mut self, text: &str, ty: &RtType) -> Result<Value, Signal> {
+        match ty {
+            RtType::Text(len) | RtType::Code(len) => {
+                let n = text.encode_utf16().count();
+                if let Some(m) = len.filter(|m| n > *m as usize) {
+                    // xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_ValueTooLongForField_Throws
+                    return Err(xerr(
+                        format!(
+                            "The length of the string is {n}, but it must be less than or equal to {m} characters. Value: {text}"
+                        ),
+                        "StringLengthExceeded",
+                    ));
+                }
+                Ok(ops::convert(Value::Text(text.to_string()), ty)?)
+            }
+            RtType::Integer | RtType::BigInteger => {
+                if text.is_empty() {
+                    return Ok(self.default_value(ty));
+                }
+                let digits = text.strip_prefix('-').unwrap_or(text);
+                let ok = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+                match (ty, ok.then(|| text.parse::<i64>().ok()).flatten()) {
+                    (RtType::Integer, Some(n)) if i32::try_from(n).is_ok() => Ok(Value::Integer(n as i32)),
+                    (RtType::BigInteger, Some(n)) => Ok(Value::BigInteger(n)),
+                    _ => Err(evaluate_error(
+                        text,
+                        if *ty == RtType::Integer {
+                            "Integer"
+                        } else {
+                            "BigInteger"
+                        },
+                    )),
+                }
+            }
+            RtType::DateTime if text.ends_with(" AM") || text.ends_with(" PM") => {
+                // The display text an export writes: `03/05/24 02:30 PM`
+                // (xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_AcceptsTheTextItExports).
+                let Some((date, clock)) = text.split_once(' ') else {
+                    return Err(evaluate_error(text, "DateTime"));
+                };
+                let Value::Date(day, _) = self.xp_value(date, &RtType::Date)? else {
+                    return Err(evaluate_error(text, "DateTime"));
+                };
+                let (hm, ampm) = clock.rsplit_once(' ').unwrap_or((clock, ""));
+                let ms = parse_time_12h(&format!("{hm}:00 {ampm}")).ok_or_else(|| evaluate_error(text, "DateTime"))?;
+                Ok(Value::DateTime((i64::from(day) - 1) * 86_400_000 + ms + 1))
+            }
+            RtType::Decimal | RtType::Date | RtType::DateTime | RtType::Boolean => {
+                if text.is_empty() && *ty != RtType::Boolean {
+                    return Ok(self.default_value(ty));
+                }
+                let name = match ty {
+                    RtType::Decimal => "Decimal",
+                    RtType::Date => "Date",
+                    RtType::DateTime => "DateTime",
+                    _ => "Boolean",
+                };
+                let mut args = [self.default_value(ty), Value::Text(text.to_string())];
+                self.ret_used = true;
+                let ok = al_builtins::evaluate::evaluate(self, None, &mut args)?;
+                if matches!(ok, Value::Boolean(true)) {
+                    Ok(args[0].clone())
+                } else {
+                    Err(evaluate_error(text, name))
+                }
+            }
+            RtType::Time => {
+                if text.trim().is_empty() {
+                    return Ok(Value::Time(0));
+                }
+                parse_time_12h(text.trim())
+                    .map(|ms| Value::Time(ms + 1))
+                    .ok_or_else(|| evaluate_error(text, "Time"))
+            }
+            RtType::Duration => {
+                if text.trim().is_empty() {
+                    return Ok(Value::Duration(0));
+                }
+                parse_duration_text(text)
+                    .map(Value::Duration)
+                    .ok_or_else(|| evaluate_error(text, "Duration"))
+            }
+            RtType::Option(members) => {
+                let t = text.trim();
+                let found = members.iter().position(|m| m.eq_ignore_ascii_case(t));
+                match found {
+                    Some(i) => Ok(Value::Option(i as i32, members.clone().into())),
+                    None if t.is_empty() => Ok(Value::Option(0, members.clone().into())),
+                    None => Err(evaluate_error(text, "Option")),
+                }
+            }
+            RtType::Enum(id) => {
+                let members = self.engine.program.objects[*id as usize].enum_values.clone();
+                let t = text.trim();
+                match members.iter().find(|(_, n)| n.eq_ignore_ascii_case(t)) {
+                    Some((o, _)) => Ok(Value::Enum(*id, *o)),
+                    None if t.is_empty() => Ok(Value::Enum(*id, members.first().map_or(0, |m| m.0))),
+                    None => Err(evaluate_error(text, "Enum")),
+                }
+            }
+            other => unsupported(format!("XmlPort import into a field of type {other:?} (not pinned)")),
+        }
+    }
+
     /// One element of a table element: a fresh record, its link fields, `OnAfterInitRecord`,
-    /// the attributes and children, and the save.
-    fn xp_import_record(&mut self, inst: &Inst, schema: &Schema, node: usize, elem: &Elem) -> Result<(), Signal> {
+    /// the attributes and children, and the save. `first_of_node` is false for the second and
+    /// later elements of a table element under the same parent: only the first gets the link
+    /// (xmlport/TestXmlPortTriggersReplaceViewContracts.al:Nested_Export_GroupsTheChildrenUnderTheirParent_ImportLinksOnlyTheFirstChild,
+    /// corpus: .
+    fn xp_import_record(
+        &mut self,
+        inst: &Inst,
+        schema: &Schema,
+        node: usize,
+        elem: &Elem,
+        first_of_node: bool,
+    ) -> Result<(), Signal> {
         let n = schema.node(node);
         let rec = self.xp_record(inst, n)?;
         let table = rec.borrow().table as usize;
@@ -469,7 +620,7 @@ impl Session {
         let mut assigned: Vec<usize> = Vec::new();
         // Nested table elements take their link fields from the record above
         // (xmlport/TestXmlPortAdvanced.al:XmlPort_NestedTableElements_ImportCreatesParentAndChildren).
-        if let Some(link) = n.link_node {
+        if let Some(link) = n.link_node.filter(|_| first_of_node) {
             let parent = self.xp_record(inst, schema.node(link))?;
             for &(own, other) in &n.link_fields {
                 let v = parent.borrow().fields[other].clone();
@@ -486,13 +637,10 @@ impl Session {
         self.xp_run_trigger(inst, schema, node, "onafterinitrecord")?;
         self.xp_import_attrs(inst, schema, node, elem, Some(&mut assigned))?;
         let mut saved = false;
+        let mut seq = Sequence::new(schema, node);
+        let mut linked: Vec<usize> = Vec::new();
         for ce in elem.elements() {
-            let Some(child) = Self::xp_child_named(schema, node, &ce.name, false) else {
-                return unsupported(format!(
-                    "XmlPort import of an element <{}> the schema does not have (error not pinned)",
-                    ce.name
-                ));
-            };
+            let child = seq.accept(schema, &ce.name)?;
             match schema.node(child).kind {
                 ir::XmlNodeKind::Field => {
                     let pos = self.xp_assign_field(inst, schema, child, &ce.text())?;
@@ -508,33 +656,33 @@ impl Session {
                         self.xp_save_record(inst, schema, node, &assigned)?;
                         saved = true;
                     }
-                    self.xp_import_record(inst, schema, child, ce)?;
+                    let first = !linked.contains(&child);
+                    linked.push(child);
+                    self.xp_import_record(inst, schema, child, ce, first)?;
                 }
                 _ => return unsupported("XmlPort import of a text element with content inside a table element"),
             }
         }
+        seq.finish(schema)?;
         if !saved {
             self.xp_save_record(inst, schema, node, &assigned)?;
         }
         Ok(())
     }
 
-    /// Stores the buffer of table element `node`. A row with the same key is modified when
-    /// `AutoUpdate` or `AutoReplace` is on, else the buffer is inserted; the matching
-    /// `OnBefore...Record` and `OnAfter...Record` triggers bracket it, and `AutoSave = false`
-    /// leaves the storing to them
-    /// (xmlport/TestXmlPortAdvanced.al:XmlPort_AutoSaveFalse_OnBeforeAndAfterInsertControlPersistence,
-    /// :..ModifyControlPersistence, :XmlPort_AutoUpdate_..., :XmlPort_AutoReplace_...).
+    /// Stores the buffer of table element `node`: it is inserted with its triggers and events, as
+    /// `Insert(true)` does (xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_RunsTheTableInsertTriggersAndEvents).
+    /// A row with the same key is modified when `AutoUpdate` or `AutoReplace` is on: `AutoReplace`
+    /// replaces the whole buffer and `AutoUpdate` changes only the fields the document carries, and
+    /// both keep the row's SystemId
+    /// (xmlport/TestXmlPortTriggersReplaceViewContracts.al:Import_AutoReplace_ReplacesTheWholeBuffer_KeepsSystemId,
+    /// :Import_AutoUpdate_ChangesOnlyTheCarriedFields_KeepsSystemId, corpus: .
+    /// The `OnBefore...Record` and `OnAfter...Record` triggers bracket it, and `AutoSave = false`
+    /// leaves the storing to them (xmlport/TestXmlPortAdvanced.al:XmlPort_AutoSaveFalse_...).
     fn xp_save_record(&mut self, inst: &Inst, schema: &Schema, node: usize, assigned: &[usize]) -> Result<(), Signal> {
         let n = schema.node(node);
         let rec = self.xp_record(inst, n)?;
         let t = self.table(&rec)?;
-        if self.has_write_hooks(&t)? {
-            return unsupported(format!(
-                "XmlPort import into {}, which has insert or modify triggers or subscribers (not pinned)",
-                t.name
-            ));
-        }
         let cx = self.cx.clone();
         let pk = t.primary_key(&rec.borrow().fields);
         let stored = self
@@ -570,30 +718,163 @@ impl Session {
                         r.fields[p] = imported[p].clone();
                     }
                 }
+            } else if modify {
+                // The row keeps its system fields.
+                let old = stored.expect("modify implies a stored row");
+                let mut r = rec.borrow_mut();
+                for (i, f) in t.fields.iter().enumerate() {
+                    if f.id >= 2_000_000_000 {
+                        r.fields[i] = old[i].clone();
+                    }
+                }
             }
             // A duplicate key raises the table's own error, as an AL Insert does.
             self.ret_used = false;
             let method = if modify { "Modify" } else { "Insert" };
-            self.immediate_errors = true;
-            let written = self.record_op(method, &rec, &mut [Value::Boolean(false)]);
-            self.immediate_errors = false;
-            written?;
+            self.record_op(method, &rec, &mut [Value::Boolean(true)])?;
         }
         self.xp_run_trigger(inst, schema, node, after)
+    }
+
+    // ------------------------------------------------- VariableText, FixedText
+
+    /// The root and table element of a text-format port: `Root > tableelement > fieldelements`.
+    fn xp_text_layout(&self, schema: &Schema, top: usize) -> Result<(usize, Vec<usize>), Signal> {
+        let kids = schema.children(top);
+        let [table] = kids[..] else {
+            return unsupported(
+                "a VariableText or FixedText port whose root has other than one table element (not pinned)",
+            );
+        };
+        if schema.node(table).kind != ir::XmlNodeKind::Table {
+            return unsupported("a VariableText or FixedText port whose root has no table element (not pinned)");
+        }
+        let fields = schema.children(table);
+        if fields.iter().any(|&f| schema.node(f).kind != ir::XmlNodeKind::Field) || fields.is_empty() {
+            return unsupported(
+                "a VariableText or FixedText port whose table element holds more than field elements (not pinned)",
+            );
+        }
+        if schema.xp().format == ir::XmlFormat::FixedText && fields.iter().any(|&f| schema.node(f).width.is_none()) {
+            return unsupported("a FixedText field element without a Width");
+        }
+        Ok((table, fields))
+    }
+
+    fn xp_import_text(&mut self, inst: &Inst, schema: &Schema, top: usize, text: &str) -> Result<(), Signal> {
+        let xp = schema.xp();
+        let (table, fields) = self.xp_text_layout(schema, top)?;
+        let record_sep = text_separator(xp.record_separator.as_deref(), "\r\n")?;
+        let variable = xp.format == ir::XmlFormat::VariableText;
+        let (fsep, fdelim) = (
+            text_separator(xp.field_separator.as_deref(), ",")?,
+            text_separator(xp.field_delimiter.as_deref(), "\"")?,
+        );
+        for line in text.split(record_sep.as_str()).filter(|l| !l.is_empty()) {
+            let values: Vec<String> = if variable {
+                split_variable(line, &fsep, &fdelim)
+            } else {
+                let chars: Vec<char> = line.chars().collect();
+                let mut at = 0;
+                fields
+                    .iter()
+                    .map(|&f| {
+                        let w = schema.node(f).width.expect("checked by xp_text_layout");
+                        let end = (at + w).min(chars.len());
+                        let v: String = chars[at.min(end)..end].iter().collect();
+                        at = end;
+                        v
+                    })
+                    .collect()
+            };
+            let n = schema.node(table);
+            let rec = self.xp_record(inst, n)?;
+            let tbl = rec.borrow().table as usize;
+            let fresh = self.initial_fields(tbl);
+            rec.borrow_mut().fields = fresh;
+            self.xp_run_trigger(inst, schema, table, "onafterinitrecord")?;
+            let mut assigned = Vec::new();
+            for (&f, v) in fields.iter().zip(&values) {
+                let is_text = {
+                    let pos = schema.node(f).field.expect("field nodes have a field");
+                    matches!(
+                        self.engine.tables[tbl].as_ref().map(|t| &t.fields[pos].ty),
+                        Some(RtType::Text(_) | RtType::Code(_))
+                    )
+                };
+                // A fixed-width field is padded with spaces.
+                let v = if variable {
+                    v.as_str()
+                } else if is_text {
+                    v.trim_end()
+                } else {
+                    v.trim()
+                };
+                assigned.push(self.xp_assign_field(inst, schema, f, v)?);
+            }
+            // Fields are read as the values come; a record of another length is not pinned.
+            if values.len() != fields.len() {
+                return unsupported(format!(
+                    "a record with {} values for a port of {} fields (not pinned)",
+                    values.len(),
+                    fields.len()
+                ));
+            }
+            self.xp_save_record(inst, schema, table, &assigned)?;
+        }
+        Ok(())
+    }
+
+    fn xp_export_text(&mut self, inst: &Inst, schema: &Schema, top: usize) -> Result<Vec<u8>, Signal> {
+        let xp = schema.xp();
+        let (table, fields) = self.xp_text_layout(schema, top)?;
+        let record_sep = text_separator(xp.record_separator.as_deref(), "\r\n")?;
+        let variable = xp.format == ir::XmlFormat::VariableText;
+        let (fsep, fdelim) = (
+            text_separator(xp.field_separator.as_deref(), ",")?,
+            text_separator(xp.field_delimiter.as_deref(), "\"")?,
+        );
+        let mut lines = Vec::new();
+        for_each_row(self, inst, schema, table, |me, inst, schema| {
+            let mut cells = Vec::new();
+            for &f in &fields {
+                let v = me.xp_field_text(inst, schema, f)?;
+                cells.push(if variable {
+                    format!("{fdelim}{v}{fdelim}")
+                } else {
+                    let w = schema.node(f).width.expect("checked by xp_text_layout");
+                    let mut cut: String = v.chars().take(w).collect();
+                    while cut.chars().count() < w {
+                        cut.push(' ');
+                    }
+                    cut
+                });
+            }
+            lines.push(cells.join(if variable { fsep.as_str() } else { "" }));
+            Ok(())
+        })?;
+        let text = lines.join(&record_sep);
+        if xp.utf8 {
+            let mut out = vec![0xEF, 0xBB, 0xBF];
+            out.extend_from_slice(text.as_bytes());
+            Ok(out)
+        } else if text.is_ascii() {
+            Ok(text.into_bytes())
+        } else {
+            unsupported(
+                "a VariableText or FixedText export with characters beyond ASCII and no TextEncoding (not pinned)",
+            )
+        }
     }
 
     // ---------------------------------------------------------------- export
 
     fn xp_export(&mut self, inst: &Inst, schema: &Schema, guarded: bool) -> Result<Value, Signal> {
         let xp = schema.xp();
+        // The document is written in its own encoding whatever the stream's own.
         let blob = match inst.borrow().globals[xp.destination_slot].clone() {
             Value::Library(_, h) => match &*h.borrow() {
-                // A stream without an encoding argument is Windows-1252 now; the document is written in
-                // its own encoding whatever the stream's (the owner of xmlports to revisit).
-                LibraryValue::OutStream(blob, Encoding::Utf8 | Encoding::Windows) => blob.clone(),
-                LibraryValue::OutStream(..) => {
-                    return unsupported("XmlPort export to a stream that is not UTF-8 (not pinned)");
-                }
+                LibraryValue::OutStream(blob, _) => blob.clone(),
                 _ => return unsupported("XmlPort export without SetDestination (a download is not supported)"),
             },
             _ => return unsupported("XmlPort export without SetDestination (a download is not supported)"),
@@ -608,24 +889,21 @@ impl Session {
         if xp.nodes[top].kind != ir::XmlNodeKind::Text || schema.children(top).is_empty() {
             return unsupported("XmlPort export whose root is not a text element with content (not pinned)");
         }
-        let result = self.xp_export_container(inst, schema, top);
-        let root = match result {
-            Ok(r) => r,
-            Err(Signal::Error(_)) if guarded => {
-                return unsupported("an error inside an Export whose result is used (not pinned)");
+        let bytes = if xp.format == ir::XmlFormat::Xml {
+            if xp.utf8 {
+                return unsupported("XmlPort export with TextEncoding = UTF8 (not pinned)");
             }
-            Err(e) => return Err(e),
-        };
-        let text = match al_builtins::xmlport::serialize(&root) {
-            Ok(t) => t,
-            Err(e) => {
-                return unsupported(format!(
-                    "XmlPort export of the empty element <{}> (<X/> or <X></X> is not pinned)",
-                    e.0
-                ));
+            match self.xp_export_container(inst, schema, top) {
+                Ok(root) => al_builtins::xmlport::utf16_bom_bytes(&al_builtins::xmlport::serialize(&root)),
+                Err(Signal::Error(_)) if guarded => {
+                    return unsupported("an error inside an Export whose result is used (not pinned)");
+                }
+                Err(e) => return Err(e),
             }
+        } else {
+            self.xp_export_text(inst, schema, top)?
         };
-        al_builtins::stream::write_bytes(&blob, text.as_bytes());
+        al_builtins::stream::write_bytes(&blob, &bytes);
         Ok(if guarded { Value::Boolean(true) } else { Value::Null })
     }
 
@@ -688,18 +966,54 @@ impl Session {
         }
     }
 
+    /// `OnBeforePassField` (it runs for every row: xmlport/TestXmlPortTriggersReplaceViewContracts.al:
+    /// Export_OnBeforePassField_Runs_AndSetTableViewFiltersAndOrders), then the field's text: the
+    /// display text of its type
+    /// (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText). A blank option
+    /// is a single space.
     fn xp_field_text(&mut self, inst: &Inst, schema: &Schema, node: usize) -> Result<String, Signal> {
+        self.xp_run_trigger(inst, schema, node, "onbeforepassfield")?;
         let n = schema.node(node);
         let rec = self.xp_record(inst, schema.node(n.table_node.expect("field nodes have a table node")))?;
         let v = rec.borrow().fields[n.field.expect("field nodes have a field")].clone();
-        al_builtins::xmlport::field_text(&v)
-            .or_else(|why| unsupported(format!("XmlPort export of {why} (the text form is not pinned)")))
+        match &v {
+            Value::Integer(i) => Ok(i.to_string()),
+            Value::Text(s) | Value::Code(s) => Ok(s.clone()),
+            Value::Decimal(_) => al_builtins::xmlport::field_text(&v)
+                .or_else(|why| unsupported(format!("XmlPort export of {why} (the text form is not pinned)"))),
+            Value::Boolean(_) | Value::Date(..) | Value::Time(_) | Value::DateTime(_) | Value::Duration(_) => {
+                al_builtins::format::try_format(&v, 0, 0, self)
+                    .or_else(|why| unsupported(format!("XmlPort export of a value: {why}")))
+            }
+            Value::Option(..) | Value::Enum(..) => {
+                let t = al_builtins::format::try_format(&v, 0, 0, self)
+                    .or_else(|why| unsupported(format!("XmlPort export of a value: {why}")))?;
+                Ok(if t.is_empty() { " ".to_string() } else { t })
+            }
+            other => unsupported(format!("XmlPort export of {other:?} (the text form is not pinned)")),
+        }
     }
 
-    /// One element per row of the table element, in primary key order, after the table view and
-    /// the link to the record above
+    /// One element per row of the table element, in the order of the table view (primary key
+    /// order by default), after the table view and the link to the record above
     /// (xmlport/TestXmlPortAdvanced.al:XmlPort_NestedTableElements_ExportIncludesChildRecordsAndAttribute).
     fn xp_export_table(&mut self, inst: &Inst, schema: &Schema, node: usize) -> Result<Vec<Elem>, Signal> {
+        let n = schema.node(node);
+        let mut out = Vec::new();
+        let mut rows = Vec::new();
+        self.xp_rows(inst, schema, node, &mut rows)?;
+        let rec = self.xp_record(inst, n)?;
+        for row in rows {
+            self.load(&rec, row)?;
+            let mut e = Elem::new(&n.xml_name);
+            self.xp_export_content(inst, schema, node, &mut e)?;
+            out.push(e);
+        }
+        Ok(out)
+    }
+
+    /// The rows of table element `node` in export order.
+    fn xp_rows(&mut self, inst: &Inst, schema: &Schema, node: usize, rows: &mut Vec<Vec<Value>>) -> Result<(), Signal> {
         let n = schema.node(node);
         let rec = self.xp_record(inst, n)?;
         let t = self.table(&rec)?;
@@ -711,20 +1025,279 @@ impl Session {
                 self.record_op("SetRange", &rec, &mut [Value::Integer(own as i32), v])?;
             }
         }
-        let key = rec.borrow().key;
-        let mut rows = Vec::new();
+        let (key, asc) = {
+            let r = rec.borrow();
+            (r.key, r.ascending && !r.field_descending)
+        };
         let mut after = None;
-        while let Some(row) = self.scan(&rec, &t, true, after.take())? {
+        while let Some(row) = self.scan(&rec, &t, asc, after.take())? {
             after = Some(position(&t, key, &row));
             rows.push(row);
         }
-        let mut out = Vec::new();
-        for row in rows {
-            self.load(&rec, row)?;
-            let mut e = Elem::new(&n.xml_name);
-            self.xp_export_content(inst, schema, node, &mut e)?;
-            out.push(e);
+        Ok(())
+    }
+}
+
+/// Runs `body` once for every row of table element `node`, with the row loaded.
+fn for_each_row(
+    me: &mut Session,
+    inst: &Inst,
+    schema: &Schema,
+    node: usize,
+    mut body: impl FnMut(&mut Session, &Inst, &Schema) -> Result<(), Signal>,
+) -> Result<(), Signal> {
+    let mut rows = Vec::new();
+    me.xp_rows(inst, schema, node, &mut rows)?;
+    let rec = me.xp_record(inst, schema.node(node))?;
+    for row in rows {
+        me.load(&rec, row)?;
+        body(me, inst, schema)?;
+    }
+    Ok(())
+}
+
+/// A separator property: `<LF>`, `<CR>` and `<TAB>` stand for the control characters, other text
+/// is itself. Other `<...>` names are not pinned.
+fn text_separator(value: Option<&str>, default: &str) -> Result<String, Signal> {
+    let Some(v) = value else { return Ok(default.to_string()) };
+    let mut out = String::new();
+    let mut rest = v;
+    while let Some(start) = rest.find('<') {
+        out.push_str(&rest[..start]);
+        let Some(end) = rest[start..].find('>') else {
+            out.push_str(&rest[start..]);
+            rest = "";
+            break;
+        };
+        match rest[start + 1..start + end].to_ascii_uppercase().as_str() {
+            "LF" => out.push('\n'),
+            "CR" => out.push('\r'),
+            "TAB" => out.push('\t'),
+            other => return unsupported(format!("the separator token <{other}> (not pinned)")),
         }
-        Ok(out)
+        rest = &rest[start + end + 1..];
+    }
+    out.push_str(rest);
+    if out.is_empty() {
+        return unsupported("an empty separator (not pinned)");
+    }
+    Ok(out)
+}
+
+/// Splits a VariableText record at `sep`. A value that starts with the delimiter runs to the next
+/// delimiter and may hold the separator; a doubled delimiter is not an escape, so the text after
+/// the closing delimiter starts the next value
+/// (xmlport/TestXmlPortTextFormatsContracts.al:VariableText_Import_DoubledQuoteInsideAQuotedValue_IsNotAnEscape,
+/// corpus: .
+fn split_variable(line: &str, sep: &str, delim: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    loop {
+        if let Some(after) = rest.strip_prefix(delim) {
+            match after.find(delim) {
+                Some(end) => {
+                    out.push(after[..end].to_string());
+                    rest = &after[end + delim.len()..];
+                    match rest.strip_prefix(sep) {
+                        Some(r) => rest = r,
+                        None if rest.is_empty() => return out,
+                        None => {}
+                    }
+                    if rest.is_empty() && !line.ends_with(sep) {
+                        return out;
+                    }
+                }
+                None => {
+                    out.push(after.to_string());
+                    return out;
+                }
+            }
+        } else {
+            match rest.find(sep) {
+                Some(end) => {
+                    out.push(rest[..end].to_string());
+                    rest = &rest[end + sep.len()..];
+                }
+                None => {
+                    out.push(rest.to_string());
+                    return out;
+                }
+            }
+        }
+    }
+}
+
+/// `h:mm:ss AM` as milliseconds since midnight.
+fn parse_time_12h(t: &str) -> Option<i64> {
+    let (clock, ampm) = t.rsplit_once(' ')?;
+    let mut it = clock.split(':');
+    let (h, m, s): (i64, i64, i64) = (
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+    );
+    if it.next().is_some() || !(1..=12).contains(&h) || m > 59 || s > 59 {
+        return None;
+    }
+    let pm = match ampm {
+        "AM" => false,
+        "PM" => true,
+        _ => return None,
+    };
+    Some((((h % 12) + if pm { 12 } else { 0 }) * 3600 + m * 60 + s) * 1000)
+}
+
+/// `1 day 1 hour 1 minute 1 second 1 millisecond` (the text an export writes) as milliseconds.
+fn parse_duration_text(t: &str) -> Option<i64> {
+    let mut total = 0i64;
+    let mut words = t.split_whitespace();
+    let mut any = false;
+    while let Some(n) = words.next() {
+        let n: i64 = n.parse().ok()?;
+        let unit = words.next()?.trim_end_matches('s');
+        total += n * match unit {
+            "day" => 86_400_000,
+            "hour" => 3_600_000,
+            "minute" => 60_000,
+            "second" => 1000,
+            "millisecond" => 1,
+            _ => return None,
+        };
+        any = true;
+    }
+    any.then_some(total)
+}
+
+/// Checks the child elements of an imported element against the schema's sequence: the children
+/// in declaration order, each once (a table element any number of times) unless it is optional
+/// (`MinOccurs = Zero`). The messages are .NET's schema validation messages
+/// (xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_SchemaMismatch_ThrowsXmlPortInvalidXml).
+struct Sequence {
+    decl: Vec<usize>,
+    parent: String,
+    pos: usize,
+    seen: usize,
+    optional: Vec<bool>,
+    repeat: Vec<bool>,
+    names: Vec<String>,
+}
+
+impl Sequence {
+    fn new(schema: &Schema, node: usize) -> Sequence {
+        let decl: Vec<usize> = schema
+            .children(node)
+            .into_iter()
+            .filter(|&c| {
+                !matches!(
+                    schema.node(c).kind,
+                    ir::XmlNodeKind::TextAttr | ir::XmlNodeKind::FieldAttr
+                )
+            })
+            .collect();
+        Sequence {
+            parent: schema.node(node).xml_name.clone(),
+            pos: 0,
+            seen: 0,
+            optional: decl.iter().map(|&c| schema.node(c).min_zero).collect(),
+            repeat: decl
+                .iter()
+                .map(|&c| schema.node(c).kind == ir::XmlNodeKind::Table)
+                .collect(),
+            names: decl.iter().map(|&c| schema.node(c).xml_name.clone()).collect(),
+            decl,
+        }
+    }
+
+    /// The names that may come next.
+    fn expected(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.pos >= self.decl.len() {
+            return out;
+        }
+        let done = self.seen >= 1 || self.optional[self.pos];
+        if self.seen == 0 || self.repeat[self.pos] {
+            out.push(self.names[self.pos].clone());
+        }
+        if done {
+            for j in self.pos + 1..self.decl.len() {
+                out.push(self.names[j].clone());
+                if !self.optional[j] {
+                    break;
+                }
+            }
+        }
+        out
+    }
+
+    fn list(&self, head: String) -> Result<String, Signal> {
+        let expected = self.expected();
+        match expected.len() {
+            0 => Ok(head),
+            1 => Ok(format!("{head} List of possible elements expected: '{}'.", expected[0])),
+            _ => unsupported("a schema error that lists several possible elements (the list form is not pinned)"),
+        }
+    }
+
+    /// The schema node that reads child element `name`.
+    fn accept(&mut self, _schema: &Schema, name: &str) -> Result<usize, Signal> {
+        if self.pos < self.decl.len() {
+            let cur = self.pos;
+            if self.names[cur] == name && (self.seen == 0 || self.repeat[cur]) {
+                self.seen += 1;
+                return Ok(self.decl[cur]);
+            }
+            if self.seen >= 1 || self.optional[cur] {
+                for j in cur + 1..self.decl.len() {
+                    if self.names[j] == name {
+                        self.pos = j;
+                        self.seen = 1;
+                        return Ok(self.decl[j]);
+                    }
+                    if !self.optional[j] {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(schema_error(self.list(format!(
+            "The element '{}' has invalid child element '{name}'.",
+            self.parent
+        ))?))
+    }
+
+    fn finish(&self, _schema: &Schema) -> Result<(), Signal> {
+        if self.decl.is_empty() {
+            return Ok(());
+        }
+        let done = self.seen >= 1 || self.optional[self.pos];
+        if done && (self.pos + 1..self.decl.len()).all(|j| self.optional[j]) {
+            return Ok(());
+        }
+        Err(schema_error(self.list(format!(
+            "The element '{}' has incomplete content.",
+            self.parent
+        ))?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_variable;
+
+    // xmlport/TestXmlPortTextFormatsContracts.al:VariableText_Import_QuotedUnquotedAndBlankValues
+    #[test]
+    fn a_variable_text_record_splits_into_its_values() {
+        let split = |l: &str| split_variable(l, ",", "\"");
+        assert_eq!(
+            split("\"1\",\"a,b\",\"1,234.50\",\"03/05/24\""),
+            ["1", "a,b", "1,234.50", "03/05/24"]
+        );
+        assert_eq!(split("\"2\",\"plain\",\"0\",\"\""), ["2", "plain", "0", ""]);
+        assert_eq!(split("3,unquoted,5.5,01/02/24"), ["3", "unquoted", "5.5", "01/02/24"]);
+        // A doubled delimiter is no escape: the text after the closing one starts the next value.
+        assert_eq!(
+            split("\"2\",\"say \"\"hi\"\"\",\"0\",\"\""),
+            ["2", "say ", "hi", "", "0", ""]
+        );
     }
 }

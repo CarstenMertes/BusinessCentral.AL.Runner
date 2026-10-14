@@ -258,10 +258,31 @@ pub enum XmlNodeKind {
     FieldAttr,
 }
 
-/// An xmlport as the runtime sees it (`Format = Xml`).
+/// The `Format` of an xmlport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum XmlFormat {
+    #[default]
+    Xml,
+    VariableText,
+    FixedText,
+}
+
+/// An xmlport as the runtime sees it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct XmlPort {
     pub direction: XmlDirection,
+    #[serde(default)]
+    pub format: XmlFormat,
+    /// `FieldSeparator`, `FieldDelimiter` and `RecordSeparator` as written, for the text formats
+    /// (`None`: the default). `TextEncoding = UTF8` sets `utf8`.
+    #[serde(default)]
+    pub field_separator: Option<String>,
+    #[serde(default)]
+    pub field_delimiter: Option<String>,
+    #[serde(default)]
+    pub record_separator: Option<String>,
+    #[serde(default)]
+    pub utf8: bool,
     /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
     pub nodes: Vec<XmlNode>,
     /// Global slots of the source `InStream` and destination `OutStream` set by
@@ -295,6 +316,12 @@ pub struct XmlNode {
     pub auto_update: bool,
     pub auto_replace: bool,
     pub use_temporary: bool,
+    /// `MinOccurs = Zero`: the element may be missing from an imported document.
+    #[serde(default)]
+    pub min_zero: bool,
+    /// `Width` of a field element in a FixedText port.
+    #[serde(default)]
+    pub width: Option<usize>,
     /// Triggers by lower-case name (`onbeforepassvariable`, ...) to routine index.
     pub triggers: Vec<(String, usize)>,
 }

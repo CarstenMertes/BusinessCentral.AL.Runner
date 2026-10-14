@@ -1,6 +1,6 @@
 //! `Query` variable methods. The VM executes them (`al-vm/src/queries.rs`); the registry only routes
-//! catalog overload ids to it. A method not listed here, such as `SaveAsCsv`, is refused at lowering
-//! ("builtin ... is not implemented"): the corpus pins only that the export contains the row values.
+//! catalog overload ids to it. A method not listed here, such as `SaveAsCsv` (no probe pins its text), is refused at
+//! lowering ("builtin ... is not implemented").
 
 use crate::native::NativeFn;
 
@@ -25,4 +25,6 @@ query_methods! {
     "Query.ColumnNo#1" => "ColumnNo",
     "Query.TopNumberOfRows#1" => "TopNumberOfRows",
     "Query.SecurityFiltering#1" => "SecurityFiltering",
+    "Query.SaveAsXml#2" => "SaveAsXml",
+    "Query.SaveAsJson#1" => "SaveAsJson",
 }

@@ -436,6 +436,7 @@ impl Session {
     /// Whether an insert or modify of `t` would run table code (a trigger, an extension trigger
     /// or an event subscriber). XmlPort import refuses such tables: whether it runs them is not
     /// pinned (docs/probes-needed.md).
+    #[allow(dead_code)] // the XmlPort import ran no hooks before; it runs them now
     pub(crate) fn has_write_hooks(&mut self, t: &TableDef) -> Result<bool, Signal> {
         let mut any = ["OnInsert", "OnModify"]
             .iter()

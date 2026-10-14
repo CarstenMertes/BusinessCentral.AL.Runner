@@ -295,3 +295,54 @@ fn a_version_without_an_isolation_oracle_lists_only_the_onprem_app() {
         .collect();
     assert_eq!(names, vec!["onprem"]);
 }
+
+// `--baseline FILE` is the main app's ratchet alone. The extra apps keep their own files in
+// `oracle.toml`, which may need the dependency apps this `--no-deps` run does not load.
+#[test]
+fn an_explicit_baseline_does_not_ratchet_the_extra_apps() {
+    require_corpus();
+    // Not a regression: onprem's own baseline lists cases that need the dependency apps.
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("passing.txt");
+    std::fs::write(&base, "").unwrap();
+    let (code, _, err) = cli(&["--bc-version", "27", "--baseline", base.to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn a_suite_baseline_ratchets_that_extra_app_and_no_ratchet_ignores_it() {
+    require_corpus();
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("passing.txt");
+    std::fs::write(&base, "").unwrap();
+    // A case the OnPrem app cannot pass without its platform tables and dependency apps.
+    let suite = dir.path().join("onprem.txt");
+    std::fs::write(
+        &suite,
+        "61200 ObjectMetadata_Find_ApplicationDatabaseTableId_ReturnsARow\n",
+    )
+    .unwrap();
+    let args = |extra: &[&str]| {
+        let mut a = vec!["--bc-version", "27", "--baseline", base.to_str().unwrap()];
+        a.extend_from_slice(&["--suite-baseline"]);
+        let named = format!("onprem={}", suite.display());
+        let mut v: Vec<String> = a.iter().map(|s| s.to_string()).collect();
+        v.push(named);
+        v.extend(extra.iter().map(|s| s.to_string()));
+        v
+    };
+    let run = |a: Vec<String>| cli(&a.iter().map(String::as_str).collect::<Vec<_>>());
+    let (code, _, err) = run(args(&[]));
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("27.5 onprem") && err.contains("ObjectMetadata_Find_ApplicationDatabaseTableId"),
+        "{err}"
+    );
+    // --no-ratchet reports only, for every app.
+    let mut a = args(&["--no-ratchet"]);
+    a.retain(|x| x != base.to_str().unwrap() && x != "--baseline");
+    let (code, _, err) = run(a);
+    assert_eq!(code, 0, "{err}");
+    let (_, _, err) = cli(&["--bc-version", "27", "--suite-baseline", "nope=x"]);
+    assert!(err.contains("no suite named `nope`"), "{err}");
+}

@@ -186,6 +186,10 @@ pub struct QueryState {
 
 #[derive(Debug, Clone)]
 pub struct QueryRun {
+    /// Whether the query has run. `Open` does not run it: the first `Read` does, so a row written
+    /// in between is read (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch
+    /// now in the corpus).
+    pub started: bool,
     /// The rows still to read, in the query's order.
     pub rows: Vec<QueryRow>,
     pub next: usize,
@@ -648,6 +652,8 @@ pub enum LibraryValue {
     XmlAttrs(crate::json::Handle),
     /// An XmlNameTable (opaque).
     XmlNameTable,
+    /// An XmlNamespaceManager: the (prefix, namespace) pairs added to it.
+    XmlNamespaces(Vec<(String, String)>),
     /// An InStream: a snapshot being read.
     InStream(crate::stream::InState),
     /// An OutStream: appends to a Blob buffer.

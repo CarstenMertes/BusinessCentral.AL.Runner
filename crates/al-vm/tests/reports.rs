@@ -1244,23 +1244,22 @@ fn an_empty_extension_changes_nothing() {
 
 // ---- mutation-testing additions (docs/status.md debt) ----
 
-// UseRequestPage(true) on a report that declares UseRequestPage = false is not pinned; on a report
-// with a request page, and UseRequestPage(false) anywhere, it is accepted.
+// UseRequestPage(true) overrides a report that declares UseRequestPage = false, and the getter
+// answers what the next Run does (handlers/TestReportRuntimeContracts.al:416-440).
 #[test]
-fn use_request_page_true_is_refused_only_on_a_report_that_declares_false() {
-    let why = refusal("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(true); exit('set'); end;");
-    assert!(
-        why.contains("UseRequestPage(true) on a report declaring UseRequestPage = false"),
-        "{why}"
+fn use_request_page_overrides_the_report_property_and_the_getter_reads_it() {
+    assert_eq!(
+        f("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(true); exit(Format(R.UseRequestPage())); end;"),
+        "Yes"
+    );
+    assert_eq!(
+        f("var R: Report \"TxRpt Plain Marker\"; begin exit(Format(R.UseRequestPage())); end;"),
+        "No"
     );
     assert_eq!(
         f(
             "var R: Report \"TxRpt ReqPage Marker\"; begin R.UseRequestPage(true); R.UseRequestPage(false); exit('set'); end;"
         ),
-        "set"
-    );
-    assert_eq!(
-        f("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(false); exit('set'); end;"),
         "set"
     );
 }
@@ -1293,12 +1292,13 @@ fn a_report_variable_is_cleared_after_run() {
     );
 }
 
-// Only the call straight from OnInitReport is pinned for CurrReport.Quit.
+// CurrReport.Quit in OnPreReport ends the run (handlers/TestReportRuntimeContracts.al:355-358).
 #[test]
-fn quit_outside_oninitreport_is_refused() {
-    let why =
-        refusal("var H: Codeunit Helpers; R: Report \"MX Quit In Pre\"; begin H.Seed(); R.Run(); exit('ran'); end;");
-    assert!(why.contains("outside the OnInitReport trigger"), "{why}");
+fn quit_in_onprereport_ends_the_run() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"MX Quit In Pre\"; begin H.Seed(); R.Run(); exit('ran'); end;"),
+        "ran"
+    );
 }
 
 // A table view that is more than filters (marked only, re-sorted, descending, temporary) is

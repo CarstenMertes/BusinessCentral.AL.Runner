@@ -27,7 +27,21 @@ runs:
 
     # ADR-014: DotNet calls run in a .NET 8 sidecar process. The SDK builds it and the runtime
     # runs it. ICU is on the ubuntu image. CI must never skip a .NET test silently.
+    # The ubuntu image ships .NET 8 (SDK and runtime). Installing it again took 12 s per job, so the
+    # install runs only when the image lacks either.
+    - name: Look for the preinstalled .NET 8
+      id: dotnet
+      shell: bash
+      run: |
+        if dotnet --list-sdks | grep -q '^8\.' && dotnet --list-runtimes | grep -q '^Microsoft.NETCore.App 8\.'; then
+          echo "preinstalled=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "preinstalled=false" >> "$GITHUB_OUTPUT"
+        fi
+        dotnet --list-sdks
+        dotnet --list-runtimes
     - uses: actions/setup-dotnet@v4
+      if: steps.dotnet.outputs.preinstalled != 'true'
       with:
         dotnet-version: 8.0.x
     - name: Build the .NET sidecar

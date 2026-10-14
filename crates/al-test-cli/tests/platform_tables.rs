@@ -313,3 +313,18 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Param");
     passes(&o, "Local");
 }
+
+/// `Database::"X"` is the table's id, a constant of its declaration. A platform table nothing
+/// provides rows for is refused where code reads or writes it as a record, not where code only
+/// names its id (Base Application's Change Log Management lists such tables by id).
+#[test]
+fn the_id_of_a_platform_table_with_no_provider_can_be_named() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure NamesTheId() var Id: Integer; begin Id := Database::"Code Coverage"; if Id <> 2000000049 then Error('id %1', Id); end;
+  [Test] procedure ReadingTheRowsIsStillRefused() var P: Record "Code Coverage"; begin if P.IsEmpty() then; end; }"#,
+    );
+    passes(&o, "NamesTheId");
+    let why = not_run(&o, "ReadingTheRowsIsStillRefused");
+    assert!(why.contains("has no provider"), "{why}");
+}

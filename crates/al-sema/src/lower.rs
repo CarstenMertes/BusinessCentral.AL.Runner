@@ -43,6 +43,9 @@ pub struct Lowered {
     /// With `lower_for_cache`: the lowered dependency objects and what the lowering of others
     /// reads about them, ready to be stored.
     pub exported: Option<crate::provided::DepSet>,
+    /// The diagnostics with the AL compiler's own codes (`alcodes.rs`) that the check found in the
+    /// workspace's apps. Code that BC rejects; the compile goes on.
+    pub al_diagnostics: Vec<crate::workspace::Diagnostic>,
 }
 
 /// The routines a variable of a page, report or xmlport type can run besides the ones the code
@@ -366,6 +369,12 @@ pub(crate) fn lower_core(
         provided: (0..ws.objects.len()).map(prov).collect(),
         driven: None,
         exported: None,
+        al_diagnostics: checked
+            .diagnostics
+            .iter()
+            .filter(|d| d.code.starts_with("AL"))
+            .cloned()
+            .collect(),
     };
     if positions {
         program.sources = ws

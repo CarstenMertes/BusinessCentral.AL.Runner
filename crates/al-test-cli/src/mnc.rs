@@ -1,0 +1,341 @@
+//! The must-not-compile corpus: `tests/must-not-compile/cases/NNNN-name.al` of the corpus repo.
+//! Each case is a small AL file the real AL compiler rejects. Its header records the diagnostics
+//! (`// @expect AL0161 | text`). The runtime has to refuse the case with the same codes
+//! (`CLAUDE.md` rule 6, owner decision of 2026-10-14).
+//!
+//! The format is the corpus's `tests/must-not-compile/README.md`. A case is compiled alone, in a
+//! one-app workspace. The dependencies it names (Base Application, System Application) are not
+//! loaded: a verdict that needs them is "not checked", never a guess.
+
+use al_sema::alcodes::{self, AppContext, AppTarget};
+use al_sema::workspace::{AppSource, Workspace};
+use std::path::{Path, PathBuf};
+
+/// One parsed case.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Case {
+    pub name: String,
+    pub source: String,
+    /// (code, text) per expected diagnostic.
+    pub expect: Vec<(String, String)>,
+    pub target: AppTarget,
+    pub depends: Vec<String>,
+    /// Keys of the `@appjson` object and its `runtime`, if given.
+    pub appjson_keys: Vec<String>,
+    pub appjson_runtime: Option<(u32, u32)>,
+    pub from: Option<u32>,
+    pub until: Option<u32>,
+    pub min_al: Option<u32>,
+}
+
+/// Parses the header (the leading run of `//` lines) of a case.
+pub fn parse_case(name: &str, text: &str) -> Result<Case, String> {
+    let mut case = Case {
+        name: name.to_string(),
+        source: text.to_string(),
+        expect: Vec::new(),
+        target: AppTarget::Cloud,
+        depends: vec!["Base Application".into(), "System Application".into()],
+        appjson_keys: Vec::new(),
+        appjson_runtime: None,
+        from: None,
+        until: None,
+        min_al: None,
+    };
+    for line in text.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        let Some(rest) = l.strip_prefix("//") else { break };
+        let Some(rest) = rest.trim_start().strip_prefix('@') else {
+            continue;
+        };
+        let (key, value) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+        let value = value.trim();
+        let number = |v: &str| {
+            v.parse::<u32>()
+                .map_err(|_| format!("{name}: @{key} needs a number, got `{v}`"))
+        };
+        match key {
+            "expect" => {
+                let (code, msg) = value.split_once('|').unwrap_or((value, ""));
+                let code = code.trim();
+                if !(code.len() == 6 && code.starts_with("AL") && code[2..].bytes().all(|b| b.is_ascii_digit())) {
+                    return Err(format!("{name}: @expect needs an ALnnnn code, got `{code}`"));
+                }
+                case.expect.push((code.to_string(), msg.trim().to_string()));
+            }
+            "target" => {
+                case.target = match value.to_ascii_lowercase().as_str() {
+                    "cloud" => AppTarget::Cloud,
+                    "onprem" => AppTarget::OnPrem,
+                    "extension" => AppTarget::Extension,
+                    "internal" => AppTarget::Internal,
+                    other => return Err(format!("{name}: unknown @target `{other}`")),
+                }
+            }
+            "depends" => case.depends = value.split(',').map(|d| d.trim().to_string()).collect(),
+            "appjson" => {
+                let v: serde_json::Value =
+                    serde_json::from_str(value).map_err(|e| format!("{name}: @appjson is not JSON: {e}"))?;
+                let obj = v
+                    .as_object()
+                    .ok_or_else(|| format!("{name}: @appjson must be an object"))?;
+                case.appjson_keys = obj.keys().cloned().collect();
+                case.appjson_runtime = obj.get("runtime").and_then(|r| r.as_str()).and_then(|r| {
+                    let (a, b) = r.split_once('.')?;
+                    Some((a.parse().ok()?, b.parse().ok()?))
+                });
+            }
+            "from" => case.from = Some(number(value)?),
+            "until" => case.until = Some(number(value)?),
+            "min-al" => case.min_al = Some(number(value)?),
+            _ => {}
+        }
+    }
+    if case.expect.is_empty() {
+        return Err(format!("{name}: no @expect line"));
+    }
+    Ok(case)
+}
+
+/// The cases of `dir` (the `cases` folder, or the folder that holds it), in file order.
+pub fn read_cases(dir: &Path) -> Result<Vec<Case>, String> {
+    let cases = if dir.join("cases").is_dir() {
+        dir.join("cases")
+    } else {
+        dir.to_path_buf()
+    };
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&cases)
+        .map_err(|e| format!("{}: {e}", cases.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "al"))
+        .collect();
+    files.sort();
+    files
+        .iter()
+        .map(|p| {
+            let name = p.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            parse_case(&name, &text)
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Verdict {
+    /// We report exactly the expected codes.
+    Match,
+    /// We report other codes than the expected ones.
+    Mismatch(String),
+    /// A code of the case is one the front end cannot decide (`alcodes::NOT_CHECKED`), or is not
+    /// implemented yet. The reason says which.
+    NotChecked(String),
+    /// The case does not apply to this BC major.
+    Skipped(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct Outcome {
+    pub name: String,
+    pub verdict: Verdict,
+    /// Our diagnostics as (code, text).
+    pub got: Vec<(String, String)>,
+    /// Same code, different text: reported, never a failure (the README: the text is a reference).
+    pub text_notes: Vec<String>,
+}
+
+/// Compiles `case` alone and compares the AL diagnostics with the expected ones.
+pub fn run_case(case: &Case, bc_major: u16) -> Outcome {
+    let major = u32::from(bc_major);
+    let mut out = Outcome {
+        name: case.name.clone(),
+        verdict: Verdict::Match,
+        got: Vec::new(),
+        text_notes: Vec::new(),
+    };
+    if case.from.is_some_and(|f| major < f) || case.until.is_some_and(|u| major > u) {
+        let range = match (case.from, case.until) {
+            (Some(f), Some(u)) => format!("BC {f} to {u}"),
+            (Some(f), None) => format!("BC {f} and later"),
+            (None, Some(u)) => format!("BC {u} and earlier"),
+            (None, None) => "every BC".to_string(),
+        };
+        out.verdict = Verdict::Skipped(format!("the verdict holds for {range}, this is BC {major}"));
+        return out;
+    }
+    let ws = Workspace::load(
+        vec![AppSource {
+            id: "mnc".into(),
+            name: "Must Not Compile by AL Language".into(),
+            dependencies: Vec::new(),
+            files: vec![("src/case.al".into(), case.source.clone())],
+        }],
+        &al_version::corpus_symbols(bc_major),
+    );
+    let members = al_sema::members::build(&ws);
+    let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+    let ctx = AppContext {
+        target: case.target,
+        runtime: case.appjson_runtime.or(Some((16, 0))),
+        app_json_keys: case.appjson_keys.clone(),
+    };
+    let mut got: Vec<(String, String)> = checked
+        .diagnostics
+        .iter()
+        .chain(alcodes::check_context(&ws, 0, &ctx).iter())
+        .filter(|d| d.code.starts_with("AL"))
+        .map(|d| (d.code.to_string(), d.message.clone()))
+        .collect();
+    got.sort();
+    out.got = got.clone();
+    let mut want = case.expect.clone();
+    want.sort();
+    // A code we cannot decide makes the whole case "not checked", even when another code of it
+    // is found: the verdict is about all of the expected diagnostics.
+    for (code, _) in &want {
+        if let Some(why) = alcodes::not_checked_reason(code) {
+            out.verdict = Verdict::NotChecked(format!("{code}: {why}"));
+            return out;
+        }
+    }
+    let codes = |v: &[(String, String)]| v.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>();
+    if codes(&got) != codes(&want) {
+        let list = |v: &[(String, String)]| v.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>().join(", ");
+        out.verdict = Verdict::Mismatch(format!("expected [{}], got [{}]", list(&want), list(&got)));
+        return out;
+    }
+    for ((_, w), (c, g)) in want.iter().zip(&got) {
+        if !w.is_empty() && !g.starts_with(w.as_str()) {
+            out.text_notes.push(format!("{c}: expected text `{w}`, ours `{g}`"));
+        }
+    }
+    out
+}
+
+/// Totals over a run.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub matched: usize,
+    pub mismatched: usize,
+    pub not_checked: usize,
+    pub skipped: usize,
+}
+
+impl Summary {
+    pub fn of(outcomes: &[Outcome]) -> Summary {
+        let mut s = Summary::default();
+        for o in outcomes {
+            match o.verdict {
+                Verdict::Match => s.matched += 1,
+                Verdict::Mismatch(_) => s.mismatched += 1,
+                Verdict::NotChecked(_) => s.not_checked += 1,
+                Verdict::Skipped(_) => s.skipped += 1,
+            }
+        }
+        s
+    }
+}
+
+/// The report: one line per case, then the totals.
+pub fn render(outcomes: &[Outcome], bc_major: u16) -> String {
+    let mut s = String::new();
+    for o in outcomes {
+        let (tag, why) = match &o.verdict {
+            Verdict::Match => ("match", String::new()),
+            Verdict::Mismatch(w) => ("MISMATCH", w.clone()),
+            Verdict::NotChecked(w) => ("not checked", w.clone()),
+            Verdict::Skipped(w) => ("skipped", w.clone()),
+        };
+        s.push_str(&format!(
+            "{:<13} {}{}\n",
+            tag,
+            o.name,
+            if why.is_empty() {
+                String::new()
+            } else {
+                format!(": {why}")
+            }
+        ));
+        for n in &o.text_notes {
+            s.push_str(&format!("              text differs, {n}\n"));
+        }
+    }
+    let t = Summary::of(outcomes);
+    s.push_str(&format!(
+        "Must-not-compile, BC {bc_major}: {} of {} cases match, {} mismatch, {} not checked, {} skipped\n",
+        t.matched,
+        outcomes.len(),
+        t.mismatched,
+        t.not_checked,
+        t.skipped
+    ));
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CASE: &str = "// @expect AL0162 | 'OnInit' is not a valid trigger\n// A human line.\n// @target OnPrem\n// @from 27\n\ntable 1 T { }\n";
+
+    #[test]
+    fn the_header_is_parsed() {
+        let c = parse_case("0004-x", CASE).unwrap();
+        assert_eq!(
+            c.expect,
+            vec![("AL0162".to_string(), "'OnInit' is not a valid trigger".to_string())]
+        );
+        assert_eq!(c.target, AppTarget::OnPrem);
+        assert_eq!(c.from, Some(27));
+        assert_eq!(c.until, None);
+    }
+
+    #[test]
+    fn a_case_without_expect_is_an_error() {
+        assert!(parse_case("x", "// nothing\ntable 1 T { }").is_err());
+        assert!(parse_case("x", "// @expect BAD | t\n").is_err());
+    }
+
+    #[test]
+    fn appjson_gives_keys_and_runtime() {
+        let c = parse_case(
+            "x",
+            "// @expect AL0124 | t\n// @appjson {\"runtime\": \"15.2\", \"assemblyProbingPaths\": [\"./x\"]}\n",
+        )
+        .unwrap();
+        assert_eq!(c.appjson_runtime, Some((15, 2)));
+        assert!(c.appjson_keys.contains(&"assemblyProbingPaths".to_string()));
+    }
+
+    #[test]
+    fn from_and_until_skip_a_major() {
+        let c = parse_case(
+            "x",
+            "// @expect AL0162 | t\n// @from 28\n// @until 28\ncodeunit 1 C { }",
+        )
+        .unwrap();
+        assert!(matches!(run_case(&c, 27).verdict, Verdict::Skipped(_)));
+        assert!(matches!(run_case(&c, 29).verdict, Verdict::Skipped(_)));
+        assert!(!matches!(run_case(&c, 28).verdict, Verdict::Skipped(_)));
+    }
+
+    #[test]
+    fn a_missing_diagnostic_is_a_mismatch_and_an_undecidable_code_is_not_checked() {
+        let c = parse_case("x", "// @expect AL0162 | t\ncodeunit 50000 C { }").unwrap();
+        assert!(matches!(run_case(&c, 27).verdict, Verdict::Mismatch(_)));
+        let c = parse_case("x", "// @expect AL0175 | t\ncodeunit 50000 C { }").unwrap();
+        assert!(matches!(run_case(&c, 27).verdict, Verdict::NotChecked(_)));
+        let c = parse_case("x", "// @expect AL9999 | t\ncodeunit 50000 C { }").unwrap();
+        assert!(matches!(run_case(&c, 27).verdict, Verdict::NotChecked(_)));
+    }
+
+    #[test]
+    fn a_found_diagnostic_matches_and_a_wording_difference_is_only_a_note() {
+        let src = "// @expect AL0197 | An application object of type 'Codeunit' with name 'C' is already declared by the extension\n// @expect AL0197 | other wording\ncodeunit 50000 C { }\ncodeunit 50001 C { }";
+        let o = run_case(&parse_case("x", src).unwrap(), 27);
+        assert_eq!(o.verdict, Verdict::Match);
+        assert_eq!(o.text_notes.len(), 1, "{:?}", o.text_notes);
+    }
+}

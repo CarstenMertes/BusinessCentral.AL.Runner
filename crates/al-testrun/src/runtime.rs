@@ -663,6 +663,17 @@ impl CorpusRuntime {
                 eprintln!("parse: ... {} more", unparsed.len() - 10);
             }
         }
+        // Code the AL compiler rejects (must-not-compile corpus, `alcodes.rs`). Said, not acted on: the
+        // run goes on, so an error found here that BC would not give shows in the output, not as a refusal.
+        if !lowered.al_diagnostics.is_empty() {
+            eprintln!(
+                "compile: {} error(s) the AL compiler would give for the workspace's code",
+                lowered.al_diagnostics.len()
+            );
+            for d in lowered.al_diagnostics.iter().take(10) {
+                eprintln!("compile: error {} {}: {}", d.code, d.file, d.message);
+            }
+        }
         if std::env::var_os("AL_REACH_REPORT").is_some() {
             eprintln!("{}", crate::reach::report(&ws, &lowered));
         }

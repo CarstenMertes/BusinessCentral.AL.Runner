@@ -68,6 +68,26 @@ Application and the other Microsoft apps are compiled from source on every run o
 
 Every test passes in 19 more areas (836 tests): access-control, autoformat, dateformulacontrol, extensionevents, filterpage, install, json, pageextensionpart, pageextensiontrigger, pagefindrecord, pagesave, pageupdate, recordref, tableextension, testfilter, testpageclose, testpageteardown, testpart, xml.
 
+## Must-not-compile (2026-10-14)
+
+The corpus repo holds AL files the real compiler rejects (`tests/must-not-compile`, branch `al-runtime-rs`; the
+submodule does not carry them yet). Each records the AL codes (`// @expect AL0161 | text`). The front end must
+report the same codes. Run: `al-test-cli --must-not-compile DIR [--bc-version N]`, or
+`AL_MNC_DIR=DIR cargo test -p al-test-cli --test must_not_compile`; the test skips with a message when the folder is absent.
+Our own diagnostics keep their `AR` codes; the AL ones are `alcodes.rs` and `check.rs` (`al_unresolved_name`).
+
+| BC major | Cases | Match | Mismatch | Not checked |
+|---|---:|---:|---:|---:|
+| 27, 28, 29 | 16 | 15 | 0 | 1 |
+
+Match: AL0161 (2 cases), AL0440, AL0162, AL0118, AL0296 (2), AL0124, AL0365, AL0132 (4), AL0385, AL0197.
+Not checked: 0008 (AL0175, `=` between two DotNet class objects): an enum is comparable and a class is not, and the
+front end has no assembly metadata. Message text is compared as a note only (the corpus README: the text is a
+reference). A case whose code the front end does not implement is "not checked" with that reason, never a pass.
+Each check rejects only the shape its case pins; the wider rules are in `docs/probes-needed.md`.
+A run of the workspace's code prints `compile: error ALnnnn ...` on stderr and goes on; nothing is refused by it yet.
+Guard against rejecting code BC accepts: the corpus (27, 28, 29), Tests-ERM and NP Retail give no such line and the same counts.
+
 ## Platform tables (ADR-019)
 
 The platform `System` app loads with every app. Providers answer Integer, Date, Session, Active Session, AllObj,

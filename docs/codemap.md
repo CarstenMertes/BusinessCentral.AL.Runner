@@ -142,6 +142,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 ### al-sema
 
+- `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `ABSENT_ENUM_MEMBERS`).
 - `base_access.rs` (78): Page and report extension code that names the base object's members (ADR-023): which probes are pinned (`PINNED`), the `AL_UNPINNED_BASE_ACCESS` switch, the base's visible variables and procedures, and the slot of a base variable from syntax. Entry: `PINNED`, `pinned`, `scope_enabled`, `visible_vars`, `visible_procs`, `slot_of`.
 - `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax. Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
 - `check.rs` (2492): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 122, `Checker` 323, `check_object` 647, `check_routine_in` 672, `CheckResult` 43, `Res` 67, `Roots` 103.
@@ -180,6 +181,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `config.rs` (292): oracle/oracle.toml: versions, suites, corpus pin. Entry: `OracleFile` 7, `VersionEntry` 16, `SuiteEntry` 51.
 - `corpus.rs` (210): Corpus discovery: test codeunits, their area folder and file. Entry: `discover` 32, `CorpusIndex` 20, `TestCodeunit` 12.
 - `drift.rs` (119): Comparing case sets across BC versions (ADR-015 3.6). Entry: `differences` 11, `common` 26, `restrict` 39, `table` 46.
+- `mnc.rs` (300): The must-not-compile corpus (`--must-not-compile [DIR]`): parse a case header, compile it alone, compare the ALnnnn codes, report match / mismatch / not checked / skipped. Entry: `parse_case`, `read_cases`, `run_case`, `render`.
 - `insight.rs` (388): --top-refusals (folded reason ranking) and --baseline-diff. Entry: `normalise_reason` 22, `top_refusals` 116, `baseline_diff` 194, `render_top` 145, `render_diff` 222.
 - `lib.rs` (22): Runs the corpus's `[Test]` codeunits and reports them against the oracle.
 - `main.rs` (806): The binary: run each oracle version, report, ratchet. Exit 0 ok, 1 regression, 2 setup error. Entry: `main` 17, `run` 40, `run_version` 135, `find_explained` 670, `drift_summary` 124.

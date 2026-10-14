@@ -3,6 +3,7 @@
 //! (corpus testfilter/TestTestFilter.al, TestTestFilterFilterGroups.al).
 
 use super::*;
+use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
 
 impl Session {
@@ -35,7 +36,7 @@ impl Session {
                 let pos = field_arg(args, 0)?;
                 let text = match args.get(1) {
                     Some(Value::Text(t) | Value::Code(t)) => t.clone(),
-                    other => return unsupported(format!("TestFilter.SetFilter with {other:?}")),
+                    other => return unsupported(format!("TestFilter.SetFilter with {}", other.describe())),
                 };
                 let ty = table.fields[pos].ty.clone();
                 let expr = self
@@ -129,6 +130,6 @@ impl Session {
 fn field_arg(args: &[Value], i: usize) -> Result<usize, Signal> {
     match args.get(i) {
         Some(Value::Integer(p)) => Ok(*p as usize),
-        other => unsupported(format!("TestFilter field argument {other:?}")),
+        other => unsupported(format!("TestFilter field argument {}", other.describe())),
     }
 }

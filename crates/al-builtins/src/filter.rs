@@ -1,5 +1,6 @@
 //! Record filters as data (shared by the VM and the store).
 
+use crate::describe::Describe;
 use crate::ops::compare;
 use crate::value::Value;
 use std::cmp::Ordering;
@@ -86,7 +87,7 @@ pub fn parse_filter_with(
     let mut p = Parser { toks, i: 0, ty, enums };
     let e = p.or()?;
     if p.i != p.toks.len() {
-        return Err(format!("unexpected `{:?}` in filter `{text}`", p.toks[p.i]));
+        return Err(format!("unexpected {} in filter `{text}`", p.toks[p.i].describe()));
     }
     Ok(e)
 }
@@ -100,6 +101,16 @@ enum Tok {
     /// A `%n` placeholder's typed value.
     Typed(Value),
     Op(&'static str),
+}
+
+impl Describe for Tok {
+    fn describe(&self) -> String {
+        match self {
+            Tok::Raw(s) | Tok::Quoted(s) => format!("`{s}`"),
+            Tok::Typed(v) => v.describe(),
+            Tok::Op(o) => format!("`{o}`"),
+        }
+    }
 }
 
 fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
@@ -229,7 +240,7 @@ impl Parser<'_> {
     fn typed(&self, t: Tok) -> Result<Value, String> {
         use crate::value::RtType as T;
         let text = match t {
-            Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| format!("{e:?}")),
+            Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| e.describe()),
             Tok::Raw(s) | Tok::Quoted(s) => s,
             Tok::Op(o) => return Err(format!("operator `{o}` where a value was expected")),
         };
@@ -269,7 +280,8 @@ impl Parser<'_> {
             }
             other => {
                 return Err(format!(
-                    "text filter value for {other:?} (region-dependent or not pinned yet)"
+                    "text filter value for {other} (region-dependent or not pinned yet)",
+                    other = other.describe()
                 ));
             }
         })

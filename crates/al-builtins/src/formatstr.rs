@@ -9,6 +9,7 @@
 //! (types/TestDateRoundFormatStringContracts.al:Format_PictureCodes; handlers/TestPageTemporalSetValue_Page.al:47-65).
 //! Any other code, or one of these on another type or in another width, is refused.
 
+use crate::describe::Describe;
 use crate::format::{FormatCtx, civil_from_day, format_value};
 use crate::value::Value;
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -128,7 +129,7 @@ fn group(int: &str) -> String {
 fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Result<String, String> {
     let abs = n.value.abs();
     let int = abs.trunc().to_string();
-    let refuse = || Err(format!("code `<{code}>` on {v:?}"));
+    let refuse = || Err(format!("code `<{code}>` on {}", v.describe()));
     if code == "Sign" || code.starts_with("Sign,") {
         let w = width(code, "Sign")?;
         let neg = n.value.is_sign_negative() && !n.value.is_zero();
@@ -217,7 +218,7 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
     if code == "Closing" {
         return match day_no {
             Some(_) => Ok(if closing { "C".into() } else { String::new() }),
-            None => Err(format!("code `<Closing>` on {v:?}")),
+            None => Err(format!("code `<Closing>` on {}", v.describe())),
         };
     }
     let date = if closing { None } else { day_no.map(civil_from_day) };
@@ -245,7 +246,7 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         ("Minutes,2", _, Some(ms)) => format!("{:02}", ms / 60_000 % 60),
         ("Seconds,2", _, Some(ms)) => format!("{:02}", ms / 1000 % 60),
         ("AM/PM", _, Some(ms)) => (if ms / 3_600_000 < 12 { "AM" } else { "PM" }).to_string(),
-        _ => return Err(format!("code `<{code}>` on {v:?}")),
+        _ => return Err(format!("code `<{code}>` on {}", v.describe())),
     };
     Ok(part)
 }

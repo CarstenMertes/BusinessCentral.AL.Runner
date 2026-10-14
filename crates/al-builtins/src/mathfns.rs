@@ -1,5 +1,6 @@
 //! `Round` and `Power`. Only the forms a corpus test pins are computed; the rest is refused.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::value::Value;
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -30,13 +31,13 @@ fn dec(v: &Value) -> Option<Decimal> {
 /// default precision is 0.01 (same test). A precision that is not positive is refused.
 fn round(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Some(number) = dec(&a[0]) else {
-        return unsupported(format!("Round of {:?}", a[0]));
+        return unsupported(format!("Round of {}", a[0].describe()));
     };
     let precision = match a.get(1) {
         None => Decimal::new(1, 2),
         Some(p) => match dec(p) {
             Some(p) => p,
-            None => return unsupported(format!("Round with a Precision of {p:?}")),
+            None => return unsupported(format!("Round with a Precision of {}", p.describe())),
         },
     };
     if precision <= Decimal::ZERO {
@@ -85,7 +86,7 @@ impl NormalizeTo for Decimal {
 /// test); a result that is not a finite number is refused, as is zero to a negative power.
 fn power(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let (Some(base), Some(exp)) = (dec(&a[0]), dec(&a[1])) else {
-        return unsupported(format!("Power of {:?} and {:?}", a[0], a[1]));
+        return unsupported(format!("Power of {} and {}", a[0].describe(), a[1].describe()));
     };
     if exp.fract() != Decimal::ZERO || exp.abs() > Decimal::from(10_000) {
         use rust_decimal::prelude::ToPrimitive;

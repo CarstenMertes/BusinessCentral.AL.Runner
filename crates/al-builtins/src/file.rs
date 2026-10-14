@@ -17,6 +17,7 @@
 //! it to the host file system. A temporary file never reaches the host file system: it is a name and
 //! a buffer.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::stream::{BlobRef, Encoding, InState, new_blob, write_bytes};
@@ -71,14 +72,14 @@ fn with_file<R>(r: Option<&mut Value>, f: impl FnOnce(&mut FileState) -> Result<
     }
     match &mut *lib {
         LibraryValue::File(s) => f(s),
-        other => unsupported(format!("File method on {other:?}")),
+        other => unsupported(format!("File method on {}", other.describe())),
     }
 }
 
 fn path(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
         Some(t) => Ok(t),
-        None => unsupported(format!("a file name, got {:?}", a.get(i))),
+        None => unsupported(format!("a file name, got {}", a.get(i).describe())),
     }
 }
 
@@ -189,8 +190,8 @@ fn write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         }
         let Some(mut text) = a.first().and_then(crate::native::text_of) else {
             return unsupported(format!(
-                "File.Write of {:?} (only a text is documented plainly)",
-                a.first()
+                "File.Write of {} (only a text is documented plainly)",
+                a.first().describe()
             ));
         };
         text.push_str("\r\n");
@@ -223,7 +224,7 @@ fn create_out_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
     })?;
     match &a[0] {
         Value::Library(_, h) => *h.borrow_mut() = LibraryValue::OutStream(blob, enc),
-        other => return unsupported(format!("a stream variable was expected, got {other:?}")),
+        other => return unsupported(format!("a stream variable was expected, got {}", other.describe())),
     }
     Ok(Value::Null)
 }
@@ -235,7 +236,7 @@ fn create_in_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> 
     })?;
     match &a[0] {
         Value::Library(_, h) => *h.borrow_mut() = LibraryValue::InStream(InState::live(blob, enc)),
-        other => return unsupported(format!("a stream variable was expected, got {other:?}")),
+        other => return unsupported(format!("a stream variable was expected, got {}", other.describe())),
     }
     Ok(Value::Null)
 }
@@ -256,7 +257,7 @@ fn flag(
                 *which(s) = *b;
                 Ok(Value::Null)
             }
-            Some(other) => unsupported(format!("File.{what} with {other:?}")),
+            Some(other) => unsupported(format!("File.{what} with {}", other.describe())),
         })
     }
 }

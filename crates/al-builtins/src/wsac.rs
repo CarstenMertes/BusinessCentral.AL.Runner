@@ -1,6 +1,7 @@
 //! `WebServiceActionContext`: the object an API page action tells the OData layer to answer with.
 //! A mutable in-memory value shared by assignment (corpus session/TestWebServiceActionContext.al).
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, Value, WebServiceActionState};
@@ -22,7 +23,7 @@ fn with_state<R>(r: Option<&mut Value>, f: impl FnOnce(&mut WebServiceActionStat
     }
     match &mut *lib {
         LibraryValue::WebServiceAction(s) => Ok(f(s)),
-        other => unsupported(format!("WebServiceActionContext method on {other:?}")),
+        other => unsupported(format!("WebServiceActionContext method on {}", other.describe())),
     }
 }
 
@@ -49,14 +50,14 @@ fn get_result_code(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> O
 /// (session/TestWebServiceActionContext.al:279-290, :294-300 stores -7).
 fn set_object_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Value::Integer(id) = a[0] else {
-        return unsupported(format!("SetObjectId with {:?}", a[0]));
+        return unsupported(format!("SetObjectId with {}", a[0].describe()));
     };
     with_state(r, |s| s.object_id = id).map(|()| Value::Null)
 }
 
 fn set_object_type(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Value::Option(o, _) = a[0] else {
-        return unsupported(format!("SetObjectType with {:?}", a[0]));
+        return unsupported(format!("SetObjectType with {}", a[0].describe()));
     };
     with_state(r, |s| s.object_type = o).map(|()| Value::Null)
 }
@@ -65,7 +66,7 @@ fn set_object_type(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
 /// back as `Get` (session/TestWebServiceActionContext.al:352-395).
 fn set_result_code(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Value::Option(o, members) = &a[0] else {
-        return unsupported(format!("SetResultCode with {:?}", a[0]));
+        return unsupported(format!("SetResultCode with {}", a[0].describe()));
     };
     let stored = if members.get(*o as usize).is_some_and(|m| m == "Updated") {
         members.iter().position(|m| m == "Get").unwrap_or(*o as usize) as i32
@@ -80,7 +81,7 @@ fn set_result_code(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
 /// (session/TestWebServiceActionContext.al:437-505). The wording around the type name is not pinned.
 fn add_entity_key(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Value::Integer(field) = a[0] else {
-        return unsupported(format!("AddEntityKey with field id {:?}", a[0]));
+        return unsupported(format!("AddEntityKey with field id {}", a[0].describe()));
     };
     let added = with_state(r, |s| {
         if s.keys.contains(&field) {

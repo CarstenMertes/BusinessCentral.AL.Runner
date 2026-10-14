@@ -1056,7 +1056,7 @@ impl Session {
             dst.key = src.key;
             dst.adhoc = src.adhoc.clone();
             dst.temporary = src.temporary;
-            dst.temp_id = src.temp_id;
+            dst.temp_id = src.temp_id.clone();
             dst.ascending = src.ascending;
         }
         let result = (|| {

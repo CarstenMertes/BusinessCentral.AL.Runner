@@ -819,3 +819,11 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
     Integer(n)`); `DateTime + Duration` is pinned (session/TestDateTimeContracts.al:50-75). 98 tests, from the
     project's `CurrentDateTime + (Seconds * 1000)`. Probe wanted: `DT + 1000` for an `Integer`, a `BigInteger` and a
     `Decimal` constant and variable (milliseconds? a compile error?), `DT - 1000`, and `DT + 1000.5` (rounding).
+
+## All buckets with test data (issue 10)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| A temporary record of a `TableType = CRM` table | Needs no table connection: its table is in memory (was: the connection error of a non-temporary record). Not pinned by a corpus line: Base Application's `CRM Synch. Helper.ClearCache` does `Reset()` and `DeleteAll()` on temporary CRM records and Microsoft's CRM tests run it with no connection registered (22 tests of Tests-CRM integration start with `ResetEnvironment`) | A temporary variable of the ALT CRM Entity fixture (60291) with no connection registered: Init, Insert, Count, Reset, DeleteAll |
+| A field declared `ObsoleteState = Removed` in `RecordRef` | Listed like any field (FieldCount, FieldIndex, FieldExist, Field(n)), as before. Microsoft's Tests-Misc T120 to T122 expect it to be left out and `Field(n)` to raise "Field X (n) of table Y (id) is obsoleted". Refusing `Field`/`FieldExist` for it stopped 252 passing Base Application tests (`General Ledger Setup` field 110 and others), so the behavior is left and not refused | A table with a removed field: `FieldCount`, `FieldExist`, `Field(n)` and `FieldIndex` loops, and the error text; and whether Base Application's `RecRef.Field(110)` of General Ledger Setup (field declared Removed) raises there |
+| Data: Cost Type, Service Hour | The restored CRONUS holds no row (Cost Accounting and Service Hours are not set up in the demo backup). Not a runtime question | none |

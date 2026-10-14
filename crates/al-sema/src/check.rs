@@ -2304,7 +2304,11 @@ fn sig_cand(s: &Signature, recv: &Ty, id: String) -> Cand {
         param_tys: s.params.iter().map(|p| p.ty.clone()).collect(),
         min,
         max,
-        ret: catalog_ty(&s.ret, recv),
+        // `Enum::"X".FromInteger(n)` is a value of enum X; the catalog's return type is "Any".
+        ret: match recv {
+            Ty::Enum(n) if !n.is_empty() && s.receiver == "Enum" && s.name == "FromInteger" => recv.clone(),
+            _ => catalog_ty(&s.ret, recv),
+        },
         fields,
         rest_field,
         hidden: None,

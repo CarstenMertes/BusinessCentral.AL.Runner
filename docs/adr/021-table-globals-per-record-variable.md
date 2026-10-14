@@ -14,9 +14,9 @@ Tests-ERM with test data: Base App "Price List Line" sets the global `PriceAsset
 `T043_AmountTypeMustBeDiscountForItemDiscGroup` (Price List Line UT and Price Worksheet Line UT)
 failed because the check that reads `PriceAsset` was skipped.
 
-The probes (corpus branch `al-runtime-rs`, head `eb46da5`, `tests/al-language/tableglobals/`, 58
-tests, all green on BC 27.5; the corpus submodule does not hold them yet) pin what each operation
-does to the globals.
+The probes (corpus `tests/al-language/tableglobals/`, 58 tests, in the corpus submodule since
+`eb46da5`, all green in the corpus CI on BC 27.5, 28.5 and 29.0) pin what each operation does to
+the globals.
 
 ## Decision
 
@@ -78,9 +78,20 @@ does to the globals.
 ## Conformance
 
 Unit tests in `crates/al-vm/tests/table_globals.rs`, one per rule above, with their own fixtures.
-Each cites the probe test by corpus branch and head until the corpus bump brings the probes into
-the submodule: corpus `tests/al-language/tableglobals/TestTableGlobalsRecordVariable.al` (rules 1
-to 7) and `TestTableGlobalsHolders.al` (codeunit-held records, pages). Real-world check: Tests-ERM
+Each cites the probe test by corpus file and line (corpus `tests/al-language/tableglobals/TestTableGlobalsRecordVariable.al` unless noted):
+
+| Decision | Probe tests (line) |
+|---|---|
+| 1 | TableGlobals_PersistAcrossProcedureCalls_OnTheSameVariable :72, _FieldTriggerAndProcedure_ShareTheGlobals :86, _SetByValidate_AreSeenByOnInsert :101, _SecondVariable_HasItsOwnGlobals :115; TableExtensionGlobals_PersistAcrossCallsOnTheSameVariable :890 |
+| 4 | _Assignment_/_Copy_/_TransferFields_WhatHappensToBothSides :132, :153, :174; _PassedByVar_IsTheSameInstance :195; _PassedByValue_ :209; _ReturnedRecord_ :239; _EchoedRecord_ :254; _Clear_ :272, _Init_ :287, _Reset_ :302, _ClearAll_ :317, _OtherOperations_ :331, _ResetInsideTable_ :397, _ResetOnTemporaryRecord_ :412, _ResetOnCodeunitGlobalRecord_ :427; _GetFindNext_ :441; _InsertModifyDelete_ :475; _CodeunitRunWithRecord_RunsOnTheCallersInstance :682; _TemporaryRecord_ :725, :741; _RecAssignedInsideTable_ :759, _RecCopyInsideTable_ :778, _RecTransferFieldsInsideTable_ :797; _RecordRef_GetTableSetTable_ :832; _Variant_ :870; TableExtensionGlobals_CopyAndClear_ :907 |
+| 3 | TableGlobals_RecordGlobalOfOwnTable_IsPerInstanceAndLazy :816 |
+| 5 | _XRecInOnModify_ :582, _XRecInOnValidate_ :601, _XRecAcrossTwoModifies_ :617, _XRecInOnValidate_KeepsItsGlobalsBetweenValidations :634, _XRecIsOneInstanceForValidateAndModify :647, _XRecGlobals_AfterResetAndClear :662 |
+| 6 | _ModifyAll_ :497, _ModifyTwice_ :525, _Modify_OnAnotherVariableOfTheSameRow_ :542, _DeleteAll_TriggersRunOnOneInstanceForAllRows :561 |
+| 7 | _Events_RecIsTheCallersInstance :697; _RecordRef_ValidateAndInsert_RunTriggersOnItsOwnInstance :852 |
+| 8 | `tests/al-language/tableglobals/TestTableGlobalsHolders.al`: _PageRec_PersistsAcrossActions :119, _PageFieldValidate_ThenAction_SeesTheTriggerGlobals :140, _ListPageRec_AcrossRows_ :160, _PageRec_AfterGetRecordSeesTheGlobals :183, _PageInsert_OnInsertSeesTheValidateGlobals :202, _PageModify_OnModifySeesTheValidateGlobals :219, _PageRec_ActionGlobalsAreLostAfterPageFieldValidation :238, _NewPageInstance_StartsFresh :259, _PageFieldValidate_WhatTheTriggerSeesOfThePageRecGlobals :280 |
+| 9 | `tests/al-language/tableglobals/TestTableGlobalsHolders.al`: _CodeunitGlobalRecord_PersistsAcrossCalls :28, _TwoCodeunitInstances_HaveTheirOwn :43, _LocalRecordVariable_IsFreshPerCall :59, _AssignmentIntoCodeunitGlobal_ :71 |
+
+Unit tests in `crates/al-vm/tests/table_globals.rs` repeat the line numbers above each test. Real-world check: Tests-ERM
 with `--test-data` (docs/alrunner-buckets.md), including the two `T043` tests.
 
 ## Decided without owner review (2026-10-14)

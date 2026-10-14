@@ -154,7 +154,7 @@ fn a_bad_invocation_exits_2_and_says_why() {
     for (args, why) in [
         (vec!["test"], "at least one APP"),
         (vec!["test", ".", "--nope"], "unknown option"),
-        (vec!["test", ".", "--test-data-company", "X"], "needs --test-data"),
+        (vec!["test", ".", "--test-data", "--no-test-data"], "cannot be combined"),
         (vec!["test", ".", "--test-data", "/no/such/Demo.bak"], "Demo.bak"),
         (vec!["serve"], "not implemented yet"),
     ] {
@@ -520,4 +520,79 @@ fn explain_needs_exactly_one_test() {
         "NoSuchTest",
     ]);
     assert_eq!(code(&o), 6, "{}", text(&o));
+}
+
+const DEEP: &str = r#"
+codeunit 50200 "Deep Tests"
+{
+    Subtype = Test;
+
+    local procedure Inner()
+    begin
+        Error('deep boom');
+    end;
+
+    local procedure Middle()
+    begin
+        Inner();
+    end;
+
+    [Test]
+    procedure DeepFails()
+    begin
+        Middle();
+    end;
+}
+"#;
+
+fn deep_app(root: &Path) -> PathBuf {
+    let dir = root.join("deep");
+    write(
+        &dir,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000002", "Deep", &[]),
+    );
+    write(&dir, "src/Deep.al", DEEP);
+    dir
+}
+
+#[test]
+fn a_failure_shows_the_al_call_stack_in_the_console_and_in_junit() {
+    let d = tempfile::tempdir().unwrap();
+    let app = deep_app(d.path());
+    let junit = d.path().join("junit.xml");
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--junit",
+        junit.to_str().unwrap(),
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    // Innermost frame first: Inner, Middle, then the test itself.
+    let frames: Vec<&str> = t
+        .lines()
+        .filter(|l| l.trim_start().starts_with("\"Deep Tests\"(CodeUnit 50200)"))
+        .collect();
+    assert_eq!(frames.len(), 3, "{t}");
+    assert!(frames[0].contains(".Inner line 2"), "{t}");
+    assert!(frames[1].contains(".Middle line 2"), "{t}");
+    assert!(frames[2].contains(".DeepFails line 2"), "{t}");
+    assert!(
+        t.lines().any(|l| l.starts_with("FAIL") && l.contains("deep boom")),
+        "{t}"
+    );
+    let x = std::fs::read_to_string(&junit).unwrap();
+    assert!(x.contains("<failure message=\"deep boom\">"), "{x}");
+    assert!(x.contains(".Inner line 2"), "{x}");
+    assert!(x.contains("</failure>"), "{x}");
+}
+
+#[test]
+fn quiet_leaves_the_call_stack_out_of_the_console() {
+    let d = tempfile::tempdir().unwrap();
+    let app = deep_app(d.path());
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--quiet"]);
+    assert!(!text(&o).contains("CodeUnit 50200"), "{}", text(&o));
 }

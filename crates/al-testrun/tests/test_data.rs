@@ -372,3 +372,53 @@ codeunit 50120 "Lib" {{ procedure Missing() var S: Record "Setup"; begin S.Get('
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn the_install_code_of_the_app_under_test_may_change_the_restored_rows() {
+    // ADR-020 (decided without owner review, 2026-10-14): the guard that keeps install code from
+    // rewriting the restored company protects the dependency apps' install roots; the tested app's
+    // own install codeunit is the project's fixture (a real project's seeds the setup tables of
+    // the demo company), and publishing it on a real database may change those rows.
+    let fake = Arc::new(Fake::new("CRONUS International Ltd.").table(
+        "Setup",
+        &["Primary Key", "Value"],
+        vec![vec![text(""), text("restored")]],
+    ));
+    let (rt, _) = run(
+        r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Changed() var S: Record "Setup"; begin
+    S.Get('');
+    if S.Value <> 'fixture' then Error('value %1', S.Value);
+  end; }
+codeunit 50002 "Fixture" { Subtype = Install;
+  trigger OnInstallAppPerCompany() var S: Record "Setup"; begin
+    S.Get(''); S.Value := 'fixture'; S.Modify();
+  end; }"#,
+        DEP,
+        Some(&fake),
+    );
+    assert_eq!(outcome(&rt, 50001, "Changed"), Outcome::Pass);
+}
+
+#[test]
+fn a_get_in_the_tests_own_code_on_a_table_the_baseline_could_not_seed_is_refused_too() {
+    // The same unseeded table as above, read by the test code itself (a real project's tests read
+    // the rows its install code creates): "does not exist" would be a wrong failure, not BC's answer.
+    let dep = format!(
+        r#"{DEP}
+codeunit 2 "Company-Initialize" {{ trigger OnRun() var S: Record "Setup"; begin
+  MinimumActiveRowVersion(); S."Primary Key" := ''; S.Insert(); end; }}
+"#
+    );
+    let main = r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Own() var S: Record "Setup"; begin S.Get('NOPE'); end;
+  [Test] procedure OwnWithResult() var S: Record "Setup"; begin if S.Get('NOPE') then Error('found'); end; }"#;
+    let (rt, _) = run(main, &dep, None);
+    for name in ["Own", "OwnWithResult"] {
+        assert!(
+            matches!(outcome(&rt, 50001, name), Outcome::NotRun(_)),
+            "{name}: {:?}",
+            outcome(&rt, 50001, name)
+        );
+    }
+}

@@ -74,6 +74,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `filter.rs` (626): Record filters as data (shared by the VM and the store). Entry: `FilterExpr` 8, `parse_filter` 70, `parse_filter_with` 79, `FieldFilter` 371.
 - `format.rs` (619): `Format(Value [, Length] [, FormatNumber])`. Entry: `FormatCtx` 8, `FormatFail` 15, `try_format` 29, `format_value` 37.
 - `formatstr.rs` (389): `Format(Value, Length, FormatString)`. Entry: `format_with_string` 50.
+- `http.rs` (85): `HttpRequestMessage`: `Method`, `SetRequestUri`, `GetRequestUri`; nothing is sent. Entry: `native_for` 71.
 - `iso.rs` (121): ISO 8601 text to AL date/time values (JSON strings, XML-format Evaluate). Entry: `days_in_month` 11, `parse_date` 21, `parse_time` 36, `parse_datetime` 56.
 - `json.rs` (1415): JsonObject, JsonArray, JsonToken and JsonValue. Entry: `Handle` 17, `JsonCell` 21, `JsonNode` 27, `Scalar` 34.
 - `lib.rs` (39): Crate root of the AL standard library: values, builtins, catalog.
@@ -109,6 +110,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `artifact.rs` (1153): Dependency apps from Microsoft's artifact feed, as the fallback behind the project's `.alpackages` and `--deps` (ADR-013. Entry: `Cdn` 28, `HttpCdn` 38, `Fetch` 79, `ArtifactUse` 89.
 - `build.rs` (424): Which Business Central build supplies the Microsoft apps (ADR-013 decision 2, "Layer A"). Entry: `BuildId` 14, `parse_index` 91, `BuildQuery` 106, `Origin` 160.
+- `demo.rs` (200): The demo database backup of a build: streamed from the country artifact into the artifact cache (ADR-020). Entry: `ensure_demo_backup`, `cached_backup`, `DemoBackup`.
 - `cache.rs` (349): The artifact cache (ADR-013 decision 3). Entry: `cache_root` 21, `cache_root_from_env` 44, `Store` 48, `BuildDir` 86.
 - `lib.rs` (17): Dependency apps for the runtime (ADR-013).
 - `load.rs` (577): Finding, choosing and reading the dependency apps of a project (ADR-013). Entry: `parse_app_json` 26, `read_package_at` 96, `scan_dir` 103.
@@ -197,6 +199,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `apps.rs` (128): Reads the APPs given on the command line (folder, `*.Source.zip`, `.app`) and builds the project the dependency resolution works for. Entry: `load`, `combined_project`.
 - `args.rs` (262): Command-line parsing and the `--help` text of `alrunner`. Entry: `parse`, `HELP`.
+- `testdata.rs` (300): Which demo backup a run restores: disk, cache, download, other build; or why test data is off (ADR-020). Entry: `locate`, `Where`, `Located`.
 - `main.rs` (51): The `alrunner` binary: runs on a thread with a large stack, maps results to exit codes. Entry: `main`.
 - `output.rs` (182): Counts, exit codes (0, 1, 6, 7), the summary line and JUnit XML of a run. Entry: `exit_code`, `junit`.
 - `run.rs` (433): `alrunner test`: load APPs, select test codeunits, resolve dependencies, compile, run, print. Entry: `test`.
@@ -302,8 +305,11 @@ functions or methods; the file is in the module list above.
    so it sees Base Application without declaring it.
 4. `CorpusRuntime::run_suites_with` (the same compile and run as the corpus job; see "Corpus run" step 4), with
    `RunOptions::only` set to the selected codeunits. `CorpusRuntime::results` lists every test with its codeunit.
-   With `--test-data`, `run::open_test_data` opens the backup (`al_bcdb_std::BackupProvider`; the cached artifact of the
-   Microsoft apps' build when no PATH is given) and passes it as `RunOptions::test_data`; `run_suites_with` puts it on
+   Test data is on unless `--no-test-data`: `run::choose_test_data` finds the backup (`testdata::locate`: the build of the
+   Microsoft apps on disk, in the artifact cache, downloaded by `al_deps::demo::ensure_demo_backup`, or another build of
+   the version) and opens it (`al_bcdb_std::BackupProvider`); without a backup the run says why test data is off. The
+   build of the tests (`apps::own_build`) is `BuildQuery::preferred`, so the apps, `System.app` and the data share it.
+   The backup is passed as `RunOptions::test_data`; `run_suites_with` puts it on
    each `Engine`. `Session::with_host` gives the store a `TestBacking` (al-vm/testdata.rs): a table the store holds no
    entry for reads `provider.read` once for all threads (`TestData::read`), maps columns to fields, and builds the
    table once per thread. `run::test` prints `LoadStats::summary` before the test summary.

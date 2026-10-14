@@ -62,3 +62,24 @@ fn the_cdn_serves_the_test_libraries_by_range() {
         assert!(!sources.is_empty());
     }
 }
+
+#[test]
+#[ignore = "needs the network: cargo test --release -p al-deps --test network -- --ignored"]
+fn the_country_artifact_lists_the_demo_backup_in_its_central_directory() {
+    let cdn = HttpCdn::from_env();
+    let chosen = newest_published(&cdn, &BuildQuery::new(Some("27.5"), 27, None)).unwrap();
+    let (url, src) = cdn.country(&chosen.build, "w1");
+    let zip = RemoteZip::open(src).unwrap();
+    let name = al_deps::demo::backup_name("w1");
+    let e = zip
+        .entries
+        .iter()
+        .find(|e| e.name == name)
+        .unwrap_or_else(|| panic!("{url} holds no {name}"));
+    println!(
+        "{url}: {name}, {} MB stored, {} MB inflated",
+        e.compressed_size() >> 20,
+        e.size >> 20
+    );
+    assert!(e.size > 300 << 20, "the demo backup is hundreds of megabytes");
+}

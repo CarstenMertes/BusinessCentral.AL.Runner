@@ -62,6 +62,15 @@ table 50903 "ALT Library Types"
     }
     keys { key(PK; Id) { } }
 }
+table 50960 "ALT RV"
+{
+    fields { field(1; Id; Integer) { } field(2; Name; Text[20]) { } }
+    keys { key(PK; Id) { } }
+}
+tableextension 50961 "ALT RV Ext" extends "ALT RV"
+{
+    keys { key("RV Key"; SystemRowVersion) { } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -681,4 +690,42 @@ fn current_key_index_numbers_the_keys_and_the_hidden_system_id_key() {
         text(r),
         "$systemId;5|1Id|1=Id;2=A;3=B,A;4=D;5=System ID;|The ALT Keys table does not have an active key at index 0.|DB:KeyNotFound|The ALT Keys table does not have an active key at index 6.|No|1|3B,A|-1C"
     );
+}
+
+#[test]
+fn a_tableextension_key_on_systemrowversion_is_visible_through_keyref() {
+    // A key a table extension declares on SystemRowVersion is a key of the table; KeyRef sees it
+    // after the declared keys and before the implicit SystemId key (same order as
+    // recordref/TestRecordRefRuntimeContracts.al:KeyRefAndFieldRef_Active_AreTrue_KeyCount).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; KR: KeyRef; i: Integer; s: Text; begin
+            RR.Open(50960);
+            for i := 1 to RR.KeyCount() do begin
+                KR := RR.KeyIndex(i);
+                s += Format(KR.FieldCount()) + ':' + KR.FieldIndex(1).Name() + ';';
+            end;
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "1:Id;1:SystemRowVersion;1:$systemId;");
+}
+
+#[test]
+fn systemrowversion_is_field_0_through_fieldno_number_and_field() {
+    // Corpus recordref/TestKeyMetadataRowVersionRemoved.al:51,:85 pins that KeyRef.FieldIndex(1).Number()
+    // equals FieldNo(SystemRowVersion); the rowversion sits at field id 0 (record/TestCalcFormulaSystemFieldsTests
+    // .Codeunit.al:213-215), which is also what a real project reads (`KeyRef.FieldIndex(1).Number = 0`).
+    // The literal is an assumption (docs/probes-needed.md, batch 7). The other system fields keep their numbers.
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; KR: KeyRef; R: Record \"ALT RV\"; begin
+            RR.Open(50960);
+            KR := RR.KeyIndex(2);
+            exit(Format(KR.FieldIndex(1).Number()) + '|' + Format(R.FieldNo(SystemRowVersion)) + '|' +
+                Format(R.FieldNo(SystemId)) + '|' + Format(RR.Field(0).Name()) + '|' + Format(RR.FieldExist(0)) + '|' +
+                Format(RR.Field(R.FieldNo(SystemRowVersion)).Number()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "0|0|2000000000|SystemRowVersion|Yes|0");
 }

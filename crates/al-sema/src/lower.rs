@@ -3363,7 +3363,10 @@ impl Lowerer<'_> {
                     .is_some_and(|s| !s.instance || (s.receiver == "Record" && self.rec_slot.is_some()));
             if let Some(sig) = sig.filter(|_| member || implicit) {
                 if al_builtins::native::lookup(&id).is_none() {
-                    return Err(format!("builtin {id} is not implemented"));
+                    return Err(match al_builtins::native::refusal(&id) {
+                        Some(why) => format!("builtin {id}: {why} (docs/probes-needed.md)"),
+                        None => format!("builtin {id} is not implemented"),
+                    });
                 }
                 let compound = sig_tokens(n).iter().any(|t| {
                     matches!(
@@ -4261,7 +4264,10 @@ impl Lowerer<'_> {
             }
             Some(Res::Builtin(id)) => {
                 if al_builtins::native::lookup(&id).is_none() {
-                    return Err(format!("builtin {id} is not implemented"));
+                    return Err(match al_builtins::native::refusal(&id) {
+                        Some(why) => format!("builtin {id}: {why} (docs/probes-needed.md)"),
+                        None => format!("builtin {id} is not implemented"),
+                    });
                 }
                 let sig = self
                     .catalog

@@ -23,6 +23,7 @@ pub mod file;
 pub mod filter;
 pub mod format;
 pub mod formatstr;
+pub mod http;
 pub mod iso;
 pub mod json;
 pub mod mathfns;

@@ -222,9 +222,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetUrl#4", |_, _, _| {
         unsupported("GetUrl (the server address is not a host value)")
     }),
-    ("TaskScheduler.CanCreateTask#1", |_, _, _| {
-        unsupported("TaskScheduler.CanCreateTask (not pinned)")
-    }),
+    // False in a test: measured on real BC by session/TestEnvironmentUserTenantContracts.al:172
+    // (corpus-probes head c542144; the citation is pending until the corpus bump).
+    ("TaskScheduler.CanCreateTask#1", |_, _, _| Ok(Value::Boolean(false))),
     // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
     // and nothing more). A task starts in a session of its own after the creating transaction
     // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).

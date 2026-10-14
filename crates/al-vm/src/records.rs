@@ -306,6 +306,10 @@ impl Session {
             self.run_ext_trigger(t, "OnDelete", rec, Some(&x))?;
         }
         self.global_trigger(t, GlobalOp::Delete, rec, None)?;
+        let user_row = self.is_user_row(t, rec.borrow().temporary);
+        if user_row {
+            self.user_before_delete(t, rec)?;
+        }
         let row = rec.borrow().fields.clone();
         let pk = t.primary_key(&row);
         match self
@@ -314,6 +318,12 @@ impl Session {
             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
         {
             WriteOutcome::Done => {
+                // The platform deletes the user's User Property row with the User, after the
+                // OnBeforeDelete subscribers and before the OnAfterDelete ones
+                // (access-control/TestUserDeleteCascadeOrder.al:26-84 in the OnPrem app).
+                if user_row {
+                    self.user_after_delete(t, rec)?;
+                }
                 if run {
                     let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
                     self.run_ext_trigger(t, "OnAfterDelete", rec, Some(&x))?;
@@ -840,6 +850,7 @@ impl Session {
         {
             self.bg_refuse_write(t.object as usize, method)?;
             self.gate_write(method)?;
+            self.user_bulk_refusal(&t, rec.borrow().temporary, method)?;
         }
         match method {
             "Init" => {
@@ -914,6 +925,11 @@ impl Session {
                 // The database event follows the table's triggers and precedes the write
                 // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
                 self.global_trigger(&t, GlobalOp::Insert, rec, None)?;
+                // The platform's own User trigger runs below the events and triggers (usertable.rs).
+                let user_row = self.is_user_row(&t, rec.borrow().temporary);
+                if user_row {
+                    self.user_before_insert(&t, rec)?;
+                }
                 // Only Insert(_, true) takes a SystemId the code put in the buffer; a trigger
                 // that sets one on any other insert changes nothing about the stored id.
                 if let (false, Some(i), Some(id)) = (keep_id, id_slot, assigned) {
@@ -957,6 +973,9 @@ impl Session {
                     InsertOutcome::Inserted => {
                         if let (Some(a), false) = (auto, taken) {
                             self.note_explicit_key(&t, a, &row);
+                        }
+                        if user_row {
+                            self.user_after_insert(&t, rec)?;
                         }
                         if run {
                             self.run_ext_trigger(&t, "OnAfterInsert", rec, None)?;
@@ -1071,6 +1090,9 @@ impl Session {
                     self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
                 self.global_trigger(&t, GlobalOp::Modify, rec, xrec.as_ref())?;
+                if self.is_user_row(&t, rec.borrow().temporary) {
+                    self.user_before_modify(&t, rec)?;
+                }
                 let old_version = self.bump_row_version(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
                 let mut row = rec.borrow().fields.clone();
@@ -1134,7 +1156,9 @@ impl Session {
                 // DeleteAll(true). Pinned on real BC 27.5 by the probe codeunit 68212
                 // (record/TestTableExtensionTriggerOrderContracts.al:Delete_And_DeleteAll_...,
                 // corpus branch `al-runtime-rs`; the citation is pending until the corpus bump).
-                if events || global || (run && trigger) {
+                // The User table has no bulk delete: the platform deletes it row by row.
+                let user_rows = self.is_user_row(&t, rec.borrow().temporary);
+                if events || global || user_rows || (run && trigger) {
                     // One Delete per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
                     let key = rec.borrow().key;
                     let mut rows = Vec::new();

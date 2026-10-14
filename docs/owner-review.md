@@ -99,6 +99,10 @@ reviewed it.
 
 ## Decided without owner review
 
+- 2026-10-14, User table triggers (`usertable.rs`): applied for every User write, with no check of
+  the topology gate the corpus header describes (unique emails only on premises). The Cloud app's
+  tier is not known to take the same branch. The error texts are the corpus fragments only.
+
 - 2026-10-14, ADR-014 registry: `NavTenantSettingsHelper.GetEnvironmentName` answers an empty
   text. The probe only sees `'Sandbox'` through the wrapper, which also answers `'Sandbox'` for an
   empty name. `SetTestTenantEnvironmentType` is not provided: no corpus test reaches it and the

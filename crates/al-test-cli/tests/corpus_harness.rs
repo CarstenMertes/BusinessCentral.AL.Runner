@@ -161,7 +161,7 @@ fn markdown_summary_is_written() {
     let md = dir.path().join("s.md");
     let (code, _, _) = cli(&["--markdown", md.to_str().unwrap()]);
     assert_eq!(code, 0);
-    assert!(std::fs::read_to_string(md).unwrap().contains("| **overall** | 4836 |"));
+    assert!(std::fs::read_to_string(md).unwrap().contains("| **overall** | 5112 |"));
 }
 
 #[test]

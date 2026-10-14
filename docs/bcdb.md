@@ -82,4 +82,32 @@ extent), the three catalog tables 6-8 ms, and finding one table's columns by des
 clustered index 1.7 ms. For a `.bacpac`, `model.xml` (111 MB of XML) dominates: inflate,
 SHA-256 over the same bytes, and the scan.
 
-RESULTS_PLACEHOLDER
+### Indicative numbers (2026-10-14, not a quiet machine)
+
+AMD Ryzen 5 5600X, 12 threads, warm page cache, NVMe, minimum of 5 runs after one warm-up,
+CRONUS from the BC 28.1 W1 demo backup (894 MB) and a 446 MB `.bacpac` that `sqlpackage` made
+from it. Reference: bcdb 0.2.1, native AOT. The load average was 4-12 while these ran (other
+agents build all day): the order of magnitude is reliable, single figures are not. CPU time
+(user+sys) tracks wall time within a few percent in every row except the parallel export, where
+it is 3x wall.
+
+| Operation (wall, ms) | `.bak` bcdb | `.bak` port | `.bacpac` bcdb | `.bacpac` port |
+|---|---:|---:|---:|---:|
+| list tables | 65 | 30 | 1286 | 788 |
+| `describe Customer` (Base Application symbols) | 636 | 256 | 1159 | 541 |
+| read a small table (No. Series) | 63 | 24 | 792 | 311 |
+| read the largest table by rows (Calendar Entry) | 221 | 54 | 904 | 326 |
+| full export, 528 tables, through `serve` (same work for both) | 12,154 | 1,553 | 10,235 | 2,195 |
+| full export, port only, `export --jobs 1` | | 867 | | 1,796 |
+| full export, port only, `export` (12 threads) | | 331 | | 1,323 |
+
+`tools/bcdb-bench.sh` produced these; its full output is in the report that came with this
+change. The port's `.bak` listing improved from 88 ms to 30 ms after the first run (sort keys
+built once), so the "list tables" row for the `.bak` mixes two runs. A second run, with the load
+at 10-45, kept every ratio in the port's favour. Run the script yourself on a quiet machine
+before quoting a number. Add `--cold` for a cold page cache; cold numbers were not taken.
+
+What the port does not beat is bcdb's own best case, a warm single small table: the open of the
+`.bak` is one 40-byte read per extent for the page map (13 ms) plus the catalog (6-8 ms). The
+rest of its time, 20 ms in all, is process start and that open.
+

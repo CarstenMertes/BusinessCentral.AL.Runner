@@ -172,5 +172,5 @@ awk -F'\t' '
   { split($3, w, " "); split($4, c, " ")
     if ($2 == "ref") { rw[$1] = w[1]; rc[$1] = c[1] } else { pw[$1] = w[1]; pc[$1] = c[1] } }
   END { for (k in rw) if (k in pw)
-          printf "  %-36s wall %9.1f -> %9.1f ms  x%.2f   cpu %9.1f -> %9.1f ms  x%.2f\n", k, rw[k]/1000, pw[k]/1000, pw[k]/rw[k], rc[k]/1000, pc[k]/rc[k] }' "$RESULTS" | sort
+          printf "  %-36s wall %9.1f -> %9.1f ms  x%.2f   cpu %9.1f -> %9.1f ms  x%.2f\n", k, rw[k]/1000, pw[k]/1000, pw[k]/rw[k], rc[k]/1000, pc[k]/1000, pc[k]/rc[k] }' "$RESULTS" | sort
 echo "load at end: $(cut -d' ' -f1-3 /proc/loadavg)"

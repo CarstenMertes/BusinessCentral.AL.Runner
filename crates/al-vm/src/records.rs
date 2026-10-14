@@ -40,6 +40,13 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 /// The platform table "User Personalization".
 const USER_PERSONALIZATION: u32 = 2_000_000_073;
 
+/// What the `Rec` and `xRec` slots of a table instance held before a call filled them.
+#[derive(Default)]
+pub(crate) struct RecSlots {
+    rec: Option<(usize, Value)>,
+    xrec: Option<(usize, Value)>,
+}
+
 impl Session {
     pub(crate) fn table(&self, rec: &Rec) -> Result<Arc<TableDef>, Signal> {
         let r = rec.borrow();
@@ -222,6 +229,8 @@ impl Session {
     fn xrec_handle(rec: &Rec, fields: Vec<Value>) -> Rec {
         let mut st = rec.borrow().clone();
         st.fields = fields;
+        // The variable's xRec keeps its globals from one operation to the next (ADR-021).
+        st.globals = rec.borrow().globals.xrec();
         Rc::new(RefCell::new(st))
     }
 
@@ -521,36 +530,131 @@ impl Session {
             .position(|r| r.is_trigger && r.field.is_none() && r.name.eq_ignore_ascii_case(name))
     }
 
-    /// An instance of `object` (a table or table extension) whose Rec is `rec`.
-    pub(crate) fn record_instance(
+    /// An instance of `object` whose Rec is `rec`, for a call on that record.
+    ///
+    /// A table or table extension runs on the globals of the record variable (ADR-021): one
+    /// instance per object, created on the first call and kept in `rec`'s state. Its `Rec` and
+    /// `xRec` slots are filled for the call; give the returned [`RecSlots`] to
+    /// [`Session::leave_record`] when the call ends, whether it succeeded or not, so the slots go
+    /// back to what they held (nothing, or the outer call's record) and the instance holds no
+    /// pointer to its record at rest. Any other object (a codeunit with `TableNo`, a page) gets a
+    /// fresh instance, as before.
+    pub(crate) fn enter_record(
         &mut self,
         object: usize,
         rec: Rec,
         xrec: Option<&Rec>,
-    ) -> Result<Rc<RefCell<Instance>>, Signal> {
-        let inst = self.instance(object);
-        let (rs, xs) = (
-            self.engine.program.objects[object].rec_slot,
-            self.engine.program.objects[object].xrec_slot,
-        );
-        // xRec: the caller's handle when the operation has one (shared, so changes made by
-        // event subscribers reach the trigger and the other subscribers), else a copy of Rec.
-        let copy = match xrec {
-            Some(x) => Value::Record(x.clone()),
-            None => Value::Record(Rc::new(RefCell::new(rec.borrow().clone()))),
+    ) -> Result<(Rc<RefCell<Instance>>, RecSlots), Signal> {
+        let (rs, xs, per_variable) = {
+            let o = &self.engine.program.objects[object];
+            (
+                o.rec_slot,
+                o.xrec_slot,
+                matches!(o.kind.as_str(), "table" | "tableextension"),
+            )
         };
+        let existing = if per_variable {
+            rec.borrow().globals.instance(object as u32)
+        } else {
+            None
+        };
+        let inst = match existing {
+            Some(i) => i,
+            None => {
+                let i = if per_variable {
+                    self.table_instance(object)
+                } else {
+                    self.instance(object)
+                };
+                if per_variable {
+                    rec.borrow().globals.set_instance(object as u32, i.clone());
+                }
+                i
+            }
+        };
+        // xRec: the caller's handle when the operation has one (shared, so changes made by
+        // event subscribers reach the trigger and the other subscribers), else a copy of Rec. Both
+        // carry the variable's xRec globals (ADR-021 decision 5).
+        let xr = match (xrec, xs) {
+            (Some(x), _) => {
+                if x.borrow().globals.is_unset() {
+                    let g = rec.borrow().globals.xrec();
+                    x.borrow_mut().globals = g;
+                }
+                Some(Value::Record(x.clone()))
+            }
+            (None, Some(_)) => {
+                let mut st = rec.borrow().clone();
+                st.globals = rec.borrow().globals.xrec();
+                Some(Value::Record(Rc::new(RefCell::new(st))))
+            }
+            (None, None) => None,
+        };
+        let mut i = inst.borrow_mut();
+        let mut saved = RecSlots::default();
         if let Some(r) = rs {
-            inst.borrow_mut().globals[r] = Value::Record(rec);
+            saved.rec = Some((r, std::mem::replace(&mut i.globals[r], Value::Record(rec))));
         }
-        if let Some(x) = xs {
-            inst.borrow_mut().globals[x] = copy;
+        if let (Some(x), Some(v)) = (xs, xr) {
+            saved.xrec = Some((x, std::mem::replace(&mut i.globals[x], v)));
         }
-        Ok(inst)
+        drop(i);
+        Ok((inst, saved))
+    }
+
+    /// Puts the `Rec` and `xRec` slots back to what they held before [`Session::enter_record`].
+    pub(crate) fn leave_record(inst: &Rc<RefCell<Instance>>, saved: RecSlots) {
+        let mut i = inst.borrow_mut();
+        if let Some((slot, v)) = saved.rec {
+            i.globals[slot] = v;
+        }
+        if let Some((slot, v)) = saved.xrec {
+            i.globals[slot] = v;
+        }
+    }
+
+    /// Runs `routine` of `object` with `rec` as its Rec (and `xrec`, or a copy of `rec`, as its xRec).
+    pub(crate) fn call_on_record(
+        &mut self,
+        object: usize,
+        routine: usize,
+        rec: Rec,
+        xrec: Option<&Rec>,
+        args: Vec<Value>,
+    ) -> Result<(Value, Vec<Value>), Signal> {
+        let (inst, saved) = self.enter_record(object, rec, xrec)?;
+        let r = self.call(object, routine, inst.clone(), args);
+        Self::leave_record(&inst, saved);
+        r
+    }
+
+    /// Sets the table globals of `rec` back to their initial values, in place: the instances
+    /// stay (a running call keeps its own), their variables are re-initialised. `xRec`'s set is
+    /// not touched (ADR-021 decision 4 and 5).
+    pub(crate) fn reset_table_globals(&mut self, rec: &Rec) {
+        let instances = rec.borrow().globals.instances();
+        for (object, inst) in instances {
+            let (rs, xs, tys) = {
+                let o = &self.engine.program.objects[object as usize];
+                (
+                    o.rec_slot,
+                    o.xrec_slot,
+                    o.globals.iter().map(|g| g.ty.clone()).collect::<Vec<_>>(),
+                )
+            };
+            for (i, ty) in tys.iter().enumerate() {
+                if Some(i) == rs || Some(i) == xs {
+                    continue;
+                }
+                let v = self.default_value(ty);
+                inst.borrow_mut().globals[i] = v;
+            }
+        }
     }
 
     fn run_trigger(&mut self, object: usize, routine: usize, rec: &Rec, xrec: Option<&Rec>) -> Result<(), Signal> {
-        let inst = self.record_instance(object, rec.clone(), xrec)?;
-        self.call(object, routine, inst, Vec::new()).map(|_| ())
+        self.call_on_record(object, routine, rec.clone(), xrec, Vec::new())
+            .map(|_| ())
     }
 
     /// Every write gets a new, increasing SystemRowVersion.
@@ -928,6 +1032,9 @@ impl Session {
                     }
                 }
                 let fresh = self.initial_fields(t.object as usize);
+                // Clear sets the table's globals back to their initial values (ADR-021 decision 4;
+                // corpus probe TableGlobals_Clear_WhatHappensToTheGlobals).
+                self.reset_table_globals(rec);
                 let mut r = rec.borrow_mut();
                 r.fields = fresh;
                 r.filters.clear();
@@ -1234,10 +1341,14 @@ impl Session {
                         after = Some(position(&t, key, &row));
                         rows.push(row);
                     }
+                    // One fresh set of table globals for all rows, not the caller's
+                    // (ADR-021 decision 6; corpus probe TableGlobals_DeleteAll_TriggersRunOnOneInstanceForAllRows).
+                    let shared = al_builtins::value::TableGlobals::new_shared();
                     for row in rows {
                         let mut st = rec.borrow().clone();
                         st.fields = row;
                         st.filters.clear();
+                        st.globals = shared.share();
                         self.delete_row(&t, &Rc::new(RefCell::new(st)), run)?;
                     }
                     return Ok(Value::Null);
@@ -1480,6 +1591,9 @@ impl Session {
                 Ok(Value::Null)
             }
             "Reset" => {
+                // Reset also sets the table's globals back to their initial values (ADR-021
+                // decision 4; corpus probe TableGlobals_Reset_WhatHappensToTheGlobals).
+                self.reset_table_globals(rec);
                 // SetAutoCalcFields survives Reset and Clear (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
                 // SetAutoCalcFields_SurvivesResetAndClear).
                 let mut r = rec.borrow_mut();

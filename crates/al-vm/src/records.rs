@@ -1290,6 +1290,15 @@ impl Session {
             }
             "DeleteAll" => {
                 let run = arg_bool(args, 0)?;
+                // The platform takes no delete on Tenant License State (record/
+                // TestPlatformTablesWritableContracts.al:96-101; the single-record Delete is not pinned).
+                if self.engine.program.objects[t.object as usize].id == Some(2_000_000_189) {
+                    return Err(Signal::Error(AlError {
+                        message: "It is not possible to delete any record in the Tenant License State table.".into(),
+                        code: "DB:Ok".into(),
+                        call_stack: String::new(),
+                    }));
+                }
                 let (filters, flow_field_filters) = self.split_filters(rec);
                 if !flow_field_filters.is_empty() {
                     return unsupported("DeleteAll with a filter on a FlowField");

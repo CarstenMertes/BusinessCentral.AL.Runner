@@ -864,3 +864,14 @@ element into the loop variable. Null, objects, enums and `Format` of an object s
 | A character assigned into a Code (`Letter: Code[1]; Letter[1] := c`) | REFUSED (was "indexing a non-array"). Base Application's `Company Information.IsDigit` does it | `Letter[1] := 'a'; Letter` in a Code[1]: is it `A`? And in a Code[10] at position 3 |
 | Control add-ins (`usercontrol`, `CurrPage.BusinessChart` passed to a `var ControlAddIn` parameter) | REFUSED with the name of the control add-in (was "is not assignable"); 38 + 12 Tests-ERM tests of the chart pages. Nothing in the corpus uses one | What a test can observe of a control add-in: calls into it from AL, the `ControlAddIn` events, and what `Initialize`/`Update` of the Business Chart Buffer do without a client |
 | An array of records | Every element is a record variable of its own (fixed: it was `Null`, so `A[1].Init()` raised "record method Init on an unassigned Variant"). Nothing to probe: the language reference says so and `collections/TestArray.al` pins arrays of simple values | none |
+
+## Probe round 6, platform tables (2026-10-14)
+
+| Area | Assumption or open point | Probe wanted | Where |
+|---|---|---|---|
+| Feature Key | The 16 rows of BC 27.5 are listed with ID and "Data Update Required" only (record/TestFieldLenAndFeatureKeyContracts.al). Every read of "Enabled" (column 2) is refused at lowering, and so are 543 Tests-ERM tests through Feature Management Impl. Rows of other majors are refused | `Format(FeatureKey.Enabled)` per ID on 27.5 (and the 28/29 row lists) | `platform/host_tables.rs` `feature_key_rows` |
+| Table Relations Metadata | A relation whose conditions the runtime does not understand (a `filter(...)` condition) lists Condition Type CONST and an empty Condition Value | A relation with `if (Field = filter(A\|B)) T.F` read through "Condition Type" and "Condition Value" | `platform/metadata.rs` `field_relations` |
+| Report Layout List | A layout without a `Caption` property is refused (its Caption column is unknown) | A layout with no Caption | `platform/reports.rs` `layout_row` |
+| Event Subscription | A filter on "Number of Calls" or "Active Manual Instances" is refused; the start value of "Number of Calls" is 0 (the probe reads it relative to its start) | A fresh session's "Number of Calls" for a subscriber nobody raised | `platform/mod.rs` `with_event_stats` |
+| Tenant License State | `DeleteAll` raises the pinned error; the single-record `Delete` is not pinned and runs as an ordinary delete | `Delete` of one row | `records.rs` |
+| User Personalization | The row's Profile ID is `BUSINESS MANAGER` (the probe pins only "not blank"); Company, Time Zone and the rest are blank | The row's Profile ID, Company and Time Zone in the test runner session | `platform/seed.rs` |

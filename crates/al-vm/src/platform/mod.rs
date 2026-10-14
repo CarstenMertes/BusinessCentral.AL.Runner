@@ -40,6 +40,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
+/// What the Event Subscription table reports about the running session: how many events each
+/// subscriber handled and how many instances of a manual subscriber are bound (record/
+/// TestEventSubscriptionColumnsReportLayoutListContracts.al). The session writes it, the provider reads it.
+#[derive(Default)]
+pub(crate) struct EventStats {
+    /// (subscriber object, subscriber routine) to the events it handled.
+    pub calls: RefCell<HashMap<(usize, usize), i64>>,
+    /// Subscriber object to the number of bound instances.
+    pub active: RefCell<HashMap<usize, i64>>,
+}
+
 /// What the host says about the session, read once when the session starts.
 #[derive(Clone)]
 pub(crate) struct Ident {
@@ -164,10 +175,13 @@ pub(crate) struct Providers {
     /// stored Tenant Permission Set table they were composed at.
     aggregate: permissions::Cache,
     grants: permissions::Grants,
+    events: Rc<EventStats>,
+    /// (subscriber codeunit id, lower-case function) to (object, routine); built on first use.
+    event_index: RefCell<Option<HashMap<(u32, String), (usize, usize)>>>,
 }
 
 impl Providers {
-    pub(crate) fn new(engine: &Arc<Engine>, ident: Ident) -> Providers {
+    pub(crate) fn new(engine: &Arc<Engine>, ident: Ident, events: Rc<EventStats>) -> Providers {
         let served = engine
             .program
             .objects
@@ -200,7 +214,51 @@ impl Providers {
             listed: RefCell::default(),
             aggregate: RefCell::default(),
             grants: Default::default(),
+            events,
+            event_index: RefCell::new(None),
         }
+    }
+
+    /// An Event Subscription row with "Number of Calls" (8) and "Active Manual Instances" (13) as
+    /// the session has them now.
+    fn with_event_stats(&self, t: &TableDef, row: Option<Row>) -> Option<Row> {
+        let mut row = row?;
+        if self.events.calls.borrow().is_empty() && self.events.active.borrow().is_empty() {
+            return Some(row);
+        }
+        let (Value::Integer(cu), Value::Text(f)) = (&row[pos(t, 1)], &row[pos(t, 2)]) else {
+            return Some(row);
+        };
+        let key = (*cu as u32, f.to_ascii_lowercase());
+        let mut index = self.event_index.borrow_mut();
+        let index = index.get_or_insert_with(|| {
+            let engine = self.engine();
+            let mut m = HashMap::new();
+            for (oi, o) in engine.program.objects.iter().enumerate() {
+                let (Some(id), "codeunit") = (o.id, o.kind.as_str()) else {
+                    continue;
+                };
+                for (ri, r) in o.routines.iter().enumerate() {
+                    m.insert((id, r.name.to_ascii_lowercase()), (oi, ri));
+                }
+            }
+            m
+        });
+        if let Some(&(oi, ri)) = index.get(&key) {
+            row[pos(t, 8)] = Value::BigInteger(self.events.calls.borrow().get(&(oi, ri)).copied().unwrap_or(0));
+            row[pos(t, 13)] = Value::Integer(self.events.active.borrow().get(&oi).copied().unwrap_or(0) as i32);
+        }
+        Some(row)
+    }
+
+    /// A filter on a column the session changes cannot be answered from the shared listing.
+    fn event_filter_refusal(t: &TableDef, filters: &[FieldFilter]) -> Result<(), StoreError> {
+        if filters.iter().any(|f| matches!(t.fields[f.field].id, 8 | 13)) {
+            return Err(refused(
+                "Event Subscription: a filter on \"Number of Calls\" or \"Active Manual Instances\" is not answered",
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn engine(&self) -> Arc<Engine> {
@@ -305,6 +363,7 @@ impl Providers {
             Virtual::PageMetadata => pages::page_metadata_rows(self, t),
             Virtual::PageControlField => pages::page_control_field_rows(self, t),
             Virtual::Field => fields::field_rows(self, t),
+            Virtual::FeatureKey => host_tables::feature_key_rows(t, self.engine().target.as_ref()),
             Virtual::Key => fields::key_rows(self, t),
             Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage => unreachable!("generated, never listed"),
         }
@@ -399,6 +458,7 @@ impl VirtualTables for Providers {
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
             Virtual::WindowsLanguage => host_tables::windows_language_get(t, pk),
+            Virtual::EventSubscription => Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.get(t, pk)?)),
             k => self.listed(t, k)?.get(t, pk),
         }
     }
@@ -417,6 +477,10 @@ impl VirtualTables for Providers {
             Virtual::Integer => integer::next(t, scan),
             Virtual::Date => date::next(t, scan),
             Virtual::WindowsLanguage => host_tables::windows_language_next(t, scan),
+            Virtual::EventSubscription => {
+                Self::event_filter_refusal(t, scan.filters)?;
+                Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.next(t, scan)?))
+            }
             k => self.listed(t, k)?.next(t, scan),
         }
     }
@@ -440,6 +504,10 @@ impl VirtualTables for Providers {
             Virtual::Integer => integer::count(t, filters),
             Virtual::Date => date::count(t, filters),
             Virtual::WindowsLanguage => host_tables::windows_language_count(t, filters),
+            Virtual::EventSubscription => {
+                Self::event_filter_refusal(t, filters)?;
+                self.listed(t, Virtual::EventSubscription)?.count(t, filters)
+            }
             k => self.listed(t, k)?.count(t, filters),
         }
     }

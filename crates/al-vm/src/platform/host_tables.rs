@@ -22,6 +22,45 @@ pub(super) fn time_zone_rows(t: &TableDef, i: &Ident) -> Vec<Entry> {
         .collect()
 }
 
+/// The Feature Key table of the BC 27.5 platform: 16 rows, `Data Update Required` set for three of them
+/// (record/TestFieldLenAndFeatureKeyContracts.al:83-125, corpus branch al-runtime-rs d0f5d52). The rows
+/// of other majors were not measured: one poisoned entry stands for all of them, so a read is refused.
+pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>) -> Vec<Entry> {
+    const ROWS: &[(&str, bool)] = &[
+        ("AdvancedTellMe", false),
+        ("CalcOnlyVisibleFlowFields", false),
+        ("ConcealedMaskType", false),
+        ("ConcurrentInventoryPosting", false),
+        ("ConcurrentJobPosting", false),
+        ("ConcurrentResourcePosting", false),
+        ("DisableSoapWebServicesOnMicrosoftUIPages", false),
+        ("EnableMcpAccess", false),
+        ("FinancialReportDefaults", false),
+        ("FullTextSearch", false),
+        ("GLCurrencyRevaluation", true),
+        ("Manufacturing_FlushingMethod_ActivateManualWoPick", true),
+        ("ReminderTermsCommunicationTexts", false),
+        ("SalesPrices", true),
+        ("SaveValueToDatabasePromptly", false),
+        ("SemanticMetadataSearch", false),
+    ];
+    if target.is_none_or(|t| t.bc.major != 27) {
+        return vec![Entry::poisoned_prefix(
+            blank(t),
+            0,
+            "Feature Key: its rows are pinned for BC 27.5 only (docs/probes-needed.md)".into(),
+        )];
+    }
+    ROWS.iter()
+        .map(|(id, data_update)| {
+            let mut r = blank(t);
+            r[pos(t, 1)] = Value::Text((*id).into());
+            r[pos(t, 8)] = Value::Boolean(*data_update);
+            Entry::ok(r)
+        })
+        .collect()
+}
+
 // ---- Windows Language -----------------------------------------------------------------------------
 
 use super::{option, ranges, refused};

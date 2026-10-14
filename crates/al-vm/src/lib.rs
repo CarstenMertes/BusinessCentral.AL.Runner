@@ -231,6 +231,8 @@ pub struct Session {
     pub(crate) ret_used: bool,
     /// Manual event subscriptions made by `BindSubscription`.
     pub(crate) bindings: Vec<dispatch::Binding>,
+    /// What the Event Subscription table reports (calls handled, bound instances).
+    pub(crate) event_stats: Rc<platform::EventStats>,
     /// The parameters of the routine that just failed with an error, as it left them:
     /// the caller writes its `var` arguments back before it handles the error.
     pub(crate) error_finals: Option<Vec<Value>>,
@@ -348,8 +350,9 @@ impl Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
         let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
+        let event_stats = Rc::new(platform::EventStats::default());
         let mut store =
-            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone(), event_stats.clone())));
         if let Some(td) = &engine.test_data {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }
@@ -384,6 +387,7 @@ impl Session {
             baseline_rows: Default::default(),
             ret_used: true,
             bindings: Vec::new(),
+            event_stats,
             error_finals: None,
             committed_row_version: 0,
             page_handler_depth: 0,

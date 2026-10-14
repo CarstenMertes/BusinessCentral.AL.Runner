@@ -275,6 +275,12 @@ pub struct ReportColumn {
     /// The position of the table field the source names, when the source is just that field.
     #[serde(default)]
     pub field: Option<usize>,
+    /// `IncludeCaption = true`: the dataset's Labels block carries `<Name>Caption`.
+    #[serde(default)]
+    pub include_caption: bool,
+    /// The `DecimalPlaces` property as written (`1 : 1`); it decides the `decimalformatter`.
+    #[serde(default)]
+    pub decimal_places: Option<String>,
 }
 
 /// What a reportextension adds to a run of the report it extends.
@@ -322,6 +328,29 @@ pub struct AddedItem {
     pub item: ReportItem,
     /// The base item it is added under (top-level added items).
     pub base_parent: Option<usize>,
+    /// Where it sits among its siblings (`addlast` unless the extension says otherwise).
+    #[serde(default)]
+    pub place: AddedPlace,
+}
+
+/// A data item of a report or of the extension, as a sibling anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ItemAnchor {
+    /// Index into `Report::items`.
+    Base(usize),
+    /// Index into `ReportExt::added`.
+    Added(usize),
+}
+
+/// `addfirst`, `addlast`, `addbefore` and `addafter`
+/// (reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AddedPlace {
+    #[default]
+    Last,
+    First,
+    Before(ItemAnchor),
+    After(ItemAnchor),
 }
 
 /// A `dataitem` of a report.
@@ -395,6 +424,10 @@ pub struct XmlPort {
     pub record_separator: Option<String>,
     #[serde(default)]
     pub utf8: bool,
+    /// `FormatEvaluate = Xml`: values export and import in their XML forms. The default and
+    /// `Legacy` use the display text (xmlport/TestXmlPortFormatEvaluateContracts.al).
+    #[serde(default)]
+    pub format_evaluate_xml: bool,
     /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
     pub nodes: Vec<XmlNode>,
     /// Global slots of the source `InStream` and destination `OutStream` set by

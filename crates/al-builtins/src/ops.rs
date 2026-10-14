@@ -37,6 +37,8 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (v @ Value::Codeunit(_), T::Codeunit(_) | T::Interface(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
+        // A query handed on keeps its state: the callee works on the caller's query.
+        (v @ Value::Query(_), T::Query(_)) => v,
         // A DotNet variable shares the object it is assigned (ADR-014; probe pending).
         (v @ Value::DotNet(_), T::DotNet(_)) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,

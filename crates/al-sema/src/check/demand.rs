@@ -219,7 +219,14 @@ impl Checker<'_> {
                 self.resolve_at(file, ObjKind::Table, table);
             }
             Ty::Object(kind, name) => {
-                self.resolve_at(file, *kind, name);
+                let i = self.resolve_at(file, *kind, name);
+                // The call graph of a variable of a report or XML port holds its triggers
+                // (`lower.rs`, `driven_edges`), so that they are compiled whenever the variable
+                // exists, or the complete compile would refuse tests the demand-driven one
+                // runs.
+                if let (Some(i), ObjKind::Report | ObjKind::XmlPort) = (i, kind) {
+                    self.touch_full(i);
+                }
             }
             Ty::Enum(name) => {
                 self.resolve_at(file, ObjKind::Enum, name);
@@ -227,6 +234,7 @@ impl Checker<'_> {
             Ty::TestPage(name) | Ty::TestPart(name) => {
                 if let Some(i) = self.resolve_at(file, ObjKind::Page, name) {
                     self.touch_full(i);
+                    self.reach_run_targets(i);
                 }
             }
             Ty::TestRequestPage(name) => {
@@ -557,7 +565,18 @@ impl Checker<'_> {
     /// client opens a page target and runs a codeunit's `OnRun` when the action is invoked.
     /// (Only workspace pages: a dependency page's actions would pull in the app along the links.)
     pub(super) fn reach_run_objects(&self, i: usize) {
-        if self.demand.borrow().is_none() || self.ws.is_dependency(i) {
+        if self.ws.is_dependency(i) {
+            return;
+        }
+        self.reach_run_targets(i);
+    }
+
+    /// `reach_run_objects` for any page that code names with a variable: the test drives its
+    /// actions, so what they run is reached, and the pages it opens are driven through variables
+    /// of their own. The call graph of such a variable holds the same targets (`lower.rs`,
+    /// `driven_edges`).
+    pub(super) fn reach_run_targets(&self, i: usize) {
+        if self.demand.borrow().is_none() || !self.ws.usable(i) {
             return;
         }
         let file = self.ws.objects[i].file;

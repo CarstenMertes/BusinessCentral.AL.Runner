@@ -26,6 +26,9 @@ enum Want {
     Ran,
     /// It runs, or the test is refused. Never a silent skip.
     RanOrRefused,
+    /// The demand-driven, the complete and the cached compile give one and the same outcome
+    /// (the owner's rule of 2026-10-14: zero differences), and that outcome is a pass.
+    SamePass,
 }
 
 fn short(o: &Outcome) -> String {
@@ -152,6 +155,16 @@ fn check(p: Probe) {
         cached, eager,
         "{name}: the cached compile differs from the complete compile"
     );
+    if matches!(want, Want::SamePass) {
+        assert_eq!(
+            demand, eager,
+            "{name}: the demand-driven compile differs from the complete one"
+        );
+        if want == Want::SamePass {
+            assert_eq!(demand, Outcome::Pass, "{name}: the test does not pass");
+        }
+        return;
+    }
     assert!(
         !matches!(demand, Outcome::Fail(_)),
         "{name}: the implicit code was skipped without a refusal: {}",
@@ -198,7 +211,7 @@ macro_rules! probe {
     };
 }
 
-use Want::{Ran, RanOrRefused};
+use Want::{Ran, RanOrRefused, SamePass};
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures
@@ -1231,3 +1244,104 @@ fn raising_an_event_with_a_declared_but_uncompiled_subscriber_is_refused() {
     // Reading raises no event.
     assert_eq!(get("Read"), Outcome::Pass);
 }
+
+// ---------------------------------------------------------------------------------------------
+// 12. Zero differences (owner decision 2026-10-14): the static call graph of a page, report or
+//     XML port variable does not depend on how much was compiled.
+
+/// An unsupported builtin: a routine that holds it cannot run.
+const RARE: &str = "var T: Text; begin T := NoSuchBuiltin(1); end;";
+
+/// A card page over `DT` with the given body.
+fn card(id: u32, name: &str, body: &str) -> String {
+    format!(
+        "page {id} {name} {{ PageType = Card; SourceTable = DT; \
+         layout {{ area(Content) {{ field(KCtl; Rec.K) {{ }} }} }} {body} }}"
+    )
+}
+
+probe!(
+    the_run_object_of_a_dependency_page_is_not_followed_by_the_page_variable_that_opens_the_host,
+    SamePass,
+    vars = "TP: TestPage DH;",
+    body = "TP.OpenView(); TP.Close();",
+    dep = [
+        ("t.al", &table("", "")),
+        (
+            "h.al",
+            &card(
+                50140,
+                "DH",
+                "actions { area(Processing) { action(Next) { RunObject = Page DT2; } } }"
+            )
+        ),
+        ("t2.al", &card(50141, "DT2", &format!("trigger OnOpenPage() {RARE}"))),
+    ],
+);
+probe!(
+    the_run_object_codeunit_of_a_workspace_page_runs_on_run_only,
+    SamePass,
+    vars = "TP: TestPage WsHost;",
+    body = "TP.OpenView(); TP.Close();",
+    dep = [(
+        "c.al",
+        &format!("codeunit 50142 DepCu {{ trigger OnRun() begin end; procedure Other() {RARE} }}")
+    )],
+    extra = "page 50930 WsHost { PageType = Card; layout { area(Content) { } } \
+             actions { area(Processing) { action(RunIt) { RunObject = Codeunit DepCu; } } } }",
+);
+probe!(
+    a_page_variable_of_a_routine_the_test_page_reaches_does_not_pull_in_the_pages_code,
+    SamePass,
+    vars = "TP: TestPage DH;",
+    body = "TP.OpenView(); TP.Close();",
+    dep = [
+        ("t.al", &table("", "")),
+        (
+            "h.al",
+            &card(
+                50143,
+                "DH",
+                "trigger OnOpenPage() var C: Codeunit Shower; begin C.Show(); end;"
+            )
+        ),
+        (
+            "c.al",
+            "codeunit 50144 Shower { procedure Show() var P: Page DP2; begin end; }"
+        ),
+        ("t2.al", &card(50145, "DP2", &format!("trigger OnOpenPage() {RARE}"))),
+    ],
+);
+probe!(
+    a_report_variable_of_a_dependency_codeunit_reaches_the_report_triggers_only,
+    SamePass,
+    vars = "C: Codeunit Holder;",
+    body = "C.Hold();",
+    dep = [
+        ("t.al", &table("", "")),
+        (
+            "c.al",
+            "codeunit 50146 Holder { procedure Hold() var R: Report Rp; begin end; }"
+        ),
+        (
+            "r.al",
+            &format!(
+                "report 50147 Rp {{ ProcessingOnly = true; UseRequestPage = false; \
+                 procedure Helper() {RARE} }}"
+            )
+        ),
+    ],
+);
+probe!(
+    a_procedure_called_on_a_page_variable_of_a_dependency_page_is_compiled,
+    SamePass,
+    vars = "P: Page DP2; R: Record DT;",
+    body = "P.SetRecord(R); asserterror P.Proc(); Expect('page:proc');",
+    dep = [
+        ("t.al", &table("", "")),
+        (
+            "p.al",
+            &card(50150, "DP2", "procedure Proc() begin Error('page:proc'); end;")
+        ),
+    ],
+);

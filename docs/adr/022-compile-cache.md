@@ -480,12 +480,14 @@ the session before. It is a regression on `main`, not an effect of the cache.
   the entry; the sources of the dependency apps are read and scanned on every run; every needed block is decoded at
   the start. `Program::objects` is a plain list and the engine reads all of it (tables, the event registry), so lazy
   decode needs those whole-program passes stored in the entry first.
-- **The same outcome as the uncached run for every test.** The cached run gives the complete compile's outcome, which
-  differs from the demand-driven one in the tests above. Making the two equal means changing what the static call
-  graph of a page variable holds, in both paths, so that it does not depend on how much was compiled. A first try (follow
-  only what the demand analysis compiles: no `RunObject` links of dependency pages, only `OnRun` of a codeunit, only the
-  triggers of a report) made the corpus differences grow from 5 to 10 and was reverted. The fix changes the outcomes of the
-  uncached path and is the owner's decision.
+- **The same outcome as the uncached run for every test: done (2026-10-14, branch `zero-diff`, owner decision "there
+  should be zero differences").** The static call graph of a page, report or xmlport variable (`lower.rs`,
+  `driven_edges`) is a function of the sources (routine roles), not of what was compiled. A `TestPage` variable adds the
+  page, its extensions and its parts; the `RunObject` targets of a workspace page, and of the page the variable names,
+  are compiled but add an edge only for workspace pages. A `Page` variable of a dependency page adds no edge, and a
+  platform method called on it (`Run`) reaches the page. A report or xmlport variable adds its triggers, and the demand
+  compile reaches them whenever the variable is declared. `CurrPage` adds nothing. The corpus on BC 27, 28 and 29 and the
+  suites have no difference between demand, eager and cached, and `tools/demand-eager-known-differences.txt` is empty.
 - **`alrunner cache` (list, verify, prune)**; CI prunes with a shell step and verifies with
   `al-test-cli --build-compile-cache`.
 - **The install-baseline snapshot** (owner decision: not in version 1).

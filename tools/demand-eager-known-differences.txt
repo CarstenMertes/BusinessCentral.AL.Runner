@@ -1,27 +1,3 @@
 # Tests whose outcome differs between the demand-driven compile of the dependency apps and the
-# eager one (AL_EAGER_DEPENDENCIES=1), reviewed on 2026-10-14. In every one the demand-driven
-# compile is the one that runs, and the eager compile is the one that is worse. Delete a line when
-# its cause is fixed. A difference not listed here fails CI (tools/compare_junit.py --allow).
-
-# The static call graph of a page variable holds every routine the compile made. Compiling all of
-# Base Application adds `Video Impl..Play`, which uses a `usercontrol` the runtime refuses, and the
-# test is refused before it runs. Run on its own, the test never reaches that routine.
-Codeunit 67640::PrecompiledPage_PageVariableControl_NoCaption_IsTheControlName
-
-# The "Contact Duplicates" page (opened by these two tests) declares a part page whose routine
-# `Merge Duplicate Subform.Set` ran into Record.CopyFilter, which is implemented now (fixes-7). The
-# eager compile still refuses the tests before they start: compiling all of Base Application makes
-# `Merge Duplicates Line Buffer.CountRecords` reachable from the page variable's call graph, and it
-# reads column 9 of the platform table `Table Relations Metadata`, which no corpus test pins. The
-# demand-driven run never reaches that routine and passes. Delete these two lines when that column
-# is pinned.
-Codeunit 60037::ReportRun_FromBaseAppPageAction_HandlerCancelsTheRequestPage
-Codeunit 60037::ReportRun_FromBaseAppPageAction_HandlerErrorReachesTheTest
-
-# These two tests (RecordRef.Ascending, fixes-7) use a Base Application page with a part. Compiling
-# all of Base Application makes `Navigate.OnAction` reachable from the page variable's call graph;
-# it runs the report `Document Entries`, which more than one report extension changes (their order
-# is not pinned). The demand-driven run never reaches that routine and passes. Delete these two
-# lines when the order of report extensions that change a run is pinned.
-Codeunit 67990::PrecompiledHostLinkedPartShowsTheRowTheViewExcluded
-Codeunit 67990::PrecompiledHostPartSubPageViewShowsOnlyTheRowsItsViewSelects
+# eager one (AL_EAGER_DEPENDENCIES=1), or between the uncached and the cached compile. Owner
+# decision of 2026-10-14: there are none. A difference fails CI; do not add a line here.

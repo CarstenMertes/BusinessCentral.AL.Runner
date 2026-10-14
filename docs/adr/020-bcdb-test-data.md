@@ -1,6 +1,6 @@
 # ADR-020: Test data from a BC database file: `al-bcdb` and a table provider
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-14: build the loader in point 3)
 - Date: 2026-10-14
 
 ## Context

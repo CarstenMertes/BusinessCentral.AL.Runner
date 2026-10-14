@@ -859,3 +859,73 @@ fn testfield_on_the_blank_member_of_an_option_or_enum_is_refused_not_guessed() {
     );
     assert_eq!(text(r), "ok");
 }
+
+#[test]
+fn field_active_is_true_for_an_enabled_field() {
+    // corpus record/TestRecordTriggers.al:223-231 (Record_FieldActive_EnabledField_ReturnsTrue)
+    let r = run(
+        "procedure F(): Boolean var R: Record \"ALT T\"; begin exit(R.FieldActive(Amount) and R.FieldActive(Grp)); end;",
+        "F",
+    );
+    assert!(matches!(r, Ok(Value::Boolean(true))), "{r:?}");
+}
+
+#[test]
+fn field_active_of_a_disabled_field_is_refused_until_a_probe_pins_it() {
+    // Nothing in the corpus pins FieldActive for an `Enabled = false` field (docs/probes-needed.md).
+    let src = r#"
+table 50935 T2 { fields { field(1; A; Integer) { } field(2; B; Integer) { Enabled = false; } } keys { key(PK; A) { } } }
+codeunit 50101 C2 { procedure F(): Boolean var R: Record T2; begin exit(R.FieldActive(B)); end; }
+"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C2").unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+#[test]
+fn setfilter_placeholder_text_with_a_filter_character_is_refused_until_a_probe_pins_it() {
+    // A text substituted for %1 that holds `@`, a wildcard or an operator: no corpus test says whether
+    // BC quotes it or keeps `@` and the wildcards active (a real project filters an e-mail address with
+    // '@' + Email). It used to match literally, which is wrong where BC keeps `@` active.
+    for filter_value in ["'@john@example.com'", "'a*'", "'a&b'", "'a..b'"] {
+        let r = run(
+            &format!(
+                "procedure F(): Integer var R: Record \"ALT T\"; begin
+                    R.SetFilter(Descr, '%1', {filter_value}); exit(R.Count());
+                end;"
+            ),
+            "F",
+        );
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(m)) if m.contains("filter character")),
+            "{filter_value}: {r:?}"
+        );
+    }
+    // A plain text is an exact match, as before.
+    let r = run(
+        "procedure F(): Integer var R: Record \"ALT T\"; begin
+            R.\"No.\" := 'A'; R.Descr := 'plain text'; R.Insert();
+            R.SetFilter(Descr, '%1', 'plain text'); exit(R.Count());
+        end;",
+        "F",
+    );
+    assert_eq!(text_or_int(r), 1);
+}

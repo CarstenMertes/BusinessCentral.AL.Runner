@@ -81,6 +81,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `filter.rs` (626): Record filters as data (shared by the VM and the store). Entry: `FilterExpr` 8, `parse_filter` 70, `parse_filter_with` 79, `FieldFilter` 371.
 - `format.rs` (619): `Format(Value [, Length] [, FormatNumber])`. Entry: `FormatCtx` 8, `FormatFail` 15, `try_format` 29, `format_value` 37.
 - `formatstr.rs` (389): `Format(Value, Length, FormatString)`. Entry: `format_with_string` 50.
+- `http.rs` (85): `HttpRequestMessage`: `Method`, `SetRequestUri`, `GetRequestUri`; nothing is sent. Entry: `native_for` 71.
 - `iso.rs` (121): ISO 8601 text to AL date/time values (JSON strings, XML-format Evaluate). Entry: `days_in_month` 11, `parse_date` 21, `parse_time` 36, `parse_datetime` 56.
 - `json.rs` (1415): JsonObject, JsonArray, JsonToken and JsonValue. Entry: `Handle` 17, `JsonCell` 21, `JsonNode` 27, `Scalar` 34.
 - `lib.rs` (39): Crate root of the AL standard library: values, builtins, catalog.

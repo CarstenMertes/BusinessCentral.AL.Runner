@@ -157,7 +157,20 @@ impl Session {
             "TableCaption" => Ok(Value::Text(self.caption(t))),
             "FieldName" => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone())),
             "FieldCaption" => self.field_caption_checked(t, arg_pos(args, 0)?).map(Value::Text),
-            "FieldNo" => Ok(Value::Integer(t.fields[arg_pos(args, 0)?].id as i32)),
+            "FieldNo" => Ok(Value::Integer(crate::refs::al_field_no(t.fields[arg_pos(args, 0)?].id))),
+            // True for an enabled field (corpus record/TestRecordTriggers.al:223-231). What a field
+            // with `Enabled = false` answers is not pinned: refused (docs/probes-needed.md).
+            "FieldActive" => {
+                let pos = arg_pos(args, 0)?;
+                match self.field_property(t, pos, "Enabled") {
+                    None => Ok(Value::Boolean(true)),
+                    Some(v) if v.trim().eq_ignore_ascii_case("true") => Ok(Value::Boolean(true)),
+                    Some(v) => unsupported(format!(
+                        "FieldActive of field {} with Enabled = {v}",
+                        t.fields[pos].name
+                    )),
+                }
+            }
             "RecordId" => Ok(self.record_id(rec, t)),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             // Without an argument, whether the current row is marked; with one, marks or unmarks it.

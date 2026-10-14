@@ -6,16 +6,32 @@ use std::path::{Component, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// The system clock, read on every call.
+/// The system clock, read once: the instant the run first asked for the time. Every later answer
+/// is that instant (the session adds the time `Sleep` has waited and keeps system stamps strictly
+/// increasing, see `al-host`). A clock that ran with the wall would make an outcome depend on the
+/// load of the machine: `Item.OnModify` sets "Last Time Modified" to `Time`, and
+/// `Format(xRec) <> Format(Rec)` is then true only when a second passed between the insert and the
+/// modify, which decides whether Base Application's workflow subscriber runs. The wall clock is
+/// back with `ALRUNNER_REAL_CLOCK=1`.
 pub struct SystemClock;
 
-impl Clock for SystemClock {
-    fn now_utc_millis(&self) -> i64 {
+impl SystemClock {
+    fn wall() -> i64 {
         match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(d) => d.as_millis() as i64,
             // A clock set before 1970: the same distance on the other side.
             Err(e) => -(e.duration().as_millis() as i64),
         }
+    }
+}
+
+impl Clock for SystemClock {
+    fn now_utc_millis(&self) -> i64 {
+        static START: OnceLock<i64> = OnceLock::new();
+        if std::env::var_os("ALRUNNER_REAL_CLOCK").is_some() {
+            return SystemClock::wall();
+        }
+        *START.get_or_init(SystemClock::wall)
     }
 }
 
@@ -108,5 +124,15 @@ mod tests {
         let (a, b) = (c.now_utc_millis(), c.now_utc_millis());
         assert!(a > 1_704_067_200_000, "{a}");
         assert!(b >= a);
+    }
+
+    /// Red before the fix: the clock followed the wall, so a run on a loaded machine saw other
+    /// times than one on a quiet machine.
+    #[test]
+    fn the_clock_of_a_run_stands_still() {
+        let c = SystemClock;
+        let a = c.now_utc_millis();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert_eq!(c.now_utc_millis(), a);
     }
 }

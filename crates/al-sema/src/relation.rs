@@ -11,8 +11,11 @@
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedArm {
-    /// `(own field name, constant text)` of each `Field = const(x)` condition.
+    /// `(own field name, constant text)` of each `Field = const(x)` condition. [`parse_lenient`]
+    /// also keeps `Field = filter(x)` ones.
     pub conditions: Vec<(String, String)>,
+    /// Parallel to `conditions`: the condition is a `filter(...)`. Only [`parse_lenient`] sets it.
+    pub filter_conditions: Vec<bool>,
     /// The related table (and optionally its field) as written: `["Microsoft", "Sales", "Customer", "No."]`.
     pub path: Vec<String>,
     /// `None` when a where() clause is present but not understood.
@@ -119,6 +122,8 @@ fn lex(src: &str) -> Option<Vec<Tok>> {
 struct P {
     t: Vec<Tok>,
     i: usize,
+    /// Accept `Field = filter(x)` conditions too (for metadata, which only names the field).
+    lenient: bool,
 }
 
 impl P {
@@ -168,18 +173,25 @@ impl P {
 
     fn arm(&mut self) -> Option<ParsedArm> {
         let mut conditions = Vec::new();
+        let mut filter_conditions = Vec::new();
         if self.word_is("if") {
             self.i += 1;
             let g = self.group()?;
             for cond in split_commas(&g) {
-                let mut p = P { t: lex(cond)?, i: 0 };
+                let mut p = P {
+                    t: lex(cond)?,
+                    i: 0,
+                    lenient: false,
+                };
                 let field = p.name()?;
                 p.sym("=")?;
                 let (kw, text) = p.kind_group()?;
-                if kw != "const" || p.i != p.t.len() {
+                let filter = kw == "filter" && self.lenient;
+                if (kw != "const" && !filter) || p.i != p.t.len() {
                     return None;
                 }
                 conditions.push((field, unquote(&text)));
+                filter_conditions.push(filter);
             }
         }
         let mut path = vec![self.name()?];
@@ -193,7 +205,11 @@ impl P {
                 split_commas(&g)
                     .into_iter()
                     .map(|w| {
-                        let mut p = P { t: lex(w)?, i: 0 };
+                        let mut p = P {
+                            t: lex(w)?,
+                            i: 0,
+                            lenient: false,
+                        };
                         let related = p.name()?;
                         p.sym("=")?;
                         let (kw, text) = p.kind_group()?;
@@ -217,6 +233,7 @@ impl P {
         }
         Some(ParsedArm {
             conditions,
+            filter_conditions,
             path,
             wheres,
         })
@@ -260,7 +277,22 @@ fn unquote(s: &str) -> String {
 
 /// The arms of a `TableRelation` value, or `None` when its shape is not understood.
 pub fn parse(src: &str) -> Option<Vec<ParsedArm>> {
-    let mut p = P { t: lex(src)?, i: 0 };
+    parse_with(src, false)
+}
+
+/// The arms of a `TableRelation` for the Table Relations Metadata table, which also lists the
+/// arms whose conditions are `Field = filter(x)`. The runtime does not understand those
+/// (`parse` is `None`); `filter_conditions` marks them.
+pub fn parse_lenient(src: &str) -> Option<Vec<ParsedArm>> {
+    parse_with(src, true)
+}
+
+fn parse_with(src: &str, lenient: bool) -> Option<Vec<ParsedArm>> {
+    let mut p = P {
+        t: lex(src)?,
+        i: 0,
+        lenient,
+    };
     let mut arms = vec![p.arm()?];
     while p.word_is("else") {
         p.i += 1;
@@ -276,6 +308,7 @@ mod tests {
     fn arm(conds: &[(&str, &str)], path: &[&str], wheres: Option<Vec<ParsedWhere>>) -> ParsedArm {
         ParsedArm {
             conditions: conds.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            filter_conditions: conds.iter().map(|_| false).collect(),
             path: path.iter().map(|s| s.to_string()).collect(),
             wheres,
         }
@@ -354,5 +387,16 @@ mod tests {
         assert_eq!(parse("A.B where(C = upperlimit(D))").unwrap()[0].wheres, None);
         assert_eq!(parse("A.B unexpected"), None);
         assert_eq!(parse(""), None);
+    }
+
+    #[test]
+    fn a_filter_condition_is_only_understood_by_the_metadata_parse() {
+        // Base Application "Sales Line"."No.": `"Document Type" = filter(<> "Credit Memo")`.
+        let src = "if (Type = const(Item), \"Document Type\" = filter(<> \"Credit Memo\")) Item where(Blocked = const(false))";
+        assert_eq!(parse(src), None);
+        let arms = parse_lenient(src).expect("lenient");
+        assert_eq!(arms[0].conditions.len(), 2);
+        assert_eq!(arms[0].filter_conditions, vec![false, true]);
+        assert_eq!(arms[0].path, vec!["Item".to_string()]);
     }
 }

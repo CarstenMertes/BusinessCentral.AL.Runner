@@ -27,7 +27,7 @@ pub(super) fn base_kind(o: &Object) -> &str {
 /// System=10, FieldNumber=11, PageExtension=14, TableExtension=15, Enum=16, EnumExtension=17,
 /// Profile=18, ProfileExtension=19, PermissionSet=20, PermissionSetExtension=21,
 /// ReportExtension=22 (the declaration of the AllObj table in the platform app).
-fn object_type(kind: &str) -> Option<i32> {
+pub(super) fn object_type(kind: &str) -> Option<i32> {
     Some(match kind {
         "table" => 1,
         "report" => 3,
@@ -204,12 +204,12 @@ fn al_sema_platform_app_id() -> &'static str {
     "8874ed3a-0643-4247-9ced-7a7002f7135d"
 }
 
-fn truncate(s: &str, max: usize) -> String {
+pub(super) fn truncate(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
 /// The object caption: the `Caption` property's literal, else the object name.
-fn caption(o: &Object) -> String {
+pub(super) fn caption(o: &Object) -> String {
     prop(o, "Caption")
         .and_then(string_lit)
         .unwrap_or_else(|| o.name.clone())
@@ -257,7 +257,7 @@ fn subtype_text(c: &Catalog, o: &Object) -> Result<String, String> {
 }
 
 /// Builds one `Entry` per object: its row, or a poisoned entry (key only) with the reason.
-fn entries(
+pub(super) fn entries(
     c: &Catalog,
     t: &TableDef,
     wanted: impl Fn(&Object) -> Option<Vec<(u32, Value)>>,

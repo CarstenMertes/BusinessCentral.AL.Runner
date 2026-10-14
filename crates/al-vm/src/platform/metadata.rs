@@ -1,0 +1,511 @@
+//! XmlPort Metadata and Query Metadata: one row per xmlport or query object, from the object's own
+//! declaration (shells included), keyed by object id.
+//!
+//! Pinned by xmlport/TestXmlPortMetadataVirtualTable.al and query/TestQueryMetadataVirtualTable.al.
+//! A property the object does not declare reads its documented default; those defaults are not
+//! pinned by the corpus and are recorded in docs/probes-needed.md.
+
+use super::mat::Entry;
+use super::objects::{Catalog, base_kind, caption, entries, ident, member, prop, string_lit, truncate, truthy};
+use super::{Providers, blank, option, pos};
+use al_builtins::value::Value;
+use al_data::TableDef;
+use al_ir::Object;
+
+/// An option property as its ordinal: undeclared reads `default`, an unknown member is refused.
+fn ordinal(o: &Object, name: &str, members: &[&str], default: i32) -> Result<i32, String> {
+    match prop(o, name) {
+        None => Ok(default),
+        Some(v) => member(members, v)
+            .and_then(|m| members.iter().position(|x| x == &m))
+            .map(|i| i as i32)
+            .ok_or_else(|| format!("{} '{}': {name} `{v}` is not understood", o.kind, o.name)),
+    }
+}
+
+fn text(o: &Object, name: &str, max: usize) -> String {
+    prop(o, name)
+        .and_then(string_lit)
+        .map(|s| truncate(&s, max))
+        .unwrap_or_default()
+}
+
+const TRANSACTION_TYPES: &[&str] = &["UpdateNoLocks", "Update", "Snapshot", "Browse", "Report"];
+const DIRECTIONS: &[&str] = &["Import", "Export", "Both"];
+const TEXT_ENCODINGS: &[&str] = &["MSDos", "UTF8", "UTF16", "Windows"];
+const FORMATS: &[&str] = &["Xml", "VariableText", "FixedText"];
+
+/// XmlPort Metadata: ID (1), Name (2), Caption (3), UseRequestPage (4), TransactionType (5),
+/// Direction (6), TextEncoding (8), Format (9), "App ID" (10).
+pub(super) fn xmlport_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
+    entries(
+        &c,
+        t,
+        |o| match (o.id, base_kind(o)) {
+            (Some(id), "xmlport") => Some(vec![(1, Value::Integer(id as i32))]),
+            _ => None,
+        },
+        |o, r| {
+            r[pos(t, 2)] = Value::Text(truncate(&o.name, 30));
+            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80));
+            r[pos(t, 4)] = Value::Boolean(prop(o, "UseRequestPage").is_none_or(truthy));
+            r[pos(t, 5)] = option(t, 5, ordinal(o, "TransactionType", TRANSACTION_TYPES, 0)?);
+            r[pos(t, 6)] = option(t, 6, ordinal(o, "Direction", DIRECTIONS, 2)?);
+            r[pos(t, 8)] = option(t, 8, ordinal(o, "TextEncoding", TEXT_ENCODINGS, 1)?);
+            r[pos(t, 9)] = option(t, 9, ordinal(o, "Format", FORMATS, 0)?);
+            r[pos(t, 10)] = Value::Guid(c.owner(o));
+            Ok(())
+        },
+    )
+}
+
+/// Query Metadata: ID (1), Name (2), Caption (3), APIPublisher (4), APIGroup (5), APIVersion (6),
+/// EntitySetName (7), EntityName (8), "App ID" (10). A query that is not an API query leaves the
+/// API columns blank (TestQueryMetadataVirtualTable.al:107-115). An API query that declares no
+/// version is not pinned and is refused.
+pub(super) fn query_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
+    entries(
+        &c,
+        t,
+        |o| match (o.id, base_kind(o)) {
+            (Some(id), "query") => Some(vec![(1, Value::Integer(id as i32))]),
+            _ => None,
+        },
+        |o, r| {
+            let api = prop(o, "QueryType").is_some_and(|v| ident(v).eq_ignore_ascii_case("API"));
+            if api && prop(o, "APIVersion").is_none() {
+                return Err(format!(
+                    "query '{}': an API query that declares no APIVersion is not pinned",
+                    o.name
+                ));
+            }
+            r[pos(t, 2)] = Value::Text(truncate(&o.name, 30));
+            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80));
+            r[pos(t, 4)] = Value::Text(text(o, "APIPublisher", 40));
+            r[pos(t, 5)] = Value::Text(text(o, "APIGroup", 40));
+            r[pos(t, 6)] = Value::Text(text(o, "APIVersion", 250));
+            r[pos(t, 7)] = Value::Text(text(o, "EntitySetName", 250));
+            r[pos(t, 8)] = Value::Text(text(o, "EntityName", 250));
+            r[pos(t, 10)] = Value::Guid(c.owner(o));
+            Ok(())
+        },
+    )
+}
+
+// ---- Event Subscription -----------------------------------------------------------------------------
+
+/// Event Subscription: "Subscriber Codeunit ID" (1), "Subscriber Function" (2), "Event Type" (3),
+/// "Publisher Object Type" (4), "Publisher Object ID" (5), "Published Function" (6), Active (7).
+/// One row per `[EventSubscriber]` routine of a compiled codeunit (record/TestEventSubscriptionVirtualTable.al).
+///
+/// A codeunit of a dependency that was not compiled may declare subscribers the program does not
+/// hold, so each is one poisoned row with an empty function: a read that its key filters exclude is
+/// answered, any other read is refused.
+pub(super) fn event_subscription_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
+    let mut out = Vec::new();
+    for o in c.objects {
+        let Some(id) = o.id else { continue };
+        if o.kind == "uncompiled codeunit" {
+            let mut k = blank(t);
+            k[pos(t, 1)] = Value::Integer(id as i32);
+            out.push(Entry::poisoned_prefix(
+                k,
+                1,
+                format!(
+                    "codeunit '{}' was not compiled, so the event subscribers it declares are not known",
+                    o.name
+                ),
+            ));
+            continue;
+        }
+        if o.kind != "codeunit" {
+            continue;
+        }
+        for r in &o.routines {
+            let Some(a) = r
+                .attributes
+                .iter()
+                .find(|a| a.name.eq_ignore_ascii_case("EventSubscriber"))
+            else {
+                continue;
+            };
+            let mut key = blank(t);
+            key[pos(t, 1)] = Value::Integer(id as i32);
+            key[pos(t, 2)] = Value::Text(truncate(&r.name, 250));
+            match subscription_row(&c, o, &r.name, a, t, key.clone()) {
+                Ok(row) => out.push(Entry::ok(row)),
+                Err(why) => out.push(Entry::poisoned(key, why)),
+            }
+        }
+    }
+    out
+}
+
+fn subscription_row(
+    c: &Catalog,
+    o: &Object,
+    routine: &str,
+    a: &al_ir::Attribute,
+    t: &TableDef,
+    mut r: al_data::Row,
+) -> Result<al_data::Row, String> {
+    let what = || format!("subscriber '{}' of codeunit '{}'", routine, o.name);
+    if o.properties
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"))
+    {
+        return Err(format!("{}: a manual instance is not pinned (Active)", what()));
+    }
+    let args = crate::events::split_args(&a.text);
+    if args.len() < 3 {
+        return Err(format!("{}: the attribute has fewer than three arguments", what()));
+    }
+    let kind = crate::events::unquote(args[0].rsplit("::").next().unwrap_or("")).to_ascii_lowercase();
+    let Some(object_type) = super::objects::object_type(&kind) else {
+        return Err(format!("{}: publisher kind `{kind}` is not listed", what()));
+    };
+    let (target, _) = crate::events::publisher_name(args[1].rsplit("::").next().unwrap_or(""));
+    let publisher_id = c
+        .id_of(&kind, &target)
+        .map_err(|e| format!("{}: publisher {e}", what()))?;
+    let event = crate::events::unquote(&args[2]);
+    // The publisher's own routine says which kind of event it is; a table's database triggers are
+    // the platform's (event names `On{Before,After}{Insert,Modify,Delete,Rename,Validate}Event`).
+    let publisher = c
+        .objects
+        .iter()
+        .find(|x| x.id == Some(publisher_id) && base_kind(x) == kind);
+    let declared = publisher.and_then(|p| {
+        p.routines.iter().find_map(|pr| {
+            if !pr.name.eq_ignore_ascii_case(&event) {
+                return None;
+            }
+            pr.attributes
+                .iter()
+                .find_map(|pa| match pa.name.to_ascii_lowercase().as_str() {
+                    "businessevent" => Some((pr.name.clone(), 1)),
+                    "integrationevent" => Some((pr.name.clone(), 2)),
+                    "internalevent" => Some((pr.name.clone(), 3)),
+                    _ => None,
+                })
+        })
+    });
+    let (published, event_type) = match declared {
+        Some(d) => d,
+        None if kind == "table" && is_trigger_event(&event) => (event.clone(), 0),
+        None => return Err(format!("{}: the kind of event `{event}` is not known", what())),
+    };
+    r[pos(t, 3)] = option(t, 3, event_type);
+    r[pos(t, 4)] = option(t, 4, object_type);
+    r[pos(t, 5)] = Value::Integer(publisher_id as i32);
+    r[pos(t, 6)] = Value::Text(truncate(&published, 250));
+    // A statically bound subscriber that resolved is active (TestEventSubscriptionVirtualTable.al:`_Row_DescribesTheSubscription`).
+    r[pos(t, 7)] = Value::Boolean(true);
+    Ok(r)
+}
+
+fn is_trigger_event(event: &str) -> bool {
+    let e = event.to_ascii_lowercase();
+    ["onbefore", "onafter"].iter().any(|p| {
+        e.strip_prefix(p).is_some_and(|rest| {
+            ["insert", "modify", "delete", "rename", "validate"]
+                .iter()
+                .any(|k| rest.strip_prefix(k) == Some("event"))
+        })
+    })
+}
+
+// ---- Page Action ------------------------------------------------------------------------------------
+
+/// Page Action: "Page ID" (1), "Action Index" (2), "Action ID" (3), Indentation (4), "Parent Action ID" (5),
+/// "Action Type" (6), Name (8), RunObjectID (16). One row per `area(...)` of `actions` (an action
+/// container, type 0), then one per action (1) and action group (3) below it, depth first
+/// (record/TestPageActionVirtualTable.al).
+///
+/// The corpus pins that a group's parent is a row of the table at indentation 0, that its
+/// actions sit one level deeper with the group as parent, and that the three types differ. It does
+/// not pin the numbers: the index and the id both count from 1 in this order, and a container has
+/// parent 0 (docs/probes-needed.md).
+pub(super) fn page_action_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
+    let mut out = Vec::new();
+    for o in c.objects {
+        let (Some(id), "page") = (o.id, base_kind(o)) else {
+            continue;
+        };
+        let mut key = blank(t);
+        key[pos(t, 1)] = Value::Integer(id as i32);
+        let Some(page) = &o.page else {
+            out.push(Entry::poisoned_prefix(
+                key,
+                1,
+                format!("page '{}' was not compiled, so its actions are not known", o.name),
+            ));
+            continue;
+        };
+        match page_actions(&c, o, page, t, &key) {
+            Ok(rows) => out.extend(rows.into_iter().map(Entry::ok)),
+            Err(why) => out.push(Entry::poisoned_prefix(key, 1, why)),
+        }
+    }
+    out
+}
+
+fn page_actions(
+    c: &Catalog,
+    o: &Object,
+    page: &al_ir::Page,
+    t: &TableDef,
+    key: &al_data::Row,
+) -> Result<Vec<al_data::Row>, String> {
+    use al_ir::ControlKind as K;
+    let mut rows = Vec::new();
+    let mut next = 1;
+    for area in &page.action_areas {
+        if area.name.is_empty() {
+            return Err(format!(
+                "page '{}': actions written outside an area are not pinned",
+                o.name
+            ));
+        }
+        let container = next;
+        let mut r = key.clone();
+        r[pos(t, 2)] = Value::Integer(next);
+        r[pos(t, 3)] = Value::Integer(next);
+        r[pos(t, 4)] = Value::Integer(0);
+        r[pos(t, 5)] = Value::Integer(0);
+        r[pos(t, 6)] = option(t, 6, 0);
+        r[pos(t, 8)] = Value::Text(truncate(&area.name, 120));
+        rows.push(r);
+        next += 1;
+        // Depth first below the container.
+        let mut stack: Vec<(usize, i32, i32)> = area.roots.iter().rev().map(|&i| (i, 1, container)).collect();
+        while let Some((ci, depth, parent)) = stack.pop() {
+            let ctl = &page.controls[ci];
+            let kind = match ctl.kind {
+                K::Action if ctl.action_ref.is_none() => 1,
+                K::ActionGroup => 3,
+                _ => {
+                    return Err(format!(
+                        "page '{}': the action '{}' is a {:?}{}, whose row is not pinned",
+                        o.name,
+                        ctl.name,
+                        ctl.kind,
+                        if ctl.action_ref.is_some() { " reference" } else { "" }
+                    ));
+                }
+            };
+            let mut r = key.clone();
+            r[pos(t, 2)] = Value::Integer(next);
+            r[pos(t, 3)] = Value::Integer(next);
+            r[pos(t, 4)] = Value::Integer(depth);
+            r[pos(t, 5)] = Value::Integer(parent);
+            r[pos(t, 6)] = option(t, 6, kind);
+            r[pos(t, 8)] = Value::Text(truncate(&ctl.name, 120));
+            let run_id = match &ctl.run_object {
+                None => 0,
+                Some(ro) => match ro.object.and_then(|i| c.objects.get(i)).and_then(|x| x.id) {
+                    Some(id) => id as i32,
+                    None => {
+                        return Err(format!(
+                            "page '{}': action '{}' runs an object that is not compiled",
+                            o.name, ctl.name
+                        ));
+                    }
+                },
+            };
+            r[pos(t, 16)] = Value::Integer(run_id);
+            rows.push(r);
+            let me = next;
+            next += 1;
+            let kids: Vec<usize> = page
+                .controls
+                .iter()
+                .enumerate()
+                .filter(|(_, k)| k.parent == Some(ci))
+                .map(|(i, _)| i)
+                .collect();
+            for k in kids.into_iter().rev() {
+                stack.push((k, depth + 1, me));
+            }
+        }
+    }
+    Ok(rows)
+}
+
+// ---- Table Relations Metadata -----------------------------------------------------------------------
+
+/// Table Relations Metadata: "Table ID" (1), "Field No." (2), "Relation No." (3), "Condition No." (4),
+/// "Related Table ID" (5), "Related Field No." (6), "Condition Field No." (8). One row per arm of a
+/// field's `TableRelation`, or per condition of an arm that has some; `where(...)` filters are not
+/// conditions (record/TestTableRelationsMetadataVirtualTable.al). The arms number from 1 in
+/// declaration order; "Condition No." counts a row's condition from 1 and is 0 for an arm with none,
+/// and a row with no condition reports "Condition Field No." 0 (not pinned: docs/probes-needed.md).
+pub(super) fn table_relations_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
+    let mut out = Vec::new();
+    for o in c.objects {
+        let (Some(id), "table") = (o.id, base_kind(o)) else {
+            continue;
+        };
+        let mut key = blank(t);
+        key[pos(t, 1)] = Value::Integer(id as i32);
+        let Some(table) = &o.table else {
+            out.push(Entry::poisoned_prefix(
+                key,
+                1,
+                format!(
+                    "table '{}' was not compiled, so the relations of its fields are not known",
+                    o.name
+                ),
+            ));
+            continue;
+        };
+        for f in &table.fields {
+            if !f.relation {
+                continue;
+            }
+            let mut fkey = key.clone();
+            fkey[pos(t, 2)] = Value::Integer(f.id as i32);
+            match field_relations(&c, o, table, f, t, &fkey) {
+                Ok(rows) => out.extend(rows.into_iter().map(Entry::ok)),
+                Err(why) => out.push(Entry::poisoned_prefix(fkey, 2, why)),
+            }
+        }
+    }
+    out
+}
+
+/// One arm of a relation as the table lists it: the related table and field, and the ids of the
+/// fields of the own table its conditions name.
+struct Arm {
+    related_table: u32,
+    related_field: u32,
+    conditions: Vec<u32>,
+}
+
+/// The first primary key field of a compiled table.
+fn first_key_field(related: &Object, what: &str) -> Result<u32, String> {
+    let rt = related
+        .table
+        .as_ref()
+        .ok_or_else(|| format!("{what}: related table '{}' was not compiled", related.name))?;
+    rt.keys
+        .first()
+        .and_then(|k| k.first())
+        .and_then(|p| rt.fields.get(*p))
+        .map(|f| f.id)
+        .ok_or_else(|| format!("{what}: related table '{}' has no key", related.name))
+}
+
+fn arms_of(c: &Catalog, table: &al_ir::Table, f: &al_ir::Field, what: &str) -> Result<Vec<Arm>, String> {
+    let mut out = Vec::new();
+    if !f.relation_arms.is_empty() {
+        for arm in &f.relation_arms {
+            let related = arm
+                .table
+                .and_then(|i| c.objects.get(i))
+                .ok_or_else(|| format!("{what}: related table '{}' is not in the program", arm.table_name))?;
+            let related_table = related.id.ok_or_else(|| format!("{what}: related table has no id"))?;
+            let related_field = match arm.field {
+                Some(p) => related
+                    .table
+                    .as_ref()
+                    .and_then(|rt| rt.fields.get(p))
+                    .map(|rf| rf.id)
+                    .ok_or_else(|| format!("{what}: field of '{}' not compiled", related.name))?,
+                None => first_key_field(related, what)?,
+            };
+            let conditions = arm
+                .conditions
+                .iter()
+                .map(|cond| {
+                    table
+                        .fields
+                        .get(cond.field)
+                        .map(|x| x.id)
+                        .ok_or_else(|| format!("{what}: condition field not found"))
+                })
+                .collect::<Result<_, _>>()?;
+            out.push(Arm {
+                related_table,
+                related_field,
+                conditions,
+            });
+        }
+        return Ok(out);
+    }
+    // The runtime does not understand this relation (a `filter(...)` condition, for one); the
+    // compile kept the tables and fields it names.
+    if f.relation_meta.is_empty() {
+        return Err(format!("{what}: the shape of its TableRelation is not understood"));
+    }
+    for arm in &f.relation_meta {
+        let related = &c.objects[arm.table];
+        let related_table = related.id.ok_or_else(|| format!("{what}: related table has no id"))?;
+        let related_field = match arm.field {
+            Some(p) => related
+                .table
+                .as_ref()
+                .and_then(|rt| rt.fields.get(p))
+                .map(|rf| rf.id)
+                .ok_or_else(|| format!("{what}: field of '{}' not compiled", related.name))?,
+            None => first_key_field(related, what)?,
+        };
+        let conditions = arm
+            .conditions
+            .iter()
+            .map(|&p| {
+                table
+                    .fields
+                    .get(p)
+                    .map(|x| x.id)
+                    .ok_or_else(|| format!("{what}: condition field not found"))
+            })
+            .collect::<Result<_, _>>()?;
+        out.push(Arm {
+            related_table,
+            related_field,
+            conditions,
+        });
+    }
+    Ok(out)
+}
+
+fn field_relations(
+    c: &Catalog,
+    o: &Object,
+    table: &al_ir::Table,
+    f: &al_ir::Field,
+    t: &TableDef,
+    fkey: &al_data::Row,
+) -> Result<Vec<al_data::Row>, String> {
+    let what = format!("field '{}' of table '{}'", f.name, o.name);
+    let mut rows = Vec::new();
+    for (n, arm) in arms_of(c, table, f, &what)?.iter().enumerate() {
+        let mut row = fkey.clone();
+        row[pos(t, 3)] = Value::Integer(n as i32 + 1);
+        row[pos(t, 5)] = Value::Integer(arm.related_table as i32);
+        row[pos(t, 6)] = Value::Integer(arm.related_field as i32);
+        if arm.conditions.is_empty() {
+            row[pos(t, 4)] = Value::Integer(0);
+            row[pos(t, 8)] = Value::Integer(0);
+            rows.push(row.clone());
+        }
+        for (k, own) in arm.conditions.iter().enumerate() {
+            let mut r = row.clone();
+            r[pos(t, 4)] = Value::Integer(k as i32 + 1);
+            r[pos(t, 8)] = Value::Integer(*own as i32);
+            rows.push(r);
+        }
+    }
+    Ok(rows)
+}

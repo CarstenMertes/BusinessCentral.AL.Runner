@@ -229,6 +229,11 @@ reviewed it.
   Control row when it starts, as ordinary stored rows. The install baseline branch must not seed them again.
 - 2026-10-14, ADR-019: Page Metadata and Page Control Field spellings the corpus does not pin (declared
   `Visible`/`Enabled`/`Editable` in lower case, `SourceTableView` only for one `where(f = const(v))`).
+- 2026-10-14, ADR-019 (round 2): All Profile is a stored table seeded from the profile objects of the loaded apps, with native delete and rename rules for installed apps' rows (texts pinned in profile/TestAllProfileTable.al).
+- 2026-10-14, ADR-019 (round 2): Report Data Items numbers its items 10, 20, 30, ...; Action Index and Action ID of Page Action count from 1 (container, then actions depth first, container parent 0); "Condition No." of Table Relations Metadata counts a row's conditions from 1 and is 0 for an arm with none. The corpus pins none of these numbers, only the relations between rows.
+- 2026-10-14, ADR-019 (round 2): XmlPort Metadata reads the documented AL defaults for properties an xmlport leaves out (Direction Both, Format Xml, UseRequestPage true, TransactionType UpdateNoLocks, TextEncoding UTF8).
+- 2026-10-14, ADR-019 (round 2): Event Subscription lists compiled subscribers only; an uncompiled codeunit is a poisoned prefix row, so unfiltered walks and publisher filters are refused. A table trigger event has the event type Trigger.
+- 2026-10-14, ADR-019 (round 2): the code coverage tables are stored and empty; once recording started they are refused until an unfiltered DeleteAll. Feature Key (a hardcoded platform list that changes by version) and Tenant License State stay without a provider.
 - 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
   `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
 - 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that

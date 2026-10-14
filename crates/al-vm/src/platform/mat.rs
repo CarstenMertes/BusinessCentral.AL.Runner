@@ -11,16 +11,33 @@ use std::cmp::Ordering;
 pub(crate) struct Entry {
     pub row: Row,
     pub poison: Option<String>,
+    /// How many leading primary key columns of a poisoned row are known; the rest are placeholders
+    /// that no filter may rule the row out by.
+    pub known: usize,
 }
 
 impl Entry {
     pub(crate) fn ok(row: Row) -> Entry {
-        Entry { row, poison: None }
+        Entry {
+            row,
+            poison: None,
+            known: usize::MAX,
+        }
     }
     pub(crate) fn poisoned(key_only: Row, why: String) -> Entry {
         Entry {
             row: key_only,
             poison: Some(why),
+            known: usize::MAX,
+        }
+    }
+    /// A poisoned row of which only the first `known` primary key columns are real: it stands for
+    /// every row that starts with them.
+    pub(crate) fn poisoned_prefix(key_only: Row, known: usize, why: String) -> Entry {
+        Entry {
+            row: key_only,
+            poison: Some(why),
+            known,
         }
     }
 }
@@ -29,6 +46,7 @@ impl Entry {
 pub(crate) struct Mat {
     rows: Vec<Row>,
     poison: Vec<Option<String>>,
+    known: Vec<usize>,
 }
 
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
@@ -37,10 +55,10 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 
 /// Whether a row known only by its key can pass: the filters on key columns are decided, the
 /// others could go either way.
-fn may_pass(t: &TableDef, row: &Row, filters: &[FieldFilter]) -> bool {
+fn may_pass(t: &TableDef, row: &Row, known: usize, filters: &[FieldFilter]) -> bool {
     filters
         .iter()
-        .filter(|f| t.keys[0].contains(&f.field))
+        .filter(|f| t.keys[0].iter().position(|k| *k == f.field).is_some_and(|i| i < known))
         .all(|f| f.expr.matches(&row[f.field]))
 }
 
@@ -52,8 +70,15 @@ impl Mat {
     pub(crate) fn new(t: &TableDef, mut entries: Vec<Entry>) -> Mat {
         entries.sort_by(|a, b| key_cmp(&t.primary_key(&a.row), &t.primary_key(&b.row)));
         entries.dedup_by(|a, b| key_cmp(&t.primary_key(&a.row), &t.primary_key(&b.row)) == Ordering::Equal);
-        let (rows, poison) = entries.into_iter().map(|e| (e.row, e.poison)).unzip();
-        Mat { rows, poison }
+        let mut rows = Vec::new();
+        let mut poison = Vec::new();
+        let mut known = Vec::new();
+        for e in entries {
+            rows.push(e.row);
+            poison.push(e.poison);
+            known.push(e.known);
+        }
+        Mat { rows, poison, known }
     }
 
     pub(crate) fn get(&self, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
@@ -78,7 +103,7 @@ impl Mat {
         let at = |i: usize| -> Result<Option<Row>, StoreError> {
             let r = &self.rows[i];
             match &self.poison[i] {
-                Some(why) if may_pass(t, r, filters) => Err(refusal(t, why)),
+                Some(why) if may_pass(t, r, self.known[i], filters) => Err(refusal(t, why)),
                 Some(_) => Ok(None),
                 None => Ok(passes(r, filters).then(|| r.clone())),
             }
@@ -133,7 +158,7 @@ impl Mat {
         let mut best: Option<(Vec<Value>, &Row)> = None;
         for (i, r) in self.rows.iter().enumerate().filter(|(_, r)| later(r)) {
             if let Some(why) = &self.poison[i] {
-                if may_pass(t, r, scan.filters) {
+                if may_pass(t, r, self.known[i], scan.filters) {
                     return Err(refusal(t, why));
                 }
                 continue;
@@ -161,7 +186,7 @@ impl Mat {
         let mut n = 0;
         for (i, r) in self.rows.iter().enumerate() {
             match &self.poison[i] {
-                Some(why) if may_pass(t, r, filters) => return Err(refusal(t, why)),
+                Some(why) if may_pass(t, r, self.known[i], filters) => return Err(refusal(t, why)),
                 Some(_) => {}
                 None => n += usize::from(passes(r, filters)),
             }
@@ -254,5 +279,31 @@ mod tests {
         let (t, m) = (table(), mat());
         let f = [id_filter(3, 9)];
         assert!(matches!(m.next(&t, &scan(&f, None, false)), Ok(Some(r)) if matches!(r[0], Value::Integer(3))));
+    }
+
+    #[test]
+    fn a_row_known_by_a_key_prefix_stands_for_every_row_that_starts_with_it() {
+        // Key (ID, Name): a row poisoned with only ID known must not be ruled out by a Name filter.
+        let t = TableDef {
+            keys: vec![vec![0, 1]],
+            ..table()
+        };
+        let m = Mat::new(
+            &t,
+            vec![
+                Entry::ok(row(1, "a")),
+                Entry::poisoned_prefix(row(2, ""), 1, "rows of 2 are not known".into()),
+            ],
+        );
+        let name_is_a = FieldFilter {
+            field: 1,
+            expr: FilterExpr::Eq(Value::Text("a".into())),
+            group: 0,
+        };
+        // The Name placeholder ("") does not match 'a', yet the row may hold an 'a': refused.
+        assert!(m.count(&t, &[name_is_a]).is_err());
+        // An ID filter that excludes 2 is decided by the known column.
+        assert!(matches!(m.count(&t, &[id_filter(1, 1)]), Ok(1)));
+        assert!(m.get(&t, &[Value::Integer(2), Value::Text("".into())]).is_err());
     }
 }

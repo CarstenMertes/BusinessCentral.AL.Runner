@@ -224,6 +224,8 @@ pub struct RawControl {
 pub struct Layout {
     pub controls: Vec<RawControl>,
     pub reasons: Vec<String>,
+    /// The `area(...)` sections of `actions`, in source order, with the top-level controls each holds.
+    pub action_areas: Vec<al_ir::ActionArea>,
 }
 
 /// A control in the tree the extensions are merged into.
@@ -525,12 +527,22 @@ impl Tree {
                 emit(slots, c, Some(here), out);
             }
         }
+        let mut action_areas = Vec::new();
         for a in areas {
+            let mut roots = Vec::new();
             for c in a.children {
+                roots.push(controls.len());
                 emit(&mut slots, c, None, &mut controls);
             }
+            if a.in_actions {
+                action_areas.push(al_ir::ActionArea { name: a.name, roots });
+            }
         }
-        Layout { controls, reasons }
+        Layout {
+            controls,
+            reasons,
+            action_areas,
+        }
     }
 }
 

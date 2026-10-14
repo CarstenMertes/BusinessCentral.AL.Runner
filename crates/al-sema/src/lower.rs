@@ -544,6 +544,14 @@ pub fn lower_with_positions(
                 report_ext: None,
                 namespace: o.namespace.clone(),
                 extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
+                layouts: o
+                    .scanned_layouts
+                    .iter()
+                    .map(|l| ir::LayoutDecl {
+                        name: l.name.clone(),
+                        properties: l.properties.clone(),
+                    })
+                    .collect(),
             });
             out.unsupported.push(Vec::new());
             out.calls.push(Vec::new());
@@ -839,6 +847,11 @@ pub fn lower_with_positions(
             report_ext: ext_irs[oi].clone(),
             namespace: o.namespace.clone(),
             extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
+            layouts: if o.kind == ObjKind::Report {
+                crate::reports::layouts_of(&obj)
+            } else {
+                Vec::new()
+            },
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.program.positions = std::mem::take(&mut lw.positions);
@@ -1373,6 +1386,60 @@ impl Lowerer<'_> {
         arms
     }
 
+    /// The relation of a field the runtime does not understand (`relation_arms` is empty), as far
+    /// as the Table Relations Metadata table lists it: per arm the related table and field and the
+    /// own fields its conditions name, whatever their constants. Empty when even that is unclear.
+    fn relation_meta(&self, oi: usize, f: &crate::members::FieldInfo) -> Vec<ir::MetaRelationArm> {
+        let Some(text) = f
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("TableRelation"))
+            .map(|(_, v)| v)
+        else {
+            return Vec::new();
+        };
+        let Some(parsed) = crate::relation::parse_lenient(text) else {
+            return Vec::new();
+        };
+        let file = f
+            .declared_in
+            .map_or(self.ws.objects[oi].file, |d| self.ws.objects[d].file);
+        let own = &self.members[oi];
+        let field_pos =
+            |m: &crate::members::Members, name: &str| m.fields.iter().position(|x| x.name.eq_ignore_ascii_case(name));
+        let mut arms = Vec::new();
+        for a in parsed {
+            let mut conditions = Vec::new();
+            for (name, _) in &a.conditions {
+                let Some(pos) = field_pos(own, name) else {
+                    return Vec::new();
+                };
+                conditions.push(pos);
+            }
+            let resolve = |parts: &[String]| match self.ws.resolve_relation_target(file, ObjKind::Table, parts) {
+                Resolution::Found(t) => Some(t),
+                _ => None,
+            };
+            let (table, field) = match resolve(&a.path) {
+                Some(t) => (t, None),
+                None if a.path.len() > 1 => match resolve(&a.path[..a.path.len() - 1]) {
+                    Some(t) => match field_pos(&self.members[t], &a.path[a.path.len() - 1]) {
+                        Some(p) => (t, Some(p)),
+                        None => return Vec::new(),
+                    },
+                    None => return Vec::new(),
+                },
+                None => return Vec::new(),
+            };
+            arms.push(ir::MetaRelationArm {
+                conditions,
+                table,
+                field,
+            });
+        }
+        arms
+    }
+
     /// The constant of a `Field = const(x)` condition, typed by the field.
     fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
         if let Ty::Enum(name) = ty {
@@ -1455,6 +1522,7 @@ impl Lowerer<'_> {
                     }
                     _ => (None, None),
                 };
+                let arms = self.relation_arms(oi, f);
                 ir::Field {
                     id: f.id,
                     name: f.name.clone(),
@@ -1477,7 +1545,12 @@ impl Lowerer<'_> {
                     relation_table: f.relation_table.clone(),
                     relation_tables: f.relation_tables.clone(),
                     properties: f.properties.clone(),
-                    relation_arms: self.relation_arms(oi, f),
+                    relation_arms: arms.clone(),
+                    relation_meta: if arms.is_empty() && f.table_relation {
+                        self.relation_meta(oi, f)
+                    } else {
+                        Vec::new()
+                    },
                     on_validate: match (f.declared_in, f.on_validate) {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,
@@ -1816,6 +1889,7 @@ impl Lowerer<'_> {
             unsupported,
             extensions,
             ext_triggers,
+            action_areas: layout.action_areas.clone(),
         }
     }
 

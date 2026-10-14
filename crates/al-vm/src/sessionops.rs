@@ -220,6 +220,9 @@ impl Session {
                 None => Ok(Value::Boolean(self.code_coverage)),
                 Some(Value::Boolean(on)) => {
                     self.code_coverage = *on;
+                    if *on {
+                        self.coverage_started();
+                    }
                     Ok(Value::Boolean(*on))
                 }
                 Some(other) => unsupported(format!("CodeCoverageLog with {other:?}")),

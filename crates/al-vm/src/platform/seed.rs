@@ -37,6 +37,10 @@ impl Session {
             };
             let Some(t) = engine.tables[oi].as_ref() else { continue };
             let row: Row = match id {
+                super::profiles::ALL_PROFILE => {
+                    wrote |= self.seed_profiles(t, i);
+                    continue;
+                }
                 COMPANY => {
                     let mut r = super::blank(t);
                     r[pos(t, 1)] = text(t, 1, &i.company);

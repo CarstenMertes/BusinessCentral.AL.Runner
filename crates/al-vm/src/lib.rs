@@ -147,6 +147,8 @@ pub struct Session {
     pub(crate) page_handler_depth: usize,
     /// `CodeCoverageLog` is recording.
     pub(crate) code_coverage: bool,
+    /// Platform ids of the code coverage tables that recording may have filled (`platform/coverage.rs`).
+    pub(crate) coverage_dirty: Vec<u32>,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
@@ -326,6 +328,7 @@ impl Session {
             committed_row_version: 0,
             page_handler_depth: 0,
             code_coverage: false,
+            coverage_dirty: Vec::new(),
             frames: Vec::new(),
             call_stack: Vec::new(),
             fault_trace: false,

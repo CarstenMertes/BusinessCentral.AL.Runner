@@ -435,8 +435,10 @@ impl Session {
         if v.temporary || v.marked_only || v.key != 0 || !v.ascending {
             return unsupported("a table view with a temporary, marked or re-sorted record (not pinned)");
         }
-        // How a view combines with the item's own DataItemTableView is not pinned.
-        if item.view.is_some() {
+        // A view handed to SetTableView stays in force over a DataItemTableView that only sorts
+        // (handlers/TestReportRuntimeContracts.al:393-410 "Probe Rep Order"); how it combines with
+        // a DataItemTableView that filters is not pinned.
+        if item.view.as_ref().is_some_and(|v| v.to_ascii_lowercase().contains("where")) {
             return unsupported(format!(
                 "a table view for data item {}, which declares a DataItemTableView (not pinned)",
                 item.name
@@ -605,7 +607,13 @@ impl Session {
             let Some(view) = run.item(r).view.clone() else { continue };
             let rec = self.report_item_record(&run, r)?;
             let t = self.table(&rec)?;
+            // A view that only sorts leaves the filters a SetTableView gave the item in force
+            // (handlers/TestReportRuntimeContracts.al:393-410).
+            let kept = (!view.to_ascii_lowercase().contains("where")).then(|| rec.borrow().filters.clone());
             self.set_view(&rec, &t, &view)?;
+            if let Some(filters) = kept {
+                rec.borrow_mut().filters = filters;
+            }
         }
         Ok(run)
     }

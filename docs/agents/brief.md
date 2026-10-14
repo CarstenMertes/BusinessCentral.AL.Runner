@@ -114,6 +114,18 @@ you run the corpus again.
 - **Linux with systemd:** run under a cap:
   `systemd-run --user --scope -q -p MemoryMax=3G ./target/release/al-test-cli ...`
   Use 4 to 6 GB for eager runs or runs with test data.
+- **On the owner's main machine, several agents share 31 GB.** On 2026-10-14
+  their builds and runs together pushed the machine out of memory, and
+  systemd-oomd killed the owner's terminal with every session in it. There, put
+  ALL heavy work in the shared slice `al-work.slice` (capped at 20 GB in total),
+  so the kernel kills one of your processes instead of the desktop: the corpus
+  and bucket runs, and also `cargo build`, `cargo test` and `./check.sh`:
+  `systemd-run --user --scope -q --slice=al-work.slice -p MemoryMax=6G cargo build --release ...`,
+  `systemd-run --user --scope -q --slice=al-work.slice -p MemoryMax=8G ./check.sh`.
+  Keep `CARGO_BUILD_JOBS=4`. If the slice does not exist (`systemctl --user
+  show al-work.slice -p MemoryMax` shows `infinity`), say so in your report
+  and run as before. A process killed inside the slice is not a bug in your
+  change by itself: rerun it once before you look for a leak.
 - **Everywhere else (macOS, WSL without systemd):** keep a run under about
   3 GB, watch it, and always use `timeout`, for example
   `timeout 600 ./target/release/al-test-cli ...`.

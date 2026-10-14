@@ -313,11 +313,15 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         })
     } else {
         let started = std::time::Instant::now();
-        for oi in 0..ws.objects.len() {
-            if !skip(oi) && !provided(oi) {
+        let objects: Vec<usize> = (0..ws.objects.len()).filter(|&oi| !skip(oi) && !provided(oi)).collect();
+        let workers = roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32));
+        if workers > 1 && objects.len() >= PARALLEL_OBJECTS {
+            c.check_objects_parallel(workers, &objects);
+        } else {
+            for oi in objects {
                 c.guard((oi, ANY_ROUTINE), |c| c.check_object(oi));
+                c.take_calls();
             }
-            c.take_calls();
         }
         timings.workspace = started.elapsed();
         None
@@ -358,6 +362,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         panicked: c.panicked,
     }
 }
+
+/// The complete check of fewer objects than this stays on the calling thread.
+const PARALLEL_OBJECTS: usize = 64;
 
 /// How many threads check the reached routines of dependency apps. `AL_CHECK_THREADS` sets it
 /// (1 checks on one thread); the default is the number of cores.

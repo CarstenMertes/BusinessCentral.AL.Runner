@@ -443,7 +443,13 @@ impl CorpusRuntime {
         let opts_only = only;
         // A dependency file that does not parse takes every object in it out of the compile, and the
         // tests that need one are refused as "outside the workspace". Say so, once, with the first lines.
-        let unparsed = ws.lazy_parse_problems();
+        let mut unparsed = ws.lazy_parse_problems();
+        // The files the cache supplies were parsed when it was built.
+        if let Some(c) = &cache_report {
+            unparsed.extend(c.parse_problems.iter().cloned());
+            unparsed.sort();
+            unparsed.dedup();
+        }
         if !unparsed.is_empty() {
             eprintln!(
                 "parse: {} dependency file(s) did not parse; their objects are unusable and the tests that need them are not run",
@@ -763,6 +769,7 @@ fn compile_with_cache(
     let n_dep = kinds.iter().take_while(|k| **k == al_sema::AppKind::Dependency).count();
     let (entry, mut report) = cache::open_or_build(cc, &apps[..n_dep], &manifests[..n_dep], symbols, target)?;
     report.objects = DepSource::len(&entry);
+    report.parse_problems = entry.parse_problems().to_vec();
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),

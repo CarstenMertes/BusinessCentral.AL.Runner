@@ -4618,10 +4618,12 @@ pub fn lower_for_cache(
         ..Default::default()
     };
     let checked = crate::check::check_with(&ws, &members, &catalog, roots);
-    lower_core(&ws, &members, &checked, true, lower_workers(), None, true)
+    let mut set = lower_core(&ws, &members, &checked, true, lower_workers(), None, true)
         .expect("no cache, no cache error")
         .exported
-        .expect("exported")
+        .expect("exported");
+    set.parse_problems = ws.lazy_parse_problems();
+    set
 }
 
 /// [`compile_apps_with`] for a run whose dependency apps (first in `apps`) are described by `src`:

@@ -45,6 +45,8 @@ pub struct CacheReport {
     pub objects: usize,
     /// Why a file was not used, or why the cache was not used at all.
     pub notes: Vec<String>,
+    /// Dependency files that did not parse when the entry was built: (path, why).
+    pub parse_problems: Vec<(String, String)>,
 }
 
 /// A hash of the running executable: it changes with every change of the compiler or of the

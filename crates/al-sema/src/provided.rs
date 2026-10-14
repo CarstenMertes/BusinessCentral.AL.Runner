@@ -72,6 +72,11 @@ pub trait DepSource: Sync {
     fn facts(&self, object: usize) -> &DepFacts;
     /// The block of `object`, read and checked now. An error means the source is damaged.
     fn block(&self, object: usize) -> Result<DepBlock, String>;
+    /// Dependency files that did not parse when the set was built, as (path, why). A run that
+    /// uses the set parses none of them, so it has to be told.
+    fn parse_problems(&self) -> &[(String, String)] {
+        &[]
+    }
 }
 
 /// A complete set, in memory: what a build of the dependency apps produces.
@@ -79,6 +84,7 @@ pub trait DepSource: Sync {
 pub struct DepSet {
     pub facts: Vec<DepFacts>,
     pub blocks: Vec<DepBlock>,
+    pub parse_problems: Vec<(String, String)>,
 }
 
 impl DepSource for DepSet {
@@ -90,6 +96,9 @@ impl DepSource for DepSet {
     }
     fn block(&self, object: usize) -> Result<DepBlock, String> {
         Ok(self.blocks[object].clone())
+    }
+    fn parse_problems(&self) -> &[(String, String)] {
+        &self.parse_problems
     }
 }
 
@@ -385,5 +394,40 @@ codeunit 60031 WBar implements IWork { procedure Bump(): Integer begin exit(3); 
     #[test]
     fn a_report_extension_and_an_interface_implementation_in_the_workspace() {
         assert_cached_equals_eager(deps(), workspace("w", EXTENDS_REPORT_AND_INTERFACE));
+    }
+
+    /// The complete check runs on several threads (the eager compile and the cache build). What a
+    /// routine checks to does not depend on the thread, so the program is the one a single thread
+    /// makes.
+    #[test]
+    fn the_complete_check_gives_the_same_program_on_one_thread_and_on_several() {
+        let mut src = String::from(BASE);
+        for i in 0..150 {
+            src.push_str(&format!(
+                "codeunit {} \"Gen {i}\" {{ procedure P{i}(var R: Record T): Integer begin R.A := {i}; R.DX := 1; exit(R.A); end; \
+                 procedure Q{i}(): Integer begin exit({i}); end; }}\n",
+                80000 + i
+            ));
+        }
+        let apps = vec![app("d1", &[], &src)];
+        let kinds = vec![AppKind::Dependency];
+        let make = |workers| {
+            compile_apps_with(
+                apps.clone(),
+                kinds.clone(),
+                &BTreeSet::new(),
+                None,
+                Roots {
+                    eager: true,
+                    workers: Some(workers),
+                    ..Default::default()
+                },
+            )
+            .1
+        };
+        let (one, many) = (make(1), make(6));
+        assert!(*one.program == *many.program, "the programs differ");
+        assert!(one.unsupported == many.unsupported, "the refusals differ");
+        assert!(one.program.objects.len() > 150);
     }
 }

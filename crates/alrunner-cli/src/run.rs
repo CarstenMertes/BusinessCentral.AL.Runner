@@ -527,6 +527,10 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
                 c.objects,
                 c.relowered
             );
+            eprintln!(
+                "compile cache: reading the blocks {}",
+                secs(p.compile_parts.cache_blocks)
+            );
         }
         let slowest: Vec<String> = p
             .slowest

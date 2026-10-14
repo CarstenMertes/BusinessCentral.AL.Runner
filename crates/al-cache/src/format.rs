@@ -61,6 +61,7 @@ struct BlockRef {
 #[derive(Serialize, Deserialize)]
 struct Index {
     facts: Vec<DepFacts>,
+    parse_problems: Vec<(String, String)>,
     blocks: Vec<BlockRef>,
     dict_offset: u64,
     dict_len: u64,
@@ -119,6 +120,7 @@ pub fn build(set: &DepSet, key: &Key) -> Vec<u8> {
     }
     let index = Index {
         facts: set.facts.clone(),
+        parse_problems: set.parse_problems.clone(),
         blocks: block_refs,
         dict_offset,
         dict_len: dict.len() as u64,
@@ -254,5 +256,8 @@ impl DepSource for Entry {
     }
     fn block(&self, object: usize) -> Result<DepBlock, String> {
         self.read_block(object).map_err(|e| e.to_string())
+    }
+    fn parse_problems(&self) -> &[(String, String)] {
+        &self.index.parse_problems
     }
 }

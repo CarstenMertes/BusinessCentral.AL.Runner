@@ -3557,20 +3557,24 @@ impl Lowerer<'_> {
                         .into(),
                 ),
                 _ => Err(self
-                    .base_page_member(n)
+                    .base_member(n)
                     .unwrap_or_else(|| format!("`{}` is not assignable", n.text()))),
             },
         }
     }
 
-    /// Why a name cannot be lowered in a page extension: it is a variable or procedure of the
-    /// page the extension extends. Extension code runs on its own object, which holds none of the
-    /// base page's variables or procedures (a bare control name binds to a base variable through
-    /// `Binding::BaseVar`, corpus handlers/TestRequestPageControlErrorName.al).
-    fn base_page_member(&self, n: &SyntaxNode) -> Option<String> {
-        if self.ws.objects[self.oi].kind != ObjKind::PageExtension {
-            return None;
-        }
+    /// Why a name cannot be lowered in a page or report extension: it is a variable or procedure of
+    /// the object the extension extends. Extension code runs on its own object, which holds none of
+    /// the base object's variables or procedures (a bare control name binds to a base variable
+    /// through `Binding::BaseVar`, corpus handlers/TestRequestPageControlErrorName.al). A report
+    /// extension reaches the `protected` ones of its base report (Microsoft's "Mfg. Adjust Add. Rep.
+    /// Currency" calls `Window.Open(..)` and `ExchangeAmtLCYToFCY(..)`).
+    fn base_member(&self, n: &SyntaxNode) -> Option<String> {
+        let noun = match self.ws.objects[self.oi].kind {
+            ObjKind::PageExtension => "page",
+            ObjKind::ReportExtension => "report",
+            _ => return None,
+        };
         let base = self.ws.extension_target(self.oi)?;
         let root = n
             .descendants_with_tokens()
@@ -3583,7 +3587,7 @@ impl Lowerer<'_> {
             .any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)))
             || obj.routines().any(|r| r.name().eq_ignore_ascii_case(&name));
         declared.then(|| {
-            format!("`{name}` is a variable or procedure of the page it extends: page extension code on base page members is not lowered yet")
+            format!("`{name}` is a variable or procedure of the {noun} it extends: {noun} extension code on base {noun} members is not lowered yet")
         })
     }
 
@@ -4225,7 +4229,20 @@ impl Lowerer<'_> {
             }
             // The checker refused a builtin of a newer runtime (ADR-015 3.3): say why.
             None if self.runtime_refusal(node).is_some() => Err(self.runtime_refusal(node).unwrap_or_default()),
-            other => Err(format!("call `{}` ({other:?}) is not lowered yet", node.text())),
+            // `Window.Open(..)` in a report extension, where `Window` is a variable of the base report.
+            None if self.base_member(callee).is_some() => Err(self.base_member(callee).unwrap_or_default()),
+            None => Err(format!("call `{}` has no callee the checker resolved", node.text())),
+            Some(r) => Err(format!(
+                "call `{}` to {} is not lowered yet",
+                node.text(),
+                match r {
+                    Res::Local(_) | Res::Global(_) => "a variable",
+                    Res::Field { .. } | Res::QueryColumn { .. } => "a field",
+                    Res::EnumValue { .. } | Res::OptionValue(_) => "an enum or option value",
+                    Res::ObjectId(_) => "an object id",
+                    _ => "this kind of callee",
+                }
+            )),
         }
     }
 
@@ -4416,6 +4433,33 @@ pageextension 50101 Ext extends Base { layout { addlast(Content) { field(\"X\"; 
                 .any(|r| r.contains("of the page it extends") && !r.contains("not assignable")),
             "{reasons:?}"
         );
+    }
+
+    /// Tests-ERM: the Manufacturing report extensions call `Window.Open(..)` and
+    /// `ExchangeAmtLCYToFCY(..)`, a `protected var` and a `protected procedure` of the report they
+    /// extend (Microsoft's "Adjust Add. Reporting Currency"). Extension code runs on its own object,
+    /// which holds none of the base report's variables, so the routine is refused and the reason says
+    /// why instead of printing an unresolved callee.
+    #[test]
+    fn a_report_extension_naming_a_member_of_its_base_report_is_refused_with_that_reason() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; Id; Integer) { } } }
+report 50100 Base { dataset { dataitem(Item; T) { } } protected var Window: Dialog; protected procedure Conv(A: Decimal): Decimal begin exit(A); end; }
+reportextension 50101 Ext extends Base
+{
+    dataset { modify(Item) { trigger OnPreDataItem() begin Window.Open('x'); end; } }
+    trigger OnPreReport() begin Message(Format(Conv(1))); end;
+}",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert_eq!(reasons.len(), 2, "{reasons:?}");
+        for r in reasons {
+            assert!(r.contains("of the report it extends") && !r.contains("None"), "{r}");
+        }
     }
 
     const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"

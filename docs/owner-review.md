@@ -6,6 +6,12 @@ reviewed it.
 
 ## Open questions (not decided)
 
+- ADR-020 (Proposed), `al-bcdb`: the Rust port of bcdb, and the proposed way to load CRONUS
+  into the store on first touch of a table. Read the "Decided without owner review" part
+  first. The loader itself is not built. Questions: where the `TableProvider` trait lives
+  (`al-host`, as proposed), and whether names come from the compiled program (proposed) or
+  from symbol files as bcdb does.
+
 - (answered 2026-10-14, see below) Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
   - It is about 60 tests in 8 files, at local head b06fdc0 in corpus-probes.
   - All of them pass on the local BC 27.5 container, and the corpus gate
@@ -194,3 +200,4 @@ reviewed it.
 - 2026-10-14, ADR-018, SessionSettings: `RequestSessionUpdate(false)` hands a copy to the handler and needs true back; `(true)` and a missing handler are refused.
 - 2026-10-14, ADR-018, InitValue: `0DT` and closing-date literals raise in `Init()` of a written record and on the first read of an untouched one.
 - 2026-10-14, ADR-018, held branch: the narrower static-subscriber global check is not merged (net zero) until the `DeleteAll(false)` probe is in.
+- 2026-10-14, ADR-020, `al-bcdb`: two crates (core without OS access, command line with it), `pread` instead of a memory map, an approximated culture order for `tables`, bcdb's synthetic `typeprobe` fixtures (8.2 MB) committed, new dependencies `sha2`, `flate2` (zlib-rs) in the core and `rayon` in the command line. Parity with the published bcdb is tested, not assumed (`docs/bcdb.md`).

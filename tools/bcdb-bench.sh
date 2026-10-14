@@ -21,6 +21,7 @@
 # The Rust side is built with: cargo build --profile bcdb-bench -p al-bcdb-cli
 # (opt-level 3, fat LTO, codegen-units 1, panic=abort; no target-cpu flag).
 set -euo pipefail
+export LC_ALL=C   # decimal points in the time and awk output
 
 RUNS=7
 COLD=0
@@ -79,8 +80,12 @@ RESULTS=$(mktemp)
 trap 'rm -f "$RESULTS"' EXIT
 
 # bench <label> <tool> <shell snippet using $T for the tool>
+# Records wall time and CPU time (user+sys of the process and its children). CPU time moves
+# far less than wall time when other jobs share the machine, and it is what tells apart a
+# slow program from a loaded host; but a program that uses several threads (bcdb's prefetch,
+# the port's export) spends more CPU than wall, so read the two together.
 bench() {
-  local label=$1 tool=$2 snippet=$3 T i t0 t1 ns=() l0 l1
+  local label=$1 tool=$2 snippet=$3 T i t0 t1 wall=() cpu=() l0 l1 c
   [ "$tool" = ref ] && T=$REF || T=$PORT
   export T
   if [ "$COLD" = 1 ]; then drop_cache "$BAK" "$BACPAC" "$BASEAPP"; fi
@@ -89,18 +94,22 @@ bench() {
   for i in $(seq 1 "$RUNS"); do
     if [ "$COLD" = 1 ]; then drop_cache "$BAK" "$BACPAC" "$BASEAPP"; fi
     t0=$(date +%s%N)
-    eval "$snippet" >/dev/null 2>&1 || true
+    c=$( { TIMEFORMAT='%3U %3S'; time eval "$snippet" >/dev/null 2>&1 || true; } 2>&1 )
     t1=$(date +%s%N)
-    ns+=($(( (t1 - t0) / 1000 )))
+    wall+=($(( (t1 - t0) / 1000 )))
+    cpu+=($(echo "$c" | awk '{printf "%d", ($1 + $2) * 1000000}'))
   done
   l1=$(load)
-  local sorted min med
-  sorted=$(printf '%s\n' "${ns[@]}" | sort -n)
-  min=$(echo "$sorted" | head -1)
-  med=$(echo "$sorted" | awk '{a[NR]=$1} END{print (NR%2)?a[(NR+1)/2]:(a[NR/2]+a[NR/2+1])/2}')
-  printf '%s\t%s\t%d\t%d\t%s\n' "$label" "$tool" "$min" "${med%.*}" "load $l0 -> $l1" >>"$RESULTS"
-  awk -v l="$label" -v t="$tool" -v a="$min" -v b="${med%.*}" -v ld="load $l0 -> $l1" \
-    'BEGIN { printf "  %-34s %-4s min %9.1f ms   median %9.1f ms   (%s)\n", l, t, a/1000, b/1000, ld }'
+  stat() {  # min and median of the numbers on stdin
+    sort -n | awk '{a[NR]=$1} END{printf "%d %d", a[1], (NR%2)?a[(NR+1)/2]:(a[NR/2]+a[NR/2+1])/2}'
+  }
+  local w c2
+  w=$(printf '%s\n' "${wall[@]}" | stat)
+  c2=$(printf '%s\n' "${cpu[@]}" | stat)
+  printf '%s\t%s\t%s\t%s\t%s\n' "$label" "$tool" "$w" "$c2" "load $l0 -> $l1" >>"$RESULTS"
+  awk -v l="$label" -v t="$tool" -v w="$w" -v c="$c2" -v ld="load $l0 -> $l1" 'BEGIN {
+    split(w, a, " "); split(c, b, " ")
+    printf "  %-34s %-4s wall min %9.1f med %9.1f ms | cpu min %9.1f med %9.1f ms  (%s)\n", l, t, a[1]/1000, a[2]/1000, b[1]/1000, b[2]/1000, ld }'
 }
 
 # the requests for a full export: every table with rows in the company, plus tenant-wide ones
@@ -157,8 +166,10 @@ suite() {
 suite bak "$BAK"
 if [ -f "$BACPAC" ]; then suite bacpac "$BACPAC"; else echo "(no .bacpac at $BACPAC: skipped)"; fi
 
-echo "## summary: port / reference (min of $RUNS runs; below 1.00 means the port is faster)"
+echo "## summary: port / reference, min of $RUNS runs (below 1.00 the port is faster)"
 awk -F'\t' '
-  { key=$1; if ($2=="ref") ref[key]=$3; else port[key]=$3; order[key]=NR }
-  END { for (k in ref) if (k in port) printf "  %-36s ref %9.1f ms   port %9.1f ms   ratio %.2f\n", k, ref[k]/1000, port[k]/1000, port[k]/ref[k] }' "$RESULTS" | sort
+  { split($3, w, " "); split($4, c, " ")
+    if ($2 == "ref") { rw[$1] = w[1]; rc[$1] = c[1] } else { pw[$1] = w[1]; pc[$1] = c[1] } }
+  END { for (k in rw) if (k in pw)
+          printf "  %-36s wall %9.1f -> %9.1f ms  x%.2f   cpu %9.1f -> %9.1f ms  x%.2f\n", k, rw[k]/1000, pw[k]/1000, pw[k]/rw[k], rc[k]/1000, pc[k]/rc[k] }' "$RESULTS" | sort
 echo "load at end: $(cut -d' ' -f1-3 /proc/loadavg)"

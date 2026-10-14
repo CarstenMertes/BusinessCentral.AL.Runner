@@ -261,7 +261,13 @@ impl Checker<'_> {
     pub(super) fn reach_baseline(&self) {
         for i in 0..self.ws.objects.len() {
             let o = &self.ws.objects[i];
-            if !self.ws.is_dependency(i) || o.kind != ObjKind::Codeunit || !self.ws.usable(i) {
+            if !self.ws.is_dependency(i) || o.kind != ObjKind::Codeunit {
+                continue;
+            }
+            // Cheap facts first: `usable` parses the object's file, and most codeunits are no root.
+            let company_initialize =
+                o.id == Some(COMPANY_INITIALIZE) && o.name.eq_ignore_ascii_case("Company-Initialize");
+            if !(o.install || company_initialize) || !self.ws.usable(i) {
                 continue;
             }
             if o.install {
@@ -274,7 +280,7 @@ impl Checker<'_> {
                         self.reach(i, usize::from(r.syntax().text_range().start()));
                     }
                 }
-            } else if o.id == Some(COMPANY_INITIALIZE) && o.name.eq_ignore_ascii_case("Company-Initialize") {
+            } else if company_initialize {
                 self.reach_run(i);
             }
         }
@@ -795,12 +801,18 @@ impl Checker<'_> {
                 self.activate_global(global);
                 continue;
             }
-            let next = self.demand.borrow_mut().as_mut().and_then(|s| s.queue.pop());
-            if let Some((o, off)) = next {
-                self.check_reached(o, off);
-                continue;
+            let batch = self
+                .demand
+                .borrow_mut()
+                .as_mut()
+                .map(|s| std::mem::take(&mut s.queue))
+                .unwrap_or_default();
+            if batch.is_empty() {
+                break;
             }
-            break;
+            for (o, off) in batch {
+                self.check_reached(o, off);
+            }
         }
         let st = self.demand.borrow_mut().take()?;
         Some(Demand {

@@ -13,6 +13,7 @@ use al_builtins::value::RtType;
 use al_ir as ir;
 use al_syntax::ast;
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QueryLayout {
     pub query: ir::Query,
     /// The type of each column, parallel to `query.columns`.

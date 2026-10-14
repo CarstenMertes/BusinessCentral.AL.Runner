@@ -60,6 +60,15 @@ pub fn markdown(r: &Report) -> String {
         if t.eager {
             s.push_str("\nThis run compiled every dependency routine, not only the ones the tests reach.\n");
         }
+        if let Some(c) = &t.compile_cache {
+            s.push_str(&format!("\nCompile cache: {}.\n", c.line()));
+            if c.built {
+                s.push_str(&format!(
+                    "Building the entry took {} and is part of Compile above; a run that finds the entry does not pay it.\n",
+                    secs(c.build_s)
+                ));
+            }
+        }
     }
     if !r.dependencies.is_empty() {
         s.push_str(&format!("\nDependency apps: {}.\n", r.dependencies.join(", ")));
@@ -269,7 +278,40 @@ mod tests {
                 },
             ],
             dotnet: None,
+            compile_cache: None,
         }
+    }
+
+    #[test]
+    fn markdown_says_what_the_compile_cache_did_and_what_building_it_cost() {
+        let mut t = timings();
+        t.compile_cache = Some(crate::report::CacheTimes {
+            hit: false,
+            built: true,
+            open_s: 0.1,
+            build_s: 9.5,
+            mb: 13.0,
+            objects: 9683,
+            relowered: 29,
+        });
+        let mut r = build(&oracle(), &areas, &outcome);
+        r.timings = Some(t.clone());
+        let md = markdown(&r);
+        assert!(md.contains("Compile cache: miss, built in 9.50 s"), "{md}");
+        assert!(md.contains("Building the entry took 9.50 s"), "{md}");
+        t.compile_cache = Some(crate::report::CacheTimes {
+            hit: true,
+            built: false,
+            open_s: 0.05,
+            build_s: 0.0,
+            mb: 13.0,
+            objects: 9683,
+            relowered: 29,
+        });
+        r.timings = Some(t);
+        let md = markdown(&r);
+        assert!(md.contains("Compile cache: hit, opened in 0.05 s"), "{md}");
+        assert!(!md.contains("Building the entry took"), "{md}");
     }
 
     #[test]

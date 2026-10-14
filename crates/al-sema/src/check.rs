@@ -251,6 +251,12 @@ pub struct Roots {
     /// environment variable `AL_CHECK_THREADS`, else the number of cores. The result does not
     /// depend on it.
     pub workers: Option<usize>,
+    /// Per object: its lowered form comes from a compile cache (`provided.rs`), so it is neither
+    /// checked nor given a query layout. Only with `eager`; empty: none.
+    pub provided: Vec<bool>,
+    /// With `provided`: the query layouts of the objects that come from the cache (the lowering of
+    /// the workspace's code reads them), by object index.
+    pub provided_queries: Vec<Option<crate::queries::QueryLayout>>,
 }
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
@@ -268,6 +274,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
+    let provided = |oi: usize| roots.provided.get(oi).copied().unwrap_or(false);
     let mut timings = CheckTimings::default();
     let mut c = Checker::new(ws, members, catalog, system_enums(catalog), demand_mode);
     // The files of the dependency objects the checker reaches are parsed ahead on other
@@ -309,11 +316,15 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         })
     } else {
         let started = std::time::Instant::now();
-        for oi in 0..ws.objects.len() {
-            if !skip(oi) {
+        let objects: Vec<usize> = (0..ws.objects.len()).filter(|&oi| !skip(oi) && !provided(oi)).collect();
+        let workers = roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32));
+        if workers > 1 && objects.len() >= PARALLEL_OBJECTS {
+            c.check_objects_parallel(workers, &objects);
+        } else {
+            for oi in objects {
                 c.guard((oi, ANY_ROUTINE), |c| c.check_object(oi));
+                c.take_calls();
             }
-            c.take_calls();
         }
         timings.workspace = started.elapsed();
         None
@@ -324,7 +335,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
     // Without a demand state (the eager compile) every dependency object is lowered, so every one
     // needs its layout.
-    let wanted = |oi: usize| !ws.is_dependency(oi) || demand.as_ref().is_none_or(|d| d.active(oi));
+    let wanted = |oi: usize| !provided(oi) && (!ws.is_dependency(oi) || demand.as_ref().is_none_or(|d| d.active(oi)));
     for oi in 0..ws.objects.len() {
         if wanted(oi) {
             c.query(oi);
@@ -334,7 +345,13 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         .queries
         .into_iter()
         .enumerate()
-        .map(|(oi, cell)| cell.into_inner().flatten().filter(|_| wanted(oi)))
+        .map(|(oi, cell)| {
+            if provided(oi) {
+                roots.provided_queries.get(oi).cloned().flatten()
+            } else {
+                cell.into_inner().flatten().filter(|_| wanted(oi))
+            }
+        })
         .collect();
     timings.rest = rest_started.elapsed();
     CheckResult {
@@ -348,6 +365,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         panicked: c.panicked,
     }
 }
+
+/// The complete check of fewer objects than this stays on the calling thread.
+const PARALLEL_OBJECTS: usize = 64;
 
 /// How many threads check the reached routines of dependency apps. `AL_CHECK_THREADS` sets it
 /// (1 checks on one thread); the default is the number of cores.

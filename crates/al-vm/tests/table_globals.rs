@@ -1,8 +1,7 @@
 //! A table's global variables live as long as the record variable (ADR-021). Each test mirrors
-//! a probe test of the corpus branch `al-runtime-rs` at head eb46da5,
-//! `tests/al-language/tableglobals/` (TestTableGlobalsRecordVariable.al, TestTableGlobalsHolders.al),
-//! measured on real BC 27.5. Until the corpus bump brings the probes into the submodule the
-//! citation is the probe's name in that file.
+//! a probe test of the corpus, `tests/al-language/tableglobals/` (TestTableGlobalsRecordVariable.al,
+//! TestTableGlobalsHolders.al; the corpus submodule holds them since eb46da5), measured on real
+//! BC 27.5. The comment above a test names the probe test and gives file:line of the first one.
 
 use al_builtins::native::Signal;
 use al_builtins::value::Value;
@@ -378,7 +377,7 @@ fn check(body: &str, expected: &str) {
     assert_eq!(text(run(&format!("procedure F(): Text {body}"), "F")), expected);
 }
 
-// TableGlobals_PersistAcrossProcedureCalls_OnTheSameVariable
+// TableGlobals_PersistAcrossProcedureCalls_OnTheSameVariable (tableglobals/TestTableGlobalsRecordVariable.al:72)
 #[test]
 fn globals_persist_across_procedure_calls() {
     check(
@@ -388,7 +387,7 @@ fn globals_persist_across_procedure_calls() {
     );
 }
 
-// TableGlobals_FieldTriggerAndProcedure_ShareTheGlobals
+// TableGlobals_FieldTriggerAndProcedure_ShareTheGlobals (tableglobals/TestTableGlobalsRecordVariable.al:86)
 #[test]
 fn field_trigger_and_procedure_share_the_globals() {
     check(
@@ -400,7 +399,7 @@ fn field_trigger_and_procedure_share_the_globals() {
     );
 }
 
-// TableGlobals_SetByValidate_AreSeenByOnInsert
+// TableGlobals_SetByValidate_AreSeenByOnInsert (tableglobals/TestTableGlobalsRecordVariable.al:101)
 #[test]
 fn validate_globals_are_seen_by_on_insert() {
     check(
@@ -410,7 +409,7 @@ fn validate_globals_are_seen_by_on_insert() {
     );
 }
 
-// TableGlobals_SecondVariable_HasItsOwnGlobals
+// TableGlobals_SecondVariable_HasItsOwnGlobals (tableglobals/TestTableGlobalsRecordVariable.al:115)
 #[test]
 fn a_second_variable_has_its_own_globals() {
     check(
@@ -423,7 +422,7 @@ fn a_second_variable_has_its_own_globals() {
     );
 }
 
-// TableGlobals_Assignment_/Copy_/TransferFields_WhatHappensToBothSides: fields move, globals do not
+// TableGlobals_Assignment_/Copy_/TransferFields_WhatHappensToBothSides: fields move, globals do not (tableglobals/TestTableGlobalsRecordVariable.al:132, :153, :174)
 #[test]
 fn assignment_copy_and_transfer_fields_leave_both_sides_globals_alone() {
     for op in [
@@ -444,7 +443,7 @@ fn assignment_copy_and_transfer_fields_leave_both_sides_globals_alone() {
     }
 }
 
-// TableGlobals_PassedByVar_IsTheSameInstance
+// TableGlobals_PassedByVar_IsTheSameInstance (tableglobals/TestTableGlobalsRecordVariable.al:195)
 #[test]
 fn by_var_is_the_same_instance() {
     check(
@@ -454,7 +453,7 @@ fn by_var_is_the_same_instance() {
     );
 }
 
-// TableGlobals_PassedByValue_WhatTheCalleeSeesAndLeaves, _RecPassedByValueInsideTable_
+// TableGlobals_PassedByValue_WhatTheCalleeSeesAndLeaves, _RecPassedByValueInsideTable_ (tableglobals/TestTableGlobalsRecordVariable.al:209)
 #[test]
 fn by_value_is_a_copy_with_fresh_globals() {
     check(
@@ -464,7 +463,7 @@ fn by_value_is_a_copy_with_fresh_globals() {
     );
 }
 
-// TableGlobals_ReturnedRecord_WhatTheReceiverSees, _EchoedRecord_
+// TableGlobals_ReturnedRecord_WhatTheReceiverSees, _EchoedRecord_ (tableglobals/TestTableGlobalsRecordVariable.al:239)
 #[test]
 fn a_returned_record_leaves_the_receivers_globals_alone() {
     check(
@@ -477,7 +476,7 @@ fn a_returned_record_leaves_the_receivers_globals_alone() {
     );
 }
 
-// TableGlobals_Clear_ / _Init_ / _Reset_ / _ClearAll_ / _ResetInsideTable_ / _ResetOnTemporaryRecord_
+// TableGlobals_Clear_ / _Init_ / _Reset_ / _ClearAll_ / _ResetInsideTable_ / _ResetOnTemporaryRecord_ (tableglobals/TestTableGlobalsRecordVariable.al:272-412)
 #[test]
 fn only_clear_and_reset_reset_the_globals() {
     check(
@@ -493,7 +492,7 @@ fn only_clear_and_reset_reset_the_globals() {
     );
 }
 
-// TableGlobals_OtherOperations_WhichOnesResetTheGlobals
+// TableGlobals_OtherOperations_WhichOnesResetTheGlobals (tableglobals/TestTableGlobalsRecordVariable.al:331)
 #[test]
 fn other_operations_keep_the_globals() {
     check(
@@ -517,7 +516,7 @@ fn other_operations_keep_the_globals() {
     );
 }
 
-// TableGlobals_GetFindNext_WhatHappensToTheGlobals
+// TableGlobals_GetFindNext_WhatHappensToTheGlobals (tableglobals/TestTableGlobalsRecordVariable.al:441)
 #[test]
 fn reads_keep_the_globals() {
     check(
@@ -533,7 +532,7 @@ fn reads_keep_the_globals() {
     );
 }
 
-// TableGlobals_InsertModifyDelete_WhatHappensToTheGlobals
+// TableGlobals_InsertModifyDelete_WhatHappensToTheGlobals (tableglobals/TestTableGlobalsRecordVariable.al:475)
 #[test]
 fn writes_with_triggers_run_on_the_variable() {
     check(
@@ -546,7 +545,7 @@ fn writes_with_triggers_run_on_the_variable() {
     );
 }
 
-// TableGlobals_ModifyTwice_OnModifyKeepsItsOwnGlobals, _Modify_OnAnotherVariableOfTheSameRow_
+// TableGlobals_ModifyTwice_OnModifyKeepsItsOwnGlobals, _Modify_OnAnotherVariableOfTheSameRow_ (tableglobals/TestTableGlobalsRecordVariable.al:525)
 #[test]
 fn on_modify_counts_on_the_variable() {
     check(
@@ -559,7 +558,7 @@ fn on_modify_counts_on_the_variable() {
     );
 }
 
-// TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee, _DeleteAll_TriggersRunOnOneInstanceForAllRows
+// TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee, _DeleteAll_TriggersRunOnOneInstanceForAllRows (tableglobals/TestTableGlobalsRecordVariable.al:497, :561)
 #[test]
 fn bulk_operations_run_triggers_on_one_fresh_instance() {
     check(
@@ -578,7 +577,7 @@ fn bulk_operations_run_triggers_on_one_fresh_instance() {
     );
 }
 
-// TableGlobals_XRecInOnModify_WhichGlobalsItHas, _XRecInOnValidate_, _XRecAcrossTwoModifies_
+// TableGlobals_XRecInOnModify_WhichGlobalsItHas, _XRecInOnValidate_, _XRecAcrossTwoModifies_ (tableglobals/TestTableGlobalsRecordVariable.al:582)
 #[test]
 fn xrec_has_its_own_globals() {
     check(
@@ -593,7 +592,7 @@ fn xrec_has_its_own_globals() {
     );
 }
 
-// TableGlobals_XRecInOnValidate_KeepsItsGlobalsBetweenValidations, _XRecIsOneInstanceForValidateAndModify,
+// TableGlobals_XRecInOnValidate_KeepsItsGlobalsBetweenValidations, _XRecIsOneInstanceForValidateAndModify, (tableglobals/TestTableGlobalsRecordVariable.al:634-662)
 // _XRecGlobals_AfterResetAndClear
 #[test]
 fn xrec_globals_persist_per_variable_and_survive_reset_and_clear() {
@@ -610,7 +609,7 @@ fn xrec_globals_persist_per_variable_and_survive_reset_and_clear() {
     );
 }
 
-// TableGlobals_Events_RecIsTheCallersInstance
+// TableGlobals_Events_RecIsTheCallersInstance (tableglobals/TestTableGlobalsRecordVariable.al:697)
 #[test]
 fn event_subscribers_work_on_the_callers_record() {
     check(
@@ -623,7 +622,7 @@ fn event_subscribers_work_on_the_callers_record() {
     );
 }
 
-// TableGlobals_TemporaryRecord_KeepsGlobalsBetweenCalls, _AssignedFromPersistent
+// TableGlobals_TemporaryRecord_KeepsGlobalsBetweenCalls, _AssignedFromPersistent (tableglobals/TestTableGlobalsRecordVariable.al:725)
 #[test]
 fn temporary_records_behave_alike() {
     check(
@@ -636,7 +635,7 @@ fn temporary_records_behave_alike() {
     );
 }
 
-// TableGlobals_RecAssignedInsideTable_, _RecCopyInsideTable_, _RecTransferFieldsInsideTable_
+// TableGlobals_RecAssignedInsideTable_, _RecCopyInsideTable_, _RecTransferFieldsInsideTable_ (tableglobals/TestTableGlobalsRecordVariable.al:759-797)
 #[test]
 fn rec_assignment_inside_the_table_keeps_the_globals() {
     for call in ["TakeFrom", "CopyFromRow", "TransferFromRow"] {
@@ -652,7 +651,7 @@ fn rec_assignment_inside_the_table_keeps_the_globals() {
     }
 }
 
-// TableGlobals_RecordGlobalOfOwnTable_IsPerInstanceAndLazy
+// TableGlobals_RecordGlobalOfOwnTable_IsPerInstanceAndLazy (tableglobals/TestTableGlobalsRecordVariable.al:816)
 #[test]
 fn a_record_global_of_the_own_table_is_per_instance() {
     check(
@@ -663,7 +662,7 @@ fn a_record_global_of_the_own_table_is_per_instance() {
     );
 }
 
-// TableGlobals_RecordRef_GetTableSetTable_, _RecordRef_ValidateAndInsert_, _Variant_
+// TableGlobals_RecordRef_GetTableSetTable_, _RecordRef_ValidateAndInsert_, _Variant_ (tableglobals/TestTableGlobalsRecordVariable.al:832-870)
 #[test]
 fn record_ref_and_variant_copy_fields_only() {
     check(
@@ -680,7 +679,7 @@ fn record_ref_and_variant_copy_fields_only() {
     );
 }
 
-// TableExtensionGlobals_PersistAcrossCallsOnTheSameVariable, _CopyAndClear_
+// TableExtensionGlobals_PersistAcrossCallsOnTheSameVariable, _CopyAndClear_ (tableglobals/TestTableGlobalsRecordVariable.al:890)
 #[test]
 fn table_extension_globals_follow_the_same_rules() {
     check(
@@ -695,7 +694,7 @@ fn table_extension_globals_follow_the_same_rules() {
     );
 }
 
-// TableGlobals_CodeunitGlobalRecord_PersistsAcrossCalls, _TwoCodeunitInstances_HaveTheirOwn,
+// TableGlobals_CodeunitGlobalRecord_PersistsAcrossCalls, _TwoCodeunitInstances_HaveTheirOwn, (tableglobals/TestTableGlobalsHolders.al:28-71)
 // _LocalRecordVariable_IsFreshPerCall, _AssignmentIntoCodeunitGlobal_, _ResetOnCodeunitGlobalRecord_
 #[test]
 fn records_held_by_codeunits() {
@@ -712,7 +711,7 @@ fn records_held_by_codeunits() {
     );
 }
 
-// TableGlobals_CodeunitRunWithRecord_RunsOnTheCallersInstance
+// TableGlobals_CodeunitRunWithRecord_RunsOnTheCallersInstance (tableglobals/TestTableGlobalsRecordVariable.al:682)
 #[test]
 fn codeunit_run_with_a_record_runs_on_the_callers_record() {
     check(
@@ -722,7 +721,7 @@ fn codeunit_run_with_a_record_runs_on_the_callers_record() {
     );
 }
 
-// TableGlobals_PageRec_PersistsAcrossActions, _ListPageRec_AcrossRows_, _PageRec_AfterGetRecordSeesTheGlobals,
+// TableGlobals_PageRec_PersistsAcrossActions, _ListPageRec_AcrossRows_, _PageRec_AfterGetRecordSeesTheGlobals, (tableglobals/TestTableGlobalsHolders.al:119-183)
 // _NewPageInstance_StartsFresh
 #[test]
 fn the_page_record_keeps_its_globals_across_actions_and_rows() {
@@ -747,7 +746,7 @@ fn the_page_record_keeps_its_globals_across_actions_and_rows() {
     );
 }
 
-// TableGlobals_PageFieldValidate_ThenAction_SeesTheTriggerGlobals,
+// TableGlobals_PageFieldValidate_ThenAction_SeesTheTriggerGlobals, (tableglobals/TestTableGlobalsHolders.al:140)
 // _PageRec_ActionGlobalsAreLostAfterPageFieldValidation, _PageFieldValidate_WhatTheTriggerSeesOfThePageRecGlobals
 #[test]
 fn a_page_validation_runs_on_fresh_globals_and_leaves_the_page_record_fresh() {
@@ -765,7 +764,7 @@ fn a_page_validation_runs_on_fresh_globals_and_leaves_the_page_record_fresh() {
     );
 }
 
-// TableGlobals_PageInsert_OnInsertSeesTheValidateGlobals, _PageModify_OnModifySeesTheValidateGlobals
+// TableGlobals_PageInsert_OnInsertSeesTheValidateGlobals, _PageModify_OnModifySeesTheValidateGlobals (tableglobals/TestTableGlobalsHolders.al:202, :219)
 #[test]
 fn on_insert_and_on_modify_after_a_page_validation_see_fresh_globals() {
     check(

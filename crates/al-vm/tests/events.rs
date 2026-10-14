@@ -774,8 +774,8 @@ fn delete_all_true_deletes_row_by_row_with_trigger_and_events() {
 }
 
 // DeleteAll(false) raises no trigger, but the delete events fire per row (real BC 27.5, probe
-// codeunit 68212, record/TestTableExtensionTriggerOrderContracts.al:Delete_And_DeleteAll_...;
-// the citation is pending until the corpus bump). A table without delete subscribers just deletes.
+// codeunit 68212, record/TestTableExtensionTriggerOrderContracts.al:102
+// Delete_And_DeleteAll_WithAndWithoutRunTrigger). A table without delete subscribers just deletes.
 #[test]
 fn delete_all_false_raises_the_delete_events_per_row() {
     assert_eq!(text(trace("R.DeleteAll(false);")), "");

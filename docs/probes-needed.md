@@ -626,6 +626,12 @@ Assumptions and open points beside the 58 probe tests (corpus branch `al-runtime
 | Temporary record and Variant | A temporary record WITH ROWS handed to a Variant parameter is REFUSED: a by-value copy is an empty buffer (record/TestTempTableContracts.al:141-148), but Microsoft's Assert.RecordCount counts the rows through a Variant on BC (Tests-ERM Price Source List UT.T001). Probe wanted: what a Variant holds when a temporary record is assigned or passed | none (bucket oracle only) | `al-vm/src/lib.rs` |
 | ReportExtension and the base report's protected members | A reportextension names a `protected var` or `protected procedure` of the report it extends (`Window.Open(..)`, `ExchangeAmtLCYToFCY(..)` in Microsoft's "Mfg. Adjust Add. Rep. Currency"). Assumed, REFUSED until probed: the extension and the base share one instance, so the extension reads and writes the base's variable and calls its procedure on the same state. Probe wanted: a base report sets a protected variable in OnPreReport, the extension reads it in a trigger, writes it, and the base reads the write back; a protected procedure of the base called from an extension trigger and from an extension procedure; a non-protected variable of the base from the extension is a compile error | none (bucket oracle only: 2515 Tests-ERM tests) | `al-sema/src/lower.rs` `base_member` |
 
+## Page variable Editable
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `P.Editable := false` and `P.Editable(false)` on a Page variable before it runs | REFUSED. Base Application's "Reminder Level Communication" action "Add New Language" does it before `RunModal` (`Languages.Editable := false; Languages.LookupMode(true); Languages.RunModal()`); the runtime used to raise "The TestPage is not open", which BC does not. Only `CurrPage.Editable` in `OnOpenPage` is pinned (handlers/TestPageControlEditableRoutes.al:536-555, TestPageEditable_Tests.al:150-180) | A page variable with `Editable := false` before `RunModal` and before `Run`: does the page open, and does the TestPage in the handler report `Editable()` false and refuse `SetValue`; also `Editable` read on a page variable that has not run |
+
 ## Code coverage rows
 
 `CodeCoverageLog(true, ...)` records, and a read of Code Coverage (2000000049), Code Coverage Test Lookup (2000000288) or Code

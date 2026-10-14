@@ -88,7 +88,19 @@ pub fn detail(program: &ir::Program, site: &[FaultFrame], error: Option<ErrorInf
 
 /// The text `--explain` prints.
 pub fn render(head: &str, outcome: &Outcome, oracle: &str, detail: Option<&TestDetail>) -> String {
-    let mut s = format!("{head}\nreal BC (oracle): {oracle}\n");
+    render_with(head, Some(oracle), outcome, detail)
+}
+
+/// The same for a run that has no oracle (`alrunner test --explain`).
+pub fn render_without_oracle(head: &str, outcome: &Outcome, detail: Option<&TestDetail>) -> String {
+    render_with(head, None, outcome, detail)
+}
+
+fn render_with(head: &str, oracle: Option<&str>, outcome: &Outcome, detail: Option<&TestDetail>) -> String {
+    let mut s = match oracle {
+        Some(o) => format!("{head}\nreal BC (oracle): {o}\n"),
+        None => format!("{head}\n"),
+    };
     match outcome {
         Outcome::Pass => s.push_str("runtime: PASS\n"),
         Outcome::NotRun(why) => {

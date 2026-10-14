@@ -48,6 +48,44 @@ table 60007 "ALT Base"
     keys { key(PK; "Entry No.") { } }
 }
 
+// corpus handlers/TestReportCurrReportLanguage.al, TestReportCurrReportLanguageReport.al
+codeunit 60540 "CRL Log"
+{
+    SingleInstance = true;
+    var Lang: Integer; Region: Text; Reads: Integer;
+    procedure Note(L: Integer; R: Text) begin Lang := L; Region := R; Reads += 1; end;
+    procedure GetLang(): Integer begin exit(Lang); end;
+    procedure GetRegion(): Text begin exit(Region); end;
+    procedure GetReads(): Integer begin exit(Reads); end;
+}
+
+report 60541 "CRL Report"
+{
+    ProcessingOnly = true;
+    UseRequestPage = false;
+    UsageCategory = None;
+    dataset
+    {
+        dataitem(Rows; "Num Row")
+        {
+            DataItemTableView = where(Number = const(1));
+            trigger OnAfterGetRecord()
+            var Log: Codeunit "CRL Log";
+            begin
+                CurrReport.Language := LangToSet;
+                Log.Note(CurrReport.Language, RegionAfterSet);
+            end;
+        }
+    }
+    trigger OnPreReport()
+    begin
+        CurrReport.FormatRegion := 'en-US';
+        RegionAfterSet := CurrReport.FormatRegion;
+    end;
+    procedure SetLang(L: Integer) begin LangToSet := L; end;
+    var LangToSet: Integer; RegionAfterSet: Text;
+}
+
 // corpus handlers/TestReportOnInitReportTimingFixtures.al
 codeunit 60005 "OIR Log"
 {
@@ -1427,4 +1465,39 @@ fn a_filter_on_a_field_the_data_item_link_joins_is_refused() {
         "var H: Codeunit Helpers; begin H.Seed(); Report.Run(Report::\"MX Link Filter\", false, false); exit('ran'); end;",
     );
     assert!(why.contains("DataItemLink joins"), "{why}");
+}
+
+// ---------------------------------------------------------------- CurrReport.Language and FormatRegion
+
+// handlers/TestReportCurrReportLanguage.al:TestReport_SettingCurrReportLanguage_RunsAndIsReadableBack (:58-84):
+// a language set in a trigger reads back at once (1031, not the session's 1033); FormatRegion set in
+// OnPreReport reads back empty for a run that renders no layout.
+#[test]
+fn curr_report_language_reads_back_and_format_region_reads_empty() {
+    assert_eq!(
+        f(
+            "var Probe: Report \"CRL Report\"; Log: Codeunit \"CRL Log\"; H: Codeunit Helpers; begin
+            H.Seed();
+            Probe.SetLang(1031);
+            Probe.Run();
+            exit(Format(Log.GetReads()) + '|' + Format(Log.GetLang()) + '|[' + Log.GetRegion() + ']');
+        end;"
+        ),
+        "1|1031|[]"
+    );
+}
+
+// The same file :87-103 says BC rejects language 0 with an error that names the language. The text is in
+// no corpus line, so the runtime refuses instead of inventing it (docs/probes-needed.md).
+#[test]
+fn curr_report_language_zero_is_refused_with_its_reason() {
+    let why = refusal(
+        "var Probe: Report \"CRL Report\"; H: Codeunit Helpers; begin
+        H.Seed();
+        Probe.SetLang(0);
+        Probe.Run();
+        exit('');
+    end;",
+    );
+    assert!(why.contains("Language") && why.contains("not pinned"), "{why}");
 }

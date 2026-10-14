@@ -106,11 +106,13 @@ pub struct CorpusRuntime {
 }
 
 /// Wall time of the phases of a run (`--timings`).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Phases {
     pub compile: std::time::Duration,
     pub baseline: std::time::Duration,
     pub tests: std::time::Duration,
+    /// The tests phase by run, in the order of the `SuiteRun`s (name, wall time).
+    pub suites: Vec<(String, std::time::Duration)>,
 }
 
 /// What a run is asked to do beyond running everything.
@@ -297,7 +299,9 @@ impl CorpusRuntime {
         let mut outcomes = std::collections::HashMap::new();
         let mut details = std::collections::HashMap::new();
         let mut panics = 0;
+        let mut suite_times = Vec::new();
         for (si, suite) in suites.iter().enumerate() {
+            let suite_started = std::time::Instant::now();
             let isolation = match suite.runner {
                 None => Ok(TestIsolation::default()),
                 Some(r) => runner_isolation(&lowered, r),
@@ -370,6 +374,7 @@ impl CorpusRuntime {
                     }
                 }
             }
+            suite_times.push((suite.name.clone(), suite_started.elapsed()));
         }
         let suites = suites.iter().map(|s| s.name.clone()).collect();
         CorpusRuntime {
@@ -380,6 +385,7 @@ impl CorpusRuntime {
                 compile: compile_time,
                 baseline: baseline_time,
                 tests: tests_started.elapsed(),
+                suites: suite_times,
             },
             details,
         }

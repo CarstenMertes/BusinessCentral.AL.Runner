@@ -115,6 +115,7 @@ fn help_lists_every_flag_in_groups() {
         "--top-refusals-area",
         "--baseline-diff",
         "--timings",
+        "--timings-table",
         "--help",
     ] {
         assert!(text.contains(flag), "{flag} is not in --help");
@@ -131,6 +132,48 @@ fn an_unknown_flag_is_a_setup_error_that_points_at_help() {
         .unwrap();
     assert_eq!(r.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&r.stderr).contains("--help"));
+}
+
+/// The JSON and Markdown reports always say how long the run took, by phase, with no flag.
+/// The numbers vary, so this checks the structure only.
+#[test]
+fn reports_carry_the_phase_timings_without_a_flag() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = dir.path().join("r.json");
+    let md = dir.path().join("r.md");
+    let r = cli(&[
+        "--no-ratchet",
+        "--codeunit",
+        &SMALL_CU.to_string(),
+        "--json",
+        json.to_str().unwrap(),
+        "--markdown",
+        md.to_str().unwrap(),
+    ]);
+    assert_eq!(r.code, 0, "{}", r.err);
+    assert!(
+        !r.err.contains("timings:"),
+        "--timings stays opt-in on the console: {}",
+        r.err
+    );
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&json).unwrap()).unwrap();
+    let t = &v["timings"];
+    assert!(t["bc_version"].as_str().is_some_and(|v| v.starts_with("29")), "{t}");
+    for key in ["load_s", "compile_s", "baseline_s", "tests_s", "total_s"] {
+        assert!(t[key].as_f64().is_some_and(|x| x >= 0.0), "{key} in {t}");
+    }
+    assert!(t["suites"].as_array().is_some_and(|a| !a.is_empty()), "{t}");
+    let text = std::fs::read_to_string(&md).unwrap();
+    assert!(text.contains("### How long it took"), "{text}");
+    assert!(
+        text.contains("| Version | Load | Compile | Install baseline | Tests | Total |"),
+        "{text}"
+    );
+    // The same table comes back from the JSON file.
+    let table = cli(&["--timings-table", json.to_str().unwrap()]);
+    assert_eq!(table.code, 0, "{}", table.err);
+    assert!(table.out.contains("| Version | Load |"), "{}", table.out);
+    assert_eq!(table.out.lines().count(), 3, "{}", table.out);
 }
 
 #[test]

@@ -25,6 +25,9 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     "additionalsearchtermsml",
     // Where the platform reads from (a replica); nothing a run or its dataset shows.
     "dataaccessintent",
+    // Whether the client shows the report, from a permission on a table. Permissions are not modelled
+    // and no AL code reads it (docs/owner-review.md, issue 28).
+    "accessbypermission",
 ];
 
 /// Data item properties that change nothing a processing run can observe: they steer the request
@@ -606,7 +609,7 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
     }
     if has_procedures && !out.items.is_empty() {
         out.reasons
-            .push("a reportextension that declares procedures and adds data items is not supported yet".into());
+            .push("a reportextension that declares procedures and adds data items is not supported yet: which instance of the extension a procedure runs on, and whether it sees the added data items' records, are not pinned (docs/probes-needed.md)".into());
     }
     out
 }
@@ -1148,6 +1151,31 @@ mod tests {
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
         let l = ext_layout_of("reportextension 1 E extends R { AdditionalSearchTerms = 'x'; }");
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+    }
+
+    #[test]
+    fn access_by_permission_is_inert_on_a_report() {
+        // AccessByPermission decides whether the client shows the report to a user, from a permission on a
+        // table. Permissions are not modelled (ReadPermission is always true) and no AL code reads it
+        // (docs/owner-review.md, issue 28).
+        let l = layout_of(
+            "report 1 R { ProcessingOnly = true; AccessByPermission = TableData Customer = R; dataset { dataitem(A; Cust) { } } }",
+        );
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        let l = ext_layout_of("reportextension 1 E extends R { AccessByPermission = TableData Customer = R; }");
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+    }
+
+    #[test]
+    fn procedures_next_to_added_data_items_are_refused_with_the_open_question() {
+        let l = ext_layout_of(
+            "reportextension 1 E extends R { dataset { addlast(A) { dataitem(B; Ledger) { } } } procedure P() begin end; }",
+        );
+        let all = l.reasons.join("; ");
+        assert!(
+            all.contains("procedures") && all.contains("not pinned") && all.contains("probes-needed"),
+            "{all}"
+        );
     }
 
     #[test]

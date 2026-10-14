@@ -8,7 +8,7 @@ name: CI
 #
 #   test           format, clippy, and every test that runs in a plain debug `cargo test`
 #   corpus         release build, the corpus pass rate for every BC version, and the demand-driven
-#                  compile against the eager compile (the four corpus runs go side by side)
+#                  compile against the eager compile (the normal run first and alone, then the three eager runs side by side)
 #   release-tests  everything that needs an optimised build: the perf budgets, the tests that run
 #                  the finished `al-test-cli` over the whole corpus, and the network tests
 #

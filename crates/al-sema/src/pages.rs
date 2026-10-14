@@ -147,7 +147,7 @@ fn needed(
         }
     }
     if section.name().eq_ignore_ascii_case("field") {
-        let args = section.args();
+        let args = section.args_raw();
         if let Some(src) = args.get(1) {
             let names_a_base_variable = extension_routines
                 .is_some_and(|routines| plain_name(src).is_some_and(|n| !routines.contains(&n.to_lowercase())));
@@ -1038,6 +1038,19 @@ mod tests {
         assert_eq!(l.controls[1].kind, al_ir::ControlKind::Action);
         assert!(l.controls[1].section.name().eq_ignore_ascii_case("actionref"));
         assert_eq!(l.controls[1].section.args(), ["Act_Promoted", "Act"]);
+    }
+
+    // A page field whose source is a lone quoted name with spaces or punctuation
+    // (`field("Assign-to No."; "Assign-to No.")` in Base Application) keeps its quotes in the routine
+    // that reads it; unquoted, `exit(Assign-to No.)` parses as a subtraction. The quotes of the
+    // control's name are not part of the name (handlers/TestPageActionRunPageView.al names controls
+    // the same way).
+    #[test]
+    fn a_lone_quoted_field_source_keeps_its_quotes_in_the_routine() {
+        let src = "page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"; \"Assign-to No.\") { Visible = Show; } } } var Show: Boolean; }";
+        let out = expand(src, &Default::default()).expect("a field with an expression source");
+        assert!(out.contains("exit(\"Assign-to No.\")"), "{out}");
+        assert!(!out.contains("exit(Assign-to"), "{out}");
     }
 
     // Corpus pageextensioncontrol/TestPageExtensionModifyEditable_Tests.al: `Editable = not PXMSLocked;` in a

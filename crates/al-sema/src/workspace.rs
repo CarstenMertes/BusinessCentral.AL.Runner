@@ -747,7 +747,7 @@ impl Workspace {
         };
         if parts.len() == 1 {
             if let Ok(id) = name.parse::<u32>() {
-                return pick(
+                return self.pick_real(
                     self.by_id
                         .get(&(kind, id))
                         .into_iter()
@@ -768,7 +768,7 @@ impl Workspace {
             .collect();
         if parts.len() > 1 {
             let ns = Some(parts[..parts.len() - 1].join("."));
-            return pick(
+            return self.pick_real(
                 cands
                     .into_iter()
                     .filter(|&i| eq_ns(&self.objects[i].namespace, &ns))
@@ -802,10 +802,29 @@ impl Workspace {
         ];
         for tier in tiers {
             if !tier.is_empty() {
-                return pick(tier);
+                return self.pick_real(tier);
             }
         }
         Resolution::Missing
+    }
+
+    /// `pick`, but a stub marked `ObsoleteState = Moved` gives way to a candidate that is not one:
+    /// the object moved to another app and the stub only stays behind for upgrade. Only a
+    /// choice between stub and real object changes; two real candidates stay ambiguous.
+    /// Assumption, not pinned by the corpus (docs/probes-needed.md, "Probe batch 4"); evidence:
+    /// Microsoft's own libraries name "No. Series" with both Base Application's stub and
+    /// Business Foundation's table visible, and compile.
+    fn pick_real(&self, tier: Vec<usize>) -> Resolution {
+        let moved = |i: &usize| {
+            self.objects[*i]
+                .scanned_properties
+                .iter()
+                .any(|(n, v)| n.eq_ignore_ascii_case("ObsoleteState") && v.trim().eq_ignore_ascii_case("Moved"))
+        };
+        if tier.len() > 1 && tier.iter().any(|i| !moved(i)) {
+            return pick(tier.into_iter().filter(|i| !moved(i)).collect());
+        }
+        pick(tier)
     }
 
     /// Looks an object up by kind and name (case-insensitive) or by numeric id text.
@@ -825,7 +844,13 @@ impl Workspace {
             Ok(id) => self.by_id.get(&(kind, id)),
             Err(_) => self.by_name.get(&(kind, name_or_id.to_lowercase())),
         };
-        hits?.iter().find(visible).copied()
+        // A stub marked Moved gives way to the object it moved to (`pick_real`).
+        let mut seen = hits?.iter().filter(visible).copied();
+        let first = seen.next()?;
+        match self.pick_real(std::iter::once(first).chain(seen).collect()) {
+            Resolution::Found(i) => Some(i),
+            _ => Some(first),
+        }
     }
 
     /// Whether object `i` belongs to a dependency app.
@@ -1565,6 +1590,55 @@ mod tests {
             codes(&ws),
             vec![("AR0002", "unresolved page `N.Other.Svc`".to_string())]
         );
+    }
+
+    /// A table that moved between apps stays in the old app as a stub marked `ObsoleteState = Moved`
+    /// (Base Application's "No. Series", which Business Foundation now declares). Microsoft's own
+    /// test libraries compile against both apps, so the name must reach the real table. Nothing in
+    /// the corpus pins this (docs/probes-needed.md, "Probe batch 4").
+    #[test]
+    fn a_moved_stub_does_not_make_the_real_table_ambiguous() {
+        let bf = app(
+            "bf",
+            &[],
+            &[("t.al", "namespace M.NoSeries; table 308 \"No. Series\" { fields { field(1; Code; Code[20]) { } } }")],
+        );
+        let base = app(
+            "base",
+            &["bf"],
+            &[(
+                "t.al",
+                "namespace M.NoSeries; table 308 \"No. Series\" { ObsoleteState = Moved; MovedTo = 'x'; \
+                 fields { field(1; Code; Code[20]) { } } }",
+            )],
+        );
+        let lib = app("lib", &["base", "bf"], &[("c.al", "codeunit 131000 \"Lib\" { }")]);
+        let ws = Workspace::load_apps(
+            vec![bf, base, lib],
+            vec![AppKind::Dependency; 3],
+            &al_version::corpus_symbols(27),
+        );
+        let file = ws.objects.iter().find(|o| o.name == "Lib").unwrap().file;
+        let name = vec!["No. Series".to_string()];
+        let Resolution::Found(t) = ws.resolve_ref(file, ObjKind::Table, &name) else {
+            panic!("the moved stub made the name ambiguous");
+        };
+        assert_eq!(ws.apps[ws.objects[t].app].name, "bf");
+        // Both stubs: nothing real to prefer, so it stays ambiguous.
+        let only_stubs = Workspace::load_apps(
+            vec![
+                app("s1", &[], &[("t.al", "table 5 T { ObsoleteState = Moved; }")]),
+                app("s2", &[], &[("t.al", "table 5 T { ObsoleteState = Moved; }")]),
+                app("lib", &["s1", "s2"], &[("c.al", "codeunit 9 \"Lib\" { }")]),
+            ],
+            vec![AppKind::Dependency; 3],
+            &al_version::corpus_symbols(27),
+        );
+        let file = only_stubs.objects.iter().find(|o| o.name == "Lib").unwrap().file;
+        assert!(matches!(
+            only_stubs.resolve_ref(file, ObjKind::Table, &["T".to_string()]),
+            Resolution::Ambiguous(_)
+        ));
     }
 
     #[test]

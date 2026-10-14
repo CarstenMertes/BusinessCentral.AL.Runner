@@ -19,6 +19,11 @@ pub struct Refusal {
 /// the routine the reason was found in (`Object.Routine: `, `handler X: `, `OnRun: `) goes, quoted
 /// names become `<name>` and numbers become `N`.
 pub fn normalise_reason(raw: &str) -> String {
+    fold_numbers(&fold_quotes(strip_site(raw)))
+}
+
+/// The reason without the routine it was found in (`Object.Routine: `, `handler X: `, `OnRun: `).
+fn strip_site(raw: &str) -> &str {
     let mut rest = raw.trim();
     for _ in 0..4 {
         let Some((head, tail)) = rest.split_once(": ") else {
@@ -29,7 +34,63 @@ pub fn normalise_reason(raw: &str) -> String {
         }
         rest = tail.trim_start();
     }
-    fold_numbers(&fold_quotes(rest))
+    rest
+}
+
+/// Replaces the text inside every outermost pair of call parentheses (directly after a name) with `..`, so that calls that
+/// differ only in their arguments group together.
+fn fold_parens(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    let mut prev = ' ';
+    for c in s.chars() {
+        let call = prev.is_alphanumeric() || prev == '_' || prev == '"';
+        prev = c;
+        match c {
+            '(' if depth == 0 && !call => out.push(c),
+            '(' => {
+                if depth == 0 {
+                    out.push_str("(..");
+                }
+                depth += 1;
+            }
+            ')' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    out.push(')');
+                }
+            }
+            _ if depth > 0 => {}
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// A finer view than `rank` for `--refusal-detail TEXT`: the not-run reasons that contain `needle`,
+/// with the site and the call arguments folded but names and numbers kept, most frequent first.
+pub fn detail(not_run: impl IntoIterator<Item = (CaseId, String)>, needle: &str) -> Vec<Refusal> {
+    let mut groups: BTreeMap<String, Refusal> = BTreeMap::new();
+    for (id, reason) in not_run {
+        if !reason.contains(needle) {
+            continue;
+        }
+        let key = fold_parens(strip_site(&reason));
+        let g = groups.entry(key.clone()).or_insert_with(|| Refusal {
+            key,
+            count: 0,
+            example: id.clone(),
+            example_reason: reason.clone(),
+        });
+        g.count += 1;
+        if id < g.example {
+            g.example = id;
+            g.example_reason = reason;
+        }
+    }
+    let mut v: Vec<Refusal> = groups.into_values().collect();
+    v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.key.cmp(&b.key)));
+    v
 }
 
 /// Whether `head` (the text before the first `: `) says where a reason was found, not what it is.
@@ -205,6 +266,25 @@ mod tests {
             n("Format of a Duration with standard format 2 (not pinned)"),
             "Format of a Duration with standard format N (not pinned)"
         );
+    }
+
+    #[test]
+    fn detail_groups_matching_reasons_by_text_with_the_site_and_the_call_arguments_folded() {
+        let id = |n: &str| CaseId {
+            codeunit: 1,
+            name: n.into(),
+        };
+        let rows = vec![
+            (id("a"), "Lib.Gen: call `NoSeries.ReadIsolation(IsolationLevel::UpdLock)` (None) is not lowered yet".to_string()),
+            (id("b"), "Other.Proc: call `NoSeries.ReadIsolation(IsolationLevel::ReadCommitted)` (None) is not lowered yet".to_string()),
+            (id("c"), "Lib.Gen: call `X.Y(1, (2))` (None) is not lowered yet".to_string()),
+            (id("d"), "builtin Z is not implemented".to_string()),
+        ];
+        let d = detail(rows, "is not lowered");
+        assert_eq!(d.len(), 2);
+        assert_eq!(d[0].key, "call `NoSeries.ReadIsolation(..)` (None) is not lowered yet");
+        assert_eq!(d[0].count, 2);
+        assert_eq!(d[1].key, "call `X.Y(..)` (None) is not lowered yet");
     }
 
     #[test]

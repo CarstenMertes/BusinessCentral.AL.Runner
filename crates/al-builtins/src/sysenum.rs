@@ -92,6 +92,8 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "Web",
             "Desktop",
             "ChildSession",
+            // Named by Microsoft's code (Price List Lines); the position is not pinned either.
+            "ODataV4",
         ]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).

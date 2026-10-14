@@ -380,6 +380,14 @@ impl Section {
     /// The `;`-separated arguments in parentheses, each as trimmed source text
     /// (a lone quoted identifier loses its quotes).
     pub fn args(&self) -> Vec<String> {
+        self.args_with(true)
+    }
+    /// `args`, but a lone quoted identifier keeps its quotes: the text is source, to be read as an
+    /// expression (the source of a page field, `field("Assign-to No."; "Assign-to No.")`).
+    pub fn args_raw(&self) -> Vec<String> {
+        self.args_with(false)
+    }
+    fn args_with(&self, unquote: bool) -> Vec<String> {
         let Some(args) = self.0.children().find(|n| n.kind() == SyntaxKind::SectionArgs) else {
             return Vec::new();
         };
@@ -389,7 +397,7 @@ impl Section {
         let mut cur: Vec<&SyntaxToken> = Vec::new();
         let mut flush = |cur: &mut Vec<&SyntaxToken>| {
             let sig: Vec<_> = cur.iter().filter(|t| !t.kind().is_trivia()).collect();
-            let text = if sig.len() == 1 && sig[0].kind() == SyntaxKind::QuotedIdent {
+            let text = if unquote && sig.len() == 1 && sig[0].kind() == SyntaxKind::QuotedIdent {
                 ident_text(sig[0])
             } else {
                 cur.iter().map(|t| t.text()).collect::<String>().trim().to_string()

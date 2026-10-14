@@ -394,6 +394,23 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         println!("\n{}", refusals::render_top("not-run tests", &list, n));
     }
 
+    if let Some(needle) = &a.refusal_detail {
+        let list = refusals::detail(
+            results.iter().filter_map(|r| match &r.outcome {
+                Outcome::NotRun(why) => Some((
+                    CaseId {
+                        codeunit: r.codeunit,
+                        name: r.test.clone(),
+                    },
+                    why.clone(),
+                )),
+                _ => None,
+            }),
+            needle,
+        );
+        println!("\n{}", refusals::render_top(&format!("not-run tests containing `{needle}`"), &list, 30));
+    }
+
     let total_time = started.elapsed();
     if let Some(path) = &a.junit {
         write_file(

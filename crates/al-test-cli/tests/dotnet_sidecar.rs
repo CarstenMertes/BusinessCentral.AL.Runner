@@ -758,10 +758,11 @@ fn a_session_takes_a_standby_that_started_in_the_background_and_waits_for_nothin
     assert_eq!(used.from_standby, 1, "{used:?}");
     // Starting took real time; the session did not wait for it.
     assert!(ready.start_total > Duration::ZERO, "{ready:?}");
+    // (Finding `dotnet`, and building the sidecar on a cold cache, was waited for before.)
+    let waited = used.waited_total - ready.waited_total;
     assert!(
-        used.waited_total < ready.start_total / 2,
-        "waited {:?}, start {:?}",
-        used.waited_total,
+        waited < ready.start_total / 2,
+        "waited {waited:?}, start {:?}",
         ready.start_total
     );
     a.close();

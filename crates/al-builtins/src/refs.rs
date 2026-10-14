@@ -52,6 +52,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.HasFilter#1",
     "RecordRef.GetFilters#1",
     "RecordRef.GetView#1",
+    "RecordRef.FilterGroup#1",
     "RecordRef.SetView#1",
     "RecordRef.Duplicate#1",
     "RecordRef.RecordId#1",

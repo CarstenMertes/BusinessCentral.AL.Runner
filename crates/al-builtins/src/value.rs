@@ -668,6 +668,13 @@ pub struct SessionSettingsState {
     pub company: String,
 }
 
+/// What an `HttpRequestMessage` holds (corpus network/TestHttpRequestMessage.al). Nothing is sent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HttpRequestState {
+    pub method: Option<String>,
+    pub uri: Option<String>,
+}
+
 /// What a `Notification` holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NotificationState {
@@ -763,6 +770,8 @@ pub enum LibraryValue {
     ModuleInfo(ModuleInfoState),
     /// A `DataTransfer` that `SetTables` staged: (source table, destination table).
     DataTransfer(Option<(i32, i32)>),
+    /// An `HttpRequestMessage` that was configured (an untouched one is `Empty`).
+    HttpRequest(HttpRequestState),
     /// A `Version`: major, minor, build, revision.
     Version([i32; 4]),
     /// An `ErrorInfo` (the zero-argument `Create` and `Create(Message, ...)` build one).

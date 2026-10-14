@@ -12,6 +12,7 @@ use al_builtins::value::{Instance, RecordState, RtType, Value};
 use al_data::{InsertOutcome, RenameOutcome, Scan, Store, TableDef, WriteOutcome, memory::MemStore, position};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub(crate) type Rec = Rc<RefCell<RecordState>>;
 
@@ -37,7 +38,7 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 }
 
 impl Session {
-    pub(crate) fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
+    pub(crate) fn table(&self, rec: &Rec) -> Result<Arc<TableDef>, Signal> {
         let t = rec.borrow().table as usize;
         self.engine.tables[t]
             .clone()
@@ -46,7 +47,8 @@ impl Session {
 
     /// Field values of a fresh record: `InitValue` where declared, else the type default.
     pub(crate) fn initial_fields(&mut self, table: usize) -> Vec<Value> {
-        let Some(t) = self.engine.program.objects[table].table.clone() else {
+        let engine = self.engine.clone();
+        let Some(t) = engine.program.objects[table].table.as_ref() else {
             return Vec::new();
         };
         t.fields

@@ -8,7 +8,7 @@
 
 use super::mat::Entry;
 use super::objects::{Catalog, base_kind, ident, prop, string_lit, truthy};
-use super::{Providers, blank, option, pos};
+use super::{Blank, Providers, blank, pos};
 use al_builtins::value::{RtType, Value};
 use al_data::TableDef;
 use al_ir::{Field, Object};
@@ -84,6 +84,7 @@ fn table_of<'a>(c: &'a Catalog, i: usize) -> Option<(&'a Object, &'a al_ir::Tabl
 pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
+    let blank = Blank::new(t);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
         let (Some(tid), "table") = (o.id, base_kind(o)) else {
@@ -96,13 +97,13 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             continue;
         };
         for f in &schema.fields {
-            let mut r = blank(t);
+            let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(tid as i32);
             r[pos(t, 2)] = Value::Integer(f.id as i32);
-            match field_row(&c, o, schema, f, t, &mut r) {
+            match field_row(&c, o, schema, f, t, &blank, &mut r) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {
-                    let mut k = blank(t);
+                    let mut k = blank.row();
                     k[pos(t, 1)] = Value::Integer(tid as i32);
                     k[pos(t, 2)] = Value::Integer(f.id as i32);
                     out.push(Entry::poisoned(k, why));
@@ -119,6 +120,7 @@ fn field_row(
     schema: &al_ir::Table,
     f: &Field,
     t: &TableDef,
+    blank: &Blank,
     r: &mut al_data::Row,
 ) -> Result<(), String> {
     let what = || format!("field '{}' of table '{}'", f.name, table.name);
@@ -129,7 +131,7 @@ fn field_row(
             .map(|(_, v)| v.trim())
     };
     r[pos(t, 4)] = Value::Text(f.name.clone());
-    r[pos(t, 5)] = option(
+    r[pos(t, 5)] = blank.option(
         t,
         5,
         type_ordinal(&f.ty).ok_or_else(|| format!("{}: the type is not understood", what()))?,
@@ -154,7 +156,7 @@ fn field_row(
         Some(v) => ordinal_of(OBSOLETE_STATES, v)
             .ok_or_else(|| format!("{}: ObsoleteState `{v}` is not understood", what()))?,
     };
-    r[pos(t, 25)] = option(t, 25, state);
+    r[pos(t, 25)] = blank.option(t, 25, state);
     r[pos(t, 26)] = Value::Text(fprop("ObsoleteReason").and_then(string_lit).unwrap_or_default());
     // DataClassification: the field's own; else the table's; a FlowField is SystemMetadata and a
     // silent Blob is CustomerContent (TestFieldDataClassificationInheritance.al:17-50).
@@ -170,7 +172,7 @@ fn field_row(
                 .ok_or_else(|| format!("table '{}': DataClassification `{v}` is not understood", table.name))?,
         },
     };
-    r[pos(t, 27)] = option(t, 27, dc);
+    r[pos(t, 27)] = blank.option(t, 27, dc);
     // RelationTableNo and RelationFieldNo (TestFieldDataClassificationVirtualTable.al:50-72).
     match f.relation_arms.as_slice() {
         [] if f.relation => return Err(format!("{}: the TableRelation is not understood", what())),
@@ -216,6 +218,7 @@ fn field_row(
 pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
+    let blank = Blank::new(t);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
         let (Some(tid), "table") = (o.id, base_kind(o)) else {
@@ -235,7 +238,7 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                     .find(|(k, _)| k.eq_ignore_ascii_case(name))
                     .map(|(_, v)| v.trim())
             };
-            let mut r = blank(t);
+            let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(tid as i32);
             r[pos(t, 2)] = Value::Integer(n as i32 + 1);
             // The fields, comma-separated in declaration order (TestKeyVirtualTable.al:73-82).
@@ -251,7 +254,7 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             out.push(Entry::ok(r));
         }
         // BC adds a unique key on the SystemId after the declared ones (TestKeyVirtualTable.al:50-56).
-        let mut r = blank(t);
+        let mut r = blank.row();
         r[pos(t, 1)] = Value::Integer(tid as i32);
         r[pos(t, 2)] = Value::Integer(schema.keys.len() as i32 + 1);
         r[pos(t, 4)] = Value::Text("$systemId".into());

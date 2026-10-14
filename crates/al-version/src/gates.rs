@@ -27,6 +27,14 @@ pub enum Gate {
     /// null-App-ID row. Before, the lookup keys on the App ID. Not consumed yet: the
     /// permission provider is not implemented.
     SuperPermissionSetIgnoresAppId,
+    /// `Environment Information.IsSaaSInfrastructure` is false. Before, it is true (the oracle
+    /// runs of 27.5 and 28.5 answer true, the 29.0 run false, on the same container setup). It is
+    /// `NavUserAccountHelper.IsAzure()` in the server-class registry.
+    NotSaaSInfrastructure,
+    /// The header of the dataset XML that `Report.SaveAs(..., ReportFormat::Xml, ...)` writes has a
+    /// `ReportCaption` element after `ReportName` and, after `Minute`, the company information
+    /// block. Before, it has neither. Not consumed yet: `Report.SaveAs` is not implemented.
+    ReportSaveAsXmlHeaderHasCompanyBlock,
 }
 
 impl Gate {
@@ -34,6 +42,8 @@ impl Gate {
         Gate::FlowFieldSumIntegerIntoBigInteger,
         Gate::FlowFieldMinMaxOverRowVersionRefused,
         Gate::SuperPermissionSetIgnoresAppId,
+        Gate::NotSaaSInfrastructure,
+        Gate::ReportSaveAsXmlHeaderHasCompanyBlock,
     ];
 
     /// The first BC major with the new behaviour.
@@ -41,7 +51,9 @@ impl Gate {
         match self {
             Gate::FlowFieldSumIntegerIntoBigInteger
             | Gate::FlowFieldMinMaxOverRowVersionRefused
-            | Gate::SuperPermissionSetIgnoresAppId => 29,
+            | Gate::SuperPermissionSetIgnoresAppId
+            | Gate::NotSaaSInfrastructure
+            | Gate::ReportSaveAsXmlHeaderHasCompanyBlock => 29,
         }
     }
 
@@ -59,6 +71,14 @@ impl Gate {
             Gate::SuperPermissionSetIgnoresAppId => &[Evidence {
                 file: "permissions/TestMetadataPermissionSet.al",
                 lines: "98,106",
+            }],
+            Gate::NotSaaSInfrastructure => &[Evidence {
+                file: "session/TestEnvironmentUserTenantContracts.al",
+                lines: "169",
+            }],
+            Gate::ReportSaveAsXmlHeaderHasCompanyBlock => &[Evidence {
+                file: "handlers/TestReportSaveAsDatasetContracts.al",
+                lines: "243",
             }],
         }
     }

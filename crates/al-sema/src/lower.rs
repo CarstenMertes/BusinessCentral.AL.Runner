@@ -11,17 +11,35 @@ use al_ir as ir;
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
 use std::collections::HashMap;
 
-/// (lower-case attribute name, argument constants) per attribute.
-type Attrs = Vec<(String, Vec<ir::Const>)>;
+/// Wall time of the parts of a compile (`--timings`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompileTimings {
+    /// Reading the apps: parsing the workspace's files, scanning the dependencies'.
+    pub load: std::time::Duration,
+    pub members: std::time::Duration,
+    pub check: crate::check::CheckTimings,
+    pub lower: std::time::Duration,
+}
 
 pub struct Lowered {
-    pub program: ir::Program,
+    /// Zero unless the compile ran through `compile_apps_with`.
+    pub timings: CompileTimings,
+    /// Shared with the engine that runs it: the program is big, and copying it cost as much as
+    /// lowering the workspace's own code.
+    pub program: std::sync::Arc<ir::Program>,
     /// Per object, per routine: why it cannot run (empty = it can).
     pub unsupported: Vec<Vec<Vec<String>>>,
     /// Per object, per routine: the routines it calls directly, as (object, routine).
     pub calls: Vec<Vec<Vec<(usize, usize)>>>,
     /// Per object: it belongs to a dependency app, so no test or install code of it runs (ADR-013).
     pub dependency: Vec<bool>,
+}
+
+impl Lowered {
+    /// The program, to change: copies it only if an engine already holds it.
+    pub fn program_mut(&mut self) -> &mut ir::Program {
+        std::sync::Arc::make_mut(&mut self.program)
+    }
 }
 
 pub fn lower(ws: &Workspace, members: &MemberTable<'_>, checked: &CheckResult) -> Lowered {
@@ -36,6 +54,18 @@ pub fn lower_with_positions(
     checked: &CheckResult,
     positions: bool,
 ) -> Lowered {
+    lower_with_workers(ws, members, checked, positions, lower_workers())
+}
+
+/// `lower_with_positions` with `workers` threads lowering the objects of dependency apps next to
+/// the one that lowers the workspace's. The result does not depend on the number.
+pub fn lower_with_workers(
+    ws: &Workspace,
+    members: &MemberTable<'_>,
+    checked: &CheckResult,
+    positions: bool,
+    workers: usize,
+) -> Lowered {
     let catalog = al_builtins::catalog::Catalog::load();
     // With dependency apps the checker found what the workspace reaches in them (ADR-013);
     // the rest is not compiled and no longer resolves.
@@ -49,76 +79,65 @@ pub fn lower_with_positions(
     } else {
         Vec::new()
     };
-    // Routine numbering: every procedure and trigger node of an object, in source order.
-    let routine_nodes: Vec<Vec<ast::Routine>> = (0..ws.objects.len())
+    // Routine numbering: every procedure and trigger node of an object, in source order. The
+    // nodes of the objects this thread lowers stay in `nodes`; the start offset of every routine
+    // is what other threads need, so it is asked of a node once.
+    let active_v: Vec<bool> = (0..ws.objects.len()).map(active).collect();
+    let nodes = Nodes::new(ws, active_v.clone());
+    let routine_offsets: Vec<Vec<usize>> = (0..ws.objects.len())
         .map(|oi| {
-            if active(oi) {
-                ast::routines_in(ws.object_ast(oi).syntax())
-            } else {
-                Vec::new()
-            }
+            nodes
+                .get(oi)
+                .iter()
+                .map(|r| usize::from(r.syntax().text_range().start()))
+                .collect()
         })
         .collect();
-    // The routines of object `q` that exist in the compiled program: all of a workspace object's,
-    // the reached ones of a dependency's. What a variable can drive is limited to those.
-    let compiled_routines = |q: usize| -> Vec<(usize, usize)> {
-        (0..routine_nodes[q].len())
-            .filter(|&ri| {
-                demand.is_none_or(|d| {
-                    !ws.is_dependency(q)
-                        || d.reached(q, usize::from(routine_nodes[q][ri].syntax().text_range().start()))
-                })
-            })
-            .map(|ri| (q, ri))
-            .collect()
-    };
-    let routine_at: HashMap<(usize, usize), usize> = routine_nodes
+    let routine_at: HashMap<(usize, usize), usize> = routine_offsets
         .iter()
         .enumerate()
-        .flat_map(|(oi, rs)| {
-            rs.iter()
-                .enumerate()
-                .map(move |(ri, r)| ((oi, usize::from(r.syntax().text_range().start())), ri))
-        })
+        .flat_map(|(oi, offsets)| offsets.iter().enumerate().map(move |(ri, &at)| ((oi, at), ri)))
         .collect();
+    let mut program = ir::Program {
+        objects: Vec::new(),
+        apps: ws
+            .apps
+            .iter()
+            .enumerate()
+            .map(|(i, a)| ir::AppInfo {
+                id: a.id.clone(),
+                name: a.name.clone(),
+                publisher: String::new(),
+                version: String::new(),
+                dependencies: a.dependencies.clone(),
+                resources: Vec::new(),
+                dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
+            })
+            .collect(),
+        dotnet_types: ws
+            .dotnet
+            .iter()
+            .map(|d| ir::DotNetDecl {
+                alias: d.decl.alias.clone(),
+                assembly: d.decl.assembly.clone(),
+                version: d.decl.version.clone(),
+                culture: d.decl.culture.clone(),
+                public_key_token: d.decl.public_key_token.clone(),
+                type_name: d.decl.type_name.clone(),
+            })
+            .collect(),
+        uncompiled_subscribers,
+        ..Default::default()
+    };
     let mut out = Lowered {
-        program: ir::Program {
-            objects: Vec::new(),
-            apps: ws
-                .apps
-                .iter()
-                .enumerate()
-                .map(|(i, a)| ir::AppInfo {
-                    id: a.id.clone(),
-                    name: a.name.clone(),
-                    publisher: String::new(),
-                    version: String::new(),
-                    dependencies: a.dependencies.clone(),
-                    resources: Vec::new(),
-                    dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
-                })
-                .collect(),
-            dotnet_types: ws
-                .dotnet
-                .iter()
-                .map(|d| ir::DotNetDecl {
-                    alias: d.decl.alias.clone(),
-                    assembly: d.decl.assembly.clone(),
-                    version: d.decl.version.clone(),
-                    culture: d.decl.culture.clone(),
-                    public_key_token: d.decl.public_key_token.clone(),
-                    type_name: d.decl.type_name.clone(),
-                })
-                .collect(),
-            uncompiled_subscribers,
-            ..Default::default()
-        },
+        timings: CompileTimings::default(),
+        program: Default::default(),
         unsupported: Vec::new(),
         calls: Vec::new(),
         dependency: (0..ws.objects.len()).map(|oi| ws.is_dependency(oi)).collect(),
     };
     if positions {
-        out.program.sources = ws
+        program.sources = ws
             .files
             .iter()
             .map(|f| ir::SourceFile {
@@ -127,7 +146,6 @@ pub fn lower_with_positions(
             })
             .collect();
     }
-    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
     // The table whose record is the implicit `Rec` of each object, and each table's extensions.
     let mut table_of: Vec<Option<usize>> = vec![None; ws.objects.len()];
     let mut extensions: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -467,64 +485,420 @@ pub fn lower_with_positions(
             );
         }
     }
-    // The global slot of each variable of a page extension, by lower-case name. The page's control
-    // tree is built before the extensions are lowered, and binds their controls to these slots.
-    let ext_slots: std::cell::RefCell<Vec<HashMap<String, usize>>> =
-        std::cell::RefCell::new(vec![HashMap::new(); ws.objects.len()]);
-    let new_lowerer = |oi: usize| Lowerer {
-        rec_slot: None,
-        table_of: &table_of,
+    // From here on objects are lowered one at a time, each a function of the data above.
+    let mut shared = Shared {
         ws,
         members,
         checked,
         catalog: &catalog,
-        routine_at: &routine_at,
+        demand,
+        positions,
+        active: active_v,
+        table_of,
+        page_temporary,
+        page_extensions,
+        page_reasons,
+        page_parts,
+        page_runs,
+        xml_irs,
+        report_irs,
+        ext_irs,
+        ext_slots: Vec::new(),
+        routine_offsets,
+        routine_at,
+        extensions,
+        ext_base,
+    };
+    // The global slot of each variable of a page extension, by lower-case name. The page's control
+    // tree is built before the extensions are lowered, and binds their controls to these slots.
+    let mut ext_slot_table: Vec<HashMap<String, usize>> = vec![HashMap::new(); ws.objects.len()];
+    {
+        let local = Local::new(nodes);
+        let seq = Seq::new(&shared);
+        for exts in shared.page_extensions.values() {
+            for &e in exts {
+                let lw = make_lowerer(&shared, &local, &seq, e);
+                let mut slots = HashMap::new();
+                for v in ws.object_ast(e).var_decls() {
+                    let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+                    for n in v.names() {
+                        if lw.rt(&ty).is_ok() {
+                            let next = slots.len();
+                            slots.insert(n.to_lowercase(), next);
+                        }
+                    }
+                }
+                ext_slot_table[e] = slots;
+            }
+        }
+    }
+    shared.ext_slots = ext_slot_table;
+    let n = ws.objects.len();
+    // The workspace's own objects are lowered in order on this thread: the source positions they
+    // add to the program are numbered as they come. The objects of dependency apps carry no
+    // positions and are independent of each other, so worker threads share them out while this
+    // thread works, and take over when it is done.
+    let theirs: Vec<usize> = (0..n).filter(|&oi| shared.active[oi] && ws.is_dependency(oi)).collect();
+    let workers = workers.min(theirs.len() / PARALLEL_OBJECTS_PER_WORKER);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let take_some = |local: &Local<'_>, seq: &Seq<'_>| -> Vec<(usize, Piece)> {
+        let mut out = Vec::new();
+        loop {
+            let k = next.fetch_add(LOWER_CHUNK, std::sync::atomic::Ordering::Relaxed);
+            if k >= theirs.len() {
+                return out;
+            }
+            for &oi in &theirs[k..(k + LOWER_CHUNK).min(theirs.len())] {
+                let piece = lower_object(&shared, local, seq, oi, &mut Vec::new(), &mut HashMap::new());
+                out.push((oi, piece));
+            }
+        }
+    };
+    let mut pieces: Vec<Option<Piece>> = (0..n).map(|_| None).collect();
+    let (local, _) = (Local::new(Nodes::new(ws, shared.active.clone())), ());
+    let seq = Seq::new(&shared);
+    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
+    let done: Vec<Vec<(usize, Piece)>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                std::thread::Builder::new()
+                    .stack_size(LOWER_STACK)
+                    .spawn_scoped(scope, || {
+                        let local = Local::new(Nodes::new(ws, shared.active.clone()));
+                        let seq = Seq::new(&shared);
+                        take_some(&local, &seq)
+                    })
+                    .expect("spawn a lowering worker")
+            })
+            .collect();
+        #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
+        for oi in 0..n {
+            if shared.active[oi] && !ws.is_dependency(oi) {
+                pieces[oi] = Some(lower_object(
+                    &shared,
+                    &local,
+                    &seq,
+                    oi,
+                    &mut program.positions,
+                    &mut line_cache,
+                ));
+            }
+        }
+        let mut done = vec![take_some(&local, &seq)];
+        done.extend(
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("a lowering worker panicked")),
+        );
+        done
+    });
+    for (oi, piece) in done.into_iter().flatten() {
+        pieces[oi] = Some(piece);
+    }
+    // Objects nothing compiled are shells.
+    #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
+    for oi in 0..n {
+        if pieces[oi].is_none() {
+            pieces[oi] = Some(lower_object(
+                &shared,
+                &local,
+                &seq,
+                oi,
+                &mut Vec::new(),
+                &mut line_cache,
+            ));
+        }
+    }
+    for piece in pieces.into_iter().flatten() {
+        program.objects.push(piece.object);
+        out.unsupported.push(piece.unsupported);
+        out.calls.push(piece.calls);
+    }
+    out.program = std::sync::Arc::new(program);
+    out
+}
+
+/// The lowering of one object: its IR, why each routine cannot run, and the routines each calls.
+struct Piece {
+    object: ir::Object,
+    unsupported: Vec<Vec<String>>,
+    calls: Vec<Vec<(usize, usize)>>,
+}
+
+/// How many threads lower dependency objects. `AL_LOWER_THREADS` sets it; the default is the
+/// number of cores.
+fn lower_workers() -> usize {
+    std::env::var("AL_LOWER_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .clamp(1, 32)
+}
+
+/// A thread is started for at least this many objects.
+const PARALLEL_OBJECTS_PER_WORKER: usize = 16;
+/// Objects a lowering worker takes at a time.
+const LOWER_CHUNK: usize = 4;
+/// Stack of a lowering worker: lowering recurses on the nesting of the code.
+const LOWER_STACK: usize = 64 << 20;
+
+/// What the lowering of an object reads that is plain data, built once and read by every thread.
+struct Shared<'a> {
+    ws: &'a Workspace,
+    members: &'a MemberTable<'a>,
+    checked: &'a CheckResult,
+    catalog: &'a al_builtins::catalog::Catalog,
+    demand: Option<&'a crate::check::demand::Demand>,
+    /// Statements carry source positions (`lower_with_positions`).
+    positions: bool,
+    /// Per object: it is part of the compile (see `Workspace::restrict_to`).
+    active: Vec<bool>,
+    /// The table whose record is the implicit `Rec` of each object.
+    table_of: Vec<Option<usize>>,
+    page_temporary: Vec<bool>,
+    page_extensions: HashMap<usize, Vec<usize>>,
+    page_reasons: Vec<Vec<String>>,
+    page_parts: Vec<Vec<usize>>,
+    page_runs: Vec<Vec<usize>>,
+    xml_irs: Vec<Option<ir::XmlPort>>,
+    report_irs: Vec<Option<ir::Report>>,
+    ext_irs: Vec<Option<ir::ReportExt>>,
+    /// The global slot of each variable of a page extension, by lower-case name.
+    ext_slots: Vec<HashMap<String, usize>>,
+    /// The start offset of every routine, numbered as `Nodes` numbers them.
+    routine_offsets: Vec<Vec<usize>>,
+    routine_at: HashMap<(usize, usize), usize>,
+    /// The extensions of each table.
+    extensions: HashMap<usize, Vec<usize>>,
+    /// For a report extension that changes a run, the report it belongs to.
+    ext_base: Vec<Option<usize>>,
+}
+
+/// The routine nodes of the objects, built when first asked for. A syntax tree belongs to the
+/// thread that made it, so each thread has its own.
+struct Nodes<'a> {
+    ws: &'a Workspace,
+    active: Vec<bool>,
+    cells: Vec<std::cell::OnceCell<Vec<ast::Routine>>>,
+}
+
+impl<'a> Nodes<'a> {
+    fn new(ws: &'a Workspace, active: Vec<bool>) -> Nodes<'a> {
+        Nodes {
+            ws,
+            active,
+            cells: (0..ws.objects.len()).map(|_| std::cell::OnceCell::new()).collect(),
+        }
+    }
+
+    /// The procedures and triggers of object `oi` in source order (none if it is not compiled).
+    fn get(&self, oi: usize) -> &[ast::Routine] {
+        self.cells[oi].get_or_init(|| {
+            if self.active[oi] {
+                ast::routines_in(self.ws.object_ast(oi).syntax())
+            } else {
+                Vec::new()
+            }
+        })
+    }
+}
+
+/// Routines as (object, routine) pairs, shared.
+type Calls = std::rc::Rc<Vec<(usize, usize)>>;
+
+/// What one thread keeps while it lowers objects.
+struct Local<'a> {
+    nodes: Nodes<'a>,
+    memo: Memo,
+    /// `compiled_routines` memo.
+    compiled: std::cell::RefCell<HashMap<usize, Calls>>,
+}
+
+impl<'a> Local<'a> {
+    fn new(nodes: Nodes<'a>) -> Local<'a> {
+        Local {
+            nodes,
+            memo: Memo::default(),
+            compiled: Default::default(),
+        }
+    }
+
+    /// The routines of object `q` that exist in the compiled program: all of a workspace object's,
+    /// the reached ones of a dependency's. What a variable can drive is limited to those.
+    fn compiled_routines(&self, sh: &Shared<'_>, q: usize) -> Calls {
+        if let Some(hit) = self.compiled.borrow().get(&q) {
+            return hit.clone();
+        }
+        let offsets = &sh.routine_offsets[q];
+        let found: std::rc::Rc<Vec<(usize, usize)>> = std::rc::Rc::new(
+            (0..offsets.len())
+                .filter(|&ri| {
+                    sh.demand
+                        .is_none_or(|d| !sh.ws.is_dependency(q) || d.reached(q, offsets[ri]))
+                })
+                .map(|ri| (q, ri))
+                .collect(),
+        );
+        self.compiled.borrow_mut().insert(q, found.clone());
+        found
+    }
+}
+
+/// The layouts of pages, report request pages, XML ports and report extensions, built from the
+/// syntax tree of an object when first asked for. The prologue of `lower_with_positions` builds
+/// the same layouts to find what the objects need of each other; a layout holds syntax nodes,
+/// which belong to the thread that made them, so each thread builds the ones it reads.
+struct Seq<'a> {
+    ws: &'a Workspace,
+    active: &'a [bool],
+    page_extensions: &'a HashMap<usize, Vec<usize>>,
+    ext_base: &'a [Option<usize>],
+    page: Vec<std::cell::OnceCell<Option<crate::pages::Layout>>>,
+    xml: Vec<std::cell::OnceCell<Option<crate::xmlports::Layout>>>,
+    report: Vec<std::cell::OnceCell<Option<crate::reports::Layout>>>,
+    ext: Vec<std::cell::OnceCell<Option<crate::reports::ExtLayout>>>,
+}
+
+impl<'a> Seq<'a> {
+    fn new(sh: &'a Shared<'a>) -> Seq<'a> {
+        fn cells<T>(n: usize) -> Vec<std::cell::OnceCell<T>> {
+            (0..n).map(|_| std::cell::OnceCell::new()).collect()
+        }
+        let n = sh.ws.objects.len();
+        Seq {
+            ws: sh.ws,
+            active: &sh.active,
+            page_extensions: &sh.page_extensions,
+            ext_base: &sh.ext_base,
+            page: cells(n),
+            xml: cells(n),
+            report: cells(n),
+            ext: cells(n),
+        }
+    }
+
+    /// The extensions of page or report `oi` with their syntax trees.
+    fn extensions(&self, oi: usize) -> Vec<(usize, ast::Object)> {
+        self.page_extensions
+            .get(&oi)
+            .map(|v| v.iter().map(|&e| (e, self.ws.object_ast(e))).collect())
+            .unwrap_or_default()
+    }
+
+    /// The control tree of a page; of a report, its request page.
+    fn page_layout(&self, oi: usize) -> Option<&crate::pages::Layout> {
+        self.page[oi]
+            .get_or_init(|| match self.ws.objects[oi].kind {
+                ObjKind::Page if self.active[oi] => {
+                    Some(crate::pages::layout_with(&self.ws.object_ast(oi), &self.extensions(oi)))
+                }
+                ObjKind::Report if self.active[oi] => {
+                    let l = self.report(oi)?;
+                    Some(crate::reports::request_layout(&self.ws.object_ast(oi), &l.items, &self.extensions(oi)).0)
+                }
+                _ => None,
+            })
+            .as_ref()
+    }
+
+    fn xml(&self, oi: usize) -> Option<&crate::xmlports::Layout> {
+        self.xml[oi]
+            .get_or_init(|| {
+                (self.ws.objects[oi].kind == ObjKind::XmlPort && self.active[oi])
+                    .then(|| crate::xmlports::layout(&self.ws.object_ast(oi)))
+            })
+            .as_ref()
+    }
+
+    fn report(&self, oi: usize) -> Option<&crate::reports::Layout> {
+        self.report[oi]
+            .get_or_init(|| {
+                (self.ws.objects[oi].kind == ObjKind::Report && self.active[oi])
+                    .then(|| crate::reports::layout(&self.ws.object_ast(oi)))
+            })
+            .as_ref()
+    }
+
+    /// The report a report extension that changes a run belongs to.
+    fn ext_base(&self, oi: usize) -> Option<usize> {
+        self.ext_base[oi]
+    }
+
+    fn ext(&self, oi: usize) -> Option<&crate::reports::ExtLayout> {
+        self.ext[oi]
+            .get_or_init(|| self.ext_base[oi].map(|_| crate::reports::ext_layout(&self.ws.object_ast(oi))))
+            .as_ref()
+    }
+}
+
+fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a Seq<'a>, oi: usize) -> Lowerer<'a> {
+    Lowerer {
+        rec_slot: None,
+        table_of: &sh.table_of,
+        ws: sh.ws,
+        members: sh.members,
+        checked: sh.checked,
+        catalog: sh.catalog,
+        routine_at: &sh.routine_at,
         oi,
-        file: ws.objects[oi].file,
+        file: sh.ws.objects[oi].file,
         globals: HashMap::new(),
         locals: HashMap::new(),
         global_labels: HashMap::new(),
         local_labels: HashMap::new(),
         reasons: Vec::new(),
         calls: Vec::new(),
-        page_reasons: &page_reasons,
-        layouts: &layouts,
-        xmlports: &xml_irs,
-        reports: &report_irs,
-        attrs: Default::default(),
+        page_reasons: &sh.page_reasons,
+        layouts: seq,
+        xmlports: &sh.xml_irs,
+        reports: &sh.report_irs,
+        memo: &tl.memo,
         ret_ty: None,
         ret_decl: None,
-        routine_nodes: &routine_nodes,
-        ext_slots: &ext_slots,
-        page_extensions: &page_extensions,
+        routine_nodes: &tl.nodes,
+        ext_slots: &sh.ext_slots,
+        page_extensions: &sh.page_extensions,
         positions: Vec::new(),
         lines: None,
         emit_pos: false,
         routine_idx: 0,
-    };
-    for exts in page_extensions.values() {
-        for &e in exts {
-            let lw = new_lowerer(e);
-            let mut slots = HashMap::new();
-            for v in ws.object_ast(e).var_decls() {
-                let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
-                for n in v.names() {
-                    if lw.rt(&ty).is_ok() {
-                        let next = slots.len();
-                        slots.insert(n.to_lowercase(), next);
-                    }
-                }
-            }
-            ext_slots.borrow_mut()[e] = slots;
-        }
     }
-    for (oi, o) in ws.objects.iter().enumerate() {
-        if !active(oi) {
-            // Not compiled: a shell keeps object numbers stable. Its kind is `uncompiled table` and
-            // so on, so nothing the runtime looks up by kind and id (`Codeunit.Run(80)`) finds it
-            // and runs it as an empty object; the few lookups that would answer "no such object"
-            // (`RecordRef.Open(18)`) look for the shell and refuse instead.
-            out.program.objects.push(ir::Object {
+}
+
+/// Lowers object `oi`. `positions` and `line_cache` are the source positions and file line tables
+/// of the objects lowered so far on this thread.
+fn lower_object<'a>(
+    sh: &'a Shared<'a>,
+    tl: &'a Local<'a>,
+    seq: &'a Seq<'a>,
+    oi: usize,
+    positions: &mut Vec<ir::SrcPos>,
+    line_cache: &mut HashMap<usize, std::rc::Rc<FileLines>>,
+) -> Piece {
+    let ws = sh.ws;
+    let members = sh.members;
+    let checked = sh.checked;
+    let demand = sh.demand;
+    let table_of = &sh.table_of;
+    let page_temporary = &sh.page_temporary;
+    let page_extensions = &sh.page_extensions;
+    let page_reasons = &sh.page_reasons;
+    let page_parts = &sh.page_parts;
+    let page_runs = &sh.page_runs;
+    let xml_irs = &sh.xml_irs;
+    let report_irs = &sh.report_irs;
+    let ext_irs = &sh.ext_irs;
+    let routine_at = &sh.routine_at;
+    let routine_offsets = &sh.routine_offsets;
+    let extensions = &sh.extensions;
+    let o = &ws.objects[oi];
+    if !sh.active[oi] {
+        // Not compiled: a shell keeps object numbers stable. Its kind is `uncompiled table` and
+        // so on, so nothing the runtime looks up by kind and id (`Codeunit.Run(80)`) finds it
+        // and runs it as an empty object; the few lookups that would answer "no such object"
+        // (`RecordRef.Open(18)`) look for the shell and refuse instead.
+        return Piece {
+            object: ir::Object {
                 kind: format!("uncompiled {}", o.kind.label()),
                 id: o.id,
                 name: o.name.clone(),
@@ -554,313 +928,311 @@ pub fn lower_with_positions(
                         properties: l.properties.clone(),
                     })
                     .collect(),
-            });
-            out.unsupported.push(Vec::new());
-            out.calls.push(Vec::new());
-            continue;
-        }
-        let obj = ws.object_ast(oi);
-        let mut lw = new_lowerer(oi);
-        lw.positions = std::mem::take(&mut out.program.positions);
-        // Positions only feed call stacks and error lines; for a dependency app they cost a third of
-        // lowering and no corpus test reads them, so its routines carry none (measured in ADR-013).
-        lw.lines = (positions && !ws.is_dependency(oi)).then(|| {
-            line_cache
-                .entry(o.file)
-                .or_insert_with(|| std::rc::Rc::new(FileLines::new(ws, o.file)))
-                .clone()
-        });
-        let mut globals = Vec::new();
-        let mut global_reasons = Vec::new();
-        if let Some(l) = &xml_layouts[oi] {
-            for n in &l.nodes {
-                let (ty, table) = match n.kind {
-                    ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr => (Ok(RtType::Text(None)), false),
-                    ir::XmlNodeKind::Table => (
-                        lw.rt(&Ty::Record {
-                            table: n.args.get(1).cloned().unwrap_or_default(),
-                            temporary: n.section.properties().any(|p| {
-                                p.name().eq_ignore_ascii_case("UseTemporary")
-                                    && p.value_text().trim().eq_ignore_ascii_case("true")
-                            }),
-                        }),
-                        true,
-                    ),
-                    _ => continue,
-                };
-                let key = n.name.to_lowercase();
-                if lw.globals.contains_key(&key) {
-                    continue;
-                }
-                lw.globals.insert(key, globals.len());
-                match ty {
-                    Ok(rt) => globals.push(ir::Slot {
-                        name: n.name.clone(),
-                        ty: rt,
-                    }),
-                    Err(e) => {
-                        global_reasons.push(format!(
-                            "{} `{}`: {e}",
-                            if table { "table element" } else { "variable" },
-                            n.name
-                        ));
-                        globals.push(ir::Slot {
-                            name: n.name.clone(),
-                            ty: RtType::Variant,
-                        });
-                    }
-                }
-            }
-            for name in ["__source", "__destination"] {
-                let ty = if name == "__source" { "InStream" } else { "OutStream" };
-                globals.push(ir::Slot {
-                    name: name.into(),
-                    ty: RtType::Library(ty.into()),
-                });
-            }
-        }
-        if let Some(l) = &report_layouts[oi] {
-            for i in &l.items {
-                let key = i.name.to_lowercase();
-                if lw.globals.contains_key(&key) {
-                    continue;
-                }
-                let ty = lw.rt(&Ty::Record {
-                    table: i.table.clone(),
-                    temporary: false,
-                });
-                lw.globals.insert(key, globals.len());
-                match ty {
-                    Ok(rt) => globals.push(ir::Slot {
-                        name: i.name.clone(),
-                        ty: rt,
-                    }),
-                    Err(e) => {
-                        global_reasons.push(format!("dataitem `{}`: {e}", i.name));
-                        globals.push(ir::Slot {
-                            name: i.name.clone(),
-                            ty: RtType::Variant,
-                        });
-                    }
-                }
-            }
-            globals.push(ir::Slot {
-                name: "__userequestpage".into(),
-                ty: RtType::Integer,
-            });
-        }
-        // A reportextension that changes a run names the base items' records first (the run points
-        // them at the report's own), then the items it adds.
-        if let (Some(base), Some(l)) = (ext_base[oi], &ext_layouts[oi]) {
-            let base_items = report_layouts[base].as_ref().map_or(&[][..], |b| &b.items[..]);
-            for i in base_items.iter().chain(&l.items) {
-                let key = i.name.to_lowercase();
-                if lw.globals.contains_key(&key) {
-                    continue;
-                }
-                let ty = lw.rt(&Ty::Record {
-                    table: i.table.clone(),
-                    temporary: false,
-                });
-                lw.globals.insert(key, globals.len());
-                match ty {
-                    Ok(rt) => globals.push(ir::Slot {
-                        name: i.name.clone(),
-                        ty: rt,
-                    }),
-                    Err(e) => {
-                        global_reasons.push(format!("dataitem `{}`: {e}", i.name));
-                        globals.push(ir::Slot {
-                            name: i.name.clone(),
-                            ty: RtType::Variant,
-                        });
-                    }
-                }
-            }
-        }
-        for v in obj.var_decls() {
-            let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
-            let label = v.type_ref().as_ref().and_then(label_text);
-            for n in v.names() {
-                if let Some(l) = &label {
-                    lw.global_labels.insert(n.to_lowercase(), l.clone());
-                }
-                match lw.rt(&ty) {
-                    Ok(rt) => {
-                        lw.globals.insert(n.to_lowercase(), globals.len());
-                        globals.push(ir::Slot { name: n, ty: rt });
-                    }
-                    Err(e) => global_reasons.push(format!("global `{n}`: {e}")),
-                }
-            }
-        }
-        let (mut rec_slot, mut xrec_slot) = (None, None);
-        if let Some(t) = table_of[oi] {
-            for (name, slot) in [("Rec", &mut rec_slot), ("xRec", &mut xrec_slot)] {
-                // A codeunit has no xRec.
-                if name == "xRec" && o.kind == ObjKind::Codeunit {
-                    continue;
-                }
-                *slot = Some(globals.len());
-                lw.globals.insert(name.to_lowercase(), globals.len());
-                globals.push(ir::Slot {
-                    name: name.into(),
-                    ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
-                });
-            }
-        }
-        lw.rec_slot = rec_slot;
-        if o.kind == ObjKind::Report {
-            // `CurrPage` of the request page. Typed Variant: the test client puts the page there
-            // when it opens, and AL code cannot name it.
-            globals.push(ir::Slot {
-                name: "CurrPage".into(),
-                ty: RtType::Variant,
-            });
-        }
-        // The page an extension extends, when it is in the workspace.
-        let extended_page = (o.kind == ObjKind::PageExtension)
-            .then(|| page_extensions.iter().find(|(_, v)| v.contains(&oi)).map(|(&p, _)| p))
-            .flatten();
-        if o.kind == ObjKind::Page || extended_page.is_some() {
-            lw.globals.insert("currpage".into(), globals.len());
-            globals.push(ir::Slot {
-                name: "CurrPage".into(),
-                ty: RtType::TestPage(extended_page.unwrap_or(oi) as u32),
-            });
-        }
-        if extended_page.is_some() {
-            debug_assert!(
-                ext_slots.borrow()[oi]
-                    .iter()
-                    .all(|(n, &i)| globals.get(i).is_some_and(|g| g.name.eq_ignore_ascii_case(n))),
-                "the slots of a page extension's variables moved"
-            );
-        }
-        let mut routines = Vec::new();
-        let mut unsupported = Vec::new();
-        let mut calls = Vec::new();
-        for (ri, r) in routine_nodes[oi].iter().enumerate() {
-            lw.routine_idx = ri;
-            lw.reasons = global_reasons.clone();
-            lw.calls.clear();
-            // A trigger of a data item runs with the item's record as its `Rec`.
-            if matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension) {
-                lw.rec_slot = r
-                    .syntax()
-                    .ancestors()
-                    .filter_map(ast::Section::cast)
-                    .find(|s| ["dataitem", "modify"].iter().any(|k| s.name().eq_ignore_ascii_case(k)))
-                    .and_then(|s| s.args().into_iter().next())
-                    .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
-            }
-            // A dependency routine nothing reached was never checked: a stub that refuses.
-            let reached = !checked.is_skipped(oi)
-                && demand.is_none_or(|d| {
-                    !ws.is_dependency(oi) || d.reached(oi, usize::from(r.syntax().text_range().start()))
-                });
-            let routine = if reached { lw.routine(r) } else { lw.stub(r) };
-            // A TestPage drives page routines the call graph cannot see (ADR-012).
-            for s in routine.locals.iter().chain(&globals) {
-                if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
-                    // The page and, transitively, the pages it shows as parts.
-                    let mut seen = vec![p as usize];
-                    let mut at = 0;
-                    while at < seen.len() {
-                        let q = seen[at];
-                        at += 1;
-                        lw.calls.extend(compiled_routines(q));
-                        // The extensions' triggers and procedures run with the page.
-                        for &e in page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
-                            lw.calls.extend(compiled_routines(e));
-                        }
-                        for &part in page_parts[q].iter().chain(&page_runs[q]) {
-                            if !seen.contains(&part) {
-                                seen.push(part);
-                            }
-                        }
-                    }
-                }
-                // An xmlport's triggers are run by Import and Export, and a report's by Run, which
-                // the graph cannot see.
-                if let RtType::Codeunit(p) = s.ty {
-                    let p = p as usize;
-                    if matches!(ws.objects[p].kind, ObjKind::XmlPort | ObjKind::Report) {
-                        lw.calls.extend(compiled_routines(p));
-                    }
-                    if let Some(e) = report_irs[p].as_ref().and_then(|r| r.extension) {
-                        lw.calls.extend(compiled_routines(e));
-                    }
-                }
-            }
-            unsupported.push(std::mem::take(&mut lw.reasons));
-            calls.push(std::mem::take(&mut lw.calls));
-            routines.push(routine);
-        }
-        let request_section = (o.kind == ObjKind::Report)
-            .then(|| obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage")))
-            .flatten();
-        let page = layouts[oi]
-            .as_ref()
-            .map(|l| lw.page(oi, (&obj, request_section.as_ref()), l, &globals, &page_reasons[oi]));
-        // A report's request page properties (`SaveValues`, `Caption`) read like a page's: the
-        // report's own `Caption` wins over the request page's
-        // (corpus handlers/TestReportRequestPageCaption.al).
-        let mut properties: Vec<(String, String)> = obj.properties().map(|p| (p.name(), p.value_text())).collect();
-        if let Some(sec) = &request_section {
-            for p in sec.properties() {
-                let name = p.name();
-                if name.eq_ignore_ascii_case("Caption")
-                    && properties.iter().any(|(k, _)| k.eq_ignore_ascii_case("Caption"))
-                {
-                    continue;
-                }
-                properties.push((name, p.value_text()));
-            }
-        }
-        out.program.objects.push(ir::Object {
-            kind: o.kind.label().to_string(),
-            id: o.id,
-            name: o.name.clone(),
-            globals,
-            routines,
-            properties,
-            enum_values: members[oi]
-                .enum_values
-                .iter()
-                .map(|(v, n)| (*v as i32, n.clone()))
-                .collect(),
-            enum_captions: members[oi]
-                .enum_captions
-                .iter()
-                .map(|(v, c)| (*v as i32, c.clone()))
-                .collect(),
-            // A table whose source cannot be used (a platform table nothing provides, a dependency
-            // file that does not parse) has no members, so it has no schema: the Field and Key
-            // tables report it as not compiled instead of reading fields it does not have.
-            table: (o.kind == ObjKind::Table && ws.usable(oi))
-                .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), &routine_at)),
-            rec_slot,
-            xrec_slot,
-            page,
-            app: o.app as u32,
-            xmlport: xml_irs[oi].clone(),
-            report: report_irs[oi].clone(),
-            report_ext: ext_irs[oi].clone(),
-            namespace: o.namespace.clone(),
-            extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
-            layouts: if o.kind == ObjKind::Report {
-                crate::reports::layouts_of(&obj)
-            } else {
-                Vec::new()
             },
-            query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
-        });
-        out.program.positions = std::mem::take(&mut lw.positions);
-        out.unsupported.push(unsupported);
-        out.calls.push(calls);
+            unsupported: Vec::new(),
+            calls: Vec::new(),
+        };
     }
-    out
+    let obj = ws.object_ast(oi);
+    let mut lw = make_lowerer(sh, tl, seq, oi);
+    lw.positions = std::mem::take(positions);
+    // Positions only feed call stacks and error lines; for a dependency app they cost a third of
+    // lowering and no corpus test reads them, so its routines carry none (measured in ADR-013).
+    lw.lines = (sh.positions && !ws.is_dependency(oi)).then(|| {
+        line_cache
+            .entry(o.file)
+            .or_insert_with(|| std::rc::Rc::new(FileLines::new(ws, o.file)))
+            .clone()
+    });
+    let mut globals = Vec::new();
+    let mut global_reasons = Vec::new();
+    if let Some(l) = seq.xml(oi) {
+        for n in &l.nodes {
+            let (ty, table) = match n.kind {
+                ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr => (Ok(RtType::Text(None)), false),
+                ir::XmlNodeKind::Table => (
+                    lw.rt(&Ty::Record {
+                        table: n.args.get(1).cloned().unwrap_or_default(),
+                        temporary: n.section.properties().any(|p| {
+                            p.name().eq_ignore_ascii_case("UseTemporary")
+                                && p.value_text().trim().eq_ignore_ascii_case("true")
+                        }),
+                    }),
+                    true,
+                ),
+                _ => continue,
+            };
+            let key = n.name.to_lowercase();
+            if lw.globals.contains_key(&key) {
+                continue;
+            }
+            lw.globals.insert(key, globals.len());
+            match ty {
+                Ok(rt) => globals.push(ir::Slot {
+                    name: n.name.clone(),
+                    ty: rt,
+                }),
+                Err(e) => {
+                    global_reasons.push(format!(
+                        "{} `{}`: {e}",
+                        if table { "table element" } else { "variable" },
+                        n.name
+                    ));
+                    globals.push(ir::Slot {
+                        name: n.name.clone(),
+                        ty: RtType::Variant,
+                    });
+                }
+            }
+        }
+        for name in ["__source", "__destination"] {
+            let ty = if name == "__source" { "InStream" } else { "OutStream" };
+            globals.push(ir::Slot {
+                name: name.into(),
+                ty: RtType::Library(ty.into()),
+            });
+        }
+    }
+    if let Some(l) = seq.report(oi) {
+        for i in &l.items {
+            let key = i.name.to_lowercase();
+            if lw.globals.contains_key(&key) {
+                continue;
+            }
+            let ty = lw.rt(&Ty::Record {
+                table: i.table.clone(),
+                temporary: false,
+            });
+            lw.globals.insert(key, globals.len());
+            match ty {
+                Ok(rt) => globals.push(ir::Slot {
+                    name: i.name.clone(),
+                    ty: rt,
+                }),
+                Err(e) => {
+                    global_reasons.push(format!("dataitem `{}`: {e}", i.name));
+                    globals.push(ir::Slot {
+                        name: i.name.clone(),
+                        ty: RtType::Variant,
+                    });
+                }
+            }
+        }
+        globals.push(ir::Slot {
+            name: "__userequestpage".into(),
+            ty: RtType::Integer,
+        });
+    }
+    // A reportextension that changes a run names the base items' records first (the run points
+    // them at the report's own), then the items it adds.
+    if let (Some(base), Some(l)) = (seq.ext_base(oi), seq.ext(oi)) {
+        let base_items = seq.report(base).map_or(&[][..], |b| &b.items[..]);
+        for i in base_items.iter().chain(&l.items) {
+            let key = i.name.to_lowercase();
+            if lw.globals.contains_key(&key) {
+                continue;
+            }
+            let ty = lw.rt(&Ty::Record {
+                table: i.table.clone(),
+                temporary: false,
+            });
+            lw.globals.insert(key, globals.len());
+            match ty {
+                Ok(rt) => globals.push(ir::Slot {
+                    name: i.name.clone(),
+                    ty: rt,
+                }),
+                Err(e) => {
+                    global_reasons.push(format!("dataitem `{}`: {e}", i.name));
+                    globals.push(ir::Slot {
+                        name: i.name.clone(),
+                        ty: RtType::Variant,
+                    });
+                }
+            }
+        }
+    }
+    for v in obj.var_decls() {
+        let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+        let label = v.type_ref().as_ref().and_then(label_text);
+        for n in v.names() {
+            if let Some(l) = &label {
+                lw.global_labels.insert(n.to_lowercase(), l.clone());
+            }
+            match lw.rt(&ty) {
+                Ok(rt) => {
+                    lw.globals.insert(n.to_lowercase(), globals.len());
+                    globals.push(ir::Slot { name: n, ty: rt });
+                }
+                Err(e) => global_reasons.push(format!("global `{n}`: {e}")),
+            }
+        }
+    }
+    let (mut rec_slot, mut xrec_slot) = (None, None);
+    if let Some(t) = table_of[oi] {
+        for (name, slot) in [("Rec", &mut rec_slot), ("xRec", &mut xrec_slot)] {
+            // A codeunit has no xRec.
+            if name == "xRec" && o.kind == ObjKind::Codeunit {
+                continue;
+            }
+            *slot = Some(globals.len());
+            lw.globals.insert(name.to_lowercase(), globals.len());
+            globals.push(ir::Slot {
+                name: name.into(),
+                ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
+            });
+        }
+    }
+    lw.rec_slot = rec_slot;
+    if o.kind == ObjKind::Report {
+        // `CurrPage` of the request page. Typed Variant: the test client puts the page there
+        // when it opens, and AL code cannot name it.
+        globals.push(ir::Slot {
+            name: "CurrPage".into(),
+            ty: RtType::Variant,
+        });
+    }
+    // The page an extension extends, when it is in the workspace.
+    let extended_page = (o.kind == ObjKind::PageExtension)
+        .then(|| page_extensions.iter().find(|(_, v)| v.contains(&oi)).map(|(&p, _)| p))
+        .flatten();
+    if o.kind == ObjKind::Page || extended_page.is_some() {
+        lw.globals.insert("currpage".into(), globals.len());
+        globals.push(ir::Slot {
+            name: "CurrPage".into(),
+            ty: RtType::TestPage(extended_page.unwrap_or(oi) as u32),
+        });
+    }
+    if extended_page.is_some() {
+        debug_assert!(
+            sh.ext_slots[oi]
+                .iter()
+                .all(|(n, &i)| globals.get(i).is_some_and(|g| g.name.eq_ignore_ascii_case(n))),
+            "the slots of a page extension's variables moved"
+        );
+    }
+    let mut routines = Vec::new();
+    let mut unsupported = Vec::new();
+    let mut calls = Vec::new();
+    for (ri, r) in tl.nodes.get(oi).iter().enumerate() {
+        lw.routine_idx = ri;
+        lw.reasons = global_reasons.clone();
+        lw.calls.clear();
+        // A trigger of a data item runs with the item's record as its `Rec`.
+        if matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension) {
+            lw.rec_slot = r
+                .syntax()
+                .ancestors()
+                .filter_map(ast::Section::cast)
+                .find(|s| ["dataitem", "modify"].iter().any(|k| s.name().eq_ignore_ascii_case(k)))
+                .and_then(|s| s.args().into_iter().next())
+                .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
+        }
+        // A dependency routine nothing reached was never checked: a stub that refuses.
+        let reached = !checked.is_skipped(oi)
+            && demand.is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, routine_offsets[oi][ri]));
+        let routine = if reached { lw.routine(r) } else { lw.stub(r) };
+        // A TestPage drives page routines the call graph cannot see (ADR-012).
+        for s in routine.locals.iter().chain(&globals) {
+            if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
+                // The page and, transitively, the pages it shows as parts.
+                let mut seen = vec![p as usize];
+                let mut at = 0;
+                while at < seen.len() {
+                    let q = seen[at];
+                    at += 1;
+                    lw.calls.extend(tl.compiled_routines(sh, q).iter().copied());
+                    // The extensions' triggers and procedures run with the page.
+                    for &e in page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
+                        lw.calls.extend(tl.compiled_routines(sh, e).iter().copied());
+                    }
+                    for &part in page_parts[q].iter().chain(&page_runs[q]) {
+                        if !seen.contains(&part) {
+                            seen.push(part);
+                        }
+                    }
+                }
+            }
+            // An xmlport's triggers are run by Import and Export, and a report's by Run, which
+            // the graph cannot see.
+            if let RtType::Codeunit(p) = s.ty {
+                let p = p as usize;
+                if matches!(ws.objects[p].kind, ObjKind::XmlPort | ObjKind::Report) {
+                    lw.calls.extend(tl.compiled_routines(sh, p).iter().copied());
+                }
+                if let Some(e) = report_irs[p].as_ref().and_then(|r| r.extension) {
+                    lw.calls.extend(tl.compiled_routines(sh, e).iter().copied());
+                }
+            }
+        }
+        unsupported.push(std::mem::take(&mut lw.reasons));
+        calls.push(std::mem::take(&mut lw.calls));
+        routines.push(routine);
+    }
+    let request_section = (o.kind == ObjKind::Report)
+        .then(|| obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage")))
+        .flatten();
+    let page = seq
+        .page_layout(oi)
+        .map(|l| lw.page(oi, (&obj, request_section.as_ref()), l, &globals, &page_reasons[oi]));
+    // A report's request page properties (`SaveValues`, `Caption`) read like a page's: the
+    // report's own `Caption` wins over the request page's
+    // (corpus handlers/TestReportRequestPageCaption.al).
+    let mut properties: Vec<(String, String)> = obj.properties().map(|p| (p.name(), p.value_text())).collect();
+    if let Some(sec) = &request_section {
+        for p in sec.properties() {
+            let name = p.name();
+            if name.eq_ignore_ascii_case("Caption") && properties.iter().any(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+            {
+                continue;
+            }
+            properties.push((name, p.value_text()));
+        }
+    }
+    let object = ir::Object {
+        kind: o.kind.label().to_string(),
+        id: o.id,
+        name: o.name.clone(),
+        globals,
+        routines,
+        properties,
+        enum_values: members[oi]
+            .enum_values
+            .iter()
+            .map(|(v, n)| (*v as i32, n.clone()))
+            .collect(),
+        enum_captions: members[oi]
+            .enum_captions
+            .iter()
+            .map(|(v, c)| (*v as i32, c.clone()))
+            .collect(),
+        // A table whose source cannot be used (a platform table nothing provides, a dependency
+        // file that does not parse) has no members, so it has no schema: the Field and Key
+        // tables report it as not compiled instead of reading fields it does not have.
+        table: (o.kind == ObjKind::Table && ws.usable(oi))
+            .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at)),
+        rec_slot,
+        xrec_slot,
+        page,
+        app: o.app as u32,
+        xmlport: xml_irs[oi].clone(),
+        report: report_irs[oi].clone(),
+        report_ext: ext_irs[oi].clone(),
+        namespace: o.namespace.clone(),
+        extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
+        layouts: if o.kind == ObjKind::Report {
+            crate::reports::layouts_of(&obj)
+        } else {
+            Vec::new()
+        },
+        query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
+    };
+    *positions = std::mem::take(&mut lw.positions);
+    Piece {
+        object,
+        unsupported,
+        calls,
+    }
 }
 
 type L<T> = Result<T, String>;
@@ -1145,21 +1517,21 @@ struct Lowerer<'a> {
     calls: Vec<(usize, usize)>,
     /// Per object: why the test client cannot drive it yet (pages).
     page_reasons: &'a [Vec<String>],
-    layouts: &'a [Option<crate::pages::Layout>],
+    layouts: &'a Seq<'a>,
     /// Per object: the schema of an xmlport (its `unsupported` says why a variable is refused).
     xmlports: &'a [Option<ir::XmlPort>],
     /// Per object: the dataset of a report (its `unsupported` says why a variable is refused).
     reports: &'a [Option<ir::Report>],
-    /// `routine_attributes` memo, by (object, routine offset).
-    attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+    /// Answers many routines ask for, computed once per program.
+    memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
     ret_ty: Option<RtType>,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
     ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.
-    routine_nodes: &'a [Vec<ast::Routine>],
+    routine_nodes: &'a Nodes<'a>,
     /// The global slot of each variable of a page extension (see `lower`).
-    ext_slots: &'a std::cell::RefCell<Vec<HashMap<String, usize>>>,
+    ext_slots: &'a [HashMap<String, usize>],
     /// The page extensions of each page, in the order they apply.
     page_extensions: &'a HashMap<usize, Vec<usize>>,
     /// `Program::positions` while the object is lowered (taken from and given back to the program).
@@ -1170,6 +1542,17 @@ struct Lowerer<'a> {
     emit_pos: bool,
     /// Index of the routine being lowered in its object.
     routine_idx: usize,
+}
+
+/// What lowering asks about an object again and again. Each answer is computed on first use and
+/// shared by every routine of the program: walking the syntax tree for it per use was a third of
+/// the lowering time.
+#[derive(Default)]
+struct Memo {
+    /// The codeunits that implement an interface (or one that extends it), in object order.
+    implementers: std::cell::RefCell<HashMap<usize, std::rc::Rc<Vec<usize>>>>,
+    /// The `TableType` property of a table, trimmed.
+    table_type: std::cell::RefCell<HashMap<usize, std::rc::Rc<Vec<String>>>>,
 }
 
 /// Line starts of a source file, for turning offsets into the author's line and column.
@@ -1663,7 +2046,7 @@ impl Lowerer<'_> {
             }
         };
         let routine_named =
-            |ow: &Owner, name: &str| self.routine_nodes[ow.object].iter().position(|r| r.name() == name);
+            |ow: &Owner, name: &str| self.routine_nodes.get(ow.object).iter().position(|r| r.name() == name);
         let routine_of = |ow: &Owner, r: &ast::Routine| {
             self.routine_at
                 .get(&(ow.object, usize::from(r.syntax().text_range().start())))
@@ -1771,7 +2154,7 @@ impl Lowerer<'_> {
                     Some(crate::pages::Source::Var(v)) => {
                         let slot = match raw.owner {
                             None => globals.iter().position(|g| g.name.eq_ignore_ascii_case(&v)),
-                            Some(e) => self.ext_slots.borrow()[e].get(&v.to_lowercase()).copied(),
+                            Some(e) => self.ext_slots[e].get(&v.to_lowercase()).copied(),
                         };
                         match slot {
                             Some(slot) => binding = ir::Binding::Var(slot),
@@ -2180,10 +2563,41 @@ impl Lowerer<'_> {
         }
     }
 
+    /// The `TableType` properties of table `table`, trimmed, in source order.
+    fn table_types(&self, table: usize) -> std::rc::Rc<Vec<String>> {
+        if let Some(hit) = self.memo.table_type.borrow().get(&table) {
+            return hit.clone();
+        }
+        let kinds: std::rc::Rc<Vec<String>> = std::rc::Rc::new(
+            self.ws
+                .object_ast(table)
+                .properties()
+                .filter(|p| p.name().eq_ignore_ascii_case("TableType"))
+                .map(|p| p.value_text().trim().to_string())
+                .collect(),
+        );
+        self.memo.table_type.borrow_mut().insert(table, kinds.clone());
+        kinds
+    }
+
     fn is_temporary_table(&self, table: usize) -> bool {
-        self.ws.object_ast(table).properties().any(|p| {
-            p.name().eq_ignore_ascii_case("TableType") && p.value_text().trim().eq_ignore_ascii_case("temporary")
-        })
+        self.table_types(table)
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case("temporary"))
+    }
+
+    /// The codeunits that implement `iface` (or an interface that extends it), in object order.
+    fn implementers(&self, iface: usize) -> std::rc::Rc<Vec<usize>> {
+        if let Some(hit) = self.memo.implementers.borrow().get(&iface) {
+            return hit.clone();
+        }
+        let found: std::rc::Rc<Vec<usize>> = std::rc::Rc::new(
+            (0..self.ws.objects.len())
+                .filter(|&cu| self.ws.objects[cu].kind == ObjKind::Codeunit && self.implements(cu, iface))
+                .collect(),
+        );
+        self.memo.implementers.borrow_mut().insert(iface, found.clone());
+        found
     }
 
     fn rt(&self, t: &Ty) -> L<RtType> {
@@ -2264,12 +2678,7 @@ impl Lowerer<'_> {
             Ty::Record { table, temporary } => {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
                 // A table of another type (CRM, ExternalSQL, ...) is served by a table connection.
-                let kind = self
-                    .ws
-                    .object_ast(t)
-                    .properties()
-                    .find(|p| p.name().eq_ignore_ascii_case("TableType"))
-                    .map(|p| p.value_text().trim().to_string());
+                let kind = self.table_types(t).first().cloned();
                 if let Some(k) =
                     kind.filter(|k| !k.eq_ignore_ascii_case("normal") && !k.eq_ignore_ascii_case("temporary"))
                 {
@@ -2293,7 +2702,7 @@ impl Lowerer<'_> {
     fn implements(&self, cu: usize, iface: usize) -> bool {
         let file = self.ws.objects[cu].file;
         let family = self.ws.interface_family(iface);
-        self.ws.object_ast(cu).implements_parts().iter().any(
+        self.ws.objects[cu].implements.iter().any(
             |p| matches!(self.ws.resolve_ref(file, ObjKind::Interface, p), Resolution::Found(i) if family.contains(&i)),
         )
     }
@@ -2395,10 +2804,7 @@ impl Lowerer<'_> {
         }
         let name = crate::check::type_name_text(&kids[1]);
         let iface = self.resolve_obj(ObjKind::Interface, &name)?;
-        let objects: Vec<u32> = (0..self.ws.objects.len())
-            .filter(|&cu| self.ws.objects[cu].kind == ObjKind::Codeunit && self.implements(cu, iface))
-            .map(|cu| cu as u32)
-            .collect();
+        let objects: Vec<u32> = self.implementers(iface).iter().map(|&cu| cu as u32).collect();
         let value = Box::new(self.expr(&kids[0])?);
         Ok(ir::Expr::InterfaceTest {
             value,
@@ -2429,10 +2835,7 @@ impl Lowerer<'_> {
             .ok_or("interface procedure signature")?
             .clone();
         let mut targets = Vec::new();
-        for cu in 0..self.ws.objects.len() {
-            if self.ws.objects[cu].kind != ObjKind::Codeunit || !self.implements(cu, iface) {
-                continue;
-            }
+        for &cu in self.implementers(iface).iter() {
             let same_shape: Vec<_> = self.members[cu]
                 .procedures
                 .iter()
@@ -3231,7 +3634,7 @@ impl Lowerer<'_> {
             })
             .map(|t| ast::ident_text(&t))
             .ok_or("control name")?;
-        let layout = self.layouts[page].as_ref().ok_or("page layout")?;
+        let layout = self.layouts.page_layout(page).ok_or("page layout")?;
         let control = layout
             .controls
             .iter()
@@ -3241,41 +3644,6 @@ impl Lowerer<'_> {
             page: Box::new(self.expr(&recv)?),
             control,
         })
-    }
-
-    /// (lower-case name, argument constants) of each attribute of the routine
-    /// at `offset` in `object`.
-    fn routine_attributes(&self, object: usize, offset: usize) -> Attrs {
-        if let Some(hit) = self.attrs.borrow().get(&(object, offset)) {
-            return hit.clone();
-        }
-        let attrs = self.routine_attributes_uncached(object, offset);
-        self.attrs.borrow_mut().insert((object, offset), attrs.clone());
-        attrs
-    }
-
-    fn routine_attributes_uncached(&self, object: usize, offset: usize) -> Attrs {
-        // The routine starts at `offset`, so it encloses the token there: walk up
-        // from it instead of scanning every node of the object.
-        let obj = self.ws.object_ast(object);
-        let Some(tok) = obj.syntax().token_at_offset((offset as u32).into()).right_biased() else {
-            return Vec::new();
-        };
-        tok.parent_ancestors()
-            .filter_map(ast::Routine::cast)
-            .find(|r| usize::from(r.syntax().text_range().start()) == offset)
-            .map(|r| {
-                r.attributes()
-                    .map(|a| {
-                        let args = a
-                            .args()
-                            .map(|l| l.children().filter_map(|e| self.constant(&e).ok()).collect())
-                            .unwrap_or_default();
-                        (a.name().to_ascii_lowercase(), args)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
     }
 
     /// An operand whose type is only known at run time is refused (ADR-014): BC types it from the
@@ -3434,8 +3802,12 @@ impl Lowerer<'_> {
                     }
                 }
                 self.calls.push((object, routine));
-                let attrs = self.routine_attributes(object, offset);
-                let try_call = attrs.iter().any(|(a, _)| a == "tryfunction");
+                // The routine node is the one `routine_at` numbered, so no search by offset.
+                let try_call = self
+                    .routine_nodes
+                    .get(object)
+                    .get(routine)
+                    .is_some_and(|r| r.attributes().any(|a| a.name().eq_ignore_ascii_case("tryfunction")));
                 Ok(ir::Expr::Call {
                     object,
                     routine,
@@ -3663,10 +4035,21 @@ fn compile_with_roots(
     catalog: &al_builtins::catalog::Catalog,
     roots: crate::check::Roots,
 ) -> (Workspace, Lowered) {
+    let started = std::time::Instant::now();
     let ws = Workspace::load_apps(apps, kinds, symbols);
+    let load = started.elapsed();
+    let started = std::time::Instant::now();
     let members = crate::members::build(&ws);
+    let members_time = started.elapsed();
     let checked = crate::check::check_with(&ws, &members, catalog, roots);
-    let lowered = lower(&ws, &members, &checked);
+    let started = std::time::Instant::now();
+    let mut lowered = lower(&ws, &members, &checked);
+    lowered.timings = CompileTimings {
+        load,
+        members: members_time,
+        check: checked.timings,
+        lower: started.elapsed(),
+    };
     (ws, lowered)
 }
 

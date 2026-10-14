@@ -574,7 +574,7 @@ fn build(body: &str) -> (Engine0, usize, usize) {
 }
 
 struct Engine0 {
-    program: al_ir::Program,
+    program: std::sync::Arc<al_ir::Program>,
     blocked: Vec<Vec<Option<String>>>,
 }
 

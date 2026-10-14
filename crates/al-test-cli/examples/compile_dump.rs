@@ -3,7 +3,12 @@
 //! resolutions, and the lowered program. For a performance change, dump
 //! before and after and `cmp` the two files: they must be identical.
 //!
-//! `cargo run --release -p al-test-cli --example compile_dump -- ROOT OUT.txt`
+//! `cargo run --release -p al-test-cli --example compile_dump -- ROOT OUT.txt [deps]`
+//!
+//! With `deps`, the Microsoft apps of the corpus's `.alpackages` are compiled too, the way a
+//! run does (demand-driven, with the install baseline as a root). The output is then one line
+//! per object with a hash of its lowered form (the full program would be gigabytes), plus the
+//! hashes of the call graph, the refusals and the program's other parts.
 
 use al_test_cli::runtime;
 use std::io::Write;
@@ -16,6 +21,9 @@ fn main() {
         runtime::load_app(&tests.join("al-language")).unwrap(),
     ];
     let syms = al_version::corpus_symbols(27);
+    if std::env::args().nth(3).is_some_and(|a| a == "deps") {
+        return dump_with_deps(&tests, apps, &syms, &out);
+    }
     let ws = al_sema::workspace::Workspace::load(apps, &syms);
     let members = al_sema::members::build(&ws);
     let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
@@ -56,5 +64,55 @@ fn main() {
     }
     writeln!(f, "unsupported {:?}", lowered.unsupported).unwrap();
     writeln!(f, "calls {:?}", lowered.calls).unwrap();
-    writeln!(f, "program {}", serde_json::to_string(&lowered.program).unwrap()).unwrap();
+    writeln!(f, "program {}", serde_json::to_string(&*lowered.program).unwrap()).unwrap();
+}
+
+fn hash_of<T: serde::Serialize + ?Sized>(v: &T) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    serde_json::to_string(v).unwrap().hash(&mut h);
+    h.finish()
+}
+
+/// The pipeline of a run with dependencies, summarised by hashes.
+fn dump_with_deps(
+    tests: &std::path::Path,
+    mut apps: Vec<al_sema::workspace::AppSource>,
+    syms: &std::collections::BTreeSet<String>,
+    out: &str,
+) {
+    let mut kinds = vec![al_sema::AppKind::Workspace; apps.len()];
+    let deps = al_test_cli::deps::load(
+        &tests.join("al-language"),
+        &[tests.join("al-language-internals-fixture")],
+        &[],
+    )
+    .unwrap();
+    kinds.extend(deps.apps.iter().map(|_| al_sema::AppKind::Dependency));
+    apps.extend(deps.apps);
+    let roots = al_sema::check::Roots {
+        baseline: true,
+        ..Default::default()
+    };
+    let (ws, lowered) = al_sema::lower::compile_apps_with(apps, kinds, syms, None, roots);
+    let mut f = std::io::BufWriter::new(std::fs::File::create(out).unwrap());
+    for d in &ws.diagnostics {
+        writeln!(f, "wsdiag {d:?}").unwrap();
+    }
+    for (i, o) in lowered.program.objects.iter().enumerate() {
+        writeln!(f, "object {i} {} {:016x}", o.name, hash_of(o)).unwrap();
+    }
+    writeln!(f, "unsupported {:016x}", hash_of(&lowered.unsupported)).unwrap();
+    writeln!(f, "calls {:016x}", hash_of(&lowered.calls)).unwrap();
+    writeln!(f, "dependency {:016x}", hash_of(&lowered.dependency)).unwrap();
+    writeln!(f, "positions {:016x}", hash_of(&lowered.program.positions)).unwrap();
+    writeln!(f, "sources {:016x}", hash_of(&lowered.program.sources)).unwrap();
+    writeln!(f, "apps {:016x}", hash_of(&lowered.program.apps)).unwrap();
+    writeln!(
+        f,
+        "uncompiled_subscribers {:016x}",
+        hash_of(&lowered.program.uncompiled_subscribers)
+    )
+    .unwrap();
+    writeln!(f, "dotnet_types {:016x}", hash_of(&lowered.program.dotnet_types)).unwrap();
 }

@@ -95,7 +95,8 @@ impl Session {
             let Some(child) = self.engine.tables[r.table].clone() else {
                 continue;
             };
-            let schema = self.engine.program.objects[r.table].table.clone().expect("table");
+            let engine = self.engine.clone();
+            let schema = engine.program.objects[r.table].table.as_ref().expect("table");
             let field = &schema.fields[r.pos];
             if field
                 .properties

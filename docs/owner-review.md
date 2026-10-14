@@ -63,8 +63,8 @@ reviewed it.
   others) are provided in Rust through the registry.
   - Their values mirror AL Runner v2 until a probe on real BC pins them.
   - This is not a fake of an AL object, so hard rule 7 does not apply.
-  - The work is on branch `dotnet-registry`. Probe batch 3 (corpus-probes
-    c542144) pinned the values it covers, and the probe wins where it differs
+  - The work is on branch `dotnet-registry`. Probe batch 3 (corpus
+    c542144, now in the submodule) pinned the values it covers, and the probe wins where it differs
     from AL Runner: the oracle tenant is a sandbox on Azure topology
     (`IsSandbox` true, `IsAzure` true), AL Runner's is Production on premises.
     ADR-013's "Production by default" is therefore superseded for the registry.
@@ -186,6 +186,10 @@ reviewed it.
   `DefaultClientType()` is `Web`.
 - 2026-10-13, ADR-013, host values: `CompanyName()` is `My Company` instead of the
   placeholder `CRONUS`.
+- 2026-10-14, corpus bump 3: `CompanyName()` is `CRONUS International Ltd.`, not `My Company`. The oracle pins it
+  (session/TestEnvironmentUserTenantContracts.al:238, hard rule 6: observable values match real BC). Decided without owner
+  review; it supersedes the 2026-10-13 line above and ADR-013 decision 9 for the name. The Company row seeded at session start
+  (ADR-019) follows the host name.
 - 2026-10-13, ADR-013, host values: temporary records are not stamped with the system
   created and modified fields.
 - 2026-10-14, ADR-012, pages-misc: a `Page` variable is constructed (OnInit once) at its first procedure call.
@@ -251,6 +255,8 @@ reviewed it.
 - 2026-10-14, ADR-007: the corpus bump to 348a744 appends one test to an existing file
   (`handlers/TestPageRuntimeContracts.al`, `TestPage_List_Window_IsRepopulatedAroundAGoToKeyOutsideIt`). All three
   oracles are on the pin, so the older-commit check is not involved. A bump that used it would have been refused.
+- 2026-10-14, ADR-007: the corpus bump to 6219bf4 (probe batch 3: 35 new cases and 3 new OnPrem cases) only adds 8 files under
+  `tests/`. All three oracles are on the pin. No baseline case stopped passing, so nothing was removed.
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
   passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
@@ -267,3 +273,4 @@ reviewed it.
 - 2026-10-14, ADR-009, fix-data: an XmlPort import stores with `Insert(true)` / `Modify(true)` through the ordinary record path, so the record rule for duplicate keys applies to it (the earlier `immediate_errors` override for XmlPort import is dropped, as xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_DuplicateKey_... pins a deferral).
 - 2026-10-14, ADR-009, fix-data: `SaveAsXml` / `SaveAsJson` of a query write UTF-8 without a byte order mark and the XML in one line (the probe trims and joins the lines).
 - 2026-10-14, ADR-020, `al-bcdb`: two crates (core without OS access, command line with it), `pread` instead of a memory map, an approximated culture order for `tables`, bcdb's synthetic `typeprobe` fixtures (8.2 MB) committed, new dependencies `sha2`, `flate2` (zlib-rs) in the core and `rayon` in the command line. Parity with the published bcdb is tested, not assumed (`docs/bcdb.md`).
+- 2026-10-14, perf-1: `Engine::program` and `Lowered::program` became `Arc<Program>` (additive; callers that hand over a `Program` compile unchanged), and the check, lowering and test codeunits run on worker threads (`AL_CHECK_THREADS`, `AL_LOWER_THREADS`, `AL_TEST_THREADS`, default one per core). Outcomes are identical with 1 thread and with all; the orchestrator accepted it without an ADR because no seam is removed or changed in meaning.

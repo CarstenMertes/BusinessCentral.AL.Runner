@@ -103,7 +103,7 @@ impl AllVersions {
 fn every_oracle_case_is_reported_and_attributed_to_an_area() {
     // BC 29: the version a run without `--bc-version` picks.
     let r = all_versions().json("29");
-    assert_eq!(r["overall"]["total"], 5112);
+    assert_eq!(r["overall"]["total"], 5147);
     assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "{}", r["unmapped"]);
     assert_eq!(r["areas"]["json"]["total"], 129);
     assert_eq!(r["areas"]["record"]["total"], 1076);
@@ -118,7 +118,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "348a7441c3b4be2dfad3e570e83d5bdc4bfad2cb",
+            "6219bf4b41cb9802e1d7fe20efc252778f2e02ef",
             "0000000000000000000000000000000000000000",
         ),
     )
@@ -229,7 +229,7 @@ fn markdown_summary_is_written() {
     let shared = all_versions();
     assert_eq!(shared.code, 0, "{}", shared.err);
     let md = std::fs::read_to_string(shared.file("pass-rate", "29", "md")).unwrap();
-    assert!(md.contains("| **overall** | 5112 |"), "{md}");
+    assert!(md.contains("| **overall** | 5147 |"), "{md}");
     // ... and `--markdown` of a single-version run writes the file it is given.
     let dir = tempfile::tempdir().unwrap();
     let one = dir.path().join("s.md");
@@ -290,7 +290,7 @@ fn every_bc_major_has_an_oracle_with_the_same_cases() {
     // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
     // run stops with exit 2 (ADR-015 1.6).
     // All three are recorded for the pinned corpus commit.
-    for (v, total) in [("27", 5112), ("28", 5112), ("29", 5112)] {
+    for (v, total) in [("27", 5147), ("28", 5147), ("29", 5147)] {
         let r = all_versions().json(v);
         assert_eq!(r["overall"]["total"], total, "BC {v}");
         assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "BC {v}");
@@ -361,7 +361,7 @@ fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
 #[test]
 fn the_other_test_apps_are_reported_apart_from_the_main_one() {
     let r = all_versions().json("28");
-    assert_eq!(r["overall"]["total"], 5112);
+    assert_eq!(r["overall"]["total"], 5147);
     let suites = r["suites"].as_array().unwrap();
     let get = |n: &str| {
         suites
@@ -369,7 +369,7 @@ fn the_other_test_apps_are_reported_apart_from_the_main_one() {
             .find(|s| s["name"] == n)
             .unwrap_or_else(|| panic!("no suite {n}"))
     };
-    assert_eq!(get("onprem")["counts"]["total"], 61);
+    assert_eq!(get("onprem")["counts"]["total"], 64);
     assert_eq!(get("isolation-function")["counts"]["total"], 7);
     assert_eq!(get("isolation-function")["counts"]["pass"], 7);
     // The control: real BC fails T5 under Codeunit isolation, and the runtime fails it too.

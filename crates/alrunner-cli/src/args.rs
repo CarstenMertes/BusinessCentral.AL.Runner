@@ -80,6 +80,9 @@ DEPENDENCIES
                          also fills Microsoft's $(app_...) variables in source archives that
                          lie outside a folder named for their build.
     --no-download        Never fetch Microsoft's apps from the artifact feed.
+    Microsoft's apps, and the platform's System.app, come from the artifact feed. A build named
+    exactly (four numbers) that is in ~/.bcartifacts.cache/sandbox is read from there, without
+    the feed; any matching build there is the fallback when the feed has none or is offline.
     --cache-dir DIR      Where downloaded artifacts are kept (else $ALRUNNER_CACHE).
 
 SELECTION (a test is selected when any option matches it)

@@ -55,14 +55,14 @@ pub(crate) struct Mat {
 pub(crate) struct SharedMat(Mat);
 
 impl SharedMat {
-    /// Panics when a row holds a handle: a provider listed something that cannot be shared.
-    pub(crate) fn new(m: Mat) -> SharedMat {
-        for row in &m.rows {
-            if let Some(v) = row.iter().find(|v| !v.is_plain()) {
-                panic!("a listed row holds a value that is not plain, so it cannot be shared between threads: {v:?}");
-            }
+    /// The listing for sharing, or the listing back when a row holds a handle (a provider listed
+    /// something that cannot be shared between threads).
+    pub(crate) fn try_new(m: Mat) -> Result<SharedMat, Mat> {
+        if m.rows.iter().all(|row| row.iter().all(Value::is_plain)) {
+            Ok(SharedMat(m))
+        } else {
+            Err(m)
         }
-        SharedMat(m)
     }
 }
 
@@ -73,7 +73,7 @@ impl std::ops::Deref for SharedMat {
     }
 }
 
-// SAFETY: `SharedMat::new` checked that every value is plain (no `Rc`, no `RefCell`); the
+// SAFETY: `SharedMat::try_new` checked that every value is plain (no `Rc`, no `RefCell`); the
 // remaining reference-counted parts are `Arc`s. The contents are read-only from then on.
 unsafe impl Send for SharedMat {}
 unsafe impl Sync for SharedMat {}
@@ -366,14 +366,13 @@ mod shared_tests {
         let t = def(RtType::Integer);
         let m = Mat::new(&t, vec![Entry::ok(vec![Value::Integer(1)])]);
         fn is_send_sync<T: Send + Sync>(_: &T) {}
-        is_send_sync(&SharedMat::new(m));
+        is_send_sync(&SharedMat::try_new(m).ok().expect("plain"));
     }
 
     #[test]
-    #[should_panic(expected = "not plain")]
     fn a_listing_holding_a_handle_cannot_be_shared() {
         let t = def(RtType::Integer);
         let handle = Value::List(Default::default());
-        SharedMat::new(Mat::new(&t, vec![Entry::ok(vec![handle])]));
+        assert!(SharedMat::try_new(Mat::new(&t, vec![Entry::ok(vec![handle])])).is_err());
     }
 }

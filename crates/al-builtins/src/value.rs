@@ -689,7 +689,8 @@ pub enum LibraryValue {
 }
 
 impl Value {
-    /// Whether the value holds no `Rc` handle: plain data (`Option` member lists are `Arc`s), so
+    /// Whether the value holds no `Rc` handle: plain data (`Option` member lists and blob buffers
+    /// are `Arc`s), so
     /// that rows made of such values can be read from several threads.
     pub fn is_plain(&self) -> bool {
         matches!(
@@ -711,6 +712,7 @@ impl Value {
                 | Value::DateFormula(_)
                 | Value::Option(..)
                 | Value::Enum(..)
+                | Value::Blob(_)
         )
     }
 

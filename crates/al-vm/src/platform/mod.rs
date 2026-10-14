@@ -93,7 +93,7 @@ struct SharedListings {
 
 struct EngineListings {
     engine: u64,
-    tables: HashMap<Virtual, Arc<OnceLock<Arc<mat::SharedMat>>>>,
+    tables: HashMap<Virtual, Arc<OnceLock<Option<Arc<mat::SharedMat>>>>>,
 }
 
 /// The most engines whose listings are kept.
@@ -102,8 +102,9 @@ const ENGINES_KEPT: usize = 2;
 static SHARED: LazyLock<SharedListings> = LazyLock::new(SharedListings::default);
 
 impl SharedListings {
-    /// The listing of `kind` for `engine`, built by `build` if no thread has built it yet.
-    fn listing(&self, engine: u64, kind: Virtual, build: impl FnOnce() -> mat::Mat) -> Arc<mat::SharedMat> {
+    /// The listing of `kind` for `engine`, built by `build` if no thread has built it yet. `None`
+    /// when the listing holds a handle and cannot be shared: each session then lists it itself.
+    fn listing(&self, engine: u64, kind: Virtual, build: impl FnOnce() -> mat::Mat) -> Option<Arc<mat::SharedMat>> {
         let slot = {
             let mut engines = self.engines.lock().unwrap_or_else(|e| e.into_inner());
             let at = match engines.iter().position(|e| e.engine == engine) {
@@ -124,7 +125,25 @@ impl SharedListings {
             engines.swap(at, last);
             engines[last].tables.entry(kind).or_default().clone()
         };
-        slot.get_or_init(|| Arc::new(mat::SharedMat::new(build()))).clone()
+        slot.get_or_init(|| mat::SharedMat::try_new(build()).ok().map(Arc::new))
+            .clone()
+    }
+}
+
+/// A listing a session reads: shared with the other threads, or its own when it cannot be shared.
+#[derive(Clone)]
+pub(crate) enum Listed {
+    Shared(Arc<mat::SharedMat>),
+    Own(Rc<mat::Mat>),
+}
+
+impl std::ops::Deref for Listed {
+    type Target = mat::Mat;
+    fn deref(&self) -> &mat::Mat {
+        match self {
+            Listed::Shared(m) => m,
+            Listed::Own(m) => m,
+        }
     }
 }
 
@@ -139,7 +158,7 @@ pub(crate) struct Providers {
     /// Per object index: the provider of that table, if it is a virtual platform table.
     served: Vec<Option<Virtual>>,
     /// Tables listed in full, once (they depend on the program and the host only).
-    listed: RefCell<HashMap<Virtual, Arc<mat::SharedMat>>>,
+    listed: RefCell<HashMap<Virtual, Listed>>,
     /// The Aggregate Permission Set rows with the tenant's own sets in them, and the stamp of the
     /// stored Tenant Permission Set table they were composed at.
     aggregate: permissions::Cache,
@@ -213,7 +232,7 @@ impl Providers {
     }
 
     /// The rows of a table that is listed in full.
-    fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Arc<mat::SharedMat>, StoreError> {
+    fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Listed, StoreError> {
         if let Some(m) = self.listed.borrow().get(&kind) {
             return Ok(m.clone());
         }
@@ -239,10 +258,14 @@ impl Providers {
             _ => {}
         }
         let build = || mat::Mat::new(t, self.list_rows(t, kind));
-        let m = if Self::shares(kind) {
+        let shared = if Self::shares(kind) {
             SHARED.listing(self.engine_uid, kind, build)
         } else {
-            Arc::new(mat::SharedMat::new(build()))
+            mat::SharedMat::try_new(build()).ok().map(Arc::new)
+        };
+        let m = match shared {
+            Some(m) => Listed::Shared(m),
+            None => Listed::Own(Rc::new(build())),
         };
         self.listed.borrow_mut().insert(kind, m.clone());
         Ok(m)
@@ -251,7 +274,9 @@ impl Providers {
     /// The rows of the table of `kind`, worked out from the program and the host.
     fn list_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
         match kind {
-            Virtual::ApiWebhookEntity | Virtual::TenantMedia => unreachable!("refused before listing"),
+            Virtual::ApiWebhookEntity | Virtual::TenantMedia | Virtual::Unprovided => {
+                unreachable!("refused before listing")
+            }
             Virtual::XmlPortMetadata => metadata::xmlport_metadata_rows(self, t),
             Virtual::EventSubscription => metadata::event_subscription_rows(self, t),
             Virtual::PageAction => metadata::page_action_rows(self, t),
@@ -449,26 +474,28 @@ mod tests {
     #[test]
     fn sessions_of_one_engine_share_a_listing_and_other_engines_do_not() {
         let shared = SharedListings::default();
-        let a = shared.listing(1, Virtual::Field, some_mat);
+        let a = shared.listing(1, Virtual::Field, some_mat).unwrap();
         assert!(Arc::ptr_eq(
             &a,
-            &shared.listing(1, Virtual::Field, || panic!("built twice"))
+            &shared.listing(1, Virtual::Field, || panic!("built twice")).unwrap()
         ));
-        let other_kind = shared.listing(1, Virtual::AllObj, some_mat);
+        let other_kind = shared.listing(1, Virtual::AllObj, some_mat).unwrap();
         assert!(!Arc::ptr_eq(&a, &other_kind));
-        let other_engine = shared.listing(2, Virtual::Field, some_mat);
+        let other_engine = shared.listing(2, Virtual::Field, some_mat).unwrap();
         assert!(!Arc::ptr_eq(&a, &other_engine));
     }
 
     #[test]
     fn only_the_two_engines_used_last_keep_their_listings() {
         let shared = SharedListings::default();
-        let first = shared.listing(1, Virtual::Field, some_mat);
+        let first = shared.listing(1, Virtual::Field, some_mat).unwrap();
         shared.listing(2, Virtual::Field, some_mat);
         // Engine 1 is still held: the baseline engine and the test engine of one run both list.
         assert!(Arc::ptr_eq(
             &first,
-            &shared.listing(1, Virtual::Field, || panic!("dropped too early"))
+            &shared
+                .listing(1, Virtual::Field, || panic!("dropped too early"))
+                .unwrap()
         ));
         shared.listing(3, Virtual::Field, some_mat);
         // Engine 2 was used before engine 1 was asked again, so engine 2 is the one that went.
@@ -498,10 +525,24 @@ mod tests {
                     })
                 })
                 .collect();
-            handles.into_iter().map(|h| h.join().unwrap()).collect()
+            handles.into_iter().map(|h| h.join().unwrap().unwrap()).collect()
         });
         assert_eq!(builds.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(got.iter().all(|m| Arc::ptr_eq(m, &got[0])));
+    }
+
+    #[test]
+    fn a_listing_that_holds_a_handle_is_not_shared() {
+        let shared = SharedListings::default();
+        let mut t = some_def();
+        t.fields.push(al_data::FieldDef {
+            id: 1,
+            name: "F".into(),
+            ty: al_builtins::value::RtType::Variant,
+            stored: true,
+        });
+        let with_handle = || mat::Mat::new(&t, vec![mat::Entry::ok(vec![Value::List(Default::default())])]);
+        assert!(shared.listing(1, Virtual::Field, with_handle).is_none());
     }
 
     #[test]

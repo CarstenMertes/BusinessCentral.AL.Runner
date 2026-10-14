@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 /// What a Blob field holds.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BlobBuf {
     pub bytes: Vec<u8>,
     /// Where the most recent `OutStream` on this buffer writes next. `CreateOutStream` sets it to 0.
@@ -30,10 +30,40 @@ pub struct BlobBuf {
     pub loaded: bool,
 }
 
-pub type BlobRef = Rc<RefCell<BlobBuf>>;
+/// A buffer that follows the borrowing rules of a `RefCell` (any number of readers or one writer,
+/// else a panic) and can be shared between threads: the platform listings hold blob columns, and
+/// the test threads read them.
+#[derive(Debug, Default)]
+pub struct BlobCell(std::sync::RwLock<BlobBuf>);
+
+impl BlobCell {
+    pub fn new(buf: BlobBuf) -> BlobCell {
+        BlobCell(std::sync::RwLock::new(buf))
+    }
+
+    /// Shared access; panics while the buffer is borrowed mutably, as `RefCell::borrow` does.
+    pub fn borrow(&self) -> std::sync::RwLockReadGuard<'_, BlobBuf> {
+        match self.0.try_read() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => panic!("already mutably borrowed"),
+        }
+    }
+
+    /// Exclusive access; panics while the buffer is borrowed, as `RefCell::borrow_mut` does.
+    pub fn borrow_mut(&self) -> std::sync::RwLockWriteGuard<'_, BlobBuf> {
+        match self.0.try_write() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => panic!("already borrowed"),
+        }
+    }
+}
+
+pub type BlobRef = std::sync::Arc<BlobCell>;
 
 pub fn new_blob() -> BlobRef {
-    Rc::new(RefCell::new(BlobBuf {
+    std::sync::Arc::new(BlobCell::new(BlobBuf {
         bytes: Vec::new(),
         write_pos: 0,
         loaded: true,
@@ -42,7 +72,7 @@ pub fn new_blob() -> BlobRef {
 
 /// A copy with its own buffer (what a database table stores and returns).
 pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
-    Rc::new(RefCell::new(BlobBuf {
+    std::sync::Arc::new(BlobCell::new(BlobBuf {
         bytes: b.borrow().bytes.clone(),
         write_pos: 0,
         loaded,
@@ -684,4 +714,41 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         _ => return None,
     };
     Some(f)
+}
+
+#[cfg(test)]
+mod blob_cell_tests {
+    use super::*;
+
+    #[test]
+    fn readers_share_and_a_writer_excludes_them_as_in_a_refcell() {
+        let b = new_blob();
+        let (r1, r2) = (b.borrow(), b.borrow());
+        assert_eq!(r1.bytes, r2.bytes);
+        drop((r1, r2));
+        b.borrow_mut().bytes.push(1);
+        assert_eq!(b.borrow().bytes, vec![1]);
+    }
+
+    #[test]
+    #[should_panic(expected = "already borrowed")]
+    fn a_writer_while_a_reader_is_held_panics() {
+        let b = new_blob();
+        let _r = b.borrow();
+        let _w = b.borrow_mut();
+    }
+
+    #[test]
+    fn a_blob_is_read_by_two_threads() {
+        let b = new_blob();
+        b.borrow_mut().bytes.extend_from_slice(b"abc");
+        let copies: Vec<Vec<u8>> = std::thread::scope(|scope| {
+            let hs: Vec<_> = (0..2)
+                .map(|_| scope.spawn(|| copy_blob(&b, false).borrow().bytes.clone()))
+                .collect();
+            hs.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert_eq!(copies, vec![b"abc".to_vec(), b"abc".to_vec()]);
+        assert!(Value::Blob(b).is_plain());
+    }
 }

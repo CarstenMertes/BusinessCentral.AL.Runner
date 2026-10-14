@@ -488,7 +488,7 @@ impl Builder<'_> {
         let grouped = self.columns.iter().any(|c| c.method.is_none() && !c.filter_element);
         // Aggregates over a left outer join skip the missing side: sum 0 and count 0 for a parent
         // without children (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch
-        // al-runtime-rs, pending push).
+        // now in the corpus).
         if aggregated && grouped && order_by.is_empty() {
             // Corpus query/TestQueryAggregation.al always orders its groups.
             self.reason("an aggregated query with grouping columns and no OrderBy (the group order is not pinned)");
@@ -605,7 +605,7 @@ mod tests {
     use crate::workspace::AppSource;
 
     const TABLES: &str = r#"
-table 50000 "T" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } field(3; Qty; Integer) { } field(4; Big; BigInteger) { }
+table 50000 "T" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } field(3; Qty; Integer) { } field(5; Big; BigInteger) { }
     field(4; Total; Decimal) { FieldClass = FlowField; CalcFormula = sum(U.Amount where("No." = field("No."))); } }
     keys { key(PK; "No.") { Clustered = true; } } }
 table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } }

@@ -188,7 +188,7 @@ pub struct QueryState {
 pub struct QueryRun {
     /// Whether the query has run. `Open` does not run it: the first `Read` does, so a row written
     /// in between is read (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch
-    /// al-runtime-rs, pending push).
+    /// now in the corpus).
     pub started: bool,
     /// The rows still to read, in the query's order.
     pub rows: Vec<QueryRow>,

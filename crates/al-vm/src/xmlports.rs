@@ -221,7 +221,7 @@ impl Session {
         }
         // The view's key and direction order the export, ties included
         // (xmlport/TestXmlPortTriggersReplaceViewContracts.al:Export_OnBeforePassField_Runs_AndSetTableViewFiltersAndOrders,
-        // corpus branch al-runtime-rs, pending push).
+        // corpus: .
         let mut t = target.borrow_mut();
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
@@ -603,7 +603,7 @@ impl Session {
     /// the attributes and children, and the save. `first_of_node` is false for the second and
     /// later elements of a table element under the same parent: only the first gets the link
     /// (xmlport/TestXmlPortTriggersReplaceViewContracts.al:Nested_Export_GroupsTheChildrenUnderTheirParent_ImportLinksOnlyTheFirstChild,
-    /// corpus branch al-runtime-rs, pending push).
+    /// corpus: .
     fn xp_import_record(
         &mut self,
         inst: &Inst,
@@ -676,7 +676,7 @@ impl Session {
     /// replaces the whole buffer and `AutoUpdate` changes only the fields the document carries, and
     /// both keep the row's SystemId
     /// (xmlport/TestXmlPortTriggersReplaceViewContracts.al:Import_AutoReplace_ReplacesTheWholeBuffer_KeepsSystemId,
-    /// :Import_AutoUpdate_ChangesOnlyTheCarriedFields_KeepsSystemId, corpus branch al-runtime-rs, pending push).
+    /// :Import_AutoUpdate_ChangesOnlyTheCarriedFields_KeepsSystemId, corpus: .
     /// The `OnBefore...Record` and `OnAfter...Record` triggers bracket it, and `AutoSave = false`
     /// leaves the storing to them (xmlport/TestXmlPortAdvanced.al:XmlPort_AutoSaveFalse_...).
     fn xp_save_record(&mut self, inst: &Inst, schema: &Schema, node: usize, assigned: &[usize]) -> Result<(), Signal> {
@@ -1088,7 +1088,7 @@ fn text_separator(value: Option<&str>, default: &str) -> Result<String, Signal> 
 /// delimiter and may hold the separator; a doubled delimiter is not an escape, so the text after
 /// the closing delimiter starts the next value
 /// (xmlport/TestXmlPortTextFormatsContracts.al:VariableText_Import_DoubledQuoteInsideAQuotedValue_IsNotAnEscape,
-/// corpus branch al-runtime-rs, pending push).
+/// corpus: .
 fn split_variable(line: &str, sep: &str, delim: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = line;

@@ -96,7 +96,7 @@ struct Plan {
     /// Filters on stored fields of a left-outer-joined dataitem: (dataitem, field, filter). They
     /// apply after the join, to the values of the joined row, which for an unmatched parent are the
     /// defaults (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs,
-    /// pending push: a filter drops the unmatched parents unless it admits 0).
+    /// now in the corpus: a filter drops the unmatched parents unless it admits 0).
     outer: Vec<(usize, usize, FilterExpr)>,
 }
 
@@ -270,7 +270,7 @@ impl Session {
     /// `SaveAsXml(OutStream)` writes the rows as a .NET DataSet, `SaveAsJson(OutStream)` as an array
     /// of objects keyed by column name. Both run the query with the filters set now, whether it is
     /// open or not (query/TestQueryOuterJoinDescendingSaveAsContracts.al:Query_SaveAsXml_And_SaveAsJson_Output,
-    /// corpus branch al-runtime-rs, pending push). Pinned for Integer columns; the lines of the XML are
+    /// corpus: . Pinned for Integer columns; the lines of the XML are
     /// not pinned (the probe trims and joins them), the bytes are UTF-8 without a byte order mark whatever the
     /// stream's text encoding (not pinned).
     fn query_save_as(&mut self, def: &ir::Query, qs: &Qs, method: &str, args: &[Value]) -> Result<Value, Signal> {
@@ -522,7 +522,7 @@ impl Session {
         // Rows that tie on every OrderBy column and still differ are ordered by the primary key
         // ascending (corpus query/TestQueryOrderAfterWrite.al:92-104, ascending only), or in no
         // pinned way: grouped rows. Ties under a descending OrderBy still ascend by primary key
-        // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs, pending push).
+        // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus: .
         let k = dirs.len();
         if aggregated {
             for w in rows.windows(2) {
@@ -762,7 +762,7 @@ impl Session {
                 let Some(method) = c.method else { continue };
                 // A dataitem that had no match under a left outer join adds no row to its aggregates
                 // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs,
-                // pending push: `2/sum0/cnt0`).
+                // now in the corpus: `2/sum0/cnt0`).
                 let values = || -> Vec<Value> {
                     let field = c.field.expect("a column over a field");
                     rows.iter()

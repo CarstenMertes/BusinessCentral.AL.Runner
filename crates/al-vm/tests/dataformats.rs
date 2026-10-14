@@ -189,12 +189,20 @@ fn json_typed_getters() {
 }
 
 #[test]
-fn json_missing_key_throws_but_its_text_is_not_pinned() {
-    // TestJsonTypedGetters.al JsonObject_GetInteger_MissingKey_Throws only requires a non-empty
-    // error text; the corpus does not pin the text, so the runtime refuses rather than inventing one.
+fn json_missing_key_throws_with_the_pinned_text_and_code() {
+    // json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode
+    let t = text_of(
+        "J: JsonObject; R: Integer;",
+        "J.ReadFrom('{\"other\":5}'); asserterror R := J.GetInteger('missing'); exit(GetLastErrorText() + '|' + GetLastErrorCode());",
+    );
+    assert_eq!(
+        t,
+        "There is no property with the 'missing' key on the JSON object.|JsonPropertyNotFound"
+    );
+    // The DefaultIfNotFound = true form is not pinned and stays refused.
     assert!(unsupported(
         "J: JsonObject; R: Integer;",
-        "J.ReadFrom('{\"other\":5}'); R := J.GetInteger('missing'); exit('');"
+        "J.ReadFrom('{\"other\":5}'); R := J.GetInteger('missing', true); exit('');"
     ));
 }
 
@@ -331,9 +339,17 @@ fn json_dates_and_durations() {
 }
 
 #[test]
-fn json_yaml_is_not_implemented() {
-    // JsonObject.ReadFromYaml has no behaviour the corpus pins beyond "throws": refused, not faked.
-    assert!(unsupported("J: JsonObject;", "J.ReadFromYaml('key: value'); exit('');"));
+fn json_yaml_reads_and_writes_the_flat_form() {
+    // json/TestJsonRuntimeContracts.al:JsonObject_Yaml_RoundTripsOnThisTier; a nested value is refused.
+    let t = text_of(
+        "J: JsonObject; Y: Text;",
+        "J.ReadFromYaml('key: value'); J.WriteTo(Y); exit(Y);",
+    );
+    assert_eq!(t, "{\"key\":\"value\"}");
+    assert!(unsupported(
+        "J: JsonObject;",
+        "J.ReadFromYaml('key:' + Format(10) + '  - a'); exit('');"
+    ));
 }
 
 // ------------------------------------------------------------ Evaluate
@@ -662,12 +678,13 @@ fn xml_declarations_attributes_and_processing_instructions() {
 }
 
 #[test]
-fn xml_get_document_type_without_a_doctype_is_refused_not_invented() {
-    // xml/TestXmlComplete.al XmlDocument_GetDocumentType_IsCallable pins that it throws but no text.
-    assert!(unsupported(
+fn xml_get_document_type_without_a_doctype() {
+    // xml/TestXmlRuntimeContracts.al:XmlDocument_GetDocumentType_WithoutDoctype
+    let t = text_of(
         "D: XmlDocument; T: XmlDocumentType;",
-        "XmlDocument.ReadFrom('<root/>', D); D.GetDocumentType(T); exit('');"
-    ));
+        "XmlDocument.ReadFrom('<root/>', D); asserterror D.GetDocumentType(T); exit(GetLastErrorText() + '|' + GetLastErrorCode() + '|' + Format(D.GetDocumentType(T)));",
+    );
+    assert_eq!(t, "The XML node is not set.|XmlNodeNotFound|No");
 }
 
 #[test]
@@ -1061,10 +1078,13 @@ fn xml_parser_edge_cases() {
         "D: XmlDocument; E: XmlElement; S: Text;",
         "XmlDocument.ReadFrom('<r xmlns:p=\"u2\"><p:b p:y=\"2\"/></r>', D); D.WriteTo(S); exit(S);",
     );
-    assert_eq!(t, "<r xmlns:p=\"u2\"><p:b p:y=\"2\" /></r>");
+    assert_eq!(
+        t,
+        "<?xml version=\"1.0\" encoding=\"utf-16\"?>\n<r xmlns:p=\"u2\">\n  <p:b p:y=\"2\" />\n</r>"
+    );
     let t = text_of(
         "E: XmlElement; C: XmlElement; S: Text;",
         "E := XmlElement.Create('root', 'urn:x'); C := XmlElement.Create('child', 'urn:x'); E.Add(C); E.SetAttribute('a', 'v\"&<'); E.WriteTo(S); exit(S);",
     );
-    assert_eq!(t, "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\"><child /></root>");
+    assert_eq!(t, "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\">\n  <child />\n</root>");
 }

@@ -1,5 +1,5 @@
 //! Behaviour of queries and XmlPorts pinned by probe tests that are not in the corpus submodule yet
-//! (corpus branch al-runtime-rs, pending push: query/TestQueryOuterJoinDescendingSaveAsContracts.al,
+//! (corpus: query/TestQueryOuterJoinDescendingSaveAsContracts.al,
 //! xmlport/TestXmlPortTriggersReplaceViewContracts.al, xmlport/TestXmlPortTextFormatsContracts.al).
 //! AL source, compiled and run as a test codeunit. Each test names the probe it mirrors.
 

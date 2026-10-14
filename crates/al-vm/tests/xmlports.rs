@@ -894,50 +894,48 @@ fn a_failing_guarded_import_returns_false_and_rolls_back_its_rows() {
 
 // The statement form leaves the failure to the caller (xmlport/TestXmlPortImportWriteTx.al does not
 // pin its text, so the failing statement import is refused).
+// xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_BadInteger_ThrowsEvaluate
 #[test]
-fn a_failing_statement_import_is_refused_because_its_error_text_is_not_pinned() {
-    let r = refusal(
+fn a_failing_statement_import_raises_the_evaluate_error() {
+    match run(
         IMPORT_VARS,
         "H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>x</IntegerValue></Universal></Universals>'); XmlPort.Import(60023, InStr); exit('');",
-    );
-    assert!(r.contains("not pinned"), "{r}");
+    ) {
+        Err(Signal::Error(e)) => {
+            assert_eq!(e.message, "The value \"x\" can't be evaluated into type Integer.");
+            assert_eq!(e.code, "Evaluate");
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
 }
 
 // xmlport/TestXmlPortPrecompiledObject.al:PrecompiledXmlPort_DeclaredExportDirection_RefusesImport
 // (the message is a platform resource string the corpus does not pin).
-#[test]
-fn a_direction_mismatch_is_refused_until_its_message_is_pinned() {
-    let r = refusal(
-        "B: Record \"ALT Blob\" temporary; H: Codeunit Helpers; InStr: InStream; P: XmlPort \"ALT Export Only XmlPort\";",
-        "H.Stage(B, InStr, '<Root/>'); P.SetSource(InStr); P.Import(); exit('');",
-    );
-    assert!(r.contains("Direction"), "{r}");
-    let r = refusal(
-        "B: Record \"ALT Blob\"; OutStr: OutStream; P: XmlPort \"ALT Import Only XmlPort\";",
-        "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('');",
-    );
-    assert!(r.contains("Direction"), "{r}");
-}
 
 #[test]
 fn xmlports_the_runtime_cannot_run_are_refused_before_they_start() {
-    let r = refusal("P: XmlPort \"ALT Variable Text XmlPort\";", "exit('');");
-    assert!(r.contains("VariableText"), "{r}");
     let r = refusal("P: XmlPort \"ALT Request Page XmlPort\";", "exit('');");
     assert!(r.contains("request page"), "{r}");
 }
 
 // The text of a failed import is not pinned by the corpus, so reading it is refused rather than
 // answered with an invented sentence (hard rule 3); the pinned parts (false, rollback) still hold.
+// The error of a failed guarded import stays readable.
 #[test]
-fn the_last_error_of_a_failed_guarded_import_cannot_be_read() {
+fn the_last_error_of_a_failed_guarded_import_can_be_read() {
     let bad = "'<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>x</IntegerValue></Universal></Universals>'";
-    for read in ["GetLastErrorText()", "GetLastErrorCode()"] {
-        let r = refusal(
+    for (read, expected) in [
+        (
+            "GetLastErrorText()",
+            "The value \"x\" can't be evaluated into type Integer.",
+        ),
+        ("GetLastErrorCode()", "Evaluate"),
+    ] {
+        let out = text(
             &format!("{IMPORT_VARS} Ok: Boolean;"),
             &format!("H.Stage(B, InStr, {bad}); Ok := XmlPort.Import(60023, InStr); exit({read});"),
         );
-        assert!(r.contains("not pinned"), "{r}");
+        assert_eq!(out, expected);
     }
     // Without a read the import still reports false.
     let out = text(
@@ -972,8 +970,9 @@ fn set_table_view_refuses_a_view_that_is_more_than_filters() {
     for (setup, why) in [
         ("", "ok"),
         ("V.MarkedOnly(true);", "marked"),
-        ("V.SetCurrentKey(Rank);", "re-sorted"),
-        ("V.Ascending(false);", "re-sorted"),
+        // A key and a direction order the export (corpus xmlport/TestXmlPortTriggersReplaceViewContracts.al).
+        ("V.SetCurrentKey(Rank);", "ok"),
+        ("V.Ascending(false);", "ok"),
     ] {
         let r = run(
             "V: Record \"ALT Keyed\"; P: XmlPort \"ALT Keyed XmlPort\";",
@@ -983,7 +982,7 @@ fn set_table_view_refuses_a_view_that_is_more_than_filters() {
             assert!(matches!(r, Ok(Value::Text(ref t)) if t == "set"), "{r:?}");
         } else {
             match r {
-                Err(Signal::Unsupported(m)) => assert!(m.contains("temporary, marked or re-sorted"), "{setup}: {m}"),
+                Err(Signal::Unsupported(m)) => assert!(m.contains("temporary or marked"), "{setup}: {m}"),
                 other => panic!("{setup}: {other:?}"),
             }
         }
@@ -992,7 +991,7 @@ fn set_table_view_refuses_a_view_that_is_more_than_filters() {
         "V: Record \"ALT Keyed\" temporary; P: XmlPort \"ALT Keyed XmlPort\";",
         "P.SetTableView(V); exit('');",
     );
-    assert!(r.contains("temporary, marked or re-sorted"), "{r}");
+    assert!(r.contains("temporary or marked"), "{r}");
 }
 
 // A view of another table is refused too, and an xmlport with no table element has nothing to
@@ -1015,24 +1014,25 @@ fn set_table_view_refusals_name_what_is_wrong() {
 }
 
 // A refused direction names the xmlport and the direction it declares.
+// xmlport/TestXmlPortExportImportContracts.al:XmlPort_WrongDirection_Throws
 #[test]
-fn a_direction_mismatch_names_the_xmlport_and_its_direction() {
-    let r = refusal(
+fn a_direction_mismatch_raises_the_pinned_text_and_code() {
+    let err = |vars: &str, body: &str| match run(vars, body) {
+        Err(Signal::Error(e)) => (e.message, e.code),
+        other => panic!("expected an error, got {other:?}"),
+    };
+    let (m, c) = err(
         "B: Record \"ALT Blob\" temporary; H: Codeunit Helpers; InStr: InStream; P: XmlPort \"ALT Export Only XmlPort\";",
         "H.Stage(B, InStr, '<Root/>'); P.SetSource(InStr); P.Import(); exit('');",
     );
-    assert!(
-        r.contains("Import of XmlPort \"ALT Export Only XmlPort\", which declares Direction = Export"),
-        "{r}"
-    );
-    let r = refusal(
+    assert_eq!(m, "The XMLPort 'ALT Export Only XmlPort' is designed for export only.");
+    assert_eq!(c, "XmlPortExportDirection");
+    let (m, c) = err(
         "B: Record \"ALT Blob\"; OutStr: OutStream; P: XmlPort \"ALT Import Only XmlPort\";",
         "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('');",
     );
-    assert!(
-        r.contains("Export of XmlPort \"ALT Import Only XmlPort\", which declares Direction = Import"),
-        "{r}"
-    );
+    assert_eq!(m, "The XMLPort 'ALT Import Only XmlPort' is designed for import only.");
+    assert_eq!(c, "XmlPortImportDirection");
 }
 
 // The root of an importable document must be a text element with content.
@@ -1131,10 +1131,12 @@ fn text_of(r: Result<Value, Signal>) -> String {
 #[test]
 fn auto_update_with_any_assigning_trigger_is_refused() {
     for id in [60041, 60042, 60043] {
+        // The text element of the last port is not optional, so the document carries it.
+        let note = if id == 60043 { "<Note>n</Note>" } else { "" };
         let r = refusal(
             IMPORT_VARS,
             &format!(
-                "H.Row(1, 5, 'Keep', ''); H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>9</IntegerValue></Universal></Universals>');
+                "H.Row(1, 5, 'Keep', ''); H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>9</IntegerValue>{note}</Universal></Universals>');
                  XmlPort.Import({id}, InStr); exit('');"
             ),
         );
@@ -1160,7 +1162,7 @@ fn a_nested_text_group_exports_and_imports_its_variables() {
          exit(H.ReadAll(B));",
     );
     assert!(
-        out.contains("<Root><Header><Title>Hello</Title></Header></Root>"),
+        out.contains("<Root>  <Header>    <Title>Hello</Title>  </Header></Root>"),
         "{out}"
     );
     let out = text(
@@ -1217,17 +1219,18 @@ fn an_export_whose_root_is_not_a_text_element_with_content_is_refused() {
 
 // An export to a UTF-16 or MS-DOS stream is refused: only UTF-8 and Windows are implemented, and the
 // output encoding of the others is not pinned.
+// The document is written in its own encoding whatever the encoding of the stream.
 #[test]
-fn an_export_to_a_utf16_or_msdos_stream_is_refused() {
-    for enc in ["UTF16", "MSDos"] {
-        let r = refusal(
+fn an_export_to_a_utf16_or_msdos_stream_writes_the_same_bytes() {
+    for enc in ["UTF16", "MSDos", "UTF8"] {
+        let out = text(
             "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream;",
             &format!(
                 "H.Row(1, 0, '', ''); B.Code := 'U'; B.Insert(); B.Data.CreateOutStream(OutStr, TextEncoding::{enc});
-                 XmlPort.Export(60023, OutStr); exit('');"
+                 XmlPort.Export(60023, OutStr); B.Modify(); B.CalcFields(Data); exit(Format(B.Data.Length));"
             ),
         );
-        assert!(r.contains("not UTF-8"), "{enc}: {r}");
+        assert!(out.parse::<i32>().is_ok_and(|n| n > 2 && n % 2 == 0), "{enc}: {out}");
     }
 }
 

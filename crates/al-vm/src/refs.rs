@@ -173,9 +173,11 @@ impl Session {
             LibraryValue::SystemTable(n) => unsupported(format!(
                 "{what} on a RecordRef opened on system table {n} (the platform's system tables are not modelled)"
             )),
-            // BC's error text for this is not pinned by the corpus.
+            // BC's answer is not pinned by the corpus: the error text, and whether `Get(RecordId)` opens the
+            // table of the RecordId (Base Application's Data Type Management does `if not Get(RecID) then
+            // Open(RecID.TableNo)`). See docs/probes-needed.md.
             _ => unsupported(format!(
-                "{what} on a RecordRef that is not open (error text not pinned yet)"
+                "{what} on a RecordRef that is not open: BC's error text, and whether Get(RecordId) opens the table of the RecordId, are not pinned (docs/probes-needed.md)"
             )),
         }
     }

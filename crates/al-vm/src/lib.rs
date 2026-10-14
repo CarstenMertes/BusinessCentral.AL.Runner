@@ -238,6 +238,9 @@ pub struct Session {
     pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
     pub(crate) report_flow: Option<crate::reports::Flow>,
     /// The report instances that `Execute` has run: a second `Execute` on one is refused.
+    /// A page opened for a `RunObject` action looks its handler up without failing when there is
+    /// none (al-vm pages/runobject.rs).
+    pub(crate) lenient_bind: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
 }
 
@@ -308,6 +311,7 @@ impl Session {
             report_trigger: None,
             report_flow: None,
             report_executed: Vec::new(),
+            lenient_bind: false,
         }
     }
 

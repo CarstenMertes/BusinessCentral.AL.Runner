@@ -916,8 +916,19 @@ impl Session {
             // The parts' OnInit runs between the host's OnInit and its OnOpenPage (corpus
             // testpart/TestPartTriggerOrderAndRefresh.al:236-247).
             self.init_parts(st)?;
+            let mut unattended = false;
             if let Some(kind) = bind {
-                handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
+                if self.lenient_bind {
+                    // A RunObject action opens the page, runs OnInit and OnOpenPage, and only then
+                    // looks for a handler; with none it goes no further, so the first row is never
+                    // read (handlers/TestPageRunObjectContracts.al:330-346: "card.OnInit;card.OnOpenPage;").
+                    // A page opened in Create mode reads its new row first (:handlers/TestPageCreateModeNewRecordArgs.al:304-327).
+                    let object = st.borrow().object;
+                    handler = self.try_bind_page_handler(kind, object)?;
+                    unattended = handler.is_none() && mode != PageMode::New;
+                } else {
+                    handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
+                }
             }
             self.restore_page_values(st);
             self.check_page_events(st)?;
@@ -925,6 +936,9 @@ impl Session {
             st.borrow_mut().opening = false;
             opened?;
             self.page_event(st, "onopenpageevent", None, None)?;
+            if unattended {
+                return Ok(());
+            }
             let new_line = has_source && self.offers_new_line(st)?;
             st.borrow_mut().new_line = new_line;
             // Visible is evaluated once, at open.
@@ -2690,6 +2704,14 @@ impl Session {
                 if m == "Visible" && target_plain && ctl.prop("visible").is_none() {
                     return Ok(Value::Boolean(true));
                 }
+                // handlers/TestPageRunObjectContracts.al:392-404: Visible and Enabled of an actionref answer Yes.
+                let target_enabled_plain = match action_ref {
+                    ir::ActionRef::Target(t) => page.controls[*t].prop("enabled").is_none(),
+                    ir::ActionRef::Unresolved(_) => false,
+                };
+                if m == "Enabled" && target_enabled_plain && ctl.prop("enabled").is_none() {
+                    return Ok(Value::Boolean(true));
+                }
                 return unsupported(format!("TestAction.{m} of an actionref"));
             }
         }
@@ -3074,7 +3096,10 @@ impl Session {
             self.save_row(st)?;
         }
         st.borrow_mut().refresh = false;
-        if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
+        // RunObject wins over OnAction when an action declares both (handlers/TestPageRunObjectContracts.al:371-390).
+        if page_of(&engine, st).controls[idx].run_object.is_some() {
+            return self.run_object_action(st, idx);
+        } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             let r = self.control_routine(st, idx, r);
             if r.is_err() {
                 st.borrow_mut().refresh = false;
@@ -3082,8 +3107,6 @@ impl Session {
             r?;
             self.settle_after_action(st)?;
             self.run_refresh(st)?;
-        } else if page_of(&engine, st).controls[idx].run_object.is_some() {
-            return self.run_object_action(st, idx);
         }
         Ok(Value::Null)
     }

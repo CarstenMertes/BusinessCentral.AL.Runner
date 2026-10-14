@@ -1696,17 +1696,9 @@ impl Lowerer<'_> {
                 None
             };
             let run_object = match self.run_object(oi, file, sec) {
-                Some(r) => {
-                    // Which of the two an action runs first is not pinned: no corpus action
-                    // declares both.
-                    if sec.triggers().any(|t| t.name().eq_ignore_ascii_case("OnAction")) {
-                        unsupported.push(format!(
-                            "action {} declares both RunObject and OnAction (their order is not pinned)",
-                            raw.name
-                        ));
-                    }
-                    Some(r)
-                }
+                // An action that declares both runs only the RunObject
+                // (handlers/TestPageRunObjectContracts.al:371-390).
+                Some(r) => Some(r),
                 None => None,
             };
             controls.push(ir::Control {

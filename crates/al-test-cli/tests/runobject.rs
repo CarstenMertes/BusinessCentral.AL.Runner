@@ -150,7 +150,7 @@ page 61063 "RO Both Host"
 {
     PageType = Card; SourceTable = "RO Row";
     layout { area(Content) { field(NoCtl; Rec."No.") { } } }
-    actions { area(Processing) { action(Both) { RunObject = Page "RO Card"; trigger OnAction() begin end; } } }
+    actions { area(Processing) { action(Both) { RunObject = Page "RO Card"; trigger OnAction() begin Error('OnAction ran'); end; } } }
 }
 table 61003 "RO Head"
 {
@@ -535,12 +535,13 @@ fn what_the_corpus_does_not_pin_is_refused_when_the_action_is_invoked() {
     assert!(why("UnknownMode").contains("RunPageMode = strange"), "{got:?}");
 }
 
-// An action that declares both: which runs first is not pinned (no corpus action does).
+// An action that declares both runs only its RunObject
+// (handlers/TestPageRunObjectContracts.al:371-390 RunObject_ActionWithBothRunObjectAndOnAction_OnlyTheTargetRuns).
 #[test]
-fn an_action_with_run_object_and_on_action_refuses_its_page() {
-    let got = not_run(&format!(
+fn an_action_with_run_object_and_on_action_runs_only_the_target() {
+    passes(&format!(
         "{SEED}
-        [Test] procedure Both() var H: TestPage \"RO Both Host\"; begin Seed(); H.OpenEdit(); end;"
+        [Test] [HandlerFunctions('CardH')] procedure Both() var H: TestPage \"RO Both Host\"; begin Seed(); H.OpenEdit(); H.First(); H.Both.Invoke(); end;
+        [PageHandler] procedure CardH(var C: TestPage \"RO Card\") begin end;"
     ));
-    assert!(got[0].1.contains("declares both RunObject and OnAction"), "{got:?}");
 }

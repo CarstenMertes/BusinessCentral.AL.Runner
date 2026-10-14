@@ -547,9 +547,17 @@ impl Session {
     ) -> Result<(Rc<RefCell<Instance>>, RecSlots), Signal> {
         let (rs, xs, per_variable) = {
             let o = &self.engine.program.objects[object];
-            (o.rec_slot, o.xrec_slot, matches!(o.kind.as_str(), "table" | "tableextension"))
+            (
+                o.rec_slot,
+                o.xrec_slot,
+                matches!(o.kind.as_str(), "table" | "tableextension"),
+            )
         };
-        let existing = if per_variable { rec.borrow().globals.instance(object as u32) } else { None };
+        let existing = if per_variable {
+            rec.borrow().globals.instance(object as u32)
+        } else {
+            None
+        };
         let inst = match existing {
             Some(i) => i,
             None => {
@@ -645,7 +653,8 @@ impl Session {
     }
 
     fn run_trigger(&mut self, object: usize, routine: usize, rec: &Rec, xrec: Option<&Rec>) -> Result<(), Signal> {
-        self.call_on_record(object, routine, rec.clone(), xrec, Vec::new()).map(|_| ())
+        self.call_on_record(object, routine, rec.clone(), xrec, Vec::new())
+            .map(|_| ())
     }
 
     /// Every write gets a new, increasing SystemRowVersion.

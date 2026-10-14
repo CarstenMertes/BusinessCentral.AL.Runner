@@ -426,7 +426,11 @@ fn a_second_variable_has_its_own_globals() {
 // TableGlobals_Assignment_/Copy_/TransferFields_WhatHappensToBothSides: fields move, globals do not
 #[test]
 fn assignment_copy_and_transfer_fields_leave_both_sides_globals_alone() {
-    for op in ["Target := Source", "Target.Copy(Source)", "Target.TransferFields(Source)"] {
+    for op in [
+        "Target := Source",
+        "Target.Copy(Source)",
+        "Target.TransferFields(Source)",
+    ] {
         check(
             &format!(
                 "var Source: Record \"TG Row\"; Target: Record \"TG Row\"; begin
@@ -798,12 +802,22 @@ fn a_table_instance_holds_no_pointer_to_its_record_at_rest() {
     let blocked = l.unsupported.iter().map(|o| o.iter().map(|_| None).collect()).collect();
     let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
     let ti = l.program.objects.iter().position(|o| o.name == "TG Row").unwrap();
-    let row_slot = l.program.objects[oi].globals.iter().position(|g| g.name == "Row").unwrap();
+    let row_slot = l.program.objects[oi]
+        .globals
+        .iter()
+        .position(|g| g.name == "Row")
+        .unwrap();
     let (rec_slot, xrec_slot) = (
         l.program.objects[ti].rec_slot.unwrap(),
         l.program.objects[ti].xrec_slot.unwrap(),
     );
-    let ri = |name: &str| l.program.objects[oi].routines.iter().position(|r| r.name == name).unwrap();
+    let ri = |name: &str| {
+        l.program.objects[oi]
+            .routines
+            .iter()
+            .position(|r| r.name == name)
+            .unwrap()
+    };
     let (f, g) = (ri("F"), ri("G"));
     let mut s = Session::new(Engine::new(l.program, blocked));
     let inst = s.instance(oi);

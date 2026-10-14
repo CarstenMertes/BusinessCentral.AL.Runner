@@ -238,8 +238,8 @@ impl Session {
                 let at = rec.borrow().marks.iter().position(|m| ops::compare_keys(m, &pk));
                 match args.first() {
                     None => Ok(Value::Boolean(at.is_some())),
-                    // Mark(SetMark) returns the new state (corpus branch al-runtime-rs, pending push:
-                    // record/TestRecordViewCopyMarkContracts.al:Mark_ReturnsTheNewState).
+                    // Mark(SetMark) returns the new state
+                    // (record/TestRecordViewCopyMarkContracts.al:113, Mark_ReturnsTheNewState).
                     Some(v) => {
                         let want = ops::truthy(v)?;
                         let mut r = rec.borrow_mut();
@@ -439,8 +439,8 @@ impl Session {
                 Ok(Value::Integer(r.filter_group))
             }
             // Doc (Record.SetRecFilter): filters the primary key fields to the current values; the
-            // filters on other fields stay (corpus branch al-runtime-rs, pending push:
-            // record/TestRecordViewCopyMarkContracts.al:SetRecFilter_KeepsFiltersOnOtherFields_...).
+            // filters on other fields stay (record/TestRecordViewCopyMarkContracts.al:41,
+            // SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey).
             "SetRecFilter" => {
                 let group = rec.borrow().filter_group;
                 let pk = &t.keys[0];
@@ -521,8 +521,8 @@ impl Session {
                 // (record/TestChangeCompanyFiltersCopyDeleteContracts.al:117-121).
                 let mut d = rec.borrow_mut();
                 // shareTable needs both records temporary; a plain Copy of a temporary record onto
-                // a normal one copies values and filters only (corpus branch al-runtime-rs, pending
-                // push: record/TestRecordViewCopyMarkContracts.al:Copy_ShareTable_RequiresBothRecordsToBeTemporary).
+                // a normal one copies values and filters only
+                // (record/TestRecordViewCopyMarkContracts.al:89, Copy_ShareTable_RequiresBothRecordsToBeTemporary).
                 if share && !(s.temporary && d.temporary) {
                     return Err(error(
                         "The COPY function can only be used with the shareTable argument set to true if both records are temporary.".into(),
@@ -765,8 +765,7 @@ impl Session {
         let pos = arg_pos(args, 0)?;
         if t.fields[pos].id == 2_000_000_000 {
             // Wording after the pinned fragment: record/TestRecordSystemId.al:230-262, docs/probes-needed.md.
-            // corpus branch al-runtime-rs (pending push): record/TestSystemFieldStampsContracts.al:
-            // SystemId_Duplicate_And_ModifyAll_Texts.
+            // record/TestSystemFieldStampsContracts.al:153 (SystemId_Duplicate_And_ModifyAll_Texts).
             return Err(error(
                 format!(
                     "You cannot change the value of the SystemId field.{}{}Table: {}",

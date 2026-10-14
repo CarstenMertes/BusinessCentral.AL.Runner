@@ -406,8 +406,7 @@ impl Session {
     ) -> Result<Value, Signal> {
         // A TestPage begins a transaction of its own (see `in_page_transaction`). Page.Run and Page.RunModal with a handler that writes are allowed under None, and the
         // transaction the page began has ended afterwards
-        // (codeunit/TestWriteTxNoneModelContracts.al:200-216 and :163-185, corpus branch
-        // al-runtime-rs, probe on BC 27.5).
+        // (codeunit/TestWriteTxNoneModelContracts.al:200-216 and :163-185).
         if recv.is_none() && self.no_transaction() {
             if matches!(method, "Page.RunStatic" | "Page.RunModalStatic") {
                 return self.in_page_transaction(|s| s.page_op_inner(method, recv, args));
@@ -489,9 +488,9 @@ impl Session {
                 let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
                 // The static RunModal reports the lookup values, with or without a record: OK reads
                 // LookupOK, Cancel LookupCancel (corpus handlers/TestPageModalHandlerStatic_Tests.al:48-72
-                // for the record overload; corpus branch al-runtime-rs:
-                // handlers/TestPageModalResultsAndTriggersContracts.al:RunModal_Dialog_StaticVersusVariable_ReportedAction
-                // and ..._Card_StaticWithAndWithoutRecord_... for the others). A page variable reports OK and Cancel.
+                // for the record overload;
+                // handlers/TestPageModalResultsAndTriggersContracts.al:206 RunModal_Dialog_StaticVersusVariable_ReportedAction
+                // and :240 RunModal_Card_StaticWithAndWithoutRecord_VersusVariable_ReportedAction for the others). A page variable reports OK and Cancel.
                 if method == "Page.RunModalStatic" {
                     st.borrow_mut().lookup = true;
                 }

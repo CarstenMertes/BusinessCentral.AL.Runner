@@ -1681,8 +1681,8 @@ mod tests {
                     if not Ok then Error('guarded run refused'); end;
                 [Test] procedure DefaultWrites() var R: Record S; begin
                     // The guarded run of NextStartsClean committed its row 'RUN': it survives an
-                    // AutoRollback test (codeunit/TestCodeunitRunErrorTextsAndModels.al:
-                    // AutoRollback_Test04, corpus branch al-runtime-rs, probe on BC 27.5).
+                    // AutoRollback test (codeunit/TestCodeunitRunErrorTextsAndModels.al:259,
+                    // AutoRollback_Test04_SuccessfulGuardedRun_RowSurvivesTheTestBoundary).
                     R.DeleteAll();
                     R.K := 'D'; R.Insert();
                     if not Database.IsInWriteTransaction() then Error('no write transaction after an insert'); end;
@@ -1725,7 +1725,7 @@ mod tests {
         assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
         assert_eq!(o[2].1, Outcome::Pass, "{o:?}");
         // DeleteAll under None is refused with the Insert text
-        // (codeunit/TestWriteTxNoneModelContracts.al:Test04, corpus branch al-runtime-rs, BC 27.5).
+        // (codeunit/TestWriteTxNoneModelContracts.al:91, NoneModel_Test04_DeleteAll_IsRefused).
         assert_eq!(
             o[3].1,
             Outcome::Fail("A transaction must be started before changes can be made to the database.".into()),

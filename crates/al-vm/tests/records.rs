@@ -328,8 +328,8 @@ fn find_without_argument_is_find_equal_by_primary_key() {
     assert_eq!(text(r), "Yes1");
 }
 
-// Find honours the active filters; a key typed by hand outside the filter is not found (corpus
-// branch al-runtime-rs, pending push: record/TestFilterTextBooleanFindContracts.al).
+// Find honours the active filters; a key typed by hand outside the filter is not found
+// (record/TestFilterTextBooleanFindContracts.al:143, Find_AllForms_HonourTheActiveFilters).
 #[test]
 fn find_equal_honours_the_filters() {
     let r = run(

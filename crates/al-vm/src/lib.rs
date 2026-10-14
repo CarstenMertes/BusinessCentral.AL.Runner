@@ -934,9 +934,9 @@ impl Session {
             S::AssertError(body) => {
                 // A caught error rolls the transaction back to the last commit, also inside a modal
                 // page handler: the write pending before the page opened and the handler's own
-                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
-                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
-                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
+                // earlier writes are lost with it
+                // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit).
                 match self.exec_block(body, f) {
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit

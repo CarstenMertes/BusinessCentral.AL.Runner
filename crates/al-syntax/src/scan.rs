@@ -51,7 +51,7 @@ pub struct ScannedObject {
 }
 
 /// `layout(Name) { Type = RDLC; ... }` in the `rendering` section of a report.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScannedLayout {
     /// The name as the parser's `Section::args` gives it (a lone quoted name loses its quotes).
     pub name: String,
@@ -60,7 +60,7 @@ pub struct ScannedLayout {
 }
 
 /// `[EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", 'OnBeforePost', ...)]`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScannedSubscriber {
     /// The publisher's kind as written after `ObjectType::`, lower case (`table`, `codeunit`, ...).
     pub publisher_kind: String,

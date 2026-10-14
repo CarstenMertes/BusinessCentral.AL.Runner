@@ -69,7 +69,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => {
             Value::Library("SecretText".into(), Rc::new(RefCell::new(LibraryValue::Text(s))))
         }
-        (v @ Value::Enum(..), T::Enum(_)) => v,
+        (v @ Value::Enum(from, _), T::Enum(to)) if from == *to => v,
+        // An enum of another type (`AssignmentCompatibility = true`): which value the ordinal selects and
+        // the error for an ordinal the target lacks are not pinned (docs/probes-needed.md).
+        (v @ Value::Enum(..), T::Enum(_)) => {
+            return unsupported(format!(
+                "assigning {} of another enum type to an Enum: the conversion by ordinal (AssignmentCompatibility) and the error for an ordinal the target lacks are not pinned (docs/probes-needed.md)",
+                v.describe()
+            ));
+        }
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
         (Value::Option(o, _), T::Integer) => Value::Integer(o),
         (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
@@ -145,6 +153,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Option(..), T::Enum(_)) => {
             return unsupported(format!(
                 "assigning {} to an Enum: which enum value an Option ordinal selects, and the error for an ordinal the enum lacks, are not pinned (docs/probes-needed.md)",
+                v.describe()
+            ));
+        }
+        // An Integer into an Enum slot (a Record.Get key for an Enum field, Base Application's deferral
+        // codeunit passes document types as Integer). Only `Enum.FromInteger` is pinned
+        // (types/TestEnum.al:83-91); the implicit form is not (docs/probes-needed.md).
+        (v @ (Value::Integer(_) | Value::BigInteger(_)), T::Enum(_)) => {
+            return unsupported(format!(
+                "assigning {} to an Enum: whether an Integer converts to the enum value of that ordinal, and the error for an ordinal the enum lacks, are not pinned (docs/probes-needed.md)",
                 v.describe()
             ));
         }
@@ -466,6 +483,22 @@ mod tests {
 
     fn d(s: &str) -> Value {
         Value::Decimal(Decimal::from_str(s).unwrap())
+    }
+
+    // An Enum of one type stored in a slot of another enum type (`AssignmentCompatibility = true` in
+    // Base Application's Contact Business Relation) is refused at the assignment with its own reason;
+    // no corpus test pins the conversion (docs/probes-needed.md). Never keep the source's enum type.
+    #[test]
+    fn an_enum_of_another_type_is_refused_at_the_assignment() {
+        let why = match convert(Value::Enum(5057, 1), &RtType::Enum(5056)) {
+            Err(Signal::Unsupported(w)) => w,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        assert!(why.contains("another enum type") && why.contains("not pinned"), "{why}");
+        assert!(matches!(
+            convert(Value::Enum(5056, 1), &RtType::Enum(5056)),
+            Ok(Value::Enum(5056, 1))
+        ));
     }
 
     #[test]

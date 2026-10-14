@@ -22,6 +22,9 @@ pub struct Dependencies {
     pub build: Option<ArtifactUse>,
     /// The ids the `Application` aggregate depends on (see [`Dependencies::implied_dependencies`]).
     pub application_aggregate: Vec<String>,
+    /// Per app of `apps`: set when the package was read lazily (`load_project_with`), in which case
+    /// the app's files hold no text yet.
+    pub lazy: Vec<Option<al_sema::LazySource>>,
 }
 
 impl Dependencies {
@@ -102,6 +105,21 @@ pub fn load_project(
     source_build: Option<&str>,
     implied: bool,
 ) -> Result<Dependencies, String> {
+    load_project_with(project, workspace_apps, search, provision, source_build, implied, false)
+}
+
+/// [`load_project`] where, with `lazy_sources`, the text of a package's files is left unread
+/// (`Dependencies::lazy`). The caller must read it (`LazySource::fill`) or hand the apps to a run that
+/// knows (`RunOptions::lazy`); a file of such an app holds an empty text until then.
+pub fn load_project_with(
+    project: &AppJson,
+    workspace_apps: &[WorkspaceApp],
+    search: &[PathBuf],
+    provision: Option<&Provision>,
+    source_build: Option<&str>,
+    implied: bool,
+    lazy_sources: bool,
+) -> Result<Dependencies, String> {
     let req = Request {
         project,
         workspace_apps,
@@ -109,6 +127,7 @@ pub fn load_project(
         missing: MissingPolicy::Skip,
         source_build,
         application_implies_dependencies: implied,
+        lazy_sources,
     };
     let mut log = Vec::new();
     let (loaded, build) = match provision {
@@ -134,6 +153,7 @@ pub fn load_project(
     let mut apps = Vec::new();
     let mut summary = Vec::new();
     let mut manifests = Vec::new();
+    let mut lazy = Vec::new();
     let application_aggregate = loaded.application_aggregate.clone();
     for d in loaded.apps {
         let files = d.app.files.len();
@@ -149,6 +169,7 @@ pub fn load_project(
             resources: Vec::new(),
         });
         summary.push(format!("{} {}", d.app.name, d.version));
+        lazy.push(d.lazy);
         apps.push(d.app);
     }
     Ok(Dependencies {
@@ -158,5 +179,6 @@ pub fn load_project(
         log,
         build,
         application_aggregate,
+        lazy,
     })
 }

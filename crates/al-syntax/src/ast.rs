@@ -120,7 +120,7 @@ fn is_name(t: &SyntaxToken) -> bool {
 }
 
 /// One `type("Full.Name"; "Alias")` of a `dotnet { assembly(..) { } }` block.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DotNetTypeDecl {
     pub assembly: String,
     pub version: Option<String>,

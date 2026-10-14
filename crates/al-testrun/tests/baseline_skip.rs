@@ -169,3 +169,91 @@ fn a_selection_that_needs_the_baseline_still_uses_the_compile_cache() {
     assert!(rt.phases.cache.as_ref().is_some_and(|c| c.built));
     assert_eq!(outcome(&rt, "SeesTheInstallRowThroughTheHelper"), Outcome::Pass);
 }
+
+// ---- dependency apps whose files are read on demand (ADR-022, "pure tests") ----
+
+#[derive(Debug)]
+struct TextLoader {
+    texts: Vec<String>,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl al_sema::SourceLoader for TextLoader {
+    fn text(&self, i: usize) -> String {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.texts[i].clone()
+    }
+}
+
+/// A run where the dependency app comes with no text and a loader.
+fn run_lazy(only: &[u32], cache: &std::path::Path, base: &str) -> (CorpusRuntime, std::sync::Arc<TextLoader>) {
+    let manifest = |p: &str| Manifest {
+        publisher: p.into(),
+        version: "1.0.0.0".into(),
+        resources: vec![],
+    };
+    let loader = std::sync::Arc::new(TextLoader {
+        texts: vec![base.to_string()],
+        reads: Default::default(),
+    });
+    let mut dep = app("base", &[], base);
+    dep.files[0].1.clear();
+    let rt = CorpusRuntime::try_run_suites_with(
+        vec![app("main", &["base"], MAIN), dep],
+        vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+        &[manifest("Me"), manifest("Microsoft")],
+        &Default::default(),
+        None,
+        Default::default(),
+        &[SuiteRun::everything()],
+        &RunOptions {
+            only: (!only.is_empty()).then(|| only.iter().map(|&id| (0, id)).collect()),
+            compile_cache: Some(CompileCache {
+                dir: cache.to_path_buf(),
+                require: false,
+            }),
+            lazy: vec![
+                None,
+                Some(al_sema::LazySource {
+                    loader: loader.clone(),
+                    identity: [9; 32],
+                }),
+            ],
+            ..Default::default()
+        },
+    )
+    .expect("the run starts");
+    (rt, loader)
+}
+
+#[test]
+fn a_pure_run_with_lazy_dependencies_builds_the_index_once_and_then_reads_no_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let (first, l1) = run_lazy(&[60101], dir.path(), BASE);
+    assert_eq!(first.phases.source_index, Some("built"));
+    assert_eq!(outcome(&first, "Adds"), Outcome::Pass);
+    assert!(
+        l1.reads.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "the first run reads to scan"
+    );
+    let (second, l2) = run_lazy(&[60101], dir.path(), BASE);
+    assert_eq!(second.phases.source_index, Some("read"));
+    assert_eq!(outcome(&second, "Adds"), Outcome::Pass);
+    assert_eq!(outcome(&second, "Fails"), Outcome::Fail("on purpose".into()));
+    // The test calls the helper codeunit, so the file that holds it is read; nothing else is.
+    assert_eq!(l2.reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(second.phases.baseline_skipped && second.phases.compile_cache_skipped);
+}
+
+#[test]
+fn a_run_that_needs_the_baseline_reads_the_lazy_files_it_needs_and_gets_the_same_outcomes() {
+    let dir = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        let (rt, loader) = run_lazy(&[60103], dir.path(), BASE);
+        assert!(!rt.phases.baseline_skipped);
+        assert_eq!(outcome(&rt, "SeesTheInstallRowThroughTheHelper"), Outcome::Pass);
+        assert!(loader.reads.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+    }
+    let (rt, _) = run_lazy(&[], dir.path(), BASE);
+    assert_eq!(outcome(&rt, "SeesTheInstallRow"), Outcome::Pass);
+}

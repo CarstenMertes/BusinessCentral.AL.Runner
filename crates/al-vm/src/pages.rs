@@ -942,6 +942,7 @@ impl Session {
             dst.fields = src.fields.clone();
             dst.filters = src.filters.clone();
             dst.key = src.key;
+            dst.adhoc = src.adhoc.clone();
             dst.temporary = src.temporary;
             dst.temp_id = src.temp_id;
             dst.ascending = src.ascending;

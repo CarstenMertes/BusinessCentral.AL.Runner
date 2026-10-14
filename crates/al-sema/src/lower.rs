@@ -1083,6 +1083,15 @@ fn lower_object<'a>(
             });
         }
     }
+    // A query's own code runs on the query it was called on: its state sits in a hidden slot
+    // the VM fills when it makes the instance (`Session::query_instance`).
+    if o.kind == ObjKind::Query {
+        rec_slot = Some(globals.len());
+        globals.push(ir::Slot {
+            name: "__query".into(),
+            ty: RtType::Query(oi as u32),
+        });
+    }
     lw.rec_slot = rec_slot;
     if o.kind == ObjKind::Report {
         // `CurrPage` of the request page. Typed Variant: the test client puts the page there
@@ -3776,7 +3785,7 @@ impl Lowerer<'_> {
                         if matches!(
                             self.ty_of(r),
                             Ty::Object(
-                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report,
+                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report | ObjKind::Query,
                                 _
                             ) | Ty::Record { .. }
                         ) =>
@@ -3888,9 +3897,11 @@ impl Lowerer<'_> {
                         Err(_) => ir::Arg::Value(self.expr(r)?),
                     })),
                     // An unqualified record method in table code runs on the implicit Rec.
-                    None if sig.instance && sig.receiver == "Record" => Some(Box::new(ir::Arg::Ref(
-                        ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
-                    ))),
+                    None if sig.instance && matches!(sig.receiver.as_str(), "Record" | "Query") => {
+                        Some(Box::new(ir::Arg::Ref(ir::Place::Global(
+                            self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
+                        ))))
+                    }
                     _ => None,
                 };
                 let mut out = Vec::new();

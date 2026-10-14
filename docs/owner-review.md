@@ -4,6 +4,15 @@ These were decided while the owner was away, or are still open. Each line names
 the ADR or document that has the detail. Remove a line once the owner has
 reviewed it.
 
+## Decided without the owner (data-2, 2026-10-14)
+
+- Companies (ChangeCompany, per-company rows): no seam changed, so no ADR. The store already keys per-company tables by
+  (company, table) (ADR-005); a record carries an optional company and its access context names it. Added only additive
+  things: `RecordState.company` and `adhoc`, `MemStore::drop_company` / `has_company_rows` / `companies_with_rows`,
+  `ir::XmlPort::run_unsupported`. Assumption to review: deleting a Company row drops its rows (docs/probes-needed.md, Companies).
+- XmlPort constructs the corpus does not pin now refuse when the port runs, not when it is declared (so Base App's xmlport 1
+  can sit behind a cancelled request page).
+
 ## Open questions (not decided)
 
 - ADR-020 (Proposed), `al-bcdb`: the Rust port of bcdb, and the proposed way to load CRONUS

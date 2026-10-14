@@ -493,6 +493,77 @@ query 68532 "QRW Amounts"
         }
     }
 }
+table 60990 "QC Row"
+{
+    fields { field(1; Id; Integer) { } field(2; Kind; Integer) { } field(3; Amt; Decimal) { } }
+    keys { key(PK; Id) { } }
+}
+table 60991 "QC Log"
+{
+    fields { field(1; Name; Text[30]) { } field(2; Val; Integer) { } }
+    keys { key(PK; Name) { } }
+}
+// The shape of Base App's query 522 (a filter() element, procedures that set it) and of the
+// fixture ALTManualQueryIntegrationEvent (a procedure that raises its own IntegrationEvent).
+query 60992 "QC With Code"
+{
+    QueryType = Normal;
+    elements
+    {
+        dataitem(Row; "QC Row")
+        {
+            filter(KindF; Kind) { }
+            column(Total; Amt) { Method = Sum; }
+        }
+    }
+
+    procedure SetKind(K: Integer; Row2: Record "QC Row")
+    begin
+        SetRange(KindF, K);
+        if Row2.Id <> 0 then
+            SetRange(KindF, Row2.Kind);
+    end;
+
+    procedure Raise(V: Integer)
+    var L: Record "QC Log";
+    begin
+        L.Name := 'ran'; L.Val := V; L.Insert();
+        OnRaised(V);
+    end;
+
+    [IntegrationEvent(false, false)]
+    local procedure OnRaised(V: Integer)
+    begin
+    end;
+
+    trigger OnBeforeOpen()
+    begin
+    end;
+}
+codeunit 60993 "QC Sub"
+{
+    [EventSubscriber(ObjectType::Query, Query::"QC With Code", 'OnRaised', '', false, false)]
+    local procedure OnRaised(V: Integer)
+    var L: Record "QC Log";
+    begin
+        L.Name := 'fired'; L.Val := V; L.Insert();
+    end;
+}
+query 60996 "QC Unordered Groups"
+{
+    elements { dataitem(Row; "QC Row") { column(Kind; Kind) { } column(Total; Amt) { Method = Sum; } } }
+}
+query 60994 "QC With Variable"
+{
+    elements { dataitem(Row; "QC Row") { column(Id; Id) { } } }
+    var Counter: Integer;
+    procedure Bump() begin Counter += 1; end;
+}
+query 60995 "QC With Trigger Code"
+{
+    elements { dataitem(Row; "QC Row") { column(Id; Id) { } } }
+    trigger OnBeforeOpen() begin SetRange(Id, 1); end;
+}
 "#;
 
 fn run(body: &str) -> Result<Value, Signal> {
@@ -519,7 +590,7 @@ fn run(body: &str) -> Result<Value, Signal> {
         .position(|r| r.name == "F")
         .unwrap();
     if let Some(Some(r)) = blocked.get(oi).and_then(|o| o.get(ri)) {
-        panic!("F is blocked: {r}");
+        return Err(Signal::Unsupported(r.clone()));
     }
     let engine = Engine::new(l.program, blocked);
     let mut s = Session::new(engine);
@@ -1301,4 +1372,110 @@ fn a_write_to_the_child_table_of_a_join_is_noticed_between_reads() {
         end;",
     ));
     assert_eq!(text(r), "1,2,9,");
+}
+
+// query/TestQueryDataItemTableFilterDatabaseConst.al:96-107 (a query's own procedure sets its
+// filter without raising) and :109-136 (the filter applies when the query is opened).
+#[test]
+fn a_query_procedure_sets_the_queries_own_filters_and_the_query_reads_them() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QC With Code\"; R: Record \"QC Row\"; Seen: Text;
+        begin
+            R.Id := 1; R.Kind := 1; R.Amt := 5; R.Insert();
+            R.Id := 2; R.Kind := 2; R.Amt := 7; R.Insert();
+            R.Id := 3; R.Kind := 2; R.Amt := 9; R.Insert();
+            R.Reset();
+            Q.SetKind(2, R);
+            Q.Open();
+            while Q.Read() do Seen += Format(Q.Total) + ',';
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "16,");
+}
+
+// handlers/TestManualObjectIntegrationEvent.al:69-89: a query's procedure runs and raises an
+// IntegrationEvent it declares; the subscriber fires.
+#[test]
+fn a_query_procedure_raises_the_integration_event_the_query_declares() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QC With Code\"; L: Record \"QC Log\"; Seen: Text;
+        begin
+            Q.Raise(13);
+            if L.FindSet() then
+                repeat Seen += L.Name + Format(L.Val) + ','; until L.Next() = 0;
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "fired13,ran13,");
+}
+
+// query/TestQueryObject.al reads queries without code; with an OnBeforeOpen whose body is empty
+// (Base App's query 1302 has one) Open and Read behave the same.
+#[test]
+fn an_empty_on_before_open_changes_nothing() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QC With Code\"; R: Record \"QC Row\";
+        begin
+            R.Id := 1; R.Kind := 1; R.Amt := 5; R.Insert();
+            Q.Open();
+            exit(Format(Q.Read()) + Format(Q.Total));
+        end;",
+    ));
+    assert_eq!(text(r), "Yes5");
+}
+
+// What no corpus test pins is refused, but only for the code that uses the query: a variable of a
+// query (its persistence across calls) and an OnBeforeOpen with statements (when it runs relative to
+// the filters).
+#[test]
+fn query_variables_and_trigger_bodies_are_refused() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text var Q: Query \"QC With Variable\"; begin exit('x'); end;",
+    ));
+    assert!(unsupported(r).contains("variables"), "variables");
+    let r = run(&with(
+        "",
+        "procedure F(): Text var Q: Query \"QC With Trigger Code\"; begin exit('x'); end;",
+    ));
+    assert!(unsupported(r).contains("OnBeforeOpen"), "trigger");
+}
+
+// Base App's query 1302 groups with no OrderBy; query/TestQueryAggregation.al always orders its
+// groups, so the order of several groups is not pinned. One group (or none) has no order to get
+// wrong (record/TestSalesQuoteVatRounding.al:67-79 reads a single VAT % group).
+#[test]
+fn groups_without_an_order_by_are_refused_only_when_there_are_several() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QC Unordered Groups\"; R: Record \"QC Row\";
+        begin
+            R.Id := 1; R.Kind := 1; R.Amt := 5; R.Insert();
+            R.Id := 2; R.Kind := 1; R.Amt := 7; R.Insert();
+            Q.Open();
+            exit(Format(Q.Read()) + Format(Q.Total) + Format(Q.Read()));
+        end;",
+    ));
+    assert_eq!(text(r), "Yes12No");
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QC Unordered Groups\"; R: Record \"QC Row\";
+        begin
+            R.Id := 1; R.Kind := 1; R.Amt := 5; R.Insert();
+            R.Id := 2; R.Kind := 2; R.Amt := 7; R.Insert();
+            Q.Open();
+            exit(Format(Q.Read()));
+        end;",
+    ));
+    assert!(unsupported(r).contains("group order"));
 }

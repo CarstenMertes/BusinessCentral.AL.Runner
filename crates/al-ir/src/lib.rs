@@ -315,13 +315,32 @@ pub struct ReportExtModify {
     pub after: Option<usize>,
 }
 
-/// A data item added by `addlast`: under a base item, or (`item.parent`) under another added item.
+/// A data item added by `addlast`, `addfirst`, `addbefore` or `addafter`: under a base item, or
+/// (`item.parent`) under another added item.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AddedItem {
     /// `item.parent` indexes `ReportExt::added`.
     pub item: ReportItem,
     /// The base item it is added under (top-level added items).
     pub base_parent: Option<usize>,
+    /// Where it runs among the children of `base_parent`.
+    #[serde(default)]
+    pub place: AddedPlace,
+}
+
+/// Where an added data item sits among the data items nested under its parent (corpus
+/// reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AddedPlace {
+    /// After the base item's own children (`addlast(Parent)`).
+    #[default]
+    Last,
+    /// Before them (`addfirst(Parent)`).
+    First,
+    /// Right before the base child with this index (`addbefore(Child)`).
+    Before(usize),
+    /// Right after the base child with this index (`addafter(Child)`).
+    After(usize),
 }
 
 /// A `dataitem` of a report.

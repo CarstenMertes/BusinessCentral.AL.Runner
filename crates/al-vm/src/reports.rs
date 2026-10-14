@@ -841,7 +841,7 @@ impl Session {
 }
 
 /// A data item of the running report: one of its own, or one its reportextension adds.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ItemRef {
     Base(usize),
     Added(usize),
@@ -896,8 +896,10 @@ impl Run {
             .collect()
     }
 
-    /// The items nested directly under `r`, in the order they run: a base item's own, then the
-    /// ones the extension added under it.
+    /// The items nested directly under `r`, in the order they run: a base item's own with the
+    /// ones the extension added around them (`addfirst` before all, `addbefore` and `addafter`
+    /// next to one, `addlast` after all). Corpus
+    /// reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al:214-257.
     fn children(&self, r: ItemRef) -> Vec<ItemRef> {
         let mut out = Vec::new();
         if let ItemRef::Base(i) = r {
@@ -907,16 +909,34 @@ impl Run {
                     .map(ItemRef::Base),
             );
         }
-        if let Some(x) = self.ext_ir() {
-            out.extend(
-                (0..x.added.len())
-                    .filter(|&c| match r {
-                        ItemRef::Base(i) => x.added[c].base_parent == Some(i),
-                        ItemRef::Added(k) => x.added[c].item.parent == Some(k),
-                    })
-                    .map(ItemRef::Added),
-            );
+        let Some(x) = self.ext_ir() else { return out };
+        let under = |c: &usize| match r {
+            ItemRef::Base(i) => x.added[*c].base_parent == Some(i),
+            ItemRef::Added(k) => x.added[*c].item.parent == Some(k),
+        };
+        let mine: Vec<usize> = (0..x.added.len()).filter(under).collect();
+        let at = |out: &[ItemRef], base: usize| out.iter().position(|c| *c == ItemRef::Base(base));
+        for &c in mine.iter().rev().filter(|&&c| x.added[c].place == ir::AddedPlace::First) {
+            out.insert(0, ItemRef::Added(c));
         }
+        for &c in &mine {
+            match x.added[c].place {
+                ir::AddedPlace::Before(b) => {
+                    let p = at(&out, b).unwrap_or(0);
+                    out.insert(p, ItemRef::Added(c));
+                }
+                ir::AddedPlace::After(a) => {
+                    let p = at(&out, a).map_or(out.len(), |p| p + 1);
+                    out.insert(p, ItemRef::Added(c));
+                }
+                ir::AddedPlace::First | ir::AddedPlace::Last => {}
+            }
+        }
+        out.extend(
+            mine.iter()
+                .filter(|&&c| x.added[c].place == ir::AddedPlace::Last)
+                .map(|&c| ItemRef::Added(c)),
+        );
         out
     }
 }

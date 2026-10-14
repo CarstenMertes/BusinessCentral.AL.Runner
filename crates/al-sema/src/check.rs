@@ -1012,7 +1012,13 @@ impl<'a> Checker<'a> {
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
                         }
-                        _ => E::PartialObj(k, parts),
+                        _ => match (k, self.ws.unprovided_platform_table_id(sc.file, &parts)) {
+                            (ObjKind::Table, Some(id)) => {
+                                self.record(sc, node, Res::ObjectId(id));
+                                E::Val(Ty::Integer)
+                            }
+                            _ => E::PartialObj(k, parts),
+                        },
                     };
                 }
                 let base_ty = match base {
@@ -1103,7 +1109,14 @@ impl<'a> Checker<'a> {
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
                         }
-                        None => E::PartialObj(k, vec![rhs]),
+                        None => match (k, self.ws.unprovided_platform_table_id(sc.file, &split_qualified(&rhs))) {
+                            // A platform table nothing provides: its id is still a constant.
+                            (ObjKind::Table, Some(id)) => {
+                                self.record(sc, node, Res::ObjectId(id));
+                                E::Val(Ty::Integer)
+                            }
+                            _ => E::PartialObj(k, vec![rhs]),
+                        },
                     },
                     E::PartialObj(k, parts) => E::PartialObj(k, parts),
                     E::EnumKeyword => match self.resolve(sc, ObjKind::Enum, &rhs) {

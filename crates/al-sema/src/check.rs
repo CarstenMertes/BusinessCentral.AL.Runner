@@ -457,6 +457,10 @@ struct Checker<'a> {
     demand: std::cell::RefCell<Option<demand::State>>,
     /// Files to parse ahead on other threads: those of the dependency objects just reached.
     prefetch: Option<std::sync::mpsc::Sender<usize>>,
+    /// What `resolve_ref` found for a name written in a file, by (file, kind) and then name. While
+    /// a check runs the answer does not change (nothing is left out of the compile before it ends),
+    /// and the same few names are asked for again and again by the routines of a file.
+    resolved: std::cell::RefCell<HashMap<(usize, ObjKind), HashMap<String, Option<usize>>>>,
 }
 
 /// What every routine of an object sees.
@@ -533,6 +537,7 @@ impl<'a> Checker<'a> {
             calls: Vec::new(),
             demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
             prefetch: None,
+            resolved: Default::default(),
         }
     }
 
@@ -573,31 +578,31 @@ impl<'a> Checker<'a> {
     /// Resolves an object reference written in `file`. Whatever it finds is used by the code
     /// being checked, so a dependency object found this way is reached (see `demand`).
     fn resolve_at(&self, file: usize, kind: ObjKind, name: &str) -> Option<usize> {
-        let parts: Vec<String> = if name.parse::<u32>().is_ok() {
-            vec![name.to_string()]
-        } else {
-            split_qualified(name)
-        };
-        match self.ws.resolve_ref(file, kind, &parts) {
-            Resolution::Found(i) => {
-                self.touch(i);
-                Some(i)
-            }
-            _ => None,
-        }
+        let found = self.resolve_quiet(file, kind, name)?;
+        self.touch(found);
+        Some(found)
     }
 
     /// `resolve_at` without marking the object as used.
     fn resolve_quiet(&self, file: usize, kind: ObjKind, name: &str) -> Option<usize> {
+        if let Some(hit) = self.resolved.borrow().get(&(file, kind)).and_then(|m| m.get(name)) {
+            return *hit;
+        }
         let parts: Vec<String> = if name.parse::<u32>().is_ok() {
             vec![name.to_string()]
         } else {
             split_qualified(name)
         };
-        match self.ws.resolve_ref(file, kind, &parts) {
+        let found = match self.ws.resolve_ref(file, kind, &parts) {
             Resolution::Found(i) => Some(i),
             _ => None,
-        }
+        };
+        self.resolved
+            .borrow_mut()
+            .entry((file, kind))
+            .or_default()
+            .insert(name.to_string(), found);
+        found
     }
 
     /// Like `resolve_at`, for a reference already split into its parts.

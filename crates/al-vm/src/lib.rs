@@ -71,6 +71,8 @@ pub struct Engine {
     pub uid: u64,
     /// The tables a non-manual subscriber listens to the delete events of (see
     /// `autoinc::tables_with_delete_subscribers`), found when `Truncate` first asks.
+    /// The profiles that get an All Profile row (see `platform::profiles::profile_seeds`).
+    pub(crate) profile_seeds: std::sync::OnceLock<Vec<(usize, i32)>>,
     pub(crate) delete_subscribed: std::sync::OnceLock<std::collections::HashSet<String>>,
 }
 
@@ -150,6 +152,7 @@ impl Engine {
             unevaluable_init,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
+            profile_seeds: Default::default(),
         })
     }
 }

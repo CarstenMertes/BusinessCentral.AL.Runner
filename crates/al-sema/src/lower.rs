@@ -83,16 +83,22 @@ pub fn lower_with_workers(
     // nodes of the objects this thread lowers stay in `nodes`; the start offset of every routine
     // is what other threads need, so it is asked of a node once.
     let active_v: Vec<bool> = (0..ws.objects.len()).map(active).collect();
-    let nodes = Nodes::new(ws, active_v.clone());
-    let routine_offsets: Vec<Vec<usize>> = (0..ws.objects.len())
-        .map(|oi| {
-            nodes
-                .get(oi)
-                .iter()
-                .map(|r| usize::from(r.syntax().text_range().start()))
-                .collect()
-        })
-        .collect();
+    // Each thread builds the nodes of the objects it takes and keeps only the offsets.
+    let routine_offsets: Vec<Vec<usize>> = {
+        use rayon::prelude::*;
+        (0..ws.objects.len())
+            .into_par_iter()
+            .map(|oi| {
+                if !active_v[oi] {
+                    return Vec::new();
+                }
+                ast::routines_in(ws.object_ast(oi).syntax())
+                    .iter()
+                    .map(|r| usize::from(r.syntax().text_range().start()))
+                    .collect()
+            })
+            .collect()
+    };
     let routine_at: HashMap<(usize, usize), usize> = routine_offsets
         .iter()
         .enumerate()
@@ -511,7 +517,7 @@ pub fn lower_with_workers(
     // tree is built before the extensions are lowered, and binds their controls to these slots.
     let mut ext_slot_table: Vec<HashMap<String, usize>> = vec![HashMap::new(); ws.objects.len()];
     {
-        let local = Local::new(nodes);
+        let local = Local::new(Nodes::new(ws, shared.active.clone()));
         let seq = Seq::new(&shared);
         for exts in shared.page_extensions.values() {
             for &e in exts {

@@ -376,6 +376,36 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
+            // `CopyFilter(FromField, Target.ToField)` (the lowerer passes the target record and the
+            // position): the filter of the source field arrives on the target field and replaces
+            // what that field had; a source field without a filter clears the target's
+            // (record/TestRecordFilter.al:226-239, TestFilterAdvancedContracts.al:216-223). Both
+            // fields have to be of one type, and only the group 0 filters are copied: how a filter
+            // group or a conversion between types behaves is not pinned.
+            "CopyFilter" => {
+                let [Value::Integer(from), Value::Record(dst), Value::Integer(to)] = args else {
+                    return unsupported(format!("CopyFilter with {args:?}"));
+                };
+                let (from, to) = (*from as usize, *to as usize);
+                let dt = self.table(dst)?;
+                if t.fields[from].ty != dt.fields[to].ty {
+                    return unsupported("CopyFilter between fields of different types (not pinned)");
+                }
+                let copied: Vec<_> = {
+                    let r = rec.borrow();
+                    if r.filter_group != 0 || dst.borrow().filter_group != 0 {
+                        return unsupported("CopyFilter inside a filter group (not pinned)");
+                    }
+                    r.filters.iter().filter(|f| f.field == from && f.group == 0).cloned().collect()
+                };
+                let mut d = dst.borrow_mut();
+                d.filters.retain(|f| !(f.field == to && f.group == 0));
+                for mut f in copied {
+                    f.field = to;
+                    d.filters.push(f);
+                }
+                Ok(Value::Null)
+            }
             "CopyFilters" => {
                 let Some(Value::Record(src)) = args.first() else {
                     return unsupported(format!("CopyFilters from {:?}", args.first()));

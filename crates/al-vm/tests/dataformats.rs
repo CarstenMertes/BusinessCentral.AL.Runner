@@ -1143,3 +1143,14 @@ fn clearing_a_json_variable_gives_a_fresh_empty_one() {
     );
     assert_eq!(t, "[][2]{}");
 }
+
+#[test]
+fn clearing_an_array_resets_every_element() {
+    // Doc (Clear): a variable goes back to its initial value, an array element by element. The
+    // oracle runs pageupdate/PageUpdateFacts.Page.al:58 (`Clear(Derived)`, an array of Decimal).
+    let t = text_of(
+        "D: array[3] of Decimal; S: array[2] of Text; I: Integer;",
+        "D[1] := 5; D[3] := 7; S[2] := 'x'; Clear(D); Clear(S); exit(Format(D[1]) + Format(D[3]) + '|' + S[2] + '|' + Format(StrLen(S[1])));",
+    );
+    assert_eq!(t, "00||0");
+}

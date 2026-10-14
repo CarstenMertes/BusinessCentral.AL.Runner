@@ -689,3 +689,22 @@ codeunit 50101 D {
     let r = s.call(oi, ri, inst, vec![]).map(|(v, _)| v);
     assert_eq!(text(r), "TXOy");
 }
+
+#[test]
+fn copy_filter_copies_one_fields_filter_to_a_field_of_another_record() {
+    // record/TestRecordFilter.al:226-239 (the filter string of the source arrives on the target) and
+    // record/TestFilterAdvancedContracts.al:216-223 (a source without a filter clears the target's).
+    let r = run(
+        "procedure F(): Text var A: Record \"ALT T\"; B: Record \"ALT T\"; C: Record \"ALT T\"; R: Text; begin
+            A.SetRange(Grp, 1, 5);
+            A.CopyFilter(Grp, B.Grp);
+            R := A.GetFilter(Grp) + '|' + B.GetFilter(Grp) + '|';
+            B.SetRange(Grp, 42);
+            C.CopyFilter(Grp, B.Grp);
+            R += B.GetFilter(Grp) + '|' + Format(B.HasFilter());
+            exit(R);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "1..5|1..5||No");
+}

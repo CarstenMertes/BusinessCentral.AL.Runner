@@ -216,6 +216,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Session.LogMessage#2", log_message),
     ("Session.LogSecurityAudit#1", log_message),
     ("Session.LogAuditMessage#1", log_message),
+    ("System.Hyperlink#1", hyperlink),
     ("System.Variant2Date#1", variant_2_date),
     ("System.Variant2Time#1", variant_2_time),
     // Whether the host can create tasks is not pinned (corpus session/TestTaskSchedulerCloudBehavior.al
@@ -704,6 +705,13 @@ fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Resul
     Ok(Value::Null)
 }
 
+/// `Hyperlink(Url)` asks the client to open a page. What a test run does with that is not pinned
+/// (docs/probes-needed.md), so the call is refused when it runs; a routine that only contains it
+/// still lowers and runs.
+fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    unsupported("Hyperlink opens the client's browser; what a test run does with it is not pinned")
+}
+
 /// `Variant2Date(Variant)`: the Date a Variant holds (session/TestFinalCoverage.al:79-88). Another
 /// content raises a conversion error whose text is not pinned: refused.
 fn variant_2_date(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -911,6 +919,16 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 object,
                 ..Default::default()
             })))
+        }
+        // An array goes back to its initial value element by element, in place: a `var` parameter
+        // that shares it sees the change (docs/probes-needed.md; the oracle runs
+        // pageupdate/PageUpdateFacts.Page.al:58 `Clear(Derived)` on an array of Decimal).
+        Value::Array(a) => {
+            let a = a.clone();
+            for e in a.borrow_mut().iter_mut() {
+                clear(ctx, None, std::slice::from_mut(e))?;
+            }
+            return Ok(Value::Null);
         }
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };

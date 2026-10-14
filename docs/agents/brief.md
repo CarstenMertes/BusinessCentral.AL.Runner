@@ -166,6 +166,9 @@ Run these in order. Do not skip any.
    an eager run (`AL_EAGER_DEPENDENCIES=1`). Any difference not listed in
    `tools/demand-eager-known-differences.txt` fails. Never add to that list to
    make it pass.
+   If you touched `al-testrun/src/observe.rs` or the baseline, also run
+   `tools/baseline_rule_check.sh run`: the rule that skips the install baseline
+   must give zero outcome differences.
 5. Commit on your branch. Do not add attribution or session lines to commit
    messages. The message says what changed and why, in plain American English.
 6. Merge current `origin/main` into your branch (`git fetch`, then

@@ -138,9 +138,40 @@ pub struct Phases {
     pub cache: Option<crate::compile_cache::CacheReport>,
     /// Building the engine from the lowered program.
     pub engine: std::time::Duration,
+    /// The install baseline did not run because no selected test can observe it (`observe.rs`).
+    pub baseline_skipped: bool,
+    /// Why the baseline ran although the rule was tried: the first construct a selected test
+    /// reaches that could observe it. `None`: the rule was not tried (no dependency app,
+    /// `AL_FORCE_BASELINE`, a custom test runner) or the baseline was skipped.
+    pub baseline_why: Option<String>,
+    /// The compile cache was asked for and not used, because the selected tests were compiled
+    /// first without the baseline and nothing needed the cache.
+    pub compile_cache_skipped: bool,
     /// The test codeunits (object id, name) that took longest, slowest first (at most
     /// [`SLOWEST`]).
     pub slowest: Vec<CodeunitTime>,
+}
+
+impl Phases {
+    /// One line for `--timings`: whether the install baseline ran, and if the rule that skips it
+    /// was tried and said no, the first construct a selected test reaches that could observe it.
+    /// `None` when there was nothing to say (no dependency app).
+    pub fn baseline_line(&self) -> Option<String> {
+        if self.baseline_skipped {
+            Some(format!(
+                "install baseline: not run, no selected test can observe it{}",
+                if self.compile_cache_skipped {
+                    "; compile cache: not used, compiling what the tests reach was enough"
+                } else {
+                    ""
+                }
+            ))
+        } else {
+            self.baseline_why
+                .as_ref()
+                .map(|why| format!("install baseline: ran, a selected test may observe it: {why}"))
+        }
+    }
 }
 
 /// How long one test codeunit took.
@@ -164,6 +195,8 @@ struct Unit {
     oi: usize,
     id: u32,
     isolation: TestIsolation,
+    /// Run without putting the install baseline back (`AL_CHECK_BASELINE_RULE`).
+    without_baseline: bool,
 }
 
 /// What a test codeunit left: each test's outcome, and the call stack of each AL error that failed one.
@@ -197,6 +230,7 @@ fn run_unit(
 ) -> UnitResult {
     let started = std::time::Instant::now();
     crate::dotnet::take_start_time();
+    let baseline = baseline.filter(|_| !u.without_baseline);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut stacks = Vec::new();
         let done = run_codeunit_full(
@@ -225,6 +259,27 @@ fn run_unit(
         took: started.elapsed(),
         sidecar_start: crate::dotnet::take_start_time(),
     }
+}
+
+/// Whether object `oi` is a test codeunit that `suite` runs under the selection `only`.
+fn is_selected_test(lowered: &Lowered, oi: usize, suite: &SuiteRun, only: &Option<Vec<(usize, u32)>>) -> bool {
+    let o = &lowered.program.objects[oi];
+    o.kind == "codeunit"
+        && !lowered.dependency[oi]
+        && suite.app.is_none_or(|a| o.app as usize == a)
+        && only
+            .as_ref()
+            .is_none_or(|only| o.id.is_some_and(|id| only.contains(&(o.app as usize, id))))
+        && o.properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"))
+}
+
+/// The objects (indices) of every test codeunit the suites run.
+fn selected_tests(lowered: &Lowered, suites: &[SuiteRun], only: &Option<Vec<(usize, u32)>>) -> Vec<usize> {
+    (0..lowered.program.objects.len())
+        .filter(|&oi| suites.iter().any(|s| is_selected_test(lowered, oi, s, only)))
+        .collect()
 }
 
 /// How many threads run test codeunits. `AL_TEST_THREADS` sets it (1 runs them one after the
@@ -400,7 +455,14 @@ impl CorpusRuntime {
         opts: &RunOptions,
     ) -> Result<CorpusRuntime, String> {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
-        let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
+        let baseline_wanted =
+            kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
+        // The baseline runs only when a selected test can observe it (`observe.rs`).
+        // AL_FORCE_BASELINE=1 runs it always: the other side of the differential check, which
+        // must show no outcome that changes. A run with a custom test runner keeps it too.
+        let try_skip = baseline_wanted
+            && std::env::var_os("AL_FORCE_BASELINE").is_none()
+            && suites.iter().all(|s| s.runner.is_none());
         let compile_started = std::time::Instant::now();
         // The compile cache holds the dependency apps, which come first in the program (ADR-022).
         // The caller's order is kept in `order` (program app -> caller app) for what it gets back.
@@ -408,7 +470,7 @@ impl CorpusRuntime {
             && kinds.contains(&al_sema::AppKind::Dependency)
             && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
         let n_apps = apps.len();
-        let (apps, kinds, manifests, suites_in, only, order) = if use_cache {
+        let (apps, mut kinds, manifests, suites_in, only, order) = if use_cache {
             let order: Vec<usize> = (0..n_apps)
                 .filter(|&i| kinds[i] == al_sema::AppKind::Dependency)
                 .chain((0..n_apps).filter(|&i| kinds[i] != al_sema::AppKind::Dependency))
@@ -449,16 +511,82 @@ impl CorpusRuntime {
         let suites = &suites_in[..];
         let manifests = &manifests[..];
         let roots = al_sema::check::Roots {
-            baseline,
+            baseline: baseline_wanted,
             only_tests: only.clone(),
             ..Default::default()
         };
-        let (ws, mut lowered, cache_report) = match opts.compile_cache.as_ref().filter(|_| use_cache) {
-            Some(cc) => compile_with_cache(cc, apps, kinds, manifests, symbols, target, roots)?,
-            None => {
-                let (ws, lowered) = al_sema::lower::compile_apps_with(apps, kinds, symbols, target, roots);
-                (ws, lowered, None)
+        // Whether the install baseline runs, and why it does when it was weighed.
+        let mut baseline = baseline_wanted;
+        let mut baseline_note: Option<String> = None;
+        let catalog = match target {
+            Some(t) => al_builtins::catalog::Catalog::for_target(t),
+            None => al_builtins::catalog::Catalog::load(),
+        };
+        let mut apps = apps;
+        // Selected tests that look free of data are compiled first the way the demand-driven path
+        // does it, without the baseline's roots and without the compile cache: that touches only what
+        // the tests reach (a few routines), where the cache decodes every dependency object and the
+        // demand-driven compile with the baseline reaches 421 routines of Base Application. If the rule
+        // (`observe.rs`) then says the tests cannot observe the baseline, that is the compile. If it says
+        // they may, the apps go on to the compile they would have had. `--require-compile-cache` (CI:
+        // the measured run must be a hit) never takes this path.
+        let mut compile_cache_skipped = false;
+        let mut weighed = false;
+        let mut compiled: Option<(al_sema::Workspace, Lowered)> = None;
+        let require_cache = opts.compile_cache.as_ref().is_some_and(|c| c.require);
+        if try_skip && !require_cache && crate::observe::text_looks_pure(&apps, &kinds, symbols, only.as_deref()) {
+            let started = std::time::Instant::now();
+            let kinds_again = kinds.clone();
+            let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+            let load = started.elapsed();
+            let first_roots = al_sema::check::Roots {
+                baseline: false,
+                ..roots.clone()
+            };
+            let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
+            let selected = selected_tests(&lowered, suites, &only);
+            weighed = true;
+            baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
+            baseline = baseline_note.is_some();
+            if baseline {
+                // Back to the apps as they were: nothing is read from disk again.
+                apps = std::mem::take(&mut ws.apps);
+                kinds = kinds_again;
+                retire((ws, lowered));
+            } else {
+                compile_cache_skipped = use_cache;
+                compiled = Some((ws, lowered));
+                apps = Vec::new();
+                kinds = Vec::new();
             }
+        }
+        let (ws, mut lowered, cache_report) = match compiled {
+            Some((ws, lowered)) => (ws, lowered, None),
+            None => match opts.compile_cache.as_ref().filter(|_| use_cache) {
+                Some(cc) => {
+                    let (ws, lowered, report) = compile_with_cache(cc, apps, kinds, manifests, symbols, target, roots)?;
+                    if try_skip && !weighed {
+                        let selected = selected_tests(&lowered, suites, &only);
+                        baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
+                        baseline = baseline_note.is_some();
+                    }
+                    (ws, lowered, report)
+                }
+                None => {
+                    let started = std::time::Instant::now();
+                    let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+                    let load = started.elapsed();
+                    // Without a weighed answer, weigh on the compiled program, which has the baseline's
+                    // roots: the rule only looks at what the tests reach.
+                    let (ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, roots);
+                    if try_skip && !weighed {
+                        let selected = selected_tests(&lowered, suites, &only);
+                        baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
+                        baseline = baseline_note.is_some();
+                    }
+                    (ws, lowered, None)
+                }
+            },
         };
         let opts_only = only;
         // A dependency file that does not parse takes every object in it out of the compile, and the
@@ -506,6 +634,7 @@ impl CorpusRuntime {
             .collect();
         let limit = opts.test_time_limit;
         let workers = if opts.trace { 1 } else { test_workers() };
+        let baseline_skipped = baseline_wanted && !baseline;
         let engine_started = std::time::Instant::now();
         let make_engine = || {
             let mut engine = Engine::with_config(
@@ -573,15 +702,7 @@ impl CorpusRuntime {
                 Some(r) => runner_isolation(&lowered, r),
             };
             for (oi, o) in lowered.program.objects.iter().enumerate() {
-                let is_test = o.kind == "codeunit"
-                    && !lowered.dependency[oi]
-                    && suite.app.is_none_or(|a| o.app as usize == a)
-                    && opts_only
-                        .as_ref()
-                        .is_none_or(|only| o.id.is_some_and(|id| only.contains(&(o.app as usize, id))))
-                    && o.properties
-                        .iter()
-                        .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
+                let is_test = is_selected_test(&lowered, oi, suite, &opts_only);
                 let Some(id) = o.id.filter(|_| is_test) else { continue };
                 match &isolation {
                     Ok(i) => units.push(Unit {
@@ -589,6 +710,7 @@ impl CorpusRuntime {
                         oi,
                         id,
                         isolation: *i,
+                        without_baseline: false,
                     }),
                     Err(why) => {
                         for r in test_routines(o) {
@@ -606,6 +728,27 @@ impl CorpusRuntime {
                     }
                 }
             }
+        }
+        // AL_CHECK_BASELINE_RULE=1: the verification of `observe.rs`. The baseline runs as usual, but
+        // each test codeunit the rule calls free of it starts on an empty store. A run compared with a
+        // normal one must show no outcome that differs (`tools/baseline_rule_check.sh`).
+        if std::env::var_os("AL_CHECK_BASELINE_RULE").is_some() && baseline.is_some() {
+            let list = std::env::var("AL_CHECK_BASELINE_RULE").is_ok_and(|v| v == "list");
+            for u in &mut units {
+                let why = crate::observe::may_observe_baseline(&lowered, &[u.oi]);
+                if let (true, Some(why)) = (list, &why) {
+                    eprintln!(
+                        "baseline rule check: {} may observe it: {why}",
+                        lowered.program.objects[u.oi].name
+                    );
+                }
+                u.without_baseline = why.is_none();
+            }
+            eprintln!(
+                "baseline rule check: {} of {} test codeunits run without the baseline",
+                units.iter().filter(|u| u.without_baseline).count(),
+                units.len()
+            );
         }
         let results: Vec<UnitResult> = if workers <= 1 || units.len() < 2 {
             units
@@ -738,6 +881,9 @@ impl CorpusRuntime {
                 compile_parts,
                 cache: cache_report,
                 engine: engine_time,
+                baseline_skipped,
+                baseline_why: baseline_note,
+                compile_cache_skipped,
                 slowest: codeunit_times,
             },
             details,

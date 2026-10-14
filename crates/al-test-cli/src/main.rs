@@ -479,6 +479,9 @@ fn run_version(
             c.lower.as_secs_f64(),
             p.engine.as_secs_f64()
         );
+        if let Some(line) = p.baseline_line() {
+            eprintln!("{line}");
+        }
         if p.cache.is_some() {
             eprintln!(
                 "compile cache: reading the blocks {:.2} s",

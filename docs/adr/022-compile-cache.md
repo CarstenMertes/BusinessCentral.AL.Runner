@@ -505,6 +505,85 @@ Decided without owner review (2026-10-14):
 - The facts and blocks of an entry hold the dependency objects only; the sources of the dependency apps are still read
   and scanned on every run, and the blocks are all decoded at the start (in parallel).
 
+## A pure test in an app that depends on Base Application (issue 20, 2026-10-14, branch `fast-pure`)
+
+The owner's request (issue 20): a test that touches nothing from Base Application, in an app that depends on it,
+should cost what it costs in an app without dependencies (0.16 s, 78 MB in the owner's measurement). The fixture is
+the owner's setup: a demo app (`"application": "28.0.0.0"`, an enum and a codeunit of three procedures that use no
+table) and a test app of 6 tests, run on BC 28.5 (`alrunner test demo test --no-test-data --filter
+SmallCustomerIsBronze`).
+
+### Where the time went before (1 pure test, release build)
+
+| Part | Compile cache hit | Without the cache |
+|---|---|---|
+| Load the apps: read the four dependency `.app` files, inflate every source file | 0.14 to 0.26 s | 0.09 to 0.2 s |
+| Key of the cache entry (sha256 of every source byte), read the 13 MB file, open | 0.04 s | not run |
+| Scan of the 9 752 dependency objects (lexer, preprocessor, declaration scan) | 0.09 s | 0.09 s (in "load") |
+| Decode and check every block (zstd, postcard, 9 752 objects, all cores) | 0.17 s | not run |
+| Check and lower the workspace (7 routines), build the engine | 0.06 s | 0.04 s |
+| Demand compile of what the install baseline reaches (421 routines of Base Application) | not run | 1.8 to 2.5 s check, 1.0 to 1.2 s lower |
+| Install baseline run (17 roots) | 0.19 to 0.25 s | 0.3 to 0.4 s |
+| Tests (one test, 0.00 s), two .NET helper processes started ahead, exit | about 0.1 s | about 0.1 s |
+| Total | 0.95 s wall, 2.6 s CPU, 887 MB | 4.5 to 5.1 s wall, 16 s CPU, 1 905 MB |
+
+CPU profile of a cache hit (`perf`, share of samples): lexer, preprocessor and declaration scan of the dependency
+sources 28 %, inflate of the sources 9 %, sha256 of the sources 4 %, zstd and postcard decode 8 %, the rest spread.
+After the baseline skip, with the cache off, the same profile reads: lexer, preprocessor, scan 60 %, inflate 21 %.
+So once nothing else is left, the cost of a pure run is reading the dependency sources to learn what objects they
+hold.
+
+### What changed
+
+1. The install baseline does not run when no selected test can observe it, and its roots are not compiled
+   (ADR-013, "The baseline runs only when a selected test can observe it"). That removes the two largest rows.
+2. A selection whose test codeunits look free of data (a text check) is compiled first the demand-driven way,
+   without the cache. The cache decodes all 9 752 dependency objects (0.17 s, 440 MB) to serve a test that reaches
+   7 routines; the demand-driven compile touches only those. If the rule then finds the tests may observe the
+   baseline, the run goes on with the cache as before. `--require-compile-cache` keeps the cache path. A cold cache is
+   not built for a pure selection (the build takes 5 to 6 s).
+3. The two .NET helper processes are not started ahead of time for such a selection (they start on first use).
+
+### Measured after (same fixture; wall seconds, CPU seconds, peak memory; medians of 7 back to back runs under
+`flock /tmp/al-perf.lock`, load average 19 to 22 on a 12-core machine shared with other agents, so compare the CPU
+column and the pairs, not the wall column)
+
+| Run | Before (`AL_FORCE_BASELINE=1`, and the cache path) | After | 
+|---|---|---|
+| Cache on (default), 1 pure test | 1.04 s, CPU 2.57 s, 891 MB | 0.39 s, CPU 1.12 s, 399 MB |
+| Cache on, 6 pure tests | 1.22 s, CPU 2.71 s, 891 MB | 0.58 s, CPU 1.37 s, 402 MB |
+| `--no-compile-cache`, 1 pure test | 3.86 s, CPU 15.7 s, 1 909 MB | 0.44 s, CPU 1.14 s, 400 MB |
+| `--no-compile-cache`, 6 pure tests | 3.89 s, CPU 16.0 s, 1 917 MB | 0.36 s, CPU 1.25 s, 400 MB |
+| Same 6 tests, app without `application` | 0.02 s, CPU 0.02 s, 14 MB | (the owner measured 0.16 s, 78 MB) |
+
+(The "before" rows are the same binary with `AL_FORCE_BASELINE=1`; they match the owner's numbers within the load of
+the machine: 1.9 to 2.2 s and 910 MB cached, 6.4 to 7.0 s and 1 900 MB uncached.)
+
+Nothing else got slower. Corpus BC 29 with Microsoft's apps, `al-test-cli`: 4.2 s and 4.7 s with the rule on, 4.4 s and
+4.5 s with `AL_FORCE_BASELINE=1` (load 33; CPU 20.8 and 21.5 s against 21.3 and 21.0 s; 2.0 GB both). Cached
+(`--compile-cache`), warm: 1.80 s and 1.86 s, 1 246 MB both. Tests-ERM 27.5 (`alrunner test` on the zip, with the
+cache, load 35 to 47): outcomes identical (9 333 tests, 0 differences), CPU 75 s against 70 to 72 s, peak 2.1 GB
+both; none of its 277 test codeunits passes the rule, so the baseline runs as before.
+
+### What is still read, and what slice 2 would remove
+
+A pure test still reads and scans the dependency sources (60 % lexer and scan, 21 % inflate of the profile above;
+about 0.12 s CPU on 12 cores, 330 MB). The gap to the no-dependency case (0.02 s) is that. The plan, not done:
+
+- **A small index entry instead of the sources.** Store, per dependency set, what the workspace load learns from the
+  scan (the `ObjectSym` rows, the namespaces and usings of each file, the `dotnet { }` aliases) and read it instead
+  of scanning. This is much smaller than the lowered blocks and cheap to build (a scan), so a cold run can build it
+  without the 5 s build of the full entry.
+- **A key from the zip directory** (name, size, CRC-32 of each entry; `al-deps` reads it without inflating) instead
+  of a hash of every source byte, as the first version of this ADR planned.
+- **Lazy source text for dependency apps** (`AppSource` holds a loader; `Workspace::green` asks for the text of a file
+  the first time something needs one of its objects), so a workspace that names a dependency table parses that one
+  file.
+- For the cache path of tests that are not pure (and `--require-compile-cache`): decode a block the first time its
+  object is touched. The engine's whole-program passes (`Engine::with_config` builds a table definition for every
+  table, the event registry reads every object, `platform/seed.rs` and seven more iterate all objects) then need the
+  data they use stored beside the blocks. That is the "Not done" item above and is larger than the rest.
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

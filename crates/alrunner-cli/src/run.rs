@@ -436,7 +436,18 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         }
     }
     let sidecar_host = host.clone();
-    if !dependencies.apps.is_empty() {
+    let opts_only = selection.active().then(|| {
+        let mut v: Vec<(usize, u32)> = chosen_units.iter().map(|f| (f.app, f.id)).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    });
+    // Tests that look free of data are compiled first without the baseline and may need no .NET helper
+    // at all: start the helpers only when the run turns out to need them (a session starts one then).
+    let looks_pure = opts_only.is_some()
+        && std::env::var_os("AL_FORCE_BASELINE").is_none()
+        && al_testrun::observe::text_looks_pure(&all_apps, &kinds, &symbols, opts_only.as_deref());
+    if !dependencies.apps.is_empty() && !looks_pure {
         // The Microsoft apps call .NET (Media, images). Start the helper processes now so the
         // starts overlap the compile; a run without them starts nothing (ADR-014 section 6).
         sidecar_host.prewarm(al_testrun::dotnet::STANDBY_SIDECARS);
@@ -446,12 +457,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         ..Default::default()
     };
     let opts = RunOptions {
-        only: selection.active().then(|| {
-            let mut v: Vec<(usize, u32)> = chosen_units.iter().map(|f| (f.app, f.id)).collect();
-            v.sort_unstable();
-            v.dedup();
-            v
-        }),
+        only: opts_only,
         trace: a.explain.is_some(),
         test_time_limit: match a.test_timeout_secs.unwrap_or(20) {
             0 => None,
@@ -508,6 +514,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             secs(c.lower),
             secs(p.engine)
         );
+        if let Some(line) = p.baseline_line() {
+            eprintln!("{line}");
+        }
         if let Some(c) = &p.cache {
             eprintln!(
                 "compile cache: {}; {} {}",

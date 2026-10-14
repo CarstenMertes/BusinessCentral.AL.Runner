@@ -1200,7 +1200,7 @@ impl Session {
             }
             other => other?,
         }
-        let members: std::rc::Rc<[String]> = al_builtins::value::ACTION_MEMBERS
+        let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
             .iter()
             .map(|m| m.to_string())
             .collect();
@@ -2333,7 +2333,7 @@ impl Session {
             return Ok(Value::Null);
         }
         let name = result.unwrap_or_else(|| "None".into());
-        let members: std::rc::Rc<[String]> = al_builtins::value::ACTION_MEMBERS
+        let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
             .iter()
             .map(|m| m.to_string())
             .collect();

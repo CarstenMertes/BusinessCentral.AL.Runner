@@ -10,7 +10,6 @@ use al_builtins::describe::Describe;
 use al_builtins::format::day_from_civil;
 use al_builtins::native::Signal;
 use al_builtins::value::Value;
-use std::rc::Rc;
 
 const MS_PER_DAY: i64 = 86_400_000;
 
@@ -164,7 +163,7 @@ impl Session {
 }
 
 fn client_type(t: al_host::ClientType) -> Value {
-    let members: Rc<[String]> = al_builtins::sysenum::option_members("ClientType")
+    let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("ClientType")
         .expect("a system option")
         .into();
     let ordinal = members
@@ -197,7 +196,7 @@ fn changed(t: &al_data::TableDef, stored: &[Value], buffer: &[Value]) -> bool {
             return false;
         }
         match (&stored[i], &buffer[i]) {
-            (Value::Blob(a), Value::Blob(b)) => !Rc::ptr_eq(a, b) && a.borrow().bytes != b.borrow().bytes,
+            (Value::Blob(a), Value::Blob(b)) => !std::sync::Arc::ptr_eq(a, b) && a.borrow().bytes != b.borrow().bytes,
             (a, b) => al_builtins::ops::compare(a, b).map_or(true, |o| o != std::cmp::Ordering::Equal),
         }
     })

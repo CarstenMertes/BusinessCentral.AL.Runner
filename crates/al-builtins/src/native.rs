@@ -252,7 +252,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     }),
     // Measured on real BC: session/TestEnvironmentUserTenantContracts.al:237-241.
     ("Session.CurrentExecutionMode#1", |_, _, _| {
-        let members: Rc<[String]> = crate::sysenum::option_members("ExecutionMode")
+        let members: std::sync::Arc<[String]> = crate::sysenum::option_members("ExecutionMode")
             .expect("a system option")
             .into();
         Ok(Value::Option(0, members))
@@ -956,7 +956,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
 }
 
 fn context_value(c: &dyn Ctx) -> Value {
-    let members: Rc<[String]> = crate::sysenum::option_members("ExecutionContext")
+    let members: std::sync::Arc<[String]> = crate::sysenum::option_members("ExecutionContext")
         .expect("a system option")
         .into();
     // Install inside an install codeunit, Normal anywhere else (install/TestInstallEnvVisible_Tests.al:90-127).
@@ -1046,7 +1046,6 @@ fn value_kind(v: &Value) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::rc::Rc;
 
     #[derive(Default)]
     pub(crate) struct TestCtx {
@@ -1361,7 +1360,7 @@ pub(crate) mod tests {
             f(&mut TestCtx::default(), Some(&mut v), &mut []),
             Ok(Value::Boolean(true))
         ));
-        let mut v = Value::Option(0, Rc::from(vec![]));
+        let mut v = Value::Option(0, std::sync::Arc::from(vec![]));
         let f = lookup("Variant.IsOption#1").unwrap();
         assert!(matches!(
             f(&mut TestCtx::default(), Some(&mut v), &mut []),

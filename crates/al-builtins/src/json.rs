@@ -676,7 +676,7 @@ fn as_byte(s: &Scalar) -> Result<Value, Signal> {
 
 fn as_option(s: &Scalar) -> Result<Value, Signal> {
     let n = i32::try_from(as_i64(s)?).or_else(|_| unsupported("number out of Option range"))?;
-    Ok(Value::Option(n, Rc::from(Vec::<String>::new())))
+    Ok(Value::Option(n, std::sync::Arc::from(Vec::<String>::new())))
 }
 
 fn as_duration(s: &Scalar) -> Result<Value, Signal> {

@@ -25,7 +25,6 @@ use al_host::testdata::{Cell, Dropped, Outcome, Refusal, TableError, TableReques
 use rust_decimal::Decimal;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// The first object id of the platform's tables (`Company`, `Field`, ...): the runtime keeps
@@ -76,7 +75,7 @@ enum Kind {
     Int,
     BigInt,
     Byte,
-    Option(Rc<[String]>),
+    Option(std::sync::Arc<[String]>),
     Enum(u32),
     Decimal,
     Date,
@@ -105,7 +104,7 @@ fn kind_of_field(ty: &RtType, compressed: bool) -> Kind {
         RtType::Integer => Kind::Int,
         RtType::BigInteger => Kind::BigInt,
         RtType::Byte => Kind::Byte,
-        RtType::Option(names) => Kind::Option(Rc::from(names.as_slice())),
+        RtType::Option(names) => Kind::Option(std::sync::Arc::from(names.as_slice())),
         RtType::Enum(id) => Kind::Enum(*id),
         RtType::Decimal => Kind::Decimal,
         RtType::Date => Kind::Date,

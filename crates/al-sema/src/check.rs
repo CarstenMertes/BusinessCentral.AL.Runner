@@ -1586,7 +1586,12 @@ impl<'a> Checker<'a> {
         let (Some(lhs), Some(rhs)) = (kids.next(), kids.next()) else {
             return;
         };
-        if !lhs.text().to_string().trim().eq_ignore_ascii_case(base.text().to_string().trim()) {
+        if !lhs
+            .text()
+            .to_string()
+            .trim()
+            .eq_ignore_ascii_case(base.text().to_string().trim())
+        {
             return;
         }
         fn parts(n: &SyntaxNode, out: &mut Vec<String>) {

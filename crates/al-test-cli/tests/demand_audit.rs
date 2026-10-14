@@ -158,7 +158,10 @@ fn check(p: Probe) {
         "{name}: the cached compile differs from the complete compile"
     );
     if matches!(want, Want::Same | Want::SamePass) {
-        assert_eq!(demand, eager, "{name}: the demand-driven compile differs from the complete one");
+        assert_eq!(
+            demand, eager,
+            "{name}: the demand-driven compile differs from the complete one"
+        );
         if want == Want::SamePass {
             assert_eq!(demand, Outcome::Pass, "{name}: the test does not pass");
         }
@@ -1268,7 +1271,11 @@ probe!(
         ("t.al", &table("", "")),
         (
             "h.al",
-            &card(50140, "DH", "actions { area(Processing) { action(Next) { RunObject = Page DT2; } } }")
+            &card(
+                50140,
+                "DH",
+                "actions { area(Processing) { action(Next) { RunObject = Page DT2; } } }"
+            )
         ),
         ("t2.al", &card(50141, "DT2", &format!("trigger OnOpenPage() {RARE}"))),
     ],
@@ -1294,7 +1301,11 @@ probe!(
         ("t.al", &table("", "")),
         (
             "h.al",
-            &card(50143, "DH", "trigger OnOpenPage() var C: Codeunit Shower; begin C.Show(); end;")
+            &card(
+                50143,
+                "DH",
+                "trigger OnOpenPage() var C: Codeunit Shower; begin C.Show(); end;"
+            )
         ),
         (
             "c.al",

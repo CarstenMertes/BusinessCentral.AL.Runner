@@ -132,7 +132,11 @@ fn driven_edges<'a>(d: &DrivenCtx, slots: impl Iterator<Item = &'a ir::Slot>, ou
     };
     // The routines using object `q` reaches: all of a page's, the triggers of a report's.
     let used = |q: usize, out: &mut Vec<(usize, usize)>| {
-        let mask = if d.triggers_only[q] { ROLE_TRIGGER | ROLE_SYNTHETIC } else { u8::MAX };
+        let mask = if d.triggers_only[q] {
+            ROLE_TRIGGER | ROLE_SYNTHETIC
+        } else {
+            u8::MAX
+        };
         out.extend(
             d.routine_roles[q]
                 .iter()
@@ -304,7 +308,10 @@ pub(crate) fn lower_core(
             .map(|oi| {
                 if prov(oi) {
                     let f = src.expect("provided").facts(oi);
-                    return (f.routine_offsets.iter().map(|&o| o as usize).collect(), f.routine_roles.clone());
+                    return (
+                        f.routine_offsets.iter().map(|&o| o as usize).collect(),
+                        f.routine_roles.clone(),
+                    );
                 }
                 if !active_v[oi] {
                     return (Vec::new(), Vec::new());
@@ -775,7 +782,12 @@ pub(crate) fn lower_core(
         triggers_only: ws
             .objects
             .iter()
-            .map(|o| matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension | ObjKind::XmlPort | ObjKind::Query))
+            .map(|o| {
+                matches!(
+                    o.kind,
+                    ObjKind::Report | ObjKind::ReportExtension | ObjKind::XmlPort | ObjKind::Query
+                )
+            })
             .collect(),
         routine_roles,
     };

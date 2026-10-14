@@ -672,14 +672,14 @@ impl Checker<'_> {
         for sec in ast::sections_in(obj.syntax()) {
             let n = sec.name().to_ascii_lowercase();
             if matches!(n.as_str(), "dataitem" | "tableelement") {
-                if let Some(table) = sec.args().get(1) {
-                    self.resolve_at(file, ObjKind::Table, table);
+                if let Some(table) = crate::types::section_object_name(&sec, 1) {
+                    self.resolve_at(file, ObjKind::Table, &table);
                 }
             }
             // A part opens with its host.
             if n == "part" {
-                if let Some(page) = sec.args().get(1) {
-                    if let Some(p) = self.resolve_at(file, ObjKind::Page, page) {
+                if let Some(page) = crate::types::section_object_name(&sec, 1) {
+                    if let Some(p) = self.resolve_at(file, ObjKind::Page, &page) {
                         self.touch_full(p);
                     }
                 }
@@ -761,7 +761,7 @@ impl Checker<'_> {
         else {
             return;
         };
-        self.check_routine_in(&ctx, r);
+        self.guard((object, offset), |c| c.check_routine_in(&ctx, r));
         self.take_calls();
         // A reached event publisher reaches its subscribers.
         let is_publisher = r
@@ -824,6 +824,7 @@ impl Checker<'_> {
             let mut types = vec![std::mem::take(&mut self.types)];
             let mut resolutions = vec![std::mem::take(&mut self.resolutions)];
             for out in outs {
+                self.panicked.extend(out.panicked);
                 self.diags.extend(out.diags);
                 types.push(out.types);
                 resolutions.push(out.resolutions);
@@ -878,13 +879,13 @@ impl Checker<'_> {
     /// Does one task on this thread.
     fn run_task(&mut self, task: Task) {
         match task {
-            Task::Object(oi) => {
-                self.check_object(oi);
-                self.take_calls();
-            }
-            Task::Check(o, off) => self.check_reached(o, off),
-            Task::Activate(i, level) => self.activate(i, level),
-            Task::Ops(t, ops) => self.activate_ops(t, ops),
+            Task::Object(oi) => self.guard((oi, ANY_ROUTINE), |c| {
+                c.check_object(oi);
+                c.take_calls();
+            }),
+            Task::Check(o, off) => self.guard((o, off), |c| c.check_reached(o, off)),
+            Task::Activate(i, level) => self.guard((i, ANY_ROUTINE), |c| c.activate(i, level)),
+            Task::Ops(t, ops) => self.guard((t, ANY_ROUTINE), |c| c.activate_ops(t, ops)),
             Task::Global(ops) => self.activate_global(ops),
         }
     }
@@ -1029,6 +1030,7 @@ impl State {
 
 /// What a worker leaves behind when its channel closes.
 struct WorkerOut {
+    panicked: HashMap<(usize, usize), String>,
     diags: Vec<crate::workspace::Diagnostic>,
     types: PosMap<crate::types::Ty>,
     resolutions: PosMap<Res>,
@@ -1064,6 +1066,7 @@ fn worker(
         }
     }
     WorkerOut {
+        panicked: c.panicked,
         diags: c.diags,
         types: c.types,
         resolutions: c.resolutions,
@@ -1773,5 +1776,68 @@ mod tests {
                 "codeunit \"Auto\"".to_string()
             )]
         );
+    }
+    // A panic while checking or lowering one routine is a bug in the compiler. It must not end the
+    // run: the routine becomes a refusal, so the tests that reach it are not run and the rest are.
+    // `InjectedCheckPanic` and `InjectedLowerPanic` panic in the compiler (test builds only).
+    #[test]
+    fn a_panic_checking_a_reached_routine_refuses_it_and_nothing_else() {
+        for workers in [1, 4] {
+            let dep = [(
+                "lib.al".to_string(),
+                "codeunit 10 Lib { procedure Fine() begin end; procedure InjectedCheckPanic() begin end; \
+                 procedure Other() begin end; }"
+                    .to_string(),
+            )];
+            let main = "codeunit 1 Main { procedure Go() var L: Codeunit Lib; begin L.Fine(); L.InjectedCheckPanic(); L.Other(); end; \
+                        procedure Clean() var L: Codeunit Lib; begin L.Fine(); end; }";
+            let out = compile_with_workers(main, &dep, workers);
+            assert!(
+                out.contains("internal error while checking"),
+                "{workers} workers: {out}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_panic_lowering_a_routine_refuses_it_and_nothing_else() {
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var L: Codeunit Lib; begin L.Fine(); L.InjectedLowerPanic(); end; \
+             procedure Clean() var L: Codeunit Lib; begin L.Fine(); end; }",
+            &[(
+                "lib.al",
+                "codeunit 10 Lib { procedure Fine() begin end; procedure InjectedLowerPanic() begin end; }",
+            )],
+        );
+        assert!(
+            reasons(&l, "Lib", "InjectedLowerPanic")
+                .iter()
+                .any(|r| r.contains("internal error while lowering")),
+            "{:?}",
+            reasons(&l, "Lib", "InjectedLowerPanic")
+        );
+        assert!(
+            reasons(&l, "Lib", "Fine").is_empty(),
+            "{:?}",
+            reasons(&l, "Lib", "Fine")
+        );
+        assert!(reasons(&l, "Main", "Clean").is_empty());
+    }
+
+    #[test]
+    fn a_panic_in_the_workspace_refuses_that_routine_only() {
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure InjectedCheckPanic() begin end; procedure InjectedLowerPanic() begin end; \
+             procedure Fine() begin end; }",
+            &[("lib.al", "codeunit 10 Lib { }")],
+        );
+        for name in ["InjectedCheckPanic", "InjectedLowerPanic"] {
+            assert!(
+                reasons(&l, "Main", name).iter().any(|r| r.contains("internal error")),
+                "{name}: {:?}",
+                reasons(&l, "Main", name)
+            );
+        }
+        assert!(reasons(&l, "Main", "Fine").is_empty());
     }
 }

@@ -587,17 +587,19 @@ fn create_sequential_guid_has_the_same_form() {
 }
 
 #[test]
-fn the_system_id_of_an_inserted_row_is_random_looking_too() {
-    assert_eq!(
-        text(
-            "I: Integer; T: Record \"ALT T\"; Seen: List of [Text]; Bad: Integer; Dup: Integer; G: Text;",
-            "for I := 1 to 300 do begin T.Init(); T.\"No.\" := I; T.Insert(); G := Format(T.SystemId); \
-             if (CopyStr(G, 16, 1) <> '4') or (StrPos('89AB', CopyStr(G, 21, 1)) = 0) then Bad += 1; \
-             if Seen.Contains(CopyStr(G, 1, 20)) then Dup += 1 else Seen.Add(CopyStr(G, 1, 20)); end; \
-             exit(Format(Bad) + '/' + Format(Dup));"
-        ),
-        "0/0"
+fn the_system_id_of_an_inserted_row_is_random_looking_but_not_version_4() {
+    // types/TestGuidFormContracts.al:SystemId_OfNewRows_IsNotVersion4 (corpus branch al-runtime-rs d0f5d52):
+    // the version and variant positions vary, and the first 20 characters never repeat.
+    let r = text(
+        "I: Integer; T: Record \"ALT T\"; Seen: List of [Text]; Bad: Integer; Dup: Integer; G: Text;",
+        "for I := 1 to 300 do begin T.Init(); T.\"No.\" := I; T.Insert(); G := Format(T.SystemId); \
+         if (CopyStr(G, 16, 1) <> '4') or (StrPos('89AB', CopyStr(G, 21, 1)) = 0) then Bad += 1; \
+         if Seen.Contains(CopyStr(G, 1, 20)) then Dup += 1 else Seen.Add(CopyStr(G, 1, 20)); end; \
+         exit(Format(Bad) + '/' + Format(Dup));",
     );
+    let (bad, dup) = r.split_once('/').expect("bad/dup");
+    assert!(bad.parse::<u32>().unwrap() > 200, "{r}");
+    assert_eq!(dup, "0", "{r}");
 }
 
 fn first_guids(seed: Option<i32>) -> String {

@@ -1184,7 +1184,7 @@ fn a_dependency_query_with_an_unsupported_property_is_refused_in_both_compiles()
         dep: &[(
             "q.al",
             "table 50500 DepRow { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { Clustered = true; } } }\n\
-             query 50501 DepQ { QueryType = Normal; ReadState = ReadUncommitted;\n\
+             query 50501 DepQ { QueryType = Normal; ReadState = ReadCommitted;\n\
                elements { dataitem(Row; DepRow) { column(K; K) { } } } }",
         )],
     };

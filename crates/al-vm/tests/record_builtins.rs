@@ -837,18 +837,15 @@ fn set_current_key_on_a_field_that_is_not_stored_is_refused() {
 }
 
 #[test]
-fn testfield_on_the_blank_member_of_an_option_or_enum_is_refused_not_guessed() {
-    // Microsoft's Tests-ERM (Payment Registration UT, Price List Line UT) expect BC to say
-    // "<field> must not be <member> in <table>" there, not "must have a value ...". No corpus
-    // test pins that text or what follows it (docs/probes-needed.md, "Probe batch 6"), so the
-    // runtime refuses instead of answering with the wrong text.
+fn testfield_on_the_blank_member_of_an_option_or_enum_says_must_not_be_the_caption() {
+    // record/TestTestFieldOptionEnumContracts.al:TestField_ZeroMember_RaisesMustNotBeTheCaption.
     for field in ["Kind", "Kind2", "Kind3"] {
         let r = run(
             &format!("procedure F() var R: Record \"ALT Blank\"; begin R.Id := 'A'; R.TestField({field}); end;"),
             "F",
         );
         assert!(
-            matches!(&r, Err(Signal::Unsupported(m)) if m.contains("TestField") && m.contains(field)),
+            matches!(&r, Err(Signal::Error(e)) if e.message.contains("must not be") && e.code == "TestField"),
             "{field}: {r:?}"
         );
     }
@@ -901,11 +898,10 @@ codeunit 50101 C2 { procedure F(): Boolean var R: Record T2; begin exit(R.FieldA
 }
 
 #[test]
-fn setfilter_placeholder_text_with_a_filter_character_is_refused_until_a_probe_pins_it() {
-    // A text substituted for %1 that holds `@`, a wildcard or an operator: no corpus test says whether
-    // BC quotes it or keeps `@` and the wildcards active (a real project filters an e-mail address with
-    // '@' + Email). It used to match literally, which is wrong where BC keeps `@` active.
-    for filter_value in ["'@john@example.com'", "'a*'", "'a&b'", "'a..b'"] {
+fn setfilter_placeholder_text_with_an_unpinned_filter_character_is_refused() {
+    // record/TestSetFilterSpecialTextContracts.al pins @, wildcards and & | ( ) < = .. in the text; a `>`, or a
+    // wildcard together with one of those characters, is not pinned.
+    for filter_value in ["'a>b'", "'a*&b'"] {
         let r = run(
             &format!(
                 "procedure F(): Integer var R: Record \"ALT T\"; begin

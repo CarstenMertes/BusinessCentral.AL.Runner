@@ -1015,7 +1015,12 @@ impl Writer {
 /// `version="1.0" encoding="utf-16"`). The namespace declarations of `h`'s ancestors do not
 /// matter when a node is written on its own: it declares what it needs.
 fn serialize(h: &Handle) -> Result<String, Signal> {
-    let mut w = Writer::new(true);
+    serialize_with(h, true)
+}
+
+/// [`serialize`] with or without the indentation (`XmlWriteOptions.PreserveWhitespace` writes none).
+fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
+    let mut w = Writer::new(indent);
     let is_doc = with(h, |d| matches!(d, XData::Document { .. }));
     if is_doc {
         let decl = with(h, |d| match d {
@@ -2292,6 +2297,50 @@ fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
     Ok(Value::Boolean(true))
 }
 
+/// `WriteTo([XmlWriteOptions,] OutStream)`: UTF-8 with a byte order mark, whatever the encoding of the
+/// stream, the declaration saying `utf-8`; `PreserveWhitespace(true)` writes the document unindented
+/// (xml/TestXmlDocumentWriteToOutStreamContracts.al). A document whose own declaration names another
+/// encoding or none is refused: nothing pins what is written then.
+fn write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv(r)?;
+    let (options, stream) = match a.len() {
+        1 => (None, 0),
+        _ => (Some(&a[0]), 1),
+    };
+    let indent = match options {
+        None => true,
+        Some(Value::Library(_, cell)) => match &*cell.borrow() {
+            LibraryValue::XmlWriteOptions { preserve_whitespace } => !preserve_whitespace,
+            LibraryValue::Empty => true,
+            _ => return unsupported("WriteTo with something that is not an XmlWriteOptions"),
+        },
+        Some(_) => return unsupported("WriteTo with something that is not an XmlWriteOptions"),
+    };
+    let text = serialize_with(&h, indent)?;
+    let is_doc = with(&h, |d| matches!(d, XData::Document { .. }));
+    if is_doc && !text.starts_with("<?xml version=\"1.0\" encoding=\"utf-8\"") {
+        return unsupported("WriteTo(OutStream) of a document that does not declare encoding utf-8 (not pinned)");
+    }
+    let mut bytes = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend_from_slice(text.as_bytes());
+    crate::stream::write_raw_bytes(&mut a[stream], &bytes)?;
+    Ok(Value::Boolean(true))
+}
+
+/// `XmlWriteOptions.PreserveWhitespace(Value)` (xml/TestXmlDocumentWriteToOutStreamContracts.al).
+fn write_options_preserve_whitespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let Some(Value::Library(_, cell)) = r else {
+        return unsupported("PreserveWhitespace on something that is not an XmlWriteOptions");
+    };
+    let Some(Value::Boolean(on)) = a.first() else {
+        return unsupported("PreserveWhitespace with something that is not a Boolean");
+    };
+    *cell.borrow_mut() = LibraryValue::XmlWriteOptions {
+        preserve_whitespace: *on,
+    };
+    Ok(Value::Null)
+}
+
 fn name_table(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     recv(r)?;
     Ok(Value::Library(
@@ -2667,6 +2716,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlNamespaceManager", "NameTable", [] | ["XmlNameTable"]) => manager_name_table,
         ("XmlNamespaceManager", "AddNamespace", ["Text", "Text"]) => manager_add_namespace,
         (_, "WriteTo", ["Text"]) if is_node && first_by_var => write_to_text,
+        ("XmlDocument" | "XmlElement", "WriteTo", ["OutStream"] | ["XmlWriteOptions", "OutStream"]) => write_to_outstream,
+        ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,
         ("XmlElement", "SetAttribute", ["Text", "Text"]) => set_attribute,
         ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"]) => remove_attribute,
         ("XmlElement", "RemoveAllAttributes", []) => remove_all_attributes,

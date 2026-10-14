@@ -44,6 +44,16 @@ reviewed it.
 
 ## Decided by the owner (recorded)
 
+- 2026-10-14, performance phase: run tests in parallel at the test runner's
+  isolation unit.
+  - BC's test isolation can be per codeunit or per test procedure.
+  - Units share one common data store. A copy per unit or per thread would
+    cost too much memory.
+  - Design direction: every unit forks from one shared baseline snapshot, using
+    the persistent maps of ADR-003 and ADR-004, so a fork costs O(1) and
+    memory grows only with each unit's own changes.
+  - Within a session, execution stays single-threaded, as in BC.
+
 - 2026-10-14, performance goal: first close the remaining gaps, then work on
   performance.
   - The target is a corpus run WITH Microsoft's apps in under a second, and

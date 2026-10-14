@@ -93,8 +93,8 @@ jobs:
       - name: Demand-driven compile against the eager compile
         run: |
           status=0
-          AL_EAGER_DEPENDENCIES=1 ./target/release/al-test-cli --all-versions --require-dotnet \
-            --junit eager-junit.xml || status=1
+          AL_EAGER_DEPENDENCIES=1 ./target/release/al-test-cli --all-versions --require-dotnet --no-ratchet \
+            --junit eager-junit.xml || status=1   # --no-ratchet: the allow-listed differences fail the ratchet; compare_junit is the check
           for v in 27 28 29; do
             python3 tools/compare_junit.py --allow tools/demand-eager-known-differences.txt \
               runtime-junit-$v.xml eager-junit-$v.xml || status=1

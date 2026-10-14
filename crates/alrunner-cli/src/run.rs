@@ -186,6 +186,12 @@ fn choose_test_data(
 
 pub fn test(a: &TestArgs) -> Result<u8, String> {
     let started = Instant::now();
+    // The key of the compile cache starts with a hash of this executable (10 ms): make it beside the loading.
+    if !a.no_compile_cache {
+        std::thread::spawn(|| {
+            al_testrun::compile_cache::runtime_build();
+        });
+    }
     if let Some(dir) = &a.files_dir {
         al_testrun::host::set_files_dir(dir.clone());
     }
@@ -275,13 +281,17 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             .with_preferred(apps::own_build(&inputs)),
         local_artifacts: al_deps::cache::bcartifacts_sandbox_from_env(),
     };
-    let dependencies = deps::load_project(
+    // The text of a package's files is left unread: a run whose tests reach nothing in it never needs it.
+    // ALRUNNER_EAGER_SOURCES=1 reads it at once, as before (the other side of the differential check).
+    let lazy_sources = std::env::var_os("ALRUNNER_EAGER_SOURCES").is_none();
+    let dependencies = deps::load_project_with(
         &project,
         &workspace,
         &search,
         Some(&provision),
         a.bc_version.as_deref(),
         true,
+        lazy_sources,
     )?;
     if a.wants_test_data() && test_data.is_none() {
         // The build of the Microsoft apps is the build of the data: what the feed gave, what
@@ -458,6 +468,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     };
     let opts = RunOptions {
         only: opts_only,
+        lazy: std::iter::repeat_n(None, inputs.len())
+            .chain(dependencies.lazy.iter().cloned())
+            .collect(),
         trace: a.explain.is_some(),
         test_time_limit: match a.test_timeout_secs.unwrap_or(20) {
             0 => None,

@@ -47,6 +47,9 @@ pub struct CacheReport {
     pub notes: Vec<String>,
     /// Dependency files that did not parse when the entry was built: (path, why).
     pub parse_problems: Vec<(String, String)>,
+    /// With lazily read dependency apps: where the scan of their sources came from, `read` (the index
+    /// in the cache folder) or `built` (scanned now, index saved).
+    pub source_index: Option<&'static str>,
 }
 
 /// A hash of the running executable: it changes with every change of the compiler or of the
@@ -109,16 +112,30 @@ pub fn key_for(
     symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
 ) -> Key {
+    key_with(apps, manifests, symbols, target, &[])
+}
+
+/// [`key_for`] where `identities[i]`, when set, stands for the source of app `i`: the hash of the zip
+/// directory of a package read lazily, which needs no read of the files (and is the hash the app has
+/// whether or not its files were read since). An app without one is hashed over every path and byte.
+pub fn key_with(
+    apps: &[&AppSource],
+    manifests: &[crate::runtime::Manifest],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    identities: &[Option<[u8; 32]>],
+) -> Key {
     let apps = apps
         .iter()
         .zip(manifests)
-        .map(|(a, m)| AppKey {
+        .enumerate()
+        .map(|(i, (a, m))| AppKey {
             id: a.id.clone(),
             name: a.name.clone(),
             dependencies: a.dependencies.clone(),
             publisher: m.publisher.clone(),
             version: m.version.clone(),
-            source: source_hash(a),
+            source: identities.get(i).copied().flatten().unwrap_or_else(|| source_hash(a)),
         })
         .collect();
     Key::new(
@@ -200,7 +217,13 @@ pub fn touch(path: &Path) {
 pub fn prune(dir: &Path, keep: &Path) -> Vec<PathBuf> {
     let limit = std::time::Duration::from_secs(KEEP_DAYS * 24 * 3600);
     let mut removed = Vec::new();
-    for (path, _) in list(dir) {
+    let indexes = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "alci"));
+    for path in list(dir).into_iter().map(|(p, _)| p).chain(indexes) {
         if path == keep {
             continue;
         }
@@ -240,9 +263,27 @@ pub fn open_or_build(
     symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
 ) -> Result<(Entry, CacheReport), String> {
+    let mut apps = apps.to_vec();
+    open_or_build_with(cc, &mut apps, manifests, symbols, target, &[], &mut |_| {})
+}
+
+/// [`open_or_build`] with the identities of [`key_with`].
+/// `prepare` is called with the apps just before an entry is built, which needs their text: a caller
+/// that left it unread reads it then. A hit never calls it.
+pub fn open_or_build_with(
+    cc: &CompileCache,
+    apps: &mut [AppSource],
+    manifests: &[crate::runtime::Manifest],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    identities: &[Option<[u8; 32]>],
+    prepare: &mut dyn FnMut(&mut [AppSource]),
+) -> Result<(Entry, CacheReport), String> {
     let opened = std::time::Instant::now();
-    let dep_refs: Vec<&AppSource> = apps.iter().collect();
-    let key = key_for(&dep_refs, manifests, symbols, target);
+    let key = {
+        let dep_refs: Vec<&AppSource> = apps.iter().collect();
+        key_with(&dep_refs, manifests, symbols, target, identities)
+    };
     let mut report = CacheReport {
         file: cc.dir.join(key.file_name()),
         ..Default::default()
@@ -277,6 +318,7 @@ pub fn open_or_build(
         apps.len(),
         report.file.display()
     );
+    prepare(apps);
     let started = std::time::Instant::now();
     let bytes = build_entry(apps.to_vec(), symbols, target, &key);
     report.bytes = bytes.len();
@@ -290,4 +332,57 @@ pub fn open_or_build(
     let entry = Entry::open(bytes, &key).map_err(|e| format!("a fresh compile cache entry does not open: {e}"))?;
     report.build = started.elapsed();
     Ok((entry, report))
+}
+
+/// The index entry of the dependency apps: what the scan of their sources found (`al_cache::index`).
+/// Its key is the key of the apps without a target: the scan depends on the sources, the preprocessor
+/// symbols and the compiler, not on the BC version.
+pub fn index_key(
+    apps: &[&AppSource],
+    manifests: &[crate::runtime::Manifest],
+    symbols: &std::collections::BTreeSet<String>,
+    identities: &[Option<[u8; 32]>],
+) -> Key {
+    key_with(apps, manifests, symbols, None, identities)
+}
+
+/// Reads the index for `key` from `dir`: `None` when there is no file or it cannot be used (damaged,
+/// cut, made for other inputs; such a file is removed). The run scans the sources instead.
+pub fn read_index(dir: &Path, key: &Key) -> Option<Vec<Vec<al_sema::FileIndex>>> {
+    let path = dir.join(al_cache::index_file_name(key));
+    let bytes = std::fs::read(&path).ok()?;
+    match al_cache::open_index(&bytes, key) {
+        Ok(index) => {
+            touch(&path);
+            Some(index)
+        }
+        Err(e) => {
+            eprintln!("compile cache: {} ignored and removed: {e}", path.display());
+            let _ = std::fs::remove_file(&path);
+            None
+        }
+    }
+}
+
+/// Writes the index for `key` (a temporary file, then a rename). Best effort: a run that cannot
+/// save it is not worse off than before.
+pub fn write_index(dir: &Path, key: &Key, index: &[Vec<al_sema::FileIndex>]) {
+    let bytes = al_cache::build_index(key, index);
+    let _ = std::fs::create_dir_all(dir);
+    let path = dir.join(al_cache::index_file_name(key));
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let tmp = dir.join(format!(
+        ".{}.tmp-{}-{}",
+        al_cache::index_file_name(key),
+        std::process::id(),
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    if std::fs::write(&tmp, bytes)
+        .and_then(|()| std::fs::rename(&tmp, &path))
+        .is_err()
+    {
+        let _ = std::fs::remove_file(&tmp);
+    } else {
+        prune(dir, &path);
+    }
 }

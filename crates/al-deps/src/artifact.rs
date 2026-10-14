@@ -241,6 +241,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                 missing: MissingPolicy::Skip,
                 source_build: req.source_build,
                 application_implies_dependencies: req.application_implies_dependencies,
+                lazy_sources: req.lazy_sources,
             },
             &mut scans,
         )?;
@@ -411,6 +412,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
         missing: MissingPolicy::Skip,
         source_build: req.source_build,
         application_implies_dependencies: req.application_implies_dependencies,
+        lazy_sources: req.lazy_sources,
     };
     let loaded = read_planned(planned.expect("at least one round ran"), &final_req)?;
     let used = chosen.map(|(_, sel)| {
@@ -720,6 +722,7 @@ mod tests {
                 missing,
                 source_build: None,
                 application_implies_dependencies: false,
+                lazy_sources: false,
             },
             f,
             cdn,

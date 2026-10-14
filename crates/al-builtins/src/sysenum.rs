@@ -65,6 +65,18 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // (handlers/TestReportSaveAsDatasetContracts.al) and never prints or compares the number,
         // so the ordinals are not pinned and nothing may print them.
         "reportformat" => Some(&["Pdf", "Word", "Excel", "Html", "Xml"]),
+        // Arguments of `Session.LogSecurityAudit`, which writes a log AL cannot read. The members are the
+        // ones the Base Application names; the ordinals are not pinned and nothing may print them.
+        "securityoperationresult" => Some(&["Success", "Failure"]),
+        "auditcategory" => Some(&[
+            "ApplicationManagement",
+            "Authorization",
+            "CustomerFacing",
+            "KeyManagement",
+            "Other",
+            "PolicyManagement",
+            "UserManagement",
+        ]),
         "errortype" => Some(&["Client", "Internal"]),
         // The ordinals are not pinned: the corpus only calls `Session.CurrentClientType()` and
         // `DefaultClientType()` (session/TestSessionExtended.al:21,31) and names Default and Web

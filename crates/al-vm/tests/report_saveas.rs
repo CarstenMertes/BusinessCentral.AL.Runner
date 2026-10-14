@@ -18,6 +18,9 @@ table 68300 "Probe Rep Parent"
         field(3; Amt; Decimal) { }
         field(4; D; Date) { }
         field(5; B; Boolean) { }
+        field(6; Kids; Integer) { FieldClass = FlowField; CalcFormula = count("Probe Rep Child" where(ParentId = field(Id))); }
+        field(7; Kind; Option) { OptionMembers = Alpha,Beta,Gamma; }
+        field(8; At; Time) { }
         field(10; Data; Blob) { }
     }
     keys { key(PK; Id) { Clustered = true; } }
@@ -153,6 +156,120 @@ report 68311 "Probe Layout Guard Report"
     begin
         if P.GetFilters() = '' then
             Error('You must specify one or more filters.');
+    end;
+}
+
+// A column bound to a FlowField, and one the trigger fills from the same FlowField without CalcFields.
+report 68312 "Probe Flow Report"
+{
+    ProcessingOnly = false;
+
+    dataset
+    {
+        dataitem(P; "Probe Rep Parent")
+        {
+            column(Kids; Kids) { }
+            column(SeenKids; SeenKids) { }
+
+            trigger OnAfterGetRecord()
+            begin
+                SeenKids := Kids;
+            end;
+        }
+    }
+
+    var
+        SeenKids: Integer;
+}
+
+// Columns of the types the probe does not pin, and a property no test pins.
+report 68313 "Probe Types Report"
+{
+    ProcessingOnly = false;
+
+    dataset
+    {
+        dataitem(P; "Probe Rep Parent")
+        {
+            column(KindCol; Kind) { }
+            column(DecExpr; Amt * 2) { AutoFormatType = 1; }
+        }
+    }
+}
+
+report 68314 "Probe Time Report"
+{
+    ProcessingOnly = false;
+
+    dataset
+    {
+        dataitem(P; "Probe Rep Parent")
+        {
+            column(AtCol; At) { }
+        }
+    }
+}
+
+report 68315 "Probe Caption Report"
+{
+    ProcessingOnly = false;
+
+    dataset
+    {
+        dataitem(P; "Probe Rep Parent")
+        {
+            column(WithCaption; Id) { IncludeCaption = true; }
+        }
+    }
+}
+
+// Skip leaves a row out of the dataset.
+report 68316 "Probe Skip Report"
+{
+    ProcessingOnly = false;
+
+    dataset
+    {
+        dataitem(P; "Probe Rep Parent")
+        {
+            column(PNo; Id) { }
+
+            trigger OnAfterGetRecord()
+            begin
+                if Id = 1 then
+                    CurrReport.Skip();
+            end;
+        }
+    }
+}
+
+// A data item whose name has spaces and parentheses.
+report 68317 "Probe Quoted Report"
+{
+    ProcessingOnly = false;
+
+    dataset
+    {
+        dataitem("Probe Item (Parent)"; "Probe Rep Parent")
+        {
+            column("Probe Col"; Id) { }
+        }
+    }
+}
+
+// A reportextension that adds a column to a base item and fails on request.
+reportextension 68318 "Probe Plain Ext" extends "Probe Plain Report"
+{
+    dataset
+    {
+        add(P)
+        {
+            column(ExtCol; 'E-' + Format(Id)) { }
+        }
+    }
+
+    trigger OnPreReport()
+    begin
     end;
 }
 
@@ -479,7 +596,7 @@ fn an_instance_saveas_runs_the_triggers_and_the_columns_see_their_result() {
         .map(|l| l.trim().to_string())
         .collect::<Vec<_>>()
         .join(","),
-        "2,<Column name=\"Tag\">T-1-1</Column>,<Column name=\"Tens\">10</Column>,<Column name=\"Tag\">T-2-2</Column>,<Column name=\"Tens\">20</Column>"
+        "2,<Column name=\"Tag\">T-1-1</Column>,<Column name=\"Tens\">10</Column>,<Column name=\"ExtCol\">E-1</Column>,<Column name=\"Tag\">T-2-2</Column>,<Column name=\"Tens\">20</Column>,<Column name=\"ExtCol\">E-2</Column>"
     );
 }
 
@@ -529,4 +646,130 @@ fn a_filtered_recordref_limits_the_data_item_over_its_table() {
     assert!(text.starts_with("Yes|"), "{text}");
     assert!(text.contains("<Column name=\"PNo\">2</Column>"), "{text}");
     assert!(!text.contains("<Column name=\"PNo\">1</Column>"), "{text}");
+}
+
+
+fn dataset_of(report: &str, parameters: &str) -> String {
+    f(&format!(
+        "var H: Codeunit Helpers; begin H.Seed(); exit(H.Dataset(Report::\"{report}\", '{parameters}')); end;"
+    ))
+}
+
+// handlers/TestReportFlowFieldColumnAutoCalc.al:FlowFieldColumn_IsCalculatedWithoutCalcFields,
+// FlowFieldColumn_IsCalculatedBeforeOnAfterGetRecord (the trigger reads the calculated FlowField)
+#[test]
+fn a_flowfield_column_is_calculated_for_every_row_before_the_trigger() {
+    let text = dataset_of("Probe Flow Report", "");
+    // Parent 1 has two children, parent 2 one.
+    let cells: Vec<&str> = text.split('|').map(str::trim).filter(|l| l.starts_with("<Column ")).collect();
+    assert_eq!(
+        cells,
+        [
+            "<Column name=\"Kids\">2</Column>",
+            "<Column name=\"SeenKids\">2</Column>",
+            "<Column name=\"Kids\">1</Column>",
+            "<Column name=\"SeenKids\">1</Column>",
+        ]
+    );
+}
+
+// reportextension/TestReportExtensionTriggers.al:SaveAsXml_ExtensionRowsAndColumns_ReachTheDataset
+#[test]
+fn a_column_an_extension_adds_is_written_after_the_columns_of_the_item() {
+    let text = dataset_of("Probe Plain Report", "");
+    let cells: Vec<&str> = text.split('|').map(str::trim).filter(|l| l.starts_with("<Column ")).collect();
+    assert_eq!(
+        cells,
+        [
+            "<Column name=\"Tag\">T-1-1</Column>",
+            "<Column name=\"Tens\">10</Column>",
+            "<Column name=\"ExtCol\">E-1</Column>",
+            "<Column name=\"Tag\">T-2-2</Column>",
+            "<Column name=\"Tens\">20</Column>",
+            "<Column name=\"ExtCol\">E-2</Column>",
+        ]
+    );
+}
+
+// handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText: Skip in
+// OnAfterGetRecord leaves the row and its nested items out (handlers/TestReportRuntimeContracts.al:322-368).
+#[test]
+fn a_skipped_row_is_not_written() {
+    let text = dataset_of("Probe Skip Report", "");
+    assert!(!text.contains("<Column name=\"PNo\">1</Column>"), "{text}");
+    assert!(text.contains("<Column name=\"PNo\">2</Column>"), "{text}");
+}
+
+// Assumption (docs/probes-needed.md, "Report.SaveAs dataset"): an Option is written as its ordinal, a
+// Decimal expression carries the same decimalformatter attribute as a Decimal field, whatever AutoFormatType says.
+#[test]
+fn an_option_is_written_as_its_ordinal_and_a_decimal_expression_gets_the_default_formatter() {
+    let text = dataset_of("Probe Types Report", "");
+    assert!(text.contains("<Column name=\"KindCol\">0</Column>"), "{text}");
+    assert!(text.contains("<Column name=\"DecExpr\" decimalformatter=\"#,##0.00\">25</Column>"), "{text}");
+}
+
+#[test]
+fn a_column_type_nothing_pins_is_refused_when_a_row_carries_it() {
+    let why = refusal(&format!(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); end;"
+    ));
+    assert!(why.contains("AtCol") && why.contains("no pinned text"), "{why}");
+}
+
+#[test]
+fn a_column_property_nothing_pins_is_refused_when_a_row_carries_the_column() {
+    let why = refusal(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Caption Report\", '', ReportFormat::Xml, Out); end;",
+    );
+    assert!(why.contains("IncludeCaption"), "{why}");
+}
+
+// handlers/TestReportNestedLinkImplicitParent.al: `Change Log Setup (Table)` is `Change_Log_Setup_Table`.
+#[test]
+fn a_data_item_name_with_spaces_and_parentheses_is_written_the_way_the_corpus_shows() {
+    let text = dataset_of("Probe Quoted Report", "");
+    assert!(text.contains("<DataItem language=\"en-US\" formatRegion=\"en-US\" name=\"Probe_Item_Parent\">"), "{text}");
+}
+
+// Assumption (docs/probes-needed.md): a DataItems element is written only when it holds a DataItem.
+#[test]
+fn a_dataset_without_rows_has_no_data_items_element() {
+    let text = f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin
+            Buf.DeleteAll();
+            Buf.Data.CreateOutStream(Out);
+            Report.SaveAs(Report::\"Probe SaveAs Report\", '', ReportFormat::Xml, Out);
+            exit(H.Lines(Buf));
+        end;");
+    assert!(!text.contains("DataItems"), "{text}");
+    assert!(text.ends_with("  </BCReportInformation>|</ReportDataSet>|"), "{text}");
+}
+
+#[test]
+fn a_second_saveas_on_one_report_variable_is_refused() {
+    let why = refusal(
+        "var H: Codeunit Helpers; R: Report \"Probe Plain Report\"; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin
+            H.Seed();
+            Buf.Data.CreateOutStream(Out);
+            R.SaveAs('', ReportFormat::Xml, Out);
+            R.SaveAs('', ReportFormat::Xml, Out);
+        end;",
+    );
+    assert!(why.contains("second SaveAs"), "{why}");
+}
+
+// handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText: a parent with no
+// child rows is written with no nested DataItems (assumption: docs/probes-needed.md).
+#[test]
+fn a_parent_row_without_child_rows_has_no_nested_data_items_element() {
+    let text = f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Parent: Record \"Probe Rep Parent\"; Out: OutStream; begin
+            H.Seed();
+            Parent.Init(); Parent.Id := 3; Parent.Insert();
+            Buf.Data.CreateOutStream(Out);
+            Report.SaveAs(Report::\"Probe SaveAs Report\", '', ReportFormat::Xml, Out);
+            exit(H.Lines(Buf));
+        end;");
+    let third = text.rsplit("<Column name=\"PNo\">3</Column>|").next().unwrap();
+    assert!(third.starts_with("        <Column name=\"PName\"></Column>|"), "{text}");
+    assert!(third.contains("      </Columns>|    </DataItem>|  </DataItems>|</ReportDataSet>|"), "{third}");
 }

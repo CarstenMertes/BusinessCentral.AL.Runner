@@ -819,7 +819,7 @@ impl Session {
                     self.call(*e, t, ext_inst.clone(), Vec::new())?;
                 }
                 if run.dataset {
-                    self.dataset_begin(run, r, &rec)?;
+                    self.dataset_begin(run, r)?;
                 }
                 for child in run.children(r) {
                     if self.report_item(run, child, Some(rec.clone()))? {
@@ -1076,16 +1076,11 @@ impl Session {
         self.apply_request_parameters(inst, &exts, schema.object, xml)
     }
 
-    /// The table of the record of data item `r`.
-    fn dataset_table(&self, rec: &Rec) -> usize {
-        rec.borrow().table as usize
-    }
-
     /// A column bound to a FlowField of the data item's table is calculated for every row before
     /// `OnAfterGetRecord`, because a column's AutoCalcField property defaults to true
     /// (handlers/TestReportFlowFieldColumnAutoCalc.al).
     fn dataset_autocalc(&mut self, run: &Run, r: ItemRef, rec: &Rec) -> Result<(), Signal> {
-        let table = self.dataset_table(rec);
+        let table = rec.borrow().table as usize;
         let engine = self.engine.clone();
         let Some(def) = engine.program.objects[table].table.as_ref() else {
             return Ok(());
@@ -1109,22 +1104,21 @@ impl Session {
         self.calc_fields(rec, &calc)
     }
 
-    /// Opens the `DataItem` element of the row `rec` of item `r` with its columns, evaluated now:
+    /// Opens the `DataItem` element of the current row of item `r` with its columns, evaluated now:
     /// after `OnAfterGetRecord` and before the nested items.
-    fn dataset_begin(&mut self, run: &Run, r: ItemRef, rec: &Rec) -> Result<(), Signal> {
+    fn dataset_begin(&mut self, run: &Run, r: ItemRef) -> Result<(), Signal> {
         let item = run.item(r);
         let name = dataset::dataset_name(&item.name)?;
         let (owner, object) = run.owner(r);
         let owner = owner.clone();
-        let table = self.dataset_table(rec);
         let mut columns = Vec::new();
         for c in &item.columns {
-            columns.push(self.dataset_column(c, &owner, object, table)?);
+            columns.push(self.dataset_column(c, &owner, object)?);
         }
         if let (ItemRef::Base(i), Some((ext_inst, e)), Some(x)) = (r, &run.ext, run.ext_ir()) {
             for add in x.adds.iter().filter(|a| a.item == i) {
                 for c in &add.columns {
-                    columns.push(self.dataset_column(c, ext_inst, *e, table)?);
+                    columns.push(self.dataset_column(c, ext_inst, *e)?);
                 }
             }
         }
@@ -1145,7 +1139,6 @@ impl Session {
         c: &ir::ReportColumn,
         owner: &Inst,
         object: usize,
-        _table: usize,
     ) -> Result<Column, Signal> {
         let name = dataset::dataset_name(&c.name)?;
         if let Some(why) = &c.unsupported {

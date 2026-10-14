@@ -313,6 +313,9 @@ pub struct PageState {
     /// The instances of the page's extensions (extension object, instance): they share the page's
     /// `Rec`, `xRec` and `CurrPage`, and hold the extension's own variables.
     pub ext_instances: Vec<(usize, Rc<RefCell<Instance>>)>,
+    /// A request page that `Report.RunRequestPage` opened: its OK confirms the parameters, whatever
+    /// the report renders.
+    pub parameters_wanted: bool,
     /// The session's application areas when the page opened: controls whose area they do not
     /// enable are not on the page.
     pub areas: String,
@@ -378,6 +381,7 @@ impl PageState {
             set_record: None,
             host: None,
             ext_instances: Vec::new(),
+            parameters_wanted: false,
             areas: String::new(),
             inited: false,
             stale: false,

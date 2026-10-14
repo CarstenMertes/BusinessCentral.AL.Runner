@@ -720,7 +720,11 @@ impl Session {
             S::Foreach { var, collection, body } => {
                 let items: Vec<Value> = match self.eval(collection, f)? {
                     Value::List(l) => l.borrow().clone(),
-                    other => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                    // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
+                    other => match al_builtins::xml::node_list_items(&other) {
+                        Some(items) => items,
+                        None => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                    },
                 };
                 for item in items {
                     self.write(var, item, f)?;

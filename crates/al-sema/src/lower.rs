@@ -1001,7 +1001,7 @@ fn lower_object<'a>(
             }
             let ty = lw.rt(&Ty::Record {
                 table: i.table.clone(),
-                temporary: false,
+                temporary: crate::reports::uses_temporary(&i.section),
             });
             lw.globals.insert(key, globals.len());
             match ty {
@@ -1034,7 +1034,7 @@ fn lower_object<'a>(
             }
             let ty = lw.rt(&Ty::Record {
                 table: i.table.clone(),
-                temporary: false,
+                temporary: crate::reports::uses_temporary(&i.section),
             });
             lw.globals.insert(key, globals.len());
             match ty {

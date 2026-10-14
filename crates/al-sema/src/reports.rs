@@ -20,6 +20,8 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     "tooltip",
     "tooltipml",
     "description",
+    // Where the platform reads from (a replica); nothing a run or its dataset shows.
+    "dataaccessintent",
 ];
 
 /// Data item properties that change nothing a processing run can observe: they steer the request
@@ -35,6 +37,19 @@ const INERT_ITEM_PROPERTIES: &[&str] = &[
 
 /// Sections that only matter to a layout or a request page.
 const LAYOUT_SECTIONS: &[&str] = &["rendering", "labels", "wordlayout", "rdlclayout", "excellayout"];
+
+/// Column properties that steer how a layout shows a number. The Base Application states
+/// `AutoFormatType` on most decimal columns, so a dataset that refused them would refuse nearly every
+/// report; the dataset is taken to carry the same `decimalformatter` for them
+/// (docs/probes-needed.md, "Report.SaveAs dataset").
+const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &["autoformattype", "autoformatexpression", "decimalplaces"];
+
+/// Whether the data item `sec` states `UseTemporary = true`: its record is a temporary one, which
+/// holds only what the report's code inserts.
+pub fn uses_temporary(sec: &ast::Section) -> bool {
+    sec.properties()
+        .any(|p| p.name().eq_ignore_ascii_case("UseTemporary") && p.value_text().trim().eq_ignore_ascii_case("true"))
+}
 
 /// A data item before its names are resolved.
 pub struct RawItem {
@@ -180,7 +195,9 @@ pub fn layout(obj: &ast::Object) -> Layout {
             },
             "transactiontype" => out.transaction_type = Some(value.trim().to_ascii_lowercase()),
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
-            "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" => out
+            // Rendering-only: how the report prints. `PreviewMode` belongs to the Base Application's
+            // G/L Register (handlers/TestReportDatasetHelpLink.al runs its SaveAs).
+            "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" | "previewmode" => out
                 .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
             // The Schedule button of the request page. Nothing pins what a run does with it, but a
@@ -408,8 +425,10 @@ fn visit(
         let table = args.get(1).cloned().unwrap_or_default();
         for p in s.properties() {
             let pn = p.name().to_ascii_lowercase();
+            let temporary_ok = pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
             if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
                 && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
+                && !temporary_ok
             {
                 reasons.push(format!("property {pn} of dataitem {name} is not supported yet"));
             }
@@ -650,9 +669,12 @@ impl<'a> Owner<'a> {
                     unsupported = Some(format!("column {name} does not state exactly a name and a source"));
                 } else if routine.is_none() {
                     unsupported = Some(format!("column {name} has no routine"));
-                } else if let Some(p) = c.properties().next() {
-                    // Every column property (IncludeCaption, DecimalPlaces, AutoFormatType, ...) changes
-                    // what the dataset carries for the column; no test pins any of them.
+                } else if let Some(p) = c
+                    .properties()
+                    .find(|p| !FORMAT_ONLY_COLUMN_PROPERTIES.contains(&p.name().to_ascii_lowercase().as_str()))
+                {
+                    // Every other column property (IncludeCaption, BlankZero, ...) changes what the
+                    // dataset carries for the column; no test pins any of them.
                     unsupported = Some(format!(
                         "column {name} states the property {} (its effect on the dataset is not pinned)",
                         p.name()

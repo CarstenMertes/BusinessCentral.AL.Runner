@@ -806,3 +806,37 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
     Integer(n)`); `DateTime + Duration` is pinned (session/TestDateTimeContracts.al:50-75). 98 tests, from the
     project's `CurrentDateTime + (Seconds * 1000)`. Probe wanted: `DT + 1000` for an `Integer`, a `BigInteger` and a
     `Decimal` constant and variable (milliseconds? a compile error?), `DT - 1000`, and `DT + 1000.5` (rounding).
+
+## DotNet values typed at run time (ADR-024, Proposed)
+
+Nothing is implemented. The corpus app is `Cloud` (`corpus/tests/al-language/app.json:63`), so these need an
+`OnPrem` probe app first (ADR-024, decision 2). Today the four cases are refused statically (`no_dotnet_operand`,
+`System.CopyStream`, `System.Format`, `foreach` in `al-sema/src/lower.rs`). Counts: BC 27.5.46862.48827, Tests-ERM
+and NP Retail, tests whose first refusal it is (ADR-024, Context).
+
+1. **Kind seen by AL for each CLR result.** A member returning `int`, `long`, `short`, `byte`, `char`, `float`,
+   `double`, `decimal`, `bool`, `string`, `DateTime`, `TimeSpan`, `Guid`, an enum, a null `string`, a null
+   object: `Variant.IsInteger`, `IsBigInteger`, `IsDecimal`, `IsText`, ... and `Format`. Then `Count - 1`,
+   `Count / 2`, `Length() - 1` as a `for` bound, `Scheme = 'HTTPS'` (is the compare case-insensitive).
+2. **A null `string` result as an operand.** `s = ''`, `StrLen(s)`, `s + 'x'`, `Format(s)`, assigned to a `Variant`.
+3. **`Format` of a `DotNet` object.** `System.Type` (Business Chart compares it with CLR type names),
+   an enum, `StringBuilder`, a null object; with `Format(x, 0, 2)` too. Is it `ToString()`?
+4. **`DotNet` enum operators.** Flags `+` (`NumberStyles.Number + NumberStyles.AllowCurrencySymbol`, 8 tests),
+   `=` between enums, an enum against an `Integer` or an `Option`.
+5. **`foreach` over a `DotNet` value.** `string[]` (`Array`), `MatchCollection`, `Queue`, `List<string>`,
+   `Dictionary` (element type), a `string` (chars), a null collection (error text and code), a collection modified
+   in the loop (exception text), a loop variable of the wrong type, a `Text` variable over `int` elements, and
+   whether the enumerator is disposed at the end, on `break`, on `exit` and on an error. 101 Tests-ERM and 59 NP
+   Retail tests.
+6. **`CopyStream` with a `DotNet` stream.** Target a `DotNet MemoryStream` (content through `ToArray`, `Position`
+   after), source `ZipArchiveEntry.Open()` or a `MemoryStream` into a blob, with and without the byte count, a
+   source stream already at a non-zero position, a read-only target (exception text), a non-`Stream` object as
+   the target (compile error or run-time text). 561 Tests-ERM and 345 NP Retail tests.
+7. **`=` and `<>` between `DotNet` objects.** Same object, two equal strings held in `object` variables, `IsNull`.
+8. **`DateTimeOffset.LocalDateTime - Offset`.** The AL type of the result; `DateTime` minus `Duration`.
+
+Documentation-only assumption if the owner approves it (ADR-024, decision 3): a result of a kind the marshalling
+table maps to an AL scalar (ADR-014 section 4) is that AL scalar wherever it is used; `CopyStream` copies the
+unread bytes and advances the source; `foreach` calls `GetEnumerator`, `MoveNext`, `Current` and settles each
+element into the loop variable. Null, objects, enums and `Format` of an object stay refused.
+

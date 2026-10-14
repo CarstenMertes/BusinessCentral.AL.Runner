@@ -162,7 +162,8 @@ impl Session {
                 let at = rec.borrow().marks.iter().position(|m| ops::compare_keys(m, &pk));
                 match args.first() {
                     None => Ok(Value::Boolean(at.is_some())),
-                    Some(_) if self.ret_used => unsupported("a used result of Mark(SetMark) (not pinned)"),
+                    // Mark(SetMark) returns the new state (corpus branch al-runtime-rs, pending push:
+                    // record/TestRecordViewCopyMarkContracts.al:Mark_ReturnsTheNewState).
                     Some(v) => {
                         let want = ops::truthy(v)?;
                         let mut r = rec.borrow_mut();
@@ -173,7 +174,7 @@ impl Session {
                             }
                             _ => {}
                         }
-                        Ok(Value::Null)
+                        Ok(Value::Boolean(want))
                     }
                 }
             }
@@ -350,30 +351,26 @@ impl Session {
                 let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
                 self.set_view(rec, t, &view).map(|()| Value::Null)
             }
-            // Returns the group in use before the call (docs/probes-needed.md); without an argument, the current one.
+            // Returns the group it sets, or the current one without an argument (corpus
+            // record/TestRecordRuntimeTextsAndViews.al:Record_FilterGroup_ReturnsTheGroupJustSet_...).
             "FilterGroup" => {
                 let mut r = rec.borrow_mut();
-                let before = r.filter_group;
                 if let Some(v) = args.first() {
                     r.filter_group = match v {
                         Value::Integer(n) => *n,
                         other => return unsupported(format!("FilterGroup({other:?})")),
                     };
                 }
-                Ok(Value::Integer(before))
+                Ok(Value::Integer(r.filter_group))
             }
-            // Doc (Record.SetRecFilter): filters the primary key fields to the current values. Whether
-            // filters on other fields are kept is not pinned, so they refuse.
+            // Doc (Record.SetRecFilter): filters the primary key fields to the current values; the
+            // filters on other fields stay (corpus branch al-runtime-rs, pending push:
+            // record/TestRecordViewCopyMarkContracts.al:SetRecFilter_KeepsFiltersOnOtherFields_...).
             "SetRecFilter" => {
                 let group = rec.borrow().filter_group;
                 let pk = &t.keys[0];
-                if rec.borrow().filters.iter().any(|f| !pk.contains(&f.field)) {
-                    return unsupported(
-                        "SetRecFilter with filters on other fields (whether they are kept is not pinned)",
-                    );
-                }
                 let mut r = rec.borrow_mut();
-                r.filters.retain(|f| !pk.contains(&f.field));
+                r.filters.retain(|f| !(pk.contains(&f.field) && f.group == group));
                 for &p in pk {
                     let v = r.fields[p].clone();
                     r.filters.push(al_builtins::filter::FieldFilter {
@@ -412,8 +409,14 @@ impl Session {
                     return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
                 }
                 let mut d = rec.borrow_mut();
-                if s.temporary && !d.temporary {
-                    return unsupported("Copy from a temporary record onto a normal one (not pinned)");
+                // shareTable needs both records temporary; a plain Copy of a temporary record onto
+                // a normal one copies values and filters only (corpus branch al-runtime-rs, pending
+                // push: record/TestRecordViewCopyMarkContracts.al:Copy_ShareTable_RequiresBothRecordsToBeTemporary).
+                if share && !(s.temporary && d.temporary) {
+                    return Err(error(
+                        "The COPY function can only be used with the shareTable argument set to true if both records are temporary.".into(),
+                        "Argument",
+                    ));
                 }
                 d.fields = s.fields;
                 d.filters = s.filters;
@@ -462,9 +465,11 @@ impl Session {
                 let want = ops::convert(want.clone(), &t.fields[pos].ty)?;
                 if ops::compare(&current, &want)? != Ordering::Equal {
                     let key = self.key_text(t, &row)?;
+                    // record/TestRecordRuntimeTextsAndViews.al:Record_TestField_MismatchTexts: the
+                    // wanted and the current value are quoted, and two spaces precede "in".
                     return Err(error(
                         format!(
-                            "{caption} must be {} in {table}: {key}. Currently it's {}.",
+                            "{caption} must be equal to '{}'  in {table}: {key}. Current value is '{}'.",
                             self.message_value(&want)?,
                             self.message_value(&current)?
                         ),
@@ -476,26 +481,22 @@ impl Session {
         Ok(Value::Null)
     }
 
-    /// `GetPosition`: the current key's fields, then the primary key fields it lacks, as
-    /// `Name=CONST(value)` (`Field<n>` with `UseNames = false`). The corpus only round-trips it
-    /// through SetPosition (docs/probes-needed.md).
+    /// `GetPosition`: the primary key fields, whatever the current key is, as `Name=CONST(value)`
+    /// (`Field<n>=0(value)` with `UseNames = false`); corpus
+    /// record/TestRecordRuntimeTextsAndViews.al:RecordId_Format_And_GetPosition.
     fn get_position(&self, rec: &Rec, t: &TableDef, use_names: bool) -> Result<String, Signal> {
         let r = rec.borrow();
-        let mut fields: Vec<usize> = t.keys[r.key].clone();
-        let missing: Vec<usize> = t.keys[0].iter().copied().filter(|p| !fields.contains(p)).collect();
-        fields.extend(missing);
         let mut parts = Vec::new();
-        for p in fields {
+        for &p in &t.keys[0] {
             let value = self.message_value(&r.fields[p])?;
             if value.contains([')', ',', '\'', '"']) {
                 return unsupported("a position value that needs quoting");
             }
-            let name = if use_names {
-                t.fields[p].name.clone()
+            if use_names {
+                parts.push(format!("{}=CONST({value})", t.fields[p].name));
             } else {
-                format!("Field{}", t.fields[p].id)
-            };
-            parts.push(format!("{name}=CONST({value})"));
+                parts.push(format!("Field{}=0({value})", t.fields[p].id));
+            }
         }
         Ok(parts.join(","))
     }
@@ -510,6 +511,7 @@ impl Session {
             let value = rest
                 .trim()
                 .strip_prefix("CONST(")
+                .or_else(|| rest.trim().strip_prefix("0("))
                 .and_then(|v| v.strip_suffix(')'))
                 .ok_or_else(|| Signal::Unsupported(format!("position `{text}`")))?;
             let name = name.trim();
@@ -641,8 +643,15 @@ impl Session {
         let pos = arg_pos(args, 0)?;
         if t.fields[pos].id == 2_000_000_000 {
             // Wording after the pinned fragment: record/TestRecordSystemId.al:230-262, docs/probes-needed.md.
+            // corpus branch al-runtime-rs (pending push): record/TestSystemFieldStampsContracts.al:
+            // SystemId_Duplicate_And_ModifyAll_Texts.
             return Err(error(
-                "ModifyAll cannot change the value of the SystemId field.".into(),
+                format!(
+                    "You cannot change the value of the SystemId field.{}{}Table: {}",
+                    crate::records::BR,
+                    crate::records::BR,
+                    self.caption(t)
+                ),
                 "Dialog",
             ));
         }
@@ -690,18 +699,32 @@ impl Session {
         )
     }
 
-    /// `FieldError(Field, Text)`: `<caption> <text> in <table>: <key>.` A bare `FieldError(Field)`
-    /// has no pinned wording (the corpus only checks that the caption appears): refused.
+    /// `FieldError(Field [, Text])`. With a text: `<caption> <text> in <table> <key>.`; without:
+    /// `<caption> must not be <value> in <table> <key>.` The key is `Name='value'` pairs joined by
+    /// commas, no colon after the table (corpus record/TestRecordRuntimeTextsAndViews.al:
+    /// Record_FieldError_Texts). The code is `NCLCSRTS:TableErrorStr`.
     fn field_error(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
         let pos = arg_pos(args, 0)?;
-        let Some(text) = args.get(1).and_then(al_builtins::native::text_of) else {
-            return unsupported("FieldError without a message (default wording not pinned)");
-        };
         let row = rec.borrow().fields.clone();
-        let key = self.key_text(t, &row)?;
+        let mut parts = Vec::new();
+        for &i in &t.keys[0] {
+            parts.push(format!(
+                "{}='{}'",
+                self.field_caption(t, i),
+                self.message_value(&row[i])?
+            ));
+        }
+        let key = parts.join(",");
+        let what = match args.get(1) {
+            Some(v) => match al_builtins::native::text_of(v) {
+                Some(text) => text,
+                None => return unsupported("FieldError with an ErrorInfo"),
+            },
+            None => format!("must not be {}", self.message_value(&row[pos])?),
+        };
         Err(error(
-            format!("{} {text} in {}: {key}.", self.field_caption(t, pos), self.caption(t)),
-            "Dialog",
+            format!("{} {what} in {} {key}.", self.field_caption(t, pos), self.caption(t)),
+            "NCLCSRTS:TableErrorStr",
         ))
     }
 }

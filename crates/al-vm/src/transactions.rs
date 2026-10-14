@@ -179,6 +179,11 @@ impl Session {
         if self.commit_behavior == CommitBehavior::Error {
             return Err(al_error_code(COMMIT_PROHIBITED, "DB:Ok"));
         }
+        // A deferred duplicate-key Insert comes out here (corpus record/TestRecordRuntimeTextsAndViews.al:
+        // Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_...: "raised by Commit").
+        if let Some((_, e)) = self.deferred_insert.take() {
+            return Err(Signal::Error(e));
+        }
         self.commit_transaction();
         Ok(())
     }

@@ -60,19 +60,19 @@ enum Entry {
 }
 
 /// The report instance's object, kept alive independently of the session.
-struct Schema {
+pub(crate) struct Schema {
     engine: Arc<crate::Engine>,
     object: usize,
 }
 
 impl Schema {
-    fn report(&self) -> &ir::Report {
+    pub(crate) fn report(&self) -> &ir::Report {
         self.engine.program.objects[self.object]
             .report
             .as_ref()
             .expect("checked by Session::report_schema")
     }
-    fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.engine.program.objects[self.object].name
     }
 }
@@ -615,6 +615,9 @@ impl Session {
         match closed? {
             (RequestClosed::Cancel, _) => Ok(String::new()),
             (RequestClosed::Ok, parameters) => Ok(parameters.expect("parameters were asked for")),
+            (RequestClosed::SavedAsXml, _) => {
+                unsupported("SaveAsXml in the request page of a RunRequestPage (not pinned)")
+            }
         }
     }
 
@@ -623,6 +626,23 @@ impl Session {
     /// (handlers/TestReportMultiLineDataItemView.al: "the request page applies those views to the
     /// data items before the handler runs") and before OnPreReport, which may refine them
     /// (handlers/TestReportGetFilterInTriggers.al:43-52 reads the view there).
+    /// The `Schema` of the report `inst` is an instance of.
+    pub(crate) fn report_schema_of(&self, inst: &Inst) -> Result<Schema, Signal> {
+        self.report_schema(inst)
+    }
+
+    /// A `Run` over instances that already exist and whose items already have their views (the request
+    /// page is open): `SaveAsXml` finishes the report from there.
+    pub(crate) fn report_run_for(&self, object: usize, base: &Inst, ext: Option<(Inst, usize)>, dataset: bool) -> Run {
+        Run {
+            engine: self.engine.clone(),
+            object,
+            base: base.clone(),
+            ext,
+            dataset,
+        }
+    }
+
     fn report_prepare(&mut self, inst: &Inst, schema: &Schema) -> Result<Run, Signal> {
         let report = schema.report();
         // A reportextension that changes the run gets an instance of its own for this run, whose
@@ -680,7 +700,6 @@ impl Session {
         shows_page: bool,
         save_as: Option<&str>,
     ) -> Result<bool, Signal> {
-        let report = schema.report();
         let mut run = self.report_prepare(inst, schema)?;
         run.dataset = save_as.is_some();
         if let Some(xml) = save_as.filter(|x| !x.is_empty()) {
@@ -692,10 +711,21 @@ impl Session {
         // Report_Run_CancelledRequestPageRunsNothingAndRaisesNoError).
         if shows_page {
             let ext = run.ext.as_ref().map(|(i, e)| (*e, i.clone()));
-            if self.run_request_page(inst, schema.object, None, ext, false)?.0 == RequestClosed::Cancel {
-                return Ok(false);
+            match self.run_request_page(inst, schema.object, None, ext, false)?.0 {
+                RequestClosed::Cancel => return Ok(false),
+                // The handler's `SaveAsXml` ran the report there and then
+                // (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:
+                // SaveAsXml_RunsTheReportOnce_AndClosesTheRequestPage): it does not run a second time.
+                RequestClosed::SavedAsXml => return Ok(true),
+                RequestClosed::Ok => {}
             }
         }
+        self.report_after_page(&run, schema)
+    }
+
+    /// Everything of a run after its request page: the triggers and the data items.
+    pub(crate) fn report_after_page(&mut self, run: &Run, schema: &Schema) -> Result<bool, Signal> {
+        let report = schema.report();
         // A report that renders output runs up to its request page and no further: there is no
         // renderer (docs/probes-needed.md). The dataset a `SaveAs` writes is not rendered output.
         if let Some(why) = report.output.first().filter(|_| !run.dataset) {
@@ -710,7 +740,7 @@ impl Session {
             if item.link.is_empty() {
                 continue;
             }
-            let rec = self.report_item_record(&run, r)?;
+            let rec = self.report_item_record(run, r)?;
             if rec
                 .borrow()
                 .filters
@@ -727,7 +757,7 @@ impl Session {
         // had before it (handlers/TestReportRuntimeContracts.al:371-390).
         let mut kept = Vec::new();
         for r in run.all_items() {
-            let rec = self.report_item_record(&run, r)?;
+            let rec = self.report_item_record(run, r)?;
             let filters = rec.borrow().filters.clone();
             kept.push((rec, filters));
         }
@@ -747,7 +777,7 @@ impl Session {
             rec.borrow_mut().filters = filters;
         }
         for i in 0..report.items.len() {
-            if report.items[i].parent.is_none() && self.report_item(&run, ItemRef::Base(i), None)? {
+            if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None)? {
                 return Ok(false);
             }
         }
@@ -865,7 +895,7 @@ enum ItemRef {
 }
 
 /// The instances a run executes: the report, and the reportextension that changes it (if any).
-struct Run {
+pub(crate) struct Run {
     engine: Arc<crate::Engine>,
     /// The report's object index.
     object: usize,
@@ -1288,10 +1318,17 @@ impl Session {
             }
         }
         let mut attribute = None;
+        let mut schema_type = None;
         let text = match &value {
-            Value::Integer(n) => n.to_string(),
+            Value::Integer(n) => {
+                schema_type = Some("xs:int");
+                n.to_string()
+            }
             Value::BigInteger(n) => n.to_string(),
-            Value::Text(s) | Value::Code(s) => dataset::escape(s)?,
+            Value::Text(s) | Value::Code(s) => {
+                schema_type = Some("xs:string");
+                dataset::escape(s)?
+            }
             Value::Boolean(b) => if *b { "True" } else { "False" }.to_string(),
             Value::Date(0, false) => String::new(),
             Value::Date(d, false) => dataset::date_text(*d),
@@ -1354,7 +1391,12 @@ impl Session {
                 ));
             }
         };
-        Ok(Column { name, attribute, text })
+        Ok(Column {
+            name,
+            attribute,
+            text,
+            schema_type,
+        })
     }
 
     /// The header of the dataset: what the report, its app, the session and the clock say.

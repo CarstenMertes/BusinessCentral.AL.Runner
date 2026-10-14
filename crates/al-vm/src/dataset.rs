@@ -256,6 +256,9 @@ pub(crate) struct Column {
     pub name: String,
     pub attribute: Option<(&'static str, String)>,
     pub text: String,
+    /// The XML Schema type of the column in a .NET DataSet (`TestRequestPage.SaveAsXml`), for the
+    /// column types that probe pins: Integer and Text/Code.
+    pub schema_type: Option<&'static str>,
 }
 
 /// A dataset being written: the `DataItems` block, and who is open.
@@ -269,6 +272,11 @@ pub(crate) struct Dataset {
     pub rows: usize,
     /// The `Labels` block: (column name + `Caption`, text), in the order the columns come.
     pub labels: Vec<(String, String)>,
+    /// The rows of the top-level data items for a .NET DataSet: (name, schema type) of the columns
+    /// of the first row, and the texts of every row.
+    flat: Vec<Vec<(String, Option<&'static str>, String)>>,
+    /// Whether the rows fit one flat table: one data item, no nested row.
+    flat_ok: bool,
 }
 
 impl Dataset {
@@ -281,6 +289,28 @@ impl Dataset {
     /// Opens a row of a data item: `<DataItem ..>` and its `Columns`.
     pub(crate) fn begin(&mut self, name: &str, identity: Option<(u32, &str)>, columns: &[Column]) {
         let depth = self.open.len();
+        if depth == 0 {
+            if self.rows == 0 {
+                self.flat_ok = true;
+            }
+            self.flat.push(
+                columns
+                    .iter()
+                    .map(|c| (c.name.clone(), c.schema_type, c.text.clone()))
+                    .collect(),
+            );
+            // A second data item (its rows have other columns) is not one table.
+            if self.flat.len() > 1
+                && self.flat[0]
+                    .iter()
+                    .map(|c| &c.0)
+                    .ne(self.flat[self.flat.len() - 1].iter().map(|c| &c.0))
+            {
+                self.flat_ok = false;
+            }
+        } else {
+            self.flat_ok = false;
+        }
         if depth == 0 {
             if !self.root {
                 self.root = true;
@@ -330,6 +360,54 @@ impl Dataset {
         }
         self.pad(at);
         self.body.push_str("</DataItem>\n");
+    }
+
+    /// The bytes of the .NET DataSet `TestRequestPage.SaveAsXml` writes: the schema of the rows (one
+    /// element per column with its .NET type) and a `Result` element per row, behind a byte order
+    /// mark (corpus al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:
+    /// SaveAs_ReportDataFile_IsADataSet). Pinned for one data item whose columns are Integer or Text;
+    /// anything else is refused.
+    pub(crate) fn finish_data_set(self) -> Result<Vec<u8>, Signal> {
+        if !self.flat_ok || self.flat.is_empty() {
+            return unsupported(
+                "a SaveAsXml data file of a report that is not one flat data item with rows (not pinned)",
+            );
+        }
+        let mut out = String::new();
+        out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\n<DataSet>\n");
+        out.push_str("  <xs:schema id=\"NewDataSet\" xmlns=\"\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:msdata=\"urn:schemas-microsoft-com:xml-msdata\">\n");
+        out.push_str("    <xs:element name=\"NewDataSet\" msdata:IsDataSet=\"true\" msdata:MainDataTable=\"Result\" msdata:Locale=\"en-US\">\n");
+        out.push_str("      <xs:complexType>\n        <xs:choice minOccurs=\"0\" maxOccurs=\"unbounded\">\n");
+        out.push_str("          <xs:element name=\"Result\" msdata:Locale=\"en-US\">\n            <xs:complexType>\n              <xs:sequence>\n");
+        for (name, ty, _) in &self.flat[0] {
+            let Some(ty) = ty else {
+                return unsupported(format!(
+                    "the SaveAsXml data file column {name}, a type with no pinned .NET type"
+                ));
+            };
+            out.push_str(&format!(
+                "                <xs:element name=\"{name}\" type=\"{ty}\" minOccurs=\"0\" />\n"
+            ));
+        }
+        out.push_str("              </xs:sequence>\n            </xs:complexType>\n          </xs:element>\n");
+        out.push_str("        </xs:choice>\n      </xs:complexType>\n    </xs:element>\n  </xs:schema>\n");
+        for row in &self.flat {
+            out.push_str("  <Result>\n");
+            for (name, _, text) in row {
+                // An empty value is no element in a DataSet; the probe has none, so it is refused.
+                if text.is_empty() {
+                    return unsupported(format!(
+                        "an empty value of column {name} in a SaveAsXml data file (not pinned)"
+                    ));
+                }
+                out.push_str(&format!("    <{name}>{text}</{name}>\n"));
+            }
+            out.push_str("  </Result>\n");
+        }
+        out.push_str("</DataSet>\n");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(out.as_bytes());
+        Ok(bytes)
     }
 
     /// The bytes of the whole dataset: the byte order mark, the header, the data items.

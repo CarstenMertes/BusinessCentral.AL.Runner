@@ -142,7 +142,11 @@ impl Session {
     }
 
     fn require_open(&self, st: &St) -> Result<(), Signal> {
-        if st.borrow().open { Ok(()) } else { Err(error(NOT_OPEN)) }
+        if st.borrow().open {
+            Ok(())
+        } else {
+            Err(error_code(NOT_OPEN, "TestPageNotOpened"))
+        }
     }
 
     /// Runs page trigger `name` (lower case) if the page declares it, then the same trigger of
@@ -224,6 +228,57 @@ impl Session {
         Ok(match v {
             Some(Value::Boolean(b)) if states_answer => Some(b),
             _ => None,
+        })
+    }
+
+    /// `OnQueryClosePage` of a page and of the extensions that declare it: all of them run, the page's first
+    /// and then each extension's in application order, whatever the earlier ones answered. The page closes
+    /// only when every trigger that states an answer says true (corpus
+    /// handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+    /// OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose). `Some(false)` vetoes; `None` when
+    /// none states an answer.
+    fn query_close_answer(&mut self, st: &St, args: Vec<Value>) -> Result<Option<bool>, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let page = page_of(&engine, st);
+        let mut answers = Vec::new();
+        let mut calls: Vec<(usize, usize, Option<usize>)> = Vec::new();
+        if let Some(r) = page
+            .triggers
+            .iter()
+            .find(|(n, _)| n == "onqueryclosepage")
+            .map(|(_, r)| *r)
+        {
+            calls.push((object, r, None));
+        }
+        for (n, e, r) in &page.ext_triggers {
+            if n == "onqueryclosepage" {
+                calls.push((*e, *r, Some(*e)));
+            }
+        }
+        let mut failure = None;
+        for (obj, routine, owner) in calls {
+            let states = has_value_exit(&engine.program.objects[obj].routines[routine].body);
+            let inst = self.owner_instance(st, owner);
+            match self.call(obj, routine, inst, args.clone()) {
+                Ok((Value::Boolean(b), _)) if states => answers.push(b),
+                Ok(_) => {}
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            }
+        }
+        self.end_page_call(st);
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        Ok(if answers.contains(&false) {
+            Some(false)
+        } else if answers.is_empty() {
+            None
+        } else {
+            Some(true)
         })
     }
 
@@ -540,6 +595,7 @@ impl Session {
                 self.require_open(st)?;
                 Ok(Value::Boolean(false))
             }
+            "SaveAsXml" => self.request_save_as_xml(st, args),
             m @ ("OK" | "Cancel" | "Yes" | "No") => {
                 self.require_open(st)?;
                 if !self.builtin_offered(st, m) {
@@ -706,6 +762,10 @@ impl Session {
             "EnqueueBackgroundTask" => {
                 self.require_open(st)?;
                 self.bg_enqueue(st, args)
+            }
+            "CancelBackgroundTask" => {
+                self.require_open(st)?;
+                self.bg_cancel(st, args)
             }
             "RunPageBackgroundTask" => {
                 self.require_open(st)?;
@@ -1148,7 +1208,16 @@ impl Session {
     /// `TestPage.Close()`: the page closes the way a Cancel does (corpus
     /// testpageclose/TestPageClosingActions.al:Dialog arms, `qcp:Cancel` after Close()).
     fn page_close(&mut self, st: &St) -> Result<Value, Signal> {
-        let r = self.close_with(st, "Cancel", false, false);
+        // A Card reports OK (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+        // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose); the dialogs report Cancel.
+        // Other page types are not pinned and keep Cancel.
+        let object = st.borrow().object as usize;
+        let card = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("PageType") && v.trim().eq_ignore_ascii_case("card"));
+        let action = if card && !st.borrow().modal { "OK" } else { "Cancel" };
+        let r = self.close_with(st, action, false, false);
         // A refused TestPage.Close() leaves the variable not open all the same (corpus
         // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen).
         if r.is_ok() {
@@ -1226,11 +1295,7 @@ impl Session {
             if !part.borrow().parts.is_empty() {
                 return unsupported("closing a host whose part page has parts of its own (close order not pinned)");
             }
-            let answer = match self.page_trigger_answer(
-                part,
-                "onqueryclosepage",
-                vec![Value::Option(none_ordinal, members.clone())],
-            ) {
+            let answer = match self.query_close_answer(part, vec![Value::Option(none_ordinal, members.clone())]) {
                 Err(Signal::Error(_)) => {
                     return unsupported("an error in a part's OnQueryClosePage (not pinned)");
                 }
@@ -1242,7 +1307,7 @@ impl Session {
         }
         // An AL error raised in OnQueryClosePage is shown as a message and refuses the close
         // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
-        let veto = match self.page_trigger_answer(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
+        let veto = match self.query_close_answer(st, vec![Value::Option(ordinal, members)]) {
             Err(Signal::Error(e)) => {
                 self.ui_message(e.message)?;
                 st.borrow_mut().close_error = true;
@@ -1989,7 +2054,7 @@ impl Session {
                 if self.is_list(st) {
                     Err(Signal::Error(e))
                 } else {
-                    Err(error(NOT_OPEN))
+                    Err(error_code(NOT_OPEN, "TestPageNotOpened"))
                 }
             }
             other => other,
@@ -2737,6 +2802,32 @@ impl Session {
             }
         };
         let parsed = ops::convert(parsed, &ty)?;
+        // A control's own MinValue / MaxValue (on a control bound to a variable) is not pinned: only the
+        // field's is (below). A value outside the bounds is refused instead of written.
+        if self.control_field(st, idx).is_none() {
+            let out_of_bounds = {
+                let engine = self.engine();
+                let ctl = &page_of(&engine, st).controls[idx];
+                let bound = |n: &str| match ctl.prop(n) {
+                    Some(ir::PropVal::Lit(v)) => v.trim().parse::<rust_decimal::Decimal>().ok(),
+                    _ => None,
+                };
+                let value = match &parsed {
+                    Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
+                    Value::BigInteger(i) => Some(rust_decimal::Decimal::from(*i)),
+                    Value::Decimal(d) => Some(*d),
+                    _ => None,
+                };
+                value.is_some_and(|v| {
+                    bound("minvalue").is_some_and(|m| v < m) || bound("maxvalue").is_some_and(|m| v > m)
+                })
+            };
+            if out_of_bounds {
+                return unsupported(
+                    "SetValue outside the MinValue/MaxValue of a control bound to a variable (not pinned)",
+                );
+            }
+        }
         // MinValue / MaxValue are enforced on a control write, not on Rec.Validate (corpus
         // handlers/TestPageFieldMinMaxValue_Tests.al:20-110).
         if let Some(f) = self.control_field(st, idx) {
@@ -3050,6 +3141,9 @@ impl Session {
             "Visible" => Ok(Value::Boolean(self.control_visible(st, idx)?)),
             "Invoke" => self.action_invoke(st, idx),
             "DrillDown" | "AssistEdit" | "Lookup" => self.control_navigate(st, idx, m),
+            // SetValue on a field of a cuegroup does nothing and raises nothing
+            // (handlers/TestPageCueGroupFixedGridContracts.al:CueGroup_SetValue_IsSilentlyIgnored).
+            "SetValue" if self.in_cue_group(st, idx) => Ok(Value::Null),
             "SetValue" => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
@@ -3646,6 +3740,8 @@ impl Session {
                 Ok(v)
             }
             ir::Binding::Expr(r) => self.control_routine(st, idx, r),
+            // A label shows its caption (handlers/TestPageLabelControlContracts.al:Label_IsATestPageMember_WithItsCaption).
+            ir::Binding::Caption => Ok(Value::Text(self.control_caption(st, idx)?)),
             ir::Binding::None => unsupported("a control without a source"),
         }
     }
@@ -3909,7 +4005,36 @@ impl Session {
             ir::Binding::Var(_) | ir::Binding::BaseVar(_)
         ) || (st.borrow().lookup && self.is_list_page(st))
             || st.borrow().editable_off;
+        // A label is never editable (handlers/TestPageLabelControlContracts.al). A cuegroup with
+        // `Editable = false` makes its fields read No (handlers/TestPageCueGroupFixedGridContracts.al:
+        // CueGroup_SetValue_IsSilentlyIgnored).
+        if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Caption) {
+            return Ok(false);
+        }
+        let mut cue = page_of(&engine, st).controls[idx].parent;
+        while let Some(p) = cue {
+            if page_of(&engine, st).controls[p].kind == ir::ControlKind::CueGroup
+                && !self.prop_bool_now(st, p, "editable", true)?
+            {
+                return Ok(false);
+            }
+            cue = page_of(&engine, st).controls[p].parent;
+        }
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
+    }
+
+    /// Whether control `idx` sits inside a `cuegroup`.
+    fn in_cue_group(&self, st: &St, idx: usize) -> bool {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let mut at = page.controls[idx].parent;
+        while let Some(p) = at {
+            if page.controls[p].kind == ir::ControlKind::CueGroup {
+                return true;
+            }
+            at = page.controls[p].parent;
+        }
+        false
     }
 
     fn control_enabled(&mut self, st: &St, idx: usize) -> Result<bool, Signal> {
@@ -3921,7 +4046,10 @@ impl Session {
         let page = page_of(&engine, st);
         // Own Visible is the open-time value; a group's is live and so are the groups around the
         // control (corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
-        let own = if page.controls[idx].kind == ir::ControlKind::Group {
+        let own = if matches!(
+            page.controls[idx].kind,
+            ir::ControlKind::Group | ir::ControlKind::CueGroup
+        ) {
             self.prop_bool_now(st, idx, "visible", true)?
         } else {
             st.borrow().frozen_visible.get(idx).copied().unwrap_or(true)

@@ -583,6 +583,9 @@ pub enum ControlKind {
     /// `systemaction(OK)` and friends.
     SystemAction,
     ActionGroup,
+    /// A `cuegroup`: a group whose fields take `SetValue` without effect
+    /// (corpus handlers/TestPageCueGroupFixedGridContracts.al).
+    CueGroup,
     Part,
     /// A data item of a report's request page: its `binding` is the global slot of the item's
     /// record, and the test client reads and writes that record's filters.
@@ -602,6 +605,9 @@ pub enum Binding {
     BaseVar(usize),
     /// A read-only expression: a routine returning the value.
     Expr(usize),
+    /// A `label` control: its value is its caption and it is not editable
+    /// (corpus handlers/TestPageLabelControlContracts.al).
+    Caption,
 }
 
 impl Binding {

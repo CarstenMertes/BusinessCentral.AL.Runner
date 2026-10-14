@@ -289,6 +289,165 @@ impl Session {
         }
     }
 
+    /// `foreach` over a `DotNet` value (ADR-024 section 4): `GetEnumerator`, then `MoveNext` and
+    /// `Current` as ordinary host calls, each `Current` settled into the loop variable. The error
+    /// texts and codes are pinned by tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al
+    /// (codeunit 61400, `Foreach_OverClrCollections`, `Foreach_Failures_HaveTheirTextsAndCodes`).
+    pub(crate) fn foreach_dotnet(
+        &mut self,
+        var: &ir::Place,
+        coll: Value,
+        collection: &ir::Expr,
+        body: &[ir::Stmt],
+        f: &mut Frame,
+    ) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let var_ty = self.place_type(var, f);
+        let (handle, clr_type) = match &coll {
+            Value::DotNet(o) => match &o.kind {
+                DotNetKind::Host { handle, clr_type } => (*handle, clr_type.clone()),
+                DotNetKind::Enum { clr_type, .. } => {
+                    return unsupported(format!("foreach over a .NET enum value of {clr_type} (not pinned)"));
+                }
+                DotNetKind::Internal { type_name, .. } => {
+                    return unsupported(format!("foreach over a runtime-provided {type_name} (not pinned)"));
+                }
+            },
+            _ => {
+                // Null: the variable was never instantiated. The text names the variable's CLR
+                // type, the object and the procedure.
+                let ir::Expr::Load(place) = collection else {
+                    return unsupported("foreach over a null DotNet value that is not a variable");
+                };
+                let RtType::DotNet(i) = self.place_type(place, f) else {
+                    return unsupported("foreach over a null that is not a DotNet variable");
+                };
+                let o = &engine.program.objects[f.object];
+                let kind = match o.kind.as_str() {
+                    "codeunit" => "CodeUnit",
+                    other => {
+                        return unsupported(format!(
+                            "foreach over an uninstantiated DotNet variable in a {other} (the object kind's spelling in the error is not pinned)"
+                        ));
+                    }
+                };
+                let message = format!(
+                    "A DotNet variable has not been instantiated. Attempting to call {}.GetEnumerator in {kind} {}: {}",
+                    engine.program.dotnet_types[i as usize].type_name, o.name, o.routines[f.routine].name
+                );
+                return al_builtins::native::raise(message, "DotNetVariableNotCreated");
+            }
+        };
+        if let Err(why) = engine
+            .dotnet
+            .policy
+            .check(None, &clr_type, Access::Member("GetEnumerator"))
+        {
+            return unsupported(format!("DotNet {clr_type}.GetEnumerator: {why}"));
+        }
+        let enumerator = self
+            .host_call(DotNetTarget::Instance(handle), "GetEnumerator", &clr_type, f)
+            .map_err(|e| e.signal(&clr_type, "GetEnumerator"))?;
+        let Value::DotNet(en) = &enumerator else {
+            return unsupported(format!("{clr_type}.GetEnumerator did not return an object"));
+        };
+        let DotNetKind::Host {
+            handle: en_handle,
+            clr_type: en_type,
+        } = &en.kind
+        else {
+            return unsupported(format!("{clr_type}.GetEnumerator did not return a host object"));
+        };
+        let (en_handle, en_type) = (*en_handle, en_type.clone());
+        loop {
+            let more = self.host_call(DotNetTarget::Instance(en_handle), "MoveNext", &en_type, f);
+            let more = match more {
+                Ok(v) => v,
+                Err(MoveNextFailure::Exception(e)) if e.clr_type == "System.InvalidOperationException" => {
+                    return al_builtins::native::raise(
+                        format!("A call to {en_type}.MoveNext failed with this message: {}", e.message),
+                        "DotNetInvoke:InvalidOperation",
+                    );
+                }
+                Err(other) => return Err(other.signal(&en_type, "MoveNext")),
+            };
+            if !matches!(more, Value::Boolean(true)) {
+                return Ok(());
+            }
+            let current = self
+                .host_get(en_handle, "Current", &en_type, f)
+                .map_err(|e| e.signal(&en_type, "Current"))?;
+            let item = match self.dotnet_coerce(current.clone(), &var_ty) {
+                Ok(v) => v,
+                Err(unfit) => {
+                    return Err(match (&current, &var_ty) {
+                        (Value::Integer(_), RtType::Text(_) | RtType::Code(_)) => {
+                            match al_builtins::native::raise::<()>(
+                                "Invalid Conversion. Source: Int32, Destination: NavText.",
+                                "Argument",
+                            ) {
+                                Err(e) => e,
+                                Ok(()) => unreachable!(),
+                            }
+                        }
+                        (Value::Text(_), RtType::Date) => {
+                            match al_builtins::native::raise::<()>(
+                                "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavText to System.DateTime.",
+                                "Conversion",
+                            ) {
+                                Err(e) => e,
+                                Ok(()) => unreachable!(),
+                            }
+                        }
+                        _ => prefix(unfit, "foreach element"),
+                    });
+                }
+            };
+            self.write(var, item, f)?;
+            match self.exec_block(body, f) {
+                Err(Signal::Break) => return Ok(()),
+                r => r?,
+            }
+        }
+    }
+
+    /// One host call for `foreach`: `member` with no arguments on `target`.
+    fn host_call(
+        &mut self,
+        target: DotNetTarget,
+        member: &str,
+        clr_type: &str,
+        f: &mut Frame,
+    ) -> Result<Value, MoveNextFailure> {
+        self.dotnet_ready(clr_type).map_err(MoveNextFailure::Refused)?;
+        let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+        match session.invoke(target, member, Vec::new()) {
+            Ok(r) => self
+                .apply_reply(r, &StreamBook::default(), &[], member, f)
+                .map_err(MoveNextFailure::Refused),
+            Err(DotNetFailure::Refused(why)) => Err(MoveNextFailure::Refused(Signal::Unsupported(why))),
+            Err(DotNetFailure::Exception(e)) => Err(MoveNextFailure::Exception(e)),
+        }
+    }
+
+    fn host_get(
+        &mut self,
+        handle: DotNetHandle,
+        member: &str,
+        clr_type: &str,
+        f: &mut Frame,
+    ) -> Result<Value, MoveNextFailure> {
+        self.dotnet_ready(clr_type).map_err(MoveNextFailure::Refused)?;
+        let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+        match session.get_property(DotNetTarget::Instance(handle), member) {
+            Ok(r) => self
+                .apply_reply(r, &StreamBook::default(), &[], member, f)
+                .map_err(MoveNextFailure::Refused),
+            Err(DotNetFailure::Refused(why)) => Err(MoveNextFailure::Refused(Signal::Unsupported(why))),
+            Err(DotNetFailure::Exception(e)) => Err(MoveNextFailure::Exception(e)),
+        }
+    }
+
     /// `CopyStream` where the target or the source is a `DotNet` stream (ADR-024 section 3). The
     /// bytes go through the host: the sidecar cannot see Rust memory.
     ///
@@ -676,6 +835,24 @@ pub(crate) fn dotnet_equal(l: &Value, r: &Value) -> Result<bool, Signal> {
     match (l, r) {
         (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) => Ok(a == b),
         _ => Ok(ops::compare(l, r)? == std::cmp::Ordering::Equal),
+    }
+}
+
+/// Why a host call of a `foreach` failed: the host refused it, or the .NET code threw.
+enum MoveNextFailure {
+    Refused(Signal),
+    Exception(al_host::dotnet::DotNetException),
+}
+
+impl MoveNextFailure {
+    fn signal(self, clr_type: &str, member: &str) -> Signal {
+        match self {
+            MoveNextFailure::Refused(s) => s,
+            MoveNextFailure::Exception(e) => Signal::Unsupported(format!(
+                "DotNet {clr_type}.{member} raised the .NET exception {}: {}; the text AL would see is not pinned (ADR-014 section 7)",
+                e.clr_type, e.message
+            )),
+        }
     }
 }
 

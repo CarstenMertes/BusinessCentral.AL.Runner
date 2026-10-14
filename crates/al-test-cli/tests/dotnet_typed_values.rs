@@ -27,6 +27,13 @@ dotnet
         type("System.IO.Path"; DnPath) { }
         type("System.TimeSpan"; DnTimeSpan) { }
         type("System.IO.MemoryStream"; DnMemoryStream) { }
+        type("System.String[]"; DnStringArray) { }
+        type("System.Collections.ArrayList"; DnArrayList) { }
+        type("System.Collections.Queue"; DnQueue) { }
+    }
+    assembly("System.Text.RegularExpressions")
+    {
+        type("System.Text.RegularExpressions.Regex"; DnRegex) { }
     }
     assembly("System")
     {
@@ -360,6 +367,129 @@ codeunit 50100 C
         exit(DT2Date(Value) = Today());
     end;
 
+    // Foreach_OverClrCollections (probe codeunit 61400)
+    procedure ForeachStrings(): Text
+    var
+        Regex: DotNet DnRegex;
+        Parts: DotNet DnStringArray;
+        Piece: Text;
+        Total: Text;
+    begin
+        Parts := Regex.Split('a,b,c', ',');
+        foreach Piece in Parts do
+            Total += Piece + '|';
+        exit(Total);
+    end;
+
+    procedure ForeachInts(): Text
+    var
+        Numbers: DotNet DnArrayList;
+        Number: Integer;
+        Total: Text;
+    begin
+        Numbers := Numbers.ArrayList();
+        Numbers.Add(1);
+        Numbers.Add(2);
+        Numbers.Add(3);
+        foreach Number in Numbers do
+            Total += Format(Number) + '|';
+        exit(Total);
+    end;
+
+    procedure ForeachVariant(): Text
+    var
+        Numbers: DotNet DnArrayList;
+        Anything: Variant;
+        Total: Text;
+    begin
+        Numbers := Numbers.ArrayList();
+        Numbers.Add(1);
+        Numbers.Add(2);
+        foreach Anything in Numbers do
+            Total += Format(Anything) + '/' + Format(Anything.IsInteger()) + '|';
+        exit(Total);
+    end;
+
+    procedure ForeachQueue(): Text
+    var
+        Waiting: DotNet DnQueue;
+        Piece: Text;
+        Total: Text;
+    begin
+        Waiting := Waiting.Queue();
+        Waiting.Enqueue('x');
+        Waiting.Enqueue('y');
+        foreach Piece in Waiting do
+            Total += Piece + '|';
+        exit(Total + Format(Waiting.Count));
+    end;
+
+    procedure ForeachBreak(): Integer
+    var
+        Numbers: DotNet DnArrayList;
+        Number: Integer;
+        Seen: Integer;
+    begin
+        Numbers := Numbers.ArrayList();
+        Numbers.Add(1);
+        Numbers.Add(2);
+        Numbers.Add(3);
+        foreach Number in Numbers do begin
+            Seen += 1;
+            if Number = 2 then
+                break;
+        end;
+        exit(Seen);
+    end;
+
+    procedure ForeachTextOverInts(): Text
+    var
+        Numbers: DotNet DnArrayList;
+        Piece: Text;
+    begin
+        Numbers := Numbers.ArrayList();
+        Numbers.Add(1);
+        asserterror foreach Piece in Numbers do;
+        exit(GetLastErrorText() + '|' + GetLastErrorCode());
+    end;
+
+    procedure ForeachModified(): Text
+    var
+        Numbers: DotNet DnArrayList;
+        Number: Integer;
+        Count: Integer;
+    begin
+        Numbers := Numbers.ArrayList();
+        Numbers.Add(1);
+        Numbers.Add(2);
+        asserterror foreach Number in Numbers do begin
+            Count += 1;
+            if Count = 1 then
+                Numbers.Add(3);
+        end;
+        exit(Format(Count) + '|' + GetLastErrorText() + '|' + GetLastErrorCode());
+    end;
+
+    procedure ForeachNull(): Text
+    var
+        Missing: DotNet DnArrayList;
+        Number: Integer;
+    begin
+        asserterror foreach Number in Missing do;
+        exit(GetLastErrorText() + '|' + GetLastErrorCode());
+    end;
+
+    procedure ForeachDateOverText(): Text
+    var
+        Texts: DotNet DnArrayList;
+        Day: Date;
+    begin
+        Texts := Texts.ArrayList();
+        Texts.Add('text');
+        asserterror foreach Day in Texts do;
+        exit(GetLastErrorText() + '|' + GetLastErrorCode());
+    end;
+
     procedure ToInt(Value: Text): Integer
     var
         Convert: DotNet DnConvert;
@@ -597,5 +727,42 @@ fn copystream_out_of_a_memorystream_copies_the_whole_stream_or_the_count_from_th
 fn copystream_with_a_count_into_a_dotnet_stream_is_refused() {
     if let Some(w) = refusal("CopyIntoMemoryWithACountIsRefused") {
         assert!(w.contains("CopyStream") && w.contains("not pinned"), "{w}");
+    }
+}
+
+#[test]
+fn foreach_over_clr_collections() {
+    assert!(matches!(txt("ForeachStrings").as_deref(), Some("a|b|c|") | None));
+    assert!(matches!(txt("ForeachInts").as_deref(), Some("1|2|3|") | None));
+    assert!(matches!(txt("ForeachVariant").as_deref(), Some("1/Yes|2/Yes|") | None));
+    // The Queue is not consumed.
+    assert!(matches!(txt("ForeachQueue").as_deref(), Some("x|y|2") | None));
+    assert!(matches!(int("ForeachBreak"), 2 | i32::MIN));
+}
+
+#[test]
+fn foreach_failures_have_their_pinned_texts_and_codes() {
+    let want = [
+        (
+            "ForeachTextOverInts",
+            "Invalid Conversion. Source: Int32, Destination: NavText.|Argument",
+        ),
+        (
+            "ForeachModified",
+            "1|A call to System.Collections.ArrayList+ArrayListEnumeratorSimple.MoveNext failed with this message: Collection was modified; enumeration operation may not execute.|DotNetInvoke:InvalidOperation",
+        ),
+        (
+            "ForeachNull",
+            "A DotNet variable has not been instantiated. Attempting to call System.Collections.ArrayList.GetEnumerator in CodeUnit C: ForeachNull|DotNetVariableNotCreated",
+        ),
+        (
+            "ForeachDateOverText",
+            "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavText to System.DateTime.|Conversion",
+        ),
+    ];
+    for (name, text) in want {
+        if let Some(got) = txt(name) {
+            assert_eq!(got, text, "{name}");
+        }
     }
 }

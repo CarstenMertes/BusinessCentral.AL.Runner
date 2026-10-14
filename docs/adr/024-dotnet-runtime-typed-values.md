@@ -373,3 +373,17 @@ submodule. Code comments cite it by corpus path.
 - Not done in slice 1: `CopyStream`, `foreach`, `StrLen`/`Format` of a null object (refused, uncatchable error needs a
   seam), a `DotNet DateTime` variable holding a by-value `DateTime` (`LocalTime := Stamp.LocalDateTime`).
 - The compile cache stores IR only (no sidecar data); the new nodes change the executable hash, so old entries rebuild.
+
+## Build notes, slices 2 and 3 (2026-10-14, branch adr-024)
+
+- `CopyStream` (`Ctx::copy_stream_dotnet`, defaulted): AL `InStream` into a `DotNet` stream writes all unread bytes
+  (`DotNetSession::stream_write`) and moves the AL position to the end; a byte count in this direction is refused
+  (not pinned). A `DotNet` `MemoryStream` into an AL `OutStream` copies the whole stream whatever the position and
+  leaves position 0, or with a count the bytes from the position, which then follows (`stream_read`). Reading any other
+  stream type is refused by the sidecar (only `MemoryStream` is pinned). Two sidecar ops, protocol version 3.
+  Both directions go through the policy first (a `FileStream` stays refused). Between two `DotNet` streams is refused.
+- `foreach` over a host object: `GetEnumerator`, `MoveNext`, `Current` as host calls, the enumerator handle is released with
+  the loop. Pinned errors are raised as AL errors: null collection (`DotNetVariableNotCreated`, text for a codeunit only,
+  other object kinds are refused), collection modified (`DotNetInvoke:InvalidOperation`, only that .NET exception type),
+  `Int32` into Text (`Argument`) and Text into Date (`Conversion`). Any other bad element or exception is a refusal.
+  `foreach` over a `string` value (characters) is not built: a Text cannot be held in a `DotNet String` variable yet.

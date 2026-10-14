@@ -462,6 +462,31 @@ fn copystream_into_a_dotnet_stream_hands_the_unread_bytes_to_the_host_and_ends_t
     );
 }
 
+#[test]
+fn foreach_over_a_dotnet_value_uses_get_enumerator_move_next_and_current() {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    let moves = Arc::new(AtomicI32::new(0));
+    let m = moves.clone();
+    let host = Fake::new(move |r| match r {
+        Req::Invoke(DotNetTarget::Instance(1), g, _) if g == "GetEnumerator" => reply(handle(2, "Some.Enumerator")),
+        Req::Invoke(DotNetTarget::Instance(2), g, _) if g == "MoveNext" => {
+            reply(DotNetValue::Bool(m.fetch_add(1, Ordering::SeqCst) < 2))
+        }
+        Req::Get(DotNetTarget::Instance(2), g) if g == "Current" => {
+            reply(DotNetValue::Int32(m.load(Ordering::SeqCst) * 10))
+        }
+        Req::Invoke(_, g, _) if g == "List" => reply(handle(1, "Some.Collection")),
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; N: Integer; T: Integer;",
+        "foreach N in C.List() do T += N; exit(T);",
+        ": Integer",
+    );
+    assert!(matches!(r.result, Ok(Value::Integer(30))), "{:?}", r.result);
+}
+
 // ---- policy ------------------------------------------------------------------------------
 
 #[test]

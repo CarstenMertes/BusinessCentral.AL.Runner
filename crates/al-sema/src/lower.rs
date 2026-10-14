@@ -3629,9 +3629,6 @@ impl Lowerer<'_> {
                     })
                 })()
             }
-            ForeachStmt if matches!(self.ty_of(&kids[1]), Ty::DotNet(_)) => {
-                Err("foreach over a DotNet value is refused until a corpus test pins it (ADR-014)".into())
-            }
             ForeachStmt => {
                 let var = self.place(&kids[0]);
                 let coll = self.expr(&kids[1]);

@@ -891,7 +891,14 @@ impl Session {
                 Ok(())
             }
             S::Foreach { var, collection, body } => {
-                let items: Vec<Value> = match self.eval(collection, f)? {
+                let coll = self.eval(collection, f)?;
+                // A .NET collection, or a DotNet variable that holds none (ADR-024 section 4).
+                let dotnet_var = matches!(coll, Value::Null)
+                    && matches!(collection, ir::Expr::Load(p) if matches!(self.place_type(p, f), RtType::DotNet(_)));
+                if matches!(coll, Value::DotNet(_)) || dotnet_var {
+                    return self.foreach_dotnet(var, coll, collection, body, f);
+                }
+                let items: Vec<Value> = match coll {
                     Value::List(l) => l.borrow().clone(),
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
                     other => match al_builtins::xml::node_list_items(&other) {

@@ -615,13 +615,19 @@ mod tests {
         assert_eq!(all(0), " |  |  | P0DT0H0M0.0S");
         assert_eq!(all(1), "1 millisecond | 1 millisecond | 1 8 | P0DT0H0M0.001S");
         assert_eq!(all(999), "999 milliseconds | 999 milliseconds | 999 9 | P0DT0H0M0.999S");
-        assert_eq!(all(1500), "1 second 500 milliseconds | 1 second 500 milliseconds | 1 6 500 9 | P0DT0H0M1.5S");
+        assert_eq!(
+            all(1500),
+            "1 second 500 milliseconds | 1 second 500 milliseconds | 1 6 500 9 | P0DT0H0M1.5S"
+        );
         assert_eq!(all(120_000), "2 minutes | 2 minutes | 2 5 | P0DT0H2M0.0S");
         assert_eq!(
             all(86_399_999),
             "23 hours 59 minutes 59 seconds 999 milliseconds | 23 hours 59 minutes 59 seconds 999 milliseconds | 23 3 59 5 59 7 999 9 | P0DT23H59M59.999S"
         );
-        assert_eq!(all(172_800_005), "2 days 5 milliseconds | 2 days 5 milliseconds | 2 1 5 9 | P2DT0H0M0.005S");
+        assert_eq!(
+            all(172_800_005),
+            "2 days 5 milliseconds | 2 days 5 milliseconds | 2 1 5 9 | P2DT0H0M0.005S"
+        );
         assert_eq!(
             all(123_456_789_012),
             "1428 days 21 hours 33 minutes 9 seconds 12 milliseconds | 1428 days 21 hours 33 minutes 9 seconds 12 milliseconds | 1428 1 21 3 33 5 9 7 12 9 | P1428DT21H33M9.012S"

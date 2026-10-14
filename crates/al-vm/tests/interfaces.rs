@@ -386,7 +386,9 @@ fn is_is_false_and_as_raises_unable_to_cast_for_a_missing_implementation() {
     assert_eq!(text(r), "YesNoNoNo");
     for stmt in ["IB := IA as IB;", "IB := Un as IB;", "IA := Un as IA;"] {
         let r = run(fixtures, &body(&format!("{stmt} exit('');")), "P");
-        let Err(Signal::Error(e)) = r else { panic!("{stmt}: {r:?}") };
+        let Err(Signal::Error(e)) = r else {
+            panic!("{stmt}: {r:?}")
+        };
         assert_eq!(
             (e.message.as_str(), e.code.as_str()),
             ("The expression cannot be the target interface.", "UnableToCast"),

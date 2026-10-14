@@ -2229,7 +2229,11 @@ fn sig_cand(s: &Signature, recv: &Ty, id: String) -> Cand {
         param_tys: s.params.iter().map(|p| p.ty.clone()).collect(),
         min,
         max,
-        ret: catalog_ty(&s.ret, recv),
+        // `Enum::"X".FromInteger(n)` is a value of enum X; the catalog's return type is "Any".
+        ret: match recv {
+            Ty::Enum(n) if !n.is_empty() && s.receiver == "Enum" && s.name == "FromInteger" => recv.clone(),
+            _ => catalog_ty(&s.ret, recv),
+        },
         fields,
         rest_field,
         hidden: None,
@@ -2271,6 +2275,7 @@ fn subst(t: Ty, recv: &Ty) -> Ty {
         (Ty::Builtin(n), Ty::List(el)) if n == "T" => (**el).clone(),
         (Ty::Builtin(n), Ty::Dictionary(k, _)) if n == "TKey" => (**k).clone(),
         (Ty::Builtin(n), Ty::Dictionary(_, v)) if n == "TValue" => (**v).clone(),
+        // `Enum::"X".FromInteger(n)` is a value of enum X.
         (Ty::List(el), _) => Ty::List(Box::new(subst((**el).clone(), recv))),
         (Ty::Dictionary(k, v), _) => Ty::Dictionary(
             Box::new(subst((**k).clone(), recv)),

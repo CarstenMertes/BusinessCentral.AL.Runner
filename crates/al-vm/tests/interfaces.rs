@@ -396,3 +396,23 @@ fn is_is_false_and_as_raises_unable_to_cast_for_a_missing_implementation() {
         );
     }
 }
+
+// An enum value made by FromInteger goes straight into an interface variable. The two halves are
+// pinned apart: FromInteger carries any ordinal (types/TestEnumDefaultImplTests.Codeunit.al:70) and
+// an enum value converts to the interface its enum implements (:75, :96-98); a real project writes
+// `Workflow := Enum::"X".FromInteger(n)`, which was refused as "an unknown type into interface".
+#[test]
+fn an_enum_value_from_frominteger_converts_to_the_interface_directly() {
+    let r = run(
+        EDI,
+        "procedure P(): Text var G: Interface \"EDI Greeter\"; n: Integer; s: Text; begin
+            n := 1; G := Enum::\"EDI Kind\".FromInteger(n); s := G.Greet();
+            n := 0; G := \"EDI Kind\".FromInteger(n); s += '|' + G.Greet();
+            n := 99; G := Enum::\"EDI Kind\".FromInteger(n); s += '|' + G.Greet();
+            exit(s);
+        end;",
+        "P",
+    );
+    let Ok(Value::Text(s)) = r else { panic!("{r:?}") };
+    assert_eq!(s, "OWN|DEFAULT|UNKNOWN");
+}

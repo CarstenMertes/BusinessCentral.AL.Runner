@@ -3466,6 +3466,10 @@ impl Lowerer<'_> {
             BinExpr if matches!(sig_tokens(n)[0].text().to_ascii_lowercase().as_str(), "is" | "as") => {
                 self.interface_test(n, &kids)
             }
+            // The parser recovered from text it did not accept and left one operand.
+            BinExpr if kids.len() < 2 => {
+                Err("binary expression with a missing operand (the parser did not accept it)".into())
+            }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
                 self.no_dotnet_operand(&kids[0])?;
@@ -4109,6 +4113,24 @@ mod tests {
         let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
         let lowered = lower_with_positions(&ws, &members, &checked, positions);
         (ws, lowered)
+    }
+
+    /// Tests-ERM (Microsoft's BaseApp bucket): a page field whose source is a lone quoted name with
+    /// a hyphen reaches the synthetic source routine unquoted (`exit(Assign-to No.)`), which parses
+    /// as `Assign-` with no right operand. Lowering indexed `kids[1]` and panicked, which ended the
+    /// whole run. The routine is refused instead.
+    #[test]
+    fn a_binary_expression_with_a_missing_operand_is_refused_not_a_panic() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; \"Assign-to No.\"; Code[20]) { } } }
+page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"; \"Assign-to No.\") { } } } }",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert!(reasons.iter().any(|r| r.contains("missing operand")), "{reasons:?}");
     }
 
     const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"

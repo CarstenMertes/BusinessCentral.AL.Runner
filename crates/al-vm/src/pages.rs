@@ -12,6 +12,7 @@ use al_builtins::ops;
 use al_builtins::pagefmt::{self, Blank, ControlFormat};
 use al_builtins::value::{ControlRef, ControlTarget, Cursor, PageMode, PageState, RecordState, RtType, Value};
 use al_ir as ir;
+use rust_decimal::prelude::ToPrimitive;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -35,6 +36,23 @@ fn error(message: impl Into<String>) -> Signal {
         code: String::new(),
         call_stack: String::new(),
     })
+}
+
+fn error_code(message: impl Into<String>, code: &str) -> Signal {
+    Signal::Error(AlError {
+        message: message.into(),
+        code: code.into(),
+        call_stack: String::new(),
+    })
+}
+
+/// The id a TestPage error names a control by: FNV-1a over the UTF-16 text of the declaring
+/// object's id followed by the control name, read as a signed 32-bit number and made positive.
+/// It reproduces every id the corpus pins: part `Hidden` of page 60344 (1318487454), `Name` of
+/// page 329 (301776846), `User Defined` of page 5361 (104384132) and the extension control
+/// `Ignore Status on Service Docs.` of page extension 6478 (1790009997).
+pub(crate) fn control_id(object_id: u32, name: &str) -> i64 {
+    request::action_id(object_id, name)
 }
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
@@ -400,9 +418,12 @@ impl Session {
                     return Err(error(format!("You tried to invoke the Page object with the ID {n}")));
                 };
                 let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
-                // RunModal(id, Record) is the lookup overload: OK reads LookupOK, Cancel LookupCancel
-                // (corpus handlers/TestPageModalHandlerStatic_Tests.al:48-72).
-                if method == "Page.RunModalStatic" && record.is_some() {
+                // The static RunModal reports the lookup values, with or without a record: OK reads
+                // LookupOK, Cancel LookupCancel (corpus handlers/TestPageModalHandlerStatic_Tests.al:48-72
+                // for the record overload; corpus branch al-runtime-rs:
+                // handlers/TestPageModalResultsAndTriggersContracts.al:RunModal_Dialog_StaticVersusVariable_ReportedAction
+                // and ..._Card_StaticWithAndWithoutRecord_... for the others). A page variable reports OK and Cancel.
+                if method == "Page.RunModalStatic" {
                     st.borrow_mut().lookup = true;
                 }
                 self.run_page_ui(&st, record, method == "Page.RunModalStatic")
@@ -471,7 +492,11 @@ impl Session {
             "GetField" => {
                 self.require_open(st)?;
                 match args.first() {
-                    Some(Value::Integer(n)) => Err(error(format!("The field with ID = {n} is not found on the page."))),
+                    // Code: handlers/TestPageRuntimeContracts.al:274-275 (page and part).
+                    Some(Value::Integer(n)) => Err(error_code(
+                        format!("The field with ID = {n} is not found on the page."),
+                        "TestFieldNotFound",
+                    )),
                     _ => unsupported("TestPart.GetField without an id"),
                 }
             }
@@ -642,7 +667,9 @@ impl Session {
                 let s = st.borrow();
                 match usize::try_from(i - 1).ok().and_then(|n| s.errors.get(n)) {
                     Some((_, t)) => Ok(Value::Text(t.clone())),
-                    None => Err(error(format!("The index {i} is out of range."))),
+                    // Index 0 is pinned (handlers/TestPageRuntimeContracts.al:224-236: text and code);
+                    // an index past the last error is assumed to raise the same (docs/probes-needed.md).
+                    None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
                 }
             }
             "Update" | "SaveRecord" => {
@@ -894,8 +921,22 @@ impl Session {
             if !std::mem::take(&mut st.borrow_mut().inited) {
                 self.page_trigger(st, "oninit", vec![])?;
             }
+            // The parts' OnInit runs between the host's OnInit and its OnOpenPage (corpus
+            // testpart/TestPartTriggerOrderAndRefresh.al:236-247).
+            self.init_parts(st)?;
+            let mut unattended = false;
             if let Some(kind) = bind {
-                handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
+                if self.lenient_bind {
+                    // A RunObject action opens the page, runs OnInit and OnOpenPage, and only then
+                    // looks for a handler; with none it goes no further, so the first row is never
+                    // read (handlers/TestPageRunObjectContracts.al:330-346: "card.OnInit;card.OnOpenPage;").
+                    // A page opened in Create mode reads its new row first (:handlers/TestPageCreateModeNewRecordArgs.al:304-327).
+                    let object = st.borrow().object;
+                    handler = self.try_bind_page_handler(kind, object)?;
+                    unattended = handler.is_none() && mode != PageMode::New;
+                } else {
+                    handler = Some(self.bind_page_handler(kind, st.borrow().object)?);
+                }
             }
             self.restore_page_values(st);
             self.check_page_events(st)?;
@@ -903,6 +944,9 @@ impl Session {
             st.borrow_mut().opening = false;
             opened?;
             self.page_event(st, "onopenpageevent", None, None)?;
+            if unattended {
+                return Ok(());
+            }
             let new_line = has_source && self.offers_new_line(st)?;
             st.borrow_mut().new_line = new_line;
             // Visible is evaluated once, at open.
@@ -1086,6 +1130,38 @@ impl Session {
             .iter()
             .position(|m| *m == action)
             .unwrap_or(0) as i32;
+        // The parts are asked first, with the action None; the host's own OnQueryClosePage follows
+        // (testpart/TestPartCloseLinkEditableContracts.al:
+        // Parts_CloseTriggers_AllPartsQueryClose_ThenHost_ThenPartsClose_ThenHost).
+        let open_parts: Vec<St> = st
+            .borrow()
+            .parts
+            .iter()
+            .map(|(_, c)| c.clone())
+            .filter(|c| c.borrow().open)
+            .collect();
+        let none_ordinal = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == "None")
+            .unwrap_or(0) as i32;
+        for part in &open_parts {
+            if !part.borrow().parts.is_empty() {
+                return unsupported("closing a host whose part page has parts of its own (close order not pinned)");
+            }
+            let answer = match self.page_trigger_answer(
+                part,
+                "onqueryclosepage",
+                vec![Value::Option(none_ordinal, members.clone())],
+            ) {
+                Err(Signal::Error(_)) => {
+                    return unsupported("an error in a part's OnQueryClosePage (not pinned)");
+                }
+                other => other?,
+            };
+            if answer == Some(false) || !self.page_event(part, "onqueryclosepageevent", Some(true), None)? {
+                return unsupported("a part's OnQueryClosePage that refuses the close (not pinned)");
+            }
+        }
         // An AL error raised in OnQueryClosePage is shown as a message and refuses the close
         // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
         let veto = match self.page_trigger_answer(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
@@ -1102,6 +1178,10 @@ impl Session {
         }
         if !self.page_event(st, "onqueryclosepageevent", Some(true), None)? {
             return Ok(Value::Null);
+        }
+        for part in &open_parts {
+            self.page_trigger(part, "onclosepage", vec![])?;
+            self.page_event(part, "onclosepageevent", None, None)?;
         }
         self.page_trigger(st, "onclosepage", vec![])?;
         self.page_event(st, "onclosepageevent", None, None)?;
@@ -1252,12 +1332,14 @@ impl Session {
         }
         // The blank line of a part is a started record: the client runs NewRecord when it becomes
         // current (corpus handlers/TestPagePartDraftLineLink.al:LinkedPart_DraftLine_*,
-        // handlers/TestPagePartOnNewRecordCount.al). A top-level list is not pinned.
-        if st.borrow().host.is_some() {
-            self.stamp_from_filters(st, true)?;
-            self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
-            self.page_event(st, "onnewrecordevent", None, Some(true))?;
-        }
+        // handlers/TestPagePartOnNewRecordCount.al). A top-level list does the same, and both then
+        // run OnAfterGetCurrRecord on the blank row (corpus testpart/TestPartTriggerOrderAndRefresh.al:
+        // 258-273 TopLevelList_BlankLine_RunsOnNewRecord, Part_BlankLine_RunsOnNewRecord).
+        self.stamp_from_filters(st, true)?;
+        self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+        self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         Ok(())
     }
 
@@ -1402,22 +1484,51 @@ impl Session {
         };
         use rust_decimal::Decimal as D;
         let step = D::from(10000);
+        let is_decimal = matches!(ty, RtType::Decimal);
         let number = match (lower, upper) {
             // An empty grid burns one interval on the blank placeholder row.
             (None, _) => D::from(20000),
+            // Appended after the last line (handlers/TestPageAutoSplitKeyMoreShapes.al:104-117,
+            // corpus handlers/TestPageAutoSplitKeyRanges_Tests.al): last + 10000. After a negative
+            // line the corpus pins exactly these values; the rule behind them is not known, so
+            // any other negative last line is refused.
             (Some(l), None) if l >= D::ZERO => l + step,
-            (Some(l), None) if l == D::from(-10000) => l + (-l / D::from(3)).trunc(),
-            (Some(l), Some(u)) if l >= D::ZERO && u > l => {
-                if matches!(ty, RtType::Decimal) {
-                    return unsupported("AutoSplitKey between two lines of a Decimal key");
-                }
-                let half = ((u - l) / D::from(2)).trunc();
-                if half < D::ONE {
-                    return unsupported("AutoSplitKey between two adjacent lines");
-                }
-                l + half.min(step)
+            (Some(l), None)
+                if !is_decimal && [-30000, -20000, -10000, -5, -1].contains(&ToPrimitive::to_i64(&l).unwrap_or(0)) =>
+            {
+                D::from(match ToPrimitive::to_i64(&l).unwrap_or(0) {
+                    -30000 => -22500,
+                    -20000 => -15000,
+                    -10000 => -6667,
+                    -5 => -4,
+                    _ => 1,
+                })
             }
-            (Some(l), Some(u)) if l == D::from(-10000) && u == D::from(10000) => D::from(-1),
+            // Between two lines (handlers/TestPageAutoSplitKeyMoreShapes.al:119-166 and
+            // :186-205 for Decimal; handlers/TestPageAutoSplitKeyRanges_Tests.al for the cap): the
+            // lower line plus half the gap, at most 10000. A gap that crosses zero gives one less
+            // (the number zero is reserved: -10000 and 10000 give -1, -1 and 1 give -0.5), and a
+            // result that lands on zero by the cap goes to 1. No whole number between two adjacent
+            // lines raises "The line cannot be split." (code TestWrapped).
+            (Some(l), Some(u)) if u > l => {
+                let crossing = l < D::ZERO && u > D::ZERO;
+                let gap = if crossing { u - l - D::ONE } else { u - l };
+                let mut half = gap / D::from(2);
+                if !is_decimal {
+                    half = half.trunc();
+                    if half < D::ONE {
+                        return Err(error_code("The line cannot be split.", "TestWrapped"));
+                    }
+                }
+                let mut n = l + half.min(step);
+                if n.is_zero() {
+                    if is_decimal {
+                        return unsupported("AutoSplitKey landing on zero in a Decimal key (not pinned)");
+                    }
+                    n = D::ONE;
+                }
+                n
+            }
             (l, u) => {
                 return unsupported(format!(
                     "AutoSplitKey between {l:?} and {u:?} (the corpus does not pin it)"
@@ -1632,6 +1743,10 @@ impl Session {
             self.set_xrec_fields(st, row.stored.clone());
         }
         st.borrow_mut().window = keys;
+        // The row the cursor stands on is read once more after the window: a list of 60 rows
+        // raises OnAfterGetRecord 21 times when it opens, rows 1 to 20 and then row 1 again
+        // (corpus handlers/TestPageRuntimeContracts.al:121-136 TestPage_List_OpenReads21Rows).
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
         Ok(())
     }
 
@@ -1764,12 +1879,15 @@ impl Session {
         // A TestPart raises when the key has the wrong number of fields, and when the key is
         // missing and the result is not used (corpus testpart/TestTestPart.al:
         // TestPart_GoToKey_ErrorsWhenTheKeyFieldCountIsWrong, _ErrorsForAMissingKeyWhenTheReturnIsDiscarded).
-        // The corpus pins that an error is raised, not its text: refused.
+        // Texts and codes: handlers/TestPageRuntimeContracts.al:300-312 (TestPart_GoToKey_Arity_AndMissingKey).
         if st.borrow().host.is_some() {
             let rec = self.page_rec(st);
             let wanted = self.table(&rec)?.keys[0].len();
             if key.len() != wanted {
-                return unsupported("TestPart.GoToKey with the wrong number of key values (error text not pinned)");
+                return Err(error_code(
+                    "The number of arguments does not match the number of primary key fields.",
+                    "TestInvalidNumberOfKeyFieldValues",
+                ));
             }
         }
         self.save_row(st)?;
@@ -1810,7 +1928,7 @@ impl Session {
             s.draft = before_draft;
             drop(s);
             if st.borrow().host.is_some() && !result_used {
-                return unsupported("TestPart.GoToKey of a missing key with the result unused (error text not pinned)");
+                return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
             }
         }
         Ok(Value::Boolean(found))
@@ -2247,11 +2365,14 @@ impl Session {
     /// handlers/TestPageRecordTriggers.al:76 OnInsertRecord_ReturningFalse_SuppressesTheInsert).
     fn insert_draft(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
-        let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(false)])?;
+        // BelowxRec is Yes for a row added with New() at the end, as it is for OnNewRecord (corpus
+        // handlers/TestPageRuntimeContracts.al:197-211 TestPage_New_AtTheEnd_PassesBelowxRecTrueToOnInsertRecord).
+        // A row added in the middle is not pinned; it is given the same Yes as OnNewRecord gets.
+        let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
         if go == Some(false) {
             return Ok(());
         }
-        if !self.page_event(st, "oninsertrecordevent", Some(true), Some(false))? {
+        if !self.page_event(st, "oninsertrecordevent", Some(true), Some(true))? {
             return Ok(());
         }
         self.auto_split_key(st)?;
@@ -2320,7 +2441,10 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
-        self.refuse_read_only_part(st, "SetValue")?;
+        // SetValue through a part whose control says Editable = false writes anyway (corpus branch
+        // al-runtime-rs: testpart/TestPartCloseLinkEditableContracts.al:
+        // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites). New() and Next() onto the
+        // new-row line of such a part are not pinned and stay refused.
         self.activate(st, idx)?;
         // Only an Update() requested by this call's triggers refreshes at its end.
         st.borrow_mut().refresh = false;
@@ -2439,9 +2563,8 @@ impl Session {
                 }
             }
         }
-        if Self::same_values(std::slice::from_ref(&current), std::slice::from_ref(&parsed)) {
-            return Ok(Value::Null);
-        }
+        // A value equal to the one held still validates: OnValidate runs again (corpus
+        // handlers/TestPageRuntimeContracts.al:179-194 TestPage_SetValue_OfTheValueAlreadyHeld_StillRunsOnValidate).
         let rec = if rec_bound { Some(self.page_rec(st)) } else { None };
         let before = rec.as_ref().map(|r| r.borrow().fields.clone());
         let was_dirty = st.borrow().dirty;
@@ -2602,19 +2725,23 @@ impl Session {
                 ir::ControlKind::Action | ir::ControlKind::SystemAction => "action",
                 _ => "field",
             };
-            // A page that ships precompiled names the control by an internal number in this
-            // message (corpus pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:92
-            // pins `ID = 301776846` for a Base Application control). How the number derives from the
-            // control is not known, so the text is refused rather than guessed.
+            // The id in the text is generated from the declaring object and the control name
+            // (see `control_id`); it matches the ids the corpus pins for Base Application controls
+            // (pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:57, :92, :124)
+            // and for a part (testpart/TestTestPart.al:233). The code of a field is pinned by
+            // handlers/TestPageRuntimeContracts.al:260; that of an action is not.
+            let ctl_name = ctl.name.clone();
+            let owner = ctl.owner;
             let object = st.borrow().object as usize;
-            let app = engine.program.objects[object].app as usize;
-            if engine.program.apps.get(app).is_some_and(|a| a.dependency) {
-                return unsupported(format!(
-                    "the error text for the {what} {} of a page from a dependency app (it names the control by an internal ID)",
-                    ctl.name
-                ));
-            }
-            return Err(error(format!("The {what} {} is not found on the page.", ctl.name)));
+            let declaring = self.object_id_of(owner.unwrap_or(object) as u32);
+            let id = control_id(declaring, &ctl_name);
+            return Err(match what {
+                "action" => error(format!("The action with ID = {id} is not found on the page.")),
+                _ => error_code(
+                    format!("The field with ID = {id} is not found on the page."),
+                    "TestFieldNotFound",
+                ),
+            });
         }
         // Only Invoke of an actionref is pinned: it runs the action it stands for. A found actionref
         // reads Visible true when neither it nor its target states a Visible (corpus
@@ -2630,6 +2757,14 @@ impl Session {
                     ir::ActionRef::Unresolved(_) => false,
                 };
                 if m == "Visible" && target_plain && ctl.prop("visible").is_none() {
+                    return Ok(Value::Boolean(true));
+                }
+                // handlers/TestPageRunObjectContracts.al:392-404: Visible and Enabled of an actionref answer Yes.
+                let target_enabled_plain = match action_ref {
+                    ir::ActionRef::Target(t) => page.controls[*t].prop("enabled").is_none(),
+                    ir::ActionRef::Unresolved(_) => false,
+                };
+                if m == "Enabled" && target_enabled_plain && ctl.prop("enabled").is_none() {
                     return Ok(Value::Boolean(true));
                 }
                 return unsupported(format!("TestAction.{m} of an actionref"));
@@ -3016,7 +3151,10 @@ impl Session {
             self.save_row(st)?;
         }
         st.borrow_mut().refresh = false;
-        if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
+        // RunObject wins over OnAction when an action declares both (handlers/TestPageRunObjectContracts.al:371-390).
+        if page_of(&engine, st).controls[idx].run_object.is_some() {
+            return self.run_object_action(st, idx);
+        } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             let r = self.control_routine(st, idx, r);
             if r.is_err() {
                 st.borrow_mut().refresh = false;
@@ -3024,8 +3162,6 @@ impl Session {
             r?;
             self.settle_after_action(st)?;
             self.run_refresh(st)?;
-        } else if page_of(&engine, st).controls[idx].run_object.is_some() {
-            return self.run_object_action(st, idx);
         }
         Ok(Value::Null)
     }
@@ -3071,6 +3207,10 @@ impl Session {
         })();
         self.torn_down_on_error(st, r)?;
         st.borrow_mut().refresh = false;
+        // The parts read their rows again after the host's own triggers (corpus
+        // testpart/TestPartTriggerOrderAndRefresh.al:HostCurrPageUpdate_ReReadsThePart:
+        // "host.Action;host.AGCR(2);part.AGCR(2);", and no part OnOpenPage).
+        self.sync_parts(st)?;
         Ok(())
     }
 
@@ -3090,6 +3230,13 @@ impl Session {
             return Ok(());
         }
         if !self.is_list(st) {
+            let parts: Vec<St> = st.borrow().parts.iter().map(|(_, c)| c.clone()).collect();
+            if parts
+                .iter()
+                .any(|c| self.declares(c, "onclosepage") || self.declares(c, "onqueryclosepage"))
+            {
+                return unsupported("a card closed by a deleted row whose parts declare close triggers (not pinned)");
+            }
             self.page_trigger(st, "onclosepage", vec![])?;
             self.mark_closed(st);
             return Ok(());

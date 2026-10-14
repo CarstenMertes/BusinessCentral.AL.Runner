@@ -640,16 +640,16 @@ fn a_report_that_does_not_use_its_request_page_runs_without_one() {
     ));
 }
 
-// What BC answers a run that opens its request page where the test declares no handler is not
-// pinned: refused (docs/probes-needed.md)
+// A run that opens its request page where the test declares no handler raises the Unhandled UI
+// error (handlers/TestReportRuntimeContracts.al:416-430: text and code).
 #[test]
-fn a_request_page_with_no_handler_is_refused() {
-    let why = refused(&format!(
+fn a_request_page_with_no_handler_raises_unhandled_ui() {
+    passes(&format!(
         "{HELPERS}
         [Test]
-        procedure NoHandler() begin Seed(); Report.Run(Report::\"RQ Report\"); end;"
+        procedure NoHandler() begin Seed(); asserterror Report.Run(Report::\"RQ Report\");
+            Check('Unhandled UI: RequestPage 61210', GetLastErrorText()); Check('MissingUIHandler', GetLastErrorCode()); end;"
     ));
-    assert!(why.contains("no [RequestPageHandler]"), "{why}");
 }
 
 // handlers/TestReportInstanceRunReqPage.al:TestReport_InstanceRunRequestPage_SeededWithParameters_StillRunsTheHandler

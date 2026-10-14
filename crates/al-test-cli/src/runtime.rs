@@ -1782,27 +1782,31 @@ page 50000 "P" { PageType = List; SourceTable = "K";
   [Test] procedure Go() var P: TestPage "P"; begin P.OpenView(); P.Name.SetValue('X'); end; }"#;
 
     #[test]
-    fn a_missing_control_of_a_local_page_is_reported_by_name() {
+    fn a_missing_control_of_a_local_page_is_reported_by_its_generated_id() {
         let o = outcomes(&format!("{HIDDEN_FIELD_PAGE}{SETS_HIDDEN_FIELD}"));
         assert_eq!(
             o,
             vec![(
                 "Go".to_string(),
-                Outcome::Fail("The field Name is not found on the page.".to_string())
+                // The id is FNV-1a of "50000Name" (pages/request.rs `action_id`), checked on its own.
+                Outcome::Fail("The field with ID = 1299704023 is not found on the page.".to_string())
             )]
         );
     }
 
     #[test]
-    fn a_missing_control_of_a_dependency_page_is_refused_because_its_text_names_an_internal_id() {
+    fn a_missing_control_of_a_dependency_page_is_named_by_the_same_generated_id() {
         // corpus pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:92 pins
-        // `ID = 301776846` for a Base Application control; the number's derivation is not known.
+        // `ID = 301776846` for `Name` of page 329: the id derives from the declaring object's id and
+        // the control name alone, so a dependency page needs no special case.
         let o = outcomes_over_dependency(SETS_HIDDEN_FIELD, HIDDEN_FIELD_PAGE);
-        let [(name, Outcome::NotRun(why))] = o.as_slice() else {
-            panic!("{o:?}")
-        };
-        assert_eq!(name, "Go");
-        assert!(why.contains("dependency app") && why.contains("internal ID"), "{why}");
+        assert_eq!(
+            o,
+            vec![(
+                "Go".to_string(),
+                Outcome::Fail("The field with ID = 1299704023 is not found on the page.".to_string())
+            )]
+        );
     }
 
     #[test]

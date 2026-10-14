@@ -254,6 +254,15 @@ pub struct Session {
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,
     pub(crate) report_quit: bool,
+    /// The call depth of the report trigger being run and what it may ask of the report
+    /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
+    pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
+    pub(crate) report_flow: Option<crate::reports::Flow>,
+    /// The report instances that `Execute` has run: a second `Execute` on one is refused.
+    /// A page opened for a `RunObject` action looks its handler up without failing when there is
+    /// none (al-vm pages/runobject.rs).
+    pub(crate) lenient_bind: bool,
+    pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
@@ -324,6 +333,10 @@ impl Session {
             application_areas: String::new(),
             report_init_depth: None,
             report_quit: false,
+            report_trigger: None,
+            report_flow: None,
+            report_executed: Vec::new(),
+            lenient_bind: false,
         }
     }
 

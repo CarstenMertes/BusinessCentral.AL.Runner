@@ -86,6 +86,9 @@ impl Session {
         }
         // What the codeunit did to the host's row is shown like the effects of an OnAction.
         self.settle_after_action(st)?;
+        // The host reads its row again after a codeunit, even one that wrote nothing
+        // (handlers/TestPageRunObjectContracts.al:248-270).
+        self.reread_host_row(st, true)?;
         self.run_refresh(st)
     }
 
@@ -108,9 +111,11 @@ impl Session {
         // List is answered by a [PageHandler] (TestPageActionRunObject_Tests.al:
         // RunObjectActionToAStandardDialogTargetIsAnsweredByTheModalHandler). Other page types are
         // not pinned.
+        // List, Document, Worksheet and ListPlus targets are answered by a PageHandler; a
+        // NavigatePage by a ModalPageHandler (handlers/TestPageRunObjectContracts.al:288-326).
         let modal = match page_type.as_str() {
-            "standarddialog" => true,
-            "card" | "list" => false,
+            "standarddialog" | "navigatepage" => true,
+            "card" | "list" | "document" | "worksheet" | "listplus" => false,
             other => return unsupported(format!("RunObject of a {other} page (the handler kind is not pinned)")),
         };
         let mode = match ro.mode {
@@ -139,15 +144,11 @@ impl Session {
         target_state.borrow_mut().modal = modal;
         let record = self.run_object_record(st, &target_state, ro, mode)?;
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
-        self.open_page(&target_state, mode, record, None)?;
-        // The host re-reads its row once the target is done, but keeps its xRec (corpus
-        // handlers/TestPageActionRunObjectPageRec_Tests.al:HostOnAfterGetRecordAfterTheTargetWroteTheRow,
-        // HostSaveAfterTheTargetEditedTheRowCarriesXRec).
-        let handler = if trapped {
-            None
-        } else {
-            self.try_bind_page_handler(kind, target as u32)?
-        };
+        // The handler is looked up after OnInit and OnOpenPage; a page nobody answers stops there.
+        self.lenient_bind = true;
+        let opened = self.open_page(&target_state, mode, record, if trapped { None } else { Some(kind) });
+        self.lenient_bind = false;
+        let handler = opened?;
         let answered = match handler {
             Some(h) => self.answer_page(&target_state, h, modal).map(|_| ()),
             None if trapped => Ok(()),
@@ -155,23 +156,16 @@ impl Session {
                 // BC refuses a dialog nobody answers, after it opened (NoHandler_Tests.al arms 7 and 8).
                 self.mark_closed(&target_state);
                 let id = obj.id.unwrap_or(0);
-                Err(error(format!(
-                    "TestPages that are invoked from a RunObject action must have a handler. Page No. = {id}"
-                )))
+                // Code: handlers/TestPageRunObjectContracts.al:228-240.
+                Err(error_code(
+                    format!("TestPages that are invoked from a RunObject action must have a handler. Page No. = {id}"),
+                    "TestPageInvokedWithoutHandler",
+                ))
             }
             None => {
-                // An ordinary page opens with nobody to answer it and AL is told nothing (arm 1).
-                // What happens to its close triggers is not pinned.
-                let closes = page_of(&engine, &target_state)
-                    .triggers
-                    .iter()
-                    .any(|(n, _)| n == "onclosepage" || n == "onqueryclosepage");
-                if closes {
-                    self.mark_closed(&target_state);
-                    return unsupported(
-                        "an unattended RunObject page with a close trigger (when it closes is not pinned)",
-                    );
-                }
+                // An ordinary page opens with nobody to answer it and AL is told nothing: it ran
+                // OnInit and OnOpenPage and is dropped without its close triggers
+                // (handlers/TestPageRunObjectContracts.al:330-346, TestPageActionRunObjectNoHandler_Tests.al arm 1).
                 self.mark_closed(&target_state);
                 Ok(())
             }
@@ -179,7 +173,9 @@ impl Session {
         target_state.borrow_mut().modal = false;
         answered?;
         self.settle_after_action(st)?;
-        self.reread_host_row(st)
+        // A page target that wrote nothing leaves the host as it was; one that wrote makes the host
+        // read its row again (handlers/TestPageRunObjectContracts.al:228-246, :194-215).
+        self.reread_host_row(st, false)
     }
 
     /// The record the target opens on: the host's stored row for `RunPageOnRec`, narrowed by
@@ -286,7 +282,7 @@ impl Session {
     /// the one it loaded (corpus handlers/TestPageActionRunObjectPageRec_Tests.al:
     /// HostSaveAfterTheTargetEditedTheRowCarriesXRec, HostOnAfterGetRecordAfterTheTargetWroteTheRow).
     /// Whether the triggers also run when the target wrote nothing is not pinned.
-    fn reread_host_row(&mut self, st: &St) -> Result<(), Signal> {
+    fn reread_host_row(&mut self, st: &St, always: bool) -> Result<(), Signal> {
         if !st.borrow().open || !self.has_source(st) {
             return Ok(());
         }
@@ -298,8 +294,20 @@ impl Session {
             return Ok(());
         }
         let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+        let shown = rec.borrow().fields.clone();
+        let loaded = self.page_xrec_fields(st);
         self.ret_used = true;
         self.record_op("Get", &rec, &mut pk)?;
+        // Nothing was written when the stored row is the one the host loaded.
+        // (A Blob field is a shared buffer and compares unequal to its own copy.)
+        let unchanged = loaded.len() == rec.borrow().fields.len()
+            && loaded.iter().zip(rec.borrow().fields.iter()).all(|(a, b)| {
+                matches!(a, Value::Blob(_)) || Self::same_values(std::slice::from_ref(a), std::slice::from_ref(b))
+            });
+        if !always && unchanged {
+            rec.borrow_mut().fields = shown;
+            return Ok(());
+        }
         let r = (|| {
             self.calc_row_flowfields(st)?;
             self.populate_expressions(st)?;

@@ -175,20 +175,35 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
                 .get(n.wrapping_sub(1))
                 .cloned()
                 .ok_or("filter placeholder without an argument")?;
-            // What BC makes of a text that holds a filter character (`@`, a wildcard, an operator)
-            // is not pinned: whether it quotes the text, and whether `@` and the wildcards stay
-            // active. No corpus test substitutes such a text (docs/probes-needed.md, batch 7), so it
-            // is refused instead of matched literally.
+            // A text substituted for a placeholder is TEXT, not a filter, except that `*` and `?` stay
+            // wildcards and a leading `@` ignores case. `&`, `|`, `(`, `)`, `<`, `=` and `..` in it make
+            // BC quote the whole value (record/TestSetFilterSpecialTextContracts.al, BC 27.5); `>` is
+            // not pinned, nor a text with both a wildcard and one of those.
             if let Value::Text(t) | Value::Code(t) = &arg {
-                if let Some(ch) = t
-                    .chars()
-                    .find(|ch| "@*?&|()=<>'".contains(*ch))
-                    .or_else(|| t.contains("..").then_some('.'))
-                {
+                let (at, body) = match t.strip_prefix('@') {
+                    Some(rest) => (true, rest),
+                    None => (false, t.as_str()),
+                };
+                let special = body.contains(['&', '|', '(', ')', '<', '=']) || body.contains("..");
+                let wildcard = body.contains(['*', '?']);
+                if body.contains('>') || (special && wildcard) || body.starts_with('@') {
+                    let ch = body.chars().find(|c| ">*?@".contains(*c)).unwrap_or('>');
                     return Err(format!(
                         "placeholder %{n} holds a text with the filter character `{ch}`: how BC quotes it is not pinned"
                     ));
                 }
+                if at {
+                    out.push(Tok::Op("@"));
+                }
+                if special {
+                    out.push(Tok::Quoted(body.to_string()));
+                } else if !body.is_empty() {
+                    out.push(Tok::Raw(body.to_string()));
+                } else {
+                    out.push(Tok::Typed(arg.clone()));
+                }
+                i += 2;
+                continue;
             }
             out.push(Tok::Typed(arg));
             i += 2;

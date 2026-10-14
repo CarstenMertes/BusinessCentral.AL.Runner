@@ -380,14 +380,13 @@ impl Section {
     /// The `;`-separated arguments in parentheses, each as trimmed source text
     /// (a lone quoted identifier loses its quotes).
     pub fn args(&self) -> Vec<String> {
-        self.args_with(true)
+        self.args_as(true)
     }
-    /// `args`, but a lone quoted identifier keeps its quotes: the text is source, to be read as an
-    /// expression (the source of a page field, `field("Assign-to No."; "Assign-to No.")`).
+    /// `args`, with a lone quoted identifier keeping its quotes: the text can be put back into code.
     pub fn args_raw(&self) -> Vec<String> {
-        self.args_with(false)
+        self.args_as(false)
     }
-    fn args_with(&self, unquote: bool) -> Vec<String> {
+    fn args_as(&self, unquote: bool) -> Vec<String> {
         let Some(args) = self.0.children().find(|n| n.kind() == SyntaxKind::SectionArgs) else {
             return Vec::new();
         };

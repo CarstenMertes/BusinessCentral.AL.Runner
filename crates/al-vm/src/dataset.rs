@@ -1,0 +1,343 @@
+//! The dataset XML that `Report.SaveAs(.., ReportFormat::Xml, ..)` writes: a header, then one
+//! `DataItem` element per row of every data item, nested the way the data items are.
+//!
+//! The shape is pinned by the probe in handlers/TestReportSaveAsDatasetContracts.al (written
+//! against a real BC on Linux, en-US): the byte order mark and declaration, the order of the
+//! header elements, the `DataItems` block to the character, and the escaping of text. What no
+//! test pins is listed in docs/probes-needed.md ("Report.SaveAs dataset").
+//!
+//! Core code: no OS access (ADR-006). The writer builds a string; the caller writes the bytes.
+
+use al_builtins::native::Signal;
+
+fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
+    Err(Signal::Unsupported(what.into()))
+}
+
+/// The name of a data item or column as the dataset spells it. A name made of letters, digits
+/// and underscores is written as it is (handlers/TestReportSaveAsDatasetContracts.al: `P`,
+/// `PNo`). The one other shape the corpus shows is the data item `"Change Log Setup (Table)"`,
+/// which the dataset calls `Change_Log_Setup_Table` (handlers/TestReportNestedLinkImplicitParent.al:98);
+/// a name with spaces and parentheses is written the way both readings of that one example agree
+/// on, and any other name is refused.
+pub(crate) fn dataset_name(name: &str) -> Result<String, Signal> {
+    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return Ok(name.to_string());
+    }
+    let simple = name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == ' ' || c == '(' || c == ')');
+    if !simple || name.contains("__") || name.contains("  ") {
+        return unsupported(format!(
+            "the dataset name of `{name}` (only letters, digits, underscores, spaces and parentheses are pinned)"
+        ));
+    }
+    // Reading one: every character that is not a letter or digit becomes an underscore, runs of
+    // underscores collapse, the ends are trimmed. Reading two: a space becomes an underscore and a
+    // parenthesis disappears. They agree on `Change Log Setup (Table)`.
+    let mut one = String::new();
+    for c in name.chars() {
+        let c = if c.is_alphanumeric() { c } else { '_' };
+        if !(c == '_' && one.ends_with('_')) {
+            one.push(c);
+        }
+    }
+    let one = one.trim_matches('_').to_string();
+    let two: String = name
+        .chars()
+        .filter(|c| *c != '(' && *c != ')')
+        .map(|c| if c == ' ' { '_' } else { c })
+        .collect();
+    if one != two || one.is_empty() {
+        return unsupported(format!(
+            "the dataset name of `{name}` (the pinned example does not say how this one is spelled)"
+        ));
+    }
+    Ok(one)
+}
+
+/// Text as an XML element writes it: `&`, `<` and `>` become entities
+/// (handlers/TestReportSaveAsDatasetContracts.al: `one <&>` is `one &lt;&amp;&gt;`). In an
+/// attribute value a quote does too. A control character is refused: how the writer treats it is
+/// not pinned.
+pub(crate) fn escape(text: &str) -> Result<String, Signal> {
+    escape_as(text, false)
+}
+
+fn escape_as(text: &str, attribute: bool) -> Result<String, Signal> {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' if attribute => out.push_str("&quot;"),
+            c if c.is_control() => {
+                return unsupported(format!(
+                    "text with the control character U+{:04X} in a dataset (its escaping is not pinned)",
+                    u32::from(c)
+                ));
+            }
+            c => out.push(c),
+        }
+    }
+    Ok(out)
+}
+
+/// What the header carries. The values of `Extension*`, `Tenant*`, `Environment*`, the company,
+/// the user and the clock depend on the app, the company, the user and the time; the probe does
+/// not compare them (only `ReportName`, `ReportId`, `CompanyName`, `AboutThis*` and
+/// `ReportHelpLink` are read by tests).
+pub(crate) struct Header {
+    pub extension_id: String,
+    pub extension_name: String,
+    pub extension_publisher: String,
+    pub extension_version: String,
+    pub report_id: String,
+    pub report_name: String,
+    pub report_caption: String,
+    pub about_title: String,
+    pub about_text: String,
+    pub help_link: String,
+    pub company_name: String,
+    pub company_id: String,
+    pub user_name: String,
+    /// (year, month, day, hour, minute) of the clock.
+    pub now: (i32, u32, u32, u32, u32),
+    /// BC 29 adds `ReportCaption` and the company information block
+    /// (`al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock`).
+    pub company_block: bool,
+}
+
+/// The language and format region of the session. Only en-US is pinned.
+pub(crate) const LANGUAGE: &str = "en-US";
+
+fn element(out: &mut String, indent: usize, name: &str, value: &str) -> Result<(), Signal> {
+    // An empty value is `<Name></Name>` on one line: the probe lists `ReportHelpLink`, `TenantEntraId`
+    // and others among the elements with a value although a test run states none.
+    out.push_str(&" ".repeat(indent));
+    out.push_str(&format!("<{name}>{}</{name}>\n", escape(value)?));
+    Ok(())
+}
+
+impl Header {
+    /// The declaration, the root element and the information block, up to the data items.
+    /// Elements: handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_WritesAByteOrderMarkDeclarationAndHeader;
+    /// `BCReportInformation/ReportMetadata/...` for the report's own: handlers/TestReportDatasetHelpLink.al.
+    /// How the other elements are grouped is not pinned: they follow `ReportMetadata` in the
+    /// order the probe lists them, directly under `BCReportInformation`.
+    fn write(&self, out: &mut String) -> Result<(), Signal> {
+        out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\n");
+        out.push_str(&format!(
+            "<ReportDataSet name=\"{}\" id=\"{}\" language=\"{LANGUAGE}\" formatRegion=\"{LANGUAGE}\">\n",
+            escape_as(&self.report_name, true)?,
+            escape_as(&self.report_id, true)?
+        ));
+        out.push_str("  <BCReportInformation>\n");
+        out.push_str("    <ReportMetadata>\n");
+        element(out, 6, "ExtensionId", &self.extension_id)?;
+        element(out, 6, "ExtensionName", &self.extension_name)?;
+        element(out, 6, "ExtensionPublisher", &self.extension_publisher)?;
+        element(out, 6, "ExtensionVersion", &self.extension_version)?;
+        element(out, 6, "ReportId", &self.report_id)?;
+        element(out, 6, "ReportName", &self.report_name)?;
+        if self.company_block {
+            element(out, 6, "ReportCaption", &self.report_caption)?;
+        }
+        element(out, 6, "AboutThisReportTitle", &self.about_title)?;
+        element(out, 6, "AboutThisReportText", &self.about_text)?;
+        element(out, 6, "ReportHelpLink", &self.help_link)?;
+        out.push_str("    </ReportMetadata>\n");
+        // Tenant and environment: nothing in the corpus says what a test run reports.
+        element(out, 4, "TenantEntraId", "")?;
+        element(out, 4, "EnvironmentName", "")?;
+        element(out, 4, "EnvironmentType", "")?;
+        element(out, 4, "CompanyName", &self.company_name)?;
+        element(out, 4, "CompanyDisplayName", &self.company_name)?;
+        element(out, 4, "CompanyId", &self.company_id)?;
+        element(out, 4, "UserName", &self.user_name)?;
+        let (y, mo, d, h, mi) = self.now;
+        element(
+            out,
+            4,
+            "DateAndTime",
+            &format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:00"),
+        )?;
+        element(out, 4, "Language", LANGUAGE)?;
+        element(out, 4, "FormatRegion", LANGUAGE)?;
+        element(out, 4, "Year", &y.to_string())?;
+        element(out, 4, "MonthNumber", &mo.to_string())?;
+        element(out, 4, "DayNumber", &d.to_string())?;
+        element(out, 4, "Hour", &h.to_string())?;
+        element(out, 4, "Minute", &mi.to_string())?;
+        if self.company_block {
+            // The company information block: after `Minute`, in the order the probe lists it. The
+            // corpus company has no information record whose values a test reads.
+            element(out, 4, "CompanyName", &self.company_name)?;
+            element(out, 4, "CompanyDisplayName", &self.company_name)?;
+            for n in 1..=8 {
+                element(out, 4, &format!("CompanyAddressLine{n}"), "")?;
+            }
+            for (name, caption) in [
+                ("CompanyPhone", true),
+                ("CompanyFaxNo", true),
+                ("CompanyEmail", true),
+                ("CompanyHomePage", true),
+                ("CompanyLogo", false),
+                ("CompanyVATRegistrationNo", true),
+                ("CompanyRegistrationNo", true),
+                ("CompanyBankName", true),
+                ("CompanyBankAccountNo", true),
+                ("CompanyBankBranchNo", true),
+                ("CompanyIBAN", true),
+                ("CompanyBankSWIFT", true),
+                ("CompanyGiroNo", true),
+            ] {
+                element(out, 4, name, "")?;
+                if caption {
+                    element(out, 4, &format!("{name}Caption"), "")?;
+                }
+            }
+        }
+        out.push_str("  </BCReportInformation>\n");
+        Ok(())
+    }
+}
+
+/// The attribute `decimalformatter` of a Decimal column. A plain Decimal field is pinned
+/// (handlers/TestReportSaveAsDatasetContracts.al: `#,##0.00`); a field or column that states
+/// `DecimalPlaces` or `AutoFormatType` may change it, which no test pins
+/// (docs/probes-needed.md).
+pub(crate) const DECIMAL_FORMATTER: &str = "#,##0.00";
+
+/// One column of a row: its name, an attribute written after the name, and its text.
+pub(crate) struct Column {
+    pub name: String,
+    pub attribute: Option<(&'static str, &'static str)>,
+    pub text: String,
+}
+
+/// A dataset being written: the `DataItems` block, and who is open.
+#[derive(Default)]
+pub(crate) struct Dataset {
+    body: String,
+    /// For every open `DataItem`: whether its own `DataItems` element is open.
+    open: Vec<bool>,
+    root: bool,
+    /// An element written, whatever its kind.
+    pub rows: usize,
+}
+
+impl Dataset {
+    /// `DataItem` elements sit at 4 spaces, and four more for each level of nesting. Its
+    /// `Columns` and `DataItems` elements sit two deeper, a `Column` four deeper.
+    fn pad(&mut self, spaces: usize) {
+        self.body.push_str(&" ".repeat(spaces));
+    }
+
+    /// Opens a row of a data item: `<DataItem ..>` and its `Columns`.
+    pub(crate) fn begin(&mut self, name: &str, columns: &[Column]) {
+        let depth = self.open.len();
+        if depth == 0 {
+            if !self.root {
+                self.root = true;
+                self.body.push_str("  <DataItems>\n");
+            }
+        } else if !*self.open.last().expect("depth > 0") {
+            *self.open.last_mut().expect("depth > 0") = true;
+            self.pad(2 + 4 * depth);
+            self.body.push_str("<DataItems>\n");
+        }
+        let at = 4 + 4 * depth;
+        self.pad(at);
+        self.body.push_str("<DataItem");
+        if depth == 0 {
+            self.body
+                .push_str(&format!(" language=\"{LANGUAGE}\" formatRegion=\"{LANGUAGE}\""));
+        }
+        self.body.push_str(&format!(" name=\"{name}\""));
+        self.body.push_str(">\n");
+        self.pad(at + 2);
+        self.body.push_str("<Columns>\n");
+        for c in columns {
+            self.pad(at + 4);
+            self.body.push_str(&format!("<Column name=\"{}\"", c.name));
+            if let Some((k, v)) = c.attribute {
+                self.body.push_str(&format!(" {k}=\"{v}\""));
+            }
+            self.body.push_str(&format!(">{}</Column>\n", c.text));
+        }
+        self.pad(at + 2);
+        self.body.push_str("</Columns>\n");
+        self.open.push(false);
+        self.rows += 1;
+    }
+
+    /// Closes the row opened last.
+    pub(crate) fn end(&mut self) {
+        let items_open = self.open.pop().expect("a row is open");
+        let at = 4 + 4 * self.open.len();
+        if items_open {
+            self.pad(at + 2);
+            self.body.push_str("</DataItems>\n");
+        }
+        self.pad(at);
+        self.body.push_str("</DataItem>\n");
+    }
+
+    /// The bytes of the whole dataset: the byte order mark, the header, the data items.
+    pub(crate) fn finish(self, header: &Header) -> Result<Vec<u8>, Signal> {
+        debug_assert!(self.open.is_empty());
+        let mut out = String::new();
+        header.write(&mut out)?;
+        out.push_str(&self.body);
+        if self.root {
+            out.push_str("  </DataItems>\n");
+        }
+        out.push_str("</ReportDataSet>");
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(out.as_bytes());
+        Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_names_are_kept() {
+        assert_eq!(dataset_name("PNo").unwrap(), "PNo");
+        assert_eq!(
+            dataset_name("Change_Log_Setup__Table___Table_No__").unwrap(),
+            "Change_Log_Setup__Table___Table_No__"
+        );
+    }
+
+    // handlers/TestReportNestedLinkImplicitParent.al:98 (`//DataItem[@name="Change_Log_Setup_Table"]`)
+    #[test]
+    fn a_name_with_spaces_and_parentheses_is_spelled_the_way_the_example_shows() {
+        assert_eq!(
+            dataset_name("Change Log Setup (Table)").unwrap(),
+            "Change_Log_Setup_Table"
+        );
+        assert_eq!(
+            dataset_name("Change Log Setup (Field)").unwrap(),
+            "Change_Log_Setup_Field"
+        );
+    }
+
+    #[test]
+    fn a_name_the_example_does_not_cover_is_refused() {
+        assert!(dataset_name("A(B)").is_err());
+        assert!(dataset_name("No.").is_err());
+        assert!(dataset_name("").is_err());
+    }
+
+    // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText (`one <&>`)
+    #[test]
+    fn text_is_escaped() {
+        assert_eq!(escape("one <&>").unwrap(), "one &lt;&amp;&gt;");
+        assert!(escape("a\u{1}b").is_err());
+    }
+}

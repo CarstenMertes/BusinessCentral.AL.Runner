@@ -13,6 +13,17 @@ reviewed it.
 - XmlPort constructs the corpus does not pin now refuse when the port runs, not when it is declared (so Base App's xmlport 1
   can sit behind a cancelled request page).
 
+## Decided without the owner (report-saveas, 2026-10-14)
+
+- `Report.SaveAs` writes the dataset for `ReportFormat::Xml` only; a rendered format is refused. No seam changed, so no
+  ADR. Review first: the documentation-only assumptions in `docs/probes-needed.md` ("Report.SaveAs dataset": the header
+  elements the probe does not pin, an Option column as its ordinal, `decimalformatter` for decimals that state
+  `AutoFormatType`, no `DataItems` element when it would be empty, a failing report with an RDLC layout answering false).
+- The tableId/systemId pair of BC 28.5 and later is not written: the gate rules need a `BC28PLUS` guard in the corpus.
+- Side changes the dataset needed, all additive: `UseTemporary` on a data item; `Report::"X"` named in workspace code reaches
+  the report's whole code (a test passes the id to a helper); the request page of `RunRequestPage` has OK; `CompanyProperty.DisplayName`
+  is the company name; `XmlDocument.ReadFrom(InStream)`; `foreach` over `XmlNodeList`.
+
 ## Open questions (not decided)
 
 - ADR-020 (Proposed), `al-bcdb`: the Rust port of bcdb, and the proposed way to load CRONUS

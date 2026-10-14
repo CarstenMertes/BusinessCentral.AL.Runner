@@ -1217,11 +1217,42 @@ codeunit 50100 C
     assert!(matches!(run(src, "Go"), Ok(Value::Integer(1))));
 }
 
-/// Red first: CanCreateTask was refused as "not pinned". The corpus-probes branch pins it false in a
-/// test (session/TestEnvironmentUserTenantContracts.al:172, head c542144): there is no scheduler
+/// Red first: CanCreateTask was refused as "not pinned". The corpus pins it false in a
+/// test (session/TestEnvironmentUserTenantContracts.al:238): there is no scheduler
 /// and a test does not wait for a commit.
 #[test]
 fn task_scheduler_can_create_task_is_false() {
     let src = "codeunit 50100 C { procedure F(): Boolean begin exit(TaskScheduler.CanCreateTask()); end; }";
     assert!(matches!(run(src, "F"), Ok(Value::Boolean(false))));
+}
+
+/// Red first: `Session.ApplicationIdentifier` was refused as not implemented, which stopped
+/// Base App's `Environment Information Impl.` and so every `Environment Information` call.
+/// Measured on real BC: 'NAV' (session/TestEnvironmentUserTenantContracts.al:241).
+#[test]
+fn session_application_identifier_is_nav() {
+    let src = "codeunit 50100 C { procedure F(): Text begin exit(Session.ApplicationIdentifier()); end; }";
+    assert!(matches!(run(src, "F"), Ok(Value::Text(t)) if t == "NAV"));
+}
+
+/// Red first: `ProductName.Full()`, `Short()` and `Marketing()` were refused as not implemented.
+/// Measured on real BC (session/TestEnvironmentUserTenantContracts.al:237-239).
+#[test]
+fn product_name_answers_the_three_forms() {
+    for (member, want) in [
+        ("Full", "Dynamics 365 Business Central"),
+        ("Short", "Business Central"),
+        ("Marketing", "Microsoft Dynamics 365 Business Central"),
+    ] {
+        let src = format!("codeunit 50100 C {{ procedure F(): Text begin exit(ProductName.{member}()); end; }}");
+        assert!(matches!(run(&src, "F"), Ok(Value::Text(t)) if t == want), "{member}");
+    }
+}
+
+/// Red first: `Session.CurrentExecutionMode` was refused as not implemented. A test run is in
+/// Standard mode (session/TestEnvironmentUserTenantContracts.al:247); the ordinals are not pinned.
+#[test]
+fn current_execution_mode_is_standard() {
+    let src = "codeunit 50100 C { procedure F(): Text begin exit(Format(Session.CurrentExecutionMode())); end; }";
+    assert!(matches!(run(src, "F"), Ok(Value::Text(t)) if t == "Standard"));
 }

@@ -321,8 +321,8 @@ fn session_settings_init_reads_language_locale_and_time_zone_from_the_host() {
 #[test]
 fn company_name_is_the_hosts_company() {
     // session/TestSessionFunctions.al:25 (not empty), session/TestDatabase.al:74 (equals
-    // CurrentCompany); the name is AL Runner's (ADR-013 decision 9).
-    assert_eq!(text("", "exit(CompanyName());"), "My Company");
+    // CurrentCompany); the name is the oracle's (session/TestEnvironmentUserTenantContracts.al:238).
+    assert_eq!(text("", "exit(CompanyName());"), "CRONUS International Ltd.");
     assert!(truth("R: Record \"ALT T\";", "R.CurrentCompany() = CompanyName()"));
 }
 

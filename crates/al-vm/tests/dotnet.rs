@@ -190,6 +190,20 @@ fn run_setup(cfg: DotNetConfig, vars: &str, body: &str, ret: &str, setup: impl F
     }
 }
 
+/// `run` on an engine that runs as `bc` (a BC version such as "28.5"; `None` is the newest).
+fn run_as(bc: Option<&str>, vars: &str, body: &str, ret: &str) -> Ran {
+    let (program, blocked, oi, ri) = compile(vars, body, ret);
+    let target = bc.map(|v| al_version::Target::for_bc(al_version::BcVersion::parse(v).unwrap()));
+    let engine = Engine::with_config(program, blocked, target, cfg(&no_host()));
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    let result = s.call(oi, ri, inst, vec![]).map(|(v, _)| v);
+    Ran {
+        result,
+        session: Some(s),
+    }
+}
+
 fn cfg(host: &Fake) -> DotNetConfig {
     DotNetConfig {
         host: Arc::new(host.clone()),
@@ -845,8 +859,8 @@ fn run_text(vars: &str, body: &str) -> String {
 }
 
 /// Each value, with its source. The ALConfigSettings flags, the environment type, the topology and
-/// the application family are measured on real BC 27.5 (corpus-probes c542144,
-/// `session/TestEnvironmentUserTenantContracts.al` and `TestServerSettingContracts.al`). The probe
+/// the application family are measured on real BC 27.5 and later (corpus
+/// `session/TestEnvironmentUserTenantContracts.al` and the OnPrem suite's `TestServerSettingContracts.al`). The probe
 /// wins over AL Runner v2 where they differ: the oracle tenant is a sandbox on Azure topology.
 #[test]
 fn the_server_class_members_answer_the_values_of_the_probe_and_al_runner_v2() {
@@ -876,7 +890,37 @@ fn the_server_class_members_answer_the_values_of_the_probe_and_al_runner_v2() {
         run_text(t, "T.GetEnvironmentApplicationSetting('EnableAgentBuilder')"),
         ""
     );
-    assert_eq!(run_text("U: DotNet NavUserAccountHelper;", "U.IsAzure()"), "Yes");
+    // IsAzure is the one answer that follows the BC major: see `is_azure_follows_the_bc_major`.
+    assert_eq!(
+        text(run_as(
+            Some("27.5"),
+            "U: DotNet NavUserAccountHelper;",
+            "exit(Format(U.IsAzure()));",
+            ": Text"
+        )),
+        "Yes"
+    );
+}
+
+/// `Environment Information.IsSaaSInfrastructure` is `NavUserAccountHelper.IsAzure()`: true on the
+/// BC 27.5 and 28.5 oracle runs, false on the 29.0 run (corpus
+/// `session/TestEnvironmentUserTenantContracts.al:164-174`, `#if BC29PLUS`). No target is the newest.
+#[test]
+fn is_azure_follows_the_bc_major() {
+    let u = "U: DotNet NavUserAccountHelper;";
+    for (bc, want) in [
+        (Some("27.5"), "Yes"),
+        (Some("28.5"), "Yes"),
+        (Some("29.0"), "No"),
+        (Some("30.0"), "No"),
+        (None, "No"),
+    ] {
+        assert_eq!(
+            text(run_as(bc, u, "exit(Format(U.IsAzure()));", ": Text")),
+            want,
+            "{bc:?}"
+        );
+    }
 }
 
 /// Base App's `Environment Information Impl.` reads these in a test run; `CanStartSession` is
@@ -942,8 +986,9 @@ fn an_instance_of_a_registered_type_serves_its_members_from_the_registry() {
 #[test]
 fn registry_results_are_operands() {
     let host = no_host();
-    let r = run(
-        &host,
+    // BC 27.5, where IsAzure is true.
+    let r = run_as(
+        Some("27.5"),
         "U: DotNet NavUserAccountHelper; C: DotNet ALConfigSettings; N: Integer;",
         "C := C.Instance(); if C.ApiSubscriptionDelayTime() > 1000 then N := 1; \
          if U.IsAzure() and C.ApiServicesEnabled() then N += 10; exit(N);",
@@ -1018,7 +1063,7 @@ fn the_declared_result_types_match_the_registry() {
             );
             assert!(
                 matches!(&m.pin, Pin::AlRunner(s) if s.starts_with("AL Runner v2 ") && s.contains("AlRunner/"))
-                    || matches!(&m.pin, Pin::Probe(s) if s.contains("corpus-probes c542144") && s.contains(".al"))
+                    || matches!(&m.pin, Pin::Probe(s) if s.contains("probe tests/al-language") && s.contains(".al"))
                     || matches!(&m.pin, Pin::Corpus(s) if s.contains(".al:")),
                 "{}.{}: {:?}",
                 t.clr_name,

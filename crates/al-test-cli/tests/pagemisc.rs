@@ -157,9 +157,9 @@ page 62091 "PM Kinds"
     PageType = Card; SourceTable = "PM Row";
     layout {
         area(Content) { label(Hint) { Caption = 'x'; } field(NoCtl; Rec."No.") { } }
-        area(FactBoxes) { systempart(NotesBox; Notes) { } systempart(LinksBox; Links) { } }
+        area(FactBoxes) { systempart(NotesBox; Notes) { } systempart(LinksBox; Links) { } usercontrol(Addin; "Some Add-in") { } }
     }
-    actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } action(Act) { } } }
+    actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } action(Act) { } fileuploadaction(Upload) { trigger OnAction(Files: List of [FileUpload]) begin end; } } }
 }
 "#;
 
@@ -521,6 +521,18 @@ fn a_page_with_a_systempart_a_label_and_a_customaction_opens() {
             R.DeleteAll(); R.\"No.\" := 'K1'; R.Insert(); K.OpenView(); K.GoToRecord(R);
             Check('K1', K.NoCtl.Value); Check('Yes', Format(K.Act.Enabled())); K.Close(); end;"
     ));
+}
+
+// A usercontrol (control add-in) is not a control of the TestPage either.
+#[test]
+fn naming_a_usercontrol_on_a_test_page_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Names() var K: TestPage \"PM Kinds\"; begin
+            K.OpenView(); Check('Yes', Format(K.Addin.Visible())); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(_)), "{o:?}");
 }
 
 // The TestPage has no member for these controls, so a reference is refused, not answered.

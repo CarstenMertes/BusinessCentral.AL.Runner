@@ -351,11 +351,12 @@ impl Tree {
             // tests that open Base App pages declaring one (for example
             // handlers/TestPagePlatformPageSourceTable_Tests.al:77, handlers/TestReportRunFromPrecompiledCaller.al:31)
             // never reach it. A label (handlers/TestPrecompiledOptionCaption.al:81) and a customaction (Power Automate;
-            // pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69) are treated the same way:
+            // pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69) and a usercontrol (a control add-in; likewise a fileuploadaction:
+            // pageapplicationarea/TestPageApplicationAreaPrecompiledActionRemoval.al:39 opens Item List, which hosts one in a part) are treated the same way:
             // docs/probes-needed.md says what is not pinned. They stay in the tree so that `addafter`/
             // `modify` can name them, and are dropped from the controls the page lowers, so a TestPage
             // reference to one is refused ("control ... is not in the page layout"), never answered.
-            "systempart" | "label" | "customaction" => {
+            "systempart" | "label" | "customaction" | "usercontrol" | "fileuploadaction" => {
                 let idx = self.nodes.len();
                 self.nodes.push(Node {
                     name: arg0,

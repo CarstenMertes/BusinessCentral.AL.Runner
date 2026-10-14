@@ -1,9 +1,8 @@
 //! "User Personalization" (2000000073): the platform creates the session user's row when the user
-//! signs in to a client. The corpus pins no such row (access-control/TestUserTableSessionUser.al
-//! only validates the relation to User; session/TestSessionSettings.al:402-407 says what the row
-//! holds "depends on tenant data"). A read that finds no row for the session user is therefore
-//! refused, not answered "not found" (docs/probes-needed.md, "Probe batch 6"). Rows a test writes
-//! itself (profile/TestTenantProfileRenameCascade.al:39-80) are ordinary rows.
+//! signs in to a client, and the test runner's session is that sign-in: one row, Scope Tenant, App ID
+//! Base Application, language and locale 1033, a profile id that is not blank
+//! (session/TestUserPersonalizationRowContracts.al, corpus branch al-runtime-rs d0f5d52). Rows a test
+//! writes itself (profile/TestTenantProfileRenameCascade.al:39-80) are ordinary rows.
 
 use al_builtins::native::Signal;
 use al_builtins::value::Value;
@@ -16,7 +15,7 @@ table 2000000120 "User" {
     keys { key(PK; "User Security ID") { } }
 }
 table 2000000073 "User Personalization" {
-    fields { field(1; "User ID"; Code[50]) { } field(3; "User SID"; Guid) { } field(2; "Profile ID"; Code[30]) { } }
+    fields { field(3; "User SID"; Guid) { } field(9; "Profile ID"; Code[30]) { } field(10; "App ID"; Guid) { } field(11; Scope; Option) { OptionMembers = System,Tenant; } field(12; "Language ID"; Integer) { } field(27; "Locale ID"; Integer) { } }
     keys { key(PK; "User SID") { } }
 }
 "#;
@@ -52,24 +51,22 @@ fn run(body: &str) -> Result<Value, Signal> {
 }
 
 #[test]
-fn a_get_of_the_session_users_missing_row_is_refused() {
-    let r = run("exit(Format(P.Get(UserSecurityId())));");
+fn the_session_users_row_exists_with_the_pinned_columns() {
+    let r = run(
+        "if not P.Get(UserSecurityId()) then exit('missing'); if P.Count() <> 1 then exit('count'); \
+         exit(Format(P.Scope) + '|' + Format(P.\"App ID\") + '|' + Format(P.\"Language ID\") + '|' + Format(P.\"Locale ID\") + '|' + Format(P.\"Profile ID\" <> ''));",
+    );
     assert!(
-        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("User Personalization") && m.contains("signs in")),
+        matches!(&r, Ok(Value::Text(t)) if t == "Tenant|{437DBF0E-84FF-417A-965D-ED2BB9650972}|1033|1033|Yes"),
         "{r:?}"
     );
-    // Without the Boolean result the same read would raise "does not exist": refused too.
-    let r = run("P.Get(UserSecurityId()); exit('');");
-    assert!(matches!(&r, Err(Signal::Unsupported(_))), "{r:?}");
 }
 
 #[test]
 fn rows_a_test_wrote_and_other_users_are_ordinary() {
-    // The row of the session user, once the test has written it, is found and changed.
-    let r = run(
-        "P.\"User SID\" := UserSecurityId(); P.\"Profile ID\" := 'X'; P.Insert(); \
-         P.Get(UserSecurityId()); P.\"Profile ID\" := 'Y'; P.Modify(); P.Get(UserSecurityId()); exit(P.\"Profile ID\");",
-    );
+    // The row of the session user is found and changed.
+    let r = run("P.Get(UserSecurityId()); P.\"Profile ID\" := 'X'; P.Modify(); \
+         P.Get(UserSecurityId()); P.\"Profile ID\" := 'Y'; P.Modify(); P.Get(UserSecurityId()); exit(P.\"Profile ID\");");
     assert!(matches!(&r, Ok(Value::Text(t)) if t == "Y"), "{r:?}");
     // Another user's missing row is the ordinary answer.
     let r = run("Other := CreateGuid(); exit(Format(P.Get(Other)));");

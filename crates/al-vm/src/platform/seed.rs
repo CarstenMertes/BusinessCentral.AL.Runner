@@ -21,8 +21,8 @@ pub(super) const USER_PROPERTY: u32 = crate::usertable::USER_PROPERTY;
 
 /// A text value for the field `id`, as a Code or a Text by the field's type.
 fn text(t: &TableDef, id: u32, s: &str) -> Value {
-    match t.fields[pos(t, id)].ty {
-        RtType::Code(_) => Value::Code(s.to_string()),
+    match t.fields.iter().find(|f| f.id == id).map(|f| &f.ty) {
+        Some(RtType::Code(_)) => Value::Code(s.to_string()),
         _ => Value::Text(s.to_string()),
     }
 }
@@ -67,16 +67,25 @@ impl Session {
                 // corpus branch al-runtime-rs d0f5d52). The profile is the default one, an assumption.
                 USER_PERSONALIZATION => {
                     let mut r = super::blank(t);
-                    r[pos(t, 3)] = Value::Guid(i.user_sid);
-                    r[pos(t, 9)] = text(t, 9, "BUSINESS MANAGER");
-                    r[pos(t, 10)] = Value::Guid([
-                        0x43, 0x7d, 0xbf, 0x0e, 0x84, 0xff, 0x41, 0x7a, 0x96, 0x5d, 0xed, 0x2b, 0xb9, 0x65, 0x09, 0x72,
-                    ]);
-                    if let RtType::Option(m) = &t.fields[pos(t, 11)].ty {
-                        r[pos(t, 11)] = Value::Option(1, m.clone().into());
+                    let mut set = |id: u32, v: Value| {
+                        if let Some(p) = t.fields.iter().position(|f| f.id == id) {
+                            r[p] = v;
+                        }
+                    };
+                    set(3, Value::Guid(i.user_sid));
+                    set(9, text(t, 9, "BUSINESS MANAGER"));
+                    set(
+                        10,
+                        Value::Guid([
+                            0x43, 0x7d, 0xbf, 0x0e, 0x84, 0xff, 0x41, 0x7a, 0x96, 0x5d, 0xed, 0x2b, 0xb9, 0x65, 0x09,
+                            0x72,
+                        ]),
+                    );
+                    if let Some(RtType::Option(m)) = t.fields.iter().find(|f| f.id == 11).map(|f| &f.ty) {
+                        set(11, Value::Option(1, m.clone().into()));
                     }
-                    r[pos(t, 12)] = Value::Integer(1033);
-                    r[pos(t, 27)] = Value::Integer(1033);
+                    set(12, Value::Integer(1033));
+                    set(27, Value::Integer(1033));
                     r
                 }
                 ACCESS_CONTROL => {

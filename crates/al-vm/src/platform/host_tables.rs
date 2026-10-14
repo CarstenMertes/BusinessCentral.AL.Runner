@@ -44,11 +44,11 @@ pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>
         ("SaveValueToDatabasePromptly", false),
         ("SemanticMetadataSearch", false),
     ];
-    if target.is_none_or(|t| t.bc.major != 27) {
+    if !al_version::feature_key_rows_known(target) {
         return vec![Entry::poisoned_prefix(
             blank(t),
             0,
-            "Feature Key: its rows are pinned for BC 27.5 only (docs/probes-needed.md)".into(),
+            "Feature Key: its rows are measured for one BC major only (docs/probes-needed.md)".into(),
         )];
     }
     ROWS.iter()

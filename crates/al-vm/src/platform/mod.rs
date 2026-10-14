@@ -40,6 +40,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
+/// (subscriber codeunit id, lower-case function) to (object, routine).
+type EventIndex = HashMap<(u32, String), (usize, usize)>;
+
 /// What the Event Subscription table reports about the running session: how many events each
 /// subscriber handled and how many instances of a manual subscriber are bound (record/
 /// TestEventSubscriptionColumnsReportLayoutListContracts.al). The session writes it, the provider reads it.
@@ -177,7 +180,7 @@ pub(crate) struct Providers {
     grants: permissions::Grants,
     events: Rc<EventStats>,
     /// (subscriber codeunit id, lower-case function) to (object, routine); built on first use.
-    event_index: RefCell<Option<HashMap<(u32, String), (usize, usize)>>>,
+    event_index: RefCell<Option<EventIndex>>,
 }
 
 impl Providers {

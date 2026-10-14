@@ -2,6 +2,7 @@
 //! handlers/TestNotificationHandler.al, session/TestCalcDateNotificationContracts.al,
 //! session/TestMiscTypes.al).
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, NotificationState, SessionSettingsState, Value};
@@ -22,7 +23,7 @@ fn with_settings<R>(r: Option<&mut Value>, f: impl FnOnce(&mut SessionSettingsSt
     }
     match &mut *lib {
         LibraryValue::SessionSettings(s) => Ok(f(s)),
-        other => unsupported(format!("SessionSettings method on {other:?}")),
+        other => unsupported(format!("SessionSettings method on {}", other.describe())),
     }
 }
 
@@ -36,21 +37,21 @@ fn with_notification<R>(r: Option<&mut Value>, f: impl FnOnce(&mut NotificationS
     }
     match &mut *lib {
         LibraryValue::Notification(s) => Ok(f(s)),
-        other => unsupported(format!("Notification method on {other:?}")),
+        other => unsupported(format!("Notification method on {}", other.describe())),
     }
 }
 
 fn text(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
         Some(t) => Ok(t),
-        None => unsupported(format!("a text argument, got {:?}", a.get(i))),
+        None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }
 
 fn int(a: &[Value], i: usize) -> Result<i32, Signal> {
     match a.get(i) {
         Some(Value::Integer(n)) => Ok(*n),
-        other => unsupported(format!("an Integer argument, got {other:?}")),
+        other => unsupported(format!("an Integer argument, got {}", other.describe())),
     }
 }
 
@@ -103,7 +104,7 @@ fn profile_app_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
         });
     }
     let Value::Guid(g) = a[0] else {
-        return unsupported(format!("ProfileAppId with {:?}", a[0]));
+        return unsupported(format!("ProfileAppId with {}", a[0].describe()));
     };
     with_settings(r, |s| s.profile_app_id = Some(g)).map(|()| Value::Null)
 }
@@ -160,7 +161,12 @@ fn request_update(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
                 "SessionSettings.RequestSessionUpdate(true) writes User Personalization (not pinned by the corpus)",
             );
         }
-        other => return unsupported(format!("SessionSettings.RequestSessionUpdate with {other:?}")),
+        other => {
+            return unsupported(format!(
+                "SessionSettings.RequestSessionUpdate with {}",
+                other.describe()
+            ));
+        }
     }
     let state = with_settings(r, |s| s.clone())?;
     let copy = Value::Library(
@@ -192,7 +198,7 @@ fn n_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             with_notification(r, |n| n.id = Some(g)).map(|()| Value::Null)
         }
         None => with_notification(r, |n| n.id.unwrap_or([0; 16])).map(Value::Guid),
-        Some(other) => unsupported(format!("Notification.Id with {other:?}")),
+        Some(other) => unsupported(format!("Notification.Id with {}", other.describe())),
     }
 }
 
@@ -211,7 +217,7 @@ fn n_scope(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
                 .into();
             Value::Option(o, members)
         }),
-        Some(other) => unsupported(format!("Notification.Scope with {other:?}")),
+        Some(other) => unsupported(format!("Notification.Scope with {}", other.describe())),
     }
 }
 

@@ -9,6 +9,7 @@
 //! (handlers/TestPageQueryCloseMessageHandler_Tests.al:51).
 
 use crate::Session;
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::value::{Instance, RtType, Value};
 use std::cell::RefCell;
@@ -243,7 +244,8 @@ impl Session {
         match answer {
             Value::Boolean(true) => Ok(()),
             other => Err(Signal::Unsupported(format!(
-                "a [SessionSettingsHandler] that answers {other:?} (only true is pinned)"
+                "a [SessionSettingsHandler] that answers {other} (only true is pinned)",
+                other = other.describe()
             ))),
         }
     }
@@ -291,7 +293,8 @@ impl Session {
             let (answer, _) = self.dispatch_ui_returning(UiKind::RecallNotification, "", vec![notification])?;
             if !matches!(answer, Value::Boolean(true)) {
                 return Err(Signal::Unsupported(format!(
-                    "a [RecallNotificationHandler] that answers {answer:?} (only true is pinned)"
+                    "a [RecallNotificationHandler] that answers {answer} (only true is pinned)",
+                    answer = answer.describe()
                 )));
             }
         }
@@ -395,7 +398,10 @@ impl Session {
         )?;
         match finals.get(1) {
             Some(Value::Boolean(b)) => Ok(*b),
-            other => Err(Signal::Unsupported(format!("Confirm handler returned {other:?}"))),
+            other => Err(Signal::Unsupported(format!(
+                "Confirm handler returned {}",
+                other.describe()
+            ))),
         }
     }
 
@@ -407,7 +413,10 @@ impl Session {
         )?;
         match finals.get(1) {
             Some(Value::Integer(n)) => Ok(*n),
-            other => Err(Signal::Unsupported(format!("StrMenu handler returned {other:?}"))),
+            other => Err(Signal::Unsupported(format!(
+                "StrMenu handler returned {}",
+                other.describe()
+            ))),
         }
     }
 }

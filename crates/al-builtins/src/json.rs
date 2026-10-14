@@ -7,6 +7,7 @@
 //! `Get` shares the child. Behaviour the corpus does not pin (error texts,
 //! duplicate keys, out-of-range indexes) raises `Signal::Unsupported`.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, Value};
@@ -66,7 +67,7 @@ fn new_handle(node: JsonNode) -> Handle {
 /// JsonValue variable its empty content on first use.
 fn handle_of(v: &Value) -> Result<Handle, Signal> {
     let Value::Library(name, h) = v else {
-        return unsupported(format!("{v:?} used as a JSON handle"));
+        return unsupported(format!("{} used as a JSON handle", v.describe()));
     };
     if matches!(&*h.borrow(), LibraryValue::Empty) {
         let node = match name.to_ascii_lowercase().as_str() {
@@ -79,7 +80,7 @@ fn handle_of(v: &Value) -> Result<Handle, Signal> {
     }
     match &*h.borrow() {
         LibraryValue::Json(_) => Ok(h.clone()),
-        other => unsupported(format!("{name} handle holding {other:?}")),
+        other => unsupported(format!("{name} handle holding {}", other.describe())),
     }
 }
 
@@ -202,7 +203,7 @@ fn node_for(v: &Value) -> Result<Handle, Signal> {
         // A Guid is stored as its text, braced and in upper case
         // (json/TestJsonRuntimeContracts.al:JsonObject_WriteTo_GuidIsBracedUpperCase).
         Value::Guid(g) => Ok(new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(guid_text(g)))))),
-        other => unsupported(format!("{other:?} as a JSON value")),
+        other => unsupported(format!("{} as a JSON value", other.describe())),
     }
 }
 
@@ -603,7 +604,12 @@ fn write(h: &Handle, out: &mut String) -> Result<(), Signal> {
             }
             Value::Text(s) | Value::Code(s) => write_string(out, &s),
             Value::Char(c) => write_string(out, &char::from_u32(u32::from(c)).map(String::from).unwrap_or_default()),
-            other => return unsupported(format!("serialising {other:?} to JSON text (not pinned yet)")),
+            other => {
+                return unsupported(format!(
+                    "serialising {} to JSON text (not pinned yet)",
+                    other.describe()
+                ));
+            }
         },
     }
     Ok(())
@@ -631,7 +637,8 @@ fn as_i64(s: &Scalar) -> Result<i64, Signal> {
                 .or_else(|_| unsupported("number out of range"))
         }
         other => unsupported(format!(
-            "reading {other:?} as a whole number (conversion not pinned yet)"
+            "reading {other} as a whole number (conversion not pinned yet)",
+            other = other.describe()
         )),
     }
 }
@@ -639,7 +646,10 @@ fn as_i64(s: &Scalar) -> Result<i64, Signal> {
 fn as_boolean(s: &Scalar) -> Result<Value, Signal> {
     match s {
         Scalar::Val(Value::Boolean(b)) => Ok(Value::Boolean(*b)),
-        other => unsupported(format!("reading {other:?} as Boolean (conversion not pinned yet)")),
+        other => unsupported(format!(
+            "reading {} as Boolean (conversion not pinned yet)",
+            other.describe()
+        )),
     }
 }
 
@@ -679,7 +689,10 @@ fn as_decimal(s: &Scalar) -> Result<Value, Signal> {
         Scalar::Val(Value::Integer(n)) => Ok(Value::Decimal(Decimal::from(*n))),
         Scalar::Val(Value::BigInteger(n)) => Ok(Value::Decimal(Decimal::from(*n))),
         Scalar::Val(Value::Byte(n)) => Ok(Value::Decimal(Decimal::from(*n))),
-        other => unsupported(format!("reading {other:?} as Decimal (conversion not pinned yet)")),
+        other => unsupported(format!(
+            "reading {} as Decimal (conversion not pinned yet)",
+            other.describe()
+        )),
     }
 }
 
@@ -690,7 +703,10 @@ fn as_text(s: &Scalar) -> Result<Value, Signal> {
             char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         )),
         Scalar::Null => Err(conversion(NAV_JSON_VALUE, "Microsoft.Dynamics.Nav.Runtime.NavText")),
-        other => unsupported(format!("reading {other:?} as Text (conversion not pinned yet)")),
+        other => unsupported(format!(
+            "reading {} as Text (conversion not pinned yet)",
+            other.describe()
+        )),
     }
 }
 
@@ -711,7 +727,10 @@ fn as_char(s: &Scalar) -> Result<Value, Signal> {
                 _ => unsupported(format!("reading text of length {} as Char", u.len())),
             }
         }
-        other => unsupported(format!("reading {other:?} as Char (conversion not pinned yet)")),
+        other => unsupported(format!(
+            "reading {} as Char (conversion not pinned yet)",
+            other.describe()
+        )),
     }
 }
 
@@ -722,7 +741,10 @@ fn as_date(s: &Scalar) -> Result<Value, Signal> {
             Some(d) => Ok(Value::Date(d, false)),
             None => unsupported("reading text that is not an ISO date as Date (error text not pinned yet)"),
         },
-        other => unsupported(format!("reading {other:?} as Date (conversion not pinned yet)")),
+        other => unsupported(format!(
+            "reading {} as Date (conversion not pinned yet)",
+            other.describe()
+        )),
     }
 }
 
@@ -733,7 +755,10 @@ fn as_datetime(s: &Scalar) -> Result<Value, Signal> {
             Some(d) => Ok(Value::DateTime(d)),
             None => unsupported("reading text that is not an ISO date-time as DateTime (error text not pinned yet)"),
         },
-        other => unsupported(format!("reading {other:?} as DateTime (conversion not pinned yet)")),
+        other => unsupported(format!(
+            "reading {} as DateTime (conversion not pinned yet)",
+            other.describe()
+        )),
     }
 }
 
@@ -744,7 +769,10 @@ fn as_time(s: &Scalar) -> Result<Value, Signal> {
             Some(t) => Ok(Value::Time(t)),
             None => unsupported("reading text that is not an ISO time as Time (error text not pinned yet)"),
         },
-        other => unsupported(format!("reading {other:?} as Time (conversion not pinned yet)")),
+        other => unsupported(format!(
+            "reading {} as Time (conversion not pinned yet)",
+            other.describe()
+        )),
     }
 }
 
@@ -767,7 +795,7 @@ fn object_get_child(h: &Handle, key: &Value) -> Result<Option<Handle>, Signal> {
 fn array_get_child(h: &Handle, index: &Value) -> Result<Option<Handle>, Signal> {
     let i = match index {
         Value::Integer(i) => i64::from(*i),
-        other => return unsupported(format!("JSON array index {other:?}")),
+        other => return unsupported(format!("JSON array index {}", other.describe())),
     };
     with_node(h, |n| match n {
         JsonNode::Array(kids) => Ok(usize::try_from(i).ok().and_then(|i| kids.get(i)).cloned()),
@@ -864,7 +892,7 @@ fn token_type_name(h: &Handle) -> Result<&'static str, Signal> {
             Value::Decimal(_) => Ok("Float"),
             Value::Text(_) | Value::Code(_) | Value::Char(_) => Ok("String"),
             Value::Boolean(_) => Ok("Boolean"),
-            other => unsupported(format!("the JSON type name of {other:?}")),
+            other => unsupported(format!("the JSON type name of {}", other.describe())),
         },
         JsonNode::Scalar(Scalar::Undefined) => unsupported("the JSON type name of an undefined value"),
     })

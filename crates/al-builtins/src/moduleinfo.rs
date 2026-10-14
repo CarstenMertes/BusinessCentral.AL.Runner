@@ -4,6 +4,7 @@
 //!
 //! Resources, entitlements and archive data of an app are not here.
 
+use crate::describe::Describe;
 use crate::native::{AlError, Ctx, ModuleLookup, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, ModuleInfoState, Value};
@@ -84,7 +85,7 @@ fn plain_guid(g: &[u8; 16]) -> String {
 /// found with ID" and the id). The null id answers with a Microsoft module there: refused.
 fn get_module(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Some(id) = a.first().and_then(guid_arg) else {
-        return unsupported(format!("GetModuleInfo with {:?} as the app id", a.first()));
+        return unsupported(format!("GetModuleInfo with {} as the app id", a.first().describe()));
     };
     if id == [0; 16] {
         // True, with a module whose data version is the installed application's (at least 27):
@@ -135,9 +136,9 @@ fn state_of(r: Option<&mut Value>, synthesized_ok: bool) -> Result<ModuleInfoSta
                 unsupported("a property of the module BC answers for the null app id (only DataVersion is pinned)")
             }
             LibraryValue::ModuleInfo(m) => Ok(m.clone()),
-            other => unsupported(format!("a ModuleInfo nobody filled ({other:?})")),
+            other => unsupported(format!("a ModuleInfo nobody filled ({})", other.describe())),
         },
-        other => unsupported(format!("a ModuleInfo method on {other:?}")),
+        other => unsupported(format!("a ModuleInfo method on {}", other.describe())),
     }
 }
 
@@ -224,7 +225,7 @@ fn resource(c: &dyn Ctx, name: &str) -> Result<Vec<u8>, Signal> {
 fn name_arg(a: &[Value]) -> Result<String, Signal> {
     match a.first().and_then(crate::native::text_of) {
         Some(n) => Ok(n),
-        None => unsupported(format!("a resource name that is not text: {:?}", a.first())),
+        None => unsupported(format!("a resource name that is not text: {}", a.first().describe())),
     }
 }
 
@@ -234,7 +235,8 @@ fn encoding_arg(a: &[Value], at: usize) -> Result<crate::stream::Encoding, Signa
     match a.get(at) {
         None | Some(Value::Option(1, _)) => Ok(crate::stream::Encoding::Utf8),
         Some(other) => unsupported(format!(
-            "a resource read with text encoding {other:?} (only UTF8 is pinned)"
+            "a resource read with text encoding {other} (only UTF8 is pinned)",
+            other = other.describe()
         )),
     }
 }
@@ -248,7 +250,7 @@ fn get_resource(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out 
             *cell.borrow_mut() = LibraryValue::InStream(crate::stream::InState::snapshot(data, enc));
             Ok(Value::Null)
         }
-        other => unsupported(format!("GetResource into {other:?}")),
+        other => unsupported(format!("GetResource into {}", other.describe())),
     }
 }
 

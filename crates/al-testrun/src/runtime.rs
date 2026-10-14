@@ -5,6 +5,7 @@
 use crate::explain::{self, TestDetail};
 use crate::isolation::{Checkpoint, TestIsolation, runner_isolation};
 use crate::{CaseId, Outcome};
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_sema::lower::Lowered;
 use al_vm::{Engine, Session, UiKind};
@@ -931,7 +932,7 @@ pub fn run_codeunit_observed(
                             session.rollback_transaction();
                             Outcome::NotRun(r)
                         }
-                        Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
+                        Err(other) => Outcome::Fail(format!("unexpected signal {}", other.describe())),
                     }
                 }
             }

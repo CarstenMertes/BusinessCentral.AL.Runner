@@ -8,6 +8,7 @@
 //! Every function accepts the forms a corpus test pins and refuses the rest with
 //! `Signal::Unsupported`, never a guess.
 
+use crate::describe::Describe;
 use crate::format::{civil_from_day, day_from_civil};
 use crate::native::{Ctx, NativeFn, Signal, raise};
 use crate::value::Value;
@@ -62,7 +63,8 @@ fn plain_date(v: &Value, what: &str) -> Result<i32, Signal> {
     match v {
         Value::Date(n, false) if *n > 0 => Ok(*n),
         other => unsupported(format!(
-            "{what} of {other:?}: only a defined, non-closing Date is pinned"
+            "{what} of {other}: only a defined, non-closing Date is pinned",
+            other = other.describe()
         )),
     }
 }
@@ -87,7 +89,7 @@ fn dmy2date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 /// date with a time is an error (types/TestDateRoundFormatStringContracts.al:CreateDateTime_MidnightBlankAndInvalid).
 fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Value::Time(t) = a[1] else {
-        return unsupported(format!("CreateDateTime with {:?}", a[1]));
+        return unsupported(format!("CreateDateTime with {}", a[1].describe()));
     };
     if matches!(a[0], Value::Date(0, false)) {
         if t == 0 {
@@ -103,7 +105,10 @@ fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> O
 fn defined_datetime(v: &Value, what: &str) -> Result<i64, Signal> {
     match v {
         Value::DateTime(n) if *n > 0 => Ok(*n - 1),
-        other => unsupported(format!("{what} of {other:?}: only a defined DateTime is pinned")),
+        other => unsupported(format!(
+            "{what} of {}: only a defined DateTime is pinned",
+            other.describe()
+        )),
     }
 }
 
@@ -155,7 +160,10 @@ fn date2dwy(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             }
             Ok(Value::Integer(y))
         }
-        other => unsupported(format!("Date2DWY with Value {other:?}: only 1, 2 and 3 are pinned")),
+        other => unsupported(format!(
+            "Date2DWY with Value {}: only 1, 2 and 3 are pinned",
+            other.describe()
+        )),
     }
 }
 
@@ -163,7 +171,7 @@ fn date2dwy(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 fn normal_date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     match &a[0] {
         Value::Date(n, _) if *n > 0 => Ok(Value::Date(*n, false)),
-        other => unsupported(format!("NormalDate of {other:?}")),
+        other => unsupported(format!("NormalDate of {}", other.describe())),
     }
 }
 
@@ -171,7 +179,7 @@ fn normal_date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 fn closing_date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     match &a[0] {
         Value::Date(n, _) if *n > 0 => Ok(Value::Date(*n, true)),
-        other => unsupported(format!("ClosingDate of {other:?}")),
+        other => unsupported(format!("ClosingDate of {}", other.describe())),
     }
 }
 
@@ -205,7 +213,10 @@ fn week_no(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
 fn time_part(r: Option<&mut Value>, unit_ms: i64, modulo: i64) -> Out {
     match r {
         Some(Value::Time(t)) if *t > 0 => Ok(Value::Integer((((*t - 1) / unit_ms) % modulo) as i32)),
-        other => unsupported(format!("a Time part of {other:?}: only a defined Time is pinned")),
+        other => unsupported(format!(
+            "a Time part of {}: only a defined Time is pinned",
+            other.describe()
+        )),
     }
 }
 
@@ -506,7 +517,7 @@ fn calcdate_text(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out
 fn calcdate_formula(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     match &a[0] {
         Value::DateFormula(f) => calcdate(f, a.get(1)),
-        other => unsupported(format!("CalcDate with {other:?}")),
+        other => unsupported(format!("CalcDate with {}", other.describe())),
     }
 }
 

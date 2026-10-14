@@ -1,6 +1,7 @@
 //! Builtins that act on session state: number sequences and the transaction state.
 
 use crate::Session;
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::value::Value;
 use std::cell::RefCell;
@@ -56,7 +57,7 @@ impl Session {
     fn table_connection_op(&mut self, method: &str, args: &[Value]) -> Result<Value, Signal> {
         let kind = match args.first() {
             Some(Value::Option(o, m)) => (*o, m.get(*o as usize).cloned().unwrap_or_default()),
-            other => return unsupported(format!("{method}TableConnection with {other:?} as the type")),
+            other => return unsupported(format!("{method}TableConnection with {} as the type", other.describe())),
         };
         let name = match args.get(1) {
             Some(v) => al_builtins::native::text_of(v),
@@ -153,7 +154,7 @@ impl Session {
         let company_specific = match args.get(scope) {
             None => true,
             Some(Value::Boolean(b)) => *b,
-            Some(other) => return unsupported(format!("CompanySpecific of {other:?}")),
+            Some(other) => return unsupported(format!("CompanySpecific of {}", other.describe())),
         };
         let company = if company_specific {
             self.cx.company.clone()
@@ -194,7 +195,7 @@ impl Session {
                 match args.first() {
                     None | Some(Value::Null) => {}
                     Some(Value::Boolean(b)) => self.lock_timeout = *b,
-                    Some(other) => return unsupported(format!("LockTimeout with {other:?}")),
+                    Some(other) => return unsupported(format!("LockTimeout with {}", other.describe())),
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
             }
@@ -242,7 +243,7 @@ impl Session {
                     }
                     Ok(Value::Boolean(*on))
                 }
-                Some(other) => unsupported(format!("CodeCoverageLog with {other:?}")),
+                Some(other) => unsupported(format!("CodeCoverageLog with {}", other.describe())),
             };
         }
         if let Some(method) = id
@@ -315,7 +316,12 @@ impl Session {
                                 "Sql:Sql",
                             );
                         }
-                        other => return unsupported(format!("NumberSequence.Range with Count {other:?} (not pinned)")),
+                        other => {
+                            return unsupported(format!(
+                                "NumberSequence.Range with Count {} (not pinned)",
+                                other.describe()
+                            ));
+                        }
                     }
                 } else {
                     1
@@ -377,7 +383,7 @@ impl Session {
             Some(Value::Option(..)) => {
                 unsupported("IsolatedStorage with a user data scope (needs an identity, ADR-013)")
             }
-            Some(other) => unsupported(format!("IsolatedStorage with data scope {other:?}")),
+            Some(other) => unsupported(format!("IsolatedStorage with data scope {}", other.describe())),
         }
     }
 

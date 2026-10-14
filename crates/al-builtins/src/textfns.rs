@@ -6,6 +6,7 @@
 //! TestTextBuilder.al, TestBigText.al); cases outside the pinned ones, and every
 //! error whose text is not pinned, raise `Signal::Unsupported`.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal, raise, text_of};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, Value};
@@ -29,7 +30,7 @@ fn from_u16(u: &[u16]) -> String {
 fn text(a: &[Value], i: usize) -> Result<String, Signal> {
     a.get(i)
         .and_then(text_of)
-        .ok_or_else(|| Signal::Unsupported(format!("text argument {i} of type {:?}", a.get(i))))
+        .ok_or_else(|| Signal::Unsupported(format!("text argument {i} of type {}", a.get(i).describe())))
 }
 
 fn recv_text(r: &Option<&mut Value>) -> Result<String, Signal> {
@@ -44,7 +45,7 @@ fn int(a: &[Value], i: usize) -> Result<i64, Signal> {
         Some(Value::Integer(n)) => Ok(i64::from(*n)),
         Some(Value::BigInteger(n)) => Ok(*n),
         Some(Value::Byte(n)) => Ok(i64::from(*n)),
-        other => unsupported(format!("integer argument {i} of type {other:?}")),
+        other => unsupported(format!("integer argument {i} of type {}", other.describe())),
     }
 }
 
@@ -137,7 +138,7 @@ fn index_of_any(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             .iter()
             .map(|v| match v {
                 Value::Char(c) => Ok(*c),
-                other => unsupported(format!("IndexOfAny list element {other:?}")),
+                other => unsupported(format!("IndexOfAny list element {}", other.describe())),
             })
             .collect::<Result<_, _>>()?,
         v => match text_of(v) {
@@ -273,7 +274,7 @@ fn split(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             .map(|v| match v {
                 Value::Char(c) => Ok(vec![*c]),
                 Value::Text(t) | Value::Code(t) => Ok(u16s(t)),
-                other => unsupported(format!("Split separator {other:?}")),
+                other => unsupported(format!("Split separator {}", other.describe())),
             })
             .collect::<Result<_, _>>()?,
         many => many
@@ -485,7 +486,7 @@ fn secret_content(v: &Value) -> Result<String, Signal> {
             LibraryValue::Text(s) => Ok(s.clone()),
             _ => unsupported("SecretText holding something else"),
         },
-        other => unsupported(format!("{other:?} used as a SecretText")),
+        other => unsupported(format!("{} used as a SecretText", other.describe())),
     }
 }
 
@@ -528,7 +529,7 @@ fn string_of(r: Option<&mut Value>) -> Result<Rc<RefCell<LibraryValue>>, Signal>
                 unsupported("TextBuilder or BigText method on something else")
             }
         }
-        other => unsupported(format!("TextBuilder or BigText method on {other:?}")),
+        other => unsupported(format!("TextBuilder or BigText method on {}", other.describe())),
     }
 }
 

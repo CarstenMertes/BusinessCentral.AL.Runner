@@ -9,6 +9,7 @@
 //! Every rule cites the corpus test that pins it; the rest is refused.
 
 use super::*;
+use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
 
 type Inst = Rc<RefCell<al_builtins::value::Instance>>;
@@ -126,7 +127,7 @@ impl Session {
                 Ok((RequestClosed::Ok, parameters))
             }
             Some("Cancel") => Ok((RequestClosed::Cancel, None)),
-            other => unsupported(format!("a request page closed with {other:?} (not pinned)")),
+            other => unsupported(format!("a request page closed with {} (not pinned)", other.describe())),
         }
     }
 
@@ -153,7 +154,7 @@ impl Session {
         let v = inst.borrow().globals[slot].clone();
         match v {
             Value::Record(r) => Ok(r),
-            other => unsupported(format!("a data item control holding {other:?}")),
+            other => unsupported(format!("a data item control holding {}", other.describe())),
         }
     }
 
@@ -173,14 +174,14 @@ impl Session {
         let table = self.table(&rec)?;
         let field_arg = |i: usize| match args.get(i) {
             Some(Value::Integer(p)) => Ok(*p as usize),
-            other => unsupported(format!("TestFilter field argument {other:?}")),
+            other => unsupported(format!("TestFilter field argument {}", other.describe())),
         };
         match method {
             "TestFilter.SetFilter" => {
                 let pos = field_arg(0)?;
                 let text = match args.get(1) {
                     Some(Value::Text(t) | Value::Code(t)) => t.clone(),
-                    other => return unsupported(format!("TestFilter.SetFilter with {other:?}")),
+                    other => return unsupported(format!("TestFilter.SetFilter with {}", other.describe())),
                 };
                 let ty = table.fields[pos].ty.clone();
                 let expr = self
@@ -262,7 +263,13 @@ impl Session {
                     self.require_filters_shown(object)?;
                     let rec = match inst.borrow().globals[*slot].clone() {
                         Value::Record(r) => r,
-                        other => return unsupported(format!("data item {} holds {other:?}", c.name)),
+                        other => {
+                            return unsupported(format!(
+                                "data item {} holds {other}",
+                                c.name,
+                                other = other.describe()
+                            ));
+                        }
                     };
                     let view = self.parameter_view(&rec)?;
                     items.push_str(&format!(
@@ -353,7 +360,12 @@ impl Session {
                         (Err(_), _) => return unsupported(format!("the parameter {name} = {text}")),
                     }
                 }
-                other => return unsupported(format!("a parameter for the control {name} holding {other:?}")),
+                other => {
+                    return unsupported(format!(
+                        "a parameter for the control {name} holding {}",
+                        other.describe()
+                    ));
+                }
             };
             owner.borrow_mut().globals[slot] = value;
         }

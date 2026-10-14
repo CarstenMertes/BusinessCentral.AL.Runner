@@ -6,6 +6,7 @@
 //! interface procedure; the VM only picks among them by the instance's object.
 
 use crate::{Frame, Session, Signal};
+use al_builtins::describe::Describe;
 use al_builtins::native::AlError;
 use al_builtins::value::{Instance, Value};
 use al_ir as ir;
@@ -49,7 +50,7 @@ impl Session {
             }
             Value::Null if cast => Err(unable()),
             Value::Null => Ok(Value::Boolean(false)),
-            other => Err(Signal::Unsupported(format!("`is` or `as` on {other:?}"))),
+            other => Err(Signal::Unsupported(format!("`is` or `as` on {}", other.describe()))),
         }
     }
 
@@ -75,7 +76,7 @@ impl Session {
             // codeunit/TestInterfaceRuntimeContracts.al:Interface_CallOnUnassignedVariable_Throws_
             // InterfaceNotInitialized (corpus branch al-runtime-rs, probe on BC 27.5).
             Value::Null => Err(not_initialized()),
-            other => Err(Signal::Unsupported(format!("interface call on {other:?}"))),
+            other => Err(Signal::Unsupported(format!("interface call on {}", other.describe()))),
         }
     }
 
@@ -89,7 +90,7 @@ impl Session {
         unknown: Option<usize>,
     ) -> Result<Value, Signal> {
         let Value::Enum(_, ordinal) = value else {
-            return Err(Signal::Unsupported(format!("enum cast of {value:?}")));
+            return Err(Signal::Unsupported(format!("enum cast of {}", value.describe())));
         };
         let object = match by_ordinal.iter().find(|(o, _)| *o == ordinal) {
             Some((_, c)) => *c,

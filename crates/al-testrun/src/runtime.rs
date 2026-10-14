@@ -199,7 +199,16 @@ fn run_unit(
     crate::dotnet::take_start_time();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut stacks = Vec::new();
-        let done = run_codeunit_full(engine, lowered, u.oi, baseline, u.isolation, observe, &mut stacks, limit);
+        let done = run_codeunit_full(
+            engine,
+            lowered,
+            u.oi,
+            baseline,
+            u.isolation,
+            observe,
+            &mut stacks,
+            limit,
+        );
         (done, stacks)
     }))
     .map_err(|p| {
@@ -927,7 +936,16 @@ pub fn run_codeunit_observed(
     isolation: TestIsolation,
     observe: Option<&mut Observer>,
 ) -> Vec<(String, Outcome)> {
-    run_codeunit_full(engine, lowered, object, baseline, isolation, observe, &mut Vec::new(), None)
+    run_codeunit_full(
+        engine,
+        lowered,
+        object,
+        baseline,
+        isolation,
+        observe,
+        &mut Vec::new(),
+        None,
+    )
 }
 
 /// [`run_codeunit_isolated`] where a test that runs longer than `limit` is stopped and not run.
@@ -939,7 +957,16 @@ pub fn run_codeunit_limited(
     isolation: TestIsolation,
     limit: Option<std::time::Duration>,
 ) -> Vec<(String, Outcome)> {
-    run_codeunit_full(engine, lowered, object, baseline, isolation, None, &mut Vec::new(), limit)
+    run_codeunit_full(
+        engine,
+        lowered,
+        object,
+        baseline,
+        isolation,
+        None,
+        &mut Vec::new(),
+        limit,
+    )
 }
 
 /// The frames BC's test runner has below a test, as `SessionInformation.Callstack` shows them

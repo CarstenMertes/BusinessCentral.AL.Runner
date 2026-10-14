@@ -137,8 +137,10 @@ Answered on 2026-10-13 and recorded in ADR-013:
   reports, host values, the TestPage parts, and the Format, date, math and
   ErrorInfo builtins. Every surviving mutant was either killed by a new test or
   recorded as equivalent or unpinned. What is left: `al-vm/src/pages.rs` (the
-  TestPage core, 520 mutants) and the rest of `datefns.rs` were not swept; the
-  `pages/*` survivors (47) were not rechecked against the corpus ratchet; and
+  TestPage core, 520 mutants) and the rest of `datefns.rs` were not swept; of the 47
+  `pages/*` survivors only 14 were rechecked against the corpus ratchet (9 caught, 5
+  survive both: `pages/areas.rs` check_areas_pinned, `pages/parts.rs`
+  resync_parts_linked_by, `pages/runobject.rs` run_object_codeunit); and
   `Power` with an exponent that carries a scale (`Power(2, 3.0)` answers 1) is a
   known bug with an `#[ignore]`d test (`al-builtins/src/mathfns.rs`).
 - About 135 assumptions in `docs/probes-needed.md` wait for probes on real BC.

@@ -29,8 +29,6 @@ enum Want {
     /// The demand-driven, the complete and the cached compile give one and the same outcome
     /// (the owner's rule of 2026-10-14: zero differences), and that outcome is a pass.
     SamePass,
-    /// The three compiles give one and the same outcome, whatever it is.
-    Same,
 }
 
 fn short(o: &Outcome) -> String {
@@ -157,7 +155,7 @@ fn check(p: Probe) {
         cached, eager,
         "{name}: the cached compile differs from the complete compile"
     );
-    if matches!(want, Want::Same | Want::SamePass) {
+    if matches!(want, Want::SamePass) {
         assert_eq!(
             demand, eager,
             "{name}: the demand-driven compile differs from the complete one"
@@ -213,7 +211,7 @@ macro_rules! probe {
     };
 }
 
-use Want::{Ran, RanOrRefused, Same, SamePass};
+use Want::{Ran, RanOrRefused, SamePass};
 
 // ---------------------------------------------------------------------------------------------
 // Fixtures

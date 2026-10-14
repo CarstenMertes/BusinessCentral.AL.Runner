@@ -1097,8 +1097,6 @@ impl<'a> Nodes<'a> {
     }
 }
 
-/// Routines as (object, routine) pairs, shared.
-
 /// What one thread keeps while it lowers objects.
 struct Local<'a> {
     nodes: Nodes<'a>,

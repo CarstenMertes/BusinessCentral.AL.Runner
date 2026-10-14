@@ -1605,7 +1605,7 @@ impl<'a> Checker<'a> {
         }
         let mut p = Vec::new();
         parts(&rhs, &mut p);
-        let name = p.join(&crate::types::QUAL_SEP.to_string());
+        let name = p.join(crate::types::QUAL_SEP);
         if let Some(oi) = self.resolve_at(sc.file, kind, &name) {
             self.touch_full(oi);
         }

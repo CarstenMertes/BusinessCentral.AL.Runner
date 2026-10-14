@@ -38,6 +38,15 @@ fn error(message: impl Into<String>) -> Signal {
     })
 }
 
+/// Whether `name` (a page's name or id as a table property writes it) is a page of a dependency app
+/// that was not compiled.
+fn names_uncompiled_page(engine: &Engine, name: &str) -> bool {
+    engine.program.objects.iter().any(|o| {
+        o.kind == "uncompiled page"
+            && (o.name.eq_ignore_ascii_case(name) || o.id.is_some_and(|i| i.to_string() == name))
+    })
+}
+
 fn error_code(message: impl Into<String>, code: &str) -> Signal {
     Signal::Error(AlError {
         message: message.into(),
@@ -278,21 +287,20 @@ impl Session {
     fn check_page_events(&self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        const RAISED: [&str; 7] = [
-            "onopenpageevent",
-            "onqueryclosepageevent",
-            "onclosepageevent",
-            "onaftergetcurrrecordevent",
-            "onnewrecordevent",
-            "oninsertrecordevent",
-            "onmodifyrecordevent",
-        ];
-        for ((o, ev), subs) in &engine.events.subscribers {
+        // Subscribers that are compiled and subscribers that are declared and not (both would run
+        // in BC).
+        let declared = engine
+            .events
+            .subscribers
+            .iter()
+            .filter(|(_, subs)| !subs.is_empty())
+            .map(|((o, ev), _)| (o, ev))
+            .chain(engine.events.missing.keys().map(|(o, ev)| (o, ev)));
+        for (o, ev) in declared {
             if *o == object
-                && !subs.is_empty()
                 && ev.starts_with("on")
                 && ev.ends_with("event")
-                && !RAISED.contains(&ev.as_str())
+                && !al_ir::RAISED_PAGE_EVENTS.contains(&ev.as_str())
             {
                 // Events a page publishes itself (IntegrationEvent) are ordinary routines.
                 let published = engine
@@ -394,6 +402,11 @@ impl Session {
                             });
                             if let Some(i) = found.and_then(|o| o.id) {
                                 id = i;
+                            } else if names_uncompiled_page(&engine, &l) {
+                                return unsupported(format!(
+                                    "the LookupPageId of table {} is page {l}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)",
+                                    engine.program.objects[table].name
+                                ));
                             }
                         }
                     }
@@ -543,18 +556,24 @@ impl Session {
                     target: ControlTarget::BuiltIn(m.to_string()),
                 })))
             }
+            // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
+            // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
+            "Caption" if method.starts_with("Page.") => {
+                self.require_open(st)?;
+                match args.first() {
+                    Some(v) => match al_builtins::native::text_of(v) {
+                        Some(t) => {
+                            st.borrow_mut().caption = Some(t);
+                            Ok(Value::Null)
+                        }
+                        None => unsupported(format!("CurrPage.Caption with {v:?}")),
+                    },
+                    None => Ok(Value::Text(self.page_caption(st))),
+                }
+            }
             "Caption" => {
                 self.require_open(st)?;
-                let engine = self.engine();
-                let object = st.borrow().object as usize;
-                let o = &engine.program.objects[object];
-                let cap = o
-                    .properties
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
-                    .map(|(_, v)| unquote(v))
-                    .unwrap_or_else(|| o.name.clone());
-                Ok(Value::Text(cap))
+                Ok(Value::Text(self.page_caption(st)))
             }
             // `CurrPage.PromptMode := PromptMode::Prompt` states what a PromptDialog already starts in:
             // the pages of handlers/TbaPromptDeclared.Page.al and TbaPromptBare.Page.al do it in OnOpenPage
@@ -866,6 +885,7 @@ impl Session {
             s.pending = None;
             s.result = None;
             s.editable_off = false;
+            s.caption = None;
             s.opening = true;
             s.parts = Vec::new();
             s.areas = self.application_areas.clone();
@@ -3007,6 +3027,23 @@ impl Session {
                 o.kind == "page" && (o.name.eq_ignore_ascii_case(&name) || o.id.is_some_and(|i| i.to_string() == name))
             })
         });
+        // A page of a dependency app that nothing reached is not compiled (ADR-013); BC has it, and
+        // it would open.
+        if page_of_table.is_none() {
+            for prop in ["LookupPageId", "DrillDownPageId"] {
+                let named = table_obj
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(prop))
+                    .map(|(_, v)| v.trim().trim_matches('"').to_string());
+                if let Some(name) = named.filter(|n| names_uncompiled_page(&engine, n)) {
+                    return unsupported(format!(
+                        "the {prop} of table {} is page {name}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)",
+                        table_obj.name
+                    ));
+                }
+            }
+        }
         let Some(page_object) = page_of_table else {
             // An `asserterror` around this call is the only way a test sees the error. How far it
             // rolls back when the page's operation, not the test, raised it is not pinned: with
@@ -3613,6 +3650,22 @@ impl Session {
                 None => Ok(default),
             },
         }
+    }
+
+    /// The caption of the page in force: what `CurrPage.Caption := x` set, else its `Caption`
+    /// property, else the page name.
+    fn page_caption(&self, st: &Rc<RefCell<PageState>>) -> String {
+        if let Some(c) = &st.borrow().caption {
+            return c.clone();
+        }
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let o = &engine.program.objects[object];
+        o.properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+            .map(|(_, v)| unquote(v))
+            .unwrap_or_else(|| o.name.clone())
     }
 
     fn page_editable(&self, st: &St) -> bool {

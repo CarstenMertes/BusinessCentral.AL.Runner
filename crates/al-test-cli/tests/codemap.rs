@@ -30,7 +30,11 @@ fn listed(text: &str) -> Vec<(String, String)> {
 fn every_module_file_the_codemap_lists_exists() {
     let text = std::fs::read_to_string(root().join("docs/codemap.md")).expect("docs/codemap.md");
     let files = listed(&text);
-    assert!(files.len() > 100, "the codemap lists {} files; its format changed?", files.len());
+    assert!(
+        files.len() > 100,
+        "the codemap lists {} files; its format changed?",
+        files.len()
+    );
     let missing: Vec<String> = files
         .iter()
         .filter(|(k, f)| !root().join("crates").join(k).join("src").join(f).is_file())
@@ -48,6 +52,9 @@ fn the_parser_reads_crate_headings_and_file_bullets_only() {
     let text = "### al-vm\n- `lib.rs` (10): x\n- `pages/areas.rs` (5): y\n### Corpus run\n- `not_a_crate.rs`\n";
     assert_eq!(
         listed(text),
-        [("al-vm".to_string(), "lib.rs".to_string()), ("al-vm".to_string(), "pages/areas.rs".to_string())]
+        [
+            ("al-vm".to_string(), "lib.rs".to_string()),
+            ("al-vm".to_string(), "pages/areas.rs".to_string())
+        ]
     );
 }

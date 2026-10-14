@@ -109,6 +109,10 @@ pub struct Roots {
     /// (its routines are stubs that refuse), so the demand starts from the selected tests and the
     /// workspace's non-test code only. `None`: every test codeunit is a root.
     pub only_tests: Option<Vec<(usize, u32)>>,
+    /// Check and lower every dependency routine instead of what the workspace reaches. The
+    /// environment variable `AL_EAGER_DEPENDENCIES` does the same for a whole process. Used to
+    /// compare the demand-driven compile with the complete one (outcomes must not differ).
+    pub eager: bool,
 }
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
@@ -118,13 +122,12 @@ pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> Ch
 pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, roots: Roots) -> CheckResult {
     // With dependency apps, only what the workspace's code reaches in them is checked.
     let demand_mode = ws.kinds.contains(&crate::workspace::AppKind::Dependency)
+        && !roots.eager
         && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
     // A test codeunit the selection leaves out is not a root; nothing else in the workspace is.
     let skipped: Vec<bool> = match &roots.only_tests {
         None => Vec::new(),
-        Some(keep) => (0..ws.objects.len())
-            .map(|oi| unselected_test(ws, oi, keep))
-            .collect(),
+        Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
     let mut c = Checker {
@@ -346,6 +349,16 @@ struct ObjCtx {
     rec_unqualified: bool,
     self_obj: usize,
     base_items: HashMap<String, String>,
+}
+
+/// The `this` keyword: the object whose code is running (Microsoft Learn, "this keyword").
+pub(crate) fn is_this_keyword(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::NameRef && name_of(node).eq_ignore_ascii_case("this")
+}
+
+/// Whether a variable of this name is in scope, whatever frame.
+fn sc_has_var(sc: &Scope, name: &str) -> bool {
+    sc.vars.iter().any(|frame| frame.contains_key(name))
 }
 
 fn name_of(node: &SyntaxNode) -> String {
@@ -637,6 +650,22 @@ impl<'a> Checker<'a> {
         for r in ast::routines_in(obj.syntax()) {
             self.check_routine_in(&ctx, &r);
         }
+        // What the test client does when it opens a workspace page or report, and what its actions
+        // run, reaches into the dependency apps.
+        if matches!(
+            self.ws.objects[oi].kind,
+            ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension
+        ) {
+            self.reach_caption_class_if_used(oi);
+        }
+        if matches!(self.ws.objects[oi].kind, ObjKind::Page | ObjKind::PageExtension) {
+            self.reach_run_objects(oi);
+            // The client writes to the page's table (validating a field, leaving a new row): the
+            // table's triggers and events run, whichever app the table is in.
+            if self.demand.borrow().is_some() {
+                self.activate_source_table(oi);
+            }
+        }
     }
 
     /// Checks one routine of the object `ctx` describes.
@@ -894,6 +923,7 @@ impl<'a> Checker<'a> {
                 };
                 let unknown_callee = matches!(target, E::Val(Ty::Unknown));
                 let mut arg_tys = Vec::with_capacity(args.len());
+                self.reach_static_run(sc, callee, &args);
                 for (i, a) in args.iter().enumerate() {
                     // On a receiver outside the workspace, a bare name may be one of
                     // its fields: resolve it if we can, but never report it.
@@ -955,6 +985,16 @@ impl<'a> Checker<'a> {
                 }
             }
             MemberExpr => {
+                // `this.Member` in a codeunit: the codeunit's own procedure or global variable. It
+                // resolves like the bare name does, without the implicit record's members.
+                if is_this_keyword(&kids[0])
+                    && self.ws.objects[sc.oi].kind == ObjKind::Codeunit
+                    && !sc_has_var(sc, "this")
+                {
+                    if let Some(e) = kids.get(1).and_then(|m| self.this_member(sc, node, m)) {
+                        return e;
+                    }
+                }
                 let base = self.infer(sc, &kids[0]);
                 let mname = kids.get(1).map(name_of).unwrap_or_default();
                 if let E::PartialObj(k, mut parts) = base {
@@ -1072,34 +1112,7 @@ impl<'a> Checker<'a> {
                         }
                     },
                     E::TypeName(t) | E::Val(t) => {
-                        match &t {
-                            Ty::Enum(name) => {
-                                if let Some(ei) = self.resolve(sc, ObjKind::Enum, name) {
-                                    if let Some((v, _)) = self.members[ei]
-                                        .enum_values
-                                        .iter()
-                                        .find(|(_, n)| n.eq_ignore_ascii_case(&rhs))
-                                    {
-                                        let value = *v as i32;
-                                        self.record(sc, node, Res::EnumValue { object: ei, value });
-                                    }
-                                }
-                            }
-                            Ty::Option(members) => {
-                                if let Some(i) = members.iter().position(|m| m.eq_ignore_ascii_case(&rhs)) {
-                                    self.record(sc, node, Res::OptionValue(i as i32));
-                                }
-                            }
-                            // `FieldClass::Normal`: platform option types.
-                            Ty::Builtin(n) => {
-                                if let Some(i) = al_builtins::sysenum::members(n)
-                                    .and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(&rhs)))
-                                {
-                                    self.record(sc, node, Res::OptionValue(i as i32));
-                                }
-                            }
-                            _ => {}
-                        }
+                        self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }
                     // `Rec.ReadIsolation::ReadUncommitted`: the property name is also the way to name the
@@ -1109,10 +1122,48 @@ impl<'a> Checker<'a> {
                         self.record(sc, node, Res::OptionValue(i as i32));
                         E::Val(Ty::Builtin(enum_name.to_string()))
                     }
-                    E::Callable(c) => E::Val(self.pick(sc, &kids[0], &c, &[], &rhs)),
+                    // `RecRef.SecurityFiltering::Ignored`: the member of the option a call answers
+                    // (Base Application's "Find Record Management"). Its type is the option's.
+                    E::Callable(c) => {
+                        let t = self.pick(sc, &kids[0], &c, &[], &rhs);
+                        self.scope_member(sc, node, &t, &rhs);
+                        E::Val(t)
+                    }
                 }
             }
             _ => E::Val(Ty::Unknown),
+        }
+    }
+
+    /// `T::Member` where `T` is the type of the left side: records the enum value or option member.
+    fn scope_member(&mut self, sc: &mut Scope, node: &SyntaxNode, t: &Ty, rhs: &str) {
+        match t {
+            Ty::Enum(name) => {
+                if let Some(ei) = self.resolve(sc, ObjKind::Enum, name) {
+                    if let Some((v, _)) = self.members[ei]
+                        .enum_values
+                        .iter()
+                        .find(|(_, n)| n.eq_ignore_ascii_case(rhs))
+                    {
+                        let value = *v as i32;
+                        self.record(sc, node, Res::EnumValue { object: ei, value });
+                    }
+                }
+            }
+            Ty::Option(members) => {
+                if let Some(i) = members.iter().position(|m| m.eq_ignore_ascii_case(rhs)) {
+                    self.record(sc, node, Res::OptionValue(i as i32));
+                }
+            }
+            // `FieldClass::Normal`: platform option types.
+            Ty::Builtin(n) => {
+                if let Some(i) =
+                    al_builtins::sysenum::members(n).and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(rhs)))
+                {
+                    self.record(sc, node, Res::OptionValue(i as i32));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1123,6 +1174,37 @@ impl<'a> Checker<'a> {
                 self.diag(sc, node, "AR1000", format!("unresolved name `{}`", name_of(node)));
                 E::Val(Ty::Unknown)
             }
+        }
+    }
+
+    /// `Page.Run(Page::"X")`, `Report.Run(Report::"X")`, `XmlPort.Import(XmlPort::"X", ...)`: the
+    /// object named in the first argument runs, so its code is reached (not just its shape).
+    fn reach_static_run(&self, sc: &Scope, callee: &SyntaxNode, args: &[SyntaxNode]) {
+        if self.demand.borrow().is_none() || callee.kind() != SyntaxKind::MemberExpr {
+            return;
+        }
+        let mut kids = callee.children();
+        let (Some(base), Some(_)) = (kids.next(), kids.next()) else {
+            return;
+        };
+        let kind = match base.text().to_string().trim().to_ascii_lowercase().as_str() {
+            "page" => ObjKind::Page,
+            "report" => ObjKind::Report,
+            "xmlport" => ObjKind::XmlPort,
+            _ => return,
+        };
+        let Some(first) = args.first().filter(|a| a.kind() == SyntaxKind::ScopeExpr) else {
+            return;
+        };
+        let text = first.text().to_string();
+        let Some((lhs, name)) = text.split_once("::") else {
+            return;
+        };
+        if !lhs.trim().eq_ignore_ascii_case(base.text().to_string().trim()) {
+            return;
+        }
+        if let Some(oi) = self.resolve_at(sc.file, kind, name.trim()) {
+            self.touch_full(oi);
         }
     }
 
@@ -1143,12 +1225,38 @@ impl<'a> Checker<'a> {
                 if let Some(recv) = receiver_of(&rec) {
                     c = self.catalog_cands(&recv, n, true, &rec);
                 }
+                // `Modify()` written without `Rec.` in table, page or report code writes to the
+                // implicit record like any other write.
+                if !c.is_empty() {
+                    if let Ty::Record { table, .. } = &rec {
+                        if let Some(ti) = self.resolve_quiet(sc.file, ObjKind::Table, table) {
+                            self.touch_ops(ti, demand::record_ops(n));
+                        }
+                    }
+                }
             }
         }
         if c.is_empty() {
             c = self.global_cands(n);
         }
         (!c.is_empty()).then_some(c)
+    }
+
+    /// `this.Name` in a codeunit: a global variable, else a procedure of the codeunit. The
+    /// resolution is recorded on the member expression, as a member access would.
+    fn this_member(&mut self, sc: &mut Scope, node: &SyntaxNode, member: &SyntaxNode) -> Option<E> {
+        let n = name_of(member);
+        let key = n.to_lowercase();
+        if let Some(t) = sc.vars.first().and_then(|globals| globals.get(&key)).cloned() {
+            self.record(sc, node, Res::Global(key));
+            return Some(E::Val(t));
+        }
+        let own: Vec<Cand> = self.members[sc.self_obj]
+            .procedures_named(&n)
+            .iter()
+            .map(|p| proc_cand(p))
+            .collect();
+        (!own.is_empty()).then_some(E::Callable(own))
     }
 
     /// Name lookup without reporting: None if the name does not resolve.
@@ -1338,6 +1446,11 @@ impl<'a> Checker<'a> {
                 }]));
             }
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),
+            // A RecordRef writes to a table that is known only when the code runs; the write raises
+            // the platform's database events whatever the table is.
+            Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") => {
+                self.touch_global_ops(demand::record_ops(name));
+            }
             Ty::Record { table, .. } => {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
                     return Some(E::Val(Ty::Unknown));
@@ -1384,6 +1497,11 @@ impl<'a> Checker<'a> {
                 }
                 if !procs.is_empty() {
                     return Some(E::Callable(procs));
+                }
+                // `Rep.Run()`, `Xp.Import()`: the platform's methods of a report or XML port run its
+                // triggers, so its code is reached.
+                if matches!(kind, ObjKind::Report | ObjKind::XmlPort) {
+                    self.touch_full(oi);
                 }
                 // `CurrPage.<Part>`: the part control, whose `.Page` is the page it shows.
                 if *kind == ObjKind::Page {

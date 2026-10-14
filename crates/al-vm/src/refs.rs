@@ -144,13 +144,17 @@ impl Session {
                 return unsupported("RecordRef.Open with a company name (ChangeCompany is not implemented yet)");
             }
         }
+        // corpus recordref/TestRecordRefOpenCompilationTarget.al:27-35: an internal system table is
+        // refused for a Cloud-target app (this app is Cloud), whether or not a dependency app
+        // declares an object with that number (the platform's `System.app` does, as
+        // `Object Metadata`; a complete compile of the dependencies must not change the answer).
+        if no == 2_000_000_071 {
+            return Err(al_error(format!(
+                "You cannot open record {no} from a RecordRef data type when you are using target Cloud."
+            )));
+        }
         let Some(table) = self.table_object(no) else {
             return match no {
-                // corpus recordref/TestRecordRefOpenCompilationTarget.al:27-35: an internal
-                // system table is refused for a Cloud-target app (this app is Cloud).
-                2_000_000_071 => Err(al_error(format!(
-                    "You cannot open record {no} from a RecordRef data type when you are using target Cloud."
-                ))),
                 // :37-62: these system tables open for a Cloud-target app and report their number.
                 2_000_000_026 | 2_000_000_187 | 2_000_000_188 => {
                     *lib.borrow_mut() = LibraryValue::SystemTable(no);
@@ -235,6 +239,22 @@ impl Session {
             "SetView" => {
                 let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
                 self.set_view(&rec, &t, &view).map(|()| Value::Null)
+            }
+            // The load set of a RecordRef is given by field numbers (record/TestRecordPartialLoad.al
+            // PartialLoad_SetLoadFields_UnknownFieldNo_Throws: a number no field has is an error that
+            // names it; its text is not pinned). The rest is the Record rule (partial.rs).
+            "SetLoadFields" | "AddLoadFields" => {
+                let mut positions = Vec::with_capacity(args.len());
+                for a in args.iter() {
+                    let Value::Integer(n) = a else {
+                        return unsupported(format!("RecordRef.{method} with {a:?}"));
+                    };
+                    match t.fields.iter().position(|f| i64::from(f.id) == i64::from(*n)) {
+                        Some(p) => positions.push(Value::Integer(p as i32)),
+                        None => return Err(Signal::Error(al_builtins::native::unpinned_error())),
+                    }
+                }
+                self.load_fields_op(method, &rec, &t, &positions)
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),

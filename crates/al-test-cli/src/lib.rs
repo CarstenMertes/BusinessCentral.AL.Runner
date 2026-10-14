@@ -16,6 +16,6 @@ pub mod output;
 pub mod pin;
 pub mod report;
 pub mod runner;
-pub mod select;
 pub mod runtime;
+pub mod select;
 pub mod target;

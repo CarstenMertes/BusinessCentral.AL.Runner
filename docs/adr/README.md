@@ -28,3 +28,4 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [017](017-builtins-round-2-defaults.md) | Defaults for error collection, partial records, media and the call depth ceiling, chosen without owner review | Accepted |
 | [018](018-fixes-2-defaults.md) | Defaults chosen in the second round of corpus fixes (background worker transaction, LogMessage, SessionSettings handler, unevaluable InitValue), without owner review | Accepted |
 | [019](019-platform-table-providers.md) | Platform tables: a registry of providers keyed by table id, a `VirtualTables` seam in the store, poisoned rows and unpinned columns refused, stored platform tables seeded with the session's facts | Accepted (without owner review) |
+| [020](020-bcdb-test-data.md) | `al-bcdb` reads BC data from a `.bak` or `.bacpac` with no OS access; a table provider in `al-host` is the proposed way to load CRONUS into the store on first touch | Proposed |

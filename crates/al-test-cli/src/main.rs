@@ -4,8 +4,8 @@
 //! (oracle and corpus disagree, unreadable input, bad arguments).
 
 use al_host::dotnet::DotNetHost;
-use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
 use al_test_cli::args::{self, Args, Parsed};
+use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
 use al_test_cli::{
     config, corpus, deps, drift, explain, insight, oracle, output, pin, report, runner::Runner, runtime, select, target,
 };
@@ -45,6 +45,9 @@ fn run() -> Result<ExitCode, String> {
         }
         Parsed::Run(a) => *a,
     };
+    if let Some(dir) = &args.files_dir {
+        al_test_cli::host::set_files_dir(dir.clone());
+    }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
     if let Some(project) = &args.project {
         return fetch_project(&args, &root, project);
@@ -191,17 +194,24 @@ fn run_version(
     let selecting = args.select.is_active() || explained.is_some();
     let (cases, suite_cases_all): (Vec<oracle::OracleCase>, Vec<Vec<oracle::OracleCase>>) = match &explained {
         Some((suite, case)) => (
-            if suite.is_none() { vec![case.clone()] } else { Vec::new() },
+            if suite.is_none() {
+                vec![case.clone()]
+            } else {
+                Vec::new()
+            },
             (0..suite_data.len())
-                .map(|i| if *suite == Some(i) { vec![case.clone()] } else { Vec::new() })
+                .map(|i| {
+                    if *suite == Some(i) {
+                        vec![case.clone()]
+                    } else {
+                        Vec::new()
+                    }
+                })
                 .collect(),
         ),
         None => (
             args.select.filter(&all_cases, &index),
-            suite_data
-                .iter()
-                .map(|(c, ix)| args.select.filter(c, ix))
-                .collect(),
+            suite_data.iter().map(|(c, ix)| args.select.filter(c, ix)).collect(),
         ),
     };
     if selecting && cases.is_empty() && suite_cases_all.iter().all(Vec::is_empty) {
@@ -216,7 +226,11 @@ fn run_version(
             "selection: {} of {} cases{}",
             cases.len() + suite_cases_all.iter().map(Vec::len).sum::<usize>(),
             all_cases.len() + suite_data.iter().map(|(c, _)| c.len()).sum::<usize>(),
-            if args.select.is_active() { format!(" ({})", args.select.describe()) } else { String::new() }
+            if args.select.is_active() {
+                format!(" ({})", args.select.describe())
+            } else {
+                String::new()
+            }
         );
     }
 
@@ -479,7 +493,11 @@ fn run_version(
         let head = format!(
             "BC {}{}: test {} in codeunit {}{}",
             version.bc_version,
-            if name.is_empty() { String::new() } else { format!(" {name}") },
+            if name.is_empty() {
+                String::new()
+            } else {
+                format!(" {name}")
+            },
             case.id.name,
             case.id.codeunit,
             cu.map_or(String::new(), |c| format!(" ({}, area {})", c.file.display(), c.area))
@@ -550,7 +568,10 @@ fn run_version(
     }
     // The baseline of a target, narrowed to the selected cases: the others did not run.
     let load_baseline = |t: &Target| -> Result<std::collections::BTreeSet<oracle::CaseId>, String> {
-        let path = t.baseline_path.as_ref().expect("a ratcheted target has a baseline file");
+        let path = t
+            .baseline_path
+            .as_ref()
+            .expect("a ratcheted target has a baseline file");
         let mut baseline = report::parse_baseline(&read(path)?).map_err(|e| format!("{}: {e}", path.display()))?;
         // Only the selected cases ran; the others cannot have regressed.
         baseline.retain(|c| (t.selected)(c));
@@ -574,7 +595,10 @@ fn run_version(
     if args.baseline_diff {
         for t in targets.iter().filter(|t| t.baseline_path.is_some()) {
             let d = insight::baseline_diff(&load_baseline(t)?, t.cases, &*t.outcome);
-            println!("\n{}", insight::render_diff(&format!("BC {}", t.label), &d, &*t.area_of));
+            println!(
+                "\n{}",
+                insight::render_diff(&format!("BC {}", t.label), &d, &*t.area_of)
+            );
         }
     }
     if args.no_ratchet {
@@ -665,9 +689,16 @@ fn find_explained(
         );
     }
     let lower = pattern.to_lowercase();
-    let exact: Vec<_> = all.iter().filter(|(_, c)| c.id.name.to_lowercase() == lower).cloned().collect();
+    let exact: Vec<_> = all
+        .iter()
+        .filter(|(_, c)| c.id.name.to_lowercase() == lower)
+        .cloned()
+        .collect();
     let found = if exact.is_empty() {
-        all.iter().filter(|(_, c)| c.id.name.to_lowercase().contains(&lower)).cloned().collect()
+        all.iter()
+            .filter(|(_, c)| c.id.name.to_lowercase().contains(&lower))
+            .cloned()
+            .collect()
     } else {
         exact
     };

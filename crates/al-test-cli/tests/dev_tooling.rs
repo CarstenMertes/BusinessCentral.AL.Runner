@@ -65,19 +65,57 @@ const SMALL_CU: u32 = 60184;
 
 #[test]
 fn help_lists_every_flag_in_groups() {
-    let r = Command::new(env!("CARGO_BIN_EXE_al-test-cli")).arg("--help").output().unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+        .arg("--help")
+        .output()
+        .unwrap();
     let text = String::from_utf8_lossy(&r.stdout);
     assert!(r.status.success());
-    for group in ["INPUT", "SELECTION", "DIAGNOSE", "BASELINE AND REPORTS", "DOTNET", "EXIT CODES"] {
+    for group in [
+        "INPUT",
+        "SELECTION",
+        "DIAGNOSE",
+        "BASELINE AND REPORTS",
+        "DOTNET",
+        "EXIT CODES",
+    ] {
         assert!(text.contains(group), "no group {group}:\n{text}");
     }
     for flag in [
-        "--root", "--oracle", "--baseline", "--suite-baseline", "--json", "--markdown", "--junit",
-        "--update-baseline", "--no-ratchet", "--deps", "--no-deps", "--bc-version", "--all-versions",
-        "--dotnet-sidecar", "--dotnet-assembly-dir", "--dotnet-allow-roll-forward", "--dotnet-timeout-secs",
-        "--require-dotnet", "--no-download", "--cache-dir", "--fetch-deps", "--print-builds", "--project",
-        "--codeunit", "--test", "--area", "--file", "--explain", "--top-refusals", "--top-refusals-area",
-        "--baseline-diff", "--timings", "--help",
+        "--root",
+        "--oracle",
+        "--baseline",
+        "--suite-baseline",
+        "--json",
+        "--markdown",
+        "--junit",
+        "--update-baseline",
+        "--no-ratchet",
+        "--deps",
+        "--no-deps",
+        "--bc-version",
+        "--all-versions",
+        "--dotnet-sidecar",
+        "--dotnet-assembly-dir",
+        "--dotnet-allow-roll-forward",
+        "--dotnet-timeout-secs",
+        "--require-dotnet",
+        "--files-dir",
+        "--no-download",
+        "--cache-dir",
+        "--fetch-deps",
+        "--print-builds",
+        "--project",
+        "--codeunit",
+        "--test",
+        "--area",
+        "--file",
+        "--explain",
+        "--top-refusals",
+        "--top-refusals-area",
+        "--baseline-diff",
+        "--timings",
+        "--help",
     ] {
         assert!(text.contains(flag), "{flag} is not in --help");
     }
@@ -87,7 +125,10 @@ fn help_lists_every_flag_in_groups() {
 
 #[test]
 fn an_unknown_flag_is_a_setup_error_that_points_at_help() {
-    let r = Command::new(env!("CARGO_BIN_EXE_al-test-cli")).arg("--frobnicate").output().unwrap();
+    let r = Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+        .arg("--frobnicate")
+        .output()
+        .unwrap();
     assert_eq!(r.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&r.stderr).contains("--help"));
 }
@@ -103,18 +144,28 @@ fn a_codeunit_selection_reports_only_that_codeunit() {
 fn selection_flags_repeat_and_make_a_union() {
     let cases = oracle_cases();
     let in_cu = |cu: u32| cases.iter().filter(|c| c.codeunit == cu).count() as u64;
-    let other = cases.iter().map(|c| c.codeunit).find(|&c| c != SMALL_CU && in_cu(c) > 0).unwrap();
+    let other = cases
+        .iter()
+        .map(|c| c.codeunit)
+        .find(|&c| c != SMALL_CU && in_cu(c) > 0)
+        .unwrap();
     assert_eq!(
         total_of(&["--codeunit", &SMALL_CU.to_string(), "--codeunit", &other.to_string()]),
         in_cu(SMALL_CU) + in_cu(other)
     );
     // --test: a substring of the name, any case. One name picks every codeunit that has it.
     let name = &cases.iter().find(|c| c.codeunit == SMALL_CU).unwrap().name;
-    let by_name = cases.iter().filter(|c| c.name.to_lowercase().contains(&name.to_lowercase())).count() as u64;
+    let by_name = cases
+        .iter()
+        .filter(|c| c.name.to_lowercase().contains(&name.to_lowercase()))
+        .count() as u64;
     assert_eq!(total_of(&["--test", &name.to_uppercase()]), by_name);
     // --area and --codeunit together: the area, plus the codeunit when it is outside it.
     assert_eq!(total_of(&["--area", "json"]), 129);
-    assert_eq!(total_of(&["--area", "json", "--codeunit", &SMALL_CU.to_string()]), 129 + in_cu(SMALL_CU));
+    assert_eq!(
+        total_of(&["--area", "json", "--codeunit", &SMALL_CU.to_string()]),
+        129 + in_cu(SMALL_CU)
+    );
 }
 
 #[test]
@@ -122,7 +173,15 @@ fn a_file_selection_matches_the_end_of_the_path() {
     let n = total_of(&["--file", "types/TestDurationContracts.al"]);
     assert!(n > 0);
     assert_eq!(total_of(&["--file", "TestDurationContracts.al"]), n);
-    assert_eq!(total_of(&["--file", "types/TestDurationContracts.al", "--file", "TestDurationContracts.al"]), n);
+    assert_eq!(
+        total_of(&[
+            "--file",
+            "types/TestDurationContracts.al",
+            "--file",
+            "TestDurationContracts.al"
+        ]),
+        n
+    );
 }
 
 #[test]
@@ -137,9 +196,19 @@ fn update_baseline_refuses_a_selection_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path().join("passing.txt");
     std::fs::write(&base, "1 Keep\n").unwrap();
-    let r = cli(&["--update-baseline", "--baseline", base.to_str().unwrap(), "--codeunit", "60184"]);
+    let r = cli(&[
+        "--update-baseline",
+        "--baseline",
+        base.to_str().unwrap(),
+        "--codeunit",
+        "60184",
+    ]);
     assert_eq!(r.code, 2);
-    assert!(r.err.contains("--update-baseline") && r.err.contains("selection"), "{}", r.err);
+    assert!(
+        r.err.contains("--update-baseline") && r.err.contains("selection"),
+        "{}",
+        r.err
+    );
     assert_eq!(std::fs::read_to_string(&base).unwrap(), "1 Keep\n");
 }
 
@@ -162,13 +231,26 @@ fn the_ratchet_checks_only_the_selected_baseline_cases() {
 fn outcomes_of_codeunit(cu: u32) -> (Vec<String>, Vec<String>) {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("j.xml");
-    let r = cli(&["--no-ratchet", "--junit", f.to_str().unwrap(), "--codeunit", &cu.to_string()]);
+    let r = cli(&[
+        "--no-ratchet",
+        "--junit",
+        f.to_str().unwrap(),
+        "--codeunit",
+        &cu.to_string(),
+    ]);
     assert_eq!(r.code, 0, "{}", r.err);
     let xml = std::fs::read_to_string(&f).unwrap();
     let (mut pass, mut refused) = (Vec::new(), Vec::new());
     for case in xml.split("<testcase ").skip(1) {
         let case = case.split("</testcase>").next().unwrap();
-        let name = case.split(" name=\"").nth(1).unwrap().split('"').next().unwrap().to_string();
+        let name = case
+            .split(" name=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_string();
         if case.contains("<skipped") {
             refused.push(name);
         } else if !case.contains("<failure") {
@@ -188,19 +270,33 @@ fn baseline_diff_lists_new_passes_and_lost_baseline_cases_by_area() {
     let mut lines: Vec<String> = pass[1..].iter().map(|n| format!("{SMALL_CU} {n}")).collect();
     lines.push(format!("{SMALL_CU} {}", refused[0]));
     std::fs::write(&base, lines.join("\n") + "\n").unwrap();
-    let r = cli(&["--baseline", base.to_str().unwrap(), "--baseline-diff", "--codeunit", &SMALL_CU.to_string()]);
+    let r = cli(&[
+        "--baseline",
+        base.to_str().unwrap(),
+        "--baseline-diff",
+        "--codeunit",
+        &SMALL_CU.to_string(),
+    ]);
     assert_eq!(r.code, 1, "a lost baseline case is still a regression: {}", r.err);
     let diff = &r.out[r.out.find("Baseline diff").expect(&r.out)..];
     assert!(diff.contains("1 newly pass"), "{diff}");
     assert!(diff.contains("1 baseline cases no longer pass"), "{diff}");
     let section = |title: &str| {
-        let at = diff.find(title).unwrap_or_else(|| panic!("no section {title}:\n{diff}"));
+        let at = diff
+            .find(title)
+            .unwrap_or_else(|| panic!("no section {title}:\n{diff}"));
         diff[at..].split("\n\n").next().unwrap().to_string()
     };
     let new = section("Newly passing");
-    assert!(new.contains("  types (1):") && new.contains(&format!("{SMALL_CU} {}", pass[0])), "{new}");
+    assert!(
+        new.contains("  types (1):") && new.contains(&format!("{SMALL_CU} {}", pass[0])),
+        "{new}"
+    );
     let lost = section("In the baseline but no longer passing");
-    assert!(lost.contains(&format!("{SMALL_CU} {}", refused[0])) && lost.contains("not run:"), "{lost}");
+    assert!(
+        lost.contains(&format!("{SMALL_CU} {}", refused[0])) && lost.contains("not run:"),
+        "{lost}"
+    );
 }
 
 #[test]
@@ -220,9 +316,23 @@ fn top_refusals_ranks_folded_reasons_with_an_example_each() {
     assert_eq!(text.matches("e.g. 6").count(), 3, "an example per reason:\n{text}");
     assert!(text.contains("more reasons"), "{text}");
     // The header's count is the run's own count of cases not run.
-    let not_run: u64 = r.out.lines().find(|l| l.starts_with("BC 29.0:")).unwrap().split(", ").nth(2).unwrap()
-        .split_whitespace().next().unwrap().parse().unwrap();
-    assert!(text.lines().next().unwrap().contains(&format!("{not_run} not run")), "{text}");
+    let not_run: u64 = r
+        .out
+        .lines()
+        .find(|l| l.starts_with("BC 29.0:"))
+        .unwrap()
+        .split(", ")
+        .nth(2)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        text.lines().next().unwrap().contains(&format!("{not_run} not run")),
+        "{text}"
+    );
 }
 
 #[test]
@@ -231,7 +341,11 @@ fn top_refusals_area_ranks_one_area_and_selects_it() {
     let b = cli(&["--no-ratchet", "--area", "types", "--top-refusals"]);
     assert_eq!(a.code, 0, "{}", a.err);
     let ranking = |o: &Out| o.out[o.out.find("Top refusals").unwrap()..].to_string();
-    assert!(ranking(&a).lines().next().unwrap().contains("area types"), "{}", ranking(&a));
+    assert!(
+        ranking(&a).lines().next().unwrap().contains("area types"),
+        "{}",
+        ranking(&a)
+    );
     assert_eq!(
         ranking(&a).lines().skip(1).collect::<Vec<_>>(),
         ranking(&b).lines().skip(1).collect::<Vec<_>>()
@@ -242,12 +356,26 @@ fn top_refusals_area_ranks_one_area_and_selects_it() {
 #[test]
 fn explain_a_passing_test_and_a_refused_test() {
     let (pass, refused) = outcomes_of_codeunit(SMALL_CU);
-    let p = cli(&["--no-ratchet", "--explain", &pass[0], "--codeunit", &SMALL_CU.to_string()]);
+    let p = cli(&[
+        "--no-ratchet",
+        "--explain",
+        &pass[0],
+        "--codeunit",
+        &SMALL_CU.to_string(),
+    ]);
     assert_eq!(p.code, 0, "{}", p.err);
-    assert!(p.out.contains("runtime: PASS") && p.out.contains("real BC (oracle): passes"), "{}", p.out);
+    assert!(
+        p.out.contains("runtime: PASS") && p.out.contains("real BC (oracle): passes"),
+        "{}",
+        p.out
+    );
     let r = cli(&["--no-ratchet", "--explain", &refused[0]]);
     assert_eq!(r.code, 0, "{}", r.err);
-    assert!(r.out.contains("runtime: NOT RUN (refused)") && r.out.contains("reason: "), "{}", r.out);
+    assert!(
+        r.out.contains("runtime: NOT RUN (refused)") && r.out.contains("reason: "),
+        "{}",
+        r.out
+    );
     // Where it was refused: a routine and a source position.
     assert!(r.out.contains(".al:") && r.out.contains("codeunit "), "{}", r.out);
 }
@@ -267,15 +395,27 @@ fn explain_a_failure_prints_error_code_and_stack() {
     let name = failing.split(" name=\"").nth(1).unwrap().split('"').next().unwrap();
     let r = cli(&["--no-ratchet", "--explain", name]);
     assert_eq!(r.code, 0, "{}", r.err);
-    assert!(r.out.contains("runtime: FAIL") && r.out.contains("error: ") && r.out.contains("code: "), "{}", r.out);
-    assert!(r.out.contains("AL call stack") && r.out.contains("raised in (innermost first):"), "{}", r.out);
+    assert!(
+        r.out.contains("runtime: FAIL") && r.out.contains("error: ") && r.out.contains("code: "),
+        "{}",
+        r.out
+    );
+    assert!(
+        r.out.contains("AL call stack") && r.out.contains("raised in (innermost first):"),
+        "{}",
+        r.out
+    );
 }
 
 #[test]
 fn explain_needs_one_test() {
     let many = cli(&["--no-ratchet", "--explain", "Throws"]);
     assert_eq!(many.code, 2);
-    assert!(many.err.contains("matches") && many.err.contains("--codeunit"), "{}", many.err);
+    assert!(
+        many.err.contains("matches") && many.err.contains("--codeunit"),
+        "{}",
+        many.err
+    );
     let none = cli(&["--no-ratchet", "--explain", "NoSuchTestAnywhere_zzz"]);
     assert_eq!(none.code, 2);
     assert!(none.err.contains("no test matches"), "{}", none.err);

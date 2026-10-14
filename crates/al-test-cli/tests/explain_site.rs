@@ -91,7 +91,9 @@ fn run() -> (al_ir::Program, Vec<(String, Outcome, explain::TestDetail)>) {
                 call_stack: e.call_stack.clone(),
             }),
         );
-        d.refused_in = seen.refused_in.map(|(o, r)| explain::describe(&l.program, o, r, NO_POS));
+        d.refused_in = seen
+            .refused_in
+            .map(|(o, r)| explain::describe(&l.program, o, r, NO_POS));
         details.push((name.to_string(), d));
     };
     let observer: &mut Observer = &mut observe;
@@ -132,17 +134,12 @@ fn a_failure_names_the_error_and_every_routine_it_left_with_its_line() {
     // The statement that was running in each routine, innermost first (the file starts with a
     // newline, so the `codeunit` line is line 2).
     let at: Vec<&str> = d.raised_in.iter().map(|l| l.at.as_str()).collect();
-    assert_eq!(
-        at,
-        [
-            "a: src/t.al:48:9",
-            "a: src/t.al:43:9",
-            "a: src/t.al:9:9"
-        ]
-    );
+    assert_eq!(at, ["a: src/t.al:48:9", "a: src/t.al:43:9", "a: src/t.al:9:9"]);
     let text = explain::render("head", outcome, "passes", Some(d));
     assert!(
-        text.contains("runtime: FAIL") && text.contains("error: boom from Inner") && text.contains("raised in (innermost first):"),
+        text.contains("runtime: FAIL")
+            && text.contains("error: boom from Inner")
+            && text.contains("raised in (innermost first):"),
         "{text}"
     );
 }
@@ -151,13 +148,19 @@ fn a_failure_names_the_error_and_every_routine_it_left_with_its_line() {
 fn a_refusal_while_running_names_the_statement() {
     let (_, rows) = run();
     let (_, outcome, d) = of(&rows, "DividesByZero");
-    assert!(matches!(outcome, Outcome::NotRun(r) if r.contains("division by zero")), "{outcome:?}");
+    assert!(
+        matches!(outcome, Outcome::NotRun(r) if r.contains("division by zero")),
+        "{outcome:?}"
+    );
     assert_eq!(d.refused_in, None);
     assert_eq!(d.raised_in.len(), 1);
     assert_eq!(d.raised_in[0].who, "codeunit 63100 \"T\".DividesByZero");
     assert_eq!(d.raised_in[0].at, "a: src/t.al:18:9");
     let text = explain::render("head", outcome, "passes", Some(d));
-    assert!(text.contains("refused while running, in:") && text.contains("src/t.al:18:9"), "{text}");
+    assert!(
+        text.contains("refused while running, in:") && text.contains("src/t.al:18:9"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -166,7 +169,10 @@ fn an_error_that_was_caught_does_not_stand_for_a_later_one() {
     let (_, outcome, d) = of(&rows, "AssertErrorIsCaught_ThenSecondErrorEscapes");
     assert_eq!(outcome, &Outcome::Fail("second, escapes".into()));
     assert_eq!(d.raised_in.len(), 1);
-    assert_eq!(d.raised_in[0].at, "a: src/t.al:25:9", "the second Error, not the asserterror line");
+    assert_eq!(
+        d.raised_in[0].at, "a: src/t.al:25:9",
+        "the second Error, not the asserterror line"
+    );
 }
 
 #[test]
@@ -179,7 +185,11 @@ fn a_reason_found_before_the_run_names_its_routine_header() {
     );
     let site = d.refused_in.as_ref().expect("a lowering reason has a routine");
     assert_eq!(site.who, "codeunit 63100 \"T\".NeedsAnUnimplementedBuiltin");
-    assert!(site.at.starts_with("a: src/t.al:") && site.at.contains("routine header"), "{}", site.at);
+    assert!(
+        site.at.starts_with("a: src/t.al:") && site.at.contains("routine header"),
+        "{}",
+        site.at
+    );
     assert!(d.raised_in.is_empty());
 }
 
@@ -207,8 +217,16 @@ fn blocked_site_finds_the_routine_a_reason_sits_in_through_the_call_graph() {
         &Default::default(),
     );
     assert!(ws.diagnostics.is_empty());
-    let t = l.program.objects[0].routines.iter().position(|r| r.name == "T").unwrap();
-    let helper = l.program.objects[0].routines.iter().position(|r| r.name == "Helper").unwrap();
+    let t = l.program.objects[0]
+        .routines
+        .iter()
+        .position(|r| r.name == "T")
+        .unwrap();
+    let helper = l.program.objects[0]
+        .routines
+        .iter()
+        .position(|r| r.name == "Helper")
+        .unwrap();
     let b = blocked_site(&l, 0, t).expect("blocked through Helper");
     assert_eq!((b.object, b.routine), (0, helper));
     assert!(b.text.starts_with("C.Helper: "), "{}", b.text);

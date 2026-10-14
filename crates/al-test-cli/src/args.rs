@@ -37,6 +37,9 @@ pub struct Args {
     pub dotnet_timeout_secs: Option<u64>,
     /// `--require-dotnet`: a machine without a usable .NET is an error, not a skip (CI).
     pub require_dotnet: bool,
+    /// `--files-dir DIR`: the `File` data type reads and writes real files under DIR. Without it
+    /// files live in memory and are gone when the test ends.
+    pub files_dir: Option<PathBuf>,
     /// `--no-download`: never fetch a dependency app from Microsoft's artifact feed (ADR-013).
     pub no_download: bool,
     /// `--cache-dir DIR`: where downloaded artifacts are kept (else `ALRUNNER_CACHE`, else
@@ -84,7 +87,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             // The count is optional: `--top-refusals` or `--top-refusals 5`.
             let n = match it.peek() {
                 Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => {
-                    let n = it.next().unwrap_or_default().parse().map_err(|_| "--top-refusals: number too large")?;
+                    let n = it
+                        .next()
+                        .unwrap_or_default()
+                        .parse()
+                        .map_err(|_| "--top-refusals: number too large")?;
                     if n == 0 {
                         return Err("--top-refusals needs a count of at least 1".into());
                     }
@@ -120,6 +127,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(text()?.into()),
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
             "--require-dotnet" => a.require_dotnet = true,
+            "--files-dir" => a.files_dir = Some(text()?.into()),
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--fetch-deps" => a.fetch_deps = true,
@@ -134,10 +142,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             }
             "--codeunit" => {
                 let v = text()?;
-                a.select.codeunits.push(
-                    v.parse()
-                        .map_err(|_| format!("{flag} needs an object id, got `{v}`"))?,
-                );
+                a.select
+                    .codeunits
+                    .push(v.parse().map_err(|_| format!("{flag} needs an object id, got `{v}`"))?);
             }
             "--test" => a.select.tests.push(text()?),
             "--area" => a.select.areas.push(text()?),
@@ -184,6 +191,7 @@ INPUT
   --deps DIR                  extra directory of .app packages for the dependencies (repeatable)
   --no-deps                   run the corpus alone, without Microsoft's apps
   --no-download               never fetch a dependency app from the artifact feed
+  --files-dir DIR             let the File data type read and write real files under DIR (default: in memory)
   --cache-dir DIR             where downloaded artifacts are kept (default: ~/.cache/al-runtime)
 
 SELECTION (each flag repeats; the selection is their union; without one, everything runs)
@@ -242,7 +250,19 @@ mod tests {
 
     #[test]
     fn selection_flags_repeat() {
-        let a = run(&["--codeunit", "5", "--codeunit", "6", "--test", "x", "--area", "a", "--file", "f"]).unwrap();
+        let a = run(&[
+            "--codeunit",
+            "5",
+            "--codeunit",
+            "6",
+            "--test",
+            "x",
+            "--area",
+            "a",
+            "--file",
+            "f",
+        ])
+        .unwrap();
         assert_eq!(a.select.codeunits, [5, 6]);
         assert_eq!(a.select.tests, ["x"]);
         assert!(a.select.is_active());

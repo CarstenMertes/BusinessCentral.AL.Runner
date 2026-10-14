@@ -227,3 +227,59 @@ fn set_base_load_fields_on_a_full_load_is_callable_and_answers_false() {
     // the test's comment, not an assertion (probes-needed).
     assert_eq!(text("", "exit(Format(Rec.SetBaseLoadFields()));").unwrap(), "No");
 }
+
+// ---------------------------------------------------------------- RecordRef
+
+#[test]
+fn a_record_ref_takes_field_numbers_and_its_reads_still_see_stored_values() {
+    // record/TestRecordPartialLoad.al: a read of an omitted field returns its stored value, so a
+    // RecordRef with a load set reads like one without (RecordRef has no AreFieldsLoaded here).
+    let r = text(
+        "RR: RecordRef;",
+        &format!(
+            "{SEED} RR.Open(50800); RR.SetLoadFields(2, 3); b := RR.AddLoadFields(4);
+             RR.FindFirst(); exit(Format(RR.Field(1).Value) + '/' + Format(RR.Field(5).Value) + '/' + Format(b));"
+        ),
+    );
+    // Without a request AddLoadFields adds nothing and answers false on a Record
+    // (add_load_fields_on_a_full_load_does_nothing_and_answers_false); here a request exists.
+    assert_eq!(r.unwrap(), "1/n1/Yes");
+}
+
+#[test]
+fn a_record_ref_load_set_with_no_numbers_goes_back_to_a_full_load() {
+    // record/TestRecordPartialLoad.al:61-99 for a Record; the RecordRef form is the same call.
+    let r = text(
+        "RR: RecordRef;",
+        &format!(
+            "{SEED} RR.Open(50800); RR.SetLoadFields(2); RR.SetLoadFields(); RR.FindFirst(); exit(Format(RR.Field(5).Value));"
+        ),
+    );
+    assert_eq!(r.unwrap(), "n1");
+}
+
+#[test]
+fn a_field_number_the_table_lacks_is_an_error_with_no_pinned_text() {
+    // record/TestRecordPartialLoad.al:PartialLoad_SetLoadFields_UnknownFieldNo_Throws pins that
+    // the call fails and that the text names the number; the text is not pinned.
+    let r = text(
+        "RR: RecordRef;",
+        "RR.Open(50800); RR.SetLoadFields(9999); exit('no error');",
+    );
+    match r {
+        Err(Signal::Error(e)) => assert_eq!(e.message, al_builtins::native::UNPINNED_ERROR),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_member_of_the_option_a_call_answers_names_its_value() {
+    // Base Application "Find Record Management": `RecRef.SecurityFiltering(RecRef.SecurityFiltering::Ignored)`
+    // (reached by the report 91 tests, handlers/TestPrecompiledOptionCaption.al).
+    let r = text(
+        "RR: RecordRef; X: SecurityFilter;",
+        "RR.Open(50800); X := RR.SecurityFiltering; RR.SecurityFiltering(RR.SecurityFiltering::Ignored);
+         exit(Format(RR.SecurityFiltering = RR.SecurityFiltering::Ignored));",
+    );
+    assert_eq!(r.unwrap(), "Yes");
+}

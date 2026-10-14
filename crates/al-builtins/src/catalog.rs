@@ -45,9 +45,11 @@ pub fn apply_overrides(lines: &[&str], overrides: &str) -> Result<Vec<String>, S
 
 /// Receivers whose static methods can be called without a qualifier
 /// (`Message(...)`, `Format(...)`, `CopyStr(...)`, `Commit()`, `BindSubscription(...)`).
+/// `File` is here because Base Application's File Management codeunit calls `Download(...)`,
+/// `Upload(...)` and `Exists(...)` unqualified (the static methods of the File type).
 /// `SecretText` is here because corpus types/TestSecretText.al:73 calls
 /// `SecretStrSubstNo(...)` unqualified and BC compiles it.
-pub const GLOBAL_RECEIVERS: &[&str] = &["System", "Dialog", "Text", "Database", "Session", "SecretText"];
+pub const GLOBAL_RECEIVERS: &[&str] = &["System", "Dialog", "Text", "Database", "Session", "SecretText", "File"];
 
 pub struct Catalog {
     /// Every overload of every version, in id order: untagged first, then by tag (ADR-015 3.3).

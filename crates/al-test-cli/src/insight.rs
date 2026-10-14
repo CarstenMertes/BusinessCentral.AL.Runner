@@ -70,8 +70,8 @@ fn fold_quotes(s: &str) -> String {
         let c = chars[i];
         let opens = matches!(c, '\'' | '`' | '"') && (i == 0 || !chars[i - 1].is_alphanumeric());
         if opens {
-            let close = (i + 1..chars.len())
-                .find(|&j| chars[j] == c && chars.get(j + 1).is_none_or(|n| !n.is_alphanumeric()));
+            let close =
+                (i + 1..chars.len()).find(|&j| chars[j] == c && chars.get(j + 1).is_none_or(|n| !n.is_alphanumeric()));
             if let Some(j) = close {
                 out.push_str("<name>");
                 i = j + 1;
@@ -144,7 +144,10 @@ pub fn top_refusals(
 /// The ranking as text: `limit` entries, then what was left out.
 pub fn render_top(title: &str, list: &[Refusal], limit: usize) -> String {
     let total: usize = list.iter().map(|r| r.count).sum();
-    let mut s = format!("Top refusals, {title}: {total} not run, {} distinct reasons\n", list.len());
+    let mut s = format!(
+        "Top refusals, {title}: {total} not run, {} distinct reasons\n",
+        list.len()
+    );
     for r in list.iter().take(limit) {
         s.push_str(&format!("{:>6}  {}\n", r.count, r.key));
         let raw = if r.example_reason == r.key {
@@ -152,7 +155,10 @@ pub fn render_top(title: &str, list: &[Refusal], limit: usize) -> String {
         } else {
             format!(": {}", clip(&r.example_reason, 200))
         };
-        s.push_str(&format!("        e.g. {} {}{raw}\n", r.example.codeunit, r.example.name));
+        s.push_str(&format!(
+            "        e.g. {} {}{raw}\n",
+            r.example.codeunit, r.example.name
+        ));
     }
     if list.len() > limit {
         let rest: usize = list[limit..].iter().map(|r| r.count).sum();
@@ -272,17 +278,28 @@ mod tests {
             n("Test Query Object.Query_SaveAsCsv: builtin Query.SaveAsCsv#4 is not implemented"),
             "builtin Query.SaveAsCsv#N is not implemented"
         );
-        assert_eq!(n("builtin Query.SaveAsCsv#2 is not implemented"), "builtin Query.SaveAsCsv#N is not implemented");
+        assert_eq!(
+            n("builtin Query.SaveAsCsv#2 is not implemented"),
+            "builtin Query.SaveAsCsv#N is not implemented"
+        );
         assert_eq!(
             n("`LayoutList`: platform table 'Report Layout List' (2000000234) has no provider"),
             "platform table <name> (N) has no provider"
         );
         assert_eq!(
-            n("handler OkGetDemandToReserve: Request Page Parameters Helper.GetFiltersForTable: foreach over a DotNet value is refused"),
+            n(
+                "handler OkGetDemandToReserve: Request Page Parameters Helper.GetFiltersForTable: foreach over a DotNet value is refused"
+            ),
             "foreach over a DotNet value is refused"
         );
-        assert_eq!(n("OnRun: Some Codeunit.OnRun: division by zero (not pinned)"), "division by zero (not pinned)");
-        assert_eq!(n("Format of a Duration with standard format 2 (not pinned)"), "Format of a Duration with standard format N (not pinned)");
+        assert_eq!(
+            n("OnRun: Some Codeunit.OnRun: division by zero (not pinned)"),
+            "division by zero (not pinned)"
+        );
+        assert_eq!(
+            n("Format of a Duration with standard format 2 (not pinned)"),
+            "Format of a Duration with standard format N (not pinned)"
+        );
     }
 
     #[test]
@@ -292,7 +309,10 @@ mod tests {
             "DotNet X.Y.IsSandbox: refused by policy: server class <name> is neither registered"
         );
         assert_eq!(normalise_reason("Test01 does not fit"), "Test01 does not fit");
-        assert_eq!(normalise_reason("it doesn't fit and don't try"), "it doesn't fit and don't try");
+        assert_eq!(
+            normalise_reason("it doesn't fit and don't try"),
+            "it doesn't fit and don't try"
+        );
     }
 
     fn case(cu: u32, n: &str) -> OracleCase {
@@ -320,13 +340,22 @@ mod tests {
         assert_eq!(top[0].example.codeunit, 1);
         assert_eq!(top[1].count, 1);
         let text = render_top("BC 1", &top, 1);
-        assert!(text.contains("3 not run, 2 distinct reasons") && text.contains("e.g. 1 A"), "{text}");
+        assert!(
+            text.contains("3 not run, 2 distinct reasons") && text.contains("e.g. 1 A"),
+            "{text}"
+        );
         assert!(text.contains("1 more reasons"), "{text}");
     }
 
     #[test]
     fn the_diff_separates_new_passes_new_failures_and_regressions() {
-        let cases = [case(1, "NewPass"), case(1, "NewFail"), case(2, "Held"), case(2, "Lost"), case(2, "Gone")];
+        let cases = [
+            case(1, "NewPass"),
+            case(1, "NewFail"),
+            case(2, "Held"),
+            case(2, "Lost"),
+            case(2, "Gone"),
+        ];
         let baseline: BTreeSet<CaseId> = ["Held", "Lost"]
             .iter()
             .map(|n| CaseId {
@@ -350,6 +379,9 @@ mod tests {
         let lost: Vec<_> = d.regressed.iter().map(|(c, _)| c.name.as_str()).collect();
         assert_eq!(lost, ["Lost", "Removed"]);
         let text = render_diff("BC 1", &d, &|cu| Some(if cu == 1 { "a".into() } else { "b".into() }));
-        assert!(text.contains("1 newly pass") && text.contains("  a (1):\n    1 NewPass"), "{text}");
+        assert!(
+            text.contains("1 newly pass") && text.contains("  a (1):\n    1 NewPass"),
+            "{text}"
+        );
     }
 }

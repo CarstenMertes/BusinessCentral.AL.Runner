@@ -63,6 +63,17 @@ impl Session {
             .iter()
             .position(|o| o.kind == "codeunit" && o.id == Some(codeunit as u32))
         else {
+            // A codeunit of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
+            if engine
+                .program
+                .objects
+                .iter()
+                .any(|o| o.kind == "uncompiled codeunit" && o.id == Some(codeunit as u32))
+            {
+                return unsupported(format!(
+                    "background task of codeunit {codeunit}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                ));
+            }
             return unsupported(format!(
                 "background task of codeunit {codeunit}, which no object declares"
             ));

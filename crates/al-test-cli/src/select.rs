@@ -42,7 +42,11 @@ impl Selection {
         let Some(cu) = index.codeunits.get(&case.codeunit) else {
             return false;
         };
-        if self.areas.iter().any(|a| cu.area.eq_ignore_ascii_case(a.trim_matches('/'))) {
+        if self
+            .areas
+            .iter()
+            .any(|a| cu.area.eq_ignore_ascii_case(a.trim_matches('/')))
+        {
             return true;
         }
         let path = cu.file.to_string_lossy().replace('\\', "/");

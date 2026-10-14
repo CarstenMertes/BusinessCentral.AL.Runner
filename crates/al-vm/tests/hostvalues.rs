@@ -372,3 +372,25 @@ fn is_session_active_is_false_for_an_unknown_id_and_refused_for_the_running_sess
     let r = run("procedure F(): Boolean begin exit(Session.IsSessionActive(Database.SessionId())); end;");
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+// ------------------------------------------------------------------ the transaction type
+
+#[test]
+fn the_current_transaction_type_reads_and_a_set_is_refused() {
+    // session/TestDatabaseExtended.al:Database_CurrentTransactionType_ReturnsType (a read must not
+    // throw); the default Update is the documented one (docs/probes-needed.md).
+    assert_eq!(
+        text(
+            "TT: TransactionType;",
+            "TT := Database.CurrentTransactionType(); exit(Format(TT));"
+        ),
+        "Update"
+    );
+    // :Database_CurrentTransactionType_SetAfterWriteOp_Throws expects an error once a transaction
+    // has started; when that is, and its text, are not pinned.
+    let r = run("procedure F() begin Database.CurrentTransactionType(TransactionType::Update); end;");
+    assert!(
+        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("CurrentTransactionType")),
+        "{r:?}"
+    );
+}

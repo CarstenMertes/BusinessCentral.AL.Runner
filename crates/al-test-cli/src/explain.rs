@@ -44,7 +44,11 @@ pub fn describe(program: &ir::Program, object: usize, routine: usize, pos: u32) 
         obj.id.map_or(String::from("?"), |i| i.to_string()),
         obj.name,
         r.map_or("?", |r| r.name.as_str()),
-        if r.is_some_and(|r| r.is_trigger) { " (trigger)" } else { "" }
+        if r.is_some_and(|r| r.is_trigger) {
+            " (trigger)"
+        } else {
+            ""
+        }
     );
     let place = |p: &ir::SrcPos, note: &str| {
         let src = program.sources.get(p.file as usize);
@@ -92,10 +96,7 @@ pub fn render(head: &str, outcome: &Outcome, oracle: &str, detail: Option<&TestD
             match detail {
                 Some(TestDetail {
                     refused_in: Some(l), ..
-                }) => s.push_str(&format!(
-                    "refused before the run, in {}\n  at {}\n",
-                    l.who, l.at
-                )),
+                }) => s.push_str(&format!("refused before the run, in {}\n  at {}\n", l.who, l.at)),
                 Some(d) if !d.raised_in.is_empty() => {
                     s.push_str("refused while running, in:\n");
                     push_lines(&mut s, &d.raised_in);
@@ -106,7 +107,10 @@ pub fn render(head: &str, outcome: &Outcome, oracle: &str, detail: Option<&TestD
         Outcome::Fail(why) => {
             s.push_str(&format!("runtime: FAIL\nerror: {why}\n"));
             if let Some(e) = detail.and_then(|d| d.error.as_ref()) {
-                s.push_str(&format!("code: {}\n", if e.code.is_empty() { "(none)" } else { &e.code }));
+                s.push_str(&format!(
+                    "code: {}\n",
+                    if e.code.is_empty() { "(none)" } else { &e.code }
+                ));
                 if !e.call_stack.is_empty() {
                     s.push_str("AL call stack (GetLastErrorCallStack form):\n");
                     for l in e.call_stack.lines() {

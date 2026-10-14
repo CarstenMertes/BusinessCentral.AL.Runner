@@ -21,3 +21,11 @@ quick-xml = "0.37"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+
+# The profile tools/bcdb-bench.sh builds the Rust side of the bcdb comparison with.
+[profile.bcdb-bench]
+inherits = "release"
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"

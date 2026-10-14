@@ -2,9 +2,9 @@
 //! pins it: one instance per test codeunit, `OnRun` once before the tests
 //! (codeunit/TestCodeunitOnRun.al), tests in declaration order.
 
+use crate::explain::{self, TestDetail};
 use crate::isolation::{Checkpoint, TestIsolation, runner_isolation};
 use crate::report::Outcome;
-use crate::explain::{self, TestDetail};
 use al_builtins::native::{AlError, Signal};
 use al_sema::lower::Lowered;
 use al_vm::{Engine, Session, UiKind};
@@ -245,17 +245,17 @@ impl CorpusRuntime {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
         let compile_started = std::time::Instant::now();
-        let (_ws, mut lowered) =
-            al_sema::lower::compile_apps_with(
-                apps,
-                kinds,
-                symbols,
-                target,
-                al_sema::check::Roots {
-                    baseline,
-                    only_tests: opts.only.clone(),
-                },
-            );
+        let (_ws, mut lowered) = al_sema::lower::compile_apps_with(
+            apps,
+            kinds,
+            symbols,
+            target,
+            al_sema::check::Roots {
+                baseline,
+                only_tests: opts.only.clone(),
+                ..Default::default()
+            },
+        );
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();

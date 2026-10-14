@@ -50,6 +50,19 @@ pub struct Registry {
     /// read. Raising an event one of them would receive is refused (`dispatch.rs`), except for the
     /// two setup events while the tables the subscriber reads hold no row.
     pub unavailable_global: std::collections::HashMap<(usize, usize), UnavailableGlobal>,
+    /// (publisher object, lower-case event name) → subscribers BC would run that this program has
+    /// no code for (`Program::uncompiled_subscribers`, and subscribers whose publisher cannot be
+    /// told apart from another object of the same name). Raising such an event is refused.
+    pub missing: HashMap<(usize, String), Vec<Missing>>,
+}
+
+/// A subscriber that is declared and not compiled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Missing {
+    /// `ElementName`; empty when the event has no elements.
+    pub element: String,
+    /// Where it is declared, for the refusal text.
+    pub subscriber: String,
 }
 
 impl Default for Registry {
@@ -60,6 +73,7 @@ impl Default for Registry {
             global_key: GLOBAL_TRIGGERS,
             has_global_triggers: false,
             unavailable_global: Default::default(),
+            missing: HashMap::new(),
         }
     }
 }
@@ -120,9 +134,15 @@ impl Registry {
             }
         }
         let mut by_name: HashMap<(&str, String), usize> = HashMap::new();
+        // Objects that share a kind and a name (they sit in different namespaces).
+        let mut same_name: HashMap<(&str, String), Vec<usize>> = HashMap::new();
         let mut by_id: HashMap<(&str, u32), usize> = HashMap::new();
         for (oi, o) in program.objects.iter().enumerate() {
             by_name.entry((o.kind.as_str(), o.name.to_lowercase())).or_insert(oi);
+            same_name
+                .entry((o.kind.as_str(), o.name.to_lowercase()))
+                .or_default()
+                .push(oi);
             if let Some(id) = o.id {
                 by_id.entry((o.kind.as_str(), id)).or_insert(oi);
             }
@@ -170,36 +190,58 @@ impl Registry {
                                 "xmlport" => "xmlport",
                                 _ => continue,
                             };
-                            let target = unquote(args[1].rsplit("::").next().unwrap_or(""));
+                            // `Codeunit::Microsoft.Foundation.Company."Company-Initialize"` writes the
+                            // namespace; objects are found by their name.
+                            let (target, qualified) = publisher_name(args[1].rsplit("::").next().unwrap_or(""));
+                            let event = unquote(&args[2]).to_lowercase();
+                            // A qualified name of which several objects of the program share the last
+                            // part cannot be told apart here (the program keeps no namespaces): the
+                            // subscriber attaches to none of them and every one refuses its event.
+                            if qualified {
+                                let twins = same_name.get(&(kind, target.to_lowercase())).map_or(&[][..], |v| v);
+                                if twins.len() > 1 {
+                                    for &t in twins {
+                                        reg.missing.entry((t, event.clone())).or_default().push(Missing {
+                                            element: args.get(3).map(|e| unquote(e)).unwrap_or_default(),
+                                            subscriber: format!("{} \"{}\".{}", o.kind, o.name, r.name),
+                                        });
+                                    }
+                                    continue;
+                                }
+                            }
                             let found = by_name.get(&(kind, target.to_lowercase())).copied().or_else(|| {
                                 target
                                     .parse::<u32>()
                                     .ok()
                                     .and_then(|id| by_id.get(&(kind, id)).copied())
                             });
-                            let event = unquote(&args[2]).to_lowercase();
+                            // The page client raises the caption class event under a key of its own,
+                            // whether or not the codeunit is compiled.
+                            if kind == "codeunit"
+                                && (target.eq_ignore_ascii_case("Caption Class") || target == "42")
+                                && event == "onresolvecaptionclass"
+                            {
+                                reg.subscribers
+                                    .entry((CAPTION_CLASS, event.clone()))
+                                    .or_default()
+                                    .push(Subscriber {
+                                        object: oi,
+                                        routine: ri,
+                                        manual: is_manual(o),
+                                        element: String::new(),
+                                    });
+                            }
                             match found {
-                                Some(t) => reg.subscribers.entry((t, event)).or_default().push(Subscriber {
-                                    object: oi,
-                                    routine: ri,
-                                    manual: is_manual(o),
-                                    element: args.get(3).map(|e| unquote(e)).unwrap_or_default(),
-                                }),
-                                // The System Application's Caption Class codeunit is not in the workspace:
-                                // its subscribers are kept under a key of their own for the page client.
-                                None if kind == "codeunit"
-                                    && (target.eq_ignore_ascii_case("Caption Class") || target == "42")
-                                    && event == "onresolvecaptionclass" =>
-                                {
-                                    reg.subscribers
-                                        .entry((CAPTION_CLASS, event))
-                                        .or_default()
-                                        .push(Subscriber {
-                                            object: oi,
-                                            routine: ri,
-                                            manual: is_manual(o),
-                                            element: String::new(),
-                                        })
+                                Some(t) => {
+                                    if kind == "codeunit" && is_global_triggers(&target) {
+                                        reg.has_global_triggers = true;
+                                    }
+                                    reg.subscribers.entry((t, event)).or_default().push(Subscriber {
+                                        object: oi,
+                                        routine: ri,
+                                        manual: is_manual(o),
+                                        element: args.get(3).map(|e| unquote(e)).unwrap_or_default(),
+                                    })
                                 }
                                 None if kind == "codeunit" && is_global_triggers(&target) => {
                                     reg.has_global_triggers = true;
@@ -221,14 +263,43 @@ impl Registry {
                 }
             }
         }
+        // Subscribers the compile left out (ADR-013 decision 6).
+        for u in &program.uncompiled_subscribers {
+            let key = match u.platform {
+                ir::PlatformPublisher::None => match u.publisher {
+                    Some(p) => p as usize,
+                    None => continue,
+                },
+                ir::PlatformPublisher::GlobalTriggers => {
+                    reg.has_global_triggers = true;
+                    reg.global_key
+                }
+                ir::PlatformPublisher::CaptionClass => CAPTION_CLASS,
+            };
+            reg.missing.entry((key, u.event.clone())).or_default().push(Missing {
+                element: u.element.clone(),
+                subscriber: u.subscriber.clone(),
+            });
+        }
         reg
     }
 
-    /// Whether any subscriber (manual or not) listens to `event` of `object`.
+    /// Whether any subscriber (manual or not) listens to `event` of `object`, or one that is
+    /// declared but not compiled would.
     pub fn is_subscribed(&self, object: usize, event: &str) -> bool {
         self.subscribers
             .get(&(object, event.to_string()))
             .is_some_and(|v| !v.is_empty())
+            || self.missing.contains_key(&(object, event.to_string()))
+    }
+
+    /// The first subscriber of `event` of `object` that is declared but not compiled and that an
+    /// event for `element` (any element when `None`) would reach.
+    pub fn missing_for(&self, object: usize, event: &str, element: Option<&str>) -> Option<&Missing> {
+        self.missing
+            .get(&(object, event.to_string()))?
+            .iter()
+            .find(|m| element.is_none_or(|e| m.element.is_empty() || m.element.eq_ignore_ascii_case(e)))
     }
 }
 
@@ -277,6 +348,28 @@ pub fn split_args(attribute: &str) -> Vec<String> {
         out.push(last);
     }
     out
+}
+
+/// The object name written after `Kind::`: the last part of a name that carries its namespace
+/// (`Microsoft.Foundation.Company."Company-Initialize"` is `Company-Initialize`), and whether
+/// there was a namespace. Dots inside quotes belong to the name.
+fn publisher_name(written: &str) -> (String, bool) {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    for c in written.trim().chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                cur.push(c);
+            }
+            '.' if !quoted => parts.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    parts.push(cur);
+    let qualified = parts.len() > 1;
+    (unquote(parts.last().map_or("", |p| p.as_str())), qualified)
 }
 
 /// The text of a name argument: `'On Foo'` → `On Foo` (`''` is an
@@ -413,5 +506,95 @@ mod tests {
              { [EventSubscriber(ObjectType::Table, Database::\"Global Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }",
         );
         assert!(!table.has_global_triggers);
+    }
+
+    #[test]
+    fn a_publisher_written_with_its_namespace_is_found_by_its_name() {
+        let reg = registry(
+            "namespace A.B;\n\
+             codeunit 50200 Pub { [IntegrationEvent(false, false)] procedure OnX() begin end; }\n\
+             codeunit 50201 Sub { [EventSubscriber(ObjectType::Codeunit, Codeunit::A.B.Pub, 'OnX', '', false, false)] local procedure H() begin end; \
+             [EventSubscriber(ObjectType::Codeunit, Codeunit::A.B.\"Pub\", 'OnY', '', false, false)] local procedure G() begin end; }",
+        );
+        let keys: Vec<_> = reg.subscribers.keys().map(|(_, e)| e.as_str()).collect();
+        assert!(keys.contains(&"onx") && keys.contains(&"ony"), "{keys:?}");
+        assert!(reg.missing.is_empty());
+    }
+
+    #[test]
+    fn a_qualified_name_two_objects_share_attaches_to_neither_and_both_refuse() {
+        // Two codeunits `Pub` in different namespaces: the program keeps no namespaces, so the
+        // subscriber cannot be told which it means.
+        let (_ws, l) = al_sema::lower::compile(
+            vec![al_sema::workspace::AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![
+                    ("a.al".into(), "namespace A;\ncodeunit 50200 Pub { }".into()),
+                    ("b.al".into(), "namespace B;\ncodeunit 50201 Pub { }".into()),
+                    (
+                        "s.al".into(),
+                        "codeunit 50202 Sub { [EventSubscriber(ObjectType::Codeunit, Codeunit::A.Pub, 'OnX', '', false, false)] local procedure H() begin end; }"
+                            .into(),
+                    ),
+                ],
+            }],
+            &Default::default(),
+        );
+        let reg = Registry::build(&l.program);
+        assert!(reg.subscribers.is_empty());
+        assert_eq!(reg.missing.len(), 2);
+        assert!(reg.is_subscribed(0, "onx") || reg.is_subscribed(1, "onx"));
+    }
+
+    #[test]
+    fn the_caption_class_subscribers_are_found_under_their_own_key_whether_or_not_the_codeunit_is_compiled() {
+        let sub = "codeunit 50310 Sub { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Caption Class\", 'OnResolveCaptionClass', '', false, false)] local procedure H() begin end; }";
+        let absent = registry(sub);
+        assert!(absent.is_subscribed(CAPTION_CLASS, "onresolvecaptionclass"));
+        let present = registry(&format!("codeunit 42 \"Caption Class\" {{ }}\n{sub}"));
+        assert!(present.is_subscribed(CAPTION_CLASS, "onresolvecaptionclass"));
+    }
+
+    #[test]
+    fn an_uncompiled_subscriber_counts_as_a_listener_for_its_element_only() {
+        let (_ws, mut l) = al_sema::lower::compile(
+            vec![al_sema::workspace::AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![(
+                    "f.al".into(),
+                    "table 50200 T { fields { field(1; K; Code[10]) { } } }".into(),
+                )],
+            }],
+            &Default::default(),
+        );
+        let uncompiled = |platform, publisher, event: &str, element: &str| al_ir::UncompiledSubscriber {
+            publisher,
+            platform,
+            event: event.into(),
+            element: element.into(),
+            subscriber: "codeunit \"S\"".into(),
+        };
+        l.program.uncompiled_subscribers = vec![
+            uncompiled(
+                al_ir::PlatformPublisher::None,
+                Some(0),
+                "onaftervalidateevent",
+                "Status",
+            ),
+            uncompiled(al_ir::PlatformPublisher::GlobalTriggers, None, "ondatabasemodify", ""),
+        ];
+        let reg = Registry::build(&l.program);
+        assert!(reg.is_subscribed(0, "onaftervalidateevent"));
+        assert!(reg.missing_for(0, "onaftervalidateevent", Some("status")).is_some());
+        assert!(reg.missing_for(0, "onaftervalidateevent", None).is_some());
+        assert!(reg.missing_for(0, "onaftervalidateevent", Some("Other")).is_none());
+        assert!(reg.missing_for(0, "onafterinsertevent", None).is_none());
+        // The platform codeunits are found under the keys the runtime raises them with.
+        assert!(reg.has_global_triggers);
+        assert!(reg.missing_for(reg.global_key, "ondatabasemodify", None).is_some());
     }
 }

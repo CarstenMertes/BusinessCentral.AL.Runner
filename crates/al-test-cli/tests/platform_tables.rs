@@ -450,8 +450,13 @@ codeunit 50000 "T" { Subtype = Test;
     R.SetRange("Table ID", 50003); R.SetRange("Field No.", 4); if R.Count() <> 1 then Error('plain'); R.FindFirst(); if R."Related Table ID" <> 50001 then Error('table'); if R."Related Field No." <> 1 then Error('field');
     R.SetRange("Field No.", 5); if not R.IsEmpty() then Error('soft');
     R.SetRange("Field No.", 6); if R.Count() <> 2 then Error('cond'); R.FindSet(); if R."Relation No." <> 1 then Error('first'); if R."Condition Field No." <> 2 then Error('cond field'); R.Next(); if R."Related Table ID" <> 50002 then Error('else');
-    R.SetRange("Field No.", 7); if R.Count() <> 2 then Error('two conditions %1', R.Count()); R.FindFirst(); if R."Condition Field No." <> 2 then Error('first condition'); R.Next(); if R."Condition Field No." <> 3 then Error('second condition'); end; }"#,
+    R.SetRange("Field No.", 7); if R.Count() <> 2 then Error('two conditions %1', R.Count()); R.FindFirst(); if R."Condition Field No." <> 2 then Error('first condition'); R.Next(); if R."Condition Field No." <> 3 then Error('second condition'); end;
+  [Test] procedure FieldRelation() var F: Record "Field"; begin F.Get(50003, 7); if F.RelationTableNo <> 50001 then Error('filtered relation %1', F.RelationTableNo); if F.RelationFieldNo <> 1 then Error('related field'); end;
+  [Test] procedure ConditionalRelation() var F: Record "Field"; begin F.Get(50003, 6); end; }"#,
     );
+    passes(&o, "FieldRelation");
+    let why = not_run(&o, "ConditionalRelation");
+    assert!(why.contains("conditional TableRelation"), "{why}");
     passes(&o, "Rows");
 }
 
@@ -515,4 +520,46 @@ codeunit 50000 "T" { Subtype = Test;
     }
     let why = not_run(&o, "PersistentReadIsRefused");
     assert!(why.contains("platform table 'Feature Key' (2000000211)"), "{why}");
+}
+
+/// Columns that the declaration describes, filled from it: the caption, card page and editability of
+/// a page, and the table name, caption, class and enabled flag of a field. Not pinned by a corpus
+/// test: Page Management reads CardPageID off the lookup page and Microsoft's tests read the others
+/// (docs/probes-needed.md, "Probe batch 5").
+#[test]
+fn declared_caption_card_page_class_and_enabled_are_read_from_the_declaration() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { Caption = 'Number'; } field(2; Total; Decimal) { FieldClass = FlowField; CalcFormula = count(Thing); Caption = 'The total'; }
+    field(3; Filt; Integer) { FieldClass = FlowFilter; } field(4; Off; Integer) { Enabled = false; } field(5; Plain; Text[10]) { } }
+  keys { key(PK; "No.") { Clustered = true; } } }
+page 50002 "Thing Card" { PageType = Card; SourceTable = Thing; Caption = 'A card'; }
+page 50003 "Thing List" { PageType = List; SourceTable = Thing; CardPageID = "Thing Card"; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Pages() var M: Record "Page Metadata"; begin M.Get(50003); if M.CardPageID <> 50002 then Error('card %1', M.CardPageID); if M.Caption <> 'Thing List' then Error('caption %1', M.Caption);
+    M.Get(50002); if M.CardPageID <> 0 then Error('no card'); if M.Caption <> 'A card' then Error('card caption %1', M.Caption); end;
+  [Test] procedure Fields() var F: Record "Field"; begin
+    F.Get(50001, 1); if F.TableName <> 'Thing' then Error('table name'); if F."Field Caption" <> 'Number' then Error('caption %1', F."Field Caption"); if F.Class <> F.Class::Normal then Error('class'); if not F.Enabled then Error('enabled');
+    F.Get(50001, 2); if F.Class <> F.Class::FlowField then Error('flowfield'); if F."Field Caption" <> 'The total' then Error('total caption');
+    F.Get(50001, 3); if F.Class <> F.Class::FlowFilter then Error('flowfilter'); if F."Field Caption" <> 'Filt' then Error('name as caption');
+    F.Get(50001, 4); if F.Enabled then Error('disabled'); end; }"#,
+    );
+    passes(&o, "Pages");
+    passes(&o, "Fields");
+}
+
+/// A key states `MaintainSIFTIndex` and `ObsoleteState`, a table its `DrillDownPageId`; the tables
+/// report them (probe batch 5: no corpus test reads them).
+#[test]
+fn a_keys_sift_flag_and_obsolete_state_and_a_tables_drill_down_page_are_read_from_the_declaration() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { DrillDownPageId = "Thing List"; fields { field(1; "No."; Integer) { } field(2; Amt; Decimal) { } }
+  keys { key(PK; "No.") { Clustered = true; } key(S1; Amt) { MaintainSIFTIndex = false; } key(S2; Amt, "No.") { ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; } } }
+page 50002 "Thing List" { PageType = List; SourceTable = Thing; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Keys() var K: Record "Key"; begin K.SetRange(TableNo, 50001); K.SetRange("No.", 1); K.FindFirst(); if not K.MaintainSIFTIndex then Error('default sift'); if K.ObsoleteState <> K.ObsoleteState::No then Error('default state');
+    K.SetRange("No.", 2); K.FindFirst(); if K.MaintainSIFTIndex then Error('sift'); K.SetRange("No.", 3); K.FindFirst(); if K.ObsoleteState <> K.ObsoleteState::Pending then Error('pending'); end;
+  [Test] procedure Table() var M: Record "Table Metadata"; begin M.Get(50001); if M.DrillDownPageId <> 50002 then Error('drill down %1', M.DrillDownPageId); end; }"#,
+    );
+    passes(&o, "Keys");
+    passes(&o, "Table");
 }

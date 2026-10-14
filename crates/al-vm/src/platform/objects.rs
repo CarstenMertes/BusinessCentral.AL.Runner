@@ -216,6 +216,39 @@ pub(super) fn al_sema_platform_app_id() -> &'static str {
     "8874ed3a-0643-4247-9ced-7a7002f7135d"
 }
 
+/// The caption a declaration states: the `Caption` literal, else the `ENU` entry of `CaptionML`, else the
+/// name (AL's default caption). A caption that is not a literal is not known.
+pub(super) fn declared_caption(caption: Option<&str>, caption_ml: Option<&str>, name: &str) -> Result<String, String> {
+    if let Some(c) = caption {
+        return string_lit(c).ok_or_else(|| format!("Caption `{c}` is not a literal"));
+    }
+    if let Some(ml) = caption_ml {
+        let enu = split_outside_quotes(ml)
+            .iter()
+            .find_map(|part| part.trim().strip_prefix("ENU=").map(str::trim))
+            .and_then(string_lit);
+        return enu.ok_or_else(|| format!("CaptionML `{ml}` has no ENU literal"));
+    }
+    Ok(name.to_string())
+}
+
+/// `a='x,y',b='z'` split at the commas outside single quotes.
+fn split_outside_quotes(s: &str) -> Vec<&str> {
+    let (mut out, mut start, mut quoted) = (Vec::new(), 0, false);
+    for (i, c) in s.char_indices() {
+        match c {
+            '\'' => quoted = !quoted,
+            ',' if !quoted => {
+                out.push(&s[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&s[start..]);
+    out
+}
+
 pub(super) fn truncate(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }

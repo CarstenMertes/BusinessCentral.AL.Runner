@@ -230,16 +230,17 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // CodeUnit Metadata: record/TestCodeunitMetadataVirtualTable.al, TestCodeunitInventoryOrder.al. "App ID" (6) is not read.
     (2_000_000_137, &[1, 2, 3, 4, 5, 7, 8, 9, 10, 11]),
     // Table Metadata: record/TestTableMetadataVirtualTable.al.
-    (2_000_000_136, &[1, 2, 3, 4, 5, 11, 12, 13, 15]),
-    // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al.
-    (2_000_000_041, &[1, 2, 4, 5, 21, 22, 24, 25, 26, 27]),
+    (2_000_000_136, &[1, 2, 3, 4, 5, 6, 11, 12, 13, 15]),
+    // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al. TableName, Class, Enabled and "Field Caption"
+    // are read from the declaration (probe batch 5); Len (6), Type Name (9), ExternalName (10) and the rest are not.
+    (2_000_000_041, &[1, 2, 3, 4, 5, 7, 8, 20, 21, 22, 24, 25, 26, 27]),
     // Key: record/TestKeyVirtualTable.al.
-    (2_000_000_063, &[1, 2, 4, 7, 10, 13]),
-    // Page Metadata: record/TestPageMetadata*.al.
+    (2_000_000_063, &[1, 2, 4, 7, 9, 10, 11, 13]),
+    // Page Metadata: record/TestPageMetadata*.al. Caption (3) and CardPageID (6) are read from the declaration (probe batch 5).
     (
         2_000_000_138,
         &[
-            1, 2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
+            1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
         ],
     ),
     // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
@@ -264,7 +265,7 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // All Profile: profile/TestAllProfileTable.al, TestCopyProfile.al. The obsolete columns and "Disable Personalization" are not read.
     (2_000_000_178, &[1, 2, 3, 4, 5, 6, 14, 15, 16, 17]),
     // Report Layout List: handlers/TestSourceReportLayoutFlags.al, TestPrecompiledReportLayouts.al.
-    (2_000_000_234, &[1, 2, 7, 16, 17]),
+    (2_000_000_234, &[1, 2, 7, 11, 16, 17]),
     // Report Metadata, Report Data Items: handlers/TestReportMetadataColumns.al.
     (2_000_000_139, &[1, 4, 9, 17, 18]),
     (2_000_000_203, &[1, 2, 3, 4, 5, 6, 7, 8]),

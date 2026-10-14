@@ -380,6 +380,12 @@ fn run_version(
             p.tests.as_secs_f64(),
             started.elapsed().as_secs_f64()
         );
+        let slowest: Vec<String> = p
+            .slowest
+            .iter()
+            .map(|(id, name, t)| format!("{id} {name} {:.2} s", t.as_secs_f64()))
+            .collect();
+        eprintln!("slowest test codeunits: {}", slowest.join("; "));
     }
     if rt.panics > 0 {
         eprintln!(

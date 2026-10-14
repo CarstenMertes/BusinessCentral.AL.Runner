@@ -106,12 +106,18 @@ pub struct CorpusRuntime {
 }
 
 /// Wall time of the phases of a run (`--timings`).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Phases {
     pub compile: std::time::Duration,
     pub baseline: std::time::Duration,
     pub tests: std::time::Duration,
+    /// The test codeunits (object id, name) that took longest, slowest first (at most
+    /// [`SLOWEST`]).
+    pub slowest: Vec<(u32, String, std::time::Duration)>,
 }
+
+/// How many test codeunits `--timings` names.
+pub const SLOWEST: usize = 8;
 
 /// What a run is asked to do beyond running everything.
 #[derive(Debug, Clone, Default)]
@@ -297,6 +303,7 @@ impl CorpusRuntime {
         let mut outcomes = std::collections::HashMap::new();
         let mut details = std::collections::HashMap::new();
         let mut panics = 0;
+        let mut codeunit_times: Vec<(u32, String, std::time::Duration)> = Vec::new();
         for (si, suite) in suites.iter().enumerate() {
             let isolation = match suite.runner {
                 None => Ok(TestIsolation::default()),
@@ -328,6 +335,7 @@ impl CorpusRuntime {
                         continue;
                     }
                 };
+                let codeunit_started = std::time::Instant::now();
                 // A Rust panic is a runtime bug; contain it to this codeunit and report it.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let mut observe = |name: &str, _: &Outcome, seen: &Observed| {
@@ -348,6 +356,7 @@ impl CorpusRuntime {
                     let trace: Option<&mut Observer> = opts.trace.then_some(&mut observe);
                     run_codeunit_observed(&engine, &lowered, oi, baseline.as_ref(), isolation, trace)
                 }));
+                codeunit_times.push((id, o.name.clone(), codeunit_started.elapsed()));
                 match result {
                     Ok(list) => {
                         for (name, outcome) in list {
@@ -371,6 +380,9 @@ impl CorpusRuntime {
                 }
             }
         }
+        let tests_time = tests_started.elapsed();
+        codeunit_times.sort_by(|a, b| b.2.cmp(&a.2));
+        codeunit_times.truncate(SLOWEST);
         let suites = suites.iter().map(|s| s.name.clone()).collect();
         CorpusRuntime {
             outcomes,
@@ -379,7 +391,8 @@ impl CorpusRuntime {
             phases: Phases {
                 compile: compile_time,
                 baseline: baseline_time,
-                tests: tests_started.elapsed(),
+                tests: tests_time,
+                slowest: codeunit_times,
             },
             details,
         }

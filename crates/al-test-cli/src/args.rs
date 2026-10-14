@@ -63,7 +63,7 @@ pub struct Args {
     pub top_refusals_area: Option<String>,
     /// `--baseline-diff`: list what newly passes, what fails and what left the baseline.
     pub baseline_diff: bool,
-    /// `--timings`: print how long loading, compiling and running took.
+    /// `--timings`: print how long loading, compiling and running took, and the slowest test codeunits.
     pub timings: bool,
 }
 
@@ -211,7 +211,7 @@ DIAGNOSE
   --top-refusals-area FOLDER  the same for one corpus folder; also selects that folder
   --baseline-diff             per version: cases that newly pass, cases that fail and are not in
                               the baseline, and baseline cases that no longer pass; listed by area
-  --timings                   print how long loading, compiling and running took
+  --timings                   print how long loading, compiling and running took, and the slowest test codeunits
 
 BASELINE AND REPORTS
   --baseline FILE             ratchet against this file instead of metrics/<major>/passing.txt

@@ -153,12 +153,10 @@ impl Session {
                         "RecordRef.Open on table {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
                     ))
                 }
-                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; how
-                // BC names the calling object is not pinned (docs/probes-needed.md).
-                n => Err(al_error(format!(
-                    "You tried to invoke the Table object with the ID {n} from the object (caller not recorded). \
-                     An object with that ID does not exist in the current application."
-                ))),
+                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; the full
+                // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30
+                // (corpus branch al-runtime-rs, probe on BC 27.5).
+                n => Err(self.missing_object("Table", n)),
             };
         };
         let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, temp)) else {

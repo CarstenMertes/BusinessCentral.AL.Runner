@@ -61,11 +61,7 @@ fn drain(v: &Value) -> Result<Vec<u8>, Signal> {
         return unsupported(format!("an InStream was expected, got {v:?}"));
     };
     match &mut *h.borrow_mut() {
-        LibraryValue::InStream(s) => {
-            let rest = s.data[s.pos.min(s.data.len())..].to_vec();
-            s.pos = s.data.len();
-            Ok(rest)
-        }
+        LibraryValue::InStream(s) => Ok(s.drain()),
         other => unsupported(format!("an InStream was expected, got {other:?}")),
     }
 }
@@ -142,9 +138,7 @@ fn media_export(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     };
     match &*h.borrow() {
         LibraryValue::OutStream(blob, _) => {
-            let mut b = blob.borrow_mut();
-            b.bytes.extend_from_slice(&obj.bytes);
-            b.loaded = true;
+            crate::stream::write_bytes(blob, &obj.bytes);
         }
         other => return unsupported(format!("an OutStream was expected, got {other:?}")),
     }

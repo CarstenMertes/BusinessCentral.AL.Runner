@@ -677,19 +677,12 @@ impl Session {
                 Ok(())
             }
             S::AssertError(body) => {
-                // Inside a UI handler, with writes pending from before the page opened, the extent
-                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
-                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
-                // Initialize() without a Commit, runs a modal page whose handler does
-                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
-                // real BC. Rolling back to the last commit would undo it.
-                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                // A caught error rolls the transaction back to the last commit, also inside a modal
+                // page handler: the write pending before the page opened and the handler's own
+                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
+                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
                 match self.exec_block(body, f) {
-                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
-                        "asserterror in a UI handler with writes pending from before it ran: the extent \
-                         of the rollback is not pinned"
-                            .into(),
-                    )),
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
@@ -699,10 +692,10 @@ impl Session {
                         self.last_error = e;
                         Ok(())
                     }
-                    // The message is not pinned by the corpus yet (docs/probes-needed.md).
+                    // Text and code: types/TestFormatEvaluateTextContracts.al:Asserterror_NothingRaised_ReportsAssertError.
                     Ok(()) => Err(Signal::Error(AlError {
                         message: "An error was expected inside an ASSERTERROR statement.".into(),
-                        code: "Dialog".into(),
+                        code: "AssertError".into(),
                         call_stack: String::new(),
                     })),
                     Err(other) => Err(other),
@@ -778,10 +771,10 @@ impl Session {
                     B::Xor => Value::Boolean(ops::truthy(&l)? ^ ops::truthy(&r)?),
                     B::Eq => Value::Boolean(ops::compare(&l, &r)? == Ordering::Equal),
                     B::Ne => Value::Boolean(ops::compare(&l, &r)? != Ordering::Equal),
-                    B::Lt => Value::Boolean(ops::compare(&l, &r)? == Ordering::Less),
-                    B::Le => Value::Boolean(ops::compare(&l, &r)? != Ordering::Greater),
-                    B::Gt => Value::Boolean(ops::compare(&l, &r)? == Ordering::Greater),
-                    B::Ge => Value::Boolean(ops::compare(&l, &r)? != Ordering::Less),
+                    B::Lt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Less),
+                    B::Le => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Greater),
+                    B::Gt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Greater),
+                    B::Ge => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Less),
                 })
             }
             E::In(v, set) => {
@@ -839,10 +832,10 @@ impl Session {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
                 self.finish_call(object, routine, inst, args, false, f)
             }
-            E::IsInterface { value, objects } => match self.eval(value, f)? {
-                Value::Codeunit(inst) => Ok(Value::Boolean(objects.contains(&(inst.borrow().object as usize)))),
-                _ => Ok(Value::Boolean(false)),
-            },
+            E::InterfaceTest { value, objects, cast } => {
+                let v = self.eval(value, f)?;
+                self.interface_test(v, objects, *cast)
+            }
             E::EnumImpl {
                 value,
                 by_ordinal,

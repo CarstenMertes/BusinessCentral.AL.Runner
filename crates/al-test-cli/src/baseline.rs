@@ -198,7 +198,6 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
                 Expr::Const(_) => {}
                 Expr::Load(p) => self.place(p),
                 Expr::Unary(_, a) | Expr::Convert(_, a) | Expr::DotNetCoerce(_, a) => self.expr(a),
-                Expr::IsInterface { value, .. } => self.expr(value),
                 Expr::Binary(_, a, b) => {
                     self.expr(a);
                     self.expr(b);
@@ -227,7 +226,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
                     self.expr(receiver);
                     args.iter().for_each(|a| self.arg(a));
                 }
-                Expr::EnumImpl { value, .. } => self.expr(value),
+                Expr::InterfaceTest { value, .. } | Expr::EnumImpl { value, .. } => self.expr(value),
                 Expr::Control { page, .. } => self.expr(page),
                 Expr::QueryColumn { query, .. } => self.expr(query),
                 Expr::DotNet { receiver, args, .. } => {

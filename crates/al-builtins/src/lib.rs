@@ -11,6 +11,7 @@ pub mod xml;
 pub mod xmlport;
 
 pub mod catalog;
+pub mod collation;
 pub mod collections;
 pub mod datatransfer;
 pub mod datefns;

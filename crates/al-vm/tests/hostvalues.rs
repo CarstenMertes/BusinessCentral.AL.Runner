@@ -91,7 +91,7 @@ fn the_default_host_clock_is_frozen_at_a_known_instant() {
     assert_eq!(text("", "exit(Format(Today(), 0, 9));"), "2024-01-15");
     assert_eq!(
         text("", "exit(Format(CurrentDateTime(), 0, 9));"),
-        "2024-01-15T12:00:00.000Z"
+        "2024-01-15T12:00:00Z"
     );
 }
 
@@ -216,7 +216,7 @@ fn insert_stamps_all_four_fields() {
     let Value::Text(t) = v else { panic!() };
     assert_eq!(
         t,
-        "2024-01-15T12:00:00.000Z|2024-01-15T12:00:00.000Z|{C0A1BDFA-0000-0000-0000-545553545553}|{C0A1BDFA-0000-0000-0000-545553545553}"
+        "2024-01-15T12:00:00Z|2024-01-15T12:00:00Z|{C0A1BDFA-0000-0000-0000-545553545553}|{C0A1BDFA-0000-0000-0000-545553545553}"
     );
 }
 
@@ -324,6 +324,43 @@ fn company_name_is_the_hosts_company() {
     // CurrentCompany); the name is AL Runner's (ADR-013 decision 9).
     assert_eq!(text("", "exit(CompanyName());"), "My Company");
     assert!(truth("R: Record \"ALT T\";", "R.CurrentCompany() = CompanyName()"));
+}
+
+// ---------------------------------------------------------------- mutation-testing additions
+
+#[test]
+fn time_is_the_time_of_day_of_the_frozen_clock() {
+    // The default instant is 12:00:00.000 UTC; Time() is the offset into the day, one-based
+    // because 0T is the undefined time (Value::Time(0)).
+    assert!(truth("", "Time() = 120000T"));
+    assert!(truth("", "Time() > 115959.999T"));
+    assert!(truth("", "Time() < 120000.001T"));
+}
+
+#[test]
+fn sleep_of_zero_is_allowed_and_a_negative_wait_is_refused() {
+    // Only a non-negative wait is pinned (hostvalues.rs); zero changes nothing.
+    assert_eq!(
+        text(
+            "A: DateTime;",
+            "A := CurrentDateTime(); Sleep(0); exit(Format(CurrentDateTime() = A));"
+        ),
+        "Yes"
+    );
+    match run("procedure F() begin Sleep(-1); end;") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("non-negative"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn global_language_accepts_only_positive_ids() {
+    for bad in ["0", "-1"] {
+        match run(&format!("procedure F() begin GlobalLanguage({bad}); end;")) {
+            Err(Signal::Unsupported(m)) => assert!(m.contains("positive language id"), "{bad}: {m}"),
+            other => panic!("{bad}: {other:?}"),
+        }
+    }
 }
 
 // session/TestSessionComplete.al:45-52: an id no session has is not active. The running session's

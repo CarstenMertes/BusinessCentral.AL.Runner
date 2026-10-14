@@ -47,6 +47,13 @@ pub struct Args {
     pub cache_dir: Option<PathBuf>,
     /// `--fetch-deps`: resolve and download the dependency apps, then stop (warms the cache).
     pub fetch_deps: bool,
+    /// `--compile-cache`: use the compile cache of the dependency apps (ADR-022). The corpus
+    /// ratchet runs without it: it is recorded under the demand-driven compile.
+    pub compile_cache: bool,
+    /// `--require-compile-cache`: a run without a usable cache entry is an error (CI).
+    pub require_compile_cache: bool,
+    /// `--build-compile-cache`: build the entry (or check the one there), then stop.
+    pub build_compile_cache: bool,
     /// `--print-builds`: print the newest published build for each version and stop. CI keys its
     /// artifact cache by this.
     pub print_builds: bool,
@@ -134,6 +141,15 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--fetch-deps" => a.fetch_deps = true,
+            "--compile-cache" => a.compile_cache = true,
+            "--require-compile-cache" => {
+                a.compile_cache = true;
+                a.require_compile_cache = true;
+            }
+            "--build-compile-cache" => {
+                a.compile_cache = true;
+                a.build_compile_cache = true;
+            }
             "--print-builds" => a.print_builds = true,
             "--project" => a.project = Some(text()?.into()),
             "--dotnet-timeout-secs" => {
@@ -237,6 +253,12 @@ DOTNET (ADR-014)
   --require-dotnet            a machine without .NET is an error, not a skip (CI)
 
 DEPENDENCY TOOLING
+  --compile-cache             use the compile cache of the dependency apps (ADR-022), in
+                              <cache dir>/compile. The first run builds the entry. Outcomes equal the
+                              uncached run's, except the tests in tools/demand-eager-known-differences.txt
+  --require-compile-cache     with --compile-cache: a miss is an error, not a build (CI)
+  --build-compile-cache       build the entry for each selected version (or read and check the one
+                              there), print how long it took, then stop
   --fetch-deps                resolve and download the dependency apps, then stop
   --project DIR               with --fetch-deps: any AL project, not the corpus
   --print-builds              print the newest published build of each version, then stop

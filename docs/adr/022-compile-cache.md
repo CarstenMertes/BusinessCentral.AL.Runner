@@ -1,6 +1,6 @@
-# ADR-022: Compile cache: one entry per dependency app version
+# ADR-022: Compile cache: one entry per dependency set
 
-- Status: Proposed (owner answered the open questions on 2026-10-14; the measurement below is done; decision 2 does not work as written, see "Proposed amendments"; building waits for the owner)
+- Status: Accepted (owner, 2026-10-14; the measurement below amended decisions 2 to 4 and the owner accepted the amendments)
 - Date: 2026-10-14
 - Amends: ADR-013 (decision 6: its "persistent cache only if the warm start needs it" becomes a design; its
   "lowered IR is not cached" is lifted for dependency apps), ADR-016 (the deferral of persistent dependency
@@ -37,61 +37,74 @@ runtime has no SQL schema step, so a cache can be opened by reading an index and
      compile of ADR-013 stays as it is. It is the reference path and the fallback.
    - Only dependency apps are cached. The workspace apps (the code under test) compile on every run.
 
-2. **One entry per app id + version**, not per stack. (The measurement below found this cannot work as written: the IR refers to other objects by position in one global list. See "Can lowering be done per app?" and the proposed amendments.) Base Application is shared by all projects, and a customer
-   extension, which depends on Base Application and is not part of its entry, never invalidates it. An entry holds:
+2. **One entry per dependency set** (owner, 2026-10-14, open question 5; design A of the measurement). The set is every
+   non-workspace app of a run, in dependency order. Workspace apps are ordered after them in the program, so the
+   position of every dependency object and every base field is the same in every run with that set and needs no
+   remap. (Per-app entries were measured and do not work: the IR refers to objects and fields by position. See
+   "Can lowering be done per app?".) A customer extension never invalidates the entry. A Base Application hotfix
+   rebuilds the whole entry, which is 79 % of the objects under either unit. An entry holds:
    - a header: magic, format integer, the key (decision 4), a checksum of the index;
    - an object index: object type + id -> offset and length of its block;
-   - one string table for the whole entry (names, texts, reasons); blocks refer to strings by number;
-   - the event-subscriber index, precomputed (publisher -> subscribers), including subscribers of objects in other
-     apps, by name;
+   - the event-subscriber index, precomputed (publisher -> subscribers), by name;
    - the member and type tables the workspace is checked against (fields, enum values, procedure signatures,
      extension fields the app adds to other apps' tables);
-   - **one block per object**: its lowered IR, compressed on its own with zstd, with its own checksum;
-   - per routine, the refusal reason if lowering refused it (decision 7);
-   - optionally, per app set, the install-baseline result (ADR-004 snapshot; open question 2).
+   - one shared zstd dictionary (level 3, about 512 KB) for all blocks;
+   - **one block per object**: its lowered IR (serde + postcard), compressed on its own with zstd level 3 and the
+     shared dictionary, with its own checksum. The block lists the objects whose extension or implementer set it
+     embeds (the "whole-program facts" of the measurement: `InterfaceCall::targets`, `InterfaceTest::objects`,
+     `EnumImpl::by_ordinal`, table and page extension lists, merged page controls). **A block whose listed object is
+     extended or implemented by a workspace object is not loaded; it is lowered again from source with the demand
+     path.** About 4 % of the objects are affected;
+   - per routine, the refusal reason if lowering refused it (decision 7).
+   - No string table (the dictionary reaches nearly the same size with no format change). No call graph in the
+     blocks (three quarters of the raw bytes; derived from the IR where `baseline.rs` and the explanations need it).
+     No level 19 (8 % smaller, not worth the time). No source positions (dependency IR has none).
+   - The entry is about 16 to 19 MB per BC build.
 
-   Positions, source-file numbers and `Object::app` are local to the entry and remapped when it is loaded.
-
-3. **Loading costs as little as possible.**
+3. **Loading costs as little as possible.** (The first implementation keeps three parts of this for later; see
+   "Not done" below: the event index and the member tables are not stored, the sources of the dependency apps are
+   still read, and the blocks are decoded at the start, not on first touch.)
    - Open = read the header and the index. Nothing else.
    - The event index and the member tables are used as stored. They are not rebuilt from objects.
-   - A block is read, checked and decoded the first time a test touches its object. An object no test touches is never
-     decoded. `Program` therefore gets lazily filled object slots (`OnceLock`, because test codeunits run on worker
+   - The objects the install baseline reaches are decoded in parallel at start (4 threads: 70 to 90 ms), because every
+     run reaches about 3 100 of them. A block is otherwise read, checked and decoded the first time a test touches its
+     object. An object no test touches is never decoded. Per-routine laziness is not needed. `Program` therefore gets lazily filled object slots (`OnceLock`, because test codeunits run on worker
      threads). This changes how the engine reaches `Program::objects` and needs an accessor (ADR-011, additive).
    - The format code is a core crate over bytes (ADR-006). The file access (read, rename, directory) sits next to
      the existing download cache in `al-deps/src/cache.rs`.
 
 4. **The key** has five inputs. Every one must be in it, and a test proves each one misses when it changes:
-   1. app id and 2. app version;
-   3. a hash of the app's source. For an artifact the hash is made once when the artifact is stored (ADR-013
+   1. app id and 2. app version, for every app of the set, in order;
+   3. a hash of each app's source. For an artifact the hash is made once when the artifact is stored (ADR-013
       decision 13 keeps CRC-32 and size per entry). For `.alpackages` and `--deps` files it is a hash of the zip
       central directory (name, size and CRC-32 of every entry), which needs no data read;
    4. the target BC version, with the runtime version (`Target`, ADR-015: gates change lowering);
    5. the runtime build id. Any compiler change must invalidate. Decided here: the hash of the running executable
-      (it cannot miss a crate; a hash of source files can). The measurement section times it; if it costs too
-      much, the build script hashes all workspace sources and `Cargo.lock` instead.
+      (it cannot miss a crate; a hash of source files can). Measured at 6 to 8 ms; there is no build-script fallback.
 
-   The entry of an app also takes the keys of the entries of its dependencies, because its lowering was checked
-   against their member tables. A dependency hotfix therefore rebuilds the apps that depend on it, and nothing else.
-   The format integer is part of the key as well; a mismatch is a miss and rebuilds, never an error (ADR-016).
+   The key of the entry is the ordered list of these per-app inputs plus inputs 4 and 5. Any hotfix of any app in the
+   set is a miss and rebuilds the whole entry. The format integer is part of the key as well; a mismatch is a miss and rebuilds, never an error (ADR-016).
 
    **No input can be forgotten.** The key is one struct. The hash function destructures it field by field without
-   `..`, so adding a field that is not hashed does not compile. The install-baseline key (if built) takes the keys of
-   every entry in the set plus the test-data and normalization inputs, built the same way.
+   `..`, so adding a field that is not hashed does not compile. The install-baseline key (if built) takes the key of
+   the entry plus the test-data and normalization inputs, built the same way.
 
 5. **Writing is safe and local.**
    - Write to a temporary file in the cache folder, then rename. A reader sees the whole old file or the whole new
      file. Two parallel runs may both build the same entry; the last rename wins, and the bytes are the same
      (the build is deterministic, a test checks it).
    - A damaged file is refused and rebuilt, never used: the header and index checksum are checked at open, a block
-     checksum at first touch. A failed check stops the run with a named error (not a test failure and not a pass),
-     deletes the entry, and the next run rebuilds. `alrunner cache verify` reads every block, for CI.
+     checksum at first touch. A failed check (named reason on stderr) ignores the entry, the run
+     continues from a rebuild (or the demand path), and the damaged file is replaced. A damaged cache never changes an
+     outcome and never fails a run. `alrunner cache verify` reads every block, for CI.
    - **Licensing (ADR-013, "cache only"):** the cache is a local file made on the user's machine from source the
      user downloaded. Nothing compiled from Microsoft code is committed, released, uploaded as a release asset or
      shared outside the user's own CI cache.
-   - Location: open question 3.
+   - Location: `<cache root>/compile/` (owner decision 3 below).
 
-6. **CI** caches the cache folder between pipeline runs with `actions/cache`.
+6. **CI** caches the cache files between pipeline runs with `actions/cache` (owner, 2026-10-14: short-lived key per BC build; a
+   separate step builds or verifies the cache before the measured run, so the measured run is always a hit; the job
+   summary reports the times with the cache on and the cache build time separately).
    - The `actions/cache` key is built from the same inputs as decision 4: the output of `--print-builds`
      (the app versions), the runtime build id and the format integer. No `restore-keys`: an entry of another version
      is never usable.
@@ -320,24 +333,18 @@ dependency object (to compare two closures). `cargo run --release -p al-test-cli
 DEMAND.json...` opens a written file and times the decode. The corpus run is
 `al-test-cli --root . --bc-version 29`; the bucket runs are the recipe in `docs/alrunner-buckets.md`.
 
-## Proposed amendments to this ADR (need the owner's decision; the accepted answers above stay as they are)
+## Amendments adopted (owner, 2026-10-14)
 
-1. **Decision 2: the entry is per dependency set, not per app** (design A). Key: the ordered list of the per-app
-   inputs of decision 4, plus the other inputs. Workspace apps are ordered after the dependency apps in the program.
-2. **Decision 2: add to each block the list of objects whose extension or implementer set it embeds.** At load, a block
-   whose listed object is extended or implemented by a workspace object is lowered from source with the demand path
-   instead of being loaded.
-3. **Decision 2: leave the call graph out of the blocks**; derive it where `baseline.rs` and the explanations need it.
-4. **Decision 2: per-object zstd level 3 with one shared dictionary per entry**; no string table; no level 19.
-5. **Decision 3: decode the objects the baseline reaches in parallel at start (4 threads: 70 to 90 ms).** Per-object
-   laziness stays; per-routine laziness is not needed (decode of everything is 0.19 s on 4 threads).
-6. **Decision 4.5: hash the executable.** Measured 6 to 8 ms; drop the build-script fallback.
-7. **Consequences:** the first-run cost is 9 to 13 s and 5 GB of memory (builder), not 10 to 30 s. Entry size is
-   16 to 19 MB per BC build.
+The owner accepted all seven amendments the measurement proposed. They are folded into the decisions above:
+(1) the entry is per dependency set; (2) blocks list the objects whose extension or implementer set they embed and are
+lowered again when the workspace extends or implements one; (3) no call graph in the blocks; (4) per-object zstd
+level 3 with one shared dictionary, no string table, no level 19; (5) the objects the baseline reaches are decoded in
+parallel at start; (6) the executable is hashed, no build-script fallback; (7) the first-run cost is 9 to 13 s and
+5 GB of memory in the builder, and an entry is 16 to 19 MB per BC build.
 
-## Open questions for the project owner
+## Open questions (all answered, see "Owner decisions")
 
-Each is one decision. The recommendation comes first.
+Each was one decision. The recommendation came first.
 
 1. **How are blocks serialized?**
    - Recommended: **serde + postcard (or bincode) + per-object zstd.** The IR already derives serde. Small change,
@@ -375,28 +382,146 @@ Each is one decision. The recommendation comes first.
 
 ## Owner decisions (2026-10-14)
 
-The owner accepted every recommendation above:
+The owner accepted every recommendation above and answered question 5:
 
 1. Blocks are serialized with serde + postcard (or bincode) and compressed per object with zstd.
 2. The install-baseline snapshot is not in version 1.
 3. The cache lives in `<cache root>/compile/`, under the root the download cache already uses.
 4. WebAssembly has no compile cache in version 1.
+5. **One cache entry per dependency set**, not per app (design A). Workspace apps are ordered last.
+6. CI caches the cache files with `actions/cache`; a separate step builds or verifies the cache; the measured run is a
+   cache hit; the job summary reports the run time with the cache on and the cache build time apart.
+
+Decided without owner review (2026-10-14): see `docs/owner-review.md` (the file layout of an entry, the way a block is
+lowered again from source, the corruption handling, and the CLI spelling).
+
+## What was built (2026-10-14, branch `compile-cache`)
+
+- **Crates.** `al-cache` (core, no OS access): `Key`, the entry file, `build` and `Entry`. `al-sema/provided.rs`:
+  `DepFacts`, `DepBlock`, `DepSource`, `relower_set`. `al-testrun/compile_cache.rs`: the key of a run, reading, writing
+  and building the file. `lower::lower_for_cache` builds an entry (the complete compile of the dependency apps alone);
+  `lower::compile_loaded_cached` is a compile that takes those objects from it.
+- **The file.** Header (magic, format, key digest, where the index is, hashes), the zstd dictionary, one block per
+  dependency object (postcard, zstd level 3 with the dictionary and a content checksum), the index last (the facts of
+  every object and where each block sits). Opening reads the header, the index and the dictionary and checks their
+  hashes and the length; a block is checked when it is read.
+- **What a block is.** The lowered `ir::Object`, why each routine cannot run, and the direct calls of each routine.
+  What a variable of a page, report or xmlport type drives is added when the call graph is asked for
+  (`Lowered::calls_of`), from the page extensions and parts of the run. The facts beside the blocks are what the
+  lowering of other objects reads: the table behind a page, why a page cannot be driven, its parts, the numbering of
+  routines, the layout of a query.
+- **What makes a block unusable.** A block records the objects whose extensions or implementers it embeds: itself,
+  the interface of an interface call or test, the enum of an enum cast, a page or report a variable names (with the
+  parts of a page), a page whose control index it uses. The workspace "touches" the objects its own objects extend
+  or implement (and the interfaces they extend). Every block that lists a touched object is lowered again from source,
+  with the objects that extend each other. A test per case compares the whole `Program`, the refusals and the call
+  graph of the cached compile with the complete compile (`provided.rs`), and `demand_audit.rs` runs its 78 probes
+  in the cached mode against the complete compile.
+- **Order.** `CorpusRuntime::try_run_suites_with` puts the dependency apps first in the program and maps the app
+  indices of the caller (`SuiteRun::app`, `RunOptions::only`, `TestResult::app`) both ways.
+- **The key** holds the format integer, the sha256 of the executable, the target, the preprocessor symbols, and per
+  dependency app its id, name, dependency ids, publisher, version and a hash of every path and byte of its source. For
+  an app from a package the source hash is made from the files already read (about 30 ms for Business Central); the
+  hash of the zip directory that the first version of this ADR planned needs a change in `al-deps` and is left for
+  when the load of the sources is skipped.
+- **Outcomes.** The cached compile is the complete compile for the dependency apps. It gives the same outcome as the
+  eager run for every corpus test and the same as the demand-driven run except in `tools/demand-eager-known-differences.txt`
+  (a test the complete compile refuses before it starts because a page variable's call graph holds every routine of
+  the page). Those five tests pass in the uncached run and are refused with the cache. `al-test-cli` therefore uses the
+  cache only with `--compile-cache`; the ratchet runs without it. `alrunner test` uses it unless
+  `--no-compile-cache` or `ALRUNNER_NO_COMPILE_CACHE=1`.
+
+### Measured with the implementation (2026-10-14, release build, 12 cores shared with other agents)
+
+Two sessions under `flock /tmp/al-perf.lock`, each back to back: uncached, cold (the entry is deleted, so the run
+builds it), hit, hit, uncached again. Wall seconds, CPU seconds (user + system), and the peak resident size of the
+largest process. The load average is in `docs/adr/022-measurements.txt` (4 to 9 for the first three rows, 8 to 15 for
+the last), so compare the CPU column and the pairs, not rows. The first three rows are from the session at the final
+commit (`measure2`), the 32 buckets from the session before the last two merges of `main` (see the note below the table).
+
+| Run | Uncached (two runs) | Cold: build + run | Of which the build | Hit (two runs) | Memory: uncached / cold / hit |
+|---|---|---|---|---|---|
+| Small app, one test (`alrunner`, BC 29, no test data) | 1.60 s, 1.51 s; CPU 7.1, 7.0 s | 5.33 s; CPU 23.6 s | 4.51 s | 0.74 s, 0.75 s; CPU 2.6 s | 1259 / 3922 / 896 MB |
+| Corpus, BC 29, Microsoft's apps (`al-test-cli`) | 2.24 s, 2.48 s; CPU 12.2, 12.5 s | 6.49 s; CPU 28.3 s | 5.00 s | 1.46 s, 1.51 s; CPU 7.1, 7.4 s | 1445 / 3766 / 1232 MB |
+| Tests-ERM, BC 27.5, test data (`alrunner`) | 12.02 s, 11.72 s; CPU 39.1, 40.7 s | 13.99 s; CPU 50.7 s | 5.76 s | 8.09 s, 8.34 s; CPU 27.8, 28.2 s | 3107 / 4183 / 2112 MB |
+| All 32 buckets, one process, test data (earlier session) | 33.4 s, 30.4 s; CPU 130.8, 125.5 s | 29.2 s; CPU 124.9 s | 4.71 s | 35.0 s, 34.8 s; CPU 118.5, 116.1 s | 6310 / 4963 / 4710 MB |
+
+Note on the 32 buckets: `main` as of the last merge needs more than 18 GB for the combined run with test data and is
+killed, with or without the cache (the binary built from `main` in the main checkout at 18:41 too), so the row is from
+the session before. It is a regression on `main`, not an effect of the cache.
+
+- **Build.** 4.5 to 5.8 s and 3.8 to 4.2 GB, for an entry of 12.9 to 13.3 MB. The complete check of the dependency apps
+  runs on all cores now (`Checker::check_objects_parallel`); before, it was serial and the build took 10 to 19 s.
+- **Hit.** The file opens in 0.03 to 0.05 s (key, read, header and index). Reading the blocks takes 0.05 to 0.17 s
+  on all cores (more when the machine is loaded). A small app runs 2 times faster than uncached, uses a third of
+  the CPU and 30 % less memory. The corpus runs 1.6 times faster with 40 % less CPU. Tests-ERM runs 1.45 times faster
+  (the 5 to 6 s of tests with test data do not change) with 30 % less CPU and a third less memory.
+- **All 32 buckets: no gain in wall time.** The workspace holds 91 MB of test sources, which load, check and lower the
+  same with and without the cache (load 2.5 s, check 1.3 s, lowering 1.1 to 1.5 s), and 19 s of the run is the
+  tests with test data. The cache replaces the demand compile of the dependency apps (about 3 s on a quiet machine)
+  by reading the blocks (0.15 s). The CPU time is 8 % lower, the peak memory 25 % lower.
+- **Not reached: the projections of the measurement section** (small app 4 to 6 times, corpus 1.4 to 2.3 times). The
+  sources of the dependency apps are still read, inflated, hashed and scanned on every run (0.2 to 0.35 s), every
+  block of the objects the workspace does not change is decoded at the start (more objects than a run reaches), and
+  the whole program is built (the engine reads every object). Skipping these needs the object index and the member
+  tables in the entry, a workspace without dependency sources, and a lazily filled `Program::objects`; see "Not done".
+- **Outcomes.** The program of the cached compile equals the program of the complete compile object for object
+  (`provided.rs` tests, the 78 probes of `demand_audit.rs`), every corpus test of BC 27, 28 and 29 and of the OnPrem
+  and isolation suites has the outcome it has in the eager run, and Tests-ERM with test data and all 40300 tests of the
+  32 buckets have the outcome of the eager run (0 differences). Against the uncached run (demand-driven compile): the
+  corpus differs in the 5 tests of `tools/demand-eager-known-differences.txt` (on all three versions), Tests-ERM in
+  none, and the 32 buckets in 7 of 40300 tests (a test that passes or fails uncached is not run with the cache). The
+  cause is the same as in the corpus: a routine that only the complete compile has is in the static call graph of a
+  page variable, for example `Navigate.OnAction` through a `RunObject` action of a dependency page.
+
+### Not done
+
+- **Skipping the load of the dependency sources, and lazy objects.** The object index and the member tables are not in
+  the entry; the sources of the dependency apps are read and scanned on every run; every needed block is decoded at
+  the start. `Program::objects` is a plain list and the engine reads all of it (tables, the event registry), so lazy
+  decode needs those whole-program passes stored in the entry first.
+- **The same outcome as the uncached run for every test.** The cached run gives the complete compile's outcome, which
+  differs from the demand-driven one in the tests above. Making the two equal means changing what the static call
+  graph of a page variable holds, in both paths, so that it does not depend on how much was compiled. A first try (follow
+  only what the demand analysis compiles: no `RunObject` links of dependency pages, only `OnRun` of a codeunit, only the
+  triggers of a report) made the corpus differences grow from 5 to 10 and was reverted. The fix changes the outcomes of the
+  uncached path and is the owner's decision.
+- **`alrunner cache` (list, verify, prune)**; CI prunes with a shell step and verifies with
+  `al-test-cli --build-compile-cache`.
+- **The install-baseline snapshot** (owner decision: not in version 1).
+
+Decided without owner review (2026-10-14):
+
+- A damaged, cut or foreign file is ignored with a note, removed, and the run builds a new one (or, if the entry was
+  read but a block fails, compiles without it). The first version of this ADR said the run stops. Ignoring cannot
+  change an outcome and needs no manual step. `--require-compile-cache` makes any of that an error.
+- The corpus tool is opt-in (`--compile-cache`), because its baseline is recorded under the demand-driven compile.
+- A run that uses an entry sets its modification time; a run that builds an entry removes the entries nothing used for
+  30 days (an app that changes on every run would otherwise leave 13 MB behind each time).
+- `al-test-cli --build-compile-cache` builds or checks the entries and prints the build time; CI uses it. There is no
+  `alrunner cache` command yet.
+- The facts and blocks of an entry hold the dependency objects only; the sources of the dependency apps are still read
+  and scanned on every run, and the blocks are all decoded at the start (in parallel).
 
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an
   IR type changes the runtime build id and so invalidates all entries; no migration code is needed.
-- **`Program` changes shape** (lazy object slots, entry-local indexes) and the compile pipeline must produce output
-  per app. Today `Program` is one list for all apps. Additive, but not small.
-- **First run is slow.** Building the entries is the eager compile of the whole closure: estimated 10-30 s per Base
-  App version, to be measured. The runner prints one line to stderr saying it is building the cache once. Later
-  runs, and every CI run after the cache-build step, do not pay it.
-- **Memory:** the builder holds an eager compile in memory once. A cached run holds only the index and decoded
-  objects, which may be below today's demand compile; the spike measures it.
-- **Disk:** an entry per app version, left behind after each hotfix. `alrunner cache prune` and `alrunner doctor`
-  (ADR-016) report and remove it.
+- **The program order changes, `Program` does not.** The dependency apps come first in the program of a cached run, so
+  an object index means the same in the entry and in the run; `CorpusRuntime` maps the caller's app indices both ways.
+  Lazy object slots are not built yet (see "Not done").
+- **First run is slow.** Building the entry is the complete compile of the dependency set: measured 4.6 to 5.3 s and
+  3.8 to 4.1 GB for Business Foundation, System Application and Base Application of BC 27.5 to 29 (it was 10 to 19 s
+  while the complete check ran on one thread). The runner prints one line to stderr saying it is building the cache
+  once. Later runs, and every CI run after the cache-build step, do not pay it.
+- **Memory:** the builder holds the complete compile in memory once (3.8 to 4.1 GB measured, so it needs a cap of at
+  least 5 GB). A cached run holds the decoded program: 0.9 GB for a small app, 1.2 GB for the corpus, 2.1 GB for
+  Tests-ERM, against 1.3, 1.4 and 3.1 GB uncached.
+- **Disk:** an entry per set of dependency apps (13 MB), left behind after each hotfix. A run that builds an entry
+  removes the ones nothing used for 30 days. `alrunner cache` and `alrunner doctor` (ADR-016) are not built.
 - **Two paths stay.** The demand-driven compile remains (cache off, WebAssembly, differential), so both are
-  maintained. The cached path adds no new behaviour: it must give the outcomes of the uncached path (ADR-009).
+  maintained. The cached path adds no new behaviour: it gives the outcomes of the complete compile, which are those of
+  the uncached path except in a few tests (see "Outcomes" above and the open question in `docs/owner-review.md`).
 - **ADR-016's rule** (no feature that only hides start-up or run cost) is not broken: this is the owner's explicit
   request, placed after the performance work, with a go/no-go gate.
 
@@ -410,7 +535,7 @@ The owner accepted every recommendation above:
   the entry is deleted and rebuilt, and the corrupted bytes are never executed. A truncated file does the same.
 - **Atomic and parallel.** Several processes build the same entry at once; every reader sees a whole file. Two
   builds produce identical bytes.
-- **Sharing.** Two projects with different own extensions load the same Base Application entry without rewriting it.
+- **Sharing.** Two projects with different own extensions load the same dependency-set entry without rewriting it.
   A customer table extension on a Base table and a customer event subscriber give the same outcomes as an uncached
   run.
 - **Outcome identity.** The corpus with caching on and with `--no-compile-cache` gives the same outcome and the

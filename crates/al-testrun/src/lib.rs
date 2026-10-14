@@ -4,6 +4,7 @@
 //! The oracle, the pass-rate report and the ratchet stay in `al-test-cli`.
 
 pub mod baseline;
+pub mod compile_cache;
 pub mod deps;
 pub mod discover;
 pub mod dotnet;

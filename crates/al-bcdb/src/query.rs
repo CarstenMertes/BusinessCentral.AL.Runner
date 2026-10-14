@@ -107,33 +107,30 @@ fn primary_weights(s: &str, out: &mut Vec<u32>) {
     }
 }
 
+/// A sort key whose ordering is [`collate_cmp`]: primary weights, then which letters are
+/// accented or special, then which are upper case, then the text itself.
+type CollationKey = (Vec<u32>, Vec<bool>, Vec<bool>, String);
+
+fn collation_key(s: &str) -> CollationKey {
+    let mut primary = Vec::with_capacity(s.len());
+    primary_weights(s, &mut primary);
+    (
+        primary,
+        s.chars().map(|c| !c.is_ascii()).collect(), // secondary: an accented or special letter sorts after its plain form
+        s.chars().map(|c| c.is_uppercase()).collect(), // tertiary: lower case before upper case
+        s.to_string(),
+    )
+}
+
 /// Culture-aware string order, as bcdb's `OrderBy(t => t.Company)` sorts.
 pub fn collate_cmp(a: &str, b: &str) -> std::cmp::Ordering {
-    let (mut pa, mut pb) = (Vec::new(), Vec::new());
-    primary_weights(a, &mut pa);
-    primary_weights(b, &mut pb);
-    pa.cmp(&pb)
-        .then_with(|| {
-            // secondary: an accented or special letter sorts after its plain form
-            let acc = |s: &str| s.chars().map(|c| !c.is_ascii()).collect::<Vec<_>>();
-            acc(a).cmp(&acc(b))
-        })
-        .then_with(|| {
-            // tertiary: lower case before upper case
-            let up = |s: &str| s.chars().map(|c| c.is_uppercase()).collect::<Vec<_>>();
-            up(a).cmp(&up(b))
-        })
-        .then_with(|| a.cmp(b))
+    collation_key(a).cmp(&collation_key(b))
 }
 
 /// Sort the way `tables` lists them: company (none first), then table name, culture-aware.
+/// Keys are built once per table; comparing two names allocates nothing.
 pub fn sort_tables(tables: &mut [BcTable]) {
-    tables.sort_by(|x, y| match (&x.company, &y.company) {
-        (None, None) => collate_cmp(&x.table_name, &y.table_name),
-        (None, Some(_)) => std::cmp::Ordering::Less,
-        (Some(_), None) => std::cmp::Ordering::Greater,
-        (Some(a), Some(b)) => collate_cmp(a, b).then_with(|| collate_cmp(&x.table_name, &y.table_name)),
-    });
+    tables.sort_by_cached_key(|t| (t.company.as_deref().map(collation_key), collation_key(&t.table_name)));
 }
 
 pub fn bc_tables(src: &dyn BcSource) -> Result<Vec<BcTable>> {

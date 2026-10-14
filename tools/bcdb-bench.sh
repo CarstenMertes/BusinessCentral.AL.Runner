@@ -85,7 +85,7 @@ trap 'rm -f "$RESULTS"' EXIT
 # slow program from a loaded host; but a program that uses several threads (bcdb's prefetch,
 # the port's export) spends more CPU than wall, so read the two together.
 bench() {
-  local label=$1 tool=$2 snippet=$3 T i t0 t1 wall=() cpu=() l0 l1 c
+  local label="[$KIND] $1" tool=$2 snippet=$3 T i t0 t1 wall=() cpu=() l0 l1 c
   [ "$tool" = ref ] && T=$REF || T=$PORT
   export T
   if [ "$COLD" = 1 ]; then drop_cache "$BAK" "$BACPAC" "$BASEAPP"; fi
@@ -144,6 +144,7 @@ pick_tables() {
 
 suite() {
   local kind=$1 file=$2
+  KIND=$kind
   local big bigc reqs
   IFS=$'\t' read -r big bigc < <(pick_tables "$file")
   reqs=$CACHE/requests-$kind.jsonl

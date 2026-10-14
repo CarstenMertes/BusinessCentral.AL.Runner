@@ -1652,6 +1652,10 @@ impl Session {
             self.set_xrec_fields(st, row.stored.clone());
         }
         st.borrow_mut().window = keys;
+        // The row the cursor stands on is read once more after the window: a list of 60 rows
+        // raises OnAfterGetRecord 21 times when it opens, rows 1 to 20 and then row 1 again
+        // (corpus handlers/TestPageRuntimeContracts.al:121-136 TestPage_List_OpenReads21Rows).
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
         Ok(())
     }
 

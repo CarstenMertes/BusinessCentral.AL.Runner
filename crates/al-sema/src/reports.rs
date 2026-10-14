@@ -432,7 +432,7 @@ fn visit(
         }
         let args = s.args();
         let name = args.first().cloned().unwrap_or_default();
-        let table = args.get(1).cloned().unwrap_or_default();
+        let table = crate::types::section_object_name(&s, 1).unwrap_or_default();
         for p in s.properties() {
             let pn = p.name().to_ascii_lowercase();
             let temporary_ok =

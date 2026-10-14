@@ -1,0 +1,14 @@
+[package]
+name = "al-bcdb-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Dev command line for al-bcdb: the bcdb read commands (tables, companies, describe, read, serve, check, verify)."
+
+[[bin]]
+name = "al-bcdb"
+path = "src/main.rs"
+
+[dependencies]
+al-bcdb = { path = "../al-bcdb" }

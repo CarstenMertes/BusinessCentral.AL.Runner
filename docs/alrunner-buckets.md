@@ -119,3 +119,14 @@ Threads for Tests-ERM (compile / run / total): 1 thread 14.62 s / 0.86 s / 15.92
 
 Compile dominates: the demand compile of Base Application for the test codeunits of the bucket. The run is
 sub-second except for Tests-Misc (5.4 s: 229 tests really run).
+
+## "Outside the workspace" refusals (branch `bucket-demand`, 2026-10-14)
+
+All 32 buckets in one process, before and after (same artifact, same flags). Before: 2939 tests refused as outside
+the workspace (global table 1968, global codeunit 500, table 330, page 71, report 32). After: none. The cause was
+never the demand-driven reach. A dependency file that does not parse takes all its objects out of the compile, and
+name lookup then says "outside the workspace". The fixes are parser fixes (`Option` return type with no members,
+`trigger Var::Event`, `ControlAddIn Name`, control add-in `event`), namespace-qualified data item tables, and the
+message for platform tables with a dot in the name. The details are in ADR-013, "Outside the workspace on
+Microsoft's test buckets". To find the next one, run a bucket with `AL_EAGER_DEPENDENCIES=1` (parses every file;
+Tests-SMB: 3.4 GB peak, 8 s) and read the `parse:` lines; a normal run prints them for the files it reached.

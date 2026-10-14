@@ -230,13 +230,13 @@ pub fn lower_with_workers(
                     ));
                 }
             }
-            match c.section.args().get(1) {
-                Some(n) => match ws.resolve_ref(file, ObjKind::Page, &crate::types::qualified_parts(n)) {
+            match crate::types::section_object_name(&c.section, 1) {
+                Some(n) => match ws.resolve_ref(file, ObjKind::Page, &crate::types::qualified_parts(&n)) {
                     Resolution::Found(p) => page_parts[oi].push(p),
                     _ => page_reasons[oi].push(format!(
                         "part {} shows page {} outside the workspace",
                         c.name,
-                        crate::types::display_name(n)
+                        crate::types::display_name(&n)
                     )),
                 },
                 None => page_reasons[oi].push(format!("part {} names no page", c.name)),
@@ -1141,7 +1141,26 @@ fn lower_object<'a>(
         // A dependency routine nothing reached was never checked: a stub that refuses.
         let reached = !checked.is_skipped(oi)
             && demand.is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, routine_offsets[oi][ri]));
-        let routine = if reached { lw.routine(r) } else { lw.stub(r) };
+        // A routine whose check panicked has no types and resolutions to lower from: it refuses.
+        let routine = if let Some(why) = checked.panic_of(oi, routine_offsets[oi][ri]) {
+            lw.refused(r, format!("internal error while checking: {why}"))
+        } else if reached {
+            // A panic lowering one routine is a bug in the compiler; the routine refuses and the
+            // run goes on.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lw.routine(r))) {
+                Ok(routine) => routine,
+                Err(p) => {
+                    lw.calls.clear();
+                    lw.reasons = global_reasons.clone();
+                    lw.refused(
+                        r,
+                        format!("internal error while lowering: {}", crate::check::panic_message(&*p)),
+                    )
+                }
+            }
+        } else {
+            lw.stub(r)
+        };
         // A TestPage drives page routines the call graph cannot see (ADR-012).
         for s in routine.locals.iter().chain(&globals) {
             if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
@@ -2236,7 +2255,7 @@ impl Lowerer<'_> {
                 .collect();
             let file = self.ws.objects[ow.object].file;
             let part_page = if raw.kind == ir::ControlKind::Part {
-                match sec.args().get(1).map(|n| self.resolve_obj_in(file, ObjKind::Page, n)) {
+                match crate::types::section_object_name(sec, 1).map(|n| self.resolve_obj_in(file, ObjKind::Page, &n)) {
                     Some(Ok(p)) => Some(p),
                     _ => {
                         unsupported.push(format!("part {} shows a page outside the workspace", raw.name));
@@ -2926,6 +2945,10 @@ impl Lowerer<'_> {
     }
 
     fn routine(&mut self, r: &ast::Routine) -> ir::Routine {
+        #[cfg(test)]
+        if r.name() == "InjectedLowerPanic" {
+            panic!("injected lowering panic");
+        }
         // A routine the compiler made up (a page expression) has no source.
         self.emit_pos = self.lines.is_some() && !crate::pages::is_synthetic(&r.name());
         let pos = match r.keyword_offset().filter(|_| self.emit_pos) {
@@ -3064,8 +3087,15 @@ impl Lowerer<'_> {
     /// A routine of a dependency app that nothing reached: its name and attributes (so event
     /// subscribers stay registered), no body, and a reason that refuses anything that runs it.
     fn stub(&mut self, r: &ast::Routine) -> ir::Routine {
-        self.reasons
-            .push("not compiled: no code reached it while compiling the workspace's dependencies (ADR-013)".into());
+        self.refused(
+            r,
+            "not compiled: no code reached it while compiling the workspace's dependencies (ADR-013)".into(),
+        )
+    }
+
+    /// A routine without a body, and `reason` that refuses anything that runs it.
+    fn refused(&mut self, r: &ast::Routine, reason: String) -> ir::Routine {
+        self.reasons.push(reason);
         ir::Routine {
             name: r.name(),
             field: None,
@@ -4951,6 +4981,56 @@ codeunit 50101 C2
             .unwrap();
         let target = agent.relation_arms[0].table.map(|t| l.program.objects[t].id);
         assert_eq!(target, Some(Some(291)), "{:?}", agent.relation_arms);
+    }
+
+    // Base Application's `AdjustAddReportingCurrency.Report.al` declares
+    // `dataitem(Integer; System.Utilities.Integer)`: a data item whose table is written with its namespace.
+    #[test]
+    fn a_dataitem_table_written_with_its_namespace_resolves() {
+        use crate::workspace::AppKind;
+        let src = |id: &str, deps: &[&str], files: &[(&str, &str)]| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files: files.iter().map(|(p, s)| (p.to_string(), s.to_string())).collect(),
+        };
+        let dep = src(
+            "dep",
+            &[],
+            &[(
+                "ship.al",
+                "namespace D.Ship; table 291 \"Ship Agent\" { fields { field(1; Code; Code[10]) { } } keys { key(PK; Code) { } } }",
+            )],
+        );
+        let main = src(
+            "main",
+            &["dep"],
+            &[(
+                "r.al",
+                "report 50000 R { ProcessingOnly = true; UseRequestPage = false; \
+                 dataset { dataitem(Agent; D.Ship.\"Ship Agent\") { } } \
+                 trigger OnPreReport() begin end; } \
+                 codeunit 50001 C { var Rep: Report R; procedure P() begin end; }",
+            )],
+        );
+        let ws = Workspace::load_apps(
+            vec![main, dep],
+            vec![AppKind::Workspace, AppKind::Dependency],
+            &Default::default(),
+        );
+        let members = crate::members::build(&ws);
+        let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
+        let l = lower_with_positions(&ws, &members, &checked, false);
+        let why: Vec<_> = l
+            .unsupported
+            .iter()
+            .enumerate()
+            .flat_map(|(o, rs)| {
+                let name = &l.program.objects[o].name;
+                rs.iter().flatten().map(move |r| format!("{name}: {r}"))
+            })
+            .collect();
+        assert!(why.is_empty(), "{why:?}");
     }
 
     fn table_ir(l: &Lowered) -> &ir::Table {

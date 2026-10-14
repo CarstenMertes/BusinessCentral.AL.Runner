@@ -355,6 +355,21 @@ impl CorpusRuntime {
                 ..Default::default()
             },
         );
+        // A dependency file that does not parse takes every object in it out of the compile, and the
+        // tests that need one are refused as "outside the workspace". Say so, once, with the first lines.
+        let unparsed = ws.lazy_parse_problems();
+        if !unparsed.is_empty() {
+            eprintln!(
+                "parse: {} dependency file(s) did not parse; their objects are unusable and the tests that need them are not run",
+                unparsed.len()
+            );
+            for (_, why) in unparsed.iter().take(10) {
+                eprintln!("parse: {why}");
+            }
+            if unparsed.len() > 10 {
+                eprintln!("parse: ... {} more", unparsed.len() - 10);
+            }
+        }
         // Nothing else holds the program yet, so this does not copy it.
         for (app, m) in std::sync::Arc::make_mut(&mut lowered.program)
             .apps

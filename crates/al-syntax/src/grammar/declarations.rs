@@ -87,6 +87,8 @@ const OBJECT_TYPES: &[&str] = &[
     "testfield",
     // `DotNet Alias`: the alias a `dotnet { }` block declares.
     "dotnet",
+    // `ControlAddIn Name`: a parameter that receives a control add-in.
+    "controladdin",
 ];
 
 pub(crate) fn type_ref(p: &mut Parser) {
@@ -112,7 +114,11 @@ pub(crate) fn type_ref(p: &mut Parser) {
             }
         }
         "option" => loop {
-            if matches!(p.current(), Ident | QuotedIdent | Integer) {
+            // `Option` with no members ends a return type: the `var` or `begin` after it opens
+            // the body (Base Application `FALedgerEntry.Table.al`, `ConvertPostingType(): Option`).
+            // As a member name they are followed by a comma.
+            let body_keyword = (p.at_kw("var") || p.at_kw("begin")) && p.nth(1) != Comma;
+            if matches!(p.current(), Ident | QuotedIdent | Integer) && !body_keyword {
                 p.bump_any();
             }
             if !p.eat(Comma) {
@@ -219,6 +225,11 @@ pub(crate) fn routine(p: &mut Parser) {
         p.expect_kw("procedure");
     }
     name(p);
+    // `trigger Variable::Event(...)` handles an event of a `WithEvents` variable.
+    if kind == Trigger && p.at(ColonColon) {
+        p.bump_any();
+        name(p);
+    }
     param_list(p);
     return_spec(p);
     p.eat(Semicolon);
@@ -398,6 +409,46 @@ mod tests {
         assert_eq!(
             dump("trigger OnRun()\nbegin\nend;", routine),
             "(Trigger trigger OnRun (ParamList ( )) (Block begin end) ;)"
+        );
+    }
+
+    #[test]
+    fn option_return_type_without_members_ends_before_var_or_begin() {
+        // Base Application's `FALedgerEntry.Table.al` has `procedure ConvertPostingType(): Option`
+        // followed by a `var` section; the `var` is no member.
+        let src = "procedure P(): Option\nvar\n  X: Integer;\nbegin\nend;";
+        assert_eq!(errors(src, routine), 0);
+        assert_eq!(
+            dump(src, routine),
+            "(Procedure procedure P (ParamList ( )) (ReturnSpec : (TypeRef Option)) (VarSection var (VarDecl X : (TypeRef Integer) ;)) (Block begin end) ;)"
+        );
+        assert_eq!(errors("procedure P(): Option\nbegin\nexit(1);\nend;", routine), 0);
+        // A member can still be named `Begin` or `Var`.
+        assert_eq!(t("Option Begin,End"), "(TypeRef Option Begin , End)");
+        assert_eq!(t("Option Var,Other"), "(TypeRef Option Var , Other)");
+    }
+
+    #[test]
+    fn event_handler_trigger_names_the_variable_and_the_event() {
+        // `trigger CameraProvider::PictureAvailable(...)` handles an event of a WithEvents variable
+        // (System Application, `Camera.Page.al`).
+        let src = "trigger Tour::TourEnded(PageId: Integer)\nbegin\nend;";
+        assert_eq!(errors(src, routine), 0);
+        assert_eq!(
+            dump(src, routine),
+            "(Trigger trigger Tour :: TourEnded (ParamList ( (Param PageId : (TypeRef Integer)) )) (Block begin end) ;)"
+        );
+    }
+
+    #[test]
+    fn control_add_in_parameter_type() {
+        assert_eq!(t("ControlAddIn BusinessChart"), "(TypeRef ControlAddIn BusinessChart)");
+        assert_eq!(
+            errors(
+                "procedure Update(Chart: ControlAddIn BusinessChart)\nbegin\nend;",
+                routine
+            ),
+            0
         );
     }
 

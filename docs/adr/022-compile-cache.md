@@ -477,8 +477,10 @@ and the pairs, not rows. Raw output: `docs/adr/022-measurements.txt`.
   decode needs those whole-program passes stored in the entry first.
 - **The same outcome as the uncached run for every test.** The cached run gives the complete compile's outcome, which
   differs from the demand-driven one in the tests above. Making the two equal means changing what the static call
-  graph of a page variable follows (parts and `RunObject` links of dependency pages) in both paths, so that it does not
-  depend on how much was compiled. That changes the outcomes of the uncached path and is the owner's decision.
+  graph of a page variable holds, in both paths, so that it does not depend on how much was compiled. A first try (follow
+  only what the demand analysis compiles: no `RunObject` links of dependency pages, only `OnRun` of a codeunit, only the
+  triggers of a report) made the corpus differences grow from 5 to 10 and was reverted. The fix changes the outcomes of the
+  uncached path and is the owner's decision.
 - **`alrunner cache` (list, verify, prune)**; CI prunes with a shell step and verifies with
   `al-test-cli --build-compile-cache`.
 - **The install-baseline snapshot** (owner decision: not in version 1).

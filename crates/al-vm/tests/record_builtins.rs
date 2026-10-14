@@ -20,6 +20,18 @@ table 50900 "ALT T"
     }
     keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } key(ByAmt; Amount) { } }
 }
+enum 50901 "ALT Blank Kind" { value(0; " ") { Caption = '(All)'; } value(1; Item) { } }
+table 50902 "ALT Blank"
+{
+    fields
+    {
+        field(1; Id; Code[10]) { }
+        field(2; Kind; Option) { OptionMembers = " ",A,B; }
+        field(3; Kind2; Enum "ALT Blank Kind") { }
+        field(4; Kind3; Option) { OptionMembers = First,Second; }
+    }
+    keys { key(PK; Id) { } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -822,4 +834,28 @@ fn set_current_key_on_a_field_that_is_not_stored_is_refused() {
         Err(Signal::Unsupported(m)) => assert!(m.contains("not pinned"), "{m}"),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn testfield_on_the_blank_member_of_an_option_or_enum_is_refused_not_guessed() {
+    // Microsoft's Tests-ERM (Payment Registration UT, Price List Line UT) expect BC to say
+    // "<field> must not be <member> in <table>" there, not "must have a value ...". No corpus
+    // test pins that text or what follows it (docs/probes-needed.md, "Probe batch 6"), so the
+    // runtime refuses instead of answering with the wrong text.
+    for field in ["Kind", "Kind2", "Kind3"] {
+        let r = run(
+            &format!("procedure F() var R: Record \"ALT Blank\"; begin R.Id := 'A'; R.TestField({field}); end;"),
+            "F",
+        );
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(m)) if m.contains("TestField") && m.contains(field)),
+            "{field}: {r:?}"
+        );
+    }
+    // A non-blank member passes.
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT Blank\"; begin R.Kind := R.Kind::B; R.TestField(Kind); exit('ok'); end;",
+        "F",
+    );
+    assert_eq!(text(r), "ok");
 }

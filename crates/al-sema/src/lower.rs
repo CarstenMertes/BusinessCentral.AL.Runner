@@ -44,6 +44,11 @@ pub fn lower_with_positions(
         ws.restrict_to((0..ws.objects.len()).map(|i| d.active(i)).collect());
     }
     let active = |oi: usize| demand.is_none_or(|d| !ws.is_dependency(oi) || d.active(oi));
+    let uncompiled_subscribers = if demand.is_some() {
+        crate::check::demand::uncompiled_subscribers(ws, &active)
+    } else {
+        Vec::new()
+    };
     // Routine numbering: every procedure and trigger node of an object, in source order.
     let routine_nodes: Vec<Vec<ast::Routine>> = (0..ws.objects.len())
         .map(|oi| {
@@ -105,6 +110,7 @@ pub fn lower_with_positions(
                     type_name: d.decl.type_name.clone(),
                 })
                 .collect(),
+            uncompiled_subscribers,
             ..Default::default()
         },
         unsupported: Vec::new(),

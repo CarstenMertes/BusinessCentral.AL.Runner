@@ -187,6 +187,14 @@ impl Session {
         element: Option<&str>,
     ) -> Result<Vec<(crate::events::Subscriber, Inst)>, Signal> {
         let engine = self.engine.clone();
+        // A subscriber BC would run and this program has no code for: running the event without it
+        // would be a wrong answer (ADR-013 decision 6, hard rule 4).
+        if let Some(m) = engine.events.missing_for(object, event, element) {
+            return unsupported(format!(
+                "event {event}: {} subscribes to it and was not compiled (no code the workspace reaches uses it)",
+                m.subscriber
+            ));
+        }
         let Some(subs) = engine.events.subscribers.get(&(object, event.to_string())) else {
             return Ok(Vec::new());
         };

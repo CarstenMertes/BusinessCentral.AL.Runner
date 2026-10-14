@@ -39,6 +39,9 @@ pub struct ScannedObject {
     pub subscribers: Vec<ScannedSubscriber>,
     /// A codeunit that declares `Subtype = Install;` in its body.
     pub install: bool,
+    /// An object that declares `EventSubscriberInstance = Manual;`: its subscribers fire only while
+    /// an instance is bound.
+    pub manual_subscribers: bool,
 }
 
 /// `[EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", 'OnBeforePost', ...)]`
@@ -50,6 +53,9 @@ pub struct ScannedSubscriber {
     pub publisher: Vec<String>,
     /// The event name without its quotes.
     pub event: String,
+    /// The `ElementName` argument (a field or control name for field events), without its quotes;
+    /// empty when absent.
+    pub element: String,
     /// Byte offset of the attribute's `[`.
     pub offset: usize,
 }
@@ -237,6 +243,7 @@ fn scan_object(sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
         implements,
         subscribers: Vec::new(),
         install: false,
+        manual_subscribers: false,
     };
     // Body: braces nest; subscriber attributes sit directly in the object body.
     let mut i = end;
@@ -258,6 +265,14 @@ fn scan_object(sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
                     && sig.get(i + 2).is_some_and(|t| t.is_kw("Install")) =>
             {
                 obj.install = true;
+            }
+            Ident
+                if depth == 1
+                    && sig[i].text.eq_ignore_ascii_case("EventSubscriberInstance")
+                    && sig.get(i + 1).is_some_and(|t| t.kind == Eq)
+                    && sig.get(i + 2).is_some_and(|t| t.is_kw("Manual")) =>
+            {
+                obj.manual_subscribers = true;
             }
             LBrack if depth == 1 => {
                 if let Some(s) = subscriber(sig, i) {
@@ -311,10 +326,16 @@ fn subscriber(sig: &[Tok], at: usize) -> Option<ScannedSubscriber> {
         Ident | QuotedIdent => ev.ident_text(),
         _ => return None,
     };
+    // , 'ElementName'
+    let element = match (t(i + 2), t(i + 3)) {
+        (Some(c), Some(e)) if c.kind == Comma && e.kind == StringLit => e.text.trim_matches('\'').replace("''", "'"),
+        _ => String::new(),
+    };
     Some(ScannedSubscriber {
         publisher_kind,
         publisher,
         event,
+        element,
         offset: sig[at].start,
     })
 }
@@ -407,6 +428,19 @@ mod tests {
         assert_eq!(subs[1].publisher, ["Sales-Post"]);
         assert_eq!(subs[2].publisher, ["80"]);
         assert_eq!(subs[2].event, "It's");
+        // The element name of a field event.
+        assert_eq!(subs[3].element, "Status");
+        assert_eq!(subs[0].element, "");
+    }
+
+    #[test]
+    fn a_manual_subscriber_instance_is_noted() {
+        let f = s("codeunit 50 M { EventSubscriberInstance = Manual; \
+                   [EventSubscriber(ObjectType::Codeunit, Codeunit::P, 'OnX', '', false, false)] local procedure A() begin end; }\
+                   codeunit 51 A { EventSubscriberInstance = StaticAutomatic; }\
+                   codeunit 52 N { procedure P() begin end; }");
+        let manual: Vec<bool> = f.objects.iter().map(|o| o.manual_subscribers).collect();
+        assert_eq!(manual, [true, false, false]);
     }
 
     #[test]

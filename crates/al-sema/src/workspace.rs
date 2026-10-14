@@ -170,6 +170,9 @@ pub struct ObjectSym {
     pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
     /// A codeunit with `Subtype = Install` (known for objects of scanned files only).
     pub install: bool,
+    /// The object declares `EventSubscriberInstance = Manual` (known for objects of scanned files
+    /// only): its subscribers fire only while an instance is bound.
+    pub manual_subscribers: bool,
 }
 
 /// A byte range of a parsed text.
@@ -326,6 +329,7 @@ impl Workspace {
                     implements: o.implements,
                     subscribers: o.subscribers,
                     install: o.install,
+                    manual_subscribers: o.manual_subscribers,
                 });
             }
         }
@@ -441,8 +445,17 @@ impl Workspace {
     /// `Global Triggers` (2000000002), which no app need declare: its events are raised by the
     /// runtime around record writes.
     pub fn global_trigger_subscribers(&self) -> Vec<(usize, usize)> {
-        ["global triggers", "2000000002"]
-            .iter()
+        self.codeunit_subscribers(&["global triggers", "2000000002"])
+    }
+
+    /// Subscribers to the platform's `Caption Class` codeunit (42), whose `OnResolveCaptionClass`
+    /// the page client raises for a `CaptionClass` no built-in area resolves.
+    pub fn caption_class_subscribers(&self) -> Vec<(usize, usize)> {
+        self.codeunit_subscribers(&["caption class", "42"])
+    }
+
+    fn codeunit_subscribers(&self, keys: &[&str]) -> Vec<(usize, usize)> {
+        keys.iter()
             .flat_map(|k| {
                 self.subscribers_of
                     .get(&(ObjKind::Codeunit, (*k).to_string()))
@@ -835,6 +848,7 @@ struct FileObject {
     implements: Vec<Vec<String>>,
     subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
     install: bool,
+    manual_subscribers: bool,
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
@@ -854,6 +868,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 implements: o.implements_parts(),
                 subscribers: Vec::new(),
                 install: false,
+                manual_subscribers: false,
             })
             .collect(),
         dotnet: root.dotnet_types(),
@@ -893,6 +908,7 @@ fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
                 implements: o.implements,
                 subscribers: o.subscribers,
                 install: o.install,
+                manual_subscribers: o.manual_subscribers,
             })
             .collect(),
     }

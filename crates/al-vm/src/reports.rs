@@ -231,6 +231,18 @@ impl Session {
             .iter()
             .position(|o| o.kind == "report" && o.id == u32::try_from(*n).ok())
         else {
+            // A report of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
+            if self
+                .engine
+                .program
+                .objects
+                .iter()
+                .any(|o| o.kind == "uncompiled report" && o.id == u32::try_from(*n).ok())
+            {
+                return unsupported(format!(
+                    "{id} of report {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                ));
+            }
             return unsupported(format!(
                 "{id} of id {n}, which no report declares (error text not pinned)"
             ));

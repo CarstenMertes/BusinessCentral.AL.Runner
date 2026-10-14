@@ -22,7 +22,50 @@ pub struct Program {
     /// [`Routine::pos`] hold an index into this table (`docs/architecture.md`, "Source positions").
     #[serde(default)]
     pub positions: Vec<SrcPos>,
+    /// Event subscribers of dependency objects that were not compiled (ADR-013 decision 6), for
+    /// events the runtime can raise. BC would run them; this program has no code for them, so
+    /// raising such an event is refused instead of running without them.
+    #[serde(default)]
+    pub uncompiled_subscribers: Vec<UncompiledSubscriber>,
 }
+
+/// An event subscriber that is declared but not compiled (see [`Program::uncompiled_subscribers`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UncompiledSubscriber {
+    /// The object whose event it subscribes to, as an index into `Program::objects`. `None` for the
+    /// platform's own codeunits, which no app need declare; `platform` names which.
+    pub publisher: Option<u32>,
+    pub platform: PlatformPublisher,
+    /// Lower-case event name.
+    pub event: String,
+    /// The `ElementName` argument; empty for an event without elements.
+    pub element: String,
+    /// Where the subscriber is declared: `Object "Name"`, for the refusal text.
+    pub subscriber: String,
+}
+
+/// The platform codeunits whose events the runtime raises and no app has to declare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlatformPublisher {
+    /// The subscriber names an object of the program (`UncompiledSubscriber::publisher`).
+    None,
+    /// `Global Triggers` (2000000002): database events around record writes.
+    GlobalTriggers,
+    /// `Caption Class` (42): `OnResolveCaptionClass`.
+    CaptionClass,
+}
+
+/// The events of a page the test client raises (`al-vm/src/pages.rs`). A subscriber to any other
+/// event of a page is refused when the page opens.
+pub const RAISED_PAGE_EVENTS: [&str; 7] = [
+    "onopenpageevent",
+    "onqueryclosepageevent",
+    "onclosepageevent",
+    "onaftergetcurrrecordevent",
+    "onnewrecordevent",
+    "oninsertrecordevent",
+    "onmodifyrecordevent",
+];
 
 /// A source file of the program: the app it belongs to and its path inside the app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -899,6 +942,13 @@ mod tests {
             apps: vec![],
             sources: vec![],
             positions: vec![],
+            uncompiled_subscribers: vec![UncompiledSubscriber {
+                publisher: Some(0),
+                platform: PlatformPublisher::None,
+                event: "onafterinsertevent".into(),
+                element: String::new(),
+                subscriber: "codeunit \"S\"".into(),
+            }],
             objects: vec![Object {
                 kind: "codeunit".into(),
                 id: Some(50100),

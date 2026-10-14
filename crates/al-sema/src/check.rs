@@ -95,6 +95,10 @@ pub struct Roots {
     /// The install baseline: the install codeunits of the dependency apps and Base Application's
     /// `Company-Initialize` (codeunit 2).
     pub baseline: bool,
+    /// Check and lower every dependency routine instead of what the workspace reaches. The
+    /// environment variable `AL_EAGER_DEPENDENCIES` does the same for a whole process. Used to
+    /// compare the demand-driven compile with the complete one (outcomes must not differ).
+    pub eager: bool,
 }
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
@@ -104,6 +108,7 @@ pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> Ch
 pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, roots: Roots) -> CheckResult {
     // With dependency apps, only what the workspace's code reaches in them is checked.
     let demand_mode = ws.kinds.contains(&crate::workspace::AppKind::Dependency)
+        && !roots.eager
         && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
     let mut c = Checker {
         ws,
@@ -589,6 +594,22 @@ impl<'a> Checker<'a> {
         for r in ast::routines_in(obj.syntax()) {
             self.check_routine_in(&ctx, &r);
         }
+        // What the test client does when it opens a workspace page or report, and what its actions
+        // run, reaches into the dependency apps.
+        if matches!(
+            self.ws.objects[oi].kind,
+            ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension
+        ) {
+            self.reach_caption_class_if_used(oi);
+        }
+        if matches!(self.ws.objects[oi].kind, ObjKind::Page | ObjKind::PageExtension) {
+            self.reach_run_objects(oi);
+            // The client writes to the page's table (validating a field, leaving a new row): the
+            // table's triggers and events run, whichever app the table is in.
+            if self.demand.borrow().is_some() {
+                self.activate_source_table(oi);
+            }
+        }
     }
 
     /// Checks one routine of the object `ctx` describes.
@@ -846,6 +867,7 @@ impl<'a> Checker<'a> {
                 };
                 let unknown_callee = matches!(target, E::Val(Ty::Unknown));
                 let mut arg_tys = Vec::with_capacity(args.len());
+                self.reach_static_run(sc, callee, &args);
                 for (i, a) in args.iter().enumerate() {
                     // On a receiver outside the workspace, a bare name may be one of
                     // its fields: resolve it if we can, but never report it.
@@ -1071,6 +1093,37 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// `Page.Run(Page::"X")`, `Report.Run(Report::"X")`, `XmlPort.Import(XmlPort::"X", ...)`: the
+    /// object named in the first argument runs, so its code is reached (not just its shape).
+    fn reach_static_run(&self, sc: &Scope, callee: &SyntaxNode, args: &[SyntaxNode]) {
+        if self.demand.borrow().is_none() || callee.kind() != SyntaxKind::MemberExpr {
+            return;
+        }
+        let mut kids = callee.children();
+        let (Some(base), Some(_)) = (kids.next(), kids.next()) else {
+            return;
+        };
+        let kind = match base.text().to_string().trim().to_ascii_lowercase().as_str() {
+            "page" => ObjKind::Page,
+            "report" => ObjKind::Report,
+            "xmlport" => ObjKind::XmlPort,
+            _ => return,
+        };
+        let Some(first) = args.first().filter(|a| a.kind() == SyntaxKind::ScopeExpr) else {
+            return;
+        };
+        let text = first.text().to_string();
+        let Some((lhs, name)) = text.split_once("::") else {
+            return;
+        };
+        if !lhs.trim().eq_ignore_ascii_case(base.text().to_string().trim()) {
+            return;
+        }
+        if let Some(oi) = self.resolve_at(sc.file, kind, name.trim()) {
+            self.touch_full(oi);
+        }
+    }
+
     /// Procedures and functions named `n`, skipping variables and fields: a
     /// call `UserSecurityId()` means the function even in a table with a
     /// field of that name.
@@ -1087,6 +1140,15 @@ impl<'a> Checker<'a> {
             if let Some(rec) = sc.rec.clone() {
                 if let Some(recv) = receiver_of(&rec) {
                     c = self.catalog_cands(&recv, n, true, &rec);
+                }
+                // `Modify()` written without `Rec.` in table, page or report code writes to the
+                // implicit record like any other write.
+                if !c.is_empty() {
+                    if let Ty::Record { table, .. } = &rec {
+                        if let Some(ti) = self.resolve_quiet(sc.file, ObjKind::Table, table) {
+                            self.touch_ops(ti, demand::record_ops(n));
+                        }
+                    }
                 }
             }
         }
@@ -1276,6 +1338,11 @@ impl<'a> Checker<'a> {
                 }]));
             }
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),
+            // A RecordRef writes to a table that is known only when the code runs; the write raises
+            // the platform's database events whatever the table is.
+            Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") => {
+                self.touch_global_ops(demand::record_ops(name));
+            }
             Ty::Record { table, .. } => {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
                     return Some(E::Val(Ty::Unknown));
@@ -1322,6 +1389,11 @@ impl<'a> Checker<'a> {
                 }
                 if !procs.is_empty() {
                     return Some(E::Callable(procs));
+                }
+                // `Rep.Run()`, `Xp.Import()`: the platform's methods of a report or XML port run its
+                // triggers, so its code is reached.
+                if matches!(kind, ObjKind::Report | ObjKind::XmlPort) {
+                    self.touch_full(oi);
                 }
                 // `CurrPage.<Part>`: the part control, whose `.Page` is the page it shows.
                 if *kind == ObjKind::Page {

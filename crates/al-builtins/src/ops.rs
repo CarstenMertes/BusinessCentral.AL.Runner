@@ -123,6 +123,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             Some(g) => Value::Guid(g),
             None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
         },
+        // An Option assigned to an Enum (Base Application does it for document types): BC takes the enum
+        // value for the option's ordinal, but no corpus test pins that, or the error for an ordinal the
+        // enum lacks (docs/probes-needed.md).
+        (v @ Value::Option(..), T::Enum(_)) => {
+            return unsupported(format!(
+                "assigning {} to an Enum: which enum value an Option ordinal selects, and the error for an ordinal the enum lacks, are not pinned (docs/probes-needed.md)",
+                v.describe()
+            ));
+        }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }

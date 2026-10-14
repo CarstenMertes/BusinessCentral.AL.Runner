@@ -806,6 +806,7 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
 | Data: Cost Type, Service Hour | The restored CRONUS holds no row (Cost Accounting and Service Hours are not set up in the demo backup). Not a runtime question | none |
 
 ## DotNet values typed at run time (ADR-024, Proposed)
+
 ## DotNet values typed at run time (ADR-024, Accepted, build deferred)
 
 Nothing is implemented. The corpus app is `Cloud` (`corpus/tests/al-language/app.json:63`), so these need an
@@ -926,6 +927,7 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | InStream.Read(Text, Length) | Pinned only for a Windows-encoded stream and bytes outside 128 to 159 | Reading those bytes, and a UTF-8 stream | `stream.rs` |
 | SetFilter %1 | A text with `>` or `"`, or with a wildcard together with `& | ( ) < =` or `..`, is still refused | Those texts through `SetFilter` and `GetFilter` | `filter.rs`, `views.rs` |
 | Query ReadState | `ReadUncommitted` is accepted; other values refuse the query | Not needed on runtime 16 | `al-sema/queries.rs` |
+
 ## Clear of a DotNet variable (ADR-024 follow-up)
 
 | Area | Assumption | Probe wanted |
@@ -939,3 +941,19 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | Query properties `AboutTitle` and `AboutText` | Help texts with no effect on the rows. Accepted like `Caption` and `ToolTip`; no corpus test sets them on a query (124 Tests-ERM tests, Base Application's "Analysis View Source" among them) | A query with both properties, opened and read; the same rows as without |
 | `DataItemLink` to a data item that is not the enclosing one | In SQL terms the link names a column of an outer alias. Base Application's "Analysis View Source" does it four times (DimSet1..4 link to the grandparent `Analysis_View` and to `G_L_Entry`, under a `CrossJoin`). No corpus query does. REFUSED (130 tests) | A three-level query where the leaf links to the grandparent, with `InnerJoin`, `LeftOuterJoin` and `CrossJoin` in the middle: the rows, and `Method = Sum` columns, against the same query with the link moved to the parent |
 | Rows of Application Area Setup and Experience Tier Setup | BC has them after Company-Initialize (`InitApplicationAreasForSaaS`). The install baseline stops before: Company-Initialize ends at `InitElectronicFormats`, where `Electronic Document Format.InsertElectronicFormat` passes an Option to the key of an Enum field (`Get(Code, UsageOption)`), which is refused (see "Option to Enum"). 561 tests wait on it. Not an Application Area Setup problem | The Option-to-Enum probe of issue 23; then Company-Initialize can run on to `InitApplicationAreasForSaaS` (not verified: later steps may stop it too) |
+
+## BigText.Read, Media.ImportStream with a file name, XmlReadOptions (issue 22)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `BigText.Read(InStream)` | Nothing in the corpus calls it (693 Tests-ERM tests reach it through Email Item `GetBodyTextFromBlob`). REFUSED | `CreateInStream(IS, TextEncoding::UTF8)` and the default, over bytes with and without a byte order mark and a non-ASCII text; `Read` into an empty BigText and one that has text (replace or append); `Length`, `GetSubText` afterwards; the return value |
+| `Media.ImportStream(InStream, Description, MimeType, FileName)` | The three-argument forms are pinned (media/TestMediaPngImport.al). What the file name changes (the Tenant Media row's file name, anything a test reads) is not. REFUSED (117 tests) | The form with a file name on a Media field, then `Rec.Pic.MediaId`, the "Tenant Media" row's `File Name`, `Description` and `Mime Type` through `Rec.Pic.ExportFile`/`ExportStream` |
+| `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)` | The form without options keeps white space (xml/TestXmlRuntimeContracts.al:99). A default `XmlReadOptions` may not (its `PreserveWhitespace` property). Implemented for a document without white space between tags or around the root, where the options cannot matter; refused otherwise | `ReadFrom` with a default `XmlReadOptions` and with `PreserveWhitespace(true)` and `(false)` on `<root>  <a/>  </root>` and ` <root/> `, then `WriteTo` |
+| `SecretText.Unwrap()` | Returns the text the secret carries (types/TestSecretText.al:43 calls it the one API returning the plain text; the compile-time scope is OnPrem). Implemented without a runtime pin of the value | `Unwrap` of `SecretStrSubstNo('a-%1', S)` and of an unassigned SecretText, from an OnPrem app |
+
+## RecordRef.FilterGroup, Option to Enum (issue 23)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `RecordRef.FilterGroup` | Behaves as `Record.FilterGroup` (the group it sets, or the current one; a group shows only its own filters), because a RecordRef holds the same record buffer. Pinned for Record (record/TestRecordRuntimeTextsAndViews.al:374); no corpus test calls it on a RecordRef. A negative group stays refused (see the FilterGroup(-1) section) | The test at record/TestRecordRuntimeTextsAndViews.al:374 through `RecordRef.Open`, `FieldRef.SetRange` and `RecordRef.GetFilters`; also `RecordRef.GetTable(Rec)` and `SetTable` carrying the group |
+| An Option assigned to an Enum | BC takes the enum value for the option's ordinal (Base Application assigns an Option document type to an Enum field). No corpus test pins it, nor the error for an ordinal the enum lacks. REFUSED (208 Tests-ERM tests) | `Opt := Opt::B; Enum := Opt;` with an enum whose ordinals are not 0, 1, 2 (explicit values), and an ordinal the enum does not have; with `AssignmentCompatibility = true` on the enum and without; as an argument and as a field assignment |

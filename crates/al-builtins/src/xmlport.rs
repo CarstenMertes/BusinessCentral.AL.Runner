@@ -56,8 +56,8 @@ impl Elem {
 /// Why a document could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadFailure {
-    /// Not well-formed XML.
-    Malformed,
+    /// Not well-formed XML, with the .NET exception message where the runtime knows it.
+    Malformed(Option<String>),
     /// Well-formed, but uses something the runtime does not read yet.
     Unsupported(String),
 }
@@ -66,26 +66,24 @@ pub enum ReadFailure {
 pub fn parse(text: &str) -> Result<Elem, ReadFailure> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     match crate::xml::read_tree(text) {
-        Ok(Some(e)) => Ok(e),
-        Ok(None) => Err(ReadFailure::Malformed),
+        Ok(Ok(e)) => Ok(e),
+        Ok(Err(message)) => Err(ReadFailure::Malformed(message)),
         Err(why) => Err(ReadFailure::Unsupported(why)),
     }
 }
 
-/// An element with no content: `<X/>` or `<X></X>` is not pinned by any test.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EmptyElement(pub String);
-
-/// The document text: a declaration, then the root with no whitespace between nodes.
-pub fn serialize(root: &Elem) -> Result<String, EmptyElement> {
-    let mut out = String::from(r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>"#);
-    write_elem(root, &mut out)?;
-    Ok(out)
+/// The document text as an export writes it: the declaration, a line feed, then the root with
+/// two spaces of indentation per level. An element without content is `<X />`; an element with
+/// text only is on one line (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText).
+pub fn serialize(root: &Elem) -> String {
+    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\n");
+    write_elem(root, 0, &mut out);
+    out
 }
 
-fn write_elem(e: &Elem, out: &mut String) -> Result<(), EmptyElement> {
-    if e.children.iter().all(|c| matches!(c, Node::Text(t) if t.is_empty())) {
-        return Err(EmptyElement(e.name.clone()));
+fn write_elem(e: &Elem, level: usize, out: &mut String) {
+    for _ in 0..level {
+        out.push_str("  ");
     }
     out.push('<');
     out.push_str(&e.name);
@@ -96,17 +94,42 @@ fn write_elem(e: &Elem, out: &mut String) -> Result<(), EmptyElement> {
         crate::xml::escape_attr(v, out);
         out.push('"');
     }
+    if e.children.iter().all(|c| matches!(c, Node::Text(t) if t.is_empty())) {
+        out.push_str(" />");
+        return;
+    }
     out.push('>');
-    for c in &e.children {
-        match c {
-            Node::Text(t) => crate::xml::escape_text(t, out),
-            Node::Elem(c) => write_elem(c, out)?,
+    if e.children.iter().any(|c| matches!(c, Node::Elem(_))) {
+        out.push('\n');
+        for c in &e.children {
+            match c {
+                Node::Elem(c) => {
+                    write_elem(c, level + 1, out);
+                    out.push('\n');
+                }
+                Node::Text(t) => crate::xml::escape_text(t, out),
+            }
+        }
+        for _ in 0..level {
+            out.push_str("  ");
+        }
+    } else {
+        for c in &e.children {
+            if let Node::Text(t) = c {
+                crate::xml::escape_text(t, out);
+            }
         }
     }
     out.push_str("</");
     out.push_str(&e.name);
     out.push('>');
-    Ok(())
+}
+
+/// The bytes of an exported document: UTF-16 little endian after a byte order mark.
+pub fn utf16_bom_bytes(text: &str) -> Vec<u8> {
+    let mut out = vec![0xFF, 0xFE];
+    out.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+    out
 }
 
 /// The text an exported field value is written as. `Err` names a type whose text is not pinned.
@@ -119,7 +142,21 @@ pub fn field_text(v: &Value) -> Result<String, String> {
     match v {
         Value::Integer(i) => Ok(i.to_string()),
         Value::Text(s) | Value::Code(s) => Ok(s.clone()),
-        Value::Decimal(d) if d.normalize().scale() <= 2 => Ok(format!("{:.2}", d.round_dp(2))),
+        // Two places and a comma between thousands: `1,234.50`, `-0.50`
+        // (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText).
+        Value::Decimal(d) if d.normalize().scale() <= 2 => {
+            let text = format!("{:.2}", d.round_dp(2));
+            let (sign, digits) = text.strip_prefix('-').map_or(("", text.as_str()), |t| ("-", t));
+            let (int, frac) = digits.split_once('.').unwrap_or((digits, ""));
+            let mut grouped = String::new();
+            for (i, c) in int.chars().enumerate() {
+                if i > 0 && (int.len() - i) % 3 == 0 {
+                    grouped.push(',');
+                }
+                grouped.push(c);
+            }
+            Ok(format!("{sign}{grouped}.{frac}"))
+        }
         Value::Decimal(d) => Err(format!("the Decimal {d}, which needs rounding to two places")),
         other => Err(format!("a value of type {}", type_name(other))),
     }
@@ -171,35 +208,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_document_round_trips_through_the_writer_and_the_reader() {
-        let mut row = Elem::new("Universal");
-        row.attrs.push(("Note".into(), "a\"b&c".into()));
+    fn a_document_is_written_indented_with_a_declaration() {
+        let mut row = Elem::new("U");
+        row.attrs.push(("Attr".into(), "a\"b&<c>".into()));
         let mut id = Elem::new("EntryNo");
         id.children.push(Node::Text("1".into()));
         row.children.push(Node::Elem(id));
-        let mut root = Elem::new("Universals");
+        row.children.push(Node::Elem(Elem::new("Txt")));
+        let mut root = Elem::new("Root");
         root.children.push(Node::Elem(row));
-        let text = serialize(&root).unwrap();
-        assert!(
-            text.contains(
-                "<Universals><Universal Note=\"a&quot;b&amp;c\"><EntryNo>1</EntryNo></Universal></Universals>"
-            ),
-            "{text}"
+        // xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText
+        assert_eq!(
+            serialize(&root),
+            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\n<Root>\n  <U Attr=\"a&quot;b&amp;&lt;c&gt;\">\n    <EntryNo>1</EntryNo>\n    <Txt />\n  </U>\n</Root>"
         );
-        assert_eq!(parse(&text).unwrap(), {
-            // The reader keeps no declaration; the tree is the one written.
-            root
-        });
     }
 
     #[test]
-    fn an_empty_element_is_refused_because_its_form_is_not_pinned() {
-        assert_eq!(serialize(&Elem::new("X")), Err(EmptyElement("X".into())));
+    fn the_bytes_start_with_a_byte_order_mark() {
+        assert_eq!(utf16_bom_bytes("<a"), vec![0xFF, 0xFE, b'<', 0, b'a', 0]);
     }
 
     #[test]
     fn malformed_and_namespaced_documents_are_told_apart() {
-        assert_eq!(parse("<a><b></a>"), Err(ReadFailure::Malformed));
+        assert!(matches!(parse("<a><b></a>"), Err(ReadFailure::Malformed(Some(_)))));
         assert!(matches!(parse("<a xmlns=\"u\"/>"), Err(ReadFailure::Unsupported(_))));
     }
 
@@ -208,6 +240,11 @@ mod tests {
         assert_eq!(field_text(&Value::Integer(7)).unwrap(), "7");
         assert_eq!(field_text(&Value::Decimal(Decimal::from(15))).unwrap(), "15.00");
         assert_eq!(field_text(&Value::Decimal("2.5".parse().unwrap())).unwrap(), "2.50");
+        assert_eq!(
+            field_text(&Value::Decimal("1234.5".parse().unwrap())).unwrap(),
+            "1,234.50"
+        );
+        assert_eq!(field_text(&Value::Decimal("-0.5".parse().unwrap())).unwrap(), "-0.50");
         assert!(field_text(&Value::Decimal("1.234".parse().unwrap())).is_err());
         assert!(field_text(&Value::Boolean(true)).is_err());
         assert!(matches!(field_value("15.00", &RtType::Decimal), Ok(Value::Decimal(d)) if d == Decimal::from(15)));

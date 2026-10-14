@@ -271,19 +271,15 @@ impl Session {
     /// of objects keyed by column name. Both run the query with the filters set now, whether it is
     /// open or not (query/TestQueryOuterJoinDescendingSaveAsContracts.al:Query_SaveAsXml_And_SaveAsJson_Output,
     /// corpus branch al-runtime-rs, pending push). Pinned for Integer columns; the lines of the XML are
-    /// not pinned (the probe trims and joins them), the stream encoding is taken to be UTF-8 without a
-    /// byte order mark.
+    /// not pinned (the probe trims and joins them), the bytes are UTF-8 without a byte order mark whatever the
+    /// stream's text encoding (not pinned).
     fn query_save_as(&mut self, def: &ir::Query, qs: &Qs, method: &str, args: &[Value]) -> Result<Value, Signal> {
         let Some(Value::Library(_, h)) = args.first() else {
             return unsupported(format!("{method} with {:?}", args.first()));
         };
         let blob = match &*h.borrow() {
-            al_builtins::value::LibraryValue::OutStream(blob, al_builtins::stream::Encoding::Utf8) => blob.clone(),
-            _ => {
-                return unsupported(format!(
-                    "{method} to a stream that is not a UTF-8 OutStream (not pinned)"
-                ));
-            }
+            al_builtins::value::LibraryValue::OutStream(blob, _) => blob.clone(),
+            _ => return unsupported(format!("{method} to something that is not an OutStream")),
         };
         let cols: Vec<usize> = (0..def.columns.len())
             .filter(|&c| !def.columns[c].filter_element)
@@ -346,7 +342,7 @@ impl Session {
             }
             out.push_str("</DataSet>");
         }
-        blob.borrow_mut().bytes.extend_from_slice(out.as_bytes());
+        al_builtins::stream::write_bytes(&blob, out.as_bytes());
         Ok(Value::Boolean(true))
     }
 
@@ -519,7 +515,9 @@ impl Session {
         };
         rows.sort_by(|a, b| key_cmp(&a.key, &b.key, &dirs));
         if COLLATION_FAILED.with(|f| f.replace(false)) {
-            return unsupported("sorting or grouping text with characters whose database collation order is not pinned");
+            return unsupported(
+                "sorting or grouping text with characters whose database collation order is not pinned",
+            );
         }
         // Rows that tie on every OrderBy column and still differ are ordered by the primary key
         // ascending (corpus query/TestQueryOrderAfterWrite.al:92-104, ascending only), or in no

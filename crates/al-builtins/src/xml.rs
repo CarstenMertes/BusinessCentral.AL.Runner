@@ -318,6 +318,9 @@ enum ParseError {
         message: String,
         line: usize,
         pos: usize,
+        /// Whether `XmlDocument.ReadFrom` is known to word its error with this message; an XmlPort
+        /// import words its errors with the .NET messages in every case.
+        dom: bool,
     },
     Unsupported(&'static str),
 }
@@ -325,6 +328,8 @@ enum ParseError {
 struct Parser<'a> {
     s: &'a str,
     i: usize,
+    /// The names of the open elements, outermost first.
+    open: Vec<String>,
     /// In-scope namespace declarations, innermost last.
     scope: Vec<(String, String)>,
     depth: usize,
@@ -535,6 +540,7 @@ impl Parser<'_> {
         self.expect("<")?;
         let name_at = self.i;
         let qn = self.name()?;
+        self.open.push(qn.clone());
         let mut raw_attrs: Vec<(String, String)> = Vec::new();
         let self_closed = loop {
             let had_ws = self.skip_ws();
@@ -621,6 +627,7 @@ impl Parser<'_> {
                             ),
                             line,
                             pos,
+                            dom: true,
                         });
                     }
                     break;
@@ -639,7 +646,19 @@ impl Parser<'_> {
                 } else if self.starts("<") {
                     children.push(self.element()?);
                 } else if self.peek().is_none() {
-                    return Err(ParseError::Invalid);
+                    // Pinned for an XmlPort import (xmlport/TestXmlPortExportImportContracts.al:
+                    // XmlPortImport_MalformedXml_Throws).
+                    let (line, pos) = self.line_pos(self.s.len());
+                    let names: Vec<&str> = self.open.iter().rev().map(String::as_str).collect();
+                    return Err(ParseError::Failed {
+                        message: format!(
+                            "Unexpected end of file has occurred. The following elements are not closed: {}. Line {line}, position {pos}.",
+                            names.join(", ")
+                        ),
+                        line,
+                        pos,
+                        dom: false,
+                    });
                 } else {
                     let end = self.rest().find('<').unwrap_or(self.rest().len());
                     let raw = self.s[self.i..self.i + end].to_string();
@@ -655,6 +674,7 @@ impl Parser<'_> {
             }
         }
         self.scope.truncate(scope_mark);
+        self.open.pop();
         self.depth -= 1;
         Ok(new_node(XData::Element {
             prefix,
@@ -694,6 +714,14 @@ impl Parser<'_> {
             } else if self.starts("<") && !root_seen {
                 children.push(self.element()?);
                 root_seen = true;
+            } else if !self.starts("<") {
+                let (line, pos) = self.line_pos(self.i);
+                return Err(ParseError::Failed {
+                    message: format!("Data at the root level is invalid. Line {line}, position {pos}."),
+                    line,
+                    pos,
+                    dom: false,
+                });
             } else {
                 return Err(ParseError::Invalid);
             }
@@ -705,24 +733,38 @@ impl Parser<'_> {
     }
 }
 
-/// `Ok(None)`: not well-formed XML.
-fn parse_document(text: &str) -> Result<Option<Handle>, Signal> {
-    Ok(parse_document_detail(text)?.ok())
+/// A .NET XML exception: its message and the position it names.
+struct Failure {
+    message: String,
+    line: usize,
+    pos: usize,
+    dom: bool,
 }
 
 /// `Ok(Err(detail))`: not well-formed XML; `detail` is BC's exception text with its position
 /// where the runtime knows it.
-fn parse_document_detail(text: &str) -> Result<Result<Handle, Option<(String, usize, usize)>>, Signal> {
+fn parse_document_detail(text: &str) -> Result<Result<Handle, Option<Failure>>, Signal> {
     let mut p = Parser {
         s: text,
         i: 0,
+        open: Vec::new(),
         scope: Vec::new(),
         depth: 0,
     };
     match p.document() {
         Ok(d) => Ok(Ok(d)),
         Err(ParseError::Invalid) => Ok(Err(None)),
-        Err(ParseError::Failed { message, line, pos }) => Ok(Err(Some((message, line, pos)))),
+        Err(ParseError::Failed {
+            message,
+            line,
+            pos,
+            dom,
+        }) => Ok(Err(Some(Failure {
+            message,
+            line,
+            pos,
+            dom,
+        }))),
         Err(ParseError::Unsupported(w)) => unsupported(w),
     }
 }
@@ -1503,13 +1545,18 @@ fn read_from_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NR
             Ok(Value::Boolean(true))
         }
         Err(_) if c.ret_used() => Ok(Value::Boolean(false)),
-        Err(Some((message, line, pos))) => Err(error(
+        Err(Some(Failure {
+            message,
+            line,
+            pos,
+            dom: true,
+        })) => Err(error(
             format!(
                 "The following exception was encountered when processing XML data: '{message}' at line {line} and position {pos}."
             ),
             "Xml:Xml",
         )),
-        Err(None) => unsupported(
+        Err(_) => unsupported(
             "XmlDocument.ReadFrom of invalid XML, result unused (the error text is pinned only for a mismatched end tag)",
         ),
     }
@@ -2420,7 +2467,7 @@ variant_is! {
 /// The element tree of a document, for XmlPort import (`xmlport.rs`). `Ok(None)`: not
 /// well-formed; `Err`: well-formed but uses namespaces or other features the reader does not
 /// carry over.
-pub(crate) fn read_tree(text: &str) -> Result<Option<crate::xmlport::Elem>, String> {
+pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Option<String>>, String> {
     use crate::xmlport::{Elem, Node};
     fn convert(h: &Handle) -> Result<Elem, String> {
         let (prefix, local, ns, attrs) = with(h, |d| match d {
@@ -2470,9 +2517,9 @@ pub(crate) fn read_tree(text: &str) -> Result<Option<crate::xmlport::Elem>, Stri
         }
         Ok(out)
     }
-    let doc = match parse_document(text) {
-        Ok(Some(d)) => d,
-        Ok(None) => return Ok(None),
+    let doc = match parse_document_detail(text) {
+        Ok(Ok(d)) => d,
+        Ok(Err(f)) => return Ok(Err(f.map(|f| f.message))),
         Err(Signal::Unsupported(why)) => return Err(why),
         Err(other) => return Err(format!("{other:?}")),
     };
@@ -2480,7 +2527,7 @@ pub(crate) fn read_tree(text: &str) -> Result<Option<crate::xmlport::Elem>, Stri
         .into_iter()
         .find(|c| with(c, |d| matches!(d, XData::Element { .. })))
         .ok_or("a document without a root element")?;
-    convert(&root).map(Some)
+    convert(&root).map(Ok)
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {

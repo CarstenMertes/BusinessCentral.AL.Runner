@@ -33,6 +33,11 @@ pub struct RawNode {
 pub struct Layout {
     pub nodes: Vec<RawNode>,
     pub direction: ir::XmlDirection,
+    pub format: ir::XmlFormat,
+    pub field_separator: Option<String>,
+    pub field_delimiter: Option<String>,
+    pub record_separator: Option<String>,
+    pub utf8: bool,
     pub reasons: Vec<String>,
 }
 
@@ -61,7 +66,7 @@ fn allowed_triggers(kind: ir::XmlNodeKind) -> &'static [&'static str] {
     use ir::XmlNodeKind as K;
     match kind {
         K::Text | K::TextAttr => &["onbeforepassvariable", "onafterassignvariable"],
-        K::Field | K::FieldAttr => &["onafterassignfield"],
+        K::Field | K::FieldAttr => &["onafterassignfield", "onbeforepassfield"],
         K::Table => &[
             "onafterinitrecord",
             "onbeforeinsertrecord",
@@ -83,6 +88,7 @@ fn allowed_properties(kind: ir::XmlNodeKind) -> &'static [&'static str] {
             "autoreplace",
             "usetemporary",
         ],
+        ir::XmlNodeKind::Field => &["xmlname", "minoccurs", "width"],
         _ => &["xmlname"],
     }
 }
@@ -92,6 +98,11 @@ pub fn layout(obj: &ast::Object) -> Layout {
     let mut out = Layout {
         nodes: Vec::new(),
         direction: ir::XmlDirection::Both,
+        format: ir::XmlFormat::Xml,
+        field_separator: None,
+        field_delimiter: None,
+        record_separator: None,
+        utf8: false,
         reasons: Vec::new(),
     };
     for p in obj.properties() {
@@ -103,14 +114,21 @@ pub fn layout(obj: &ast::Object) -> Layout {
                 "both" => out.direction = ir::XmlDirection::Both,
                 other => out.reasons.push(format!("Direction = {other} is not supported")),
             },
-            "format" if value.trim().eq_ignore_ascii_case("xml") => {}
-            "format" => out
-                .reasons
-                .push(format!("Format = {} is not supported yet (only Xml is)", value.trim())),
+            "format" => match value.trim().to_ascii_lowercase().as_str() {
+                "xml" => {}
+                "variabletext" => out.format = ir::XmlFormat::VariableText,
+                "fixedtext" => out.format = ir::XmlFormat::FixedText,
+                other => out.reasons.push(format!("Format = {other} is not supported")),
+            },
             // UseRequestPage only matters for Run, which is not implemented: Export and Import
             // never open the request page.
             "userequestpage" => {}
-            "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => {}
+            // xmlport/TestXmlPortTextFormatsContracts.al (corpus branch al-runtime-rs, pending
+            // push): VariableText and FixedText pin these; an Xml port's encoding is not pinned.
+            "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => out.utf8 = true,
+            "fieldseparator" => out.field_separator = Some(unquote(&value)),
+            "fielddelimiter" => out.field_delimiter = Some(unquote(&value)),
+            "recordseparator" => out.record_separator = Some(unquote(&value)),
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             other => out
                 .reasons
@@ -294,6 +312,10 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
             auto_update: flag("AutoUpdate", false),
             auto_replace: flag("AutoReplace", false),
             use_temporary: flag("UseTemporary", false),
+            min_zero: layout
+                .property(i, "MinOccurs")
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("zero")),
+            width: layout.property(i, "Width").and_then(|v| v.trim().parse().ok()),
             triggers,
         };
         match kind {
@@ -409,6 +431,11 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
     reasons.extend(layout.reasons.iter().cloned());
     ir::XmlPort {
         direction: layout.direction,
+        format: layout.format,
+        field_separator: layout.field_separator.clone(),
+        field_delimiter: layout.field_delimiter.clone(),
+        record_separator: layout.record_separator.clone(),
+        utf8: layout.utf8,
         nodes,
         source_slot: cx.source_slot,
         destination_slot: cx.destination_slot,
@@ -443,10 +470,10 @@ mod tests {
     #[test]
     fn what_the_corpus_does_not_pin_becomes_a_reason() {
         let l = layout_of(
-            "xmlport 1 X { Format = VariableText; schema { textelement(Root) { MinOccurs = Zero; trigger OnPreXmlItem() begin end; } } requestpage { } }",
+            "xmlport 1 X { Format = Binary; schema { textelement(Root) { MinOccurs = Zero; trigger OnPreXmlItem() begin end; } } requestpage { } }",
         );
         let all = l.reasons.join("; ");
-        assert!(all.contains("Format = VariableText"), "{all}");
+        assert!(all.contains("Format = binary"), "{all}");
         assert!(all.contains("property minoccurs"), "{all}");
         assert!(all.contains("trigger onprexmlitem"), "{all}");
         assert!(all.contains("request pages"), "{all}");

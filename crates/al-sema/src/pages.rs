@@ -98,6 +98,19 @@ pub fn classify_source(text: &str, globals: &BTreeSet<String>) -> Source {
     Source::Expr
 }
 
+/// Whether `text` is one bare name, quoted or not (`ProdOrderNo`, `"Prod. Order No."`): the only form in which
+/// a control of an extension can name a `protected var` of its base object.
+pub fn plain_name(text: &str) -> Option<String> {
+    let t = text.trim();
+    if let Some(inner) = t.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+        return (!inner.is_empty() && !inner.contains('"')).then(|| inner.to_string());
+    }
+    (!t.is_empty()
+        && t.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !t.starts_with(|c: char| c.is_ascii_digit()))
+    .then(|| t.to_string())
+}
+
 /// Global variable names (lower case) declared in `obj`.
 pub fn global_names(obj: &ast::Object) -> BTreeSet<String> {
     obj.var_decls()
@@ -108,7 +121,17 @@ pub fn global_names(obj: &ast::Object) -> BTreeSet<String> {
 
 /// A control's section and the properties and source of it that need routines:
 /// (property name, type, offset used in the name, expression text).
-fn needed(section: &ast::Section, base: usize, globals: &BTreeSet<String>) -> Vec<(String, PropType, usize, String)> {
+///
+/// `extension_routines` are the routines of an extension object (empty for any other object): a field of an extension
+/// whose source is a bare name that is none of them and no global of the extension gets no routine, because it
+/// names a variable of the base object (corpus handlers/TestRequestPageControlErrorName.al, Ext5803Handler:
+/// `field(...; ResetProdOrderCosting)` in Base App's "Mfg. Reset Cost Is Adjusted"). Lowering binds it there or refuses.
+fn needed(
+    section: &ast::Section,
+    base: usize,
+    globals: &BTreeSet<String>,
+    extension_routines: Option<&BTreeSet<String>>,
+) -> Vec<(String, PropType, usize, String)> {
     let mut out = Vec::new();
     for p in section.properties() {
         let name = p.name();
@@ -126,7 +149,9 @@ fn needed(section: &ast::Section, base: usize, globals: &BTreeSet<String>) -> Ve
     if section.name().eq_ignore_ascii_case("field") {
         let args = section.args();
         if let Some(src) = args.get(1) {
-            if classify_source(src, globals) == Source::Expr {
+            let names_a_base_variable = extension_routines
+                .is_some_and(|routines| plain_name(src).is_some_and(|n| !routines.contains(&n.to_lowercase())));
+            if classify_source(src, globals) == Source::Expr && !names_a_base_variable {
                 out.push((
                     "source".into(),
                     PropType::Variant,
@@ -170,10 +195,13 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
             continue;
         };
         let globals = global_names(&obj);
+        let extension_routines: Option<BTreeSet<String>> = kind
+            .ends_with("extension")
+            .then(|| obj.routines().map(|r| r.name().to_lowercase()).collect());
         let base = usize::from(obj.syntax().text_range().start());
         let mut text = String::new();
         for sec in control_sections(&obj) {
-            for (prop, ty, offset, expr) in needed(&sec, base, &globals) {
+            for (prop, ty, offset, expr) in needed(&sec, base, &globals, extension_routines.as_ref()) {
                 text.push_str(&format!(
                     "\nprocedure {}(): {} begin exit({}); end;",
                     synthetic_name(&prop, offset),
@@ -236,6 +264,9 @@ struct Node {
     owner: Option<usize>,
     modifies: Vec<(usize, ast::Section)>,
     children: Vec<usize>,
+    /// The control is only an anchor for extensions: it is not part of the page the test client sees
+    /// (a `systempart`).
+    anchor_only: bool,
 }
 
 /// An `area(...)` of the `layout` or `actions` section: where extensions attach controls by name.
@@ -244,6 +275,12 @@ struct Area {
     in_actions: bool,
     children: Vec<usize>,
 }
+
+/// Areas of the `actions` section a page extension may add to although the page declares none.
+const IMPLICIT_ACTION_AREAS: &[&str] = &["Processing", "Prompting"];
+
+/// Promoted category groups of `actions` that a page extension may place actionrefs after although the page declares none.
+const IMPLICIT_PROMOTED_CATEGORIES: &[&str] = &["Category_Process"];
 
 /// A list of sibling controls: the children of an area or of a group-like control.
 #[derive(Clone, Copy, PartialEq)]
@@ -344,6 +381,29 @@ impl Tree {
             "action" | "actionref" => K::Action,
             "systemaction" => K::SystemAction,
             "part" => K::Part,
+            // The TestPage has no member for a system part (Notes, Links, MyNotes, ...), and the corpus
+            // tests that open Base App pages declaring one (for example
+            // handlers/TestPagePlatformPageSourceTable_Tests.al:77, handlers/TestReportRunFromPrecompiledCaller.al:31)
+            // never reach it. A label (handlers/TestPrecompiledOptionCaption.al:81) and a customaction (Power Automate;
+            // pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69) and a usercontrol (a control add-in; likewise a fileuploadaction:
+            // pageapplicationarea/TestPageApplicationAreaPrecompiledActionRemoval.al:39 opens Item List, which hosts one in a part) are treated the same way:
+            // docs/probes-needed.md says what is not pinned. They stay in the tree so that `addafter`/
+            // `modify` can name them, and are dropped from the controls the page lowers, so a TestPage
+            // reference to one is refused ("control ... is not in the page layout"), never answered.
+            "systempart" | "label" | "customaction" | "usercontrol" | "fileuploadaction" => {
+                let idx = self.nodes.len();
+                self.nodes.push(Node {
+                    name: arg0,
+                    kind: K::Part,
+                    section: s.clone(),
+                    owner,
+                    modifies: Vec::new(),
+                    children: Vec::new(),
+                    anchor_only: true,
+                });
+                into.push(idx);
+                return;
+            }
             // A separator carries no behaviour of its own.
             "separator" => return,
             other => {
@@ -360,6 +420,7 @@ impl Tree {
             owner,
             modifies: Vec::new(),
             children: Vec::new(),
+            anchor_only: false,
         });
         into.push(idx);
         if matches!(kind, K::Group | K::Repeater | K::ActionGroup) {
@@ -483,6 +544,64 @@ impl Tree {
                 }
             }
         }
+        // The areas of `actions` that every page has, declared or not. Only the two names corpus tests
+        // reach are listed (see the test `an_extension_adds_to_the_processing_area_of_a_page_that_declares_none`).
+        for op in &pending {
+            let kind = op.section.name().to_ascii_lowercase();
+            let target = op.section.args().first().cloned().unwrap_or_default();
+            if op.in_actions
+                && (kind == "addfirst" || kind == "addlast")
+                && IMPLICIT_ACTION_AREAS.iter().any(|a| a.eq_ignore_ascii_case(&target))
+                && !self
+                    .areas
+                    .iter()
+                    .any(|a| a.in_actions && a.name.eq_ignore_ascii_case(&target))
+            {
+                self.areas.push(Area {
+                    name: target,
+                    in_actions: true,
+                    children: Vec::new(),
+                });
+            }
+        }
+        // The promoted category groups that every page has. Only `Category_Process` is listed: it is the one
+        // a corpus-reachable extension names (the test `an_extension_adds_after_the_process_category_...`).
+        // The group is only an anchor: it is no control of the page.
+        for op in &pending {
+            let kind = op.section.name().to_ascii_lowercase();
+            let target = op.section.args().first().cloned().unwrap_or_default();
+            if op.in_actions
+                && ["addafter", "addbefore"].contains(&kind.as_str())
+                && IMPLICIT_PROMOTED_CATEGORIES
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(&target))
+                && self.find_node(&target).is_none()
+            {
+                let idx = self.nodes.len();
+                self.nodes.push(Node {
+                    name: target,
+                    kind: al_ir::ControlKind::ActionGroup,
+                    section: op.section.clone(),
+                    owner: None,
+                    modifies: Vec::new(),
+                    children: Vec::new(),
+                    anchor_only: true,
+                });
+                let promoted = self
+                    .areas
+                    .iter()
+                    .position(|a| a.in_actions && a.name.eq_ignore_ascii_case("Promoted"));
+                let promoted = promoted.unwrap_or_else(|| {
+                    self.areas.push(Area {
+                        name: "Promoted".into(),
+                        in_actions: true,
+                        children: Vec::new(),
+                    });
+                    self.areas.len() - 1
+                });
+                self.areas[promoted].children.push(idx);
+            }
+        }
         loop {
             let before = pending.len();
             let mut later = Vec::new();
@@ -514,6 +633,9 @@ impl Tree {
         let mut controls = Vec::new();
         fn emit(slots: &mut [Option<Node>], idx: usize, parent: Option<usize>, out: &mut Vec<RawControl>) {
             let Some(n) = slots[idx].take() else { return };
+            if n.anchor_only {
+                return;
+            }
             let here = out.len();
             out.push(RawControl {
                 name: n.name,
@@ -854,6 +976,57 @@ mod tests {
         assert_eq!(l.reasons.len(), 2, "{:?}", l.reasons);
         assert!(l.reasons.iter().any(|r| r.contains("Nowhere")));
         assert!(l.reasons.iter().any(|r| r.contains("movefirst")));
+    }
+
+    // Corpus handlers/TestPagePlatformPageSourceTable_Tests.al:77 (ReadsTheWholePositionedRow) and the other tests that open a
+    // Base App page declaring `systempart(Control; Notes)`: the TestPage has no member for a system part, so
+    // it is not a control of the page. An extension can still anchor on it.
+    #[test]
+    fn a_systempart_is_not_a_control_but_still_an_anchor() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } label(Hint) { } } area(FactBoxes) { systempart(Control1; Notes) { } systempart(Control2; Links) { } } } actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } } } }";
+        let ext = "pageextension 50101 E extends P { layout { addafter(Control1) { field(AfterNotes; Rec.F) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(names(&l), ["A", "AfterNotes", "Flow"]);
+    }
+
+    // A page that declares no `actions` still has the area an extension adds to. Microsoft's own extensions of
+    // Base App pages do it and compile in real BC; the corpus tests that open them pass there
+    // (handlers/TestPageModalHandler_PrecompiledPage.al:31 RunModalOnErrorMessages_HandlerInvokesOk_ReturnsActionOk
+    // over "Error Messages" + `addfirst(Processing)`, RunModalOnNoSeries_HandlerInvokesOk_ReturnsActionOk over
+    // "No. Series" + `addfirst(Prompting)`).
+    #[test]
+    fn an_extension_adds_to_the_processing_area_of_a_page_that_declares_none() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } }";
+        let ext = "pageextension 50101 E extends P { actions { addfirst(Processing) { action(Act) { } } addlast(Prompting) { action(Ask) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(names(&l), ["A", "Act", "Ask"]);
+        assert_eq!(
+            l.action_areas.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            ["Processing", "Prompting"]
+        );
+    }
+
+    // Every page has the promoted category groups, declared or not: the same Microsoft extension of "Error Messages"
+    // does `addafter(Category_Process) { actionref(...) }` on a page with no actions
+    // (handlers/TestPageModalHandler_PrecompiledPage.al:31, pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69).
+    #[test]
+    fn an_extension_adds_after_the_process_category_of_a_page_that_declares_none() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } }";
+        let ext = "pageextension 50101 E extends P { actions { addfirst(Processing) { action(Act) { } } addafter(Category_Process) { actionref(Act_Promoted; Act) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(names(&l), ["A", "Act", "Act_Promoted"]);
+    }
+
+    // An area name nothing pins is still refused.
+    #[test]
+    fn an_extension_adding_to_an_unknown_area_is_still_refused() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } }";
+        let ext = "pageextension 50101 E extends P { actions { addfirst(Nowhere) { action(Act) { } } } }";
+        let l = merged(base, &[ext]);
+        assert_eq!(l.reasons.len(), 1, "{:?}", l.reasons);
     }
 
     // Corpus handlers/TestPagePromotedActionref_Page.al: an actionref is a control that names its target.

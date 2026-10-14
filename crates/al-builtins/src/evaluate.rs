@@ -245,6 +245,18 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
                 None => return unsupported(format!("Evaluate of `{text}` into Version (only a.b.c.d is pinned)")),
             }
         }
+        // An ordinal into SecurityFilter: `Evaluate(Filter, '3')` gives Disallowed
+        // (recordref/TestPlatformOptionsLockingContracts.al:42-43). Other options are not pinned.
+        Value::Option(_, members) if crate::sysenum::is_security_filter(members) => {
+            match text.trim().parse::<usize>().ok().filter(|n| *n < members.len()) {
+                Some(n) => Parsed::Value(Value::Option(n as i32, members.clone())),
+                None => {
+                    return unsupported(format!(
+                        "Evaluate of `{text}` into SecurityFilter (only an ordinal is pinned)"
+                    ));
+                }
+            }
+        }
         Value::DateFormula(_) => {
             crate::datefns::check_formula(&text)?;
             Parsed::Value(Value::DateFormula(text.clone()))

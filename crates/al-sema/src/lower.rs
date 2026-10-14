@@ -390,7 +390,9 @@ pub fn lower_with_workers(
             continue;
         }
         let ext = ws.object_ast(oi);
-        let changes_a_run = ext.routines().next().is_some()
+        // The routines `pages::expand` adds for expression-valued control properties and sources of the
+        // request page are not the author's: they do not change a run.
+        let changes_a_run = ext.routines().any(|r| !crate::pages::is_synthetic(&r.name()))
             || ext.triggers().next().is_some()
             || ext.sections().any(|s| !s.name().eq_ignore_ascii_case("requestpage"));
         if let (true, Some(base)) = (changes_a_run, ext.extends_parts()) {
@@ -1080,6 +1082,15 @@ fn lower_object<'a>(
                 ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
             });
         }
+    }
+    // A query's own code runs on the query it was called on: its state sits in a hidden slot
+    // the VM fills when it makes the instance (`Session::query_instance`).
+    if o.kind == ObjKind::Query {
+        rec_slot = Some(globals.len());
+        globals.push(ir::Slot {
+            name: "__query".into(),
+            ty: RtType::Query(oi as u32),
+        });
     }
     lw.rec_slot = rec_slot;
     if o.kind == ObjKind::Report {
@@ -2166,7 +2177,21 @@ impl Lowerer<'_> {
                         let off = usize::from(sec.syntax().text_range().start()) - ow.base;
                         match routine_named(&ow, &crate::pages::synthetic_name("source", off)) {
                             Some(r) => binding = ir::Binding::Expr(r),
-                            None => unsupported.push(format!("control {} has no source routine", raw.name)),
+                            // A control of an extension that names a variable of the base object
+                            // (`pages::needed` made no routine for it).
+                            None => {
+                                let base_slot = raw
+                                    .owner
+                                    .and_then(|_| crate::pages::plain_name(args.get(1)?))
+                                    .and_then(|n| globals.iter().position(|g| g.name.eq_ignore_ascii_case(&n)));
+                                match base_slot {
+                                    Some(slot) => binding = ir::Binding::BaseVar(slot),
+                                    None => unsupported.push(format!(
+                                        "control {} is bound to a name that is no variable of its base object",
+                                        raw.name
+                                    )),
+                                }
+                            }
                         }
                     }
                     None => {}
@@ -3764,7 +3789,7 @@ impl Lowerer<'_> {
                         if matches!(
                             self.ty_of(r),
                             Ty::Object(
-                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report,
+                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report | ObjKind::Query,
                                 _
                             ) | Ty::Record { .. }
                         ) =>
@@ -3876,9 +3901,11 @@ impl Lowerer<'_> {
                         Err(_) => ir::Arg::Value(self.expr(r)?),
                     })),
                     // An unqualified record method in table code runs on the implicit Rec.
-                    None if sig.instance && sig.receiver == "Record" => Some(Box::new(ir::Arg::Ref(
-                        ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
-                    ))),
+                    None if sig.instance && matches!(sig.receiver.as_str(), "Record" | "Query") => {
+                        Some(Box::new(ir::Arg::Ref(ir::Place::Global(
+                            self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
+                        ))))
+                    }
                     _ => None,
                 };
                 let mut out = Vec::new();

@@ -54,6 +54,10 @@ const HARMLESS_QUERY_PROPERTIES: &[&str] = &[
     "inherentpermissions",
     "inherententitlements",
     "permissions",
+    // Which replica serves the read; the runtime has one store, and the test below reads rows it
+    // wrote itself through a ReadOnly query (query/TestQueryDataItemTableFilterDatabaseConst.al:
+    // 109-136, Base App's query 522).
+    "dataaccessintent",
 ];
 
 pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayout {
@@ -67,9 +71,28 @@ pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayo
         columns: Vec::new(),
         tys: Vec::new(),
     };
-    if !ast::routines_in(obj.syntax()).is_empty() || obj.var_decls().next().is_some() {
+    // Procedures run on the query they are called on (query/TestQueryDataItemTableFilterDatabaseConst.al:
+    // 96-107, handlers/TestManualObjectIntegrationEvent.al:69-89). What no corpus test pins is
+    // refused for code that uses the query: variables (whether they persist across calls) and an
+    // OnBeforeOpen with statements (when it runs relative to the filters). An empty OnBeforeOpen,
+    // as Base App's query 1302 has, can show nothing.
+    if obj.var_decls().next().is_some() {
         b.reasons
-            .push("query objects with code (procedures, triggers, variables) are not supported yet".into());
+            .push("query variables are not supported yet (their persistence across calls is not pinned)".into());
+    }
+    for r in ast::routines_in(obj.syntax()) {
+        if r.is_trigger() {
+            let empty = r.body().is_none_or(|body| {
+                body.children()
+                    .all(|n| matches!(n.kind(), al_syntax::SyntaxKind::EmptyStmt))
+            });
+            if !empty || !r.name().eq_ignore_ascii_case("OnBeforeOpen") {
+                b.reasons.push(format!(
+                    "query trigger {} with statements is not supported yet (when it runs is not pinned)",
+                    r.name()
+                ));
+            }
+        }
     }
     let mut order_by_text = None;
     let mut top = 0;
@@ -103,7 +126,7 @@ pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayo
         Some(t) => b.order_by(&t),
         None => Vec::new(),
     };
-    b.validate(&order_by);
+    b.validate();
     QueryLayout {
         query: ir::Query {
             items: b.items,
@@ -489,16 +512,13 @@ impl Builder<'_> {
     }
 
     /// Combinations whose result the corpus does not pin.
-    fn validate(&mut self, order_by: &[(usize, bool)]) {
-        let aggregated = self.columns.iter().any(|c| c.method.is_some());
-        let grouped = self.columns.iter().any(|c| c.method.is_none() && !c.filter_element);
+    fn validate(&mut self) {
         // Aggregates over a left outer join skip the missing side: sum 0 and count 0 for a parent
         // without children (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch
         // now in the corpus).
-        if aggregated && grouped && order_by.is_empty() {
-            // Corpus query/TestQueryAggregation.al always orders its groups.
-            self.reason("an aggregated query with grouping columns and no OrderBy (the group order is not pinned)");
-        }
+        // Groups without an OrderBy (query/TestQueryAggregation.al always orders its groups) have no
+        // pinned order, but that only matters when a run produces several: the VM refuses then
+        // (`Session::query_rows`), so a query like Base App's 1302 can be declared and used.
         // A FlowField on the optional side of an outer join would be calculated on the default row.
         for c in &self.columns {
             let item = &self.items[c.item];
@@ -706,13 +726,24 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
         );
         // Query code.
         has(
-            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnBeforeOpen() begin end; }",
-            "with code",
+            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnBeforeOpen() begin Message('x'); end; }",
+            "with statements",
         );
-        // Grouped aggregate without an OrderBy: the group order is not pinned.
-        has(
-            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } column(S; Amount) { Method = Sum; } } } }",
-            "no OrderBy",
+        // An empty OnBeforeOpen shows nothing (Base App's query 1302).
+        assert!(
+            layout_of(
+                "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnBeforeOpen() begin end; }"
+            )
+            .reasons
+            .is_empty()
+        );
+        // Grouped aggregate without an OrderBy is refused by the VM when a run yields several groups.
+        assert!(
+            layout_of(
+                "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } column(S; Amount) { Method = Sum; } } } }"
+            )
+            .reasons
+            .is_empty()
         );
         // Sum over a BigInteger field (an Integer field is pinned: query/TestQueryRuntimeContracts.al).
         has(

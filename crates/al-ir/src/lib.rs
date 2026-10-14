@@ -810,6 +810,41 @@ fn no_pos() -> u32 {
     NO_POS
 }
 
+impl Routine {
+    /// Moves every source position id of the routine (its own and its `Stmt::Pos` markers) up by
+    /// `by`: the object was lowered with positions numbered from 0 and now follows `by` positions
+    /// of other objects in `Program::positions`. [`NO_POS`] stays.
+    pub fn shift_positions(&mut self, by: u32) {
+        if self.pos != NO_POS {
+            self.pos += by;
+        }
+        shift_stmts(&mut self.body, by);
+    }
+}
+
+fn shift_stmts(stmts: &mut [Stmt], by: u32) {
+    for s in stmts {
+        match s {
+            Stmt::Pos(id) => *id += by,
+            Stmt::If(_, then, otherwise) => {
+                shift_stmts(then, by);
+                shift_stmts(otherwise, by);
+            }
+            Stmt::While(_, body) | Stmt::Repeat(body, _) | Stmt::AssertError(body) => shift_stmts(body, by),
+            Stmt::For { body, .. } | Stmt::Foreach { body, .. } => shift_stmts(body, by),
+            Stmt::Case {
+                branches, otherwise, ..
+            } => {
+                for (_, body) in branches {
+                    shift_stmts(body, by);
+                }
+                shift_stmts(otherwise, by);
+            }
+            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break => {}
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attribute {
     pub name: String,
@@ -1009,6 +1044,68 @@ pub enum Stmt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn routine_with(body: Vec<Stmt>, pos: u32) -> Routine {
+        Routine {
+            name: "R".into(),
+            field: None,
+            is_trigger: false,
+            attributes: vec![],
+            params: 0,
+            by_var: vec![],
+            locals: vec![],
+            ret: None,
+            ret_local: None,
+            pos,
+            body,
+        }
+    }
+
+    #[test]
+    fn shifting_positions_reaches_every_nested_marker_and_leaves_no_position_alone() {
+        let t = Expr::Const(Const::Boolean(true));
+        let marked = |id| vec![Stmt::Pos(id), Stmt::Break];
+        let mut r = routine_with(
+            vec![
+                Stmt::Pos(0),
+                Stmt::If(t.clone(), marked(1), marked(2)),
+                Stmt::While(t.clone(), marked(3)),
+                Stmt::Repeat(marked(4), t.clone()),
+                Stmt::For {
+                    var: Place::Local(0),
+                    from: t.clone(),
+                    to: t.clone(),
+                    down: false,
+                    body: marked(5),
+                },
+                Stmt::Foreach {
+                    var: Place::Local(0),
+                    collection: t.clone(),
+                    body: marked(6),
+                },
+                Stmt::Case {
+                    scrutinee: t.clone(),
+                    branches: vec![(vec![], marked(7)), (vec![], marked(8))],
+                    otherwise: marked(9),
+                },
+                Stmt::AssertError(vec![Stmt::If(t.clone(), marked(10), vec![])]),
+            ],
+            11,
+        );
+        r.shift_positions(100);
+        assert_eq!(r.pos, 111);
+        let json = serde_json::to_string(&r.body).unwrap();
+        let mut ids: Vec<u32> = json
+            .split("{\"Pos\":")
+            .skip(1)
+            .map(|rest| rest.split('}').next().unwrap().parse().unwrap())
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, (100..=110).collect::<Vec<u32>>());
+        let mut none = routine_with(vec![Stmt::Break], NO_POS);
+        none.shift_positions(5);
+        assert_eq!(none.pos, NO_POS);
+    }
 
     #[test]
     fn program_round_trips_through_serde() {

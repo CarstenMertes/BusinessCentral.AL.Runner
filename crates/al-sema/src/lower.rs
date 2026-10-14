@@ -532,30 +532,32 @@ pub fn lower_with_workers(
     }
     shared.ext_slots = ext_slot_table;
     let n = ws.objects.len();
-    // The workspace's own objects are lowered in order on this thread: the source positions they
-    // add to the program are numbered as they come. The objects of dependency apps carry no
-    // positions and are independent of each other, so worker threads share them out while this
-    // thread works, and take over when it is done.
-    let theirs: Vec<usize> = (0..n).filter(|&oi| shared.active[oi] && ws.is_dependency(oi)).collect();
+    // Worker threads and this one take the active objects in turn, the workspace's own first (they
+    // are the biggest). Each object is lowered with its source positions numbered from 0; they
+    // are moved to their place in the program's table below, in object order, so the numbering is
+    // the one a single thread would have made.
+    let mut theirs: Vec<usize> = (0..n)
+        .filter(|&oi| shared.active[oi] && !ws.is_dependency(oi))
+        .collect();
+    theirs.extend((0..n).filter(|&oi| shared.active[oi] && ws.is_dependency(oi)));
     let workers = workers.min(theirs.len() / PARALLEL_OBJECTS_PER_WORKER);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let take_some = |local: &Local<'_>, seq: &Seq<'_>| -> Vec<(usize, Piece)> {
         let mut out = Vec::new();
+        let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
         loop {
             let k = next.fetch_add(LOWER_CHUNK, std::sync::atomic::Ordering::Relaxed);
             if k >= theirs.len() {
                 return out;
             }
             for &oi in &theirs[k..(k + LOWER_CHUNK).min(theirs.len())] {
-                let piece = lower_object(&shared, local, seq, oi, &mut Vec::new(), &mut HashMap::new());
-                out.push((oi, piece));
+                out.push((oi, lower_object(&shared, local, seq, oi, &mut line_cache)));
             }
         }
     };
     let mut pieces: Vec<Option<Piece>> = (0..n).map(|_| None).collect();
-    let (local, _) = (Local::new(Nodes::new(ws, shared.active.clone())), ());
+    let local = Local::new(Nodes::new(ws, shared.active.clone()));
     let seq = Seq::new(&shared);
-    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
     let done: Vec<Vec<(usize, Piece)>> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
@@ -569,19 +571,6 @@ pub fn lower_with_workers(
                     .expect("spawn a lowering worker")
             })
             .collect();
-        #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
-        for oi in 0..n {
-            if shared.active[oi] && !ws.is_dependency(oi) {
-                pieces[oi] = Some(lower_object(
-                    &shared,
-                    &local,
-                    &seq,
-                    oi,
-                    &mut program.positions,
-                    &mut line_cache,
-                ));
-            }
-        }
         let mut done = vec![take_some(&local, &seq)];
         done.extend(
             handles
@@ -594,20 +583,21 @@ pub fn lower_with_workers(
         pieces[oi] = Some(piece);
     }
     // Objects nothing compiled are shells.
+    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
     #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
     for oi in 0..n {
         if pieces[oi].is_none() {
-            pieces[oi] = Some(lower_object(
-                &shared,
-                &local,
-                &seq,
-                oi,
-                &mut Vec::new(),
-                &mut line_cache,
-            ));
+            pieces[oi] = Some(lower_object(&shared, &local, &seq, oi, &mut line_cache));
         }
     }
-    for piece in pieces.into_iter().flatten() {
+    for mut piece in pieces.into_iter().flatten() {
+        if !piece.positions.is_empty() {
+            let base = program.positions.len() as u32;
+            for r in &mut piece.object.routines {
+                r.shift_positions(base);
+            }
+            program.positions.append(&mut piece.positions);
+        }
         program.objects.push(piece.object);
         out.unsupported.push(piece.unsupported);
         out.calls.push(piece.calls);
@@ -619,6 +609,8 @@ pub fn lower_with_workers(
 /// The lowering of one object: its IR, why each routine cannot run, and the routines each calls.
 struct Piece {
     object: ir::Object,
+    /// The source positions of its statements, numbered from 0.
+    positions: Vec<ir::SrcPos>,
     unsupported: Vec<Vec<String>>,
     calls: Vec<Vec<(usize, usize)>>,
 }
@@ -870,7 +862,6 @@ fn lower_object<'a>(
     tl: &'a Local<'a>,
     seq: &'a Seq<'a>,
     oi: usize,
-    positions: &mut Vec<ir::SrcPos>,
     line_cache: &mut HashMap<usize, std::rc::Rc<FileLines>>,
 ) -> Piece {
     let ws = sh.ws;
@@ -927,13 +918,13 @@ fn lower_object<'a>(
                     })
                     .collect(),
             },
+            positions: Vec::new(),
             unsupported: Vec::new(),
             calls: Vec::new(),
         };
     }
     let obj = ws.object_ast(oi);
     let mut lw = make_lowerer(sh, tl, seq, oi);
-    lw.positions = std::mem::take(positions);
     // Positions only feed call stacks and error lines; for a dependency app they cost a third of
     // lowering and no corpus test reads them, so its routines carry none (measured in ADR-013).
     lw.lines = (sh.positions && !ws.is_dependency(oi)).then(|| {
@@ -1225,9 +1216,10 @@ fn lower_object<'a>(
         },
         query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
     };
-    *positions = std::mem::take(&mut lw.positions);
+    let positions = std::mem::take(&mut lw.positions);
     Piece {
         object,
+        positions,
         unsupported,
         calls,
     }

@@ -156,6 +156,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 v.describe()
             ));
         }
+        // An Integer into an Enum slot (a Record.Get key for an Enum field, Base Application's deferral
+        // codeunit passes document types as Integer). Only `Enum.FromInteger` is pinned
+        // (types/TestEnum.al:83-91); the implicit form is not (docs/probes-needed.md).
+        (v @ (Value::Integer(_) | Value::BigInteger(_)), T::Enum(_)) => {
+            return unsupported(format!(
+                "assigning {} to an Enum: whether an Integer converts to the enum value of that ordinal, and the error for an ordinal the enum lacks, are not pinned (docs/probes-needed.md)",
+                v.describe()
+            ));
+        }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }

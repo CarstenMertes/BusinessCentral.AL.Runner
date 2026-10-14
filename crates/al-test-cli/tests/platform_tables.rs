@@ -146,11 +146,11 @@ fn not_run(o: &[(String, Outcome)], test: &str) -> String {
 fn a_platform_table_with_no_provider_is_refused_where_code_uses_it_and_names_table_and_id() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure UsesATableWithNoProvider() var P: Record "Code Coverage"; begin if P.IsEmpty() then; end; }"#,
+  [Test] procedure UsesATableWithNoProvider() var P: Record "Feature Key"; begin if P.IsEmpty() then; end; }"#,
     );
     let why = not_run(&o, "UsesATableWithNoProvider");
     assert!(
-        why.contains("platform table 'Code Coverage' (2000000049) has no provider"),
+        why.contains("platform table 'Feature Key' (2000000211) has no provider"),
         "{why}"
     );
 }
@@ -321,10 +321,155 @@ codeunit 50000 "T" { Subtype = Test;
 fn the_id_of_a_platform_table_with_no_provider_can_be_named() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure NamesTheId() var Id: Integer; begin Id := Database::"Code Coverage"; if Id <> 2000000049 then Error('id %1', Id); end;
-  [Test] procedure ReadingTheRowsIsStillRefused() var P: Record "Code Coverage"; begin if P.IsEmpty() then; end; }"#,
+  [Test] procedure NamesTheId() var Id: Integer; begin Id := Database::"Feature Key"; if Id <> 2000000211 then Error('id %1', Id); end;
+  [Test] procedure ReadingTheRowsIsStillRefused() var P: Record "Feature Key"; begin if P.IsEmpty() then; end; }"#,
     );
     passes(&o, "NamesTheId");
     let why = not_run(&o, "ReadingTheRowsIsStillRefused");
     assert!(why.contains("has no provider"), "{why}");
+}
+
+/// Report Layout List, Report Metadata and Report Data Items (handlers/TestSourceReportLayoutFlags.al,
+/// TestPrecompiledReportLayouts.al, TestReportMetadataColumns.al).
+#[test]
+fn a_report_is_listed_with_its_layouts_metadata_and_data_items() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } field(2; Kind; Option) { OptionMembers = A,B; } field(3; Name; Text[30]) { } }
+  keys { key(PK; "No.") { Clustered = true; } key(ByName; Name, Kind) { } } }
+report 50002 "R" { UseRequestPage = false; ProcessingOnly = false;
+  dataset { dataitem(Thing; Thing) { DataItemTableView = sorting(Name, Kind) order(descending); RequestFilterFields = Name, "No.";
+    dataitem(Child; Thing) { DataItemLink = "No." = field("No."); } } }
+  rendering { layout(L1) { Type = Excel; LayoutFile = 'a.xlsx'; ExcelLayoutMultipleDataSheets = true; }
+    layout(L2) { Type = Word; LayoutFile = 'b.docx'; ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Layouts() var L: Record "Report Layout List"; begin L.SetRange("Report ID", 50002); if L.Count() <> 2 then Error('count %1', L.Count());
+    L.SetRange(Name, 'L1'); L.FindFirst(); if L."Layout Format" <> L."Layout Format"::Excel then Error('format'); if L.IsObsolete then Error('obsolete');
+    if L.ExcelLayoutMultipleDataSheets <> L.ExcelLayoutMultipleDataSheets::"Multiple data sheets" then Error('sheets');
+    L.SetRange(Name, 'L2'); L.FindFirst(); if not L.IsObsolete then Error('not obsolete'); end;
+  [Test] procedure Metadata() var M: Record "Report Metadata"; begin M.Get(50002); if M.ProcessingOnly then Error('processing'); if M.UseRequestPage then Error('request page'); if M.FirstDataItemTableID <> Database::Thing then Error('table'); end;
+  [Test] procedure DataItems() var D: Record "Report Data Items"; begin D.SetRange("Report ID", 50002); if D.Count() <> 2 then Error('count'); D.FindFirst();
+    if D.Name <> 'Thing' then Error('name'); if D."Indentation Level" <> 0 then Error('indent'); if D."Request Filter Fields" <> '3,1' then Error('rff %1', D."Request Filter Fields");
+    if D."Sorting Fields" <> '3,2' then Error('sorting %1', D."Sorting Fields"); if D."Data Item Table View" <> 'SORTING(Field3,Field2) ORDER(1)' then Error('view %1', D."Data Item Table View");
+    D.Next(); if D.Name <> 'Child' then Error('child'); if D."Indentation Level" <> 1 then Error('child indent'); end; }"#,
+    );
+    for t in ["Layouts", "Metadata", "DataItems"] {
+        passes(&o, t);
+    }
+}
+
+/// XmlPort Metadata and Query Metadata (xmlport/TestXmlPortMetadataVirtualTable.al,
+/// query/TestQueryMetadataVirtualTable.al).
+#[test]
+fn xmlports_and_queries_are_listed_from_their_declarations() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+xmlport 50002 "X" { Caption = 'X Caption'; Direction = Export; Format = VariableText; UseRequestPage = false; TransactionType = Browse; TextEncoding = UTF16;
+  schema { textelement(Root) { tableelement(Row; Thing) { fieldelement(No; Row."No.") { } } } } }
+query 50003 "Q" { QueryType = API; APIPublisher = 'pub'; APIGroup = 'grp'; APIVersion = 'v2.0'; EntityName = 'q'; EntitySetName = 'qs';
+  elements { dataitem(Thing; Thing) { column(No; "No.") { } } } }
+query 50004 "Plain" { elements { dataitem(Thing; Thing) { column(No; "No.") { } } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure XmlPort() var M: Record "XmlPort Metadata"; begin M.Get(50002); if M.Name <> 'X' then Error('name'); if M.Caption <> 'X Caption' then Error('caption'); if M.UseRequestPage then Error('request page');
+    if M.Direction <> M.Direction::Export then Error('direction'); if M.Format <> M.Format::VariableText then Error('format'); if M.TransactionType <> M.TransactionType::Browse then Error('tx'); if M.TextEncoding <> M.TextEncoding::UTF16 then Error('enc'); if M.Get(50009) then Error('invented'); end;
+  [Test] procedure Query() var M: Record "Query Metadata"; P: Record "Query Metadata"; begin M.Get(50003); if M.APIPublisher <> 'pub' then Error('publisher'); if M.APIVersion <> 'v2.0' then Error('version'); if M.EntitySetName <> 'qs' then Error('set');
+    P.Get(50004); if P.APIPublisher <> '' then Error('plain publisher'); if P.Caption <> 'Plain' then Error('caption %1', P.Caption); end; }"#,
+    );
+    passes(&o, "XmlPort");
+    passes(&o, "Query");
+}
+
+/// Page Action (record/TestPageActionVirtualTable.al): the area is a container row, a group and its
+/// actions nest under it.
+#[test]
+fn a_pages_actions_are_rows_nested_under_their_area_and_group() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+page 50002 "P" { PageType = Card; SourceTable = Thing; layout { area(Content) { field(No; Rec."No.") { } } }
+  actions { area(Processing) { group(G) { action(A) { RunObject = page P; } action(B) { } } } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Nesting() var G: Record "Page Action"; A: Record "Page Action"; C: Record "Page Action"; begin
+    G.SetRange("Page ID", 50002); G.SetRange(Name, 'G'); G.FindFirst();
+    C.SetRange("Page ID", 50002); C.SetRange("Action ID", G."Parent Action ID"); C.FindFirst();
+    if C.Indentation <> 0 then Error('container'); if G.Indentation <> 1 then Error('group');
+    if C."Action Type" = G."Action Type" then Error('types');
+    A.SetRange("Page ID", 50002); A.SetRange(Name, 'A'); A.FindFirst();
+    if A.Indentation <> 2 then Error('action'); if A."Parent Action ID" <> G."Action ID" then Error('parent'); if A.RunObjectID <> 50002 then Error('run object');
+    A.SetRange(Name, 'B'); A.FindFirst(); if A.RunObjectID <> 0 then Error('plain run object'); end; }"#,
+    );
+    passes(&o, "Nesting");
+}
+
+/// Event Subscription (record/TestEventSubscriptionVirtualTable.al): rows of compiled subscribers.
+#[test]
+fn event_subscribers_are_rows_keyed_by_codeunit_and_function() {
+    let o = outcomes(
+        r#"codeunit 50001 "Pub" { [IntegrationEvent(false, false)] procedure OnThing() begin end; [BusinessEvent(false)] procedure OnBusiness() begin end; }
+codeunit 50002 "Sub" {
+  [EventSubscriber(ObjectType::Codeunit, Codeunit::"Pub", 'OnThing', '', false, false)] local procedure H1() begin end;
+  [EventSubscriber(ObjectType::Codeunit, Codeunit::"Pub", 'OnBusiness', '', false, false)] local procedure H2() begin end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Rows() var E: Record "Event Subscription"; begin
+    E.SetRange("Subscriber Codeunit ID", 50002); if E.Count() <> 2 then Error('count %1', E.Count());
+    E.Get(50002, 'H1'); if E."Published Function" <> 'OnThing' then Error('function'); if E."Event Type" <> E."Event Type"::Integration then Error('type');
+    if E."Publisher Object Type" <> E."Publisher Object Type"::Codeunit then Error('object type'); if E."Publisher Object ID" <> 50001 then Error('object id'); if not E.Active then Error('active');
+    E.Get(50002, 'H2'); if E."Event Type" <> E."Event Type"::Business then Error('business');
+    if E.Get(50002, 'Nope') then Error('invented'); E.SetRange("Subscriber Codeunit ID", 50001); if not E.IsEmpty() then Error('publisher'); end; }"#,
+    );
+    passes(&o, "Rows");
+}
+
+/// Table Relations Metadata (record/TestTableRelationsMetadataVirtualTable.al), including a
+/// condition that is a `filter(...)`, which the runtime's own relation check does not understand.
+#[test]
+fn table_relations_are_rows_per_arm_and_condition() {
+    let o = outcomes(
+        r#"table 50001 "Parent" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { Clustered = true; } } }
+table 50002 "Parent B" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { Clustered = true; } } }
+table 50003 "Child" { fields { field(1; "Entry No."; Integer) { } field(2; Kind; Option) { OptionMembers = A,B; } field(3; Doc; Option) { OptionMembers = X,Y; }
+    field(4; Plain; Code[20]) { TableRelation = Parent.Code; } field(5; Soft; Code[20]) { }
+    field(6; Cond; Code[20]) { TableRelation = if (Kind = const(A)) Parent.Code else "Parent B".Code; }
+    field(7; Filtered; Code[20]) { TableRelation = if (Kind = const(A), Doc = filter(<> X)) Parent where(Code = filter(<> '')); } }
+  keys { key(PK; "Entry No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Rows() var R: Record "Table Relations Metadata"; begin
+    R.SetRange("Table ID", 50003); R.SetRange("Field No.", 4); if R.Count() <> 1 then Error('plain'); R.FindFirst(); if R."Related Table ID" <> 50001 then Error('table'); if R."Related Field No." <> 1 then Error('field');
+    R.SetRange("Field No.", 5); if not R.IsEmpty() then Error('soft');
+    R.SetRange("Field No.", 6); if R.Count() <> 2 then Error('cond'); R.FindSet(); if R."Relation No." <> 1 then Error('first'); if R."Condition Field No." <> 2 then Error('cond field'); R.Next(); if R."Related Table ID" <> 50002 then Error('else');
+    R.SetRange("Field No.", 7); if R.Count() <> 2 then Error('two conditions %1', R.Count()); R.FindFirst(); if R."Condition Field No." <> 2 then Error('first condition'); R.Next(); if R."Condition Field No." <> 3 then Error('second condition'); end; }"#,
+    );
+    passes(&o, "Rows");
+}
+
+/// The code coverage tables hold nothing until a recording starts; after one they are refused until
+/// a DeleteAll empties them (codeunit/TestCodeCoverageTable.al).
+#[test]
+fn code_coverage_tables_are_empty_before_recording_and_refused_after_it() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure EmptyAtFirst() var C: Record "Code Coverage"; begin if not C.IsEmpty() then Error('rows'); end;
+  [Test] procedure RefusedAfterRecording() var C: Record "Code Coverage"; begin CodeCoverageLog(true, false); CodeCoverageLog(false, false); if C.IsEmpty() then; end;
+  [Test] procedure DeleteAllEmptiesIt() var C: Record "Code Coverage"; begin CodeCoverageLog(true, false); CodeCoverageLog(false, false); C.DeleteAll(); if not C.IsEmpty() then Error('rows'); end;
+  [Test] procedure ADeleteAllWithAFilterDoesNot() var C: Record "Code Coverage"; begin CodeCoverageLog(true, false); CodeCoverageLog(false, false); C.SetRange("Object ID", 1); C.DeleteAll(); C.Reset(); if C.IsEmpty() then; end; }"#,
+    );
+    passes(&o, "EmptyAtFirst");
+    passes(&o, "DeleteAllEmptiesIt");
+    for t in ["RefusedAfterRecording", "ADeleteAllWithAFilterDoesNot"] {
+        let why = not_run(&o, t);
+        assert!(why.contains("code coverage recording"), "{why}");
+    }
+}
+
+/// All Profile (profile/TestAllProfileTable.al): stored and seeded from the profile objects. The delete
+/// rule for an installed app's row needs an app with a GUID id: the corpus pins it.
+#[test]
+fn a_profile_object_is_a_row_and_a_tenant_row_can_be_added_and_removed() {
+    let o = outcomes(
+        r#"page 50001 "Center" { PageType = RoleCenter; }
+profile "My Profile" { Caption = 'My Caption'; RoleCenter = Center; Enabled = true; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Present() var P: Record "All Profile"; begin P.SetRange("Profile ID", 'My Profile'); P.FindFirst(); if P.Caption <> 'My Caption' then Error('caption'); if P."Role Center ID" <> 50001 then Error('role center'); end;
+  [Test] procedure TenantRow() var P: Record "All Profile"; begin P.Scope := P.Scope::Tenant; P."Profile ID" := 'Mine'; P.Caption := 'Mine'; P.Enabled := false; P.Insert(); P.Get(P.Scope::Tenant, P."App ID", 'Mine'); P.Delete(); if P.Get(P.Scope::Tenant, P."App ID", 'Mine') then Error('still there'); end; }"#,
+    );
+    passes(&o, "Present");
+    passes(&o, "TenantRow");
 }

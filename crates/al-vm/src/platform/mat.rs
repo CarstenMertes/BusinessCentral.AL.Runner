@@ -280,4 +280,30 @@ mod tests {
         let f = [id_filter(3, 9)];
         assert!(matches!(m.next(&t, &scan(&f, None, false)), Ok(Some(r)) if matches!(r[0], Value::Integer(3))));
     }
+
+    #[test]
+    fn a_row_known_by_a_key_prefix_stands_for_every_row_that_starts_with_it() {
+        // Key (ID, Name): a row poisoned with only ID known must not be ruled out by a Name filter.
+        let t = TableDef {
+            keys: vec![vec![0, 1]],
+            ..table()
+        };
+        let m = Mat::new(
+            &t,
+            vec![
+                Entry::ok(row(1, "a")),
+                Entry::poisoned_prefix(row(2, ""), 1, "rows of 2 are not known".into()),
+            ],
+        );
+        let name_is_a = FieldFilter {
+            field: 1,
+            expr: FilterExpr::Eq(Value::Text("a".into())),
+            group: 0,
+        };
+        // The Name placeholder ("") does not match 'a', yet the row may hold an 'a': refused.
+        assert!(m.count(&t, &[name_is_a]).is_err());
+        // An ID filter that excludes 2 is decided by the known column.
+        assert!(matches!(m.count(&t, &[id_filter(1, 1)]), Ok(1)));
+        assert!(m.get(&t, &[Value::Integer(2), Value::Text("".into())]).is_err());
+    }
 }

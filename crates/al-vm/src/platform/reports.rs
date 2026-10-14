@@ -333,3 +333,23 @@ fn where_const(table: &Table, objects: &[Object], inner: &str) -> Result<String,
     };
     Ok(format!("WHERE(Field{}=CONST({shown}))", f.id))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_view_splits_into_its_words_and_bracketed_texts() {
+        let v = view_segments("sorting(\"No.\", Name) ORDER(descending) where(Kind = const(B), \"A (b)\" = const(1))").unwrap();
+        assert_eq!(
+            v,
+            vec![
+                ("sorting".to_string(), "\"No.\", Name".to_string()),
+                ("order".to_string(), "descending".to_string()),
+                ("where".to_string(), "Kind = const(B), \"A (b)\" = const(1)".to_string()),
+            ]
+        );
+        assert!(view_segments("sorting(a").is_err());
+        assert!(view_segments("nonsense").is_err());
+    }
+}

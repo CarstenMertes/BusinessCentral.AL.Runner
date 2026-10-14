@@ -281,8 +281,9 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_143, &[1, 2, 3, 4, 5, 6, 8, 16]),
     // Table Relations Metadata: record/TestTableRelationsMetadataVirtualTable.al. The condition type and value and the names are not read.
     (2_000_000_141, &[1, 2, 3, 4, 5, 6, 8]),
-    // Code Coverage tables: codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al. "Line" and the status and method id of a line are not read.
-    (2_000_000_049, &[1, 2, 3, 4, 6]),
+    // Code Coverage tables: codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al, and "Line" (5) and
+    // "Code Coverage Status" (7) from TestCodeCoverageLineTextContracts.al. The method id of a line is not read.
+    (2_000_000_049, &[1, 2, 3, 4, 5, 6, 7]),
     (2_000_000_288, &[1, 2, 3, 4]),
     (2_000_000_289, &[1, 2, 3, 4, 5]),
     // Windows Language: record/TestWindowsLanguageTable.al.

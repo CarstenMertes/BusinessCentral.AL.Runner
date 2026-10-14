@@ -194,18 +194,20 @@ impl Session {
     }
 
     /// The parameters file of `SaveAsXml`: a byte order mark, then `ArrayOfReportParameter` with the user id
-    /// and the execution time. The corpus asserts the start, the user id value, the second parameter's name
-    /// and the end; the rest (the closing of `Name`, the execution time's spelling) is assumed.
+    /// and the execution time. LF line ends, none after the last element; each parameter name is followed by a
+    /// fixed 32 digit GUID; the execution time has seven fraction digits and `+00:00`
+    /// (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:SaveAsXml_ParametersFile_RawForm).
     fn save_as_xml_parameters(&self) -> Vec<u8> {
         let ms = self.now_millis();
         let day = ms.div_euclid(86_400_000) + i64::from(al_builtins::format::day_from_civil(1970, 1, 1));
         let (y, mo, d) = al_builtins::format::civil_from_day(day as i32);
         let in_day = ms.rem_euclid(86_400_000);
         let time = format!(
-            "{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}",
+            "{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}.{:03}0000+00:00",
             in_day / 3_600_000,
             in_day / 60_000 % 60,
-            in_day / 1000 % 60
+            in_day / 1000 % 60,
+            in_day % 1000
         );
         let one = |name: &str, value: &str| {
             format!(
@@ -213,9 +215,12 @@ impl Session {
             )
         };
         let text = format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ArrayOfReportParameter xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n{}{}</ArrayOfReportParameter>\n",
-            one("NavUserId", &xml_escape(&self.host.identity.user_id())),
-            one("ExecutionTime", &time)
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ArrayOfReportParameter xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n{}{}</ArrayOfReportParameter>",
+            one(
+                "NavUserIdAE6AEB42076449B78A3E78A5EE366751",
+                &xml_escape(&self.host.identity.user_id())
+            ),
+            one("ExecutionTime7587CE19257C4965B7E6066BDFF21EE3", &time)
         );
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(text.as_bytes());

@@ -3003,6 +3003,14 @@ impl Lowerer<'_> {
             Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
             None => ir::NO_POS,
         };
+        let end_pos = match r.end_offset().filter(|_| self.emit_pos) {
+            Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
+            None => ir::NO_POS,
+        };
+        let begin_pos = match r.begin_offset().filter(|_| self.emit_pos) {
+            Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
+            None => ir::NO_POS,
+        };
         self.locals.clear();
         self.local_labels.clear();
         let mut locals = Vec::new();
@@ -3080,6 +3088,8 @@ impl Lowerer<'_> {
             ret_local,
             body,
             pos,
+            end_pos,
+            begin_pos,
         }
     }
 
@@ -3156,6 +3166,8 @@ impl Lowerer<'_> {
             ret_local: None,
             body: Vec::new(),
             pos: ir::NO_POS,
+            end_pos: ir::NO_POS,
+            begin_pos: ir::NO_POS,
         }
     }
 

@@ -2331,6 +2331,29 @@ fn fits(arg: &Ty, param: &str) -> bool {
             matches!(p, "text" | "code" | "string" | "any" | "joker" | "variant" | "label")
         }
         Ty::Boolean => matches!(p, "boolean" | "any" | "joker" | "variant"),
+        // A .NET result whose type is known only when the code runs (ADR-024) fits a parameter of
+        // a scalar type, which it is settled to, and a Variant; not an object parameter such as
+        // ErrorInfo (`Error(Service.LastError.Message)` is the Text overload).
+        Ty::DotNet(alias) if alias.is_empty() => matches!(
+            p,
+            "text"
+                | "code"
+                | "integer"
+                | "biginteger"
+                | "decimal"
+                | "boolean"
+                | "byte"
+                | "char"
+                | "date"
+                | "time"
+                | "datetime"
+                | "duration"
+                | "guid"
+                | "any"
+                | "joker"
+                | "variant"
+                | "dotnet"
+        ),
         other => {
             if p == "any" || p == "joker" || p == "variant" {
                 return true;

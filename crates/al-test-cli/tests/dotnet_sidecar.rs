@@ -938,3 +938,48 @@ fn refused_text(r: Result<(), DotNetFailure>) -> String {
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
+
+// ---- ADR-024 follow-up: a static member read through an object of a derived type ----------
+
+#[test]
+fn a_static_member_is_found_through_an_instance_of_a_derived_type() {
+    // NPR `Encoding.UTF8.GetBytes(...)` on a variable that already holds an Encoding: the object's type is
+    // `UTF8EncodingSealed`, and `UTF8` is a static member of its base class `Encoding`.
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    let enc = sess.get_property(st("System.Text.Encoding"), "UTF8").unwrap();
+    let enc = handle_of(&enc);
+    let again = sess.get_property(DotNetTarget::Instance(enc), "UTF8").unwrap();
+    assert!(matches!(again.value, DotNetValue::Handle { .. }), "{again:?}");
+    sess.close();
+}
+
+#[test]
+fn a_property_called_with_parentheses_reads_the_property() {
+    // NPR CloudflareMediaImpl: `DotNetEncoding.UTF8();` AL lets a property be written as a call.
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    let r = sess.invoke(st("System.Text.Encoding"), "UTF8", vec![]).unwrap();
+    assert!(matches!(r.value, DotNetValue::Handle { .. }), "{r:?}");
+    // With an argument it is still not a property.
+    let why = refused(sess.invoke(st("System.Text.Encoding"), "UTF8", vec![s("x")]));
+    assert!(why.contains("not found"), "{why}");
+    sess.close();
+}
+
+#[test]
+fn a_member_can_be_called_on_a_boxed_primitive() {
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    // 2022-01-01 in ticks since 0001-01-01.
+    let ticks = 738_156i64 * 864_000_000_000;
+    let r = sess
+        .get_property(DotNetTarget::Value(DotNetValue::DateTime(ticks)), "Year")
+        .unwrap();
+    assert_eq!(r.value, DotNetValue::Int32(2022));
+    let r = sess
+        .invoke(DotNetTarget::Value(DotNetValue::Byte(7)), "ToString", vec![])
+        .unwrap();
+    assert_eq!(r.value, DotNetValue::Str("7".into()));
+    sess.close();
+}

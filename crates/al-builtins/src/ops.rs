@@ -42,6 +42,22 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Query(_), T::Query(_)) => v,
         // A DotNet variable shares the object it is assigned (ADR-014; probe pending).
         (v @ Value::DotNet(_), T::DotNet(_)) => v,
+        // A DotNet variable holds the AL primitive stored into it, as the .NET value it marshals to
+        // (a `DotNet Byte` takes a Byte; ADR-014 section 4, ADR-024). Date and Time have no pinned mapping.
+        (
+            v @ (Value::Boolean(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Decimal(_)
+            | Value::Byte(_)
+            | Value::Char(_)
+            | Value::Text(_)
+            | Value::Code(_)
+            | Value::DateTime(_)
+            | Value::Duration(_)
+            | Value::Guid(_)),
+            T::DotNet(_),
+        ) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
         (v @ Value::Blob(_), T::Library(n)) if n.eq_ignore_ascii_case("Blob") => v,
         (v @ Value::Guid(_), T::Library(n))
@@ -123,6 +139,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             Some(g) => Value::Guid(g),
             None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
         },
+        // An Option assigned to an Enum (Base Application does it for document types): BC takes the enum
+        // value for the option's ordinal, but no corpus test pins that, or the error for an ordinal the
+        // enum lacks (docs/probes-needed.md).
+        (v @ Value::Option(..), T::Enum(_)) => {
+            return unsupported(format!(
+                "assigning {} to an Enum: which enum value an Option ordinal selects, and the error for an ordinal the enum lacks, are not pinned (docs/probes-needed.md)",
+                v.describe()
+            ));
+        }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }

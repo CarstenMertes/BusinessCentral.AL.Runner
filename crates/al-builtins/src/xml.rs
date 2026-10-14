@@ -1548,11 +1548,49 @@ fn arg_text(a: &[Value], i: usize) -> Result<String, Signal> {
         .ok_or_else(|| Signal::Unsupported(format!("XML argument {i} is not text")))
 }
 
-fn read_from_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn read_from_text(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    read_text_into(c, r, a, 1)
+}
+
+/// Whether `text` has white space that is not part of an element's text: before the first or after the
+/// last markup, or a run of white space alone between two tags. `XmlReadOptions.PreserveWhitespace`
+/// decides about those, and what the default options do is not pinned (issue 22).
+fn has_ignorable_white_space(text: &str) -> bool {
+    let t = text.trim_start_matches('\u{feff}');
+    if t.starts_with(char::is_whitespace) || t.ends_with(char::is_whitespace) {
+        return true;
+    }
+    let mut rest = t;
+    while let Some(i) = rest.find('>') {
+        let after = &rest[i + 1..];
+        let end = after.find('<').unwrap_or(after.len());
+        if end > 0 && after[..end].chars().all(char::is_whitespace) && end < after.len() {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
+/// `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)`: the text form, for a document whose
+/// white space the options cannot change. The form without options keeps white space
+/// (xml/TestXmlRuntimeContracts.al:99); the default options are not pinned, so a document with
+/// white space between tags or around the root is refused.
+fn read_from_text_options(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let text = arg_text(a, 0)?;
+    if has_ignorable_white_space(&text) {
+        return unsupported(
+            "XmlDocument.ReadFrom with XmlReadOptions of a document with white space between tags or around the root: what the default XmlReadOptions do with it is not pinned (docs/probes-needed.md)",
+        );
+    }
+    read_text_into(c, r, a, 2)
+}
+
+fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: usize) -> NResult {
     let text = arg_text(a, 0)?;
     match parse_document_detail(&text)? {
         Ok(doc) => {
-            a[1] = tagged("XmlDocument", doc);
+            a[out] = tagged("XmlDocument", doc);
             Ok(Value::Boolean(true))
         }
         Err(_) if c.ret_used() => Ok(Value::Boolean(false)),
@@ -2641,6 +2679,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     let is_node = node_types.contains(&r);
     let f: NativeFn = match (r, sig.name.as_str(), params.as_slice()) {
         ("XmlDocument", "ReadFrom", ["Text", "XmlDocument"]) => read_from_text,
+        ("XmlDocument", "ReadFrom", ["Text", "XmlReadOptions", "XmlDocument"]) => read_from_text_options,
         ("XmlDocument", "ReadFrom", ["InStream", "XmlDocument"]) => read_from_stream,
         ("XmlDocument", "Create", _) if !sig.instance => doc_create,
         ("XmlElement", "Create", ["Text"] | ["Text", "Any"]) => element_create_name,

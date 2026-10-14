@@ -2306,9 +2306,12 @@ impl Lowerer<'_> {
     /// The constant of a `Field = const(x)` condition, typed by the field.
     fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
         if let Ty::Enum(name) = ty {
+            // The enum is named in the file that declares the field, as a relation target is: a
+            // dependency's file resolves it among the apps it saw (its `using`s included), so that an
+            // enum of another namespace is found (Gen. Journal Line."IC Account No.", issue 23).
             let Resolution::Found(e) =
                 self.ws
-                    .resolve_ref_certain(file, ObjKind::Enum, &crate::types::qualified_parts(name))
+                    .resolve_relation_target(file, ObjKind::Enum, &crate::types::qualified_parts(name))
             else {
                 return None;
             };
@@ -5630,6 +5633,19 @@ codeunit 50101 C2
         assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
         let dump = format!("{:?}", r.body);
         assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
+    }
+
+    // Tests-ERM Document Service Management.CheckError: `Error(Service.LastError.Message)`. A DotNet result
+    // fits the Text overload of Error, not the ErrorInfo one (ADR-024).
+    #[test]
+    fn a_dotnet_result_passed_to_error_picks_the_text_overload() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P() var Convert: DotNet Convert; begin Error(Convert.ToBase64String('x')); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        assert!(format!("{:?}", r.body).contains("DotNetCoerce(Text"), "{:?}", r.body);
     }
 
     // A `[Native]` procedure of a platform app has an empty AL body: the service tier implements it. Running

@@ -20,6 +20,7 @@
 
 use crate::Session;
 use crate::records::Rec;
+use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::value::{Buffer, FieldSet, Value};
 use al_data::TableDef;
@@ -38,7 +39,7 @@ fn positions(args: &[Value]) -> Result<Vec<usize>, Signal> {
                     out.push(p);
                 }
             }
-            other => return unsupported(format!("field argument {other:?}")),
+            other => return unsupported(format!("field argument {}", other.describe())),
         }
     }
     Ok(out)

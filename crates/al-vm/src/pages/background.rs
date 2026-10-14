@@ -5,6 +5,7 @@
 //! handlers/TestPageBgTask_Tests.al, header). Every rule cites the corpus test that pins it.
 
 use super::*;
+use al_builtins::describe::Describe;
 use al_builtins::value::Value as V;
 
 /// A worker codeunit that is running for a page background task.
@@ -142,7 +143,7 @@ impl Session {
                 worker.result = Some(copy_dictionary(d));
                 Ok(Value::Null)
             }
-            other => unsupported(format!("Page.SetBackgroundTaskResult with {other:?}")),
+            other => unsupported(format!("Page.SetBackgroundTaskResult with {}", other.describe())),
         }
     }
 

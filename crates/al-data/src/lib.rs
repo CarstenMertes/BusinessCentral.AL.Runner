@@ -54,9 +54,9 @@ pub enum StoreError {
     Refused(String),
 }
 
-/// A refusal prints as its reason, so a report that formats the error with `{:?}` reads the reason
-/// itself and not `Refused("...")`.
-impl std::fmt::Debug for StoreError {
+/// A refusal prints as its reason, so a message that formats the error reads the reason itself and
+/// not `Refused("...")`.
+impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             StoreError::Conflict => f.write_str("Conflict"),
@@ -64,6 +64,13 @@ impl std::fmt::Debug for StoreError {
             StoreError::ChangedByAnotherUser => f.write_str("ChangedByAnotherUser"),
             StoreError::Refused(why) => f.write_str(why),
         }
+    }
+}
+
+/// Test failures and `unwrap` print the same text.
+impl std::fmt::Debug for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
     }
 }
 

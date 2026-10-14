@@ -56,6 +56,39 @@ pub enum Cell {
     Text(String),
 }
 
+impl std::fmt::Display for Cell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Cell::Null => f.write_str("NULL"),
+            Cell::Bool(b) => write!(f, "bit {}", u8::from(*b)),
+            Cell::Int(i) => write!(f, "int {i}"),
+            Cell::Float(x) => write!(f, "float {x}"),
+            Cell::Decimal {
+                negative,
+                magnitude,
+                scale,
+            } => {
+                let digits = format!("{:0>width$}", magnitude, width = usize::from(*scale) + 1);
+                let (whole, frac) = digits.split_at(digits.len() - usize::from(*scale));
+                let sign = if *negative { "-" } else { "" };
+                if frac.is_empty() {
+                    write!(f, "decimal {sign}{whole}")
+                } else {
+                    write!(f, "decimal {sign}{whole}.{frac}")
+                }
+            }
+            Cell::DateTime { days, .. } => write!(f, "datetime (day {days} since 1900-01-01)"),
+            Cell::Date { days } => write!(f, "date (day {days} since 0001-01-01)"),
+            Cell::Time { .. } => f.write_str("time"),
+            Cell::DateTime2 { days, .. } => write!(f, "datetime2 (day {days} since 0001-01-01)"),
+            Cell::Guid(_) => f.write_str("uniqueidentifier"),
+            Cell::Binary(b) => write!(f, "binary of {} bytes", b.len()),
+            Cell::RowVersion(_) => f.write_str("rowversion"),
+            Cell::Text(s) => write!(f, "text '{s}'"),
+        }
+    }
+}
+
 /// What the runtime asks for: one table of the restored company.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableRequest {
@@ -417,5 +450,26 @@ mod tests {
         );
         let refusals = s.summary().refusals();
         assert!(refusals.iter().any(|r| r.contains("page 7 is torn")), "{refusals:?}");
+    }
+
+    #[test]
+    fn a_cell_reads_as_its_sql_value() {
+        assert_eq!(Cell::Null.to_string(), "NULL");
+        assert_eq!(Cell::Int(5).to_string(), "int 5");
+        assert_eq!(Cell::Text("a".into()).to_string(), "text 'a'");
+        assert_eq!(
+            Cell::Decimal {
+                negative: true,
+                magnitude: 125,
+                scale: 2
+            }
+            .to_string(),
+            "decimal -1.25"
+        );
+        assert_eq!(
+            Cell::DateTime { days: 3, ticks: 0 }.to_string(),
+            "datetime (day 3 since 1900-01-01)"
+        );
+        assert_eq!(Cell::Binary(vec![1, 2, 3]).to_string(), "binary of 3 bytes");
     }
 }

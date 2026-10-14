@@ -126,6 +126,15 @@ pub enum DotNetFailure {
     Exception(DotNetException),
 }
 
+impl fmt::Display for DotNetFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DotNetFailure::Refused(why) => f.write_str(why),
+            DotNetFailure::Exception(e) => e.fmt(f),
+        }
+    }
+}
+
 /// Why the host cannot serve any call in this run. The text finishes the sentence
 /// `DotNet 'T' ...` (ADR-014 section 11): `needs a .NET host; none is configured`.
 #[derive(Debug, Clone, PartialEq, Eq)]

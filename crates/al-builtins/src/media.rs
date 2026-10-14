@@ -7,6 +7,7 @@
 //! (ADR-013 gives those tables rows). The field only holds the id once the record is written,
 //! so an import that was not followed by `Modify` is not seen by the next `Get`.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::value::{LibraryValue, Value};
 use std::collections::HashMap;
@@ -37,7 +38,7 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 fn id_of(r: &Option<&mut Value>) -> Result<Id, Signal> {
     match r {
         Some(Value::Guid(g)) => Ok(*g),
-        other => unsupported(format!("Media method on {other:?}")),
+        other => unsupported(format!("Media method on {}", other.describe())),
     }
 }
 
@@ -51,18 +52,18 @@ fn store(c: &mut dyn Ctx) -> Result<&mut MediaStore, Signal> {
 fn text_arg(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
         Some(t) => Ok(t),
-        None => unsupported(format!("a text argument, got {:?}", a.get(i))),
+        None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }
 
 /// Reads the rest of an `InStream` (the bytes it has not handed out yet).
 fn drain(v: &Value) -> Result<Vec<u8>, Signal> {
     let Value::Library(_, h) = v else {
-        return unsupported(format!("an InStream was expected, got {v:?}"));
+        return unsupported(format!("an InStream was expected, got {}", v.describe()));
     };
     match &mut *h.borrow_mut() {
         LibraryValue::InStream(s) => Ok(s.drain()),
-        other => unsupported(format!("an InStream was expected, got {other:?}")),
+        other => unsupported(format!("an InStream was expected, got {}", other.describe())),
     }
 }
 
@@ -140,7 +141,7 @@ fn media_export(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
         LibraryValue::OutStream(blob, _) => {
             crate::stream::write_bytes(blob, &obj.bytes);
         }
-        other => return unsupported(format!("an OutStream was expected, got {other:?}")),
+        other => return unsupported(format!("an OutStream was expected, got {}", other.describe())),
     }
     // The bytes are the ones imported. BC re-encodes an image, so the length differs from BC's;
     // the corpus asserts only what any encoder preserves (media/TestMediaPngImport.al:99-168).

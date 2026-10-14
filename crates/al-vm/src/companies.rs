@@ -7,6 +7,7 @@
 
 use crate::Session;
 use crate::records::Rec;
+use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::ops;
 use al_builtins::value::Value;
@@ -54,7 +55,7 @@ impl Session {
         let row = self
             .store
             .get(&self.cx, &t, &[key])
-            .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
         // The store matches a text key without regard to case; the company's own spelling must match.
         Ok(row
             .and_then(|r| al_builtins::native::text_of(&r[0]))
@@ -117,7 +118,7 @@ impl Session {
             None => String::new(),
             Some(v) => match al_builtins::native::text_of(v) {
                 Some(n) => n,
-                None => return unsupported(format!("ChangeCompany with {v:?}")),
+                None => return unsupported(format!("ChangeCompany with {}", v.describe())),
             },
         };
         let Some(target) = self.resolve_company(&name)? else {

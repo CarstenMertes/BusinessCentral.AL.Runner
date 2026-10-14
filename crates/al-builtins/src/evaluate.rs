@@ -4,6 +4,7 @@
 //! plainly is not a value of the type (no digits for a number, empty) fails the
 //! way the corpus shows, and every other form raises `Signal::Unsupported`.
 
+use crate::describe::Describe;
 use crate::format::day_from_civil;
 use crate::native::{Ctx, Signal};
 use crate::value::Value;
@@ -209,7 +210,7 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
     let number = match a.get(2) {
         None => 0,
         Some(Value::Integer(n)) => i64::from(*n),
-        Some(other) => return unsupported(format!("Evaluate format number {other:?}")),
+        Some(other) => return unsupported(format!("Evaluate format number {}", other.describe())),
     };
     // Number 2 is read for a DateFormula only, as number 0 (docs/probes-needed.md).
     if number != 0 && number != 9 && !(number == 2 && matches!(a[0], Value::DateFormula(_))) {
@@ -284,7 +285,7 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
             crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
             crate::datefns::Evaluated::Rejected => Parsed::Rejected,
         },
-        other => return unsupported(format!("Evaluate into {other:?} (not pinned by the corpus)")),
+        other => return unsupported(format!("Evaluate into {} (not pinned by the corpus)", other.describe())),
     };
     match parsed {
         Parsed::Value(v) => {

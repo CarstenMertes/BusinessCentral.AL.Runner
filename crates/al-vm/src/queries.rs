@@ -9,6 +9,7 @@
 
 use crate::Session;
 use al_builtins::collation;
+use al_builtins::describe::Describe;
 use al_builtins::filter::{FieldFilter, FilterExpr};
 use al_builtins::native::{AlError, Signal, text_of};
 use al_builtins::ops;
@@ -42,7 +43,7 @@ const COLUMN_NO_BASE: i32 = 4001;
 fn arg_col(args: &[Value], i: usize) -> Result<usize, Signal> {
     match args.get(i) {
         Some(Value::Integer(p)) => Ok(*p as usize),
-        other => unsupported(format!("column argument {other:?}")),
+        other => unsupported(format!("column argument {}", other.describe())),
     }
 }
 
@@ -80,7 +81,7 @@ fn negate(v: Value) -> Result<Value, Signal> {
         Value::Decimal(d) => Value::Decimal(-d),
         Value::Integer(i) => Value::Integer(-i),
         Value::BigInteger(i) => Value::BigInteger(-i),
-        other => return unsupported(format!("ReverseSign on {other:?}")),
+        other => return unsupported(format!("ReverseSign on {}", other.describe())),
     })
 }
 
@@ -128,7 +129,7 @@ impl Session {
     ) -> Result<Value, Signal> {
         let qs: Qs = match recv {
             Some(Value::Query(q)) => q.clone(),
-            other => return unsupported(format!("Query.{method} on {other:?}")),
+            other => return unsupported(format!("Query.{method} on {}", other.describe())),
         };
         let engine = self.engine.clone();
         let object = qs.borrow().object as usize;
@@ -231,7 +232,7 @@ impl Session {
                 Some(n) => {
                     let n = match n {
                         Value::Integer(n) => *n,
-                        other => return unsupported(format!("TopNumberOfRows({other:?})")),
+                        other => return unsupported(format!("TopNumberOfRows({})", other.describe())),
                     };
                     if n < 0 {
                         // Corpus query/TestQueryTopProperty.al:178.
@@ -275,7 +276,7 @@ impl Session {
                         };
                         Ok(Value::Option(i, members.into()))
                     }
-                    Some(other) => unsupported(format!("SecurityFiltering({other:?})")),
+                    Some(other) => unsupported(format!("SecurityFiltering({})", other.describe())),
                 }
             }
             "SaveAsXml" | "SaveAsJson" => self.query_save_as(def, &qs, method, args),
@@ -291,7 +292,7 @@ impl Session {
     /// stream's text encoding (not pinned).
     fn query_save_as(&mut self, def: &ir::Query, qs: &Qs, method: &str, args: &[Value]) -> Result<Value, Signal> {
         let Some(Value::Library(_, h)) = args.first() else {
-            return unsupported(format!("{method} with {:?}", args.first()));
+            return unsupported(format!("{method} with {}", args.first().describe()));
         };
         let blob = match &*h.borrow() {
             al_builtins::value::LibraryValue::OutStream(blob, _) => blob.clone(),
@@ -304,8 +305,9 @@ impl Session {
         for &c in &cols {
             if !matches!(def.columns[c].ty, RtType::Integer) {
                 return unsupported(format!(
-                    "{method} of the column {} of type {:?} (only Integer columns are pinned)",
-                    def.columns[c].name, def.columns[c].ty
+                    "{method} of the column {} of type {} (only Integer columns are pinned)",
+                    def.columns[c].name,
+                    def.columns[c].ty.describe()
                 ));
             }
         }
@@ -365,7 +367,7 @@ impl Session {
     /// The value of column `column` in the row `Read` returned last.
     pub(crate) fn query_column(&mut self, q: Value, column: usize) -> Result<Value, Signal> {
         let Value::Query(qs) = q else {
-            return unsupported(format!("a query column of {q:?}"));
+            return unsupported(format!("a query column of {}", q.describe()));
         };
         let qs = qs.borrow();
         match qs.run.as_ref().and_then(|r| r.current.as_ref()) {
@@ -809,7 +811,7 @@ impl Session {
                                 Value::Integer(i) => sum += Decimal::from(*i),
                                 Value::BigInteger(i) => sum += Decimal::from(*i),
                                 Value::Duration(i) => sum += Decimal::from(*i),
-                                other => return unsupported(format!("Sum over {other:?}")),
+                                other => return unsupported(format!("Sum over {}", other.describe())),
                             }
                         }
                         // Over no rows both give 0 (query/TestQueryRuntimeContracts.al:
@@ -859,7 +861,7 @@ impl Session {
                                     Err(_) => return unsupported("a Sum that overflows a Duration column"),
                                 }
                             }
-                            other => return unsupported(format!("Sum or Average of a {other:?} column")),
+                            other => return unsupported(format!("Sum or Average of a {} column", other.describe())),
                         }
                     }
                     M::Min | M::Max => {

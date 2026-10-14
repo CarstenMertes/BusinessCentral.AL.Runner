@@ -4,6 +4,7 @@
 //! is refused.
 
 use crate::Session;
+use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
@@ -33,7 +34,7 @@ const DEFAULT_CAPTION: &str = "Filter";
 fn text(args: &[Value], i: usize) -> Result<String, Signal> {
     match args.get(i).and_then(al_builtins::native::text_of) {
         Some(t) => Ok(t),
-        None => unsupported(format!("FilterPageBuilder argument {i}: {:?}", args.get(i))),
+        None => unsupported(format!("FilterPageBuilder argument {i}: {}", args.get(i).describe())),
     }
 }
 
@@ -134,18 +135,21 @@ impl Session {
                     }
                     "AddRecord" => match args.get(1) {
                         Some(Value::Record(r)) => (r.borrow().table, Rc::new(RefCell::new(r.borrow().clone()))),
-                        other => return unsupported(format!("FilterPageBuilder.AddRecord with {other:?}")),
+                        other => return unsupported(format!("FilterPageBuilder.AddRecord with {}", other.describe())),
                     },
                     _ => match args.get(1) {
                         Some(Value::Library(_, l)) => match &*l.borrow() {
                             LibraryValue::RecordRef(r) => (r.borrow().table, Rc::new(RefCell::new(r.borrow().clone()))),
                             other => {
                                 return unsupported(format!(
-                                    "FilterPageBuilder.AddRecordRef with a RecordRef that is not open ({other:?})"
+                                    "FilterPageBuilder.AddRecordRef with a RecordRef that is not open ({other})",
+                                    other = other.describe()
                                 ));
                             }
                         },
-                        other => return unsupported(format!("FilterPageBuilder.AddRecordRef with {other:?}")),
+                        other => {
+                            return unsupported(format!("FilterPageBuilder.AddRecordRef with {}", other.describe()));
+                        }
                     },
                 };
                 let mut s = state_of(&cell)?;
@@ -190,9 +194,9 @@ impl Session {
                         LibraryValue::FieldRef(..) => {
                             return unsupported("FilterPageBuilder.AddField with a field of another table");
                         }
-                        other => return unsupported(format!("FilterPageBuilder.AddField with {other:?}")),
+                        other => return unsupported(format!("FilterPageBuilder.AddField with {}", other.describe())),
                     },
-                    other => return unsupported(format!("FilterPageBuilder.AddField with {other:?}")),
+                    other => return unsupported(format!("FilterPageBuilder.AddField with {}", other.describe())),
                 };
                 if let Some(filter) = args.get(2) {
                     let filter = text(std::slice::from_ref(filter), 0)?;

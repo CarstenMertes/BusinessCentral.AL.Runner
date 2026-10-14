@@ -486,7 +486,10 @@ mod tests {
             other => panic!("expected a refusal, got {other:?}"),
         };
         assert!(why.contains("another enum type") && why.contains("not pinned"), "{why}");
-        assert!(matches!(convert(Value::Enum(5056, 1), &RtType::Enum(5056)), Ok(Value::Enum(5056, 1))));
+        assert!(matches!(
+            convert(Value::Enum(5056, 1), &RtType::Enum(5056)),
+            Ok(Value::Enum(5056, 1))
+        ));
     }
 
     #[test]

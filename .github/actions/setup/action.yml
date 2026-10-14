@@ -1,0 +1,35 @@
+name: Set up the build
+description: >
+  The setup every CI job shares: the corpus history, the pinned Rust toolchain with its dependency
+  cache, and the .NET 8 sidecar (ADR-014). The checkout with submodules comes before this step.
+
+inputs:
+  components:
+    description: Rust components to install besides the toolchain (for example "rustfmt, clippy").
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # ADR-007: an oracle recorded for an older corpus commit is checked against the pin with
+    # `git diff` over the corpus history, and the submodule checkout is shallow.
+    - name: Fetch the corpus history
+      shell: bash
+      run: |
+        if [ "$(git -C corpus rev-parse --is-shallow-repository)" = true ]; then
+          git -C corpus fetch --unshallow --quiet
+        fi
+    - uses: dtolnay/rust-toolchain@1.98.1
+      with:
+        components: ${{ inputs.components }}
+    # One cache per job: rust-cache keys on the job name, so the three jobs do not overwrite each other.
+    - uses: Swatinem/rust-cache@v2
+
+    # ADR-014: DotNet calls run in a .NET 8 sidecar process. The SDK builds it and the runtime
+    # runs it. ICU is on the ubuntu image. CI must never skip a .NET test silently.
+    - uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Build the .NET sidecar
+      shell: bash
+      run: dotnet publish tools/dotnet-sidecar -c Release -o target/dotnet-sidecar

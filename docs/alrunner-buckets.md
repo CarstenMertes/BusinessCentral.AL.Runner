@@ -78,8 +78,14 @@ dealt with them. Tests-ERM with test data went from 480 passed, 18 failed (main 
 variables of a table object did not persist per record variable; ADR-021 (`table-globals`) fixes it: Tests-ERM with
 test data went from 487 passed, 5 failed to 490 passed, 3 failed.
 
-Still failing in Tests-ERM (3): `GLAccountCategoryDelete`, `AddTextforLanguageInReminderLevelCommunication` (`The TestPage is not open`) and
-`AccountScheduleNoIndentationAnyValue` (`Commit` under AutoRollback) are not triaged.
+Still failing in Tests-ERM (3 on 2026-10-14, BC 27.5 build 46862.56320, `alrunner test ... --test-data`; each run with
+`--explain TEST`, add `--codeunit ID` when the name is in two codeunits). Triage of issue 5:
+
+| Test | Cause | Kind |
+|---|---|---|
+| 134979 `AddTextforLanguageInReminderLevelCommunication` ("The TestPage is not open") | Base Application's action "Add New Language" runs `Languages.Editable := false` on a Page variable before `RunModal`. The runtime raised "not open" for any `Page.Editable` on a page that is not running. BC raises no error there, and no corpus test says what it does | Runtime defect, not pinned: now refused (`Page.Editable on a page variable that is not running`), `docs/probes-needed.md` "Page variable Editable". The test is not run until a probe pins it |
+| 134994 `AccountScheduleNoIndentationAnyValue` (`Commit` under AutoRollback) | `Initialize` commits once (`IsInitialized`). In BC an earlier test of the codeunit runs it first, under the default transaction model. Here the 9 tests before it are not run (refusals such as `Report.ObjectId`, `DocumentEntries` reportextensions), so this one is the first to run and BC's own error is raised | Not a defect: a consequence of earlier refused tests. It passes once they run |
+| 134442 `GLAccountCategoryDelete` (`Income/Balance must be equal to 'Balance Sheet'`) | The library `CreateGLAccountCategory` draws two numbers from `LibraryRandom` (SingleInstance, seed 1 on first use) and the test fails for a draw of 4, 5 or 6 for the account category followed by any additional report definition. On a fresh seed the first two draws of 7 are 2 and 1 (checked), so it passes there. Here several of the tests before it in the codeunit are not run (`Format of a Record`, the `DocumentEntries` reportextensions), so the draws it gets differ from BC's | Not a defect: the random state at the start of the test depends on the tests before it. It cannot be shown to pass or fail in BC without running them |
 
 Without test data Tests-ERM failed 121 tests; the first 30 failures are missing setup data (`General Posting Setup`
 must contain records, `Sales & Receivables Setup`, `Tax Setup` and `Purchases & Payables Setup` do not exist, a date

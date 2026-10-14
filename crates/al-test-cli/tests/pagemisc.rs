@@ -609,6 +609,26 @@ fn reaching_set_selection_filter_or_get_record_is_refused() {
     );
 }
 
+// `P.Editable := false` and `P.Editable(false)` on a Page variable that has not run: Base App's "Reminder Level
+// Communication" does it before `RunModal`. It raised "The TestPage is not open", an error BC does not raise. What BC
+// does with it is in no corpus test, so reaching it is refused (docs/probes-needed.md, "Page variable Editable").
+#[test]
+fn editable_on_a_page_variable_that_has_not_run_is_refused_not_an_error() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Assigns() var P: Page \"PM Selection\"; begin P.Editable := false; end;
+        [Test]
+        procedure Calls() var P: Page \"PM Selection\"; begin P.Editable(false); end;"
+    ));
+    for (name, outcome) in &o {
+        assert!(
+            matches!(outcome, Outcome::NotRun(why) if why.contains("Editable") && why.contains("not pinned")),
+            "{name}: {outcome:?}"
+        );
+    }
+}
+
 // A control bound to a variable with its own MinValue/MaxValue: a value inside the bounds is written, one outside is
 // refused (Base App's "Document Search" page; no corpus test pins the control-level bound).
 #[test]

@@ -46,6 +46,9 @@ pub enum Virtual {
     /// The assignable rows of Permission Set (the table is walked through this one); not a table.
     PermissionSetAssignable,
     AggregatePermissionSet,
+    MetadataPermission,
+    ExpandedPermission,
+    Permission,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -119,6 +122,10 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_004, "Permission Set", Provider::Virtual(Virtual::PermissionSet)),
     (2_000_000_167, "Aggregate Permission Set", Provider::Virtual(Virtual::AggregatePermissionSet)),
     (2_000_000_165, "Tenant Permission Set", Provider::Stored),
+    (2_000_000_166, "Tenant Permission", Provider::Stored),
+    (2_000_000_251, "Metadata Permission", Provider::Virtual(Virtual::MetadataPermission)),
+    (2_000_000_254, "Expanded Permission", Provider::Virtual(Virtual::ExpandedPermission)),
+    (2_000_000_005, "Permission", Provider::Virtual(Virtual::Permission)),
     (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
     (2_000_000_121, "User Property", Provider::Stored),
     (2_000_000_175, "Scheduled Task", Provider::Stored),
@@ -176,6 +183,12 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_004, &[1, 2, 3]),
     // Aggregate Permission Set: access-control/TestAggregatePermissionSetTable.al, permissions/TestPermissionSetTable.al.
     (2_000_000_167, &[1, 2, 3, 4, 5]),
+    // Metadata Permission, Expanded Permission: permissions/TestMetadataExpandedPermission.al. The role and object names and
+    // the security filter are not read.
+    (2_000_000_251, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 12]),
+    (2_000_000_254, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 14]),
+    // Permission: permissions/TestPermissionSetGrants.al.
+    (2_000_000_005, &[1, 3, 4, 6, 7, 8, 9, 10]),
     // Windows Language: record/TestWindowsLanguageTable.al.
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.

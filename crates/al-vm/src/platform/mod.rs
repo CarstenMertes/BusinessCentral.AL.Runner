@@ -83,6 +83,7 @@ pub(crate) struct Providers {
     /// The Aggregate Permission Set rows with the tenant's own sets in them, and the stamp of the
     /// stored Tenant Permission Set table they were composed at.
     aggregate: permissions::Cache,
+    grants: permissions::Grants,
 }
 
 impl Providers {
@@ -105,6 +106,7 @@ impl Providers {
             served,
             listed: RefCell::default(),
             aggregate: RefCell::default(),
+            grants: Default::default(),
         }
     }
 
@@ -151,6 +153,9 @@ impl Providers {
             Virtual::PermissionSet => permissions::permission_set_rows(self, t, false),
             Virtual::PermissionSetAssignable => permissions::permission_set_rows(self, t, true),
             Virtual::AggregatePermissionSet => unreachable!("composed per read"),
+            Virtual::MetadataPermission | Virtual::ExpandedPermission | Virtual::Permission => {
+                unreachable!("composed per read")
+            }
             Virtual::NavAppInstalledApp => apps::nav_app_installed_app_rows(self, t),
             Virtual::PublishedApplication => apps::published_application_rows(self, t),
             Virtual::TimeZone => host_tables::time_zone_rows(t, &self.ident),
@@ -205,6 +210,12 @@ impl VirtualTables for Providers {
     fn get(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::AggregatePermissionSet => self.aggregate(store, cx, t)?.get(t, pk),
+            Virtual::MetadataPermission | Virtual::ExpandedPermission | Virtual::Permission => {
+                let which = permissions::grant_table(self.kind(t));
+                // A read by key names one set; the rest of the key is matched by the table.
+                let filters = permissions::key_filters(t, which, pk);
+                permissions::grants_mat(self, store, cx, t, which, &filters)?.get(t, pk)
+            }
             // From BC 29 a read by key under any App ID finds the null-App-ID row of SUPER and
             // SECURITY (permissions/TestMetadataPermissionSet.al:85-128).
             Virtual::MetadataPermissionSet
@@ -231,6 +242,10 @@ impl VirtualTables for Providers {
     ) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::AggregatePermissionSet => self.aggregate(store, cx, t)?.next(t, scan),
+            Virtual::MetadataPermission | Virtual::ExpandedPermission | Virtual::Permission => {
+                let which = permissions::grant_table(self.kind(t));
+                permissions::grants_mat(self, store, cx, t, which, scan.filters)?.next(t, scan)
+            }
             // The legacy table lists only assignable sets when walked, all of them when the key is named.
             Virtual::PermissionSet if !permissions::pins_the_primary_key(t, scan.filters) => {
                 self.listed(t, Virtual::PermissionSetAssignable)?.next(t, scan)
@@ -251,6 +266,10 @@ impl VirtualTables for Providers {
     ) -> Result<usize, StoreError> {
         match self.kind(t) {
             Virtual::AggregatePermissionSet => self.aggregate(store, cx, t)?.count(t, filters),
+            Virtual::MetadataPermission | Virtual::ExpandedPermission | Virtual::Permission => {
+                let which = permissions::grant_table(self.kind(t));
+                permissions::grants_mat(self, store, cx, t, which, filters)?.count(t, filters)
+            }
             Virtual::PermissionSet if !permissions::pins_the_primary_key(t, filters) => {
                 self.listed(t, Virtual::PermissionSetAssignable)?.count(t, filters)
             }

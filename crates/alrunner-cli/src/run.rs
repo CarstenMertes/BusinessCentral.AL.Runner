@@ -453,7 +453,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             v
         }),
         trace: a.explain.is_some(),
-        test_time_limit: match a.test_timeout_secs.unwrap_or(60) {
+        test_time_limit: match a.test_timeout_secs.unwrap_or(20) {
             0 => None,
             n => Some(std::time::Duration::from_secs(n)),
         },

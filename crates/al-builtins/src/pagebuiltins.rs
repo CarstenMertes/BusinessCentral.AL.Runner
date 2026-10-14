@@ -61,6 +61,7 @@ page_methods! {
     "Page.Caption#1" => "Page.Caption",
     "Page.PromptMode#1" => "Page.PromptMode",
     "Page.EnqueueBackgroundTask#1" => "Page.EnqueueBackgroundTask",
+    "Page.CancelBackgroundTask#1" => "Page.CancelBackgroundTask",
     "Page.GetBackgroundParameters#1" => "Page.GetBackgroundParameters",
     "Page.SetBackgroundTaskResult#1" => "Page.SetBackgroundTaskResult",
     "TestPage.RunPageBackgroundTask#1" => "TestPage.RunPageBackgroundTask",

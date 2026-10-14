@@ -753,6 +753,10 @@ impl Session {
                 self.require_open(st)?;
                 self.bg_enqueue(st, args)
             }
+            "CancelBackgroundTask" => {
+                self.require_open(st)?;
+                self.bg_cancel(st, args)
+            }
             "RunPageBackgroundTask" => {
                 self.require_open(st)?;
                 self.bg_run_page_task(st, args)

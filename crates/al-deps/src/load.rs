@@ -195,9 +195,9 @@ pub fn scan_path(path: &Path, hint: Option<&str>) -> (Vec<Found>, Vec<String>) {
     let reads: Vec<Result<(Manifest, bool), String>> = paths
         .par_iter()
         .map(|path| {
-            std::fs::read(path)
-                .map_err(|e| e.to_string())
-                .and_then(|bytes| read_info_with(&bytes, &vars_for(path, hint)).map_err(|e: PackageError| e.to_string()))
+            std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| {
+                read_info_with(&bytes, &vars_for(path, hint)).map_err(|e: PackageError| e.to_string())
+            })
         })
         .collect();
     for (path, read) in paths.into_iter().zip(reads) {

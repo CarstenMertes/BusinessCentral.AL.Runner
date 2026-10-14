@@ -18,13 +18,35 @@ use std::time::Instant;
 
 /// The compile budget (docs/architecture.md): at most one second.
 ///
-/// The asserted limit is the budget itself, not a looser number. The margin
-/// for noisy runners is in the measurement instead: the best of `RUNS`
-/// compiles is compared, and the measured time on the dev box is well under
-/// half of the budget, so a CI runner that is 2x slower still passes while a
-/// regression back to the original 1.8 s fails.
+/// The asserted limit is the budget itself, not a looser number. What is steadier is the measurement.
+/// On GitHub's shared runners the best of three compiles ranged from 424 to 952 ms between 24 runs of
+/// nearly the same code (issue 16): a runner that is slow for a few seconds slows all three. The
+/// estimator is the minimum, which a real regression raises and a busy neighbour does not: one
+/// uncounted warm-up compile (file cache, allocator), then compiles until one is within the budget,
+/// at most `MAX_RUNS`. A code change that makes the compile slower makes every sample slower, so the
+/// minimum stays over the budget and the test fails after `MAX_RUNS` samples; a runner that was slow
+/// for a few seconds stops being a failure. All samples are printed, with the CPU time of the process
+/// next to the wall time, so a slow run can be told from a busy runner.
 const BUDGET_SECS: f64 = 1.0;
-const RUNS: usize = 3;
+const MIN_RUNS: usize = 3;
+const MAX_RUNS: usize = 15;
+
+/// CPU seconds (user and system, all threads) this process has used; 0 where it cannot be read.
+#[cfg(target_os = "linux")]
+fn process_cpu_secs() -> f64 {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `ts` is a valid timespec for the call to fill in.
+    let rc = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
+    if rc != 0 {
+        return 0.0;
+    }
+    ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_cpu_secs() -> f64 {
+    0.0
+}
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -54,17 +76,30 @@ fn cold_compile_of_the_pinned_corpus_stays_within_one_second() {
         root().join("corpus/tests/al-language/app.json").exists(),
         "corpus submodule not checked out: run `git submodule update --init`"
     );
+    // The warm-up is not counted.
+    let mut objects = compile_corpus();
     let mut best = f64::MAX;
-    let mut objects = 0;
-    for _ in 0..RUNS {
-        let t = Instant::now();
+    let mut samples = Vec::new();
+    for n in 1..=MAX_RUNS {
+        let (cpu, t) = (process_cpu_secs(), Instant::now());
         objects = compile_corpus();
-        best = best.min(t.elapsed().as_secs_f64());
+        let wall = t.elapsed().as_secs_f64();
+        samples.push(format!(
+            "{:.0} ms (cpu {:.0} ms)",
+            wall * 1e3,
+            (process_cpu_secs() - cpu) * 1e3
+        ));
+        best = best.min(wall);
+        if n >= MIN_RUNS && best <= BUDGET_SECS {
+            break;
+        }
     }
     eprintln!(
-        "cold compile: {objects} objects, best of {RUNS} = {:.0} ms, budget {:.0} ms",
+        "cold compile: {objects} objects, best of {} = {:.0} ms, budget {:.0} ms; samples: {}",
+        samples.len(),
         best * 1e3,
-        BUDGET_SECS * 1e3
+        BUDGET_SECS * 1e3,
+        samples.join(", ")
     );
     assert!(
         objects > 1500,
@@ -72,16 +107,20 @@ fn cold_compile_of_the_pinned_corpus_stays_within_one_second() {
     );
     assert!(
         best <= BUDGET_SECS,
-        "cold compile took {best:.2} s, over the {BUDGET_SECS} s budget"
+        "cold compile took {best:.2} s at best of {MAX_RUNS}, over the {BUDGET_SECS} s budget"
     );
 }
 
 /// A full corpus run with Microsoft's apps (Base Application and the rest of `.alpackages`, the
 /// test libraries from the artifact cache). Not the owner's target of one second: a guard against
 /// the big regressions found by profiling it (a run took 14 to 27 s before; see the commit log of
-/// branch perf-1). Wall clock of the whole process, so the limit leaves room for a CI runner with
-/// few cores.
+/// branch perf-1). It is on the runtime phases of `--timings` (compile, install baseline, run tests), not on
+/// the whole process: "load apps and dependencies" reads the artifact cache and the network, and took 9.9 s of a
+/// 14.7 s run on a runner while it takes about 1 s otherwise (issue 16). The load time is printed and
+/// not budgeted. The limit leaves room for a CI runner with few cores. A run over the limit is repeated, at most
+/// `WITH_APPS_RUNS` times in all, and the best counts: a real regression is over the limit every time.
 const WITH_APPS_BUDGET_SECS: f64 = 12.0;
+const WITH_APPS_RUNS: usize = 3;
 /// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date
 /// rows took 5 s of the run before.
 const SLOWEST_CODEUNIT_SECS: f64 = 2.0;
@@ -89,6 +128,17 @@ const SLOWEST_CODEUNIT_SECS: f64 = 2.0;
 /// codeunit times. A start is about 0.05 s on a dev box and 1 s on a cold CI runner; one that
 /// takes this long is a broken start, not a slow machine.
 const SIDECAR_START_SECS: f64 = 10.0;
+
+/// Compile, install baseline and run tests of the `timings:` line of `--timings`, in seconds: the runtime,
+/// without the load of the apps and dependencies (artifact cache and network).
+fn runtime_phases_secs(err: &str) -> Option<f64> {
+    let line = err.lines().find(|l| l.starts_with("timings: "))?;
+    let part = |label: &str| -> Option<f64> {
+        let at = line.find(label)? + label.len();
+        line[at..].split(' ').next()?.parse().ok()
+    };
+    Some(part("compile ")? + part("install baseline ")? + part("run tests ")?)
+}
 
 /// One entry of the `slowest test codeunits:` line of `--timings`.
 #[derive(Debug, PartialEq)]
@@ -125,6 +175,15 @@ fn parse_slowest(line: &str) -> Vec<CodeunitLine> {
 }
 
 #[test]
+fn the_runtime_phases_leave_out_the_load_of_the_apps() {
+    // Run 38598436035 of CI: 14.7 s in all, 9.9 s of it loading.
+    let line = "timings: BC 29.0: load apps and dependencies 9.90 s, compile 3.36 s, install baseline 0.30 s, run tests 1.04 s, total 14.62 s";
+    let secs = runtime_phases_secs(line).unwrap();
+    assert!((secs - 4.70).abs() < 1e-9, "{secs}");
+    assert_eq!(runtime_phases_secs("nothing"), None);
+}
+
+#[test]
 fn the_slowest_line_is_read_with_and_without_a_sidecar_start() {
     let l =
         parse_slowest("69934 TPF Media Filled Tests 7.39 s (sidecar start 7.30 s); 60130 Test Media Png Import 0.07 s");
@@ -158,18 +217,35 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
     if cfg!(debug_assertions) {
         panic!("perf budgets are only meaningful in --release; this is a debug build");
     }
-    let started = Instant::now();
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
-        .arg("--root")
-        .arg(root())
-        .args(["--bc-version", "29", "--no-ratchet", "--timings"])
-        .output()
+    let mut runs: Vec<(f64, f64, String)> = Vec::new();
+    for _ in 0..WITH_APPS_RUNS {
+        let started = Instant::now();
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+            .arg("--root")
+            .arg(root())
+            .args(["--bc-version", "29", "--no-ratchet", "--timings"])
+            .output()
+            .unwrap();
+        let wall = started.elapsed().as_secs_f64();
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success(), "{err}");
+        let runtime = runtime_phases_secs(&err).expect("a `timings:` line in --timings");
+        runs.push((runtime, wall, err));
+        if runtime <= WITH_APPS_BUDGET_SECS {
+            break;
+        }
+    }
+    let (runtime, wall, err) = runs
+        .iter()
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(r, w, e)| (*r, *w, e.clone()))
         .unwrap();
-    let wall = started.elapsed().as_secs_f64();
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "{err}");
     eprintln!(
-        "full run with the apps: {wall:.1} s\n{}",
+        "full run with the apps: runtime phases {runtime:.1} s (whole process {wall:.1} s), samples: {}\n{}",
+        runs.iter()
+            .map(|(r, w, _)| format!("{r:.1} s ({w:.1} s)"))
+            .collect::<Vec<_>>()
+            .join(", "),
         err.lines()
             .filter(|l| l.starts_with("timings")
                 || l.starts_with("compile:")
@@ -209,7 +285,7 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
         );
     }
     assert!(
-        wall <= WITH_APPS_BUDGET_SECS,
-        "the run took {wall:.1} s, over the {WITH_APPS_BUDGET_SECS} s budget:\n{err}"
+        runtime <= WITH_APPS_BUDGET_SECS,
+        "the runtime phases took {runtime:.1} s at best of {WITH_APPS_RUNS}, over the {WITH_APPS_BUDGET_SECS} s budget:\n{err}"
     );
 }

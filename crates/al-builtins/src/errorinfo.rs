@@ -2,6 +2,7 @@
 //! TestErrorInfoErrorType.al). Raising one (`Error(ErrorInfo)`), collecting errors and the
 //! callback of an action are not here: they need the error pipeline.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{ErrorInfoState, LibraryValue, Value};
@@ -28,28 +29,31 @@ fn with_state<R>(r: Option<&mut Value>, f: impl FnOnce(&mut ErrorInfoState) -> R
     match &mut *cell.borrow_mut() {
         LibraryValue::ErrorInfo(s) => Ok(f(s)),
         // A declared but never created ErrorInfo: what its defaults are is not pinned.
-        other => unsupported(format!("ErrorInfo method on an ErrorInfo nobody created ({other:?})")),
+        other => unsupported(format!(
+            "ErrorInfo method on an ErrorInfo nobody created ({})",
+            other.describe()
+        )),
     }
 }
 
 fn text(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
         Some(t) => Ok(t),
-        None => unsupported(format!("a text argument, got {:?}", a.get(i))),
+        None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }
 
 fn int(a: &[Value], i: usize) -> Result<i32, Signal> {
     match a.get(i) {
         Some(Value::Integer(n)) => Ok(*n),
-        other => unsupported(format!("an Integer argument, got {other:?}")),
+        other => unsupported(format!("an Integer argument, got {}", other.describe())),
     }
 }
 
 fn option_arg(a: &[Value], i: usize) -> Result<i32, Signal> {
     match a.get(i) {
         Some(Value::Option(o, _)) => Ok(*o),
-        other => unsupported(format!("an option argument, got {other:?}")),
+        other => unsupported(format!("an option argument, got {}", other.describe())),
     }
 }
 
@@ -85,7 +89,7 @@ fn create(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let collectible = match a.get(1) {
         None => false,
         Some(Value::Boolean(b)) => *b,
-        Some(other) => return unsupported(format!("ErrorInfo.Create with Collectible {other:?}")),
+        Some(other) => return unsupported(format!("ErrorInfo.Create with Collectible {}", other.describe())),
     };
     let mut s = fresh(text(a, 0)?, collectible);
     if let Some(rec @ Value::Record(_)) = a.get_mut(2) {
@@ -170,7 +174,7 @@ fn collectible(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         return with_state(r, |s| Value::Boolean(s.collectible));
     }
     let Some(Value::Boolean(b)) = a.first() else {
-        return unsupported(format!("Collectible with {:?}", a.first()));
+        return unsupported(format!("Collectible with {}", a.first().describe()));
     };
     let b = *b;
     with_state(r, |s| s.collectible = b).map(|()| Value::Null)
@@ -208,7 +212,7 @@ fn custom_dimensions(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
         return Ok(Value::Dictionary(Rc::new(RefCell::new(pairs))));
     }
     let Some(Value::Dictionary(d)) = a.first() else {
-        return unsupported(format!("CustomDimensions with {:?}", a.first()));
+        return unsupported(format!("CustomDimensions with {}", a.first().describe()));
     };
     let mut entries = Vec::new();
     for (k, v) in d.borrow().iter() {
@@ -238,7 +242,7 @@ fn add_navigation_action(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]
 /// the corpus does not pin: refused. A collectible one is collected inside a collecting scope.
 pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Some(info @ Value::Library(_, cell)) = a.first() else {
-        return unsupported(format!("Error with {:?} as an ErrorInfo", a.first()));
+        return unsupported(format!("Error with {} as an ErrorInfo", a.first().describe()));
     };
     let (message, internal, collectible) = match &*cell.borrow() {
         LibraryValue::ErrorInfo(s) => (s.message.clone(), s.error_type == Some(1), s.collectible),

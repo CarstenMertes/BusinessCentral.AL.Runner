@@ -3,6 +3,7 @@
 //! separators, Booleans as Yes/No, dates in the short forms, and so on.
 //! Every rule cites the corpus test that measured it on real BC.
 
+use crate::describe::Describe;
 use crate::value::Value;
 use rust_decimal::{Decimal, RoundingStrategy};
 
@@ -241,7 +242,7 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
         Value::DateFormula(s) => crate::datefns::formula_text(s),
         other => {
             let _ = Ordering::Equal;
-            format!("{other:?}")
+            format!("{}", other.describe())
         }
     }
 }

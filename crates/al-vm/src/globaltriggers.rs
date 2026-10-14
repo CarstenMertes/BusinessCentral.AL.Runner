@@ -23,6 +23,7 @@
 use crate::Session;
 use crate::dispatch::EventCall;
 use crate::records::Rec;
+use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::value::Value;
 use al_data::TableDef;
@@ -89,7 +90,7 @@ impl Session {
                 Value::Integer(m) => *m,
                 other => {
                     self.global_setups.remove(&table);
-                    return unsupported(format!("Global Triggers: mask {other:?}"));
+                    return unsupported(format!("Global Triggers: mask {}", other.describe()));
                 }
             };
             if mask != 0 && mask != MASK_ALL {

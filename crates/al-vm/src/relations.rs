@@ -157,7 +157,7 @@ impl Session {
         let found = self
             .store
             .count(&cx, &related, &filters)
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
         if found > 0 {
             return Ok(());
         }

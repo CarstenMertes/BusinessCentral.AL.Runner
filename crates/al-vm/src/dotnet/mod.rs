@@ -7,6 +7,7 @@ pub mod registry;
 pub mod server_classes;
 
 use crate::{Frame, Session};
+use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::ops;
 use al_builtins::stream::BlobRef;
@@ -178,7 +179,7 @@ impl Session {
                     ));
                 }
             },
-            (_, other) => return unsupported(format!("DotNet member '{member}' on {other:?}")),
+            (_, other) => return unsupported(format!("DotNet member '{member}' on {}", other.describe())),
         };
         let clr_type = match &target {
             Target::Static(d) => d.name.clone(),
@@ -376,11 +377,12 @@ impl Session {
                     book.outs.push((arg, blob.clone()));
                     DotNetValue::OutStream
                 }
-                other => return unsupported(format!("an AL library value ({other:?}) passed to .NET")),
+                other => return unsupported(format!("an AL library value ({}) passed to .NET", other.describe())),
             },
             other => {
                 return unsupported(format!(
-                    "{other:?} passed to .NET: the type has no marshalling row (ADR-014 section 4)"
+                    "{other} passed to .NET: the type has no marshalling row (ADR-014 section 4)",
+                    other = other.describe()
                 ));
             }
         })
@@ -487,8 +489,9 @@ pub(crate) fn fit(v: Value, t: &RtType) -> Result<Value, Signal> {
     );
     if !ok {
         return unsupported(format!(
-            "a .NET result of kind {} stored into {t:?}: BC's conversion is not pinned (ADR-014 section 4)",
-            kind_of(&v)
+            "a .NET result of kind {} stored into {t}: BC's conversion is not pinned (ADR-014 section 4)",
+            kind_of(&v),
+            t = t.describe()
         ));
     }
     match (&v, t) {

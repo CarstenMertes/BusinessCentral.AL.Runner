@@ -700,7 +700,7 @@ impl SidecarSession {
                 .map(|d| json!({"path": d.to_string_lossy(), "recursive": false}))
                 .collect();
             self.raw_request(json!({"op":"probe","dirs":dirs}))
-                .map_err(|f| format!("{f:?}"))?;
+                .map_err(|f| f.to_string())?;
         }
         let took = began.elapsed();
         let mut st = lock(&self.shared.stats);

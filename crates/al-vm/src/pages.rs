@@ -7,6 +7,7 @@
 //! pins raises `Signal::Unsupported`.
 
 use crate::{Engine, Session, UiKind};
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::pagefmt::{self, Blank, ControlFormat};
@@ -118,7 +119,7 @@ impl Session {
                     target: ControlTarget::Control(control),
                 })))
             }
-            other => Err(Signal::Unsupported(format!("control of {other:?}"))),
+            other => Err(Signal::Unsupported(format!("control of {}", other.describe()))),
         }
     }
 
@@ -136,7 +137,7 @@ impl Session {
         let v = inst.borrow().globals[slot].clone();
         match v {
             Value::Record(r) => r,
-            other => panic!("Rec is {other:?}"),
+            other => panic!("Rec is {}", other.describe()),
         }
     }
 
@@ -372,13 +373,13 @@ impl Session {
             None if method == "Page.RunStatic" || method == "Page.RunModalStatic" => {
                 let n = match args.first() {
                     Some(Value::Integer(n)) => *n,
-                    other => return unsupported(format!("Page.Run with {other:?} as the page")),
+                    other => return unsupported(format!("Page.Run with {} as the page", other.describe())),
                 };
                 let engine = self.engine();
                 let record = match args.get(1) {
                     Some(Value::Record(r)) => Some(r.clone()),
                     None => None,
-                    other => return unsupported(format!("Page.Run with {other:?} as the record")),
+                    other => return unsupported(format!("Page.Run with {} as the record", other.describe())),
                 };
                 if args.len() > 2 {
                     return unsupported("Page.Run with a field argument");
@@ -449,7 +450,7 @@ impl Session {
                 let c = c.clone();
                 self.test_control_op(method, &c, args)
             }
-            other => unsupported(format!("{method} on {other:?}")),
+            other => unsupported(format!("{method} on {}", other.describe())),
         }
     }
 
@@ -566,7 +567,7 @@ impl Session {
                             st.borrow_mut().caption = Some(t);
                             Ok(Value::Null)
                         }
-                        None => unsupported(format!("CurrPage.Caption with {v:?}")),
+                        None => unsupported(format!("CurrPage.Caption with {}", v.describe())),
                     },
                     None => Ok(Value::Text(self.page_caption(st))),
                 }
@@ -586,7 +587,7 @@ impl Session {
                 Some(Value::Enum(..)) | Some(Value::Option(..)) => {
                     unsupported("CurrPage.PromptMode other than Prompt (not pinned)")
                 }
-                other => unsupported(format!("CurrPage.PromptMode with {other:?}")),
+                other => unsupported(format!("CurrPage.PromptMode with {}", other.describe())),
             },
             "Editable" if method.starts_with("Page.") => {
                 self.require_open(st)?;
@@ -632,7 +633,7 @@ impl Session {
                     st.borrow_mut().set_record = Some(copy);
                     Ok(Value::Null)
                 }
-                other => unsupported(format!("Page.SetRecord with {other:?}")),
+                other => unsupported(format!("Page.SetRecord with {}", other.describe())),
             },
             // `CurrPage.SetSelectionFilter(var Rec)` on a list the test client stands on a row of: the record is
             // filtered to that row (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:239-250). A
@@ -700,7 +701,7 @@ impl Session {
                     st.borrow_mut().set_record = Some(copy);
                     Ok(Value::Null)
                 }
-                other => unsupported(format!("Page.SetTableView with {other:?}")),
+                other => unsupported(format!("Page.SetTableView with {}", other.describe())),
             },
             "EnqueueBackgroundTask" => {
                 self.require_open(st)?;
@@ -1508,7 +1509,7 @@ impl Session {
         };
         let ty = table.fields[last].ty.clone();
         if !matches!(ty, RtType::Integer | RtType::BigInteger | RtType::Decimal) {
-            return unsupported(format!("AutoSplitKey on a key field of type {ty:?}"));
+            return unsupported(format!("AutoSplitKey on a key field of type {}", ty.describe()));
         }
         let dec = |v: &Value| match v {
             Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
@@ -1612,7 +1613,9 @@ impl Session {
             }
             (l, u) => {
                 return unsupported(format!(
-                    "AutoSplitKey between {l:?} and {u:?} (the corpus does not pin it)"
+                    "AutoSplitKey between {l} and {u} (the corpus does not pin it)",
+                    l = l.describe(),
+                    u = u.describe()
                 ));
             }
         };
@@ -2728,7 +2731,8 @@ impl Session {
             }
             Err(al_builtins::pagefmt::ParseError::Unsupported) => {
                 return unsupported(format!(
-                    "SetValue of a {ty:?} control: its spelling is not modelled yet"
+                    "SetValue of a {ty} control: its spelling is not modelled yet",
+                    ty = ty.describe()
                 ));
             }
         };
@@ -3176,7 +3180,7 @@ impl Session {
                         self.control_set_value(st, idx, &mut [Value::Text(t.clone())])
                     }
                     (Value::Boolean(true), other) => {
-                        unsupported(format!("an OnLookup trigger whose Text is {other:?}"))
+                        unsupported(format!("an OnLookup trigger whose Text is {}", other.describe()))
                     }
                     _ => Ok(Value::Null),
                 })

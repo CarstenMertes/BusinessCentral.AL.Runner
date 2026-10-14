@@ -9,6 +9,7 @@
 //! node lists). Lists and attribute collections are views. Behaviour the corpus
 //! does not pin raises `Signal::Unsupported` (see docs/probes-needed.md).
 
+use crate::describe::Describe;
 use crate::json::Handle;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
@@ -109,7 +110,7 @@ fn node_of(v: &Value) -> Result<Handle, Signal> {
                 unsupported(format!("{name} used as an XML node"))
             }
         }
-        other => unsupported(format!("{other:?} used as an XML node")),
+        other => unsupported(format!("{} used as an XML node", other.describe())),
     }
 }
 
@@ -1090,7 +1091,12 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
                 out.push(new_node(XData::Text(t.clone())));
                 continue;
             }
-            other => return unsupported(format!("{other:?} as XML content (only XML nodes and text are pinned)")),
+            other => {
+                return unsupported(format!(
+                    "{} as XML content (only XML nodes and text are pinned)",
+                    other.describe()
+                ));
+            }
         };
         if with(&h, |d| matches!(d, XData::Document { .. })) {
             return unsupported("adding an XmlDocument as content");
@@ -1572,7 +1578,7 @@ fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
             LibraryValue::InStream(s) => s.drain(),
             _ => return unsupported("XmlDocument.ReadFrom of something that is not an InStream"),
         },
-        other => return unsupported(format!("XmlDocument.ReadFrom of {other:?}")),
+        other => return unsupported(format!("XmlDocument.ReadFrom of {}", other.describe())),
     };
     if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
         return unsupported("XmlDocument.ReadFrom of a UTF-16 stream (not pinned)");
@@ -2219,7 +2225,7 @@ fn manager_prefixes(a: &[Value], i: usize) -> Result<Vec<(String, String)>, Sign
             LibraryValue::Empty => Ok(Vec::new()),
             _ => unsupported("an XmlNamespaceManager that is not one"),
         },
-        other => unsupported(format!("{other:?} as an XmlNamespaceManager")),
+        other => unsupported(format!("{} as an XmlNamespaceManager", other.describe())),
     }
 }
 
@@ -2555,7 +2561,7 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
         Ok(Ok(d)) => d,
         Ok(Err(f)) => return Ok(Err(f.map(|f| f.message))),
         Err(Signal::Unsupported(why)) => return Err(why),
-        Err(other) => return Err(format!("{other:?}")),
+        Err(other) => return Err(format!("{}", other.describe())),
     };
     let root = children_of(&doc)
         .into_iter()

@@ -29,6 +29,7 @@ mod reports;
 mod seed;
 
 use crate::Engine;
+use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
 use al_builtins::platform::Virtual;
 use al_builtins::value::Value;
@@ -293,7 +294,7 @@ impl Blank {
     pub(crate) fn option(&self, t: &TableDef, id: u32, n: i32) -> Value {
         match &self.row[pos(t, id)] {
             Value::Option(_, m) => Value::Option(n, m.clone()),
-            other => panic!("field {id} of '{}' is not an option: {other:?}", t.name),
+            other => panic!("field {id} of '{}' is not an option: {}", t.name, other.describe()),
         }
     }
 }
@@ -302,7 +303,7 @@ impl Blank {
 pub(crate) fn option(t: &TableDef, id: u32, n: i32) -> Value {
     match Value::default_for(&t.fields[pos(t, id)].ty) {
         Value::Option(_, m) => Value::Option(n, m),
-        other => panic!("field {id} of '{}' is not an option: {other:?}", t.name),
+        other => panic!("field {id} of '{}' is not an option: {}", t.name, other.describe()),
     }
 }
 

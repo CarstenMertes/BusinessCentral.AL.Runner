@@ -395,4 +395,13 @@ mod tests {
         assert_eq!(try_format(&r, 0, 0, &Ctx).unwrap(), "");
     }
 
+    #[test]
+    fn a_time_is_one_more_than_its_milliseconds_since_midnight() {
+        // 12:00:00.000 is Time(43_200_001); the millisecond before it is still 11:59 AM.
+        assert_eq!(f2(Value::Time(43_200_000)), "11:59 AM");
+        assert_eq!(f2(Value::Time(43_200_001)), "12:00 PM");
+        assert_eq!(f2(Value::Time(1)), "12:00 AM");
+        assert_eq!(f2(Value::Time(86_400_000)), "11:59 PM");
+    }
+
 }

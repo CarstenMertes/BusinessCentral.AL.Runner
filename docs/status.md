@@ -131,10 +131,16 @@ Answered on 2026-10-13 and recorded in ADR-013:
 
 - `GetLastErrorCallStack` returns a marker that refuses to be read; real call
   stacks need source lines in the IR.
-- Red/green discipline slipped in places during the parallel build-out (the
-  first cut of event dispatch, later FlowField formula tests, some TestPage
-  fixes). Those tests were checked by mutation, but were never seen red.
-  Review them when the code is next touched.
+- Red/green discipline slipped in places during the parallel build-out. A
+  mutation-testing pass (cargo-mutants, 2026-10-14) covered event dispatch,
+  FlowFields and CalcFormula, transactions, XmlPorts (runtime and sema), queries,
+  reports, host values, the TestPage parts, and the Format, date, math and
+  ErrorInfo builtins. Every surviving mutant was either killed by a new test or
+  recorded as equivalent or unpinned. What is left: `al-vm/src/pages.rs` (the
+  TestPage core, 520 mutants) and the rest of `datefns.rs` were not swept; the
+  `pages/*` survivors (47) were not rechecked against the corpus ratchet; and
+  `Power` with an exponent that carries a scale (`Power(2, 3.0)` answers 1) is a
+  known bug with an `#[ignore]`d test (`al-builtins/src/mathfns.rs`).
 - About 135 assumptions in `docs/probes-needed.md` wait for probes on real BC.
   They include the exact "Unhandled UI" text, JSON and XML `WriteTo`
   formatting, and the `Format` of Time and DateTime.

@@ -652,6 +652,9 @@ xmlport 50010 X
         // ends in a parenthesis and has a real field after six characters is not one.
         let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "LinkFields = ParentNo = ABCDEFNo);"));
         assert!(why.contains("is not understood"), "{why}");
+        // The same for a FIELD( that is never closed: its sixth character on is not a field name.
+        let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "LinkFields = ParentNo = FIELD(NoX;"));
+        assert!(why.contains("is not understood"), "{why}");
     }
 
 }

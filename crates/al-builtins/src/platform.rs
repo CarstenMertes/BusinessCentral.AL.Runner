@@ -135,6 +135,7 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     ),
     (2_000_000_165, "Tenant Permission Set", Provider::Stored),
     (2_000_000_166, "Tenant Permission", Provider::Stored),
+    (2_000_000_253, "Tenant Permission Set Rel.", Provider::Stored),
     (
         2_000_000_251,
         "Metadata Permission",

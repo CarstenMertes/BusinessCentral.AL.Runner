@@ -34,6 +34,31 @@ directly.
    are provided by the runtime itself as **service internals**, through a
    registry in front of the sidecar. Each member needs a corpus pin or a probe.
 
+### Decided by the owner (2026-10-14)
+
+3. The BC server classes that Microsoft's AL reaches through `DotNet` are provided in Rust through
+   the registry of section 1: `ALConfigSettings`, `NavTenantSettingsHelper`, `NavUserAccountHelper`
+   and `NavTestExecution` so far (`al-vm/src/dotnet/server_classes.rs`). This is not a fake of an
+   AL object, so hard rule 7 does not apply.
+4. Until a probe on real BC pins a value, it mirrors AL Runner v2, which runs BC's real classes on a
+   faked session (`MetadataPatches.cs` builds that session). Each registry member records its
+   source: `Pin::AlRunner("AL Runner v2 <file:line>")` now, `Pin::Probe` once a probe pins it,
+   `Pin::Corpus` where a corpus test does. Where a probe and AL Runner differ, the probe wins.
+5. The probe batch (corpus-probes branch `al-runtime-rs`, head c542144, BC 27.5) pinned the
+   ALConfigSettings flags and limits, `IsSandbox` true, `IsProduction` false, `IsAzure` true
+   (through `IsSaaSInfrastructure`), `GetApplicationFamily` `W1`, the empty Power Platform
+   environment id, and `IsInTestMode` (through `CanStartSession`). AL Runner's tenant is
+   Production on an on-premises topology, so the oracle tenant, a sandbox on Azure topology,
+   differs from it in `IsSandbox`, `IsProduction` and `IsAzure`. The shipped values follow the
+   probe. The probe files reach the corpus submodule with its next bump; the pins cite them by
+   path and head.
+6. A registry member declares its AL result type in `al-builtins/src/dotnet_sigs.rs`. The
+   compiler reads it, so `if Helper.IsAzure() then` and `Settings.ApiSubscriptionDelayTime() > 0`
+   lower. A member of a registered type that has no row, and every member of a type the host
+   serves, stays untyped and keeps the static refusal "a DotNet value used as an operand": BC types
+   those from the assembly, which lowering never opens. A test checks that the registry and the
+   table name the same members.
+
 ## Decision
 
 ### 1. Layers and call order

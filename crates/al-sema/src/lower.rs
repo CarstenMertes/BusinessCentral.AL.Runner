@@ -3790,6 +3790,37 @@ codeunit 50101 C2
         );
     }
 
+    const DOTNET_REGISTRY: &str = "dotnet { assembly(\"Microsoft.Dynamics.Nav.NavUserAccount\") { Culture = 'neutral'; PublicKeyToken = '31bf3856ad364e35'; type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper\"; \"NavUserAccountHelper\") { } type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper\"; \"NavTenantSettingsHelper\") { } } assembly(\"Microsoft.Dynamics.Nav.Types\") { Culture = 'neutral'; PublicKeyToken = '31bf3856ad364e35'; type(\"Microsoft.Dynamics.Nav.Types.ALConfigSettings\"; \"ALConfigSettings\") { } } }\n";
+
+    /// A member the registry provides declares its AL return type (ADR-014), so its result is an
+    /// operand like any typed value. Base App: `exit(IsSaaS() and UserAccountHelper.IsAzure())`.
+    #[test]
+    fn a_registry_member_with_a_declared_type_is_usable_as_an_operand() {
+        let (_, l) = lower_src(&format!(
+            "{DOTNET_REGISTRY}codeunit 50100 C {{ procedure P(B: Boolean): Boolean var U: DotNet NavUserAccountHelper; begin if U.IsAzure() then exit(true); exit(B and U.IsAzure()); end; procedure Q(): Boolean var T: DotNet NavTenantSettingsHelper; begin exit(T.GetEnvironmentName() <> ''); end; procedure R(): Boolean var S: DotNet ALConfigSettings; begin S := S.Instance(); exit(S.ApiSubscriptionDelayTime() > 0); end; }}"
+        ));
+        for name in ["P", "Q", "R"] {
+            let (ri, _) = routine(&l, name);
+            assert!(l.unsupported[0][ri].is_empty(), "{name}: {:?}", l.unsupported[0][ri]);
+        }
+    }
+
+    /// The same member names on a type the registry does not know stay refused as operands.
+    #[test]
+    fn a_member_of_an_unregistered_type_is_still_untyped() {
+        let (_, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Boolean var Convert: DotNet Convert; begin exit(Convert.IsAzure() and true); end; }}"
+        ));
+        let (oi, _) = routine(&l, "P");
+        assert!(
+            l.unsupported[oi][0]
+                .iter()
+                .any(|r| r.contains("only known at run time")),
+            "{:?}",
+            l.unsupported[oi][0]
+        );
+    }
+
     #[test]
     fn slots_for_globals_params_and_locals() {
         let (_, l) = lower_src(

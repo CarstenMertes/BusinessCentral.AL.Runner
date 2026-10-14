@@ -113,6 +113,10 @@ const DOTNET: &str = "dotnet { assembly(\"netstandard\") {
     type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper\"; \"NavTenantSettingsHelper\") { }
     type(\"System.Base64FormattingOptions\"; \"Base64FormattingOptions\") { }
     type(\"Microsoft.Dynamics.Nav.Types.Base64UrlHelper\"; \"Base64UrlHelper\") { }
+    type(\"Microsoft.Dynamics.Nav.Types.ALConfigSettings\"; \"ALConfigSettings\") { }
+    type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper\"; \"NavUserAccountHelper\") { }
+    type(\"Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper\"; \"PermissionTestHelper\") { }
+    type(\"Microsoft.Dynamics.Nav.Runtime.NavTestExecution\"; \"NavTestExecution\") { }
   }
   assembly(\"Microsoft.Exchange.WebServices\") { type(\"Microsoft.Exchange.WebServices.Data.ExchangeService\"; \"ExchangeService\") { } }
 }\n";
@@ -163,6 +167,11 @@ fn compile(vars: &str, body: &str, ret: &str) -> (al_ir::Program, Vec<Vec<Option
 }
 
 fn run_with(cfg: DotNetConfig, vars: &str, body: &str, ret: &str) -> Ran {
+    run_setup(cfg, vars, body, ret, |_| {})
+}
+
+/// As `run_with`, after `setup` has changed the session (for example `in_test_codeunit`).
+fn run_setup(cfg: DotNetConfig, vars: &str, body: &str, ret: &str, setup: impl FnOnce(&mut Session)) -> Ran {
     let (program, blocked, oi, ri) = compile(vars, body, ret);
     if let Some(Some(r)) = blocked.get(oi).and_then(|o| o.get(ri)) {
         return Ran {
@@ -172,6 +181,7 @@ fn run_with(cfg: DotNetConfig, vars: &str, body: &str, ret: &str) -> Ran {
     }
     let engine = Engine::with_dotnet(program, blocked, cfg);
     let mut s = Session::new(engine);
+    setup(&mut s);
     let inst = s.instance(oi);
     let result = s.call(oi, ri, inst, vec![]).map(|(v, _)| v);
     Ran {
@@ -349,7 +359,6 @@ fn a_registry_member_without_a_pin_does_not_build() {
         err.contains("X.M") && err.contains("neither a corpus pin nor a probe"),
         "{err}"
     );
-    assert!(Registry::builtin().is_empty(), "no member is pinned yet");
 }
 
 // ---- policy ------------------------------------------------------------------------------
@@ -377,12 +386,7 @@ fn policy_refusals_name_the_rule_and_never_reach_the_host() {
 #[test]
 fn an_unregistered_server_class_is_refused_before_the_host() {
     let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
-    let r = run(
-        &host,
-        "H: DotNet NavTenantSettingsHelper; B: Boolean;",
-        "B := H.IsSandbox();",
-        "",
-    );
+    let r = run(&host, "H: DotNet PermissionTestHelper;", "H.Clear();", "");
     let why = unsupported(&r);
     assert!(
         why.contains("server class") && why.contains("neither registered nor classified pure"),
@@ -824,4 +828,222 @@ fn an_outstream_argument_is_bridged_and_the_bytes_dotnet_wrote_are_appended_to_t
         ": Text",
     );
     assert_eq!(text(r), "from .net!", "a later call can still write into the bridge");
+}
+
+// ---- the shipped registry (owner decision 2026-10-14) ------------------------------------
+
+fn no_host() -> Fake {
+    Fake::new(|r| panic!("a registered type must never reach the host: {r:?}"))
+}
+
+fn run_text(vars: &str, body: &str) -> String {
+    let host = no_host();
+    let r = run(&host, vars, &format!("exit(Format({body}));"), ": Text");
+    let out = text(r);
+    assert_eq!(host.log(), vec![], "not even a session was opened");
+    out
+}
+
+/// Each value, with its source. The ALConfigSettings flags, the environment type, the topology and
+/// the application family are measured on real BC 27.5 (corpus-probes c542144,
+/// `session/TestEnvironmentUserTenantContracts.al` and `TestServerSettingContracts.al`). The probe
+/// wins over AL Runner v2 where they differ: the oracle tenant is a sandbox on Azure topology.
+#[test]
+fn the_server_class_members_answer_the_values_of_the_probe_and_al_runner_v2() {
+    let cfg = "C: DotNet ALConfigSettings;";
+    for (member, want) in [
+        ("EnableSaasExtensionInstallConfigSetting", "No"),
+        ("IsSaasExcelAddinEnabled", "No"),
+        ("EnableEntraGroupsOnPrem", "No"),
+        ("ApiServicesEnabled", "Yes"),
+        ("ApiSubscriptionsEnabled", "Yes"),
+        ("ApiSubscriptionSendingNotificationTimeout", "30000"),
+        ("ApiSubscriptionMaxNumberOfNotifications", "1000"),
+        ("ApiSubscriptionDelayTime", "30000"),
+        ("TestAutomationEnabled", "Yes"),
+        ("UsePermissionsFromExtensions", "Yes"),
+        ("IsSaaS", "No"),
+    ] {
+        assert_eq!(run_text(cfg, &format!("C.{member}()")), want, "{member}");
+    }
+    let t = "T: DotNet NavTenantSettingsHelper;";
+    assert_eq!(run_text(t, "T.IsSandbox()"), "Yes");
+    assert_eq!(run_text(t, "T.IsProduction()"), "No");
+    assert_eq!(run_text(t, "T.GetEnvironmentName()"), "");
+    assert_eq!(run_text(t, "T.GetApplicationFamily()"), "W1");
+    assert_eq!(run_text(t, "T.GetLinkedPowerPlatformEnvironmentId()"), "");
+    assert_eq!(
+        run_text(t, "T.GetEnvironmentApplicationSetting('EnableAgentBuilder')"),
+        ""
+    );
+    assert_eq!(run_text("U: DotNet NavUserAccountHelper;", "U.IsAzure()"), "Yes");
+}
+
+/// Base App's `Environment Information Impl.` reads these in a test run; `CanStartSession` is
+/// false in the probe because `IsInTestMode` is true there.
+#[test]
+fn is_in_test_mode_follows_the_running_test_codeunit() {
+    let vars = "E: DotNet NavTestExecution;";
+    let body = "exit(Format(E.IsInTestMode()));";
+    assert_eq!(
+        text(run_setup(cfg(&no_host()), vars, body, ": Text", |s| s
+            .in_test_codeunit =
+            true)),
+        "Yes"
+    );
+    assert_eq!(text(run(&no_host(), vars, body, ": Text")), "No");
+}
+
+/// A SUPER session on table data: the four data rights, no Execute (corpus
+/// `session/TestSessionCompanyInfoExperienceClose.al`). Anything else is refused.
+#[test]
+fn the_effective_permission_of_the_session_user_on_table_data_is_the_four_data_rights() {
+    let vars = "U: DotNet NavUserAccountHelper;";
+    let host = no_host();
+    let r = run(
+        &host,
+        vars,
+        "exit(U.GetEffectivePermissionForObject(UserSecurityId(), CompanyName(), 0, 79));",
+        ": Text",
+    );
+    assert_eq!(text(r), "1,1,1,1,0");
+    let r = run(
+        &host,
+        vars,
+        "exit(U.GetEffectivePermissionForObject(UserSecurityId(), CompanyName(), 5, 79));",
+        ": Text",
+    );
+    assert!(unsupported(&r).contains("other than table data"), "{:?}", r.result);
+    let r = run(
+        &host,
+        vars,
+        "exit(U.GetEffectivePermissionForObject(CreateGuid(), CompanyName(), 0, 79));",
+        ": Text",
+    );
+    assert!(unsupported(&r).contains("another user"), "{:?}", r.result);
+    assert_eq!(host.log(), vec![]);
+}
+
+/// `ServerSettingImpl` does `ALConfigSettings := ALConfigSettings.Instance()` and then calls the
+/// settings on the object it got back.
+#[test]
+fn an_instance_of_a_registered_type_serves_its_members_from_the_registry() {
+    let host = no_host();
+    let r = run(
+        &host,
+        "C: DotNet ALConfigSettings; D: DotNet ALConfigSettings;",
+        "C := C.Instance(); D := C; exit(Format(D.ApiSubscriptionDelayTime()));",
+        ": Text",
+    );
+    assert_eq!(text(r), "30000");
+    assert_eq!(host.log(), vec![]);
+}
+
+#[test]
+fn registry_results_are_operands() {
+    let host = no_host();
+    let r = run(
+        &host,
+        "U: DotNet NavUserAccountHelper; C: DotNet ALConfigSettings; N: Integer;",
+        "C := C.Instance(); if C.ApiSubscriptionDelayTime() > 1000 then N := 1; \
+         if U.IsAzure() and C.ApiServicesEnabled() then N += 10; exit(N);",
+        ": Integer",
+    );
+    assert!(matches!(r.result, Ok(Value::Integer(11))), "{:?}", r.result);
+    assert_eq!(host.log(), vec![]);
+}
+
+/// The rule of ADR-014 section 1 for every shipped type: a member the registry does not
+/// implement is refused by name, and nothing a registered type does reaches the host.
+#[test]
+fn a_registered_type_is_never_forwarded_to_the_host() {
+    for (alias, clr) in [
+        ("ALConfigSettings", al_builtins::dotnet_sigs::AL_CONFIG_SETTINGS),
+        (
+            "NavTenantSettingsHelper",
+            al_builtins::dotnet_sigs::TENANT_SETTINGS_HELPER,
+        ),
+        ("NavUserAccountHelper", al_builtins::dotnet_sigs::USER_ACCOUNT_HELPER),
+        ("NavTestExecution", al_builtins::dotnet_sigs::TEST_EXECUTION),
+    ] {
+        let host = no_host();
+        let r = run(
+            &host,
+            &format!("X: DotNet {alias};"),
+            "X.NotAMemberOfTheRealClass();",
+            "",
+        );
+        let why = unsupported(&r);
+        assert!(
+            why.contains(&format!("{clr}.NotAMemberOfTheRealClass")) && why.contains("never forwarded"),
+            "{why}"
+        );
+        assert_eq!(host.log(), vec![], "{alias}");
+        // A real member the runtime does not provide is refused the same way, not run on .NET.
+    }
+    let host = no_host();
+    let r = run(
+        &host,
+        "T: DotNet NavTenantSettingsHelper; S: Text;",
+        "S := T.GetRingName();",
+        "",
+    );
+    assert!(unsupported(&r).contains("NavTenantSettingsHelper.GetRingName"));
+    assert_eq!(host.log(), vec![]);
+}
+
+/// The compiler types a result from `dotnet_sigs`; the registry implements it. The two lists
+/// name the same members, and each member returns the kind of value its row declares.
+#[test]
+fn the_declared_result_types_match_the_registry() {
+    use al_builtins::dotnet_sigs::{Ret, SIGS};
+    let reg = Registry::builtin();
+    for (clr, member, ret) in SIGS {
+        let t = reg
+            .get(clr)
+            .unwrap_or_else(|| panic!("{clr} has signatures but is not registered"));
+        assert!(
+            t.members.iter().any(|m| m.name == *member),
+            "{clr}.{member} has a signature but no registry member"
+        );
+        let _ = ret;
+    }
+    for t in reg.types() {
+        for m in &t.members {
+            assert!(
+                al_builtins::dotnet_sigs::lookup(&t.clr_name, &m.name).is_some(),
+                "{}.{} is registered but has no declared result type",
+                t.clr_name,
+                m.name
+            );
+            assert!(
+                matches!(&m.pin, Pin::AlRunner(s) if s.contains("AL Runner v2 AlRunner/"))
+                    || matches!(&m.pin, Pin::Probe(s) if s.contains("corpus-probes c542144") && s.contains(".al"))
+                    || matches!(&m.pin, Pin::Corpus(s) if s.contains(".al:")),
+                "{}.{}: {:?}",
+                t.clr_name,
+                m.name,
+                m.pin
+            );
+        }
+    }
+    // The kind of value each parameterless member returns.
+    for (clr, member, ret) in SIGS {
+        let t = reg.get(clr).unwrap();
+        let m = t.members.iter().find(|m| m.name == *member).unwrap();
+        let args: Vec<Value> = match *member {
+            "GetEnvironmentApplicationSetting" => vec![Value::Text("x".into())],
+            "GetEffectivePermissionForObject" => continue, // needs a Guid; the AL test above runs it
+            _ => vec![],
+        };
+        let mut s = Session::new(Engine::new(Default::default(), vec![]));
+        let v = (m.call)(&mut s, None, &args).unwrap_or_else(|e| panic!("{clr}.{member}: {e:?}"));
+        let ok = match ret {
+            Ret::Boolean => matches!(v, Value::Boolean(_)),
+            Ret::Integer => matches!(v, Value::Integer(_)),
+            Ret::Text => matches!(v, Value::Text(_)),
+            Ret::Object => matches!(v, Value::DotNet(_)),
+        };
+        assert!(ok, "{clr}.{member} declares {ret:?} but returns {v:?}");
+    }
 }

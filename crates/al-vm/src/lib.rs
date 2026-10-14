@@ -233,6 +233,8 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
+    /// `Database.CurrentTransactionType`: a member index of the TransactionType option.
+    pub(crate) transaction_type: i32,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
@@ -245,6 +247,8 @@ pub struct Session {
     pub(crate) host: al_host::Host,
     /// The time `Sleep` has waited, added to every clock reading.
     pub(crate) waited_ms: i64,
+    /// Temporary files created so far (`File.CreateTempFile` names them in order).
+    pub(crate) temp_files: u32,
     /// The instant of the last system stamp (milliseconds since the Unix epoch).
     pub(crate) last_stamp: i64,
     /// The date `WorkDate(Date)` set; today until then.
@@ -277,7 +281,12 @@ impl Session {
         Session::with_host(engine, al_host::Host::default())
     }
 
-    /// A session whose clock and identity come from `host`.
+    /// The files AL code wrote through the `File` type, for a test or a front end to inspect.
+    pub fn files(&self) -> &dyn al_host::FileSystem {
+        &*self.host.files
+    }
+
+    /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
         let ident = platform::Ident::of(&host);
@@ -287,6 +296,7 @@ impl Session {
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
+            temp_files: 0,
             last_stamp: i64::MIN / 2,
             work_date: None,
             engine,
@@ -332,6 +342,7 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
+            transaction_type: 1,
             media: Default::default(),
             dotnet: Default::default(),
             application_areas: String::new(),
@@ -887,6 +898,20 @@ impl Session {
                 self.query_column(q, *column)
             }
             E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
+            E::CharAt(text, index) => {
+                let t = self.eval(text, f)?;
+                let Some(t) = al_builtins::native::text_of(&t) else {
+                    return Err(Signal::Unsupported(format!("indexing {t:?} as a text")));
+                };
+                let i = int(&self.eval(index, f)?)?;
+                usize::try_from(i - 1)
+                    .ok()
+                    .and_then(|i| t.encode_utf16().nth(i))
+                    .map(Value::Char)
+                    .ok_or_else(|| {
+                        Signal::Unsupported("a text indexed outside its length (error text not pinned)".into())
+                    })
+            }
             E::DotNetCoerce(t, e) => {
                 let v = self.eval(e, f)?;
                 self.dotnet_coerce(v, t)
@@ -915,6 +940,23 @@ impl Session {
                         return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
                     };
                     return Ok(Value::Integer(self.curr_field_of(&rec)));
+                }
+                // `ClearAll()` resets every global variable of the running object to its default;
+                // locals are untouched (docs/probes-needed.md "ClearAll"). A codeunit has nothing
+                // else in its globals; an object with an implicit Rec or page state is refused.
+                if id == "System.ClearAll#1" {
+                    let object = f.instance.borrow().object as usize;
+                    let o = &self.engine.program.objects[object];
+                    if o.kind != "codeunit" || o.rec_slot.is_some() {
+                        return Err(Signal::Unsupported(
+                            "ClearAll outside a codeunit without a source table (the implicit record is not pinned)"
+                                .into(),
+                        ));
+                    }
+                    let tys: Vec<RtType> = o.globals.iter().map(|g| g.ty.clone()).collect();
+                    let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
+                    f.instance.borrow_mut().globals = fresh;
+                    return Ok(Value::Null);
                 }
                 if id == "Session.ApplicationArea#1" {
                     // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
@@ -1358,6 +1400,22 @@ impl al_builtins::native::Ctx for Session {
     }
     fn collect_error(&mut self, info: &Value) -> bool {
         Session::collect_error(self, info)
+    }
+    fn fs_exists(&mut self, path: &str) -> Result<bool, Signal> {
+        Ok(self.host.files.exists(path))
+    }
+    fn fs_read(&mut self, path: &str) -> Result<Option<Vec<u8>>, Signal> {
+        Ok(self.host.files.read(path))
+    }
+    fn fs_write(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        self.host.files.write(path, bytes)
+    }
+    fn fs_remove(&mut self, path: &str) -> Result<bool, Signal> {
+        Ok(self.host.files.remove(path))
+    }
+    fn fs_temp_name(&mut self) -> String {
+        self.temp_files += 1;
+        format!("{}{}.tmp", al_builtins::file::TEMP_DIR, self.temp_files)
     }
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         Some((

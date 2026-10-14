@@ -61,8 +61,8 @@ pub(crate) fn of_expr(e: &FilterExpr, num: &dyn Fn(&Value) -> Option<i64>, lo: i
     let n = |v: &Value| num(v).ok_or_else(|| format!("filter value {v:?} is not a number of this field"));
     Ok(match e {
         FilterExpr::Range(a, b) => {
-            let a = a.as_ref().map(&n).transpose()?.unwrap_or(lo).max(lo);
-            let b = b.as_ref().map(&n).transpose()?.unwrap_or(hi).min(hi);
+            let a = a.as_ref().map(n).transpose()?.unwrap_or(lo).max(lo);
+            let b = b.as_ref().map(n).transpose()?.unwrap_or(hi).min(hi);
             normalize(vec![(a, b)])
         }
         FilterExpr::Eq(v) => normalize(vec![(n(v)?.max(lo), n(v)?.min(hi))]),

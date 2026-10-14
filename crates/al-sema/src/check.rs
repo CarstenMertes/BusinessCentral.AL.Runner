@@ -300,6 +300,16 @@ struct ObjCtx {
     base_items: HashMap<String, String>,
 }
 
+/// The `this` keyword: the object whose code is running (Microsoft Learn, "this keyword").
+pub(crate) fn is_this_keyword(node: &SyntaxNode) -> bool {
+    node.kind() == SyntaxKind::NameRef && name_of(node).eq_ignore_ascii_case("this")
+}
+
+/// Whether a variable of this name is in scope, whatever frame.
+fn sc_has_var(sc: &Scope, name: &str) -> bool {
+    sc.vars.iter().any(|frame| frame.contains_key(name))
+}
+
 fn name_of(node: &SyntaxNode) -> String {
     node.children_with_tokens()
         .filter_map(|e| e.into_token())
@@ -907,6 +917,16 @@ impl<'a> Checker<'a> {
                 }
             }
             MemberExpr => {
+                // `this.Member` in a codeunit: the codeunit's own procedure or global variable. It
+                // resolves like the bare name does, without the implicit record's members.
+                if is_this_keyword(&kids[0])
+                    && self.ws.objects[sc.oi].kind == ObjKind::Codeunit
+                    && !sc_has_var(sc, "this")
+                {
+                    if let Some(e) = kids.get(1).and_then(|m| self.this_member(sc, node, m)) {
+                        return e;
+                    }
+                }
                 let base = self.infer(sc, &kids[0]);
                 let mname = kids.get(1).map(name_of).unwrap_or_default();
                 if let E::PartialObj(k, mut parts) = base {
@@ -1024,34 +1044,7 @@ impl<'a> Checker<'a> {
                         }
                     },
                     E::TypeName(t) | E::Val(t) => {
-                        match &t {
-                            Ty::Enum(name) => {
-                                if let Some(ei) = self.resolve(sc, ObjKind::Enum, name) {
-                                    if let Some((v, _)) = self.members[ei]
-                                        .enum_values
-                                        .iter()
-                                        .find(|(_, n)| n.eq_ignore_ascii_case(&rhs))
-                                    {
-                                        let value = *v as i32;
-                                        self.record(sc, node, Res::EnumValue { object: ei, value });
-                                    }
-                                }
-                            }
-                            Ty::Option(members) => {
-                                if let Some(i) = members.iter().position(|m| m.eq_ignore_ascii_case(&rhs)) {
-                                    self.record(sc, node, Res::OptionValue(i as i32));
-                                }
-                            }
-                            // `FieldClass::Normal`: platform option types.
-                            Ty::Builtin(n) => {
-                                if let Some(i) = al_builtins::sysenum::members(n)
-                                    .and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(&rhs)))
-                                {
-                                    self.record(sc, node, Res::OptionValue(i as i32));
-                                }
-                            }
-                            _ => {}
-                        }
+                        self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }
                     // `Rec.ReadIsolation::ReadUncommitted`: the property name is also the way to name the
@@ -1061,10 +1054,48 @@ impl<'a> Checker<'a> {
                         self.record(sc, node, Res::OptionValue(i as i32));
                         E::Val(Ty::Builtin(enum_name.to_string()))
                     }
-                    E::Callable(c) => E::Val(self.pick(sc, &kids[0], &c, &[], &rhs)),
+                    // `RecRef.SecurityFiltering::Ignored`: the member of the option a call answers
+                    // (Base Application's "Find Record Management"). Its type is the option's.
+                    E::Callable(c) => {
+                        let t = self.pick(sc, &kids[0], &c, &[], &rhs);
+                        self.scope_member(sc, node, &t, &rhs);
+                        E::Val(t)
+                    }
                 }
             }
             _ => E::Val(Ty::Unknown),
+        }
+    }
+
+    /// `T::Member` where `T` is the type of the left side: records the enum value or option member.
+    fn scope_member(&mut self, sc: &mut Scope, node: &SyntaxNode, t: &Ty, rhs: &str) {
+        match t {
+            Ty::Enum(name) => {
+                if let Some(ei) = self.resolve(sc, ObjKind::Enum, name) {
+                    if let Some((v, _)) = self.members[ei]
+                        .enum_values
+                        .iter()
+                        .find(|(_, n)| n.eq_ignore_ascii_case(rhs))
+                    {
+                        let value = *v as i32;
+                        self.record(sc, node, Res::EnumValue { object: ei, value });
+                    }
+                }
+            }
+            Ty::Option(members) => {
+                if let Some(i) = members.iter().position(|m| m.eq_ignore_ascii_case(rhs)) {
+                    self.record(sc, node, Res::OptionValue(i as i32));
+                }
+            }
+            // `FieldClass::Normal`: platform option types.
+            Ty::Builtin(n) => {
+                if let Some(i) =
+                    al_builtins::sysenum::members(n).and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(rhs)))
+                {
+                    self.record(sc, node, Res::OptionValue(i as i32));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1101,6 +1132,23 @@ impl<'a> Checker<'a> {
             c = self.global_cands(n);
         }
         (!c.is_empty()).then_some(c)
+    }
+
+    /// `this.Name` in a codeunit: a global variable, else a procedure of the codeunit. The
+    /// resolution is recorded on the member expression, as a member access would.
+    fn this_member(&mut self, sc: &mut Scope, node: &SyntaxNode, member: &SyntaxNode) -> Option<E> {
+        let n = name_of(member);
+        let key = n.to_lowercase();
+        if let Some(t) = sc.vars.first().and_then(|globals| globals.get(&key)).cloned() {
+            self.record(sc, node, Res::Global(key));
+            return Some(E::Val(t));
+        }
+        let own: Vec<Cand> = self.members[sc.self_obj]
+            .procedures_named(&n)
+            .iter()
+            .map(|p| proc_cand(p))
+            .collect();
+        (!own.is_empty()).then_some(E::Callable(own))
     }
 
     /// Name lookup without reporting: None if the name does not resolve.

@@ -57,6 +57,9 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // Only CRM and ExternalSQL are named by the corpus (session/TestDatabaseTableConnectionCrm.al,
         // session/TestMiscComplete.al:192); the ordinals are not pinned.
         "tableconnectiontype" => Some(&["CRM", "ExternalSQL"]),
+        // The members in the order the documentation lists them (TransactionType option type); the
+        // ordinals are not pinned and nothing may print them as numbers.
+        "transactiontype" => Some(&["UpdateNoLocks", "Update", "Snapshot", "Browse", "Report"]),
         "errortype" => Some(&["Client", "Internal"]),
         // The ordinals are not pinned: the corpus only calls `Session.CurrentClientType()` and
         // `DefaultClientType()` (session/TestSessionExtended.al:21,31) and names Default and Web

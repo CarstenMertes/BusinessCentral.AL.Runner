@@ -241,6 +241,23 @@ page 50021 "PG CFN Card"
     SourceTable = "PG CFN";
     layout { area(Content) { field("No."; Rec."No.") { } field(Amount; Rec.Amount) { } field(ValidateFieldNo; Rec.ValidateFieldNo) { } } }
 }
+
+page 50030 "PG Static Caption"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    Caption = 'Static Caption';
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+}
+
+page 50031 "PG Dynamic Caption"
+{
+    PageType = Card;
+    SourceTable = "PG Row";
+    Caption = 'Static Caption';
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    trigger OnOpenPage() begin CurrPage.Caption := 'Dynamic Caption'; end;
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -979,4 +996,18 @@ fn a_page_write_validates_with_the_field_number_and_code_with_zero() {
         "F",
     );
     assert_eq!(text(r), "10|10|0|0");
+}
+
+// handlers/TestPageCaption_Tests.al:DynamicCaptionSetInOnOpenPage_IsReturned (and the static twin):
+// `CurrPage.Caption := x` in OnOpenPage is what `TestPage.Caption()` answers.
+#[test]
+fn a_caption_assigned_in_on_open_page_is_the_test_pages_caption() {
+    let r = run(
+        "procedure F(): Text var D: TestPage \"PG Dynamic Caption\"; S: TestPage \"PG Static Caption\"; begin
+            D.OpenView(); S.OpenView();
+            exit(D.Caption() + '/' + S.Caption());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Dynamic Caption/Static Caption");
 }

@@ -236,6 +236,22 @@ impl Session {
                 let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
                 self.set_view(&rec, &t, &view).map(|()| Value::Null)
             }
+            // The load set of a RecordRef is given by field numbers (record/TestRecordPartialLoad.al
+            // PartialLoad_SetLoadFields_UnknownFieldNo_Throws: a number no field has is an error that
+            // names it; its text is not pinned). The rest is the Record rule (partial.rs).
+            "SetLoadFields" | "AddLoadFields" => {
+                let mut positions = Vec::with_capacity(args.len());
+                for a in args.iter() {
+                    let Value::Integer(n) = a else {
+                        return unsupported(format!("RecordRef.{method} with {a:?}"));
+                    };
+                    match t.fields.iter().position(|f| i64::from(f.id) == i64::from(*n)) {
+                        Some(p) => positions.push(Value::Integer(p as i32)),
+                        None => return Err(Signal::Error(al_builtins::native::unpinned_error())),
+                    }
+                }
+                self.load_fields_op(method, &rec, &t, &positions)
+            }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),
             "LockTable" | "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission"

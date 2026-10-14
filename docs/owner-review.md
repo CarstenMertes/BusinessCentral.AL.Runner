@@ -52,6 +52,14 @@ reviewed it.
 
 ## Decided by the owner (recorded)
 
+- 2026-10-14, ADR-014: BC server classes that Microsoft's AL reaches through
+  DotNet (ALConfigSettings, NavTenantSettingsHelper, NavUserAccountHelper and
+  others) are provided in Rust through the registry.
+  - Their values mirror AL Runner v2 until a probe on real BC pins them.
+  - This is not a fake of an AL object, so hard rule 7 does not apply.
+  - The work is on branch `dotnet-registry`. Probe batch 3 reads the real
+    values.
+
 - 2026-10-14, performance phase: run tests in parallel at the test runner's
   isolation unit.
   - BC's test isolation can be per codeunit or per test procedure.

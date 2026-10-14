@@ -192,6 +192,14 @@ runtime defects, not differences between the restored company and a freshly prep
   else the newest folder with the same `major.minor`, else the newest of the major; country `w1`, else
   `us`, else the only one.
 
+- The restored-row guard covers the dependency apps' install roots and `Company-Initialize` only. The
+  install codeunits of the app under test run before each test codeunit without the guard (2026-10-14,
+  npcore-fixes): they are the project's own fixture, a real project's seeds and changes the setup tables of
+  the demo company (NaviPartner's `NPR Test Fixture` modifies `Sales & Receivables Setup`), and a published
+  app's install code may change a database that already holds data. With the guard they were all refused
+  (1466 tests not run); the dependency roots keep it because Microsoft's install code must not change what
+  the backup holds.
+
 ## Conformance
 
 `cargo test -p al-host -p al-data -p al-bcdb-std -p alrunner-cli` and

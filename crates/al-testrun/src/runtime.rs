@@ -825,6 +825,9 @@ pub fn run_codeunit_observed(
     }
     // What publishing the app does first: run its install codeunits, then commit.
     session.set_install_scope(true);
+    // These are the app under test's own install codeunits (a project's fixture): they may change
+    // the restored company's rows. Only the dependency apps' roots are guarded (ADR-020).
+    session.allow_restored_rows_to_change();
     let skipped_installs = run_install_codeunits(lowered, &mut session);
     session.set_install_scope(false);
     session.in_test_codeunit = true;

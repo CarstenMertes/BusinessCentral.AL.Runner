@@ -265,6 +265,11 @@ pub struct PageState {
     pub frozen_visible: Vec<bool>,
     /// Primary keys of the rows a repeater page has populated (its window).
     pub window: Vec<WindowRow>,
+    /// The window holds the rows from the first row of the view on, with none missing: the page
+    /// opened on its first row, or read on from there. A GoToKey reads on in blocks only then.
+    pub window_from_start: bool,
+    /// A read has run to the end of the view and read the last two rows once more.
+    pub window_eof: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -351,6 +356,8 @@ impl PageState {
             dirty: false,
             frozen_visible: Vec::new(),
             window: Vec::new(),
+            window_from_start: false,
+            window_eof: false,
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),
@@ -406,6 +413,9 @@ pub struct RecordState {
     pub temporary: bool,
     /// Identity of the private table behind a temporary record (shared by `Copy(x, true)`).
     pub temp_id: Option<u64>,
+    /// The company set by `ChangeCompany` or `RecordRef.Open(.., Company)`, as the Company table
+    /// names it; `None` is the session company.
+    pub company: Option<String>,
     /// Field values in the table's field order.
     pub fields: Vec<Value>,
     pub filters: Vec<crate::filter::FieldFilter>,
@@ -419,6 +429,10 @@ pub struct RecordState {
     pub security_filtering: i32,
     /// Index of the current key in the table's keys.
     pub key: usize,
+    /// `SetCurrentKey` on fields no key of the table starts with: the key index it stands for (one
+    /// past the table's keys) and the field positions. `Session::table` appends it to the table's
+    /// keys while `key` is that index, so a scan orders by these fields, then by the primary key.
+    pub adhoc: Option<(usize, Vec<usize>)>,
     pub ascending: bool,
     /// `SetAscending(Field, false)` on the single field of the current key. Unlike `ascending` it
     /// does not survive a page's view round trip (handlers/TestPageViewRoundTripRoutes.al).

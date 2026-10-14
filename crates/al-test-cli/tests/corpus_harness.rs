@@ -38,18 +38,6 @@ fn cli(args: &[&str]) -> (i32, String, String) {
     )
 }
 
-fn json(args: &[&str]) -> (i32, serde_json::Value) {
-    let dir = tempfile::tempdir().unwrap();
-    let f = dir.path().join("r.json");
-    let mut a = vec!["--json", f.to_str().unwrap()];
-    a.extend_from_slice(args);
-    let (code, _, err) = cli(&a);
-    let v = std::fs::read_to_string(&f)
-        .map(|s| serde_json::from_str(&s).unwrap())
-        .unwrap_or_else(|_| panic!("no report written; stderr:\n{err}"));
-    (code, v)
-}
-
 /// A test codeunit with a handful of tests that does not need the Microsoft apps. Runs that only
 /// check how a flag is handled select it: a run costs a fixed compile whatever it selects, but
 /// only the selected cases are run.
@@ -191,35 +179,164 @@ fn a_baseline_case_that_does_not_pass_fails_the_run() {
     assert!(err.contains("60002 NoSuchProcedure_UsedByTheRegressionTest"), "{err}");
 }
 
+/// A repository of its own: a git "corpus" with one test app, and an oracle for BC 27 that says real
+/// BC passes both tests of the app. One test passes in the runtime and one fails on purpose, so
+/// the run has a failing case whatever the real corpus holds today. The root has the layout the
+/// CLI reads (`oracle/oracle.toml`, a git repository for the corpus pin, an app folder).
+fn root_with_a_failing_test() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |p: &str| dir.path().join(p);
+    std::fs::create_dir_all(at("fixture/tests/app")).unwrap();
+    std::fs::create_dir_all(at("oracle/27")).unwrap();
+    // The CLI always loads the corpus's internals fixture app next to the app under test: an empty one.
+    std::fs::create_dir_all(at("fixture/tests/al-language-internals-fixture")).unwrap();
+    std::fs::write(
+        at("fixture/tests/al-language-internals-fixture/app.json"),
+        r#"{
+  "id": "0a1b2c3d-0000-4000-8000-000000000002",
+  "name": "Harness Internals Fixture",
+  "publisher": "Test",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "runtime": "16.0",
+  "target": "Cloud"
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        at("fixture/tests/app/app.json"),
+        r#"{
+  "id": "0a1b2c3d-0000-4000-8000-000000000001",
+  "name": "Harness Fixture",
+  "publisher": "Test",
+  "version": "1.0.0.0",
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "dependencies": [],
+  "idRanges": [{ "from": 60900, "to": 60999 }],
+  "runtime": "16.0",
+  "target": "Cloud"
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        at("fixture/tests/app/Fixture.al"),
+        r#"codeunit 60900 "Harness Fixture"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure Passes()
+    begin
+    end;
+
+    [Test]
+    procedure FailsOnPurpose()
+    begin
+        Error('the harness fixture fails on purpose');
+    end;
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        at("oracle/27/junit.xml"),
+        r#"<?xml version='1.0' encoding='utf-8'?>
+<testsuites name="DEFAULT" tests="2" failures="0" errors="0" skipped="0">
+  <testsuite name="Codeunit 60900" tests="2" failures="0" errors="0" skipped="0">
+    <testcase classname="Codeunit 60900" name="Passes" time="0.001" />
+    <testcase classname="Codeunit 60900" name="FailsOnPurpose" time="0.001" />
+  </testsuite>
+</testsuites>
+"#,
+    )
+    .unwrap();
+    // The corpus pin is the head of the "corpus" repository. Signing is off: the machine's own
+    // git configuration may ask for a key.
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(at("fixture"))
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-q", "-m", "fixture"]);
+    let head = git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        at("oracle/oracle.toml"),
+        format!(
+            r#"corpus_repo = "fixture"
+corpus_app = "fixture/tests/app"
+corpus_commit = "{head}"
+
+[[version]]
+major = 27
+bc_version = "27.5"
+junit = "27/junit.xml"
+baseline = "metrics/27/passing.txt"
+"#
+        ),
+    )
+    .unwrap();
+    dir
+}
+
 #[test]
 fn a_failing_case_outside_the_baseline_is_reported_but_does_not_fail_the_run() {
-    require_corpus();
     // ADR-007: only a baseline case that stops passing exits 1. The probe tests the corpus adds
     // for behaviour the runtime does not have yet are failures in the report, not in the gate.
-    // The run over every version says which codeunit holds a failing case; the ratchet run
-    // below selects that codeunit.
-    let shared = all_versions();
-    assert!(shared.json("27")["overall"]["fail"].as_u64().unwrap() > 0);
-    let junit = std::fs::read_to_string(shared.file("runtime-junit", "27", "xml")).unwrap();
-    let failing = junit
-        .split("<testcase classname=\"Codeunit ")
-        .skip(1)
-        .find(|c| c.split("</testcase>").next().unwrap().contains("<failure"))
-        .expect("BC 27 has a failing case");
-    let codeunit = failing.split('"').next().unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let base = dir.path().join("passing.txt");
-    std::fs::write(&base, "").unwrap();
-    let (code, r) = json(&[
-        "--bc-version",
-        "27",
-        "--baseline",
-        base.to_str().unwrap(),
-        "--codeunit",
-        codeunit,
-    ]);
-    assert_eq!(code, 0);
-    assert!(r["overall"]["fail"].as_u64().unwrap() > 0, "{}", r["overall"]);
+    // The run needs a failing case, and the real corpus may have none (the runtime keeps getting
+    // better), so it runs on a fixture whose second test fails on purpose.
+    let root = root_with_a_failing_test();
+    let run = |baseline: &str| {
+        let base = root.path().join("passing.txt");
+        std::fs::write(&base, baseline).unwrap();
+        let out = root.path().join("r.json");
+        let o = Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+            .arg("--root")
+            .arg(root.path())
+            .args(["--no-deps", "--bc-version", "27", "--baseline"])
+            .arg(&base)
+            .arg("--json")
+            .arg(&out)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr).to_string();
+        let report: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&out).unwrap_or_else(|_| panic!("no report written; stderr:\n{err}")),
+        )
+        .unwrap();
+        (o.status.code().unwrap_or(-1), report, err)
+    };
+    // The passing case is in the baseline, the failing one is not: reported, exit 0.
+    let (code, r, err) = run("60900 Passes\n");
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(r["overall"]["total"], 2, "{}", r["overall"]);
+    assert_eq!(r["overall"]["pass"], 1, "{}", r["overall"]);
+    assert_eq!(r["overall"]["fail"], 1, "{}", r["overall"]);
+    // The control: the same failure inside the baseline is a regression.
+    let (code, _, err) = run("60900 Passes\n60900 FailsOnPurpose\n");
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("60900 FailsOnPurpose"), "{err}");
 }
 
 #[test]

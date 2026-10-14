@@ -183,6 +183,11 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" => out
                 .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
+            // The Schedule button of the request page. Nothing pins what a run does with it, but a
+            // report that is only named (Base App's Item Tracing page has an action that runs
+            // "Item Tracing Specification"; handlers/TestPrecompiledOptionCaption.al:81 only opens the page)
+            // never reaches it, so it refuses when the report is run, not when it is compiled.
+            "allowscheduling" => out.output.push(format!("report property {name} is not supported yet")),
             other => out
                 .reasons
                 .push(format!("report property {other} is not supported yet")),
@@ -319,8 +324,13 @@ pub fn request_layout(
     if let Some(s) = &section {
         for p in s.properties() {
             let name = p.name().to_ascii_lowercase();
+            // `ShowFilter` hides the data item filters of the request page. Whether a TestRequestPage then still
+            // has them is not pinned, so a literal value passes here and the test client refuses to touch a
+            // data item of a page that says `false` (docs/probes-needed.md).
+            let show_filter = name == "showfilter" && bool_prop(&p.value_text()).is_some();
             if !["caption", "savevalues"].contains(&name.as_str())
                 && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
+                && !show_filter
             {
                 layout
                     .reasons
@@ -464,7 +474,7 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
     // extension that variable keeps (extensionevents/TestExtensionDeclaredEvents.al:105-117 pins a
     // procedure that raises an event of its own). What state that instance keeps is not pinned,
     // so a procedure next to a global variable or an added data item is refused.
-    let has_procedures = obj.routines().next().is_some();
+    let has_procedures = obj.routines().any(|r| !crate::pages::is_synthetic(&r.name()));
     if has_procedures && obj.var_decls().next().is_some() {
         out.reasons
             .push("a reportextension that declares procedures and global variables is not supported yet".into());

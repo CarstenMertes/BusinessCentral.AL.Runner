@@ -469,6 +469,21 @@ xmlport 60047 "ALT Raising Export XmlPort"
     }
 }
 
+// The shape of Base App's "Consolidation Import/Export" (xmlport 1): the container text element
+// itself carries a trigger. No corpus test pins what BC does with it.
+xmlport 60048 "ALT Container Trigger XmlPort"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            textelement(Leaf) { }
+            trigger OnAfterAssignVariable() begin end;
+        }
+    }
+}
+
 codeunit 50100 Helpers
 {
     procedure Row(EntryNo: Integer; IntegerValue: Integer; TextValue: Text; Description: Text)
@@ -914,7 +929,15 @@ fn a_failing_statement_import_raises_the_evaluate_error() {
 
 #[test]
 fn xmlports_the_runtime_cannot_run_are_refused_before_they_start() {
-    let r = refusal("P: XmlPort \"ALT Request Page XmlPort\";", "exit('');");
+    // Declaring the port is fine; running it is refused before anything of it starts.
+    assert_eq!(
+        text("P: XmlPort \"ALT Request Page XmlPort\";", "exit('declared');"),
+        "declared"
+    );
+    let r = refusal(
+        "P: XmlPort \"ALT Request Page XmlPort\"; B: Record \"ALT Blob\"; OutStr: OutStream;",
+        "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('ran');",
+    );
     assert!(r.contains("request page"), "{r}");
 }
 
@@ -1267,4 +1290,19 @@ fn a_statement_import_lets_a_trigger_error_through() {
          exit(GetLastErrorText());",
     );
     assert_eq!(out, "RAISED-IN-TRIGGER");
+}
+
+// A container text element with a trigger (Base App xmlport 1, "Consolidation Import/Export") is
+// not pinned by any corpus test, so running the port is refused. Code that only holds the port
+// (handlers/TestReqPageBoundVisibility.al:172-188 reaches it through Report.Run and cancels the
+// request page) still runs.
+#[test]
+fn a_container_text_element_trigger_is_refused_when_the_port_runs_not_when_it_is_declared() {
+    let held = text("P: XmlPort \"ALT Container Trigger XmlPort\";", "exit('reached');");
+    assert_eq!(held, "reached");
+    let why = refusal(
+        "P: XmlPort \"ALT Container Trigger XmlPort\"; B: Record \"ALT Blob\"; OutStr: OutStream;",
+        "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('ran');",
+    );
+    assert!(why.contains("triggers of the container text element Root"), "{why}");
 }

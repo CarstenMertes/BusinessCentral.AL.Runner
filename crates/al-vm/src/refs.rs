@@ -139,11 +139,21 @@ impl Session {
             Some(v) => ops::truthy(v)?,
             None => false,
         };
-        if let Some(c) = args.get(2) {
-            if !al_builtins::native::text_of(c).unwrap_or_default().is_empty() {
-                return unsupported("RecordRef.Open with a company name (ChangeCompany is not implemented yet)");
+        let company = match args.get(2) {
+            None => None,
+            Some(c) => {
+                let name = al_builtins::native::text_of(c).unwrap_or_default();
+                match self.resolve_company(&name)? {
+                    Some(company) => company,
+                    // BC's error for a company that does not exist is not pinned.
+                    None => {
+                        return unsupported(format!(
+                            "RecordRef.Open on the company `{name}`, which does not exist (error text not pinned)"
+                        ));
+                    }
+                }
             }
-        }
+        };
         // corpus recordref/TestRecordRefOpenCompilationTarget.al:27-35: an internal system table is
         // refused for a Cloud-target app (this app is Cloud), whether or not a dependency app
         // declares an object with that number (the platform's `System.app` does, as
@@ -184,6 +194,12 @@ impl Session {
         let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, temp)) else {
             return unsupported("record buffer for RecordRef.Open");
         };
+        if company.is_some() {
+            if temp {
+                return unsupported("RecordRef.Open of a temporary record on another company (not pinned)");
+            }
+            rec.borrow_mut().company = company;
+        }
         *lib.borrow_mut() = LibraryValue::RecordRef(rec);
         Ok(Value::Null)
     }
@@ -225,7 +241,8 @@ impl Session {
             "Name" => Ok(Value::Text(t.name.clone())),
             "Caption" => Ok(Value::Text(self.caption(&t))),
             // corpus recordref/TestRecordRefGetSet.al:16-30 pins only that it is not empty.
-            "CurrentCompany" => Ok(Value::Text(self.cx.company.clone())),
+            "CurrentCompany" => Ok(Value::Text(self.current_company_of(&rec))),
+            "ChangeCompany" => self.change_company(&rec, args),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
             "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
@@ -365,6 +382,9 @@ impl Session {
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
+                    if s.company != dst.borrow().company {
+                        return unsupported("RecordRef.SetTable between records of different companies (not pinned)");
+                    }
                     if s.field_descending {
                         return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
                     }
@@ -372,6 +392,7 @@ impl Session {
                     d.fields = s.fields.clone();
                     d.filters = s.filters.clone();
                     d.key = s.key;
+                    d.adhoc = s.adhoc.clone();
                     d.ascending = s.ascending;
                     d.position = s.position.clone();
                     d.load.buffer = s.load.buffer.clone();
@@ -524,6 +545,16 @@ impl Session {
             RtType::Guid => "GUID",
             RtType::DateFormula => "DateFormula",
             RtType::Option(_) | RtType::Enum(_) => "Option",
+            // The names are those of recordref/TestPlatformOptionsLockingContracts.al:46-63 (13 is
+            // BLOB) and :66-76 (RecordID, TableFilter, MediaSet name themselves).
+            RtType::Library(n) => match n.to_ascii_lowercase().as_str() {
+                "blob" => "BLOB",
+                "recordid" => "RecordID",
+                "tablefilter" => "TableFilter",
+                "media" => "Media",
+                "mediaset" => "MediaSet",
+                _ => return unsupported(format!("FieldRef.Type of a {:?} field", t.fields[pos].ty)),
+            },
             other => return unsupported(format!("FieldRef.Type of a {other:?} field")),
         };
         let members = al_builtins::sysenum::option_members("FieldType").expect("known");

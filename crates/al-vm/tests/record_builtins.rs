@@ -778,3 +778,48 @@ end; }"#;
         "{r:?}"
     );
 }
+
+#[test]
+fn set_current_key_on_fields_no_key_starts_with_orders_by_them_then_the_primary_key() {
+    // record/TestRecordNavContracts.al:180-195 (SetCurrentKey on a non-key field does not throw and
+    // the record still finds), recordref/TestRecordRefRuntimeContracts.al:115-143 (CurrentKey is
+    // just `Text Field`; GetTable and SetTable carry the key and the direction),
+    // xmlport/TestXmlPortTriggersReplaceViewContracts.al:339-375 (ascending: by the field, ties by
+    // primary key; Ascending(false) reverses both).
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; C: Record \"ALT T\"; RR: RecordRef; s: Text; begin
+            R.\"No.\" := 'A'; R.Descr := 'k'; R.Insert();
+            R.\"No.\" := 'B'; R.Descr := ''; R.Insert();
+            R.\"No.\" := 'C'; R.Descr := ''; R.Insert();
+            R.Reset();
+            R.SetCurrentKey(Descr);
+            s := R.CurrentKey() + '|';
+            if R.FindSet() then repeat s += R.\"No.\"; until R.Next() = 0;
+            R.Ascending(false);
+            s += '|';
+            if R.FindSet() then repeat s += R.\"No.\"; until R.Next() = 0;
+            RR.GetTable(R);
+            RR.SetTable(C);
+            s += '|' + C.CurrentKey() + Format(C.Ascending()) + '|';
+            if C.FindSet() then repeat s += C.\"No.\"; until C.Next() = 0;
+            R.Reset();
+            s += '|' + R.CurrentKey();
+            if R.FindSet() then repeat s += R.\"No.\"; until R.Next() = 0;
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Descr|BCA|ACB|DescrNo|ACB|No.ABC");
+}
+
+#[test]
+fn set_current_key_on_a_field_that_is_not_stored_is_refused() {
+    let r = run(
+        "procedure F() var R: Record \"ALT T\"; begin R.SetCurrentKey(Total); end;",
+        "F",
+    );
+    match r {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("not pinned"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}

@@ -495,7 +495,12 @@ fn clear_of_an_unassigned_dotnet_variable_changes_nothing_and_of_an_object_is_re
         Req::Construct(..) => reply(handle(4, "System.IO.MemoryStream")),
         other => panic!("{other:?}"),
     });
-    let r = run(&host, "M: DotNet MemoryStream;", "Clear(M); exit(IsNull(M));", ": Boolean");
+    let r = run(
+        &host,
+        "M: DotNet MemoryStream;",
+        "Clear(M); exit(IsNull(M));",
+        ": Boolean",
+    );
     assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
     let r = run(
         &host,
@@ -504,7 +509,10 @@ fn clear_of_an_unassigned_dotnet_variable_changes_nothing_and_of_an_object_is_re
         ": Boolean",
     );
     let why = unsupported(&r);
-    assert!(why.contains("Clear") && why.contains("System.IO.MemoryStream") && why.contains("not pinned"), "{why}");
+    assert!(
+        why.contains("Clear") && why.contains("System.IO.MemoryStream") && why.contains("not pinned"),
+        "{why}"
+    );
 }
 
 // ---- policy ------------------------------------------------------------------------------

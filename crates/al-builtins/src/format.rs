@@ -116,10 +116,37 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // Duration and the other reference types get their formats with
         // the corpus tests that pin them.
         other => {
-            return Err(format!("Format of {other:?} (standard format {standard}) is not pinned yet").into());
+            return Err(format!(
+                "Format of {} (standard format {standard}) is not pinned yet",
+                type_phrase(other)
+            )
+            .into());
         }
     };
     Ok(pad(s, length))
+}
+
+/// The value's type in a refusal text: a name, never the value's contents (a Record holds its
+/// whole row, filters and state, which made one refusal reason of a single test a page long).
+fn type_phrase(v: &Value) -> String {
+    let name = match v {
+        Value::Null => "an unassigned Variant",
+        Value::Record(_) => "a Record",
+        Value::List(_) => "a List",
+        Value::Dictionary(_) => "a Dictionary",
+        Value::Array(_) => "an Array",
+        Value::Codeunit(_) => "a Codeunit",
+        Value::Blob(_) => "a Blob",
+        Value::TestPage(_) => "a TestPage",
+        Value::TestControl(_) => "a TestPage control",
+        Value::Query(_) => "a Query",
+        Value::DotNet(_) => "a DotNet value",
+        Value::Library(name, _) => return format!("a {name}"),
+        // The remaining types have a text form, so this is only reached when one is added
+        // without a case above.
+        _ => "a value",
+    };
+    name.to_string()
 }
 
 /// A positive length right-aligns in that many characters (text/TestFormat.al:

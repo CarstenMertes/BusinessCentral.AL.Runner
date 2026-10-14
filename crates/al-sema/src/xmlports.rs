@@ -128,8 +128,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
             // UseRequestPage only matters for Run, which is not implemented: Export and Import
             // never open the request page.
             "userequestpage" => {}
-            // xmlport/TestXmlPortTextFormatsContracts.al (corpus branch al-runtime-rs, pending
-            // push): VariableText and FixedText pin these; an Xml port's encoding is not pinned.
+            // xmlport/TestXmlPortTextFormatsContracts.al: VariableText and FixedText pin these; an Xml port's encoding is not pinned.
             "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => out.utf8 = true,
             "fieldseparator" => out.field_separator = Some(unquote(&value)),
             "fielddelimiter" => out.field_delimiter = Some(unquote(&value)),

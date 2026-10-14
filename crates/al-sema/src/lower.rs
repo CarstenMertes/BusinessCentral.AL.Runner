@@ -1598,7 +1598,7 @@ fn lower_object<'a>(
         report_ext: ext_irs[oi].clone(),
         namespace: o.namespace.clone(),
         extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
-        layouts: if o.kind == ObjKind::Report {
+        layouts: if matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension) {
             crate::reports::layouts_of(&obj)
         } else {
             Vec::new()
@@ -2279,10 +2279,11 @@ impl Lowerer<'_> {
 
     /// The position of field `id`.
     fn readable_field_pos(&self, table: usize, id: u32) -> L<usize> {
-        // A column of a platform table that no corpus test pins is refused, not defaulted.
+        // A column of a platform table that no corpus test pins is refused, not defaulted. The
+        // table's own triggers read its columns as they are declared.
         if let Some(why) = self.ws.objects[table]
             .id
-            .filter(|_| self.ws.platform_table(table))
+            .filter(|_| self.oi != table && self.ws.platform_table(table))
             .and_then(|t| al_builtins::platform::unpinned_column(t, id))
         {
             return Err(why);
@@ -3335,6 +3336,14 @@ impl Lowerer<'_> {
             Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
             None => ir::NO_POS,
         };
+        let end_pos = match r.end_offset().filter(|_| self.emit_pos) {
+            Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
+            None => ir::NO_POS,
+        };
+        let begin_pos = match r.begin_offset().filter(|_| self.emit_pos) {
+            Some(k) => self.add_pos(k, k + 1).unwrap_or(ir::NO_POS),
+            None => ir::NO_POS,
+        };
         self.locals.clear();
         self.local_labels.clear();
         let mut locals = Vec::new();
@@ -3412,6 +3421,8 @@ impl Lowerer<'_> {
             ret_local,
             body,
             pos,
+            end_pos,
+            begin_pos,
         }
     }
 
@@ -3488,6 +3499,8 @@ impl Lowerer<'_> {
             ret_local: None,
             body: Vec::new(),
             pos: ir::NO_POS,
+            end_pos: ir::NO_POS,
+            begin_pos: ir::NO_POS,
         }
     }
 
@@ -3887,7 +3900,18 @@ impl Lowerer<'_> {
                 }
                 Some(Res::Field { table, id }) => {
                     let (table, id) = (*table, *id);
-                    let pos = self.readable_field_pos(table, id)?;
+                    // A temporary record of a platform table is an ordinary temporary table: the
+                    // columns the platform provider pins do not matter (record/
+                    // TestPlatformTablesWritableContracts.al:27-48).
+                    let temporary = n.kind() == SyntaxKind::MemberExpr
+                        && n.children()
+                            .next()
+                            .is_some_and(|b| matches!(self.ty_of(&b), Ty::Record { temporary: true, .. }));
+                    let pos = if temporary {
+                        self.field_pos(table, id).ok_or_else(|| "field position".to_string())?
+                    } else {
+                        self.readable_field_pos(table, id)?
+                    };
                     let base = match n.kind() {
                         SyntaxKind::MemberExpr => self.place(&n.children().next().ok_or("member base")?)?,
                         _ => ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),

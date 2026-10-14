@@ -38,9 +38,6 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
     }
 }
 
-/// The platform table "User Personalization".
-const USER_PERSONALIZATION: u32 = 2_000_000_073;
-
 /// What the `Rec` and `xRec` slots of a table instance held before a call filled them.
 #[derive(Default)]
 pub(crate) struct RecSlots {
@@ -81,8 +78,17 @@ impl Session {
     }
 
     pub(crate) fn store_for(&mut self, rec: &Rec) -> &mut MemStore {
-        match rec.borrow().temp_id {
-            Some(id) => self.temps.entry(id).or_default(),
+        let id = rec.borrow().temp_id.as_ref().map(|t| t.id());
+        match id {
+            Some(id) => {
+                // Tables whose last record variable is gone are freed first.
+                if !self.temp_release.borrow().is_empty() {
+                    for dead in self.temp_release.borrow_mut().drain(..) {
+                        self.temps.remove(&dead);
+                    }
+                }
+                self.temps.entry(id).or_default()
+            }
             None => &mut self.store,
         }
     }
@@ -133,21 +139,6 @@ impl Session {
                 "{} row not found: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
             ));
-        }
-        // The platform creates the session user's User Personalization row when the user signs in
-        // to a client; no corpus test pins that or what the row holds (session/TestSessionSettings.al:402-407
-        // says it "depends on tenant data"). "Not found" there is not BC's answer: refuse.
-        if !exists && self.engine.program.objects[t.object as usize].id == Some(USER_PERSONALIZATION) {
-            let sid = self.host.identity.user_security_id();
-            if t.fields
-                .iter()
-                .position(|f| f.name.eq_ignore_ascii_case("User SID"))
-                .is_some_and(|p| matches!(fields[p], Value::Guid(g) if g == sid))
-            {
-                return unsupported(
-                    "the User Personalization row of the session user: BC creates it when the user signs in to a client, and no corpus test pins what it holds (docs/probes-needed.md)",
-                );
-            }
         }
         if self.ret_used {
             return Ok(Value::Boolean(false));
@@ -305,8 +296,8 @@ impl Session {
         if let Some((object, routine)) = field.on_validate {
             if let Err(e) = self.run_trigger(object, routine, rec, Some(xrec)) {
                 // The whole record is back at its values from before the Validate when the
-                // field's OnValidate raises, not only the validated field (corpus branch
-                // al-runtime-rs, pending push: record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
+                // field's OnValidate raises, not only the validated field
+                // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:68,
                 // Validate_ThatRaises_RestoresTheWholeRecord; the validated field alone:
                 // record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
                 if matches!(e, Signal::Error(_)) {
@@ -670,8 +661,8 @@ impl Session {
     /// Gives the row its SystemId: the one in the buffer when `keep` (`Insert(_, true)`) and it is
     /// set, otherwise a fresh one (corpus record/TestRecordInsert.al:84-110).
     fn assign_system_id(&mut self, t: &TableDef, rec: &Rec, keep: bool) {
-        // A temporary record has no SystemId: it stays the null Guid (corpus branch al-runtime-rs,
-        // pending push: record/TestSystemFieldStampsContracts.al:TemporaryRecord_HasNoStampsAndNoSystemId).
+        // A temporary record has no SystemId: it stays the null Guid
+        // (record/TestSystemFieldStampsContracts.al:115, TemporaryRecord_HasNoStampsAndNoSystemId).
         if rec.borrow().temporary {
             return;
         }
@@ -783,8 +774,8 @@ impl Session {
         }
         let shown = al_builtins::format::try_format(&id, 0, 0, self).map_err(Signal::Unsupported)?;
         Err(Signal::Error(AlError {
-            // corpus branch al-runtime-rs (pending push): record/TestSystemFieldStampsContracts.al:
-            // SystemId_Duplicate_And_ModifyAll_Texts (the caption of the field is "System ID").
+            // record/TestSystemFieldStampsContracts.al:153 (SystemId_Duplicate_And_ModifyAll_Texts;
+            // the caption of the field is "System ID").
             message: format!(
                 "There is already a record in table {} that has the same values in a unique index for the following fields: System ID='{}'",
                 self.caption(t),
@@ -879,7 +870,10 @@ impl Session {
     /// session/TestCrmTableNoConnectionContracts.al:15-17,111-118. With a connection registered what
     /// the table does is not pinned.
     pub(crate) fn connection_check(&self, rec: &Rec) -> Result<(), Signal> {
-        if !rec.borrow().crm {
+        // A temporary record of a CRM table is an in-memory table of its own and needs no connection (not
+        // pinned by a corpus line; Base Application's `CRM Synch. Helper.ClearCache` relies on it,
+        // docs/probes-needed.md).
+        if !rec.borrow().crm || rec.borrow().temporary {
             return Ok(());
         }
         if self.table_connections.iter().any(|(kind, _)| *kind == 0) {
@@ -1308,6 +1302,15 @@ impl Session {
             }
             "DeleteAll" => {
                 let run = arg_bool(args, 0)?;
+                // The platform takes no delete on Tenant License State (record/
+                // TestPlatformTablesWritableContracts.al:96-101; the single-record Delete is not pinned).
+                if self.engine.program.objects[t.object as usize].id == Some(2_000_000_189) {
+                    return Err(Signal::Error(AlError {
+                        message: "It is not possible to delete any record in the Tenant License State table.".into(),
+                        code: "DB:Ok".into(),
+                        call_stack: String::new(),
+                    }));
+                }
                 let (filters, flow_field_filters) = self.split_filters(rec);
                 if !flow_field_filters.is_empty() {
                     return unsupported("DeleteAll with a filter on a FlowField");
@@ -1414,8 +1417,8 @@ impl Session {
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
                     "+" => self.scan(rec, &t, !asc, None)?,
-                    // Every form honours the active filters (corpus branch al-runtime-rs, pending push:
-                    // record/TestFilterTextBooleanFindContracts.al:Find_AllForms_HonourTheActiveFilters).
+                    // Every form honours the active filters
+                    // (record/TestFilterTextBooleanFindContracts.al:143, Find_AllForms_HonourTheActiveFilters).
                     // The one exception: a record that moved its own row out of its filter still
                     // finds the row by its key, while a second variable with the old filter does
                     // not (record/TestFindSetSortKeyModify.al:OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow
@@ -1572,8 +1575,7 @@ impl Session {
                 let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
                 let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
                     Ok(e) => e,
-                    // corpus branch al-runtime-rs (pending push): record/TestFilterTextBooleanFindContracts.al:
-                    // SetFilter_BooleanField_UnknownWord_Throws.
+                    // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
                         return Err(Signal::Error(AlError {

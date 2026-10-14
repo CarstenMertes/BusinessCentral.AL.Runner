@@ -103,8 +103,25 @@ impl Session {
             names: &names,
             sender,
         };
-        if let Err(e) = self.raise(&call, &mut values) {
+        // The publisher's event frame stands below its subscribers' (corpus
+        // session/TestSessionInformationCallstackContracts.al:187).
+        self.frames.push(object);
+        self.call_stack.push(crate::CallFrame {
+            event: true,
+            routine,
+            pos: al_ir::NO_POS,
+        });
+        self.publish_frame = true;
+        let raised = self.raise(&call, &mut values);
+        self.publish_frame = false;
+        let top = self.call_stack.pop();
+        self.frames.pop();
+        if let Err(e) = raised {
             // What earlier subscribers wrote back is what the publisher's caller sees.
+            let mut e = e;
+            if let (Signal::Error(err), Some(top)) = (&mut e, top) {
+                self.add_frame(err, object, top);
+            }
             if matches!(e, Signal::Error(_)) {
                 self.error_finals = Some(values);
             }
@@ -116,6 +133,18 @@ impl Session {
     /// Delivers the event to its subscribers. `var` parameters of subscribers are written
     /// back into `args`. Isolated events: see below.
     pub(crate) fn raise(&mut self, ev: &EventCall, args: &mut [Value]) -> Result<(), Signal> {
+        let from_publisher = std::mem::take(&mut self.publish_frame);
+        if !from_publisher {
+            self.unpinned_event_depth += 1;
+        }
+        let r = self.raise_to_subscribers(ev, args);
+        if !from_publisher {
+            self.unpinned_event_depth -= 1;
+        }
+        r
+    }
+
+    fn raise_to_subscribers(&mut self, ev: &EventCall, args: &mut [Value]) -> Result<(), Signal> {
         let EventCall {
             object,
             event,
@@ -156,6 +185,12 @@ impl Session {
             // (codeunit/TestIsolatedEventSubscriberError.al). The swallowed error becomes the last
             // error, and a subscriber that succeeds has its writes committed (corpus
             // record/TestTableEventSequenceContracts.al:IsolatedEvent_SubscriberError_BecomesTheLastError_...).
+            *self
+                .event_stats
+                .calls
+                .borrow_mut()
+                .entry((s.object, s.routine))
+                .or_insert(0) += 1;
             let isolate = isolated && !self.store.has_uncommitted();
             let before = isolate.then(|| self.store.clone());
             let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {
@@ -276,6 +311,18 @@ impl Session {
             .collect()
     }
 
+    /// The bound instances per manual subscriber codeunit, for the Event Subscription table.
+    fn sync_active_instances(&mut self) {
+        self.bindings.retain(|b| b.instance.strong_count() > 0);
+        let mut active = std::collections::HashMap::new();
+        for b in &self.bindings {
+            if let Some(i) = b.instance.upgrade() {
+                *active.entry(i.borrow().object as usize).or_insert(0) += 1;
+            }
+        }
+        *self.event_stats.active.borrow_mut() = active;
+    }
+
     /// `BindSubscription(Codeunit)` (`bind`) and `UnbindSubscription(Codeunit)`.
     pub(crate) fn subscription(&mut self, bind: bool, cu: Value, ret_used: bool) -> Result<Value, Signal> {
         let Value::Codeunit(rc) = cu else {
@@ -321,12 +368,14 @@ impl Session {
             self.bindings.push(Binding {
                 instance: Rc::downgrade(&inst),
             });
+            self.sync_active_instances();
             Ok(Value::Boolean(true))
         } else if manual {
             // True even when it was never bound (Contract 6, "container-verified").
             if let Some(i) = at {
                 self.bindings.remove(i);
             }
+            self.sync_active_instances();
             Ok(Value::Boolean(true))
         } else if ret_used {
             // The corpus pins only that it does not raise (TestEventContracts.al Contract 6).

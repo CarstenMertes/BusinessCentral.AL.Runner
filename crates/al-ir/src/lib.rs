@@ -921,6 +921,14 @@ pub struct Routine {
     /// BC counts the line of a call stack frame from this line.
     #[serde(default = "no_pos")]
     pub pos: u32,
+    /// Position of the `end` that closes the body: BC shows an event publisher's frame at this
+    /// line ([`NO_POS`] without source).
+    #[serde(default = "no_pos")]
+    pub end_pos: u32,
+    /// Position of the `begin` that opens the body (the Code Coverage table lists it as an
+    /// `Empty` line); [`NO_POS`] without source.
+    #[serde(default = "no_pos")]
+    pub begin_pos: u32,
 }
 
 fn no_pos() -> u32 {
@@ -934,6 +942,12 @@ impl Routine {
     pub fn shift_positions(&mut self, by: u32) {
         if self.pos != NO_POS {
             self.pos += by;
+        }
+        if self.end_pos != NO_POS {
+            self.end_pos += by;
+        }
+        if self.begin_pos != NO_POS {
+            self.begin_pos += by;
         }
         shift_stmts(&mut self.body, by);
     }
@@ -1183,6 +1197,8 @@ mod tests {
             ret: None,
             ret_local: None,
             pos,
+            end_pos: NO_POS,
+            begin_pos: NO_POS,
             body,
         }
     }
@@ -1295,6 +1311,8 @@ mod tests {
                     ret: None,
                     ret_local: None,
                     pos: NO_POS,
+                    end_pos: NO_POS,
+                    begin_pos: NO_POS,
                     body: vec![
                         Stmt::Pos(0),
                         Stmt::Assign(

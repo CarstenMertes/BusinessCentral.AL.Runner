@@ -97,8 +97,8 @@ struct Plan {
     having: Vec<(usize, FilterExpr)>,
     /// Filters on stored fields of a left-outer-joined dataitem: (dataitem, field, filter). They
     /// apply after the join, to the values of the joined row, which for an unmatched parent are the
-    /// defaults (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs,
-    /// now in the corpus: a filter drops the unmatched parents unless it admits 0).
+    /// defaults (query/TestQueryOuterJoinDescendingSaveAsContracts.al:
+    /// a filter drops the unmatched parents unless it admits 0).
     outer: Vec<(usize, usize, FilterExpr)>,
 }
 
@@ -824,8 +824,7 @@ impl Session {
             for (ci, c) in def.columns.iter().enumerate() {
                 let Some(method) = c.method else { continue };
                 // A dataitem that had no match under a left outer join adds no row to its aggregates
-                // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs,
-                // now in the corpus: `2/sum0/cnt0`).
+                // (query/TestQueryOuterJoinDescendingSaveAsContracts.al: `2/sum0/cnt0`).
                 let values = || -> Vec<Value> {
                     let field = c.field.expect("a column over a field");
                     rows.iter()

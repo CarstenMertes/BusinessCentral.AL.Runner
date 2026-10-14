@@ -1,7 +1,8 @@
 //! Record behaviour pinned by the corpus probes of cdf315a (record/TestRecordRuntimeTextsAndViews.al,
 //! record/TestTableEventSequenceContracts.al, record/TestCalcFieldsTruncateUniqueContracts.al) and
-//! by the local batch 2 probes (corpus branch al-runtime-rs, pending push: record/*.al in
-//! corpus-probes head 74e5b30). Each test mirrors a probe test so the behaviour has a red/green
+//! by the batch 2 probes (record/TestFilterTextBooleanFindContracts.al,
+//! record/TestRecordViewCopyMarkContracts.al, record/TestValidateRaisesAndHandlerAsserterrorContracts.al).
+//! Each test mirrors a probe test so the behaviour has a red/green
 //! test here as well as in the corpus run.
 
 use al_builtins::native::Signal;
@@ -104,8 +105,8 @@ fn failing_writes_run_before_event_and_trigger_then_raise() {
     );
 }
 
-// ---- batch 2: filters, views, Copy, Mark (corpus branch al-runtime-rs, pending push:
-// record/TestFilterTextBooleanFindContracts.al, record/TestRecordViewCopyMarkContracts.al) ----
+// ---- batch 2: filters, views, Copy, Mark (record/TestFilterTextBooleanFindContracts.al,
+// record/TestRecordViewCopyMarkContracts.al) ----
 
 const UNI: &str = r#"
 table 50400 Uni
@@ -147,8 +148,8 @@ fn text_filter_is_case_sensitive_unless_it_starts_with_at() {
             U.SetFilter(\"Code Field\", 'ap*'); R += Format(U.Count()) + ',';
             U.Reset(); U.SetFilter(\"Code Field\", 'apple'); R += Format(U.Count());
             exit(R); end;");
-    // corpus branch al-runtime-rs (pending push): record/TestFilterTextBooleanFindContracts.al:
-    // SetFilter_TextField_IsCaseSensitive_UnlessItStartsWithAt, ..._QuotedValue_..., ..._CodeField_...
+    // record/TestFilterTextBooleanFindContracts.al:58 (SetFilter_CodeField_IsCaseInsensitive), :73
+    // (SetFilter_TextField_IsCaseSensitive_UnlessItStartsWithAt), :90 (SetFilter_QuotedValue_...)
     assert_eq!(text(run(&src, "F")), "1,2,1,2,1,0,0,1");
 }
 
@@ -201,8 +202,8 @@ fn kd(body: &str) -> String {
 
 #[test]
 fn set_rec_filter_keeps_filters_on_other_fields() {
-    // corpus branch al-runtime-rs (pending push): record/TestRecordViewCopyMarkContracts.al:
-    // SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey
+    // record/TestRecordViewCopyMarkContracts.al:41
+    // (SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey)
     let src = kd("procedure F(): Text var K: Record Kd; R: Text; begin Seed();
             K.Get(1); K.SetRange(Name, 'zzz'); K.SetRecFilter();
             R += K.GetFilters() + '|' + Format(K.Count()) + '|';
@@ -265,8 +266,8 @@ fn set_view_replaces_filters_keeps_direction_and_rejects_garbage() {
 
 #[test]
 fn a_validate_that_raises_restores_the_whole_record() {
-    // corpus branch al-runtime-rs (pending push): record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
-    // Validate_ThatRaises_RestoresTheWholeRecord
+    // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:68
+    // (Validate_ThatRaises_RestoresTheWholeRecord)
     let src = "table 50420 VR
         {
             fields

@@ -193,12 +193,13 @@ fn run_unit(
     baseline: Option<&al_vm::Baseline>,
     u: &Unit,
     observe: Option<&mut Observer>,
+    limit: Option<std::time::Duration>,
 ) -> UnitResult {
     let started = std::time::Instant::now();
     crate::dotnet::take_start_time();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut stacks = Vec::new();
-        let done = run_codeunit_full(engine, lowered, u.oi, baseline, u.isolation, observe, &mut stacks);
+        let done = run_codeunit_full(engine, lowered, u.oi, baseline, u.isolation, observe, &mut stacks, limit);
         (done, stacks)
     }))
     .map_err(|p| {
@@ -249,6 +250,8 @@ pub struct RunOptions {
     /// Use the compile cache of the dependency apps (ADR-022). `None`: the demand-driven compile
     /// of every run, which is the reference path.
     pub compile_cache: Option<crate::compile_cache::CompileCache>,
+    /// A test that runs longer than this is stopped and reported as not run. `None`: no limit.
+    pub test_time_limit: Option<std::time::Duration>,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -488,6 +491,7 @@ impl CorpusRuntime {
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
+        let limit = opts.test_time_limit;
         let workers = if opts.trace { 1 } else { test_workers() };
         let engine_started = std::time::Instant::now();
         let make_engine = || {
@@ -610,7 +614,7 @@ impl CorpusRuntime {
                         details.insert((u.si, u.id, name.to_lowercase()), d);
                     };
                     let trace: Option<&mut Observer> = opts.trace.then_some(&mut observe);
-                    run_unit(&engine, &lowered, baseline.as_ref(), u, trace)
+                    run_unit(&engine, &lowered, baseline.as_ref(), u, trace, limit)
                 })
                 .collect()
         } else {
@@ -623,7 +627,7 @@ impl CorpusRuntime {
                 loop {
                     let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(u) = units.get(k) else { return done };
-                    done.push(run_unit(&engine, &lowered, baseline, u, None));
+                    done.push(run_unit(&engine, &lowered, baseline, u, None, limit));
                 }
             };
             std::thread::scope(|scope| {
@@ -919,7 +923,19 @@ pub fn run_codeunit_observed(
     isolation: TestIsolation,
     observe: Option<&mut Observer>,
 ) -> Vec<(String, Outcome)> {
-    run_codeunit_full(engine, lowered, object, baseline, isolation, observe, &mut Vec::new())
+    run_codeunit_full(engine, lowered, object, baseline, isolation, observe, &mut Vec::new(), None)
+}
+
+/// [`run_codeunit_isolated`] where a test that runs longer than `limit` is stopped and not run.
+pub fn run_codeunit_limited(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    object: usize,
+    baseline: Option<&al_vm::Baseline>,
+    isolation: TestIsolation,
+    limit: Option<std::time::Duration>,
+) -> Vec<(String, Outcome)> {
+    run_codeunit_full(engine, lowered, object, baseline, isolation, None, &mut Vec::new(), limit)
 }
 
 /// [`run_codeunit_observed`] that also collects, for each test that failed with an AL error, the AL
@@ -932,6 +948,7 @@ pub fn run_codeunit_full(
     isolation: TestIsolation,
     mut observe: Option<&mut Observer>,
     stacks: &mut Vec<(String, String)>,
+    limit: Option<std::time::Duration>,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
@@ -1049,7 +1066,18 @@ pub fn run_codeunit_full(
                     }
                     session.tx_model = model;
                     let commits_before = session.commits;
+                    session.clear_stop();
+                    let watchdog = limit.map(|l| Watchdog::start(session.stop_flag(), l));
                     let result = session.call(object, r, instance.clone(), Vec::new());
+                    let timed_out = watchdog.is_some_and(Watchdog::finish);
+                    // The reason names the limit; the VM only knows that it was stopped.
+                    let result = match result {
+                        Err(Signal::Unsupported(_)) if timed_out => Err(Signal::Unsupported(format!(
+                            "the test ran longer than the time limit of {} s and was stopped (--test-timeout-secs); BC may have ended it differently or not at all",
+                            limit.map_or(0, |l| l.as_secs())
+                        ))),
+                        r => r,
+                    };
                     committed = session.commits != commits_before;
                     session.tx_model = al_vm::TxModel::AutoCommit;
                     let unexecuted = session.end_ui_scope();
@@ -1133,6 +1161,33 @@ pub fn run_codeunit_full(
         out.push((routine.name.clone(), outcome));
     }
     out
+}
+
+/// Sets a session's stop flag when a test runs longer than its limit. One thread per test that is
+/// run; it sleeps until the deadline or until `finish`.
+struct Watchdog {
+    done: std::sync::mpsc::Sender<()>,
+    thread: std::thread::JoinHandle<bool>,
+}
+
+impl Watchdog {
+    fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
+        let (done, rx) = std::sync::mpsc::channel::<()>();
+        let thread = std::thread::spawn(move || match rx.recv_timeout(limit) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                true
+            }
+            _ => false,
+        });
+        Watchdog { done, thread }
+    }
+
+    /// Ends the watch; true when the limit passed first.
+    fn finish(self) -> bool {
+        let _ = self.done.send(());
+        self.thread.join().unwrap_or(false)
+    }
 }
 
 /// The handler functions test routine `test` of `object` declares with
@@ -2890,5 +2945,55 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the value is dropped");
         assert_ne!(dropped_on, std::thread::current().id());
+    }
+
+    /// A test that never ends is stopped at its time limit and reported as not run, with the limit
+    /// in the reason. The tests after it still run; a failure after it is not trusted, because the
+    /// stopped test left the codeunit's state half way.
+    #[test]
+    fn a_test_over_its_time_limit_is_stopped_and_not_run() {
+        let src = "codeunit 61400 Endless { Subtype = Test;
+            [Test] procedure Before() begin end;
+            [Test] procedure ForEver() var I: Integer; begin while true do I += 1; end;
+            [Test] procedure ForEverRepeat() var I: Integer; begin repeat I += 1; until false; end;
+            [Test] procedure After() begin end;
+            [Test] procedure AfterFails() begin Error('x'); end; }";
+        let (ws, l) = al_sema::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let blocked = l
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let engine = Engine::new(l.program.clone(), blocked);
+        let oi = l.program.objects.iter().position(|o| o.name == "Endless").unwrap();
+        let started = std::time::Instant::now();
+        let out = run_codeunit_limited(
+            &engine,
+            &l,
+            oi,
+            None,
+            TestIsolation::Codeunit,
+            Some(std::time::Duration::from_millis(300)),
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        let get = |n: &str| out.iter().find(|(name, _)| name == n).unwrap().1.clone();
+        assert!(matches!(get("Before"), Outcome::Pass));
+        for t in ["ForEver", "ForEverRepeat"] {
+            match get(t) {
+                Outcome::NotRun(r) => assert!(r.contains("time limit"), "{r}"),
+                o => panic!("{t}: {o:?}"),
+            }
+        }
+        assert!(matches!(get("After"), Outcome::Pass));
+        assert!(matches!(get("AfterFails"), Outcome::NotRun(_)));
     }
 }

@@ -47,6 +47,8 @@ pub struct TestArgs {
     pub dotnet_assembly_dirs: Vec<PathBuf>,
     pub dotnet_allow_roll_forward: bool,
     pub dotnet_timeout_secs: Option<u64>,
+    /// `--test-timeout-secs N`: a test running longer is stopped and not run (default 60; 0: no limit).
+    pub test_timeout_secs: Option<u64>,
     pub require_dotnet: bool,
     pub files_dir: Option<PathBuf>,
     /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
@@ -170,6 +172,9 @@ TEST DATA
 
 OTHER
     --files-dir DIR      Let the File data type read and write real files under DIR.
+    --test-timeout-secs N  A test that runs longer than N seconds (default 60) is stopped at its
+                         next loop iteration and reported as not run, with the limit as the
+                         reason; the codeunit's later failures are then not trusted. 0: no limit.
     --dotnet-sidecar PATH, --dotnet-assembly-dir DIR, --dotnet-allow-roll-forward,
     --dotnet-timeout-secs N, --require-dotnet     The optional .NET helper (ADR-014).
 
@@ -283,6 +288,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--dotnet-timeout-secs" => {
                 let v = text()?;
                 a.dotnet_timeout_secs = Some(number(&flag, &v)? as u64);
+            }
+            "--test-timeout-secs" => {
+                let v = text()?;
+                a.test_timeout_secs = Some(number(&flag, &v)? as u64);
             }
             "--test-data-company" => a.test_data_company = Some(text()?),
             "--test-data-normalize-company" => {

@@ -44,6 +44,19 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // Microsoft docs, TelemetryScope: ExtensionPublisher, then All. Only passed to
         // Session.LogMessage, which changes nothing AL can see, so the ordinals are not pinned.
         "telemetryscope" => Some(&["ExtensionPublisher", "All"]),
+        // Only passed to Session.LogSecurityAudit, which changes nothing AL can see. The members are
+        // the ones Microsoft's source uses; their ordinals are not pinned and nothing may print them.
+        "securityoperationresult" => Some(&["Success", "Failure"]),
+        "auditcategory" => Some(&[
+            "ApplicationManagement",
+            "CustomerFacing",
+            "EntitlementManagement",
+            "KeyManagement",
+            "Other",
+            "PolicyManagement",
+            "RoleManagement",
+            "UserManagement",
+        ]),
         "dataclassification" => Some(&[
             "CustomerContent",
             "ToBeClassified",

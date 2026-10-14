@@ -1194,6 +1194,25 @@ fn log_message_is_a_telemetry_write_that_changes_nothing() {
     assert!(matches!(run(src, "Log"), Ok(Value::Integer(7))));
 }
 
+// Session.LogSecurityAudit writes to the server's security audit log, which AL cannot observe
+// (ADR-009): it returns. Base Application's Change Log Management calls it
+// (session/TestEnvironmentUserTenantContracts.al:315-374).
+#[test]
+fn log_security_audit_is_an_audit_write_that_changes_nothing() {
+    let src = r#"codeunit 50100 C
+{
+    procedure Log(): Integer
+    var N: Integer;
+    begin
+        Session.LogSecurityAudit('Change log', SecurityOperationResult::Success, 'activated', AuditCategory::ApplicationManagement);
+        N := 7;
+        exit(N);
+    end;
+}"#;
+    let r = run(src, "Log");
+    assert!(matches!(r, Ok(Value::Integer(7))), "{r:?}");
+}
+
 // A table with a DateFormula field inserts with the field blank. Base Application's setup tables
 // (General Ledger Setup, Sales & Receivables Setup) have such fields and Company-Initialize
 // inserts them as `Init(); Insert();`.

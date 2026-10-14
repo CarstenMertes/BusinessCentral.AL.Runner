@@ -203,6 +203,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.StrCheckSum#1", strchecksum),
     ("Session.LogMessage#1", log_message),
     ("Session.LogMessage#2", log_message),
+    ("Session.LogSecurityAudit#1", log_message),
     ("System.Variant2Date#1", variant_2_date),
     ("System.Variant2Time#1", variant_2_time),
     // Whether the host can create tasks is not pinned (corpus session/TestTaskSchedulerCloudBehavior.al
@@ -677,8 +678,10 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     Ok(Value::Integer(pos as i32))
 }
 
-/// `Session.LogMessage`: telemetry has no effect AL code can see in a test, so the call returns
-/// (session/TestSessionExtended.al:76-89 only needs it callable).
+/// `Session.LogMessage` and `Session.LogSecurityAudit`: telemetry and the security audit log have
+/// no effect AL code can see in a test, so the call returns (session/TestSessionExtended.al:76-89
+/// only needs LogMessage callable; session/TestEnvironmentUserTenantContracts.al:315-374 runs
+/// Change Log Management, which logs a security audit entry, and reads only the change log).
 fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     Ok(Value::Null)
 }

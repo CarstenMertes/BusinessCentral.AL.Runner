@@ -122,10 +122,10 @@ pub fn check_identity(ws: &Workspace, n_dep: usize, src: &dyn DepSource) -> Resu
         let (o, f) = (&ws.objects[oi], src.facts(oi));
         if f.kind != Some(o.kind) || f.id != o.id || f.name != o.name || f.app as usize != o.app {
             return Err(format!(
-                "dependency object {oi} is `{} {}` in the run and `{:?} {}` in the cache",
+                "dependency object {oi} is `{} {}` in the run and `{} {}` in the cache",
                 o.kind.label(),
                 o.name,
-                f.kind,
+                f.kind.map_or("unknown", |k| k.label()),
                 f.name
             ));
         }

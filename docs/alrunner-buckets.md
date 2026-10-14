@@ -72,6 +72,19 @@ holds the `.bak` (902 MB) beside the entries fetched by range.
 
 Several buckets can be named in one run (all 32 together: 40300 tests, one compile).
 
+## The compile cache (ADR-022, branch `compile-cache`, 2026-10-14)
+
+`alrunner test` keeps the complete compile of the dependency apps in `<cache dir>/compile/` (13 MB per set of apps;
+`--cache-dir`, `$ALRUNNER_CACHE`, default `~/.cache/al-runtime`). The first run with a new set of apps builds it (about
+5 s and 4 GB on 12 cores). The next runs load it. `--no-compile-cache` (or `ALRUNNER_NO_COMPILE_CACHE=1`) compiles only
+what the tests reach, as before. `--require-compile-cache` fails when there is no usable entry (CI).
+
+Tests-ERM, BC 27.5, with the CRONUS data, one run each after the entry exists: 5.1 to 5.6 s against 6.7 to 6.8 s
+without the cache, 2.1 GB against 3.1 GB. All 32 buckets in one process: 35 s against 30 to 33 s (the 91 MB of test
+sources and the 19 s of tests dominate), 4.7 GB against 6.3 GB. Outcomes: Tests-ERM has no difference; the 32 buckets
+differ in 7 of 40300 tests (they are not run with the cache, see `docs/adr/022-compile-cache.md`, "Outcomes").
+The measurements are in `docs/adr/022-measurements.txt`.
+
 ## Reading the result
 
 Without `--test-data` there is no company data. Microsoft's tests expect a CRONUS company, so most failures are

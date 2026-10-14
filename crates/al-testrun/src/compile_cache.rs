@@ -86,6 +86,21 @@ pub fn source_hash(app: &AppSource) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// The target as the key holds it: every field, written out.
+fn target_text(t: &al_version::Target) -> String {
+    // Destructured without `..`: a field added to the target must be written here to compile.
+    let al_version::Target { bc, runtime } = t;
+    let al_version::BcVersion { major, minor, build } = bc;
+    let al_version::Runtime {
+        major: rt_major,
+        minor: rt_minor,
+    } = runtime;
+    format!(
+        "bc {major}.{minor} build {} runtime {rt_major}.{rt_minor}",
+        build.as_deref().unwrap_or("-")
+    )
+}
+
 /// The key of the entry for the dependency `apps` (program order), their manifests, the
 /// preprocessor symbols and the target.
 pub fn key_for(
@@ -108,7 +123,7 @@ pub fn key_for(
         .collect();
     Key::new(
         runtime_build(),
-        target.map(|t| format!("{t:?}")).unwrap_or_default(),
+        target.map(target_text).unwrap_or_default(),
         symbols.iter().cloned().collect(),
         apps,
     )

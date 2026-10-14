@@ -1135,7 +1135,14 @@ impl<'a> Checker<'a> {
             PrefixExpr => {
                 let t = kids.first().map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
                 let op = first_token(node).to_ascii_lowercase();
-                E::Val(if op == "not" { Ty::Boolean } else { t })
+                E::Val(if op == "not" {
+                    Ty::Boolean
+                } else if matches!(t, Ty::DotNet(_)) {
+                    // A DotNet operand is settled when it runs (ADR-024).
+                    Ty::DotNet(String::new())
+                } else {
+                    t
+                })
             }
             BinExpr if matches!(op_token(node).as_str(), "is" | "as") => {
                 // The right operand is an interface name, not a value: it is not resolved as a
@@ -2198,6 +2205,9 @@ fn binary_ty(op: &str, l: &Ty, r: &Ty) -> Ty {
             (Ty::Text(_) | Ty::Code(_) | Ty::Label, _) | (_, Ty::Text(_) | Ty::Code(_) | Ty::Label) if op == "+" => {
                 Ty::Text(None)
             }
+            // An operand whose type is known only when the code runs gives a result of the same
+            // kind (ADR-024); the VM's operators decide from the settled kinds.
+            (Ty::DotNet(_), _) | (_, Ty::DotNet(_)) => Ty::DotNet(String::new()),
             (Ty::Date, Ty::Date) if op == "-" => Ty::Integer,
             (Ty::Date, _) => Ty::Date,
             (Ty::DateTime, Ty::DateTime) if op == "-" => Ty::Duration,

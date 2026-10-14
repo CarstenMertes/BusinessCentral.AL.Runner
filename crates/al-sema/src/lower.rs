@@ -3650,8 +3650,8 @@ impl Lowerer<'_> {
             ForStmt => {
                 let down = sig_tokens(n).iter().any(|t| t.text().eq_ignore_ascii_case("downto"));
                 let var = self.place(&kids[0]);
-                let from = self.expr(&kids[1]);
-                let to = self.expr(&kids[2]);
+                let from = self.operand(&kids[1], ir::OperandUse::Value);
+                let to = self.operand(&kids[2], ir::OperandUse::Value);
                 let body = self.stmt_or_empty(kids.get(3));
                 (|| {
                     Ok(ir::Stmt::For {
@@ -3662,9 +3662,6 @@ impl Lowerer<'_> {
                         body,
                     })
                 })()
-            }
-            ForeachStmt if matches!(self.ty_of(&kids[1]), Ty::DotNet(_)) => {
-                Err("foreach over a DotNet value is refused until a corpus test pins it (ADR-014)".into())
             }
             ForeachStmt => {
                 let var = self.place(&kids[0]);
@@ -3864,7 +3861,7 @@ impl Lowerer<'_> {
     }
 
     fn case(&mut self, kids: &[SyntaxNode]) -> L<ir::Stmt> {
-        let scrutinee = self.expr(&kids[0])?;
+        let scrutinee = self.operand(&kids[0], ir::OperandUse::Value)?;
         let mut branches = Vec::new();
         let mut otherwise = Vec::new();
         for k in &kids[1..] {
@@ -4250,13 +4247,15 @@ impl Lowerer<'_> {
             Literal => Ok(ir::Expr::Const(self.constant(n)?)),
             ParenExpr => self.expr(&kids[0]),
             PrefixExpr => {
-                self.no_dotnet_operand(&kids[0])?;
                 let op = match sig_tokens(n)[0].text().to_ascii_lowercase().as_str() {
                     "not" => ir::UnOp::Not,
                     "-" => ir::UnOp::Neg,
                     _ => ir::UnOp::Plus,
                 };
-                Ok(ir::Expr::Unary(op, Box::new(self.expr(&kids[0])?)))
+                Ok(ir::Expr::Unary(
+                    op,
+                    Box::new(self.operand(&kids[0], ir::OperandUse::Value)?),
+                ))
             }
             BinExpr if matches!(sig_tokens(n)[0].text().to_ascii_lowercase().as_str(), "is" | "as") => {
                 self.interface_test(n, &kids)
@@ -4267,11 +4266,20 @@ impl Lowerer<'_> {
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
-                self.no_dotnet_operand(&kids[0])?;
-                if op != "in" {
-                    self.no_dotnet_operand(&kids[1])?;
+                // How a settled DotNet operand may be used depends on the operator (ADR-024).
+                let operand_use = match op.as_str() {
+                    "+" | "=" | "<>" => ir::OperandUse::Enum,
+                    "<" | "<=" | ">" | ">=" => ir::OperandUse::NoText,
+                    _ => ir::OperandUse::Value,
+                };
+                if op == "in" {
+                    self.no_dotnet_operand(&kids[0])?;
                 }
-                let l = self.expr(&kids[0])?;
+                let l = if op == "in" {
+                    self.expr(&kids[0])?
+                } else {
+                    self.operand(&kids[0], operand_use)?
+                };
                 if op == "in" {
                     let set = &kids[1];
                     if set.kind() != SetExpr {
@@ -4280,8 +4288,12 @@ impl Lowerer<'_> {
                     let elems = set.children().map(|e| self.set_elem(&e)).collect::<L<Vec<_>>>()?;
                     return Ok(ir::Expr::In(Box::new(l), elems));
                 }
-                let r = self.expr(&kids[1])?;
+                let r = self.operand(&kids[1], operand_use)?;
+                let dotnet =
+                    matches!(self.ty_of(&kids[0]), Ty::DotNet(_)) || matches!(self.ty_of(&kids[1]), Ty::DotNet(_));
                 let op = match op.as_str() {
+                    "=" if dotnet => ir::BinOp::DotNetEq,
+                    "<>" if dotnet => ir::BinOp::DotNetNe,
                     "+" => ir::BinOp::Add,
                     "-" => ir::BinOp::Sub,
                     "*" => ir::BinOp::Mul,
@@ -4312,7 +4324,7 @@ impl Lowerer<'_> {
             {
                 Ok(ir::Expr::CharAt(
                     Box::new(self.expr(&kids[0])?),
-                    Box::new(self.expr(&kids[1])?),
+                    Box::new(self.operand(&kids[1], ir::OperandUse::Value)?),
                 ))
             }
             IndexExpr if matches!(kids.first().map(|k| self.ty_of(k)), Some(Ty::DotNet(_))) => {
@@ -4464,8 +4476,18 @@ impl Lowerer<'_> {
         })
     }
 
-    /// An operand whose type is only known at run time is refused (ADR-014): BC types it from the
-    /// assembly, which lowering never opens.
+    /// An expression used as an operand. A `DotNet` value has no static type: it is settled when
+    /// the code runs, from the kind the host returned (ADR-024).
+    fn operand(&mut self, n: &SyntaxNode, how: ir::OperandUse) -> L<ir::Expr> {
+        let e = self.expr(n)?;
+        Ok(match self.ty_of(n) {
+            Ty::DotNet(_) => ir::Expr::DotNetOperand(Box::new(e), how),
+            _ => e,
+        })
+    }
+
+    /// The left side of `in` keeps the static refusal: a membership test against a set of
+    /// literals is not pinned for a settled value (ADR-024, refusals that stay).
     fn no_dotnet_operand(&self, n: &SyntaxNode) -> L<()> {
         match self.ty_of(n) {
             Ty::DotNet(_) => Err(format!(
@@ -4534,7 +4556,13 @@ impl Lowerer<'_> {
             })?)
         };
         if let (Some(i), ir::DotNetOp::Call(_)) = (ty, &op) {
-            if self.ws.dotnet[i].decl.alias.eq_ignore_ascii_case(name) {
+            // The constructor is named like the alias or like the CLR type: the probe app declares
+            // alias `DnStringBuilder` for `System.Text.StringBuilder` and calls `Builder.StringBuilder()`
+            // (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400).
+            let decl = &self.ws.dotnet[i].decl;
+            let simple = decl.type_name.rsplit('.').next().unwrap_or("");
+            let simple = simple.split('`').next().unwrap_or(simple);
+            if decl.alias.eq_ignore_ascii_case(name) || simple.eq_ignore_ascii_case(name) {
                 return Ok(ir::Expr::DotNet {
                     ty,
                     receiver: None,
@@ -4732,25 +4760,49 @@ impl Lowerer<'_> {
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
                     if let Ty::DotNet(alias) = self.ty_of(a) {
-                        // `IsNull(DotNet)` takes the value as it is. A DotNet result (no static
-                        // type) passed to a plain Text, Integer or Boolean parameter must fit it
-                        // exactly at run time, as in an assignment (ADR-014 section 4). Anything
-                        // else is refused.
-                        let slot = match p.ty.as_str() {
-                            "DotNet" => None,
-                            "Text" if !p.by_var && alias.is_empty() => Some(RtType::Text(None)),
-                            "Integer" if !p.by_var && alias.is_empty() => Some(RtType::Integer),
-                            "Boolean" if !p.by_var && alias.is_empty() => Some(RtType::Boolean),
-                            _ => {
-                                return Err(format!(
-                                    "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
-                                ));
-                            }
+                        // `IsNull(DotNet)` takes the value as it is. A `Variant` parameter takes a
+                        // primitive, an object or an enum as it is (`Format` of an object is its
+                        // `ToString()`). A scalar parameter takes a DotNet result (no static type)
+                        // when its run-time kind fits the parameter, as in an assignment (ADR-024
+                        // section 2). Anything else is refused.
+                        let scalar = match p.ty.as_str() {
+                            "Text" | "Code" => Some(RtType::Text(None)),
+                            "Integer" => Some(RtType::Integer),
+                            "BigInteger" => Some(RtType::BigInteger),
+                            "Decimal" => Some(RtType::Decimal),
+                            "Boolean" => Some(RtType::Boolean),
+                            "Char" => Some(RtType::Char),
+                            "Byte" => Some(RtType::Byte),
+                            "Date" => Some(RtType::Date),
+                            "Time" => Some(RtType::Time),
+                            "DateTime" => Some(RtType::DateTime),
+                            "Duration" => Some(RtType::Duration),
+                            "Guid" => Some(RtType::Guid),
+                            _ => None,
                         };
-                        out.push(ir::Arg::Value(match slot {
-                            Some(rt) => ir::Expr::DotNetCoerce(rt, Box::new(self.expr(a)?)),
-                            None => self.expr(a)?,
-                        }));
+                        let value = match p.ty.as_str() {
+                            "DotNet" => self.expr(a)?,
+                            // CopyStream takes a DotNet stream as it is; the VM copies the bytes
+                            // through the host (ADR-024 section 3).
+                            "InStream" | "OutStream" if !p.by_var && id.starts_with("System.CopyStream#") => {
+                                self.expr(a)?
+                            }
+                            "Any" | "Variant" if !p.by_var => {
+                                ir::Expr::DotNetOperand(Box::new(self.expr(a)?), ir::OperandUse::Variant)
+                            }
+                            _ => match scalar {
+                                Some(rt) if !p.by_var && alias.is_empty() => ir::Expr::DotNetCoerce(
+                                    rt,
+                                    Box::new(ir::Expr::DotNetOperand(Box::new(self.expr(a)?), ir::OperandUse::Strict)),
+                                ),
+                                _ => {
+                                    return Err(format!(
+                                        "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
+                                    ));
+                                }
+                            },
+                        };
+                        out.push(ir::Arg::Value(value));
                         continue;
                     }
                     // A bare control name in a field position of a test page method.
@@ -5563,19 +5615,44 @@ codeunit 50101 C2
         assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
     }
 
+    // ADR-024: a DotNet result used as an operand is settled when the code runs. The comparison with
+    // a Text literal is a CLR string comparison, so it has its own operator.
     #[test]
-    fn dotnet_results_used_as_operands_or_in_foreach_are_refused_statically() {
-        let (_, l) = lower_src(&format!(
-            "{DOTNET}codeunit 50100 C {{ procedure P(): Boolean var Convert: DotNet Convert; begin exit(Convert.ToInt32('1') > 0); end; }}"
+    fn a_dotnet_result_used_as_an_operand_is_settled_at_run_time() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Boolean var Convert: DotNet Convert; begin exit(Convert.ToInt32('1') > 0); end; procedure Q(): Boolean var Convert: DotNet Convert; begin exit(Convert.ToBase64String('x') = 'WA=='); end; procedure R(): Integer var Convert: DotNet Convert; I: Integer; begin for I := 1 to Convert.ToInt32('2') - 1 do exit(-Convert.ToInt32('3')); end; }}"
         ));
-        let (oi, _) = routine(&l, "P");
-        assert!(
-            l.unsupported[oi][0]
-                .iter()
-                .any(|r| r.contains("DotNet") && r.contains("only known at run time")),
-            "{:?}",
-            l.unsupported[oi][0]
-        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        for name in ["P", "Q", "R"] {
+            let (ri, _) = routine(&l, name);
+            assert!(l.unsupported[0][ri].is_empty(), "{name}: {:?}", l.unsupported[0][ri]);
+        }
+        let (_, p) = routine(&l, "P");
+        let dump = format!("{:?}", p.body);
+        assert!(dump.contains("DotNetOperand(") && dump.contains("NoText)"), "{dump}");
+        let (_, q) = routine(&l, "Q");
+        assert!(format!("{:?}", q.body).contains("DotNetEq"), "{:?}", q.body);
+        // The bound of a for loop is settled too.
+        let (_, r) = routine(&l, "R");
+        assert!(format!("{:?}", r.body).contains("DotNetOperand("), "{:?}", r.body);
+    }
+
+    // ADR-024: Format takes an object as it is (its ToString()); a scalar parameter takes a settled
+    // primitive; a `var` parameter and an AL procedure's DotNet-typed object stay refused.
+    #[test]
+    fn a_dotnet_value_passed_to_format_is_a_variant_operand() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Text var Convert: DotNet Convert; begin exit(Format(Convert.ToBase64String('x')) + Format(Convert)); end; procedure Q(): Integer var Convert: DotNet Convert; begin exit(StrLen(Convert.ToBase64String('x'))); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        for name in ["P", "Q"] {
+            let (ri, _) = routine(&l, name);
+            assert!(l.unsupported[0][ri].is_empty(), "{name}: {:?}", l.unsupported[0][ri]);
+        }
+        let (_, p) = routine(&l, "P");
+        assert!(format!("{:?}", p.body).contains("Variant)"), "{:?}", p.body);
+        let (_, q) = routine(&l, "Q");
+        assert!(format!("{:?}", q.body).contains("Strict)"), "{:?}", q.body);
     }
 
     const DOTNET_REGISTRY: &str = "dotnet { assembly(\"Microsoft.Dynamics.Nav.NavUserAccount\") { Culture = 'neutral'; PublicKeyToken = '31bf3856ad364e35'; type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper\"; \"NavUserAccountHelper\") { } type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper\"; \"NavTenantSettingsHelper\") { } } assembly(\"Microsoft.Dynamics.Nav.Types\") { Culture = 'neutral'; PublicKeyToken = '31bf3856ad364e35'; type(\"Microsoft.Dynamics.Nav.Types.ALConfigSettings\"; \"ALConfigSettings\") { } } }\n";
@@ -5593,20 +5670,16 @@ codeunit 50101 C2
         }
     }
 
-    /// The same member names on a type the registry does not know stay refused as operands.
+    /// The same member names on a type the registry does not know are untyped, so they are settled
+    /// when the code runs (ADR-024) instead of refused when it is lowered.
     #[test]
-    fn a_member_of_an_unregistered_type_is_still_untyped() {
+    fn a_member_of_an_unregistered_type_is_untyped_and_settled_at_run_time() {
         let (_, l) = lower_src(&format!(
             "{DOTNET}codeunit 50100 C {{ procedure P(): Boolean var Convert: DotNet Convert; begin exit(Convert.IsAzure() and true); end; }}"
         ));
-        let (oi, _) = routine(&l, "P");
-        assert!(
-            l.unsupported[oi][0]
-                .iter()
-                .any(|r| r.contains("only known at run time")),
-            "{:?}",
-            l.unsupported[oi][0]
-        );
+        let (oi, r) = routine(&l, "P");
+        assert!(l.unsupported[oi][0].is_empty(), "{:?}", l.unsupported[oi][0]);
+        assert!(format!("{:?}", r.body).contains("DotNetOperand("), "{:?}", r.body);
     }
 
     #[test]

@@ -63,9 +63,17 @@ pub struct DotNetState {
     /// `availability()` of the host, asked once per session.
     available: Option<Result<(), String>>,
     bridges: HashMap<u64, BlobRef>,
+    /// The last .NET result was a null `string` (ADR-024). Set by the reply of a host call and
+    /// cleared at the start of every `DotNet` member, so a settle step that runs right after
+    /// the member reads the declared type of the null it got.
+    null_string: bool,
 }
 
 impl DotNetState {
+    pub(crate) fn clear_null_string(&mut self) {
+        self.null_string = false;
+    }
+
     /// Hands dropped handles to the host. Called before every call and when the session closes.
     fn flush(&mut self) {
         let dropped: Vec<DotNetHandle> = std::mem::take(&mut *self.release.borrow_mut());
@@ -138,6 +146,7 @@ impl Session {
                 }
             }
         }
+        self.dotnet.null_string = false;
         let decl = ty.map(|i| {
             let d = &self.engine.program.dotnet_types[i];
             DotNetType {
@@ -216,6 +225,17 @@ impl Session {
             return (m.call)(self, this, &values);
         }
 
+        // 1b. The clock members of DateTime and DateTimeOffset read the host clock, the one
+        // `CurrentDateTime` reads, so a run is deterministic under a fixed clock (owner decision
+        // 2026-10-14, docs/owner-review.md). Not a registry type: no .NET needed for DateTime.
+        if let (Target::Static(d), true) = (&target, matches!(kind, MemberKind::Get | MemberKind::Call)) {
+            if values.is_empty() {
+                if let Some(r) = self.host_clock_member(d, &member, &shown, f) {
+                    return r;
+                }
+            }
+        }
+
         // 2. The host provider, after the policy (ADR-014 section 8).
         let assembly = match &target {
             Target::Static(d) => Some(d.assembly.as_str()),
@@ -269,6 +289,323 @@ impl Session {
         }
     }
 
+    /// `foreach` over a `DotNet` value (ADR-024 section 4): `GetEnumerator`, then `MoveNext` and
+    /// `Current` as ordinary host calls, each `Current` settled into the loop variable. The error
+    /// texts and codes are pinned by tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al
+    /// (codeunit 61400, `Foreach_OverClrCollections`, `Foreach_Failures_HaveTheirTextsAndCodes`).
+    pub(crate) fn foreach_dotnet(
+        &mut self,
+        var: &ir::Place,
+        coll: Value,
+        collection: &ir::Expr,
+        body: &[ir::Stmt],
+        f: &mut Frame,
+    ) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let var_ty = self.place_type(var, f);
+        let (handle, clr_type) = match &coll {
+            Value::DotNet(o) => match &o.kind {
+                DotNetKind::Host { handle, clr_type } => (*handle, clr_type.clone()),
+                DotNetKind::Enum { clr_type, .. } => {
+                    return unsupported(format!("foreach over a .NET enum value of {clr_type} (not pinned)"));
+                }
+                DotNetKind::Internal { type_name, .. } => {
+                    return unsupported(format!("foreach over a runtime-provided {type_name} (not pinned)"));
+                }
+            },
+            _ => {
+                // Null: the variable was never instantiated. The text names the variable's CLR
+                // type, the object and the procedure.
+                let ir::Expr::Load(place) = collection else {
+                    return unsupported("foreach over a null DotNet value that is not a variable");
+                };
+                let RtType::DotNet(i) = self.place_type(place, f) else {
+                    return unsupported("foreach over a null that is not a DotNet variable");
+                };
+                let o = &engine.program.objects[f.object];
+                let kind = match o.kind.as_str() {
+                    "codeunit" => "CodeUnit",
+                    other => {
+                        return unsupported(format!(
+                            "foreach over an uninstantiated DotNet variable in a {other} (the object kind's spelling in the error is not pinned)"
+                        ));
+                    }
+                };
+                let message = format!(
+                    "A DotNet variable has not been instantiated. Attempting to call {}.GetEnumerator in {kind} {}: {}",
+                    engine.program.dotnet_types[i as usize].type_name, o.name, o.routines[f.routine].name
+                );
+                return al_builtins::native::raise(message, "DotNetVariableNotCreated");
+            }
+        };
+        if let Err(why) = engine
+            .dotnet
+            .policy
+            .check(None, &clr_type, Access::Member("GetEnumerator"))
+        {
+            return unsupported(format!("DotNet {clr_type}.GetEnumerator: {why}"));
+        }
+        let enumerator = self
+            .host_call(DotNetTarget::Instance(handle), "GetEnumerator", &clr_type, f)
+            .map_err(|e| e.signal(&clr_type, "GetEnumerator"))?;
+        let Value::DotNet(en) = &enumerator else {
+            return unsupported(format!("{clr_type}.GetEnumerator did not return an object"));
+        };
+        let DotNetKind::Host {
+            handle: en_handle,
+            clr_type: en_type,
+        } = &en.kind
+        else {
+            return unsupported(format!("{clr_type}.GetEnumerator did not return a host object"));
+        };
+        let (en_handle, en_type) = (*en_handle, en_type.clone());
+        loop {
+            let more = self.host_call(DotNetTarget::Instance(en_handle), "MoveNext", &en_type, f);
+            let more = match more {
+                Ok(v) => v,
+                Err(MoveNextFailure::Exception(e)) if e.clr_type == "System.InvalidOperationException" => {
+                    return al_builtins::native::raise(
+                        format!("A call to {en_type}.MoveNext failed with this message: {}", e.message),
+                        "DotNetInvoke:InvalidOperation",
+                    );
+                }
+                Err(other) => return Err(other.signal(&en_type, "MoveNext")),
+            };
+            if !matches!(more, Value::Boolean(true)) {
+                return Ok(());
+            }
+            let current = self
+                .host_get(en_handle, "Current", &en_type, f)
+                .map_err(|e| e.signal(&en_type, "Current"))?;
+            let item = match self.dotnet_coerce(current.clone(), &var_ty) {
+                Ok(v) => v,
+                Err(unfit) => {
+                    return Err(match (&current, &var_ty) {
+                        (Value::Integer(_), RtType::Text(_) | RtType::Code(_)) => {
+                            match al_builtins::native::raise::<()>(
+                                "Invalid Conversion. Source: Int32, Destination: NavText.",
+                                "Argument",
+                            ) {
+                                Err(e) => e,
+                                Ok(()) => unreachable!(),
+                            }
+                        }
+                        (Value::Text(_), RtType::Date) => {
+                            match al_builtins::native::raise::<()>(
+                                "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavText to System.DateTime.",
+                                "Conversion",
+                            ) {
+                                Err(e) => e,
+                                Ok(()) => unreachable!(),
+                            }
+                        }
+                        _ => prefix(unfit, "foreach element"),
+                    });
+                }
+            };
+            self.write(var, item, f)?;
+            match self.exec_block(body, f) {
+                Err(Signal::Break) => return Ok(()),
+                r => r?,
+            }
+        }
+    }
+
+    /// One host call for `foreach`: `member` with no arguments on `target`.
+    fn host_call(
+        &mut self,
+        target: DotNetTarget,
+        member: &str,
+        clr_type: &str,
+        f: &mut Frame,
+    ) -> Result<Value, MoveNextFailure> {
+        self.dotnet_ready(clr_type).map_err(MoveNextFailure::Refused)?;
+        let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+        match session.invoke(target, member, Vec::new()) {
+            Ok(r) => self
+                .apply_reply(r, &StreamBook::default(), &[], member, f)
+                .map_err(MoveNextFailure::Refused),
+            Err(DotNetFailure::Refused(why)) => Err(MoveNextFailure::Refused(Signal::Unsupported(why))),
+            Err(DotNetFailure::Exception(e)) => Err(MoveNextFailure::Exception(e)),
+        }
+    }
+
+    fn host_get(
+        &mut self,
+        handle: DotNetHandle,
+        member: &str,
+        clr_type: &str,
+        f: &mut Frame,
+    ) -> Result<Value, MoveNextFailure> {
+        self.dotnet_ready(clr_type).map_err(MoveNextFailure::Refused)?;
+        let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+        match session.get_property(DotNetTarget::Instance(handle), member) {
+            Ok(r) => self
+                .apply_reply(r, &StreamBook::default(), &[], member, f)
+                .map_err(MoveNextFailure::Refused),
+            Err(DotNetFailure::Refused(why)) => Err(MoveNextFailure::Refused(Signal::Unsupported(why))),
+            Err(DotNetFailure::Exception(e)) => Err(MoveNextFailure::Exception(e)),
+        }
+    }
+
+    /// `CopyStream` where the target or the source is a `DotNet` stream (ADR-024 section 3). The
+    /// bytes go through the host: the sidecar cannot see Rust memory.
+    ///
+    /// - AL `InStream` into a .NET stream: all the unread bytes; the AL position goes to the end
+    ///   (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
+    ///   `CopyStream_WithAMemoryStream`, with the same codeunit pinning the .NET position at the end
+    ///   and a stream read by one byte copying the remaining 10). A byte count is not pinned for
+    ///   this direction.
+    /// - .NET `MemoryStream` into an AL `OutStream`: the whole stream whatever its position, position 0
+    ///   afterwards; with a count, from the position, which follows the count (same test).
+    pub(crate) fn copy_stream_with_dotnet(
+        &mut self,
+        out: &Value,
+        src: &Value,
+        count: Option<i64>,
+    ) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let host_stream = |v: &Value| -> Result<Option<(DotNetHandle, String)>, Signal> {
+            match v {
+                Value::DotNet(o) => match &o.kind {
+                    DotNetKind::Host { handle, clr_type } => Ok(Some((*handle, clr_type.clone()))),
+                    _ => unsupported("CopyStream with a .NET value that is not a stream the host holds"),
+                },
+                _ => Ok(None),
+            }
+        };
+        match (host_stream(out)?, host_stream(src)?) {
+            (Some(_), Some(_)) => unsupported("CopyStream between two DotNet streams (not pinned)"),
+            (Some((handle, clr_type)), None) => {
+                let Value::Library(_, h) = src else {
+                    return unsupported(format!("CopyStream from {} into a DotNet stream", src.describe()));
+                };
+                if count.is_some() {
+                    return unsupported("CopyStream with a byte count into a DotNet stream (not pinned)");
+                }
+                if let Err(why) = engine.dotnet.policy.check(None, &clr_type, Access::Member("Write")) {
+                    return unsupported(format!("DotNet {clr_type}: {why}"));
+                }
+                let bytes = match &*h.borrow() {
+                    LibraryValue::InStream(st) => st.rest(),
+                    other => return unsupported(format!("CopyStream from {} into a DotNet stream", other.describe())),
+                };
+                self.dotnet_ready(&clr_type)?;
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                stream_failure(&clr_type, session.stream_write(handle, &bytes))?;
+                if let LibraryValue::InStream(st) = &mut *h.borrow_mut() {
+                    st.pos = st.len();
+                }
+                Ok(())
+            }
+            (None, Some((handle, clr_type))) => {
+                let Value::Library(_, h) = out else {
+                    return unsupported(format!("CopyStream from a DotNet stream into {}", out.describe()));
+                };
+                if let Err(why) = engine.dotnet.policy.check(None, &clr_type, Access::Member("Read")) {
+                    return unsupported(format!("DotNet {clr_type}: {why}"));
+                }
+                let blob = match &*h.borrow() {
+                    LibraryValue::OutStream(blob, _) => blob.clone(),
+                    other => {
+                        return unsupported(format!("CopyStream from a DotNet stream into {}", other.describe()));
+                    }
+                };
+                self.dotnet_ready(&clr_type)?;
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                let max = count.map(|n| n as usize);
+                let bytes = stream_failure(&clr_type, session.stream_read(handle, max))?;
+                al_builtins::stream::write_bytes(&blob, &bytes);
+                Ok(())
+            }
+            (None, None) => unsupported("CopyStream without a DotNet stream reached the DotNet path"),
+        }
+    }
+
+    /// `Format` of a `DotNet` object: its `ToString()`; of an enum, its member name.
+    pub(crate) fn format_dotnet_value(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        let Value::DotNet(o) = v else { return None };
+        Some(match &o.kind {
+            DotNetKind::Enum { name, .. } => Ok(name.clone()),
+            DotNetKind::Internal { type_name, .. } => unsupported(format!("Format of a runtime-provided {type_name}")),
+            DotNetKind::Host { handle, clr_type } => {
+                let shown = format!("{clr_type}.ToString");
+                let engine = self.engine.clone();
+                if let Err(why) = engine.dotnet.policy.check(None, clr_type, Access::Member("ToString")) {
+                    return Some(unsupported(format!("DotNet {shown}: {why}")));
+                }
+                if let Err(e) = self.dotnet_ready(clr_type) {
+                    return Some(Err(e));
+                }
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                match session.invoke(DotNetTarget::Instance(*handle), "ToString", Vec::new()) {
+                    Ok(DotNetReply {
+                        value: DotNetValue::Str(s),
+                        ..
+                    }) => Ok(s),
+                    Ok(_) => unsupported(format!("DotNet {shown} did not return a string")),
+                    Err(DotNetFailure::Refused(why)) => unsupported(format!("DotNet {shown}: {why}")),
+                    Err(DotNetFailure::Exception(e)) => unsupported(format!(
+                        "DotNet {shown} raised the .NET exception {}: {}",
+                        e.clr_type, e.message
+                    )),
+                }
+            }
+        })
+    }
+
+    /// `System.DateTime.Now|UtcNow|Today` and `System.DateTimeOffset.Now|UtcNow` from the host
+    /// clock. The session time zone is UTC (al-host), so `Now` and `UtcNow` agree and the offset is
+    /// zero. A `DateTime` comes back by value, as the marshalling table has it; a `DateTimeOffset`
+    /// is an object, so the host builds it from the clock's ticks. `None`: not a clock member.
+    fn host_clock_member(
+        &mut self,
+        d: &DotNetType,
+        member: &str,
+        shown: &str,
+        f: &mut Frame,
+    ) -> Option<Result<Value, Signal>> {
+        let is = |m: &str| member.eq_ignore_ascii_case(m);
+        let ticks = || -> i64 {
+            let Value::DateTime(v) = crate::hostvalues::datetime_of_unix_millis(self.now_millis()) else {
+                unreachable!("datetime_of_unix_millis builds a DateTime")
+            };
+            (v - 1) * TICKS_PER_MS
+        };
+        match d.name.as_str() {
+            "System.DateTime" if is("Now") || is("UtcNow") => Some(Ok(Value::DateTime(ticks() / TICKS_PER_MS + 1))),
+            "System.DateTime" if is("Today") => {
+                let midnight = ticks().div_euclid(TICKS_PER_DAY) * TICKS_PER_DAY;
+                Some(Ok(Value::DateTime(midnight / TICKS_PER_MS + 1)))
+            }
+            "System.DateTimeOffset" if is("Now") || is("UtcNow") => {
+                let wire = vec![
+                    DotNetArg {
+                        value: DotNetValue::Int64(ticks()),
+                        by_ref: false,
+                    },
+                    DotNetArg {
+                        value: DotNetValue::TimeSpan(0),
+                        by_ref: false,
+                    },
+                ];
+                if let Err(e) = self.dotnet_ready(&d.name) {
+                    return Some(Err(e));
+                }
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                Some(match session.construct(d, wire) {
+                    Ok(r) => self.apply_reply(r, &StreamBook::default(), &[], shown, f),
+                    Err(DotNetFailure::Refused(why)) => unsupported(format!("DotNet {shown}: {why}")),
+                    Err(DotNetFailure::Exception(e)) => unsupported(format!(
+                        "DotNet {shown} raised the .NET exception {}: {}",
+                        e.clr_type, e.message
+                    )),
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Makes the host ready for a call: asks `availability()` once, opens the session at the
     /// first call, and flushes the release queue (ADR-014 sections 2 and 6).
     fn dotnet_ready(&mut self, clr_type: &str) -> Result<(), Signal> {
@@ -314,6 +651,7 @@ impl Session {
                 None => return unsupported(format!("DotNet {shown}: bytes for an unknown stream bridge {id}")),
             }
         }
+        self.dotnet.null_string = matches!(reply.value, DotNetValue::NullString);
         let value = self.wire_to_value(reply.value).map_err(|e| prefix(e, shown))?;
         for (idx, v) in reply.by_ref {
             let Some(Some(place)) = places.get(idx) else { continue };
@@ -391,7 +729,7 @@ impl Session {
     /// A wire value as an AL value.
     fn wire_to_value(&self, v: DotNetValue) -> Result<Value, Signal> {
         Ok(match v {
-            DotNetValue::Null => Value::Null,
+            DotNetValue::Null | DotNetValue::NullString => Value::Null,
             DotNetValue::Bool(b) => Value::Boolean(b),
             DotNetValue::Byte(b) => Value::Byte(b),
             DotNetValue::Char(c) => Value::Char(c),
@@ -421,7 +759,111 @@ impl Session {
 
     /// `Expr::DotNetCoerce`: a .NET result stored into a slot of type `t`.
     pub(crate) fn dotnet_coerce(&mut self, v: Value, t: &RtType) -> Result<Value, Signal> {
+        // A null `string` assigned to a Text reads as the empty text, to a Variant as the empty
+        // Variant (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit
+        // 61400, `NullStringResult_IsEmptyInExpressions`: `Text := <null string>` has length 0 and
+        // `Value := <null string>` is neither Text nor DotNet).
+        if matches!(v, Value::Null) && self.dotnet.null_string {
+            return match t {
+                RtType::Text(_) | RtType::Code(_) => Ok(Value::Text(String::new())),
+                _ => fit(v, t),
+            };
+        }
         fit(v, t)
+    }
+
+    /// `Expr::DotNetOperand`: the run-time kind of a `DotNet` value says what it is (ADR-024).
+    /// The kinds the host returns by value are the AL values of the marshalling table
+    /// (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
+    /// `ClrResults_ReadAsTheirAlKind`). An object is refused naming its CLR type; a null object is
+    /// refused too, because `StrLen` and `Format` of one raise an error `asserterror` cannot catch
+    /// and the other uses are not pinned.
+    pub(crate) fn settle_operand(&self, v: Value, how: ir::OperandUse) -> Result<Value, Signal> {
+        use ir::OperandUse as U;
+        match v {
+            Value::Boolean(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Decimal(_)
+            | Value::Byte(_)
+            | Value::Char(_)
+            | Value::Date(..)
+            | Value::Time(_)
+            | Value::DateTime(_)
+            | Value::Duration(_)
+            | Value::Guid(_) => Ok(v),
+            Value::Text(_) | Value::Code(_) if how == U::NoText => {
+                unsupported("ordering a .NET string with <, <=, > or >= (what BC compares is not pinned)")
+            }
+            Value::Text(_) | Value::Code(_) => Ok(v),
+            Value::Null if self.dotnet.null_string => match how {
+                U::Variant => Ok(Value::Null),
+                U::Strict => unsupported(
+                    "a null .NET string passed to a builtin: BC raises an error that asserterror cannot catch (not modeled)",
+                ),
+                _ => Ok(Value::Text(String::new())),
+            },
+            Value::Null => unsupported(
+                "a null .NET object used as an operand: BC raises an error that asserterror cannot catch for Format and StrLen, and the other uses are not pinned",
+            ),
+            Value::DotNet(o) => match (&o.kind, how) {
+                (_, U::Variant) => Ok(Value::DotNet(o)),
+                (DotNetKind::Enum { ordinal, .. }, U::Enum) => Ok(match i32::try_from(*ordinal) {
+                    Ok(i) => Value::Integer(i),
+                    Err(_) => Value::BigInteger(*ordinal),
+                }),
+                (DotNetKind::Enum { clr_type, .. }, _) => unsupported(format!(
+                    "a .NET enum of CLR type {clr_type} used with an operator other than +, = and <> (not pinned)"
+                )),
+                (DotNetKind::Host { clr_type, .. }, _) => unsupported(format!(
+                    "a DotNet object of CLR type {clr_type} used as an operand: only primitives and enums are operands (ADR-024)"
+                )),
+                (DotNetKind::Internal { type_name, .. }, _) => unsupported(format!(
+                    "a DotNet object of CLR type {type_name} used as an operand: only primitives and enums are operands (ADR-024)"
+                )),
+            },
+            other => unsupported(format!("{} used as a DotNet operand", other.describe())),
+        }
+    }
+}
+
+/// `=` with a settled `DotNet` operand: two texts compare as CLR strings, so by case
+/// (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
+/// `IntegerProperties_TakePartInIntegerExpressions_AndStringCompareIsCaseSensitive`); any other
+/// pair compares as AL does.
+pub(crate) fn dotnet_equal(l: &Value, r: &Value) -> Result<bool, Signal> {
+    match (l, r) {
+        (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) => Ok(a == b),
+        _ => Ok(ops::compare(l, r)? == std::cmp::Ordering::Equal),
+    }
+}
+
+/// Why a host call of a `foreach` failed: the host refused it, or the .NET code threw.
+enum MoveNextFailure {
+    Refused(Signal),
+    Exception(al_host::dotnet::DotNetException),
+}
+
+impl MoveNextFailure {
+    fn signal(self, clr_type: &str, member: &str) -> Signal {
+        match self {
+            MoveNextFailure::Refused(s) => s,
+            MoveNextFailure::Exception(e) => Signal::Unsupported(format!(
+                "DotNet {clr_type}.{member} raised the .NET exception {}: {}; the text AL would see is not pinned (ADR-014 section 7)",
+                e.clr_type, e.message
+            )),
+        }
+    }
+}
+
+fn stream_failure<T>(clr_type: &str, r: Result<T, DotNetFailure>) -> Result<T, Signal> {
+    match r {
+        Ok(v) => Ok(v),
+        Err(DotNetFailure::Refused(why)) => unsupported(format!("DotNet CopyStream on {clr_type}: {why}")),
+        Err(DotNetFailure::Exception(e)) => unsupported(format!(
+            "DotNet CopyStream on {clr_type} raised the .NET exception {}: {}; the text AL would see is not pinned (ADR-014 section 7)",
+            e.clr_type, e.message
+        )),
     }
 }
 

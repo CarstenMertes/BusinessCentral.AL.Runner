@@ -21,6 +21,7 @@ enum Req {
     Get(DotNetTarget, String),
     Set(DotNetTarget, String, DotNetValue),
     Release(Vec<u64>),
+    StreamWrite(u64, Vec<u8>),
     Close,
 }
 
@@ -74,6 +75,14 @@ impl DotNetSession for FakeSession {
     }
     fn set_property(&mut self, t: DotNetTarget, n: &str, v: DotNetValue) -> Result<DotNetReply, DotNetFailure> {
         self.go(Req::Set(t, n.into(), v))
+    }
+    fn stream_write(&mut self, handle: DotNetHandle, bytes: &[u8]) -> Result<(), DotNetFailure> {
+        self.0
+            .log
+            .lock()
+            .unwrap()
+            .push(Req::StreamWrite(handle, bytes.to_vec()));
+        Ok(())
     }
     fn release(&mut self, handles: &[DotNetHandle]) {
         self.0.log.lock().unwrap().push(Req::Release(handles.to_vec()));
@@ -381,6 +390,103 @@ fn a_registry_member_without_a_pin_does_not_build() {
     );
 }
 
+// ---- ADR-024: the clock and settled operands ---------------------------------------------
+
+#[test]
+fn datetime_now_is_the_host_clock_and_needs_no_dotnet_host() {
+    let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
+    let r = run(
+        &host,
+        "D: DotNet ClrDateTime; V: DateTime;",
+        "V := D.Now; exit(V = CurrentDateTime());",
+        ": Boolean",
+    );
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
+}
+
+#[test]
+fn a_settled_integer_takes_part_in_arithmetic_and_a_settled_object_is_refused_with_its_type() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, _) if m == "Size" => reply(DotNetValue::Int32(7)),
+        Req::Invoke(_, m, _) if m == "Thing" => reply(handle(5, "Some.Clr.Type")),
+        other => panic!("{other:?}"),
+    });
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Size() - 1);", ": Integer");
+    assert!(matches!(r.result, Ok(Value::Integer(6))), "{:?}", r.result);
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Thing() + 1);", ": Integer");
+    let why = unsupported(&r);
+    assert!(why.contains("Some.Clr.Type") && why.contains("operand"), "{why}");
+}
+
+#[test]
+fn a_null_string_is_empty_a_null_object_is_refused_and_ordering_a_string_is_refused() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, _) if m == "NullText" => reply(DotNetValue::NullString),
+        Req::Invoke(_, m, _) if m == "NullThing" => reply(DotNetValue::Null),
+        Req::Invoke(_, m, _) if m == "Name" => reply(DotNetValue::Str("Abc".into())),
+        other => panic!("{other:?}"),
+    });
+    let r = run(&host, "C: DotNet Convert;", "exit(C.NullText() + 'x');", ": Text");
+    assert!(matches!(&r.result, Ok(Value::Text(t)) if t == "x"), "{:?}", r.result);
+    let r = run(&host, "C: DotNet Convert;", "exit(C.NullText() = '');", ": Boolean");
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
+    let r = run(&host, "C: DotNet Convert;", "exit(C.NullThing() + 'x');", ": Text");
+    assert!(unsupported(&r).contains("null .NET object"));
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Name() = 'abc');", ": Boolean");
+    assert!(
+        matches!(r.result, Ok(Value::Boolean(false))),
+        "case sensitive: {:?}",
+        r.result
+    );
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Name() < 'b');", ": Boolean");
+    assert!(unsupported(&r).contains("not pinned"));
+}
+
+#[test]
+fn copystream_into_a_dotnet_stream_hands_the_unread_bytes_to_the_host_and_ends_the_source() {
+    let host = Fake::new(|r| match r {
+        Req::Construct(..) => reply(handle(9, "System.IO.MemoryStream")),
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "M: DotNet MemoryStream; B: Record \"ALT Blob\" temporary; O: OutStream; I: InStream;",
+        "B.Data.CreateOutStream(O); O.WriteText('abc'); B.Data.CreateInStream(I); M := M.MemoryStream(); CopyStream(M, I); exit(I.EOS());",
+        ": Boolean",
+    );
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
+    assert!(
+        host.log().contains(&Req::StreamWrite(9, b"abc".to_vec())),
+        "{:?}",
+        host.log()
+    );
+}
+
+#[test]
+fn foreach_over_a_dotnet_value_uses_get_enumerator_move_next_and_current() {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    let moves = Arc::new(AtomicI32::new(0));
+    let m = moves.clone();
+    let host = Fake::new(move |r| match r {
+        Req::Invoke(DotNetTarget::Instance(1), g, _) if g == "GetEnumerator" => reply(handle(2, "Some.Enumerator")),
+        Req::Invoke(DotNetTarget::Instance(2), g, _) if g == "MoveNext" => {
+            reply(DotNetValue::Bool(m.fetch_add(1, Ordering::SeqCst) < 2))
+        }
+        Req::Get(DotNetTarget::Instance(2), g) if g == "Current" => {
+            reply(DotNetValue::Int32(m.load(Ordering::SeqCst) * 10))
+        }
+        Req::Invoke(_, g, _) if g == "List" => reply(handle(1, "Some.Collection")),
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; N: Integer; T: Integer;",
+        "foreach N in C.List() do T += N; exit(T);",
+        ": Integer",
+    );
+    assert!(matches!(r.result, Ok(Value::Integer(30))), "{:?}", r.result);
+}
+
 // ---- policy ------------------------------------------------------------------------------
 
 #[test]
@@ -392,8 +498,6 @@ fn policy_refusals_name_the_rule_and_never_reach_the_host() {
         why.contains("System.IO.File") && why.contains("refused by policy"),
         "{why}"
     );
-    let r = run(&host, "D: DotNet ClrDateTime; V: DateTime;", "V := D.Now;", "");
-    assert!(unsupported(&r).contains("System.DateTime.Now"));
     let r = run(&host, "E: DotNet ExchangeService;", "E.Foo();", "");
     let why = unsupported(&r);
     assert!(

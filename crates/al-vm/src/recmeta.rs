@@ -420,6 +420,7 @@ impl Session {
                 d.filters = s.filters;
                 d.filter_group = s.filter_group;
                 d.key = s.key;
+                d.adhoc = s.adhoc;
                 d.ascending = s.ascending;
                 d.position = s.position;
                 d.load.buffer = s.load.buffer;

@@ -226,6 +226,7 @@ impl Session {
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
         t.key = v.key;
+        t.adhoc = v.adhoc.clone();
         t.ascending = v.ascending;
         t.field_descending = v.field_descending;
         Ok(())

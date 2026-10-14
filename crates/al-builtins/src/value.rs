@@ -422,6 +422,10 @@ pub struct RecordState {
     pub security_filtering: i32,
     /// Index of the current key in the table's keys.
     pub key: usize,
+    /// `SetCurrentKey` on fields no key of the table starts with: the key index it stands for (one
+    /// past the table's keys) and the field positions. `Session::table` appends it to the table's
+    /// keys while `key` is that index, so a scan orders by these fields, then by the primary key.
+    pub adhoc: Option<(usize, Vec<usize>)>,
     pub ascending: bool,
     /// `SetAscending(Field, false)` on the single field of the current key. Unlike `ascending` it
     /// does not survive a page's view round trip (handlers/TestPageViewRoundTripRoutes.al).

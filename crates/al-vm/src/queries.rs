@@ -104,6 +104,21 @@ struct Plan {
 const NO_MATCH: Vec<Value> = Vec::new();
 
 impl Session {
+    /// An instance of query `object` whose hidden `__query` slot holds `q`, so a procedure's
+    /// unqualified `SetRange` and the like act on the query the caller holds
+    /// (query/TestQueryDataItemTableFilterDatabaseConst.al:96-136).
+    pub(crate) fn query_instance(
+        &mut self,
+        object: usize,
+        q: std::rc::Rc<std::cell::RefCell<al_builtins::value::QueryState>>,
+    ) -> std::rc::Rc<std::cell::RefCell<al_builtins::value::Instance>> {
+        let inst = self.instance(object);
+        if let Some(slot) = self.engine.program.objects[object].rec_slot {
+            inst.borrow_mut().globals[slot] = Value::Query(q);
+        }
+        inst
+    }
+
     pub(crate) fn query_op(
         &mut self,
         method: &str,
@@ -513,6 +528,17 @@ impl Session {
             }
             rows
         };
+        // Groups with no OrderBy come back in an order no corpus test pins; a single group has none
+        // to get wrong (record/TestSalesQuoteVatRounding.al:67-79).
+        if aggregated
+            && def.order_by.is_empty()
+            && rows.len() > 1
+            && def.columns.iter().any(|c| c.method.is_none() && !c.filter_element)
+        {
+            return unsupported(
+                "an aggregated query with grouping columns and no OrderBy read several groups (the group order is not pinned)",
+            );
+        }
         rows.sort_by(|a, b| key_cmp(&a.key, &b.key, &dirs));
         if COLLATION_FAILED.with(|f| f.replace(false)) {
             return unsupported(

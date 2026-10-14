@@ -392,6 +392,7 @@ impl Session {
                     d.fields = s.fields.clone();
                     d.filters = s.filters.clone();
                     d.key = s.key;
+                    d.adhoc = s.adhoc.clone();
                     d.ascending = s.ascending;
                     d.position = s.position.clone();
                     d.load.buffer = s.load.buffer.clone();

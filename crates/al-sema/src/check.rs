@@ -599,6 +599,13 @@ impl<'a> Checker<'a> {
             ObjKind::XmlPort => {
                 globals.insert("currxmlport".into(), Ty::Object(ObjKind::XmlPort, o.name.clone()));
             }
+            // A query's procedures call the query's own methods unqualified and name its columns
+            // and filters (query/TestQueryDataItemTableFilterDatabaseConst.al: `SetSourceFilter` of
+            // Base App's query 522 does `SetRange(Source_Type, ..)`).
+            ObjKind::Query => {
+                rec = Some(Ty::Object(ObjKind::Query, o.name.clone()));
+                rec_unqualified = true;
+            }
             _ => {}
         }
         if let Some(r) = &rec {

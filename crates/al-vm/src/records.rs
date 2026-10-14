@@ -38,10 +38,17 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 
 impl Session {
     pub(crate) fn table(&self, rec: &Rec) -> Result<TableDef, Signal> {
-        let t = rec.borrow().table as usize;
-        self.engine.tables[t]
+        let r = rec.borrow();
+        let mut t = self.engine.tables[r.table as usize]
             .clone()
-            .map_or_else(|| unsupported("record of a table without a schema"), Ok)
+            .map_or_else(|| unsupported("record of a table without a schema"), Ok)?;
+        // A key set on fields no key starts with is one more key, as far as ordering goes.
+        if let Some((index, fields)) = &r.adhoc {
+            if r.key == *index && *index == t.keys.len() {
+                t.keys.push(fields.clone());
+            }
+        }
+        Ok(t)
     }
 
     /// Field values of a fresh record: `InitValue` where declared, else the type default.
@@ -895,6 +902,7 @@ impl Session {
                 r.marks.clear();
                 r.marked_only = false;
                 r.key = 0;
+                r.adhoc = None;
                 r.ascending = true;
                 r.field_descending = false;
                 r.position = None;
@@ -1439,6 +1447,7 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
                 r.key = 0;
+                r.adhoc = None;
                 r.ascending = true;
                 r.field_descending = false;
                 Ok(Value::Null)
@@ -1451,10 +1460,39 @@ impl Session {
                     .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
                 {
                     Some(k) => {
-                        rec.borrow_mut().key = k;
+                        let mut r = rec.borrow_mut();
+                        r.key = k;
+                        r.adhoc = None;
                         Ok(Value::Boolean(true))
                     }
-                    None => unsupported("SetCurrentKey without a matching key"),
+                    // Fields no key starts with are allowed and order the rows by themselves, then
+                    // by the primary key (record/TestRecordNavContracts.al:180-195,
+                    // xmlport/TestXmlPortTriggersReplaceViewContracts.al:339-375).
+                    None => {
+                        let schema = self.engine.program.objects[t.object as usize]
+                            .table
+                            .as_ref()
+                            .expect("table");
+                        if let Some(&bad) = wanted.iter().find(|&&p| {
+                            !t.fields[p].stored || {
+                                matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
+                                    || schema.fields[p].flow_filter
+                            }
+                        }) {
+                            return unsupported(format!(
+                                "SetCurrentKey on {}, which is not a stored field that can order rows (not pinned)",
+                                t.fields[bad].name
+                            ));
+                        }
+                        // `t` already holds this record's earlier ad hoc key, if any.
+                        let index = self.engine.tables[t.object as usize]
+                            .as_ref()
+                            .map_or(0, |e| e.keys.len());
+                        let mut r = rec.borrow_mut();
+                        r.key = index;
+                        r.adhoc = Some((index, wanted));
+                        Ok(Value::Boolean(true))
+                    }
                 }
             }
             "Validate" => {

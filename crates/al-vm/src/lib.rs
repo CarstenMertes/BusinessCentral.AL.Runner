@@ -429,6 +429,7 @@ impl Session {
                     // A record in a test run is Validated (corpus record/TestSecurityFilteringContracts.al:161-175).
                     security_filtering: 0,
                     key: 0,
+                    adhoc: None,
                     ascending: true,
                     field_descending: false,
                     position: None,
@@ -865,6 +866,8 @@ impl Session {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
                         Value::Record(rc) => self.record_instance(*object, rc, None)?,
+                        // A query procedure runs with the query it was called on as its own state.
+                        Value::Query(q) => self.query_instance(*object, q),
                         // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
                         // is constructed at first use.
                         Value::TestPage(st) => {

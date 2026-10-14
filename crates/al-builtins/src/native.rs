@@ -764,6 +764,18 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 crate::value::PageState::closed(object),
             )))
         }
+        // A cleared Query is a fresh one: no filters, no row cap, not open
+        // (query/TestQueryRuntimeContracts.al:Query_GetFilters_ThreeFilters_OrderIsNotColumnOrder).
+        Value::Query(q) => {
+            let object = q.borrow().object;
+            Value::Query(Rc::new(std::cell::RefCell::new(crate::value::QueryState {
+                object,
+                filters: Vec::new(),
+                top: None,
+                security_filtering: None,
+                run: None,
+            })))
+        }
         // A codeunit or report variable nothing has used yet has no instance to release, so
         // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`
         // before `Probe.Run()`). Clearing one in use is not pinned.

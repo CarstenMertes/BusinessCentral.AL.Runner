@@ -8,6 +8,7 @@
 //! `Signal::Unsupported`; the open questions are in docs/probes-needed.md.
 
 use crate::Session;
+use al_builtins::collation;
 use al_builtins::filter::{FieldFilter, FilterExpr};
 use al_builtins::native::{AlError, Signal, text_of};
 use al_builtins::ops;
@@ -29,6 +30,9 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+/// Where `ColumnNo` starts (not a position: query/TestQueryRuntimeContracts.al:Query_ColumnNo_IsNotAOneBasedPosition).
+const COLUMN_NO_BASE: i32 = 4001;
+
 fn arg_col(args: &[Value], i: usize) -> Result<usize, Signal> {
     match args.get(i) {
         Some(Value::Integer(p)) => Ok(*p as usize),
@@ -40,7 +44,12 @@ fn arg_col(args: &[Value], i: usize) -> Result<usize, Signal> {
 /// ascending.
 fn key_cmp(a: &[Value], b: &[Value], dirs: &[bool]) -> Ordering {
     for (i, (x, y)) in a.iter().zip(b).enumerate() {
-        let o = ops::compare(x, y).unwrap_or(Ordering::Equal);
+        // Text sorts and groups by the database collation (case sensitive), not by code point
+        // (query/TestQueryRuntimeContracts.al:Query_OrderByText_UsesTheDatabaseCollation_NotOrdinalOrder).
+        let o = match (text_of(x), text_of(y)) {
+            (Some(s), Some(t)) if matches!(x, Value::Text(_) | Value::Code(_)) => collation::compare(&s, &t),
+            _ => ops::compare(x, y).unwrap_or(Ordering::Equal),
+        };
         let o = if dirs.get(i).copied().unwrap_or(true) {
             o
         } else {
@@ -72,7 +81,15 @@ struct Plan {
     post: Vec<(usize, FilterExpr)>,
     /// Filters on aggregated columns, checked on the group.
     having: Vec<(usize, FilterExpr)>,
+    /// Filters on stored fields of a left-outer-joined dataitem: (dataitem, field, filter). They
+    /// apply after the join, to the values of the joined row, which for an unmatched parent are the
+    /// defaults (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs,
+    /// pending push: a filter drops the unmatched parents unless it admits 0).
+    outer: Vec<(usize, usize, FilterExpr)>,
 }
+
+/// The row of a dataitem with no match under a left outer join.
+const NO_MATCH: Vec<Value> = Vec::new();
 
 impl Session {
     pub(crate) fn query_op(
@@ -90,18 +107,20 @@ impl Session {
         let def = engine.program.objects[object].query.as_ref().expect("a query object");
         match method {
             "Open" => {
-                if qs.borrow().run.is_some() {
-                    return unsupported("Open on a query that is already open (not pinned)");
+                // Opening an open query is not an error (query/TestQueryRuntimeContracts.al:
+                // Query_StateMisuse_DoesNotThrow); once rows were read what it does is not pinned.
+                if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
+                    return unsupported("Open on a query that is already open and was read from (not pinned)");
                 }
-                let filters = qs.borrow().filters.clone();
-                let (rows, stamps) = self.query_rows(def, &filters)?;
+                // Open does not run the query; the first Read does.
                 qs.borrow_mut().run = Some(QueryRun {
-                    rows,
+                    started: false,
+                    rows: Vec::new(),
                     next: 0,
                     current: None,
                     last_key: None,
                     returned: 0,
-                    stamps,
+                    stamps: Vec::new(),
                 });
                 Ok(Value::Boolean(true))
             }
@@ -112,8 +131,9 @@ impl Session {
             }
             "SetRange" | "SetFilter" => {
                 let col = arg_col(args, 0)?;
-                if qs.borrow().run.is_some() {
-                    return unsupported(format!("{method} on an open query (not pinned)"));
+                // A filter set after Open and before the first Read is in force when the query runs.
+                if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
+                    return unsupported(format!("{method} on a query that was read from (not pinned)"));
                 }
                 let ty = def.columns[col].ty.clone();
                 let expr = if method == "SetRange" {
@@ -129,6 +149,11 @@ impl Session {
                             Some(FilterExpr::Range(Some(from), Some(to)))
                         }
                     }
+                } else if text_of(args.get(1).unwrap_or(&Value::Null)).is_some_and(|t| t.is_empty()) && args.len() <= 2
+                {
+                    // An empty SetFilter clears the filter
+                    // (query/TestQueryRuntimeContracts.al:Query_GetFilters_TextForSingleAndCombinedFilters).
+                    None
                 } else {
                     let text = text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                     let engine = self.engine.clone();
@@ -157,27 +182,22 @@ impl Session {
                 }
             }
             "GetFilters" => {
-                // `Caption: filter` pairs joined by `, `, as Record.GetFilters (docs/probes-needed.md).
-                let mut parts = Vec::new();
+                // `Caption: filter` pairs joined by `, `
+                // (query/TestQueryRuntimeContracts.al:Query_GetFilters_TextForSingleAndCombinedFilters).
                 let q = qs.borrow();
-                let mut sorted: Vec<&(usize, FilterExpr)> = q.filters.iter().collect();
-                sorted.sort_by_key(|(c, _)| *c);
-                for (c, e) in sorted {
-                    let Some(caption) = &def.columns[*c].caption else {
-                        return unsupported("GetFilters of a column without a Caption literal (not pinned)");
-                    };
-                    parts.push(format!("{caption}: {}", self.filter_text(e)?));
+                let mut parts = Vec::new();
+                for (c, e) in self.filters_in_text_order(def, &q.filters)? {
+                    let caption = self.column_caption(def, c)?;
+                    parts.push(format!("{caption}: {}", self.filter_text(&e)?));
                 }
                 Ok(Value::Text(parts.join(", ")))
             }
             "ColumnName" => Ok(Value::Text(def.columns[arg_col(args, 0)?].name.clone())),
-            "ColumnCaption" => match &def.columns[arg_col(args, 0)?].caption {
-                Some(c) => Ok(Value::Text(c.clone())),
-                None => unsupported("ColumnCaption of a column without a Caption literal (the fallback is not pinned)"),
-            },
-            // Only "non-zero and different per column" is pinned (corpus
-            // query/TestQueryObject.al:347-361): the position in the query is used.
-            "ColumnNo" => Ok(Value::Integer(arg_col(args, 0)? as i32 + 1)),
+            "ColumnCaption" => self.column_caption(def, arg_col(args, 0)?).map(Value::Text),
+            // The number is not the position: the first and second column are neither 1 nor 2 and
+            // the numbers differ (query/TestQueryRuntimeContracts.al:Query_ColumnNo_IsNotAOneBasedPosition,
+            // query/TestQueryObject.al:347-361). The real numbers are not pinned (docs/probes-needed.md).
+            "ColumnNo" => Ok(Value::Integer(COLUMN_NO_BASE + arg_col(args, 0)? as i32 * 97)),
             "TopNumberOfRows" => match args.first() {
                 None => Ok(Value::Integer(qs.borrow().top.unwrap_or(def.top))),
                 Some(n) => {
@@ -206,22 +226,116 @@ impl Session {
                     // Corpus query/TestQueryObject.al:382-390.
                     Some(Value::Option(i, _)) => {
                         if members[*i as usize].eq_ignore_ascii_case("Validated") {
-                            return unsupported(
-                                "SecurityFiltering(Validated) on a query raises an error whose text is not pinned",
-                            );
+                            // query/TestQueryRuntimeContracts.al:Query_SecurityFiltering_DefaultAndValidated
+                            return Err(Signal::Error(AlError {
+                                message: "SECURITYFILTERING cannot be set to \"Validated\" on a Query.".into(),
+                                code: "Argument".into(),
+                                call_stack: String::new(),
+                            }));
                         }
                         qs.borrow_mut().security_filtering = Some(*i);
                         Ok(Value::Null)
                     }
-                    None => match qs.borrow().security_filtering {
-                        Some(i) => Ok(Value::Option(i, members.into())),
-                        None => unsupported("SecurityFiltering() before it is set (the initial value is not pinned)"),
-                    },
+                    // The default is Filtered (same test).
+                    None => {
+                        let i = match qs.borrow().security_filtering {
+                            Some(i) => i,
+                            None => members
+                                .iter()
+                                .position(|m| m.eq_ignore_ascii_case("Filtered"))
+                                .expect("a member") as i32,
+                        };
+                        Ok(Value::Option(i, members.into()))
+                    }
                     Some(other) => unsupported(format!("SecurityFiltering({other:?})")),
                 }
             }
+            "SaveAsXml" | "SaveAsJson" => self.query_save_as(def, &qs, method, args),
             other => unsupported(format!("Query.{other}")),
         }
+    }
+
+    /// `SaveAsXml(OutStream)` writes the rows as a .NET DataSet, `SaveAsJson(OutStream)` as an array
+    /// of objects keyed by column name. Both run the query with the filters set now, whether it is
+    /// open or not (query/TestQueryOuterJoinDescendingSaveAsContracts.al:Query_SaveAsXml_And_SaveAsJson_Output,
+    /// corpus branch al-runtime-rs, pending push). Pinned for Integer columns; the lines of the XML are
+    /// not pinned (the probe trims and joins them), the stream encoding is taken to be UTF-8 without a
+    /// byte order mark.
+    fn query_save_as(&mut self, def: &ir::Query, qs: &Qs, method: &str, args: &[Value]) -> Result<Value, Signal> {
+        let Some(Value::Library(_, h)) = args.first() else {
+            return unsupported(format!("{method} with {:?}", args.first()));
+        };
+        let blob = match &*h.borrow() {
+            al_builtins::value::LibraryValue::OutStream(blob, al_builtins::stream::Encoding::Utf8) => blob.clone(),
+            _ => {
+                return unsupported(format!(
+                    "{method} to a stream that is not a UTF-8 OutStream (not pinned)"
+                ));
+            }
+        };
+        let cols: Vec<usize> = (0..def.columns.len())
+            .filter(|&c| !def.columns[c].filter_element)
+            .collect();
+        let json = method == "SaveAsJson";
+        for &c in &cols {
+            if !matches!(def.columns[c].ty, RtType::Integer) {
+                return unsupported(format!(
+                    "{method} of the column {} of type {:?} (only Integer columns are pinned)",
+                    def.columns[c].name, def.columns[c].ty
+                ));
+            }
+        }
+        let filters = qs.borrow().filters.clone();
+        let (rows, _) = self.query_rows(def, &filters)?;
+        let top = qs.borrow().top.unwrap_or(def.top);
+        let rows: Vec<&QueryRow> = rows
+            .iter()
+            .take(if top > 0 { top as usize } else { usize::MAX })
+            .collect();
+        let cell = |r: &QueryRow, c: usize| match &r.columns[c] {
+            Value::Integer(i) => i.to_string(),
+            _ => String::new(),
+        };
+        let mut out = String::new();
+        if json {
+            out.push('[');
+            for (i, r) in rows.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push('{');
+                for (k, &c) in cols.iter().enumerate() {
+                    if k > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&format!("\"{}\":{}", def.columns[c].name, cell(r, c)));
+                }
+                out.push('}');
+            }
+            out.push(']');
+        } else {
+            out.push_str(r#"<?xml version="1.0" standalone="yes"?><DataSet><xs:schema id="NewDataSet" xmlns="" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata"><xs:element name="NewDataSet" msdata:IsDataSet="true" msdata:MainDataTable="Result" msdata:Locale=""><xs:complexType><xs:choice minOccurs="0" maxOccurs="unbounded"><xs:element name="Result" msdata:Locale=""><xs:complexType><xs:sequence>"#);
+            for &c in &cols {
+                out.push_str(&format!(
+                    r#"<xs:element name="{}" type="xs:int" minOccurs="0" />"#,
+                    def.columns[c].name
+                ));
+            }
+            out.push_str(
+                "</xs:sequence></xs:complexType></xs:element></xs:choice></xs:complexType></xs:element></xs:schema>",
+            );
+            for r in &rows {
+                out.push_str("<Result>");
+                for &c in &cols {
+                    let n = &def.columns[c].name;
+                    out.push_str(&format!("<{n}>{}</{n}>", cell(r, c)));
+                }
+                out.push_str("</Result>");
+            }
+            out.push_str("</DataSet>");
+        }
+        blob.borrow_mut().bytes.extend_from_slice(out.as_bytes());
+        Ok(Value::Boolean(true))
     }
 
     /// The value of column `column` in the row `Read` returned last.
@@ -232,13 +346,68 @@ impl Session {
         let qs = qs.borrow();
         match qs.run.as_ref().and_then(|r| r.current.as_ref()) {
             Some(row) => Ok(row[column].clone()),
-            None => unsupported("reading a query column without a current row (not pinned)"),
+            None => {
+                // Before Open, after Open and before the first Read, and after the last row alike
+                // (query/TestQueryRuntimeContracts.al:Query_ColumnRead_WithoutARow_ThrowsQueryNoDataSet).
+                let def = self.engine.program.objects[qs.object as usize]
+                    .query
+                    .as_ref()
+                    .expect("a query object");
+                Err(Signal::Error(AlError {
+                    message: format!(
+                        "You have not yet retrieved a data row for this query. The value for column '{}' can only be accessed after a row is retrieved with a call to the READ function.",
+                        def.columns[column].name
+                    ),
+                    code: "QueryNoDataSet".into(),
+                    call_stack: String::new(),
+                }))
+            }
         }
     }
 
+    /// `ColumnCaption`: the `Caption` property, else the caption of the source field.
+    fn column_caption(&self, def: &ir::Query, col: usize) -> Result<String, Signal> {
+        let c = &def.columns[col];
+        if let Some(caption) = &c.caption {
+            return Ok(caption.clone());
+        }
+        let Some(field) = c.field else {
+            return unsupported("the caption of a Count column without a Caption property (not pinned)");
+        };
+        let t = self.engine.tables[def.items[c.item].table].clone().expect("table");
+        self.field_caption_checked(&t, field)
+    }
+
+    /// The filters in the order `GetFilters` prints them. The filters come in the order they were
+    /// set, except that the filter of a Text column comes last
+    /// (query/TestQueryRuntimeContracts.al:Query_GetFilters_ThreeFilters_OrderIsNotColumnOrder). That
+    /// probe has one Text column and it is also the OrderBy column, so it cannot tell "Text column"
+    /// from "OrderBy column" (docs/probes-needed.md asks for a probe); the Text reading is used.
+    fn filters_in_text_order(
+        &self,
+        def: &ir::Query,
+        filters: &[(usize, FilterExpr)],
+    ) -> Result<Vec<(usize, FilterExpr)>, Signal> {
+        let is_text = |c: usize| matches!(def.columns[c].ty, RtType::Text(_) | RtType::Code(_));
+        let mut out: Vec<_> = filters.iter().filter(|(c, _)| !is_text(*c)).cloned().collect();
+        out.extend(filters.iter().filter(|(c, _)| is_text(*c)).cloned());
+        Ok(out)
+    }
+
     fn query_read(&mut self, def: &ir::Query, qs: &Qs) -> Result<Value, Signal> {
+        // Read on a query that is not open returns false
+        // (query/TestQueryRuntimeContracts.al:Query_StateMisuse_DoesNotThrow).
         if qs.borrow().run.is_none() {
-            return unsupported("Read on a query that is not open (not pinned)");
+            return Ok(Value::Boolean(false));
+        }
+        if !qs.borrow().run.as_ref().expect("open").started {
+            let filters = qs.borrow().filters.clone();
+            let (rows, stamps) = self.query_rows(def, &filters)?;
+            let mut q = qs.borrow_mut();
+            let run = q.run.as_mut().expect("open");
+            run.rows = rows;
+            run.stamps = stamps;
+            run.started = true;
         }
         // A write to a table the query reads, made between two Reads, invalidates the result set;
         // Read then reads again and resumes after the last row it returned, in the query's order
@@ -300,6 +469,20 @@ impl Session {
         // The joined rows: one row of each dataitem's table.
         let mut joined: Vec<JoinedRow> = Vec::new();
         self.expand(def, &plan, 0, &mut Vec::new(), &mut joined)?;
+        if !plan.outer.is_empty() {
+            let mut kept = Vec::new();
+            for j in joined {
+                let mut ok = true;
+                for (item, field, expr) in &plan.outer {
+                    let row = self.filled(def.items[*item].table, &j[*item]);
+                    ok &= expr.matches(&row[*field]);
+                }
+                if ok {
+                    kept.push(j);
+                }
+            }
+            joined = kept;
+        }
         let aggregated = def.columns.iter().any(|c| c.method.is_some());
         let dirs: Vec<bool> = def.order_by.iter().map(|(_, asc)| *asc).collect();
         let mut rows = if aggregated {
@@ -312,24 +495,37 @@ impl Session {
                     // Order by the OrderBy columns, then the primary key of each dataitem.
                     let mut key: Vec<Value> = def.order_by.iter().map(|(c, _)| columns[*c].clone()).collect();
                     for (item, row) in def.items.iter().zip(&j) {
+                        let row = self.filled(item.table, row);
                         let t = self.engine.tables[item.table].as_ref().expect("table");
-                        key.extend(t.primary_key(row));
+                        key.extend(t.primary_key(&row));
                     }
                     rows.push(QueryRow { columns, key });
                 }
             }
             rows
         };
+        for r in &rows {
+            for v in &r.key {
+                if let Value::Text(t) | Value::Code(t) = v {
+                    if !collation::supported(t) {
+                        return unsupported(format!(
+                            "sorting or grouping text `{t}` (the database collation of its characters is not pinned)"
+                        ));
+                    }
+                }
+            }
+        }
         rows.sort_by(|a, b| key_cmp(&a.key, &b.key, &dirs));
         // Rows that tie on every OrderBy column and still differ are ordered by the primary key
         // ascending (corpus query/TestQueryOrderAfterWrite.al:92-104, ascending only), or in no
-        // pinned way: grouped rows, and ties under a descending OrderBy.
+        // pinned way: grouped rows. Ties under a descending OrderBy still ascend by primary key
+        // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs, pending push).
         let k = dirs.len();
-        if aggregated || dirs.iter().any(|a| !a) {
+        if aggregated {
             for w in rows.windows(2) {
                 if key_cmp(&w[0].key[..k], &w[1].key[..k], &dirs) == Ordering::Equal {
                     return unsupported(
-                        "rows that tie on every OrderBy column under a descending OrderBy or in a grouped query (their order is not pinned)",
+                        "rows that tie on every OrderBy column in a grouped query (their order is not pinned)",
                     );
                 }
             }
@@ -345,6 +541,7 @@ impl Session {
             flow: vec![Vec::new(); def.items.len()],
             post: Vec::new(),
             having: Vec::new(),
+            outer: Vec::new(),
         };
         for (i, item) in def.items.iter().enumerate() {
             let fields = &engine.program.objects[item.table].table.as_ref().expect("table").fields;
@@ -377,9 +574,6 @@ impl Session {
             };
             let Some(expr) = expr else { continue };
             let item = &def.items[c.item];
-            if item.left_outer && item.parent.is_some() {
-                return unsupported("a runtime filter on an outer-joined dataitem (not pinned)");
-            }
             if c.reverse_sign {
                 return unsupported(
                     "a filter on a ReverseSign column (whether it applies before the sign flips is not pinned)",
@@ -395,6 +589,8 @@ impl Session {
                 // Corpus query/TestQueryFlowFieldColumn.al:150-200: it sets the flow filter of the
                 // FlowFields of the dataitem; it never constrains the rows.
                 plan.flow[c.item].push(FieldFilter { field, expr, group: 0 });
+            } else if schema.stored && item.left_outer && item.parent.is_some() {
+                plan.outer.push((c.item, field, expr));
             } else if schema.stored {
                 plan.scan[c.item].push(FieldFilter { field, expr, group: 0 });
             } else {
@@ -426,7 +622,9 @@ impl Session {
         let item = &def.items[level];
         let t: TableDef = self.engine.tables[item.table].clone().expect("table");
         let mut filters = plan.scan[level].clone();
-        if let Some(parent) = item.parent {
+        // A parent that had no match has nothing to link to.
+        let parent_missing = item.parent.is_some_and(|p| chosen[p].is_empty());
+        if let Some(parent) = item.parent.filter(|_| !parent_missing) {
             // Corpus query/TestQueryDataItemLinkMultiField.al: every equality of the link holds.
             for (own, theirs) in &item.link {
                 let v = ops::convert(chosen[parent][*theirs].clone(), &t.fields[*own].ty)?;
@@ -438,15 +636,16 @@ impl Session {
             }
         }
         let mut rows: Vec<Vec<Value>> = Vec::new();
-        self.each_row(&t, &filters, |row| {
-            rows.push(row.to_vec());
-            Ok(())
-        })?;
+        if !parent_missing {
+            self.each_row(&t, &filters, |row| {
+                rows.push(row.to_vec());
+                Ok(())
+            })?;
+        }
         if rows.is_empty() && item.left_outer && item.parent.is_some() {
             // Corpus query/TestQueryJoin.al:117-145: the unmatched parent is kept, the child's
-            // columns hold their defaults.
-            let row = t.fields.iter().map(|f| self.default_value(&f.ty)).collect();
-            rows.push(row);
+            // columns hold their defaults (`NO_MATCH` stands for the row, see `row_of`).
+            rows.push(NO_MATCH);
         }
         for row in rows {
             chosen.push(row);
@@ -467,7 +666,7 @@ impl Session {
             }
             let item = &def.items[c.item];
             let field = c.field.expect("a column over a field");
-            let row = &joined[c.item];
+            let row = &self.filled(item.table, &joined[c.item]);
             let schema = &engine.program.objects[item.table].table.as_ref().expect("table").fields[field];
             let mut v = if schema.stored {
                 row[field].clone()
@@ -485,6 +684,16 @@ impl Session {
             out.push(v);
         }
         Ok(out)
+    }
+
+    /// The row of a dataitem in a joined row: the defaults when the dataitem had no match.
+    fn filled(&mut self, table: usize, row: &[Value]) -> Vec<Value> {
+        if row.is_empty() {
+            let t = self.engine.tables[table].clone().expect("table");
+            t.fields.iter().map(|f| self.default_value(&f.ty)).collect()
+        } else {
+            row.to_vec()
+        }
     }
 
     fn probe(
@@ -548,34 +757,78 @@ impl Session {
             }
             for (ci, c) in def.columns.iter().enumerate() {
                 let Some(method) = c.method else { continue };
+                // A dataitem that had no match under a left outer join adds no row to its aggregates
+                // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch al-runtime-rs,
+                // pending push: `2/sum0/cnt0`).
                 let values = || -> Vec<Value> {
                     let field = c.field.expect("a column over a field");
-                    rows.iter().map(|j| j[c.item][field].clone()).collect()
+                    rows.iter()
+                        .filter(|j| !j[c.item].is_empty())
+                        .map(|j| j[c.item][field].clone())
+                        .collect()
                 };
                 let mut v = match method {
-                    M::Count => Value::Integer(rows.len() as i32),
+                    M::Count => Value::Integer(rows.iter().filter(|j| !j[c.item].is_empty()).count() as i32),
                     M::Sum | M::Average => {
                         let vs = values();
                         let mut sum = Decimal::ZERO;
                         for x in &vs {
                             match x {
                                 Value::Decimal(d) => sum += d,
+                                Value::Integer(i) => sum += Decimal::from(*i),
+                                Value::BigInteger(i) => sum += Decimal::from(*i),
+                                Value::Duration(i) => sum += Decimal::from(*i),
                                 other => return unsupported(format!("Sum over {other:?}")),
                             }
                         }
-                        if method == M::Sum {
-                            Value::Decimal(sum)
-                        } else if vs.is_empty() {
-                            return unsupported("Average over no rows");
+                        // Over no rows both give 0 (query/TestQueryRuntimeContracts.al:
+                        // Query_ScalarAggregates_OverNoRows_ReturnOneRowOfZeros).
+                        let total = if method == M::Sum || vs.is_empty() {
+                            sum
                         } else {
-                            // Corpus query/TestQueryAggregation.al:36-80 (150, 50). A quotient that
-                            // does not terminate is refused: BC's decimal precision is not pinned.
-                            let n = Decimal::from(vs.len() as i64);
-                            let avg = sum / n;
-                            if avg * n != sum {
-                                return unsupported("an Average that does not divide exactly");
+                            let avg = sum / Decimal::from(vs.len() as i64);
+                            match &c.ty {
+                                // An Integer column averages to an Integer, truncated: 1.33 and 1.5
+                                // both give 1 (Query_Average_IntegerColumnTruncates_...).
+                                RtType::Decimal => {
+                                    // A Decimal column keeps 17 places (1.33333333333333333). Whether
+                                    // BC rounds or cuts the 18th is not pinned: refuse where they differ.
+                                    let cut = avg.round_dp_with_strategy(17, rust_decimal::RoundingStrategy::ToZero);
+                                    let rounded = avg.round_dp_with_strategy(
+                                        17,
+                                        rust_decimal::RoundingStrategy::MidpointAwayFromZero,
+                                    );
+                                    if cut != rounded {
+                                        return unsupported(
+                                            "an Average of a Decimal column that needs rounding at the 17th place (not pinned)",
+                                        );
+                                    }
+                                    cut
+                                }
+                                _ => avg.trunc(),
                             }
-                            Value::Decimal(avg)
+                        };
+                        match &c.ty {
+                            RtType::Decimal => Value::Decimal(total),
+                            RtType::Integer => {
+                                match i32::try_from(total.trunc().mantissa() / 10i128.pow(total.trunc().scale())) {
+                                    Ok(i) => Value::Integer(i),
+                                    Err(_) => return unsupported("a Sum that overflows an Integer column"),
+                                }
+                            }
+                            RtType::BigInteger => {
+                                match i64::try_from(total.trunc().mantissa() / 10i128.pow(total.trunc().scale())) {
+                                    Ok(i) => Value::BigInteger(i),
+                                    Err(_) => return unsupported("a Sum that overflows a BigInteger column"),
+                                }
+                            }
+                            RtType::Duration => {
+                                match i64::try_from(total.trunc().mantissa() / 10i128.pow(total.trunc().scale())) {
+                                    Ok(i) => Value::Duration(i),
+                                    Err(_) => return unsupported("a Sum that overflows a Duration column"),
+                                }
+                            }
+                            other => return unsupported(format!("Sum or Average of a {other:?} column")),
                         }
                     }
                     M::Min | M::Max => {
@@ -598,7 +851,8 @@ impl Session {
                         }
                         match best {
                             Some(b) => b,
-                            None => return unsupported("Min or Max over no rows (not pinned)"),
+                            // Over no rows: 0 (the type's default).
+                            None => self.default_value(&c.ty),
                         }
                     }
                 };

@@ -469,6 +469,15 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "RecordId.GetRecord#1" => {
             "RecordId.GetRecord is in no corpus test, so whether it reads the row or returns a handle is not pinned"
         }
+        "RequestPage.Update#1" => {
+            "RequestPage.Update (RequestOptionsPage.Update(SaveRecord)) is in no corpus test, so what it re-evaluates on the request page and whether it saves the record is not pinned"
+        }
+        "Report.Preview#1" => {
+            "Report.Preview is in no corpus test, so whether a run of a test (Run, SaveAs, a request page) is a preview is not pinned"
+        }
+        "FileUpload.CreateInStream#1" | "FileUpload.CreateInStream#2" => {
+            "FileUpload.CreateInStream is in no corpus test, so what a FileUpload holds without a client and the stream it opens is not pinned"
+        }
         "Record.FieldError#3" | "FieldRef.FieldError#3" => {
             "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
         }

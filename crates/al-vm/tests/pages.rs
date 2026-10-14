@@ -35,6 +35,22 @@ page 50001 "PG Card"
     }
 }
 
+page 50009 "PG CodeList"
+{
+    PageType = List;
+    SourceTable = "PG Row";
+    layout
+    {
+        area(Content)
+        {
+            repeater(Lines)
+            {
+                field(Code; Rec."No.") { }
+            }
+        }
+    }
+}
+
 page 50003 "PG Format"
 {
     PageType = Card;
@@ -1010,4 +1026,38 @@ fn a_caption_assigned_in_on_open_page_is_the_test_pages_caption() {
         "F",
     );
     assert_eq!(text(r), "Dynamic Caption/Static Caption");
+}
+
+// handlers/TestPagePlatformPageSourceTable_Tests.al:66,125: a bare name in the field position of
+// FindFirstField is a control of the page; a value no row carries raises the pinned error.
+#[test]
+fn find_first_field_takes_a_bare_control_name() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG FormatList\"; T: Text; begin
+                {}
+                TP.OpenView();
+                T := Format(TP.FindFirstField(NoCtl, 'B')) + TP.NoCtl.Value();
+                asserterror TP.FindFirstField(NoCtl, 'Q');
+                exit(T + '|' + GetLastErrorText());
+            end;",
+            rows(&[("A", 1), ("B", 2)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "YesB|The row does not exist on the TestPage.");
+    // A control called Code (the data type's name), as page "Currencies" has.
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG CodeList\"; begin
+                {}
+                TP.OpenView();
+                TP.FindFirstField(Code, 'B');
+                exit(TP.Code.Value());
+            end;",
+            rows(&[("A", 1), ("B", 2)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "B");
 }

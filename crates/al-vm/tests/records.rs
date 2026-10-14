@@ -623,3 +623,92 @@ codeunit 50100 C
     s.set_company("CRONUS International Ltd.");
     assert!(s.call(oi, ri("Own"), inst, vec![]).is_ok());
 }
+
+#[test]
+fn clear_of_an_empty_temporary_record_resets_fields_and_filters() {
+    // Nothing pins what Clear does to the rows of a temporary table (docs/probes-needed.md), but
+    // with no rows both readings give the same state, so that case is run.
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\" temporary; begin
+            R.\"No.\" := 'a'; R.Grp := 7; R.SetRange(Grp, 7);
+            Clear(R);
+            exit(R.\"No.\" + Format(R.Grp) + Format(R.GetFilters()) + Format(R.IsEmpty()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "0Yes");
+}
+
+#[test]
+fn clear_of_a_temporary_record_that_holds_rows_is_refused() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\" temporary; begin
+            R.\"No.\" := 'a'; R.Insert(); Clear(R); exit('ran');
+        end;",
+        "F",
+    );
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("temporary"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn overloads_that_differ_by_record_type_are_told_apart() {
+    // System Application's "Retention Policy Setup Impl." has ValidateRetentionPeriod(Record "Retention
+    // Policy Setup") and ValidateRetentionPeriod(Record "Retention Policy Setup Line"); AL picks by the
+    // record's table.
+    let src = r#"
+table 50901 "ALT Other" { fields { field(1; "No."; Code[20]) { } field(2; Name; Text[20]) { } } keys { key(PK; "No.") { } } }
+codeunit 50101 D {
+  procedure Which(R: Record "ALT T"): Text begin exit('T' + R."No."); end;
+  procedure Which(R: Record "ALT Other"): Text begin exit('O' + R.Name); end;
+  procedure F(): Text var A: Record "ALT T"; B: Record "ALT Other"; begin
+    A."No." := 'x'; B.Name := 'y'; exit(Which(A) + Which(B)); end;
+}"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), format!("{TABLE}\n{src}"))],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "D").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    let r = s.call(oi, ri, inst, vec![]).map(|(v, _)| v);
+    assert_eq!(text(r), "TXOy");
+}
+
+#[test]
+fn copy_filter_copies_one_fields_filter_to_a_field_of_another_record() {
+    // record/TestRecordFilter.al:226-239 (the filter string of the source arrives on the target) and
+    // record/TestFilterAdvancedContracts.al:216-223 (a source without a filter clears the target's).
+    let r = run(
+        "procedure F(): Text var A: Record \"ALT T\"; B: Record \"ALT T\"; C: Record \"ALT T\"; R: Text; begin
+            A.SetRange(Grp, 1, 5);
+            A.CopyFilter(Grp, B.Grp);
+            R := A.GetFilter(Grp) + '|' + B.GetFilter(Grp) + '|';
+            B.SetRange(Grp, 42);
+            C.CopyFilter(Grp, B.Grp);
+            R += B.GetFilter(Grp) + '|' + Format(B.HasFilter());
+            exit(R);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "1..5|1..5||No");
+}

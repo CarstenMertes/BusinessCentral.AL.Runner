@@ -41,7 +41,9 @@ pub(super) fn nav_app_installed_app_rows(p: &Providers, t: &TableDef) -> Vec<Ent
 
 /// Published Application: "Runtime Package ID" (1), "Package ID" (2), ID (3), Name (4), Publisher (5),
 /// version (6 to 9). The two package ids of an app are one value (AL Runner measured that on a real tier
-/// for an app published through the development endpoint).
+/// for an app published through the development endpoint). "Tenant ID" (12) is blank: install/TestRetenPolAllowedTables_Tests.al
+/// only pins that the row of Base Application satisfies `SetFilter("Tenant ID", '%1|%2', '', TenantId)`, which blank does
+/// for every app (docs/probes-needed.md: per-tenant apps may carry the tenant id on a real tier).
 pub(super) fn published_application_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     p.engine()
         .program

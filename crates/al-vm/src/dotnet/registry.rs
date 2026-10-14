@@ -48,11 +48,17 @@ impl Pin {
 /// for a static member or a constructor); the result of a constructor is the new object.
 pub type MemberFn = fn(&mut Session, Option<&Rc<DotNetObject>>, &[Value]) -> Result<Value, Signal>;
 
+/// A member that assigns to `var`/`out` arguments: it receives the arguments mutably, and the
+/// router writes every changed argument that was passed by reference back to its variable.
+pub type MemberRefFn = fn(&mut Session, Option<&Rc<DotNetObject>>, &mut [Value]) -> Result<Value, Signal>;
+
 pub struct RegistryMember {
     pub name: String,
     pub kind: MemberKind,
     pub pin: Pin,
     pub call: MemberFn,
+    /// When set, it is called instead of `call` (which then only names the member).
+    pub call_ref: Option<MemberRefFn>,
 }
 
 pub struct RegistryType {

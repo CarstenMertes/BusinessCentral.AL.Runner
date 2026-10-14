@@ -103,6 +103,11 @@ fn outcomes(main: &str) -> Vec<(String, Outcome)> {
 
 /// [`outcomes`] with the demand roots chosen: `eager` compiles every table of the System app.
 fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outcome)> {
+    outcomes_app("main", main, roots)
+}
+
+/// [`outcomes_with`] with the id of the app under test chosen (a platform table lists apps by Guid).
+fn outcomes_app(app_id: &str, main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outcome)> {
     use al_sema::workspace::{AppKind, AppSource};
     let app = |id: &str, name: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
         id: id.into(),
@@ -112,7 +117,7 @@ fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outco
     };
     let (_, l) = al_sema::lower::compile_apps_with(
         vec![
-            app("main", "main", &[], vec![("main.al".into(), main.into())]),
+            app(app_id, "main", &[], vec![("main.al".into(), main.into())]),
             app(al_sema::workspace::PLATFORM_APP_ID, "System", &[], system_app_files()),
         ],
         vec![AppKind::Workspace, AppKind::Dependency],
@@ -125,7 +130,12 @@ fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outco
         .iter()
         .map(|o| o.iter().map(|r| r.first().cloned()).collect())
         .collect();
-    let engine = Engine::new(l.program.clone(), blocked);
+    // The two sources above carry no manifest, so no version; the app tables list an app only with one.
+    let mut program = (*l.program).clone();
+    for a in program.apps.iter_mut().filter(|a| a.version.is_empty()) {
+        a.version = "1.0.0.0".into();
+    }
+    let engine = Engine::new(std::sync::Arc::new(program), blocked);
     let oi = l
         .program
         .objects
@@ -487,4 +497,21 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Present");
     passes(&o, "TenantRow");
+}
+
+#[test]
+fn a_published_application_row_passes_the_tenant_filter_of_the_retention_policy_module() {
+    // install/TestRetenPolAllowedTables_Tests.al: Base Application registers table 405 only when
+    // System Application finds its Published Application row through
+    // SetFilter("Tenant ID", '%1|%2', '', TenantId). The row must therefore satisfy that filter.
+    let o = outcomes_app(
+        "5d86850b-0d76-4eca-bd7b-951ad998e997",
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure OwnRowPassesTheTenantFilter() var P: Record "Published Application"; begin
+    P.SetRange(ID, '5d86850b-0d76-4eca-bd7b-951ad998e997');
+    P.SetFilter("Tenant ID", '%1|%2', '', 'any-tenant');
+    if not P.FindFirst() then Error('no row'); end; }"#,
+        al_sema::check::Roots::default(),
+    );
+    passes(&o, "OwnRowPassesTheTenantFilter");
 }

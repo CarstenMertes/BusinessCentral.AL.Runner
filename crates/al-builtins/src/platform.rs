@@ -244,8 +244,9 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // NAV App Installed App: record/TestNavAppInstalledAppSysTable.al. The compatibility, hash and extension columns are not read.
     (2_000_000_153, &[1, 2, 3, 4, 5, 6, 7, 8]),
     // Published Application: install/TestRetenPolAllowedTables_Tests.al reads the package ids through System Application code;
-    // the identity and version columns mirror NAV App Installed App.
-    (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9]),
+    // the identity and version columns mirror NAV App Installed App. "Tenant ID" (12) is read only through the filter
+    // `'' | TenantId` that the same test passes through (see apps.rs).
+    (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 12]),
     // Metadata Permission Set: permissions/TestMetadataPermissionSet.al, TestPermissionSetUndeclaredAssignable.al.
     (2_000_000_250, &[1, 2, 3, 4]),
     // Permission Set: permissions/TestPermissionSetTable.al.

@@ -220,8 +220,7 @@ item 6). The wire carries a tagged value.
   new values by position.
 - **Properties and fields** use `get_property` / `set_property`. Indexers are
   calls to `get_Item` / `set_Item`.
-- **`foreach` over a `DotNet` value** is refused until a corpus test pins it.
-  `GetEnumerator`, `MoveNext` and `Current` work as ordinary calls.
+- **`foreach` over a `DotNet` value** runs as `GetEnumerator`, `MoveNext` and `Current` host calls (ADR-024, pinned by the DotNet probe app).
 - **Streams.** The sidecar cannot see Rust memory. The first version copies:
   1. Passing an `InStream`: Rust sends the unread bytes. The sidecar wraps them
      in a read-only `MemoryStream`. After the call, Rust moves the AL read

@@ -220,12 +220,11 @@ fn calc_fields_keeps_an_uncommitted_in_memory_write() {
 
 #[test]
 fn what_the_corpus_does_not_pin_about_streams_is_refused() {
-    // The binary form of a Date and of a Decimal were measured once each and no rule is known.
+    // A Decimal of more than 18 significant digits has no measured binary form.
     assert!(refused(
         BASE,
-        "B.Data.CreateOutStream(O); O.Write(20240305D); exit('');"
+        "B.Data.CreateOutStream(O); O.Write(1234567890123456789.5); exit('');"
     ));
-    assert!(refused(BASE, "B.Data.CreateOutStream(O); O.Write(1.5); exit('');"));
     // An empty blob that was not loaded has no measured length.
     assert!(refused(
         BASE,
@@ -320,6 +319,57 @@ fn binary_forms_of_the_types_the_probe_measured() {
     assert_eq!(hex("O.Write(Big)"), "0,242,5,42,1,0,0,0,");
     assert_eq!(hex("O.Write(143005T)"), "201,149,28,3,");
     assert_eq!(hex("O.Write('text')"), "116,101,120,116,0,");
+}
+
+// streams/TestStreamsBinaryDateDecimalContracts.al:80-114 (Date and Decimal as bytes, in hex) and :117-123
+// (Decimal read back).
+#[test]
+fn binary_forms_of_a_date_and_a_decimal() {
+    let hex = |write: &str| {
+        let t = text(
+            base!("V: Byte; H: Text;"),
+            &format!(
+                "B.Data.CreateOutStream(O); {write}; B.Data.CreateInStream(I);
+                 while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);"
+            ),
+        );
+        t.split(',')
+            .filter(|b| !b.is_empty())
+            .map(|b| format!("{:02X}", b.parse::<u8>().unwrap()))
+            .collect::<String>()
+    };
+    for (w, want) in [
+        ("O.Write(0D)", "00000000"),
+        ("O.Write(DMY2Date(1, 1, 1753))", "1F8A1300"),
+        ("O.Write(DMY2Date(1, 1, 1900))", "932D1500"),
+        ("O.Write(DMY2Date(1, 1, 2000))", "EB4A1600"),
+        ("O.Write(DMY2Date(5, 3, 2024))", "E78F1600"),
+        ("O.Write(DMY2Date(31, 12, 9999))", "91766F00"),
+        ("O.Write(ClosingDate(DMY2Date(31, 12, 2024)))", "42921600"),
+    ] {
+        assert_eq!(hex(w), want, "{w}");
+    }
+    for (w, want) in [
+        ("O.Write(0.0)", "000000000000000000000000"),
+        ("O.Write(1.0)", "400000000000000000100000"),
+        ("O.Write(-1.0)", "C00000000000000000100000"),
+        ("O.Write(1.5)", "400000000000000000150000"),
+        ("O.Write(100.0)", "420000000000000000100000"),
+        ("O.Write(0.01)", "3E0000000000000000100000"),
+        ("O.Write(0.00000001)", "380000000000000000100000"),
+        ("O.Write(-0.5)", "BF0000000000000000500000"),
+        ("O.Write(123456789.123456789)", "488967452391785634120000"),
+        ("O.Write(999999999999999.99)", "4E9099999999999999990000"),
+    ] {
+        assert_eq!(hex(w), want, "{w}");
+    }
+    let t = text(
+        base!("D: Decimal; H: Text;"),
+        "B.Data.CreateOutStream(O); O.Write(123456789.123456789); O.Write(0.01); O.Write(-1.5);
+         B.Data.CreateInStream(I); I.Read(D); H += Format(D, 0, 9) + ';'; I.Read(D); H += Format(D, 0, 9) + ';';
+         I.Read(D); H += Format(D, 0, 9); exit(H);",
+    );
+    assert_eq!(t, "123456789.123456789;0.01;-1.5");
 }
 
 #[test]

@@ -87,7 +87,13 @@ fn get_module(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         return unsupported(format!("GetModuleInfo with {:?} as the app id", a.first()));
     };
     if id == [0; 16] {
-        return unsupported("GetModuleInfo of the null id answers a synthesized Microsoft module (not modelled)");
+        // True, with a module whose data version is the installed application's (at least 27):
+        // session/TestEnvironmentUserTenantContracts.al:195-201. Its other properties are not pinned.
+        if a.len() < 2 {
+            return unsupported("GetModuleInfo without its var parameter");
+        }
+        a[1] = module_value(c.application_module());
+        return Ok(Value::Boolean(true));
     }
     match c.module_by_id(&id) {
         ModuleLookup::Found(m) => {
@@ -117,8 +123,17 @@ fn callstack(c: &mut dyn Ctx, skip: usize) -> Out {
 }
 
 fn state(r: Option<&mut Value>) -> Result<ModuleInfoState, Signal> {
+    state_of(r, false)
+}
+
+/// The module behind a `ModuleInfo`; the module BC makes up for the null id is only readable where
+/// `synthesized_ok` (its data version).
+fn state_of(r: Option<&mut Value>, synthesized_ok: bool) -> Result<ModuleInfoState, Signal> {
     match r {
         Some(Value::Library(_, cell)) => match &*cell.borrow() {
+            LibraryValue::ModuleInfo(m) if m.synthesized && !synthesized_ok => {
+                unsupported("a property of the module BC answers for the null app id (only DataVersion is pinned)")
+            }
             LibraryValue::ModuleInfo(m) => Ok(m.clone()),
             other => unsupported(format!("a ModuleInfo nobody filled ({other:?})")),
         },
@@ -131,7 +146,11 @@ fn version_value(v: [i32; 4]) -> Value {
 }
 
 fn app_version(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    match state(r)?.version {
+    version_of(state(r)?)
+}
+
+fn version_of(m: ModuleInfoState) -> Out {
+    match m.version {
         Some(v) => Ok(version_value(v)),
         None => unsupported("the manifest of this app has no version the runtime can read"),
     }
@@ -139,8 +158,8 @@ fn app_version(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
 
 /// A freshly installed app's data version is its app version (not pinned further: the corpus asks
 /// only that a version comes back, session/TestMiscTypes.al).
-fn data_version(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    app_version(c, r, a)
+fn data_version(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    version_of(state_of(r, true)?)
 }
 
 /// Not null: the package id is a second id the manifest does not carry; it is the app id with its last

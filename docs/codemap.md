@@ -12,7 +12,8 @@ Line numbers are a snapshot and drift; find the current line with `rust-analyzer
 Dependencies point down. Core crates do no OS access (ADR-006); the host seam is `al-host`.
 
 ```
-al-test-cli    binary + harness: oracle, corpus, baseline, report, runtime (test runner), reading a run
+al-test-cli    corpus job: oracle, corpus, baseline file, ratchet, pass-rate report      alrunner-cli  user command line `alrunner test`
+al-testrun     test runner (runtime), install baseline, dependency loading, sidecar host, explain, refusal ranking
 al-vm          interpreter over the IR: Engine (immutable), Session (all mutable state), test client
 al-sema        workspace -> members -> check (+ demand) -> lower; produces al-ir
 al-builtins    values, builtin functions by catalog overload id, filters, JSON/XML, platform table registry
@@ -154,16 +155,10 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-test-cli
 
 - `args.rs` (305): Command-line parsing and the --help text. Entry: `parse` 79, `Args` 7, `HELP` 177.
-- `baseline.rs` (337): The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`, `CompanyInitializer`, `TestExecu. Entry: `BaselineRun` 22, `run` 51, `tables_written` 152.
 - `config.rs` (292): oracle/oracle.toml: versions, suites, corpus pin. Entry: `OracleFile` 7, `VersionEntry` 16, `SuiteEntry` 51.
 - `corpus.rs` (210): Corpus discovery: test codeunits, their area folder and file. Entry: `discover` 32, `CorpusIndex` 20, `TestCodeunit` 12.
-- `deps.rs` (123): Dependency apps for a corpus run (ADR-013). Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
-- `dotnet.rs` (816): The .NET sidecar host (ADR-014). Entry: `SidecarConfig` 26, `SidecarHost` 65, `encode` 675, `decode` 695.
 - `drift.rs` (119): Comparing case sets across BC versions (ADR-015 3.6). Entry: `differences` 11, `common` 26, `restrict` 39, `table` 46.
-- `explain.rs` (138): --explain: where a test was refused or failed, with file and line. Entry: `describe` 38, `detail` 77, `render` 90, `TestDetail` 27.
-- `host.rs` (113): The host the command line gives a session (ADR-006). Entry: `SystemClock` 10, `set_files_dir` 26, `system_host` 32, `DirFileSystem` 43.
 - `insight.rs` (388): --top-refusals (folded reason ranking) and --baseline-diff. Entry: `normalise_reason` 22, `top_refusals` 116, `baseline_diff` 194, `render_top` 145, `render_diff` 222.
-- `isolation.rs` (172): TestIsolation of the runner codeunit; Checkpoint for Function isolation. Entry: `TestIsolation` 27, `runner_isolation` 65, `Checkpoint` 99.
 - `lib.rs` (22): Runs the corpus's `[Test]` codeunits and reports them against the oracle.
 - `main.rs` (806): The binary: run each oracle version, report, ratchet. Exit 0 ok, 1 regression, 2 setup error. Entry: `main` 17, `run` 40, `run_version` 135, `find_explained` 670, `drift_summary` 124.
 - `oracle.rs` (288): The oracle: JUnit and xUnit cases of real BC, identified by (codeunit, name). Entry: `CaseId` 7, `OracleCase` 13, `parse_junit` 30, `parse_xunit` 74.
@@ -171,9 +166,29 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `pin.rs` (169): The per-version corpus pin check (ADR-007, "Decided without owner review (2026-10-13/14)"). Entry: `check` 13.
 - `report.rs` (461): Joins the oracle with the runtime's outcomes into the pass-rate report, and enforces the ratchet. Entry: `Outcome` 9, `build` 108, `ratchet` 177, `decide` 199, `parse_baseline` 221.
 - `runner.rs` (18): The seam between the harness and the runtime. Entry: `Runner` 6, `NoRuntime` 11.
-- `runtime.rs` (2422): Runs test codeunits the way BC's test runner does; one Session per codeunit; install baseline; handlers. Entry: `CorpusRuntime` 96, `run_suites_with` 235, `run_codeunit_observed` 517, `run_codeunit_isolated` 492, `blocked_site` 951, `RunOptions` 118, `resolve_handlers` 710.
 - `select.rs` (143): Test selection: --codeunit, --test, --area, --file (union). Entry: `Selection` 16, `matches` 34, `filter` 57.
-- `target.rs` (100): Reads the version fields of an app.json (ADR-015 step 4). Entry: `build_query` 13, `read_app_versions` 19, `app_versions_from_json` 25.
+
+### al-testrun
+
+- `baseline.rs` (336): The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`, `CompanyInitializer`, `TestExecu. Entry: `BaselineRun` 22, `run` 51, `tables_written` 152.
+- `deps.rs` (158): Dependency apps for a corpus run (ADR-013). Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
+- `discover.rs` (90): Finds `Subtype = Test` codeunits and their `[Test]` procedure names in AL text, without a syntax tree. Entry: `test_codeunits`.
+- `dotnet.rs` (815): The .NET sidecar host (ADR-014). Entry: `SidecarConfig` 26, `SidecarHost` 65, `encode` 675, `decode` 695.
+- `explain.rs` (137): --explain: where a test was refused or failed, with file and line. Entry: `describe` 38, `detail` 77, `render` 90, `TestDetail` 27.
+- `host.rs` (112): The host the command line gives a session (ADR-006). Entry: `SystemClock` 10, `set_files_dir` 26, `system_host` 32, `DirFileSystem` 43.
+- `isolation.rs` (171): TestIsolation of the runner codeunit; Checkpoint for Function isolation. Entry: `TestIsolation` 27, `runner_isolation` 65, `Checkpoint` 99.
+- `lib.rs` (32): Running test codeunits and reading the result, shared by `al-test-cli` and `alrunner-cli` (ADR-016 section 2). `Outcome` and `CaseId` live here. Entry: `Outcome`, `CaseId`.
+- `refusals.rs` (222): Ranking not-run reasons with names and numbers folded (`--top-refusals` of both command lines). Entry: `normalise_reason`, `rank`, `render_top`.
+- `runtime.rs` (2651): Runs test codeunits the way BC's test runner does; one Session per codeunit; install baseline; handlers. Entry: `CorpusRuntime` 96, `run_suites_with` 235, `run_codeunit_observed` 517, `run_codeunit_isolated` 492, `blocked_site` 951, `RunOptions` 118, `resolve_handlers` 710.
+- `target.rs` (99): Reads the version fields of an app.json (ADR-015 step 4). Entry: `build_query` 13, `read_app_versions` 19, `app_versions_from_json` 25.
+
+### alrunner-cli
+
+- `apps.rs` (128): Reads the APPs given on the command line (folder, `*.Source.zip`, `.app`) and builds the project the dependency resolution works for. Entry: `load`, `combined_project`.
+- `args.rs` (262): Command-line parsing and the `--help` text of `alrunner`. Entry: `parse`, `HELP`.
+- `main.rs` (51): The `alrunner` binary: runs on a thread with a large stack, maps results to exit codes. Entry: `main`.
+- `output.rs` (182): Counts, exit codes (0, 1, 6, 7), the summary line and JUnit XML of a run. Entry: `exit_code`, `junit`.
+- `run.rs` (433): `alrunner test`: load APPs, select test codeunits, resolve dependencies, compile, run, print. Entry: `test`.
 
 ### al-version
 
@@ -262,6 +277,21 @@ functions or methods; the file is in the module list above.
 6. Back in `run_version`: `report::build` (counts by area) -> `output::junit` / `markdown` -> `report::ratchet` and
    `decide` against `metrics/<major>/passing.txt` -> `format_baseline` with `--update-baseline`.
    Reading a run: `insight::top_refusals`, `insight::baseline_diff`, `explain::render`.
+
+### `alrunner test`: from the command line to a result
+
+1. `main` (alrunner-cli/main.rs) starts a thread with a large stack; `args::parse` returns `Command::Test`.
+2. `run::test`: `apps::load` per APP (`al_deps::load::read_package_at_with`: folder, `*.Source.zip` or `.app`) ->
+   `discover::test_codeunits` over each APP's files (which test codeunits exist, which the selection picks) ->
+   `al_version::choose_target` -> `apps::combined_project` (the APPs' dependencies, plus the `Application` and `System`
+   floors as declared Microsoft dependencies) -> `deps::load_project` (search list: `--dep`, `--package-cache`, each folder
+   APP's `.alpackages`, then the artifact feed; `al_deps::load::scan_path` reads a directory, a package file or an app folder).
+3. An APP with an `application` or `platform` floor gets the dependencies it implies (`Dependencies::implied_dependencies`),
+   so it sees Base Application without declaring it.
+4. `CorpusRuntime::run_suites_with` (the same compile and run as the corpus job; see "Corpus run" step 4), with
+   `RunOptions::only` set to the selected codeunits. `CorpusRuntime::results` lists every test with its codeunit.
+5. `run::test` filters to the selected tests, prints failures, `refusals::rank` / `render_top`, the summary line and the
+   timing line, writes `output::junit`, and returns `output::exit_code`.
 
 ### Compile pipeline: parse -> workspace -> demand -> check -> lower
 

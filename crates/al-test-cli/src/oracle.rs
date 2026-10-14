@@ -3,11 +3,7 @@
 //! Every `<testcase>` in it passed on real BC, so it is the denominator of the
 //! pass rate. A case is identified by its codeunit id and procedure name.
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CaseId {
-    pub codeunit: u32,
-    pub name: String,
-}
+pub use al_testrun::CaseId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OracleCase {

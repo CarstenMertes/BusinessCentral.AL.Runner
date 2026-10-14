@@ -616,6 +616,9 @@ pub struct ModuleInfoState {
     /// `None` when the manifest gave none the runtime can read.
     pub version: Option<[i32; 4]>,
     pub dependencies: Vec<[u8; 16]>,
+    /// The module BC makes up for the null app id: only its data version is pinned
+    /// (session/TestEnvironmentUserTenantContracts.al:195-201); the other properties are refused.
+    pub synthesized: bool,
 }
 
 /// The global variables of one codeunit instance.

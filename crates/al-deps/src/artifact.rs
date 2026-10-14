@@ -163,6 +163,8 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             workspace_apps: req.workspace_apps,
             search_dirs: &dirs,
             missing: MissingPolicy::Skip,
+            source_build: req.source_build,
+            application_implies_dependencies: req.application_implies_dependencies,
         })?;
         let todo: Vec<DepDecl> = loaded
             .skipped
@@ -543,6 +545,8 @@ mod tests {
                 workspace_apps: &[],
                 search_dirs: &[alpkg.to_path_buf()],
                 missing,
+                source_build: None,
+                application_implies_dependencies: false,
             },
             f,
             cdn,

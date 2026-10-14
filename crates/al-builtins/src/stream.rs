@@ -375,9 +375,11 @@ fn in_read(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let width = match a[0] {
         Value::Integer(_) => 4,
         Value::Byte(_) => 1,
+        // streams/TestStreamsBinaryDateDecimalContracts.al:117-123.
+        Value::Decimal(_) => 12,
         _ => {
             return unsupported(format!(
-                "InStream.Read into {:?} (only Integer and Byte are pinned)",
+                "InStream.Read into {:?} (only Integer, Byte and Decimal are pinned)",
                 a[0]
             ));
         }
@@ -392,6 +394,7 @@ fn in_read(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     })?;
     a[0] = match a[0] {
         Value::Byte(_) => Value::Byte(bytes[0]),
+        Value::Decimal(_) => Value::Decimal(decimal_from_bytes(&bytes)?),
         _ => Value::Integer(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
     };
     Ok(Value::Integer(width as i32))
@@ -426,10 +429,73 @@ fn out_write_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
     Ok(Value::Integer(bytes.len() as i32))
 }
 
+/// A Date as 4 bytes little endian: 0 for `0D`, else twice the day number (`0001-01-01` is day 1)
+/// plus 731, plus 1 for a closing date. Fits every measured value: 1753-01-01, 1900-01-01, 2000-01-01,
+/// 2024-03-05, 9999-12-31 and the closing date of 2024-12-31 (streams/TestStreamsBinaryDateDecimalContracts.al:80-90).
+fn date_bytes(day: i32, closing: bool) -> Result<Vec<u8>, Signal> {
+    let n = match (day, closing) {
+        (0, false) => 0,
+        (0, true) => return unsupported("OutStream.Write of the closing date of no date (not pinned)"),
+        (d, c) => 2 * d + 731 + i32::from(c),
+    };
+    Ok(n.to_le_bytes().to_vec())
+}
+
+/// A Decimal as 12 bytes (streams/TestStreamsBinaryDateDecimalContracts.al:7-12, :94-106): byte 0 holds
+/// the sign (0x80) and the decimal exponent of the first digit plus 0x40 (1 is 0x40, 100 is 0x42, 0.01
+/// is 0x3E); bytes 1 to 9 hold 18 digits as packed BCD, the first digit in the high nibble of byte 9, the
+/// digits after the last significant one are zero; bytes 10 and 11 are zero. Zero is twelve zero bytes.
+fn decimal_bytes(d: &rust_decimal::Decimal) -> Result<Vec<u8>, Signal> {
+    let mut out = vec![0u8; 12];
+    if d.is_zero() {
+        return Ok(out);
+    }
+    let digits = d.mantissa().unsigned_abs().to_string();
+    let exponent = digits.len() as i32 - 1 - d.scale() as i32;
+    let digits = digits.trim_end_matches('0');
+    if digits.len() > 18 {
+        return unsupported("OutStream.Write of a Decimal with more than 18 digits (not pinned)");
+    }
+    out[0] = (0x40 + exponent) as u8 | if d.is_sign_negative() { 0x80 } else { 0 };
+    for (i, c) in digits.bytes().enumerate() {
+        let v = c - b'0';
+        let at = 9 - i / 2;
+        out[at] |= if i % 2 == 0 { v << 4 } else { v };
+    }
+    Ok(out)
+}
+
+/// The inverse of [`decimal_bytes`].
+fn decimal_from_bytes(b: &[u8]) -> Result<rust_decimal::Decimal, Signal> {
+    if b.iter().all(|&x| x == 0) {
+        return Ok(rust_decimal::Decimal::ZERO);
+    }
+    let exponent = i32::from(b[0] & 0x7F) - 0x40;
+    let mut mantissa: i128 = 0;
+    for i in 0..18 {
+        let byte = b[9 - i / 2];
+        let v = if i % 2 == 0 { byte >> 4 } else { byte & 0xF };
+        mantissa = mantissa * 10 + i128::from(v);
+    }
+    let scale = 17 - exponent;
+    let bad = || Signal::Unsupported("InStream.Read of a Decimal out of range (not pinned)".into());
+    let mut d = if scale >= 0 {
+        rust_decimal::Decimal::try_from_i128_with_scale(mantissa, scale as u32).map_err(|_| bad())?
+    } else {
+        let m = mantissa.checked_mul(10i128.pow((-scale) as u32)).ok_or_else(bad)?;
+        rust_decimal::Decimal::try_from_i128_with_scale(m, 0).map_err(|_| bad())?
+    };
+    d.normalize_assign();
+    if b[0] & 0x80 != 0 {
+        d.set_sign_negative(true);
+    }
+    Ok(d)
+}
+
 /// `Write(Value)`: Integer and Boolean take 4 bytes, BigInteger 8, a Time 4 (its value, which is the
 /// millisecond of the day plus one), a Text its characters and a zero byte
-/// (:OutStream_Write_BinaryFormsOfEachType, all little endian). A Date and a Decimal have forms the
-/// probe measured once and no rule is known for (docs/probes-needed.md): refused.
+/// (:OutStream_Write_BinaryFormsOfEachType, all little endian), a Date 4 and a Decimal 12 (see
+/// [`date_bytes`], [`decimal_bytes`]).
 fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     if a.len() != 1 {
         return unsupported("OutStream.Write with a length (not pinned)");
@@ -443,6 +509,8 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
             .map_err(|_| Signal::Unsupported("OutStream.Write of a Time outside 32 bits".into()))?
             .to_le_bytes()
             .to_vec(),
+        Value::Date(d, closing) => date_bytes(*d, *closing)?,
+        Value::Decimal(d) => decimal_bytes(d)?,
         Value::Text(t) | Value::Code(t) if t.is_ascii() => {
             let mut v = enc.encode(t);
             v.extend(std::iter::repeat_n(0, enc.unit()));

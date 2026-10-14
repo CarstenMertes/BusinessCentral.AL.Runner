@@ -22,6 +22,10 @@ pub struct TestArgs {
     pub bc_version: Option<String>,
     pub no_download: bool,
     pub cache_dir: Option<PathBuf>,
+    /// `--no-compile-cache`: compile the dependency apps on every run, only what the tests reach.
+    pub no_compile_cache: bool,
+    /// `--require-compile-cache`: a run without a usable cache entry is an error (CI).
+    pub require_compile_cache: bool,
     /// `--codeunit ID`: select a test codeunit by object id.
     pub codeunits: Vec<u32>,
     /// `--filter TEXT`: select the tests whose name contains TEXT (any case).
@@ -81,6 +85,15 @@ DEPENDENCIES
                          lie outside a folder named for their build.
     --no-download        Never fetch Microsoft's apps from the artifact feed.
     --cache-dir DIR      Where downloaded artifacts are kept (else $ALRUNNER_CACHE).
+
+COMPILE CACHE
+    The Microsoft apps and the other dependency apps are compiled completely once, and the result
+    is kept in <cache dir>/compile/ (about 20 MB per set of apps). Later runs with the same apps,
+    versions, sources, target and the same alrunner build load it instead of compiling them.
+    The first run of a new set pays for the build (about 10 s for Business Central).
+    --no-compile-cache   Compile the dependency apps on every run, only what the tests reach.
+                         Same as ALRUNNER_NO_COMPILE_CACHE=1.
+    --require-compile-cache  Fail when there is no usable cache entry instead of building one (CI).
 
 SELECTION (a test is selected when any option matches it)
     --codeunit ID        A test codeunit by object id. Repeatable.
@@ -213,6 +226,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--bc-version" => a.bc_version = Some(text()?),
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
+            "--no-compile-cache" => a.no_compile_cache = true,
+            "--require-compile-cache" => a.require_compile_cache = true,
             "--codeunit" => {
                 let v = text()?;
                 a.codeunits
@@ -250,6 +265,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     }
     if a.apps.is_empty() {
         return Err("alrunner test needs at least one APP (an app folder or a *.Source.zip)".into());
+    }
+    if a.require_compile_cache && a.no_compile_cache {
+        return Err("--require-compile-cache and --no-compile-cache cannot be combined".into());
     }
     if a.test_data_company.is_some() && !a.test_data {
         return Err("--test-data-company needs --test-data".into());

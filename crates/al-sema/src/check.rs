@@ -251,6 +251,9 @@ pub struct Roots {
     /// Per object: its lowered form comes from a compile cache (`provided.rs`), so it is neither
     /// checked nor given a query layout. Only with `eager`; empty: none.
     pub provided: Vec<bool>,
+    /// With `provided`: the query layouts of the objects that come from the cache (the lowering of
+    /// the workspace's code reads them), by object index.
+    pub provided_queries: Vec<Option<crate::queries::QueryLayout>>,
 }
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
@@ -335,7 +338,13 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         .queries
         .into_iter()
         .enumerate()
-        .map(|(oi, cell)| cell.into_inner().flatten().filter(|_| wanted(oi)))
+        .map(|(oi, cell)| {
+            if provided(oi) {
+                roots.provided_queries.get(oi).cloned().flatten()
+            } else {
+                cell.into_inner().flatten().filter(|_| wanted(oi))
+            }
+        })
         .collect();
     timings.rest = rest_started.elapsed();
     CheckResult {

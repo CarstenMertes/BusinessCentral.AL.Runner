@@ -74,7 +74,12 @@ impl Lowered {
         if let Some(d) = &self.driven {
             let object = &self.program.objects[o];
             let routine = &object.routines[r];
-            driven_edges(d, &|q| (0..d.routine_counts[q]).map(|ri| (q, ri)).collect(), routine.locals.iter().chain(&object.globals), out);
+            driven_edges(
+                d,
+                &|q| (0..d.routine_counts[q]).map(|ri| (q, ri)).collect(),
+                routine.locals.iter().chain(&object.globals),
+                out,
+            );
         }
     }
 }
@@ -817,7 +822,10 @@ pub(crate) fn lower_core(
         }
     }
     let mut exported = export.then(crate::provided::DepSet::default);
-    let embeds_of_all: Vec<Vec<usize>> = pieces.iter().map(|p| p.as_ref().map_or_else(Vec::new, |p| p.embeds.clone())).collect();
+    let embeds_of_all: Vec<Vec<usize>> = pieces
+        .iter()
+        .map(|p| p.as_ref().map_or_else(Vec::new, |p| p.embeds.clone()))
+        .collect();
     for (oi, mut piece) in pieces.into_iter().flatten().enumerate() {
         if let Some(set) = exported.as_mut() {
             set.blocks.push(crate::provided::DepBlock {
@@ -849,8 +857,10 @@ pub(crate) fn lower_core(
                     .map(|v| v.iter().map(|&p| p as u32).collect())
                     .unwrap_or_default(),
                 ext_slots: {
-                    let mut v: Vec<(String, u32)> =
-                        shared.ext_slots[oi].iter().map(|(n, &i)| (n.clone(), i as u32)).collect();
+                    let mut v: Vec<(String, u32)> = shared.ext_slots[oi]
+                        .iter()
+                        .map(|(n, &i)| (n.clone(), i as u32))
+                        .collect();
                     v.sort();
                     v
                 },
@@ -858,6 +868,7 @@ pub(crate) fn lower_core(
                 xml_reason: shared.xml_reasons[oi].clone(),
                 report_reason: shared.report_reasons[oi].clone(),
                 report_extension: shared.driven.report_extension[oi].map(|e| e as u32),
+                query: checked.queries[oi].clone(),
             });
         }
         if !piece.positions.is_empty() {
@@ -2221,13 +2232,7 @@ impl Lowerer<'_> {
         out
     }
 
-    fn table_schema(
-        &self,
-        oi: usize,
-        obj: &ast::Object,
-        extensions: Vec<usize>,
-        routine_at: &RoutineAt,
-    ) -> ir::Table {
+    fn table_schema(&self, oi: usize, obj: &ast::Object, extensions: Vec<usize>, routine_at: &RoutineAt) -> ir::Table {
         let m = &self.members[oi];
         let fields = m
             .fields
@@ -4567,10 +4572,9 @@ pub fn compile_apps_cached(
     kinds: Vec<crate::workspace::AppKind>,
     symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
-    mut roots: crate::check::Roots,
+    roots: crate::check::Roots,
     src: &dyn crate::provided::DepSource,
-) -> Result<(Workspace, Lowered), String> {
-    use rayon::prelude::*;
+) -> Result<(Workspace, Lowered), (Workspace, String)> {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
@@ -4578,34 +4582,59 @@ pub fn compile_apps_cached(
     let started = std::time::Instant::now();
     let ws = Workspace::load_apps(apps, kinds, symbols);
     let load = started.elapsed();
-    let n_dep = crate::provided::dependency_prefix(&ws).ok_or("a dependency app follows a workspace app")?;
-    crate::provided::check_identity(&ws, n_dep, src)?;
-    let relower = crate::provided::relower_set(&ws, n_dep, src);
-    let blocks: Vec<Option<crate::provided::DepBlock>> = (0..ws.objects.len())
-        .into_par_iter()
-        .map(|oi| {
-            if oi < n_dep && !relower[oi] {
-                src.block(oi).map(Some)
-            } else {
-                Ok(None)
-            }
-        })
-        .collect::<Result<_, String>>()?;
+    compile_loaded_cached(ws, load, &catalog, roots, src)
+}
+
+/// [`compile_apps_cached`] on a workspace that is loaded. An error gives the workspace back, so
+/// the caller can compile it without the cache.
+pub fn compile_loaded_cached(
+    ws: Workspace,
+    load: std::time::Duration,
+    catalog: &al_builtins::catalog::Catalog,
+    mut roots: crate::check::Roots,
+    src: &dyn crate::provided::DepSource,
+) -> Result<(Workspace, Lowered), (Workspace, String)> {
+    use rayon::prelude::*;
+    let prepared = (|| {
+        let n_dep = crate::provided::dependency_prefix(&ws).ok_or("a dependency app follows a workspace app")?;
+        crate::provided::check_identity(&ws, n_dep, src)?;
+        let relower = crate::provided::relower_set(&ws, n_dep, src);
+        let blocks: Vec<Option<crate::provided::DepBlock>> = (0..ws.objects.len())
+            .into_par_iter()
+            .map(|oi| {
+                if oi < n_dep && !relower[oi] {
+                    src.block(oi).map(Some)
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<Result<_, String>>()?;
+        Ok::<_, String>(blocks)
+    })();
+    let blocks = match prepared {
+        Ok(b) => b,
+        Err(why) => return Err((ws, why)),
+    };
     let provided = Provided { src, blocks };
     let started = std::time::Instant::now();
     let members = crate::members::build(&ws);
     let members_time = started.elapsed();
     roots.eager = true;
     roots.provided = (0..ws.objects.len()).map(|oi| provided.has(oi)).collect();
-    let checked = crate::check::check_with(&ws, &members, &catalog, roots);
+    roots.provided_queries = (0..ws.objects.len())
+        .map(|oi| provided.has(oi).then(|| src.facts(oi).query.clone()).flatten())
+        .collect();
+    let checked = crate::check::check_with(&ws, &members, catalog, roots);
     let started = std::time::Instant::now();
-    let mut lowered = lower_core(&ws, &members, &checked, true, lower_workers(), Some(&provided), false)?;
+    let mut lowered = lower_core(&ws, &members, &checked, true, lower_workers(), Some(&provided), false)
+        .expect("a cache that passed its checks lowers");
     lowered.timings = CompileTimings {
         load,
         members: members_time,
         check: checked.timings,
         lower: started.elapsed(),
     };
+    drop(members);
     Ok((ws, lowered))
 }
 
@@ -4628,6 +4657,16 @@ fn compile_with_roots(
     let started = std::time::Instant::now();
     let ws = Workspace::load_apps(apps, kinds, symbols);
     let load = started.elapsed();
+    compile_loaded(ws, load, catalog, roots)
+}
+
+/// The compile of a workspace that is loaded (`load` is how long that took, for the timings).
+pub fn compile_loaded(
+    ws: Workspace,
+    load: std::time::Duration,
+    catalog: &al_builtins::catalog::Catalog,
+    roots: crate::check::Roots,
+) -> (Workspace, Lowered) {
     let started = std::time::Instant::now();
     let members = crate::members::build(&ws);
     let members_time = started.elapsed();
@@ -4640,6 +4679,8 @@ fn compile_with_roots(
         check: checked.timings,
         lower: started.elapsed(),
     };
+    drop(checked);
+    drop(members);
     (ws, lowered)
 }
 

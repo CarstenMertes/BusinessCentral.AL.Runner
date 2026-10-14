@@ -346,9 +346,17 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         }),
         trace: false,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
+        compile_cache: (!a.no_compile_cache
+            && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
+        .then(|| al_testrun::compile_cache::CompileCache {
+            dir: al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(
+                a.cache_dir.as_deref(),
+            )),
+            require: a.require_compile_cache,
+        }),
     };
     let load_time = started.elapsed();
-    let rt = CorpusRuntime::run_suites_with(
+    let rt = CorpusRuntime::try_run_suites_with(
         all_apps,
         kinds,
         &manifests,
@@ -357,7 +365,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         dotnet,
         &[SuiteRun::everything()],
         &opts,
-    );
+    )?;
     let p = &rt.phases;
     let d = sidecar_host.stats();
     sidecar_host.shutdown();
@@ -384,6 +392,30 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             secs(c.lower),
             secs(p.engine)
         );
+        if let Some(c) = &p.cache {
+            eprintln!(
+                "compile cache: {}; {} {}",
+                if c.hit {
+                    format!("hit, opened in {}", secs(c.open))
+                } else if c.built {
+                    format!("miss, built in {}", secs(c.build))
+                } else {
+                    "not used".to_string()
+                },
+                c.file.display(),
+                if c.notes.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", c.notes.join("; "))
+                }
+            );
+            eprintln!(
+                "compile cache: {:.1} MB, {} dependency objects, {} compiled again because the workspace extends or implements what they embed",
+                c.bytes as f64 / 1e6,
+                c.objects,
+                c.relowered
+            );
+        }
         let slowest: Vec<String> = p
             .slowest
             .iter()

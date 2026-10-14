@@ -321,6 +321,54 @@ fn run_version(
             passing: Default::default(),
         });
     }
+    let compile_cache = args.compile_cache.then(|| al_testrun::compile_cache::CompileCache {
+        dir: al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(
+            args.cache_dir.as_deref(),
+        )),
+        require: args.require_compile_cache,
+    });
+    if args.build_compile_cache {
+        let cc = compile_cache
+            .as_ref()
+            .expect("--build-compile-cache turns the cache on");
+        let first_dep = kinds
+            .iter()
+            .position(|k| *k == al_sema::AppKind::Dependency)
+            .unwrap_or(apps.len());
+        let started = std::time::Instant::now();
+        let (entry, report) = al_testrun::compile_cache::open_or_build(
+            cc,
+            &apps[first_dep..],
+            &manifests[first_dep..],
+            &symbols,
+            Some(&chosen.target),
+        )?;
+        let verified = std::time::Instant::now();
+        entry
+            .verify()
+            .map_err(|e| format!("compile cache entry {} is damaged: {e}", report.file.display()))?;
+        println!(
+            "compile cache: BC {}: {} {} ({:.1} MB), {} dependency objects; {} {:.2} s, checked every block in {:.2} s",
+            version.bc_version,
+            if report.built { "built" } else { "found" },
+            report.file.display(),
+            report.bytes as f64 / 1e6,
+            al_sema::provided::DepSource::len(&entry),
+            if report.built { "build" } else { "open" },
+            if report.built {
+                report.build.as_secs_f64()
+            } else {
+                report.open.as_secs_f64()
+            },
+            verified.elapsed().as_secs_f64(),
+        );
+        println!("compile cache build time: {:.2} s", started.elapsed().as_secs_f64());
+        return Ok(VersionRun {
+            code: 0,
+            oracle: Default::default(),
+            passing: Default::default(),
+        });
+    }
     // ADR-014: the sidecar starts lazily, at the first `DotNet` call that reaches it.
     let host = Arc::new(SidecarHost::new(SidecarConfig {
         sidecar: args.dotnet_sidecar.clone(),
@@ -377,9 +425,10 @@ fn run_version(
         trace: explained.is_some(),
         // The corpus has no test data: its oracle is a database the cases fill themselves.
         test_data: None,
+        compile_cache,
     };
     let load_time = started.elapsed();
-    let rt = runtime::CorpusRuntime::run_suites_with(
+    let rt = runtime::CorpusRuntime::try_run_suites_with(
         apps,
         kinds,
         &manifests,
@@ -388,7 +437,7 @@ fn run_version(
         dotnet,
         &runs,
         &opts,
-    );
+    )?;
     let p = &rt.phases;
     let sidecar_stats = sidecar_host.stats();
     sidecar_host.shutdown();
@@ -401,6 +450,7 @@ fn run_version(
         tests_s: p.tests.as_secs_f64(),
         total_s: started.elapsed().as_secs_f64(),
         dotnet: report::DotNetTimes::of(&sidecar_stats),
+        compile_cache: p.cache.as_ref().map(report::CacheTimes::of),
         suites: p
             .suites
             .iter()
@@ -442,6 +492,9 @@ fn run_version(
         eprintln!("slowest test codeunits: {}", slowest.join("; "));
         if let Some(d) = &timings.dotnet {
             eprintln!("dotnet: {}", d.line());
+        }
+        if let Some(c) = &timings.compile_cache {
+            eprintln!("compile cache: {}", c.line());
         }
     }
     if rt.panics > 0 {

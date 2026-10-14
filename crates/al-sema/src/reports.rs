@@ -867,12 +867,10 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
     let mut modifies = Vec::new();
     for (name, sec) in &cx.layout.modifies {
         let trigger = |t: &str| {
-            sec.triggers()
-                .find(|x| x.name().eq_ignore_ascii_case(t))
-                .and_then(|x| {
-                    cx.routine_at
-                        .get(&(cx.oi, usize::from(x.syntax().text_range().start())))
-                })
+            sec.triggers().find(|x| x.name().eq_ignore_ascii_case(t)).and_then(|x| {
+                cx.routine_at
+                    .get(&(cx.oi, usize::from(x.syntax().text_range().start())))
+            })
         };
         match base_index(name) {
             Some(item) => modifies.push(ir::ReportExtModify {

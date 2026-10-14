@@ -48,6 +48,8 @@ pub struct DepFacts {
     pub report_reason: Option<String>,
     /// The report extension that changes the run of a report, if exactly one does.
     pub report_extension: Option<u32>,
+    /// The layout of a query, which the lowering of code that uses its columns reads.
+    pub query: Option<crate::queries::QueryLayout>,
 }
 
 /// The lowered form of one dependency object.
@@ -269,14 +271,22 @@ codeunit 60004 WUse { procedure W() var R: Record T; begin R.WX := 1; R.DX := 2;
         let mut apps = deps.clone();
         apps.extend(workspace);
         let kinds: Vec<AppKind> = (0..apps.len())
-            .map(|i| if i < deps.len() { AppKind::Dependency } else { AppKind::Workspace })
+            .map(|i| {
+                if i < deps.len() {
+                    AppKind::Dependency
+                } else {
+                    AppKind::Workspace
+                }
+            })
             .collect();
         let roots = Roots {
             eager: true,
             ..Default::default()
         };
         let (_, eager) = compile_apps_with(apps.clone(), kinds.clone(), &symbols, None, roots.clone());
-        let (ws, cached) = compile_apps_cached(apps, kinds, &symbols, None, roots, &set).expect("the cache fits");
+        let (ws, cached) = compile_apps_cached(apps, kinds, &symbols, None, roots, &set)
+            .map_err(|(_, why)| why)
+            .expect("the cache fits");
         let n_dep = dependency_prefix(&ws).unwrap();
         let relowered = (0..n_dep).filter(|&i| !cached.provided[i]).count();
         assert_eq!(eager.program.objects.len(), cached.program.objects.len());
@@ -296,7 +306,10 @@ codeunit 60004 WUse { procedure W() var R: Record T; begin R.WX := 1; R.DX := 2;
 
     #[test]
     fn a_workspace_that_changes_nothing_takes_every_dependency_object_from_the_cache() {
-        let relowered = assert_cached_equals_eager(deps(), vec![app("w", &["d1"], "codeunit 60000 C { procedure P() begin end; }")]);
+        let relowered = assert_cached_equals_eager(
+            deps(),
+            vec![app("w", &["d1"], "codeunit 60000 C { procedure P() begin end; }")],
+        );
         assert_eq!(relowered, 0);
     }
 
@@ -310,6 +323,9 @@ codeunit 60004 WUse { procedure W() var R: Record T; begin R.WX := 1; R.DX := 2;
     #[test]
     fn extensions_and_implementers_in_the_workspace_give_the_complete_compile() {
         let relowered = assert_cached_equals_eager(deps(), vec![app("w", &["d1"], EVERYTHING)]);
-        assert!(relowered >= 4, "table, page, interface users and the enum ({relowered})");
+        assert!(
+            relowered >= 4,
+            "table, page, interface users and the enum ({relowered})"
+        );
     }
 }

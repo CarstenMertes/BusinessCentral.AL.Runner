@@ -60,6 +60,15 @@ pub fn markdown(r: &Report) -> String {
         if t.eager {
             s.push_str("\nThis run compiled every dependency routine, not only the ones the tests reach.\n");
         }
+        if let Some(c) = &t.compile_cache {
+            s.push_str(&format!("\nCompile cache: {}.\n", c.line()));
+            if c.built {
+                s.push_str(&format!(
+                    "Building the entry took {} and is part of Compile above; a run that finds the entry does not pay it.\n",
+                    secs(c.build_s)
+                ));
+            }
+        }
     }
     if !r.dependencies.is_empty() {
         s.push_str(&format!("\nDependency apps: {}.\n", r.dependencies.join(", ")));

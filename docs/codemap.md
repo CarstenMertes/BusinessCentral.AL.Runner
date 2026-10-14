@@ -29,17 +29,17 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-bcdb
 
 - `bacpac.rs` (417): The `.bacpac` container (port of `Bacpac.cs`). Entry: `BacpacTable` 30, `BacpacSource` 45.
-- `bak.rs` (428): The SQL Server backup path (port of `BakSource` and `TableReader.cs`). Entry: `BakSource` 29.
+- `bak.rs` (524): The SQL Server backup path (port of `BakSource` and `TableReader.cs`); `open_indexed` keeps the page map and catalog between runs. Entry: `BakSource` 29.
 - `bcp.rs` (551): Reads rows out of a bacpac's native-BCP data stream (port of `Bcp.cs`). Entry: `BacpacColumn` 31, `decimal_storage_bytes` 148, `BcpRowReader` 157.
-- `catalog.rs` (820): Reads the SQL Server system catalog base tables directly from page images (port of `Catalog.cs` and `ClusteredSeek.cs`). Entry: `PagePtr` 34, `AllocUnit` 37, `RowSet` 47, `SysObject` 56.
+- `catalog.rs` (924): `to_index_bytes`/`from_index_bytes`. Reads the SQL Server system catalog base tables directly from page images (port of `Catalog.cs` and `ClusteredSeek.cs`). Entry: `PagePtr` 34, `AllocUnit` 37, `RowSet` 47, `SysObject` 56.
 - `error.rs` (56): Errors. Entry: `Error` 10, `Result` 21.
 - `io.rs` (91): The byte source the readers work on. Entry: `ByteSource` 9.
 - `lib.rs` (27): Reads Business Central data straight out of a SQL Server native backup (`.bak`) or a cloud export (`.bacpac`).
 - `lob.rs` (217): Resolves off-row values. Entry: `LobReader` 29.
 - `model.rs` (530): Reading `model.xml`. Entry: `ModelScan` 17, `scan_streaming` 77, `split_name` 267.
 - `mtf.rs` (154): Structural parser for the Microsoft Tape Format (MTF) container a SQL Server native backup (`.bak`) is written in (port. Entry: `DataRegion` 36, `MtfFile` 44.
-- `pagefile.rs` (595): Maps SQL Server 8 KB pages inside a native full backup (`.bak`) to their file offsets by parsing the backup's structure,. Entry: `Page` 50, `PageFile` 52, `CrossCheck` 110.
-- `query.rs` (792): The BC meaning layer over a [`BcSource`] (port of the shared part of `Program.cs`). Entry: `BcTable` 15, `is_guid` 30, `parse_table_name` 50, `collate_cmp` 126.
+- `pagefile.rs` (713): `IndexStore`, `open_indexed` (a kept page map, checked against the file's length and data regions). Maps SQL Server 8 KB pages inside a native full backup (`.bak`) to their file offsets by parsing the backup's structure,. Entry: `Page` 50, `PageFile` 52, `CrossCheck` 110.
+- `query.rs` (814): `plan_read_table_in` (table list parsed once by the caller). The BC meaning layer over a [`BcSource`] (port of the shared part of `Program.cs`). Entry: `BcTable` 15, `is_guid` 30, `parse_table_name` 50, `collate_cmp` 126.
 - `records.rs` (425): Record parsers (port of `Records.cs`). Entry: `record_type` 10, `is_ghost_type` 14, `live_slot` 20, `FixedVar` 41.
 - `scsu.rs` (157): Decoder for SCSU (Standard Compression Scheme for Unicode), Unicode Technical Standard #6. Entry: `decode` 60.
 - `serve.rs` (297): Serve mode (port of `Program.Serve`). Entry: `serve` 33.
@@ -59,7 +59,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `file.rs` (66): A file as a byte source (pread), the OS side of `al-bcdb` (ADR-006). Entry: `FileSource` 17.
 - `lib.rs` (9): The OS side of `al-bcdb`: file byte source and the backup table provider for `--test-data` (ADR-020).
-- `provider.rs` (260): `BackupProvider`: the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
+- `provider.rs` (455): `BackupProvider` (`open_with_index_dir` keeps the backup's index in the cache dir; `cost` for `--timings`): the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
 
 ### al-cache
 

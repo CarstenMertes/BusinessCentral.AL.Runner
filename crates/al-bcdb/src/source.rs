@@ -77,3 +77,16 @@ pub fn open(src: Box<dyn ByteSource>) -> Result<Box<dyn BcSource>> {
         Ok(Box::new(crate::bak::BakSource::open(src)?))
     }
 }
+
+/// [`open`], keeping a `.bak`'s page map in `store` between runs (a `.bacpac` has none).
+pub fn open_indexed(src: Box<dyn ByteSource>, store: &dyn crate::pagefile::IndexStore) -> Result<Box<dyn BcSource>> {
+    let mut head = [0u8; 4];
+    if src.len() >= 4 {
+        src.read_at(0, &mut head)?;
+    }
+    if is_bacpac(&head) {
+        Ok(Box::new(crate::bacpac::BacpacSource::open(src)?))
+    } else {
+        Ok(Box::new(crate::bak::BakSource::open_indexed(src, store)?))
+    }
+}

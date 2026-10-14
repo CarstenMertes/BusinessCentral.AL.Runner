@@ -96,7 +96,12 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
 
 /// Opens a backup file.
 fn open_backup(a: &TestArgs, path: PathBuf) -> Result<(TestData, PathBuf), String> {
-    let provider = BackupProvider::open(&path, a.test_data_company.as_deref())
+    // The page map of the backup is kept next to the compile cache, so a cold or a warm open of a
+    // 900 MB backup reads the map instead of verifying every extent.
+    let index_dir = (!a.no_compile_cache
+        && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
+    .then(|| al_deps::cache::cache_root_from_env(a.cache_dir.as_deref()).join("backup-index"));
+    let provider = BackupProvider::open_with_index_dir(&path, a.test_data_company.as_deref(), index_dir.as_deref())
         .map_err(|e| format!("--test-data {}: {e}", path.display()))?;
     Ok((TestData::new(Arc::new(provider)), path))
 }
@@ -516,6 +521,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         );
         if let Some(line) = p.baseline_line() {
             eprintln!("{line}");
+        }
+        if let Some(cost) = test_data.as_ref().and_then(|(d, _)| d.provider.cost()) {
+            eprintln!("test data: {cost}");
         }
         if let Some(c) = &p.cache {
             eprintln!(

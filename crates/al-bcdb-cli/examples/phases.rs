@@ -33,6 +33,9 @@ fn main() {
     let t = Instant::now();
     let pf = PageFile::open(map(path)).unwrap();
     let t_map = t.elapsed();
+    for r in &pf.mtf().mqda_regions {
+        println!("region blocks {} ({} MB)", r.block_count, r.block_count * 8 / 1024);
+    }
     let t = Instant::now();
     let cat = Catalog::open(&pf).unwrap();
     let t_cat = t.elapsed();

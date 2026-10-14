@@ -19,6 +19,47 @@ use crate::types::{Cell, SysColumn, decode};
 use crate::value::Value;
 use std::collections::HashSet;
 
+const BLOB_MAGIC: &[u8; 8] = b"ALBXBAK1";
+
+/// A hash that notices truncation and flipped bytes; not a defence against an adversary (the
+/// index lives in the user's own cache).
+fn blob_hash(b: &[u8]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ b.len() as u64;
+    let mut chunks = b.chunks_exact(8);
+    for c in &mut chunks {
+        h = (h ^ u64::from_le_bytes(c.try_into().unwrap()))
+            .wrapping_mul(0x0100_0000_01b3)
+            .rotate_left(29);
+    }
+    for &x in chunks.remainder() {
+        h = (h ^ u64::from(x)).wrapping_mul(0x0100_0000_01b3);
+    }
+    h
+}
+
+fn join_blob(map: &[u8], catalog: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(40 + map.len() + catalog.len());
+    b.extend_from_slice(BLOB_MAGIC);
+    b.extend_from_slice(&(map.len() as u64).to_le_bytes());
+    b.extend_from_slice(&(catalog.len() as u64).to_le_bytes());
+    b.extend_from_slice(&blob_hash(catalog).to_le_bytes());
+    b.extend_from_slice(map);
+    b.extend_from_slice(catalog);
+    b
+}
+
+fn split_blob(b: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+    if b.get(..8)? != BLOB_MAGIC {
+        return None;
+    }
+    let map_len = usize::try_from(u64::from_le_bytes(b.get(8..16)?.try_into().ok()?)).ok()?;
+    let cat_len = usize::try_from(u64::from_le_bytes(b.get(16..24)?.try_into().ok()?)).ok()?;
+    let hash = u64::from_le_bytes(b.get(24..32)?.try_into().ok()?);
+    let map = b.get(32..32usize.checked_add(map_len)?)?;
+    let cat = b.get(32 + map_len..32usize.checked_add(map_len)?.checked_add(cat_len)?)?;
+    (32 + map_len + cat_len == b.len() && blob_hash(cat) == hash).then(|| (map.to_vec(), cat.to_vec()))
+}
+
 struct TableEntry {
     object_id: i32,
     rowset_id: i64,
@@ -42,8 +83,66 @@ struct Plan {
 
 impl BakSource {
     pub fn open(src: Box<dyn ByteSource>) -> Result<BakSource> {
-        let pf = PageFile::open(src)?;
+        Self::from_page_file(PageFile::open(src)?)
+    }
+
+    /// [`open`](BakSource::open), keeping what opening costs in `store` between runs: the page
+    /// map (a check of every extent of the file) and the catalog (a scan of the system tables).
+    /// With both kept, an open reads the container's framing and nothing else. Bytes that do not
+    /// fit the file are ignored and replaced.
+    pub fn open_indexed(src: Box<dyn ByteSource>, store: &dyn crate::pagefile::IndexStore) -> Result<BakSource> {
+        use std::sync::Mutex;
+        // The page map saves through this adapter, which keeps the bytes for the combined blob.
+        struct Section {
+            load: Option<Vec<u8>>,
+            saved: Mutex<Option<Vec<u8>>>,
+        }
+        impl crate::pagefile::IndexStore for Section {
+            fn load(&self) -> Option<Vec<u8>> {
+                self.load.clone()
+            }
+            fn save(&self, bytes: &[u8]) {
+                *self.saved.lock().unwrap() = Some(bytes.to_vec());
+            }
+        }
+        let (map_bytes, cat_bytes) = match store.load().and_then(|b| split_blob(&b)) {
+            Some((m, c)) => (Some(m), Some(c)),
+            None => (None, None),
+        };
+        let section = Section {
+            load: map_bytes,
+            saved: Mutex::new(None),
+        };
+        let pf = PageFile::open_indexed(src, &section)?;
+        let map_rebuilt = section.saved.lock().unwrap().is_some();
+        // A rebuilt map means the file is not the one the catalog bytes were made from.
+        let restored = if map_rebuilt {
+            None
+        } else {
+            cat_bytes.and_then(|b| Catalog::from_index_bytes(&b))
+        };
+        let (cat, fresh) = match restored {
+            Some(c) => (c, false),
+            None => (Catalog::open(&pf)?, true),
+        };
+        let this = Self::assemble(pf, cat)?;
+        if fresh {
+            // The map was rebuilt and sits in `saved`, or it was restored and is still in `load`.
+            let map = match section.saved.into_inner().unwrap().or(section.load) {
+                Some(m) => m,
+                None => return Ok(this),
+            };
+            store.save(&join_blob(&map, &this.cat.to_index_bytes()));
+        }
+        Ok(this)
+    }
+
+    fn from_page_file(pf: PageFile) -> Result<BakSource> {
         let cat = Catalog::open(&pf)?;
+        Self::assemble(pf, cat)
+    }
+
+    fn assemble(pf: PageFile, cat: Catalog) -> Result<BakSource> {
         let mut tables = Vec::new();
         let mut entries = Vec::new();
         for o in &cat.objects {

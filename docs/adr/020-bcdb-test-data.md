@@ -221,6 +221,26 @@ runtime defects, not differences between the restored company and a freshly prep
   (1466 tests not run); the dependency roots keep it because Microsoft's install code must not change what
   the backup holds.
 
+## Decided without owner review (2026-10-14, testdata-speed)
+
+Measured on the owner's demo app (10 tests, BC 28.5) with a cold page cache: opening the 934 MB backup took
+3.4 s, of which 2.4 s were the page map (a 40-byte read of the lead block of each of 14,900 extents; on a cold
+file the kernel reads about 270 MB for them) and 0.4 s the catalog (a scan of the system tables). Warm, the open
+is 30 to 60 ms. Each table read also parsed and sorted the names of all 4,100 tables again (4 to 8 ms per read,
+63 reads in the demo, 556 in Tests-ERM).
+
+- **The table list is parsed once**, at open (`query::plan_read_table_in`, `extension_columns_in`). A read of a
+  small table went from 4 to 8 ms to 0.2 to 0.5 ms.
+- **The page map and the catalog are kept** in `<cache dir>/backup-index/<file>-<hash>.pagemap` (2 MB for the
+  demo backup; the hash covers the path, the length and the modification time). A kept map is used only when the
+  file length and the data regions of the container still match, and the catalog part carries a checksum; anything
+  else is ignored, rebuilt and written again. The first open of a backup still pays the 2.4 s once. With the
+  index, a cold open is 8 to 30 ms. `--no-compile-cache` also turns the index off. This is a second persistent
+  cache (the brief allows only the compile cache); the owner asked for it by name in the task, the work it avoids
+  is a verification pass over the whole file, and the data itself (the rows) is not cached. Say no to remove it.
+- `--timings` prints one `test data:` line: open time, whether the kept index was used, number of table reads,
+  rows and time.
+
 ## Conformance
 
 `cargo test -p al-host -p al-data -p al-bcdb-std -p alrunner-cli` and

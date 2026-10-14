@@ -105,6 +105,13 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" => out
                 .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
+            // The Schedule button of the request page. Nothing pins what a run does with it, but a
+            // report that is only named (Base App's Item Tracing page has an action that runs
+            // "Item Tracing Specification"; handlers/TestPrecompiledOptionCaption.al:81 only opens the page)
+            // never reaches it, so it refuses when the report is run, not when it is compiled.
+            "allowscheduling" => out
+                .output
+                .push(format!("report property {name} is not supported yet")),
             other => out
                 .reasons
                 .push(format!("report property {other} is not supported yet")),

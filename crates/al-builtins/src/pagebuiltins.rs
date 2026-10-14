@@ -77,6 +77,7 @@ page_methods! {
     "Page.Run#1" => "Page.Run",
     "Page.Run#4" => "Page.RunStatic",
     "Page.SetRecord#1" => "Page.SetRecord",
+    "Page.SetSelectionFilter#1" => "Page.SetSelectionFilter",
     "Page.SetTableView#1" => "Page.SetTableView",
     "Page.RunModal#1" => "Page.RunModal",
     "Page.RunModal#5" => "Page.RunModalStatic",

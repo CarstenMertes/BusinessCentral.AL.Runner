@@ -133,6 +133,18 @@ page 62013 "PM Rowset"
     end;
 }
 page 62090 "PM Dialog" { PageType = StandardDialog; }
+report 62092 "PM Scheduled"
+{
+    ProcessingOnly = true; AllowScheduling = true;
+    dataset { dataitem(Row; "PM Row") { } }
+}
+page 62093 "PM Runs Scheduled"
+{
+    PageType = Card;
+    layout { area(Content) { field(Dummy; Dummy) { } } }
+    actions { area(Processing) { action(Print) { trigger OnAction() var R: Report "PM Scheduled"; begin R.Run(); end; } } }
+    var Dummy: Text[10];
+}
 page 62091 "PM Kinds"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -514,4 +526,26 @@ fn naming_a_systempart_on_a_test_page_is_refused() {
             K.OpenView(); Check('Yes', Format(K.NotesBox.Visible())); end;"
     ));
     assert!(matches!(&o[0].1, Outcome::NotRun(_)), "{o:?}");
+}
+
+// handlers/TestPrecompiledOptionCaption.al:81: a page whose action names a report with AllowScheduling opens.
+#[test]
+fn a_page_naming_a_report_with_allow_scheduling_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var P: TestPage \"PM Runs Scheduled\"; begin
+            P.OpenView(); Check('Yes', Format(P.Print.Enabled())); P.Close(); end;"
+    ));
+}
+
+// Nothing pins what running such a report does with the property: running it is refused.
+#[test]
+fn running_a_report_with_allow_scheduling_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Runs() begin Report.Run(Report::\"PM Scheduled\", false); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("allowscheduling")), "{o:?}");
 }

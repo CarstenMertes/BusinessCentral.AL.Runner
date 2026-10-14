@@ -683,6 +683,16 @@ impl Workspace {
         self.resolve_in_scope(file, kind, parts, false, true)
     }
 
+    /// The id of the platform table `parts` names when nothing provides rows for it. The id is
+    /// a constant of its declaration, so `Database::"X"` can name it; every use as a record is
+    /// still refused (`usable`).
+    pub fn unprovided_platform_table_id(&self, file: usize, parts: &[String]) -> Option<i32> {
+        match self.resolve_in_scope(file, ObjKind::Table, parts, false, false) {
+            Resolution::Found(i) if self.platform_table_without_provider(i) => self.objects[i].id.map(|id| id as i32),
+            _ => None,
+        }
+    }
+
     /// What a name means at run time (a `TableRelation` target), where BC resolves it against
     /// every installed app: this workspace has no Base Application, so a hit is only certain
     /// when no tier above it could hold a Base Application object of that name. That is the

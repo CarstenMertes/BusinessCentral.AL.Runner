@@ -51,6 +51,8 @@ check, lowering and tests; one run each; under `MemoryMax=4G`):
 | Tests-ERM | off | 227 | 121 | 8985 | 0.24 s | 4.40 s | 2878 MB |
 | Tests-ERM | on | 434 | 9 | 8890 | 2.12 s | 6.67 s | 2928 MB |
 
+Those four rows are the morning measurement. Afternoon, main after `fixes-8`, 4 threads, `MemoryMax=4G`: Tests-SMB off 6 passed, 6 failed, 1018 not run (total 4.71 s); Tests-SMB on 12 passed, 3 failed, 1015 not run (4.49 s); Tests-ERM off 241 passed, 149 failed, 8943 not run (6.74 s); Tests-ERM on 487 passed, 5 failed, 8841 not run (13.56 s, 2953 MB).
+
 With test data Tests-SMB loads 2953 rows from 97 tables and Tests-ERM 15352 rows from 167 tables; no table is
 refused. The Tests-SMB total includes 1.6 s to open the 860 MB backup on a cold page cache (0.1 to 0.2 s warm). The data costs nothing before a table is touched, which is why the run phase grows only with the tests that
 now get far enough to run (ERM: 2.12 s for 434 passing tests instead of 0.24 s).
@@ -81,47 +83,54 @@ Without test data Tests-ERM failed 121 tests; the first 30 failures are missing 
 must contain records, `Sales & Receivables Setup`, `Tax Setup` and `Purchases & Payables Setup` do not exist, a date
 calculation on an undefined date).
 
-## Measured (4 threads each for check, lowering and tests; one run per bucket; under `MemoryMax=3G`)
+## Measured (4 threads each for check, lowering and tests; one run per bucket; under `MemoryMax=3G`; 2026-10-14, afternoon, main after `fixes-8`)
+
+The first measurement of the morning of the same day is in the git history of this file. Since then the platform-table
+providers (ADR-019) and `fixes-8` were merged; without test data the sum went from 651 passed, 175 failed, 39474 not run
+to the figures below. The machine was shared and loaded, so the Tests/s column varies between runs.
 
 | Bucket | Tests | Passed | Failed | Not run | Compile | Run | Tests/s | Peak memory |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Tests-Bank | 667 | 5 | 0 | 662 | 3.00 s | 0.12 s | 5750 | 1438 MB |
-| Tests-Cash Flow | 399 | 21 | 2 | 376 | 3.53 s | 0.12 s | 3416 | 1497 MB |
-| Tests-Cost Accounting | 562 | 11 | 5 | 546 | 2.62 s | 0.08 s | 7043 | 1280 MB |
-| Tests-CRM integration | 961 | 9 | 6 | 946 | 3.04 s | 0.19 s | 5022 | 1468 MB |
-| Tests-Data Exchange | 399 | 6 | 0 | 393 | 3.22 s | 0.11 s | 3564 | 1447 MB |
-| Tests-Dimension | 976 | 15 | 15 | 946 | 4.46 s | 0.10 s | 10239 | 1808 MB |
-| Tests-ERM | 9333 | 142 | 12 | 9179 | 7.64 s | 0.37 s | 25210 | 2824 MB |
-| Tests-Fixed Asset | 462 | 3 | 0 | 459 | 3.43 s | 0.10 s | 4447 | 1431 MB |
-| Tests-General Journal | 825 | 4 | 1 | 820 | 3.57 s | 0.09 s | 8745 | 1625 MB |
-| Tests-Graph | 77 | 0 | 0 | 77 | 2.99 s | 0.10 s | 790 | 1349 MB |
-| Tests-Integration | 365 | 10 | 0 | 355 | 3.22 s | 0.16 s | 2292 | 1539 MB |
-| Tests-Job | 1289 | 5 | 0 | 1284 | 3.84 s | 0.11 s | 11999 | 1622 MB |
-| Tests-Marketing | 737 | 2 | 3 | 732 | 3.49 s | 0.10 s | 7452 | 1573 MB |
-| Tests-Misc | 3245 | 229 | 90 | 2926 | 5.62 s | 5.43 s | 598 | 2219 MB |
-| Tests-Monitor Sensitive Fields | 19 | 0 | 1 | 18 | 2.27 s | 0.06 s | 314 | 1163 MB |
-| Tests-Permissions | 105 | 1 | 2 | 102 | 2.55 s | 0.08 s | 1297 | 1526 MB |
-| Tests-Physical Inventory | 157 | 33 | 5 | 119 | 2.11 s | 0.08 s | 2087 | 1286 MB |
-| Tests-Prepayment | 567 | 0 | 0 | 567 | 2.51 s | 0.11 s | 5138 | 1510 MB |
-| Tests-Rapid Start | 385 | 57 | 0 | 328 | 2.77 s | 0.28 s | 1378 | 1358 MB |
-| Tests-Report | 781 | 3 | 0 | 778 | 2.67 s | 0.09 s | 8977 | 1583 MB |
-| Tests-Resource | 346 | 4 | 0 | 342 | 2.51 s | 0.06 s | 6147 | 1415 MB |
-| Tests-Reverse | 198 | 0 | 0 | 198 | 1.57 s | 0.05 s | 3920 | 1298 MB |
-| Tests-SCM-Assembly | 1764 | 0 | 0 | 1764 | 2.46 s | 0.07 s | 23630 | 1700 MB |
-| Tests-SCM-Manufacturing | 1179 | 2 | 0 | 1177 | 3.04 s | 0.06 s | 18285 | 1637 MB |
-| Tests-SCM-Service | 1917 | 13 | 0 | 1904 | 3.12 s | 0.13 s | 14384 | 1866 MB |
-| Tests-SCM | 8295 | 26 | 1 | 8268 | 5.39 s | 0.19 s | 44460 | 2576 MB |
-| Tests-SINGLESERVER | 922 | 19 | 2 | 901 | 3.57 s | 0.19 s | 4910 | 1775 MB |
-| Tests-SMB | 1030 | 3 | 4 | 1023 | 3.77 s | 0.09 s | 10925 | 1770 MB |
-| Tests-Upgrade | 12 | 6 | 0 | 6 | 2.45 s | 0.09 s | 136 | 1144 MB |
-| Tests-User | 73 | 0 | 0 | 73 | 3.32 s | 0.11 s | 694 | 1561 MB |
-| Tests-VAT | 1197 | 5 | 24 | 1168 | 3.64 s | 0.08 s | 14903 | 1743 MB |
-| Tests-Workflow | 1056 | 17 | 2 | 1037 | 3.05 s | 0.07 s | 14933 | 1709 MB |
-| Sum of the 32 buckets | 40300 | 651 | 175 | 39474 | | | | |
+| Tests-Bank | 667 | 7 | 1 | 659 | 4.14 s | 0.24 s | 2827 | 1520 MB |
+| Tests-Cash Flow | 399 | 26 | 3 | 370 | 4.17 s | 0.24 s | 1678 | 1587 MB |
+| Tests-Cost Accounting | 562 | 56 | 26 | 480 | 3.24 s | 0.32 s | 1751 | 1390 MB |
+| Tests-CRM integration | 961 | 11 | 6 | 944 | 4.82 s | 0.40 s | 2419 | 1597 MB |
+| Tests-Data Exchange | 399 | 27 | 9 | 363 | 4.93 s | 0.89 s | 449 | 1568 MB |
+| Tests-Dimension | 976 | 21 | 97 | 858 | 5.48 s | 0.33 s | 2980 | 1946 MB |
+| Tests-ERM | 9333 | 241 | 149 | 8943 | 9.22 s | 0.91 s | 10280 | 2903 MB |
+| Tests-Fixed Asset | 462 | 6 | 0 | 456 | 4.90 s | 0.26 s | 1810 | 1513 MB |
+| Tests-General Journal | 825 | 11 | 24 | 790 | 4.42 s | 0.19 s | 4375 | 1669 MB |
+| Tests-Graph | 77 | 4 | 0 | 73 | 4.31 s | 0.24 s | 321 | 1418 MB |
+| Tests-Integration | 365 | 10 | 0 | 355 | 5.64 s | 0.35 s | 1051 | 1661 MB |
+| Tests-Job | 1289 | 10 | 3 | 1276 | 5.54 s | 0.24 s | 5266 | 1736 MB |
+| Tests-Marketing | 737 | 4 | 13 | 720 | 5.34 s | 0.21 s | 3511 | 1655 MB |
+| Tests-Misc | 3245 | 358 | 167 | 2720 | 7.70 s | 6.89 s | 471 | 2434 MB |
+| Tests-Monitor Sensitive Fields | 19 | 3 | 2 | 14 | 2.96 s | 0.20 s | 97 | 1250 MB |
+| Tests-Permissions | 105 | 4 | 2 | 99 | 4.34 s | 0.22 s | 487 | 1664 MB |
+| Tests-Physical Inventory | 157 | 35 | 6 | 116 | 3.05 s | 0.15 s | 1041 | 1401 MB |
+| Tests-Prepayment | 567 | 0 | 4 | 563 | 3.63 s | 0.17 s | 3430 | 1689 MB |
+| Tests-Rapid Start | 385 | 71 | 2 | 312 | 3.56 s | 0.57 s | 672 | 1575 MB |
+| Tests-Report | 781 | 3 | 1 | 777 | 3.42 s | 0.22 s | 3568 | 1698 MB |
+| Tests-Resource | 346 | 9 | 35 | 302 | 2.36 s | 0.15 s | 2255 | 1513 MB |
+| Tests-Reverse | 198 | 0 | 1 | 197 | 1.66 s | 0.10 s | 2063 | 1385 MB |
+| Tests-SCM-Assembly | 1764 | 5 | 48 | 1711 | 2.64 s | 0.15 s | 11708 | 1793 MB |
+| Tests-SCM-Manufacturing | 1179 | 8 | 61 | 1110 | 3.41 s | 0.16 s | 7240 | 1739 MB |
+| Tests-SCM-Service | 1917 | 20 | 47 | 1850 | 3.44 s | 0.16 s | 11956 | 1908 MB |
+| Tests-SCM | 8295 | 61 | 123 | 8111 | 5.63 s | 1.10 s | 7518 | 2660 MB |
+| Tests-SINGLESERVER | 922 | 29 | 4 | 889 | 5.20 s | 0.71 s | 1290 | 2126 MB |
+| Tests-SMB | 1030 | 6 | 6 | 1018 | 4.96 s | 0.30 s | 3391 | 1914 MB |
+| Tests-Upgrade | 12 | 11 | 0 | 1 | 2.83 s | 0.36 s | 33 | 1403 MB |
+| Tests-User | 73 | 0 | 0 | 73 | 3.89 s | 0.19 s | 391 | 1591 MB |
+| Tests-VAT | 1197 | 8 | 51 | 1138 | 2.95 s | 0.10 s | 12240 | 1838 MB |
+| Tests-Workflow | 1056 | 25 | 5 | 1026 | 2.49 s | 0.15 s | 7075 | 1801 MB |
+| Sum of the 32 buckets | 40300 | 1090 | 896 | 38314 | | | | |
 
-All 32 buckets in one process (6 GB cap, 4 threads): 40300 tests, load 0.44 s, compile 15.96 s, run 4.48 s
-(8992 tests/s), total 21.17 s, peak memory 5785 MB. `Tests-TestLibraries` (a library) and `Tests-Local` (empty
-in the W1 artifact) are left out.
+All 32 buckets in one process (8 GB cap, 4 threads; 2026-10-14, afternoon, main after `fixes-8`; three runs, the same counts each time):
+40300 tests, **1083 passed, 858 failed, 38359 not run**. Load 0.40 to 0.48 s, compile 12.1 to 12.9 s, run 4.1 to 5.4 s
+(6762 to 9885 tests/s), total 16.8 to 19.1 s, peak memory 5.8 to 5.9 GB. The per-bucket sum above (1090, 896, 38314) differs from
+this one-process run; the cause of the difference is not investigated. The one-process figures are the ones to quote.
+Morning figures of the same day (before the platform-table round): 651 passed, 175 failed, 39474 not run; total 21.17 s.
+`Tests-TestLibraries` (a library) and `Tests-Local` (empty in the W1 artifact) are left out.
 
 Threads for Tests-ERM (compile / run / total): 1 thread 14.62 s / 0.86 s / 15.92 s; 4 threads 7.64 s / 0.37 s / 8.48 s;
 12 threads 5.69 s / 0.31 s / 6.38 s. Peak memory 2.6 to 2.8 GB at every thread count.

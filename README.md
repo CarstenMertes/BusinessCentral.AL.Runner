@@ -38,14 +38,18 @@ feature is missing. It never guesses. Per-area numbers and the roadmap are in
 `docs/status.md`. The corpus also has a smaller OnPrem test app (42 of 64
 passing on each version) and an isolation probe, reported separately.
 
+On BC 28.5 and 29.0 the corpus compiles Microsoft's apps from the corpus's
+27.5 `.alpackages`. Only the test libraries come from the artifact of the
+matching version.
+
 Time for the corpus on BC 29.0 on a shared 12-thread machine under load
 (`al-test-cli --timings`, total of load, compile, install baseline and run):
 
-- With Microsoft's apps: 2.9 to 6.2 s in four runs. Base Application, System
+- With Microsoft's apps: 2.9 to 6.2 s in six runs. Base Application, System
   Application and the others are compiled from source on every run. There is
   no cache of compiled output.
 - With `--no-deps` (the corpus alone; 4255 of 5147 tests pass): 0.4 to 0.9 s in
-  three runs.
+  five runs.
 
 ## Quick start
 
@@ -121,10 +125,12 @@ that into an error, for CI.
 
 `alrunner` can run Microsoft's own Base Application test buckets. Most of these
 tests are still refused, not run. On 2026-10-14, the 32 buckets together held
-40300 tests: 651 passed, 175 failed (without CRONUS data, so most of these are
-missing setup data) and 39474 were not run. `docs/alrunner-buckets.md` has the
-per-bucket numbers, the recipe and the failure analysis. Speed numbers of such a
-run cannot be compared with other runners until many more of these tests run.
+40300 tests: 1083 passed, 858 failed and 38359 were not run. These runs had no
+test data, so most of the failures are missing setup data. `--test-data` fixes
+part of that: on Tests-ERM it raises the passes from 241 to 487, with 5
+failures. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
+the failure analysis. Speed numbers of such a run cannot be compared with other
+runners until many more of these tests run.
 
 ## Documentation
 

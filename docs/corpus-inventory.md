@@ -1,20 +1,21 @@
 # Corpus inventory
 
-Corpus commit `cf6e546` (the `corpus` submodule pin). Oracle: CI run
-38306086475, BC 27.5 — **4836 cases, 0 failures**. Regenerate the per-area
-numbers with `python3 tools/inventory.py corpus/tests/al-language oracle/27/junit.xml`.
+Corpus commit `6219bf4` (the `corpus` submodule pin). Oracle: CI run
+38534169906, BC 27.5 — **5147 cases, 0 failures**. BC 28.5 and 29.0 have their own oracle
+files with the same 5147 cases. Regenerate the per-area numbers with
+`python3 tools/inventory.py corpus/tests/al-language oracle/27/junit.xml`.
 
 ## Apps in the corpus
 
 | App | `.al` files | Role |
 |---|---:|---|
-| `tests/al-language` (Target = Cloud) | 1330 | The test app. Everything below refers to it. |
+| `tests/al-language` (Target = Cloud) | 1370 | The test app. Everything below refers to it. |
 | `tests/al-language-internals-fixture` | 8 | A dependency of the test app (CI publishes it first). Must be loaded as a second app: some `codeunit/` tests call its objects across the app boundary (`ALT Internal Codeunit`, `ALT Cross Compute`). |
-| `tests/al-language-onprem` (Target = OnPrem) | 9 | Not in the main oracle (a separate CI job and artifact). Run as the `onprem` suite against its own oracle (`oracle/README.md`). |
+| `tests/al-language-onprem` (Target = OnPrem) | 10 | Not in the main oracle (a separate CI job and artifact). Run as the `onprem` suite against its own oracle (`oracle/README.md`). |
 | `tests/al-language-isolation-probe` | 5 | Only in the Windows nightly, under two custom test runners. Run as the `isolation-function` and `isolation-codeunit` suites (BC 28 only). |
 
 The original brief's "519 files / 273 test codeunits" is out of date: the test app
-now has 1330 files and 643 test codeunits.
+now has 1370 files (121 of them in `_fixtures`) and 723 test codeunits.
 
 ## First-task answers
 
@@ -24,70 +25,66 @@ plain AL. No native shim is needed: the runtime executes it like any other
 codeunit. It does lean on `Variant` type inspection, `RecordRef`, `GetLastErrorText`,
 `GetLastErrorCode` and `StrPos`, so those are on the M2 critical path.
 
-**Handler attributes** (count of uses, whole test app):
+**Handler attributes** (count of attribute lines, whole test app; a line such as
+`[ModalPageHandler]` counts once):
 
 | Attribute | Uses | Attribute | Uses |
 |---|---:|---|---:|
-| `HandlerFunctions` | 356 | `ConfirmHandler` | 22 |
-| `ModalPageHandler` | 185 | `SessionSettingsHandler` | 5 |
-| `RequestPageHandler` | 158 | `HttpClientHandler` | 3 |
-| `PageHandler` | 84 | `StrMenuHandler` | 2 |
-| `MessageHandler` | 31 | `SendNotificationHandler` | 2 |
+| `HandlerFunctions` | 360 | `ConfirmHandler` | 10 |
+| `ModalPageHandler` | 112 | `MessageHandler` | 7 |
+| `RequestPageHandler` | 75 | `SendNotificationHandler` | 2 |
+| `PageHandler` | 40 | `StrMenuHandler` | 2 |
+| | | `SessionSettingsHandler` | 1 |
 
-Other attributes the VM must understand: `Test` (4924), `EventSubscriber` (121),
-`TryFunction` (79), `IntegrationEvent` (66), `TransactionModel` (25),
-`CommitBehavior` (16), `ErrorBehavior` (8), `NonDebuggable` (8), `Scope` (5),
-`BusinessEvent` (4), `InternalEvent` (1), `TestFilterField` (1).
+Other attributes the VM must understand: `Test` (5149), `EventSubscriber` (137),
+`IntegrationEvent` (42), `TryFunction` (36), `TransactionModel` (33),
+`CommitBehavior` (7), `ErrorBehavior` (5), `BusinessEvent` (2),
+`NonDebuggable` (1), `InternalEvent` (1).
 
-In the M2–M4 areas handlers are rare (`codeunit` 4, `record` 14, `session` 5,
-`types` 1); `MessageHandler` / `ConfirmHandler` are the ones needed early.
+In the M2–M4 areas handlers are rare (`codeunit` 8, `record` 13, `session` 5,
+`types` 0).
 
-**Preprocessor symbols.** Only `BC29PLUS` (6× `#if`, 1× `#if not`) and one
+**Preprocessor symbols.** `BC29PLUS` (8× `#if`, 1× `#if not`), one `BC27PLUS` and one
 `BC143PLUS`. No `BC28PLUS` guard is currently used. Emulating BC 27 means
 `BC27PLUS` defined, everything else undefined; BC 28 and 29 add `BC28PLUS` and
 `BC29PLUS` (ADR-015, `al_version::corpus_symbols`).
 
 **Fixtures per area** (top references): every area uses `ALTFixtureCleanup`.
-`record` is dominated by `ALT Universal` (433), then `ALT Trigger Log`,
-`ALT Triggered`, `ALT Parent`/`ALT Child`, `ALT Link Host`, `ALT Base`,
-`ALT Keyed`. `codeunit` uses `ALT Event Publisher`, `ALT Manual Event Sub`,
-`IALTCompute`/`ALTDouble`. `streams` uses `ALT Blob`. `json`, `xml`, `text`
+`record` is dominated by `ALT Universal` (454), then `ALT Trigger Log` and
+`ALT Triggered` (72 each), `ALT Parent` (41), `ALT Keyed` (40) and `ALT Link Host` (36). `codeunit` uses `ALT Universal`, `ALT Event Publisher`, `ALT Trigger Log`,
+`ALT Manual Event Sub`, `IALTCompute`/`ALTDouble`. `streams` uses `ALT Blob`. `json`, `xml`, `text`
 use no table fixtures beyond cleanup.
 
 ## Cases per area (oracle, BC 27.5)
 
 | Milestone | Areas | Cases |
 |---|---|---:|
-| M2 pure semantics | types 350, text 132, collections 84, codeunit 245, error-handling 81 | 892 |
-| M3 record engine | record 1018, recordref 108, fieldref 126 | 1252 |
-| M4 stretch | json 117, xml 90, streams 47, session 427 | 681 |
-| Out of scope | handlers 1115, query 129, xmlport 40, profile 16, page*/testpage*/test* ~540, permissions 58, install 32, … | 2011 |
+| M2 pure semantics | types 392, text 132, collections 84, codeunit 281, error-handling 82 | 971 |
+| M3 record engine | record 1076, recordref 118, fieldref 126 | 1320 |
+| M4 stretch | json 129, xml 105, streams 60, session 447 | 741 |
+| Other areas | handlers 1171, query 146, xmlport 62, profile 16, page*/testpage*/test* and the rest | 2115 |
 
-`handlers/` alone is 23% of the corpus; the tier-1 ceiling is therefore
-2825 / 4836 = 58% overall, and 100% of each in-scope milestone.
+`handlers/` alone is 23% of the corpus (1171 of 5147). The runtime passes 4913 of 5147
+overall (`docs/status.md` has every area).
 
-## Dependencies outside the corpus (tier-1 risk)
+## Dependencies outside the corpus
 
 The test app declares dependencies on Base Application, System Application,
-System Application Test Library and Permissions Mock. Declared variables
-referring to objects the corpus does not define, in the in-scope areas:
+System Application Test Library and Permissions Mock. Microsoft's apps are compiled from their
+own source (ADR-013) and the platform tables are served by row providers (ADR-019). Declared
+variables referring to objects the corpus does not define, in the main areas:
 
 | Area | External objects referenced |
 |---|---|
 | types | `Codeunit "Temp Blob"` (System App, 11), `Enum "Printer Paper Kind"` (8) |
-| codeunit | `Record "Code Coverage"` and friends (system tables), `Record "CodeUnit Metadata"` |
+| codeunit | `Record "Code Coverage"` (9) and `Code Coverage Tests Run` (6), `Record "CodeUnit Metadata"` (3) |
 | error-handling | `Codeunit "Temp Blob"` (1) |
-| record | system / virtual tables: `CodeUnit Metadata` 31, `Record Link` 26, `Date` 25, `Field` 23, `AllObjWithCaption` 21, `Page Control Field` 19, `AllObj` 19, `Table Metadata` 12, `Page Metadata` 12, `Integer` 10 |
-| recordref, fieldref | a few Base App tables (`Customer`, `Item`, `G/L Entry`, `Dimension Correction`, …), ~20 uses |
-| session | `Session`, `Active Session` (system tables), `Environment Information`, `Application Area Mgmt. Facade` (System App) |
-| text, collections, json, xml, streams | none |
+| record | system / virtual tables: `CodeUnit Metadata` 31, `Record Link` 26, `Date` 25, `Field` 23, `AllObjWithCaption` 21, `AllObj` 20, `Page Control Field` 19, `Table Metadata` 12, `Page Metadata` 12, `Integer` 10 |
+| recordref | `Customer Bank Account` and `Item` (1 each) |
+| fieldref | Base App tables: `Dimension Correction` 7, `ALLanguage` 6, `Customer` 2, `Analysis Line` 2, `G/L Entry`, `Item Register`, `Inventory Setup` and `Requisition Line` (1 each) |
+| session | `Session` 12, `Active Session` 11, `Environment Information` 9, `Application Area Mgmt. Facade` 5 |
+| streams | `Codeunit "Temp Blob"` (11), `Base64 Convert` (1) |
+| text, collections, json, xml | none |
 
-Implications:
-1. M2 needs a native `Temp Blob` (or the System App source) — small.
-2. M3 needs the **platform virtual tables** (`Integer`, `Date`, `Field`,
-   `AllObj*`, `*Metadata`, `Record Link`). These are platform-defined, not
-   Base App, and belong in tier 1. Expect them to be a visible chunk of the
-   M3 curve.
-3. The handful of Base App table uses in `fieldref`/`recordref` are tier 3.
-   Those cases will stay red (compile-time "unsupported" per hard rule 4) and
-   are listed as such in the report rather than silently dropped.
+Cases that need something the runtime does not have yet are refused with a stated reason and
+listed as not run in the report. They are not dropped silently (hard rule 4).

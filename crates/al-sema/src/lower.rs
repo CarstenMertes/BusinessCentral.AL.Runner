@@ -290,6 +290,20 @@ pub(crate) fn lower_core(
     if let Some(d) = demand {
         ws.restrict_to((0..ws.objects.len()).map(|i| d.active(i)).collect());
     }
+    if let (Some(d), Some(path)) = (demand, std::env::var_os("AL_DUMP_REACH")) {
+        // Debug aid: what the demand reached, one line per object (level) and routine.
+        let mut lines: Vec<String> = Vec::new();
+        for (i, o) in ws.objects.iter().enumerate() {
+            if ws.is_dependency(i) && d.active(i) {
+                lines.push(format!("{:?} {} level {}", o.kind, o.name, d.level[i]));
+            }
+        }
+        for &(i, off) in &d.reached {
+            lines.push(format!("{:?} {} routine {off}", ws.objects[i].kind, ws.objects[i].name));
+        }
+        lines.sort();
+        let _ = std::fs::write(path, lines.join("\n"));
+    }
     let active = |oi: usize| demand.is_none_or(|d| !ws.is_dependency(oi) || d.active(oi));
     let uncompiled_subscribers = if demand.is_some() {
         crate::check::demand::uncompiled_subscribers(ws, &active)

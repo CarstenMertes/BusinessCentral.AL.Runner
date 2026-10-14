@@ -217,7 +217,14 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
     let selection = Selection {
         codeunits: a.codeunits.clone(),
-        filters: a.filters.iter().chain(&a.explain).cloned().collect(),
+        // `--explain NAME --codeunit ID` explains the test of that one codeunit; the name alone
+        // selects every codeunit that has a test of that name.
+        filters: a
+            .filters
+            .iter()
+            .chain(a.explain.iter().filter(|_| a.codeunits.is_empty()))
+            .cloned()
+            .collect(),
     };
     let chosen_units: Vec<&Found> = found
         .iter()

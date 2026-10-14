@@ -653,9 +653,10 @@ fn current_key_index_numbers_the_keys_and_the_hidden_system_id_key() {
     // DB:KeyNotFound), :126-148 (the direction stays, Reset goes back to key 1), :150-176 (GetTable
     // follows the record's key; fields no key starts with report -1).
     let r = run(
-        "procedure F(): Text var RR: RecordRef; R: Record \"ALT Keys\"; i: Integer; s: Text; begin
+        "procedure F(): Text var RR: RecordRef; R: Record \"ALT Keys\"; KR: KeyRef; i: Integer; s: Text; begin
             RR.Open(50904);
-            s := Format(RR.KeyCount()) + '|' + Format(RR.CurrentKeyIndex()) + RR.CurrentKey() + '|';
+            KR := RR.KeyIndex(5); s := KR.FieldIndex(1).Name() + ';';
+            s += Format(RR.KeyCount()) + '|' + Format(RR.CurrentKeyIndex()) + RR.CurrentKey() + '|';
             for i := 1 to RR.KeyCount() do begin
                 RR.CurrentKeyIndex(i);
                 s += Format(RR.CurrentKeyIndex()) + '=' + RR.CurrentKey() + ';';
@@ -678,6 +679,6 @@ fn current_key_index_numbers_the_keys_and_the_hidden_system_id_key() {
     );
     assert_eq!(
         text(r),
-        "5|1Id|1=Id;2=A;3=B,A;4=D;5=System ID;|The ALT Keys table does not have an active key at index 0.|DB:KeyNotFound|The ALT Keys table does not have an active key at index 6.|No|1|3B,A|-1C"
+        "$systemId;5|1Id|1=Id;2=A;3=B,A;4=D;5=System ID;|The ALT Keys table does not have an active key at index 0.|DB:KeyNotFound|The ALT Keys table does not have an active key at index 6.|No|1|3B,A|-1C"
     );
 }

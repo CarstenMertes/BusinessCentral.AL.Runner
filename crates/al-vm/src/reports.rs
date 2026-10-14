@@ -908,13 +908,57 @@ impl Run {
             );
         }
         if let Some(x) = self.ext_ir() {
+            let mine: Vec<usize> = (0..x.added.len())
+                .filter(|&c| match r {
+                    ItemRef::Base(i) => x.added[c].base_parent == Some(i),
+                    ItemRef::Added(k) => x.added[c].item.parent == Some(k),
+                })
+                .collect();
+            // Position order (reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al):
+            // the items added first, those before a sibling, the sibling, those after it, the items
+            // added last. Items next to an item the extension added are placed once that is.
+            let at = |out: &[ItemRef], a: ir::ItemAnchor| {
+                out.iter().position(|c| match (c, a) {
+                    (ItemRef::Base(x), ir::ItemAnchor::Base(y)) => *x == y,
+                    (ItemRef::Added(x), ir::ItemAnchor::Added(y)) => *x == y,
+                    _ => false,
+                })
+            };
+            let mut pending: Vec<usize> = mine
+                .iter()
+                .copied()
+                .filter(|&c| matches!(x.added[c].place, ir::AddedPlace::Before(_) | ir::AddedPlace::After(_)))
+                .collect();
+            while !pending.is_empty() {
+                let before = pending.len();
+                pending.retain(|&c| {
+                    let (anchor, after) = match x.added[c].place {
+                        ir::AddedPlace::Before(a) => (a, false),
+                        ir::AddedPlace::After(a) => (a, true),
+                        _ => unreachable!("pending holds only relative places"),
+                    };
+                    match at(&out, anchor) {
+                        Some(p) => {
+                            out.insert(p + usize::from(after), ItemRef::Added(c));
+                            false
+                        }
+                        None => true,
+                    }
+                });
+                if pending.len() == before {
+                    break;
+                }
+            }
+            let firsts: Vec<ItemRef> = mine
+                .iter()
+                .filter(|&&c| x.added[c].place == ir::AddedPlace::First)
+                .map(|&c| ItemRef::Added(c))
+                .collect();
+            out.splice(0..0, firsts);
             out.extend(
-                (0..x.added.len())
-                    .filter(|&c| match r {
-                        ItemRef::Base(i) => x.added[c].base_parent == Some(i),
-                        ItemRef::Added(k) => x.added[c].item.parent == Some(k),
-                    })
-                    .map(ItemRef::Added),
+                mine.iter()
+                    .filter(|&&c| x.added[c].place == ir::AddedPlace::Last)
+                    .map(|&c| ItemRef::Added(c)),
             );
         }
         out

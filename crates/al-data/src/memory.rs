@@ -225,7 +225,7 @@ impl MemStore {
     pub fn has_company_rows(&self, company: &str) -> bool {
         self.tables
             .iter()
-            .any(|((c, _), t)| !c.is_empty() && c.eq_ignore_ascii_case(company) && !t.is_empty())
+            .any(|((c, _), t)| !c.is_empty() && c == company && !t.is_empty())
             || self
                 .backing
                 .as_ref()
@@ -256,13 +256,34 @@ impl MemStore {
         let doomed: Vec<(String, u32)> = self
             .tables
             .keys()
-            .filter(|(c, _)| !c.is_empty() && c.eq_ignore_ascii_case(company))
+            .filter(|(c, _)| !c.is_empty() && c == company)
             .cloned()
             .collect();
         for slot in doomed {
             self.tables.remove(&slot);
             self.counter += 1;
             self.versions.insert(slot, self.counter);
+        }
+    }
+
+    /// Moves every row of company `old` to company `new`, as renaming the company does
+    /// (record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212). Part of the open transaction.
+    pub fn rename_company(&mut self, old: &str, new: &str) {
+        let moved: Vec<(String, u32)> = self
+            .tables
+            .keys()
+            .filter(|(c, _)| !c.is_empty() && c == old)
+            .cloned()
+            .collect();
+        for slot in moved {
+            if let Some(table) = self.tables.remove(&slot) {
+                let target = (new.to_string(), slot.1);
+                self.tables.insert(target.clone(), table);
+                self.counter += 1;
+                self.versions.insert(slot, self.counter);
+                self.counter += 1;
+                self.versions.insert(target, self.counter);
+            }
         }
     }
 
@@ -514,7 +535,10 @@ mod tests {
         s.insert(&cx("A"), &t, vec![Value::Integer(1)]).unwrap();
         s.insert(&cx("B"), &t, vec![Value::Integer(1)]).unwrap();
         s.commit();
-        assert!(s.has_company_rows("a"));
+        assert!(
+            s.has_company_rows("A") && !s.has_company_rows("a"),
+            "company names are case sensitive"
+        );
         assert_eq!(s.companies_with_rows(7).len(), 2);
         let before = s.table_stamp(&cx("B"), &t);
         s.drop_company("B");
@@ -522,6 +546,11 @@ mod tests {
         assert_eq!(s.count(&cx("B"), &t, &[]).unwrap(), 0);
         assert_eq!(s.count(&cx("A"), &t, &[]).unwrap(), 1);
         assert_ne!(s.table_stamp(&cx("B"), &t), before, "queries see the change");
+        s.rollback();
+        assert_eq!(s.count(&cx("B"), &t, &[]).unwrap(), 1);
+        s.rename_company("B", "C");
+        assert_eq!(s.count(&cx("B"), &t, &[]).unwrap(), 0);
+        assert_eq!(s.count(&cx("C"), &t, &[]).unwrap(), 1);
         s.rollback();
         assert_eq!(s.count(&cx("B"), &t, &[]).unwrap(), 1);
     }

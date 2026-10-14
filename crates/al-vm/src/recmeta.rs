@@ -147,6 +147,7 @@ impl Session {
         t: &TableDef,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        self.connection_check(rec)?;
         match method {
             "AddLink" | "DeleteLink" | "DeleteLinks" | "HasLinks" | "CopyLinks" => {
                 self.record_links(method, rec, t, args)
@@ -444,9 +445,8 @@ impl Session {
                 if s.field_descending {
                     return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
                 }
-                if s.company != rec.borrow().company {
-                    return unsupported("Copy between records of different companies (not pinned)");
-                }
+                // Copy takes the fields, filters and key but does not move the target to the source's company
+                // (record/TestChangeCompanyFiltersCopyDeleteContracts.al:117-121).
                 let mut d = rec.borrow_mut();
                 // shareTable needs both records temporary; a plain Copy of a temporary record onto
                 // a normal one copies values and filters only (corpus branch al-runtime-rs, pending

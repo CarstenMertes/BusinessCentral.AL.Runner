@@ -423,6 +423,9 @@ pub struct RecordState {
     /// The company set by `ChangeCompany` or `RecordRef.Open(.., Company)`, as the Company table
     /// names it; `None` is the session company.
     pub company: Option<String>,
+    /// The table is `TableType = CRM`: any use needs a registered table connection
+    /// (session/TestCrmTableNoConnectionContracts.al).
+    pub crm: bool,
     /// Field values in the table's field order.
     pub fields: Vec<Value>,
     pub filters: Vec<crate::filter::FieldFilter>,
@@ -643,6 +646,9 @@ pub enum LibraryValue {
     RecordRef(Rc<RefCell<RecordState>>),
     /// A `FieldRef`: the record buffer it points into and the field's position.
     FieldRef(Rc<RefCell<RecordState>>, usize),
+    /// A `FieldRef` reached through `KeyRef.FieldIndex`: the same field, but the hidden key on SystemId names
+    /// it `$systemId` (recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:93).
+    KeyFieldRef(Rc<RefCell<RecordState>>, usize),
     /// A `KeyRef`: the record buffer and the key's index in the table's keys.
     KeyRef(Rc<RefCell<RecordState>>, usize),
     /// A `RecordRef` opened on a system table the workspace has no schema for:

@@ -346,7 +346,7 @@ impl Session {
         let pk = t.primary_key(&row);
         let company = if self.is_company_table(t) && !rec.borrow().temporary {
             let name = al_builtins::native::text_of(&row[0]).unwrap_or_default();
-            self.before_company_row_delete(&name)?;
+            self.before_company_row_delete(&name, run)?;
             Some(name)
         } else {
             None
@@ -779,7 +779,25 @@ impl Session {
         Ok(())
     }
 
+    /// The first use of a record of a `TableType = CRM` table fails while no CRM table connection is
+    /// registered, whatever the use (Init, TableCaption, a field, IsEmpty): text and code from
+    /// session/TestCrmTableNoConnectionContracts.al:15-17,111-118. With a connection registered what
+    /// the table does is not pinned.
+    pub(crate) fn connection_check(&self, rec: &Rec) -> Result<(), Signal> {
+        if !rec.borrow().crm {
+            return Ok(());
+        }
+        if self.table_connections.iter().any(|(kind, _)| *kind == 0) {
+            return unsupported("a TableType = CRM table through a registered table connection (not modelled)");
+        }
+        Err(crate::transactions::al_error_code(
+            "Table connection  for table type CRM must be registered using RegisterTableConnection or cmdlet New-NAVTableConnection before it can be used.",
+            "Argument",
+        ))
+    }
+
     pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
+        self.connection_check(rec)?;
         let t = self.table(rec)?;
         if matches!(
             method,
@@ -1217,7 +1235,7 @@ impl Session {
                 for n in ["OnBeforeDelete", "OnDelete", "OnAfterDelete"] {
                     trigger |= self.ext_trigger(&t, n)?.is_some();
                 }
-                let global = self.global_enabled(&t, GlobalOp::Delete)?;
+                let global = !temporary && self.global_enabled(&t, GlobalOp::Delete)?;
                 // With delete events or database triggers a DeleteAll deletes row by row: the events
                 // and the database trigger per row, the table's and extensions' triggers only for
                 // DeleteAll(true). Pinned on real BC 27.5 by the probe codeunit 68212
@@ -1585,14 +1603,6 @@ impl Session {
                     self.rename_references(&t)?
                 };
                 let old = rec.borrow().fields.clone();
-                if self.is_company_table(&t) && !rec.borrow().temporary {
-                    let name = al_builtins::native::text_of(&old[0]).unwrap_or_default();
-                    if self.store.has_company_rows(&name) {
-                        return unsupported(
-                            "Rename of a company that holds rows (they would have to move; not pinned)",
-                        );
-                    }
-                }
                 let mut new = old.clone();
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
@@ -1645,6 +1655,15 @@ impl Session {
                 };
                 match outcome {
                     RenameOutcome::Renamed => {
+                        // A company that is renamed takes its data with it
+                        // (record/TestChangeCompanyRows... TestChangeCompanyFiltersCopyDeleteContracts.al:170-212).
+                        if !same_key && self.is_company_table(&t) && !rec.borrow().temporary {
+                            let (from, to) = (
+                                al_builtins::native::text_of(&old_fields[0]).unwrap_or_default(),
+                                al_builtins::native::text_of(&row[0]).unwrap_or_default(),
+                            );
+                            self.store.rename_company(&from, &to);
+                        }
                         if !same_key {
                             self.propagate_rename(rec, &t, &refs, &old_fields, &row)?;
                             self.move_record_links(&t, rec, &old_fields)?;

@@ -90,6 +90,61 @@ report 68302 "Probe SaveAs Report"
         Prefix: Text;
 }
 
+// corpus reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al (68810..68815)
+table 68810 "Probe Place Parent" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+table 68811 "Probe Place Child" { fields { field(1; Id; Integer) { } field(2; ParentId; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 68814 "Probe Place Log"
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(Entry: Text) begin Log += Entry + ';'; end;
+    procedure Take(): Text var Result: Text; begin Result := Log; Log := ''; exit(Result); end;
+}
+report 68812 "Probe Place Base"
+{
+    UsageCategory = None;
+    DefaultRenderingLayout = Rdlc;
+    dataset
+    {
+        dataitem(Parent; "Probe Place Parent")
+        {
+            dataitem(ChildA; "Probe Place Child")
+            {
+                DataItemLink = ParentId = field(Id);
+                column(AId; Id) { }
+                trigger OnAfterGetRecord() begin PlaceLog.Add('ChildA' + Format(Id)); end;
+            }
+            dataitem(ChildB; "Probe Place Child")
+            {
+                DataItemLink = ParentId = field(Id);
+                column(BId; Id) { }
+                trigger OnAfterGetRecord() begin PlaceLog.Add('ChildB' + Format(Id)); end;
+            }
+            column(PId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('Parent' + Format(Id)); end;
+        }
+    }
+    rendering { layout(Rdlc) { Type = RDLC; LayoutFile = './ProbePlaceLayout.rdl'; Caption = 'Probe layout'; } }
+    var PlaceLog: Codeunit "Probe Place Log";
+}
+reportextension 68813 "Probe Place Ext" extends "Probe Place Base"
+{
+    dataset
+    {
+        addfirst(Parent) { dataitem(ExtFirst; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EFId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtFirst' + Format(Id)); end; } }
+        addafter(ChildA) { dataitem(ExtAfterA; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EAId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtAfterA' + Format(Id)); end; } }
+        addbefore(ChildB) { dataitem(ExtBeforeB; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EBId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtBeforeB' + Format(Id)); end; } }
+        addlast(Parent) { dataitem(ExtLast; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(ELId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtLast' + Format(Id)); end; } }
+        addbefore(ChildA) { dataitem(ExtBeforeA; "Probe Place Child") { DataItemLink = ParentId = field(Id); column(EBAId; Id) { }
+            trigger OnAfterGetRecord() begin PlaceLog.Add('ExtBeforeA' + Format(Id)); end; } }
+    }
+    var PlaceLog: Codeunit "Probe Place Log";
+}
+
 report 68399 "Probe Processing Only"
 {
     UsageCategory = None;
@@ -965,4 +1020,51 @@ fn a_processing_only_report_answers_false_with_its_error_and_writes_nothing() {
         "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Processing Only\", '', ReportFormat::Xml, Out); end;",
     );
     assert!(why.contains("ProcessingOnly"), "{why}");
+}
+
+// reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al:150-198: the triggers run, and the
+// data items and their columns are written, in position order.
+#[test]
+fn added_data_items_run_and_are_written_in_position_order() {
+    let out = f(
+        "var P: Record \"Probe Place Parent\"; C: Record \"Probe Place Child\"; L: Codeunit \"Probe Place Log\"; Buf: Record \"Probe Rep Parent\"; H: Codeunit Helpers; Out: OutStream; s: Text; begin
+            P.Id := 1; P.Insert(); C.Id := 10; C.ParentId := 1; C.Insert(); L.Take();
+            Buf.Data.CreateOutStream(Out);
+            Report.SaveAs(Report::\"Probe Place Base\", '', ReportFormat::Xml, Out);
+            s := L.Take() + '#' + H.Lines(Buf);
+            exit(s);
+        end;",
+    );
+    let (log, xml) = out.split_once('#').unwrap();
+    assert_eq!(
+        log,
+        "Parent1;ExtFirst10;ExtBeforeA10;ChildA10;ExtAfterA10;ExtBeforeB10;ChildB10;ExtLast10;"
+    );
+    let names: Vec<&str> = xml
+        .split('|')
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("<DataItem "))
+        .filter_map(|l| l.split("name=\"").nth(1))
+        .filter_map(|l| l.split('"').next())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Parent",
+            "ExtFirst",
+            "ExtBeforeA",
+            "ChildA",
+            "ExtAfterA",
+            "ExtBeforeB",
+            "ChildB",
+            "ExtLast"
+        ]
+    );
+    let cols: Vec<&str> = xml
+        .split('|')
+        .map(str::trim)
+        .filter_map(|l| l.strip_prefix("<Column name=\""))
+        .filter_map(|l| l.split('"').next())
+        .collect();
+    assert_eq!(cols, ["PId", "EFId", "EBAId", "AId", "EAId", "EBId", "BId", "ELId"]);
 }

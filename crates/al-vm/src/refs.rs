@@ -121,7 +121,10 @@ impl Session {
 
     fn open_ref(lib: &Lib, what: &str) -> Result<Rec, Signal> {
         match &*lib.borrow() {
-            LibraryValue::RecordRef(r) | LibraryValue::FieldRef(r, _) | LibraryValue::KeyRef(r, _) => Ok(r.clone()),
+            LibraryValue::RecordRef(r)
+            | LibraryValue::FieldRef(r, _)
+            | LibraryValue::KeyFieldRef(r, _)
+            | LibraryValue::KeyRef(r, _) => Ok(r.clone()),
             LibraryValue::SystemTable(n) => unsupported(format!(
                 "{what} on a RecordRef opened on system table {n} (the platform's system tables are not modelled)"
             )),
@@ -445,9 +448,7 @@ impl Session {
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
-                    if s.company != dst.borrow().company {
-                        return unsupported("RecordRef.SetTable between records of different companies (not pinned)");
-                    }
+                    // SetTable does not move the target either (:123-127); GetTable takes the company.
                     if s.field_descending {
                         return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
                     }
@@ -485,7 +486,7 @@ impl Session {
                     .ok()
                     .and_then(|i| key_fields(&t, k).and_then(|f| f.get(i).copied()))
                 {
-                    Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
+                    Some(pos) => Ok(handle("FieldRef", LibraryValue::KeyFieldRef(rec, pos))),
                     // types/TestTypeSystemContracts.al:261 pins the fragment "Index out of bounds"
                     // (recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws).
                     None => Err(Signal::Error(AlError {
@@ -500,8 +501,9 @@ impl Session {
     }
 
     fn fieldref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
-        let (rec, pos) = match &*lib.borrow() {
-            LibraryValue::FieldRef(r, p) => (r.clone(), *p),
+        let (rec, pos, via_key) = match &*lib.borrow() {
+            LibraryValue::FieldRef(r, p) => (r.clone(), *p, false),
+            LibraryValue::KeyFieldRef(r, p) => (r.clone(), *p, true),
             _ => return unsupported(format!("FieldRef.{method} on a FieldRef that was never assigned")),
         };
         let t = self.table(&rec)?;
@@ -517,6 +519,7 @@ impl Session {
                 }
             },
             "Number" => Ok(Value::Integer(field.id as i32)),
+            "Name" if via_key && field.id == SYSTEM_FIELD_BASE => Ok(Value::Text("$systemId".into())),
             "Name" => Ok(Value::Text(field.name.clone())),
             "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
             "Type" => self.field_type(&t, pos),

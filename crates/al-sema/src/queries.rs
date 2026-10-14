@@ -736,18 +736,18 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
                 dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; SqlJoinType = RightOuterJoin; column(X; Amount) { } } } } }",
             "rightouterjoin",
         );
-        // Query code.
-        has(
-            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnBeforeOpen() begin Message('x'); end; }",
-            "with statements",
-        );
-        // An empty OnBeforeOpen shows nothing (Base App's query 1302).
+        // Query code: procedures, variables and an OnBeforeOpen run (query/TestQueryOnBeforeOpenVariablesContracts.al);
+        // another trigger does not exist.
         assert!(
             layout_of(
-                "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnBeforeOpen() begin end; }"
+                "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } var N: Integer; trigger OnBeforeOpen() begin N += 1; end; procedure P() begin end; }"
             )
             .reasons
             .is_empty()
+        );
+        has(
+            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } } } trigger OnAfterOpen() begin end; }",
+            "OnAfterOpen",
         );
         // Grouped aggregate without an OrderBy is refused by the VM when a run yields several groups.
         assert!(

@@ -322,14 +322,13 @@ fn recordref_open_with_the_session_company_name_opens_the_session_company() {
 
 #[test]
 fn deleting_a_company_drops_its_rows() {
-    // Not pinned: a deleted company holds no rows when a company of that name is made again
-    // (BC drops a company's data with it; docs/probes-needed.md). The corpus deletes the company
-    // it made at the end of every ChangeCompany test (record/TestRecordChangeCompanyRows.al).
+    // record/TestChangeCompanyFiltersCopyDeleteContracts.al:204-212: a company deleted with triggers takes its rows;
+    // a new company of the same name starts empty.
     let out = text(
         &format!("{NEW_CO} Other: Record \"CC Row\"; s: Text;"),
         &format!(
             "{MAKE_CO} Other.ChangeCompany('OTHER'); Other.Id := 1; Other.Insert(); Commit();
-             Co.Get('OTHER'); Co.Delete(); Commit();
+             Co.Get('OTHER'); Co.Delete(true); Commit();
              {MAKE_CO} Other.ChangeCompany('OTHER'); {}
              exit(s);",
             log("Other.Count()"),
@@ -414,5 +413,152 @@ fn record_ref_open_of_a_crm_table_without_a_connection_raises_the_connection_err
     assert_eq!(
         out,
         "Table connection  for table type CRM must be registered using RegisterTableConnection or cmdlet New-NAVTableConnection before it can be used.|Argument"
+    );
+}
+
+const CRM_TABLE: &str = r#"
+table 50920 "CRM Entity"
+{
+    TableType = CRM;
+    fields { field(1; Id; Guid) { } field(2; Name; Text[30]) { } }
+    keys { key(PK; Id) { } }
+}
+"#;
+
+// session/TestCrmTableNoConnectionContracts.al:15-17,111-118: with no CRM table connection registered
+// the first use of a record variable of a CRM table fails (Init, TableCaption, a field, IsEmpty), and
+// the statement after it does not run; declaring the variable is no use.
+#[test]
+fn a_record_of_a_crm_table_fails_on_first_use_without_a_connection() {
+    let ok = run_with(CRM_TABLE, "E: Record \"CRM Entity\";", "exit('declared');");
+    assert!(matches!(ok, Ok(Value::Text(ref s)) if s == "declared"), "{ok:?}");
+    for use_ in [
+        "E.Init();",
+        "if E.TableCaption() <> '' then;",
+        "E.Name := 'x';",
+        "if E.IsEmpty() then;",
+    ] {
+        let r = run_with(
+            CRM_TABLE,
+            "E: Record \"CRM Entity\"; s: Text;",
+            &format!(
+                "asserterror begin {use_} s := 'reached'; end; exit(s + GetLastErrorText() + '|' + GetLastErrorCode());"
+            ),
+        );
+        assert!(
+            matches!(&r, Ok(Value::Text(s)) if s == "Table connection  for table type CRM must be registered using RegisterTableConnection or cmdlet New-NAVTableConnection before it can be used.|Argument"),
+            "{use_}: {r:?}"
+        );
+    }
+}
+
+// record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212: a renamed company takes its data with it
+// and the old name answers false; a company deleted with triggers takes its data, and a new company of
+// the same name starts empty.
+#[test]
+fn a_renamed_company_takes_its_data_and_a_deleted_one_drops_it() {
+    let out = text(
+        &format!("{NEW_CO} Data: Record \"CC Row\"; Later: Record \"CC Row\"; s: Text;"),
+        &format!(
+            "{MAKE_CO} Data.ChangeCompany('OTHER'); Data.Id := 1; Data.Insert(); Commit();
+             Co.Get('OTHER'); Co.Rename('RENAMED'); Commit();
+             {} {} {}
+             Co.Get('RENAMED'); Co.Delete(true); Commit();
+             {}
+             Co.Name := 'RENAMED'; Co.Insert(); Commit();
+             {} {}
+             exit(s);",
+            log("Later.ChangeCompany('OTHER')"),
+            log("Later.ChangeCompany('RENAMED')"),
+            log("Later.Count()"),
+            log("Later.ChangeCompany('RENAMED')"),
+            log("Later.ChangeCompany('RENAMED')"),
+            log("Later.Count()"),
+        ),
+    );
+    assert_eq!(out, "No;Yes;1;No;Yes;0;");
+}
+
+// :74-148: Copy and SetTable do not move the target to the source's company; GetTable takes it.
+#[test]
+fn copy_and_set_table_do_not_move_the_target_but_get_table_does() {
+    let out = text(
+        &format!(
+            "{NEW_CO} Home: Record \"CC Row\"; Other: Record \"CC Row\"; Target: Record \"CC Row\"; RR: RecordRef; s: Text;"
+        ),
+        &format!(
+            "Home.Id := 1; Home.Insert(); {MAKE_CO}
+             Other.ChangeCompany('OTHER'); Other.Id := 5; Other.Insert();
+             Target.Copy(Other); {}
+             RR.GetTable(Other); {} {}
+             RR.SetTable(Target); {} {}
+             exit(s);",
+            log("Target.CurrentCompany() = CompanyName()"),
+            log("RR.CurrentCompany()"),
+            log("RR.Count()"),
+            log("Target.CurrentCompany() = CompanyName()"),
+            log("Target.Count()"),
+        ),
+    );
+    assert_eq!(out, "Yes;OTHER;1;Yes;1;");
+}
+
+// Base App's Price Source List (Tests-ERM Price Source List UT.T001): a codeunit keeps a temporary record
+// global, Insert(true) fills it, and `GetList` shares its table with the caller's temporary record.
+#[test]
+fn a_codeunit_global_temporary_record_is_shared_with_the_callers_through_copy() {
+    let tables = r#"
+table 50930 "TS Src" { fields { field(1; Id; Integer) { } field(2; Nm; Text[10]) { } } keys { key(PK; Id) { } } }
+codeunit 50931 "TS List"
+{
+    var Temp: Record "TS Src" temporary; Next: Integer;
+    procedure Add(Kind: Option A,B) begin Next += 1; Temp.Init(); Temp.Id := Next; Temp.Insert(true); end;
+    procedure Add(Src: Record "TS Src") begin Next += 1; Temp.TransferFields(Src); Temp.Insert(true); end;
+    procedure GetList(var Dest: Record "TS Src" temporary): Boolean
+    begin
+        if Dest.IsTemporary then Dest.Copy(Temp, true);
+        exit(Dest.FindSet());
+    end;
+}
+"#;
+    let out = text_in(
+        tables,
+        "L: Codeunit \"TS List\"; T: Record \"TS Src\" temporary;",
+        "L.Add(0); L.Add(1); L.GetList(T); exit(Format(T.Count()));",
+    );
+    assert_eq!(out, "2");
+}
+
+fn text_in(tables: &str, vars: &str, body: &str) -> String {
+    match run_with(tables, vars, body) {
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+// Microsoft's Assert.RecordCount(Variant, N) counts a caller's temporary record through a Variant parameter (Tests-ERM
+// Price Source List UT.T001 expects 2 on BC). A by-value copy of a temporary record is an empty buffer
+// (record/TestTempTableContracts.al:141-148); what a Variant holds is not pinned, so a temporary record with
+// rows handed to a Variant parameter is refused, and an empty one still goes through.
+#[test]
+fn a_temporary_record_with_rows_handed_to_a_variant_parameter_is_refused() {
+    let tables = r#"
+table 50930 "TS Src" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 50932 "TS Assert" { procedure RecordCount(RecVariant: Variant): Integer var RR: RecordRef; begin RR.GetTable(RecVariant); exit(RR.Count()); end; }
+"#;
+    let out = text_in(
+        tables,
+        "A: Codeunit \"TS Assert\"; T: Record \"TS Src\" temporary;",
+        "exit(Format(A.RecordCount(T)));",
+    );
+    assert_eq!(out, "0");
+    let r = run_with(
+        tables,
+        "A: Codeunit \"TS Assert\"; T: Record \"TS Src\" temporary;",
+        "T.Id := 1; T.Insert(); exit(Format(A.RecordCount(T)));",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("Variant parameter")),
+        "{r:?}"
     );
 }

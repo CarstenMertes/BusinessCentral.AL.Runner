@@ -2756,9 +2756,12 @@ impl Lowerer<'_> {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
                 // A table of another type (CRM, ExternalSQL, ...) is served by a table connection.
                 let kind = self.table_types(t).first().cloned();
-                if let Some(k) =
-                    kind.filter(|k| !k.eq_ignore_ascii_case("normal") && !k.eq_ignore_ascii_case("temporary"))
-                {
+                // A CRM table is lowered: the VM refuses its first use (`Session::connection_check`).
+                if let Some(k) = kind.filter(|k| {
+                    !k.eq_ignore_ascii_case("normal")
+                        && !k.eq_ignore_ascii_case("temporary")
+                        && !k.eq_ignore_ascii_case("crm")
+                }) {
                     return Err(format!(
                         "table \"{}\" has TableType = {k}: it is served by a table connection, which the runtime does not model",
                         crate::types::display_name(table)
@@ -5269,10 +5272,11 @@ table 50912 \"ALT Head\"
 
     #[test]
     fn a_record_of_a_table_that_is_not_normal_or_temporary_is_refused() {
-        // session/TestDatabaseTableConnectionCrm.al:162-176: a TableType = CRM table is served
-        // by a table connection, which the runtime does not model.
+        // A table served by a table connection the runtime does not model (ExternalSQL here) is refused.
+        // A CRM table is lowered: its first use fails at run time while no connection is registered
+        // (session/TestCrmTableNoConnectionContracts.al), and with one it is refused there.
         let (_, l) = lower_src(
-            "table 50960 Crm { TableType = CRM; fields { field(1; Id; Guid) { } } }
+            "table 50960 Crm { TableType = ExternalSQL; fields { field(1; Id; Guid) { } } }
              table 50961 Plain { TableType = Normal; fields { field(1; Id; Integer) { } } }
              codeunit 50962 C {
                 procedure A() var R: Record Crm; begin R.Init(); end;
@@ -5285,7 +5289,7 @@ table 50912 \"ALT Head\"
             l.unsupported[oi][ri].clone()
         };
         assert!(
-            reasons("A").iter().any(|r| r.contains("TableType = CRM")),
+            reasons("A").iter().any(|r| r.contains("TableType = ExternalSQL")),
             "{:?}",
             reasons("A")
         );

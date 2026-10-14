@@ -158,3 +158,26 @@ fn a_set_of_thousands_of_objects_round_trips() {
     e.verify().expect("verifies");
     assert!(blocks(&e) == set.blocks);
 }
+
+/// A dependency file that does not parse is reported by the run that builds the set. A run that
+/// takes the set from the file parses none of it, so the file has to carry the report.
+#[test]
+fn the_files_that_did_not_parse_are_kept_in_the_entry() {
+    let set = al_sema::lower::lower_for_cache(
+        vec![AppSource {
+            id: "d".into(),
+            name: "d".into(),
+            dependencies: vec![],
+            files: vec![
+                ("good.al".into(), SRC.into()),
+                ("bad.al".into(), "codeunit 59999 Broken { procedure P( begin end; }".into()),
+            ],
+        }],
+        &Default::default(),
+        None,
+    );
+    assert_eq!(set.parse_problems.len(), 1, "{:?}", set.parse_problems);
+    assert_eq!(set.parse_problems[0].0, "bad.al");
+    let e = Entry::open(build(&set, &key()), &key()).unwrap();
+    assert_eq!(e.parse_problems(), &set.parse_problems[..]);
+}

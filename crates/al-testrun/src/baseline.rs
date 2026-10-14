@@ -90,6 +90,8 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
 
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
     session.set_install_scope(true);
+    // So that a root that stops can say where (fault sites are noted only on an error or a refusal).
+    session.trace_faults(true);
     let mut notes = Vec::new();
     let mut touched = BTreeSet::new();
     let mut ran = 0;
@@ -101,9 +103,17 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         if no_company {
             session.set_company("");
         }
+        session.clear_fault_site();
         let why = match session.call(oi, ri, inst, Vec::new()) {
             Ok(_) => None,
-            Err(Signal::Unsupported(r)) => Some(r),
+            // Where it stopped: the innermost routine and its source position.
+            Err(Signal::Unsupported(r)) => Some(match session.fault_site().last() {
+                Some(f) => {
+                    let at = crate::explain::describe(&lowered.program, f.object, f.routine, f.pos);
+                    format!("{r} [in {} at {}]", at.who, at.at)
+                }
+                None => r,
+            }),
             Err(Signal::Error(e)) => Some(format!("failed with an error: {}", e.message)),
             Err(_) => None,
         };
@@ -131,10 +141,16 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
             }
         }
     }
+    session.trace_faults(false);
     session.set_install_scope(false);
     let baseline = session.capture_baseline();
     let filled = baseline.nonempty_tables();
-    let unseeded = touched.difference(&filled).copied().collect();
+    // A table the restored company holds rows for is seeded, whether or not a root could write it.
+    let unseeded = touched
+        .difference(&filled)
+        .copied()
+        .filter(|&t| !session.backs_rows(t))
+        .collect();
     Some(BaselineRun {
         baseline,
         unseeded,

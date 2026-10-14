@@ -12,6 +12,7 @@ al-ir.workspace = true
 al-version.workspace = true
 al-host.workspace = true
 rust_decimal = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 al-sema.workspace = true

@@ -38,6 +38,7 @@ mod relations;
 mod rename;
 mod reports;
 mod sessionops;
+mod testdata;
 mod transactions;
 mod ui;
 mod usertable;
@@ -63,6 +64,9 @@ pub struct Engine {
     /// Table objects whose rows the install baseline should have created and did not (ADR-013
     /// decision 5): a `Get` that finds nothing in dependency code is not BC's answer for them.
     pub unseeded: std::collections::HashSet<usize>,
+    /// Rows of a restored company, read when a session first touches a table (ADR-020). `None`: a
+    /// run without test data.
+    pub test_data: Option<al_host::testdata::TestData>,
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
@@ -149,6 +153,7 @@ impl Engine {
             target,
             dotnet,
             unseeded: Default::default(),
+            test_data: None,
             unevaluable_init,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
@@ -194,6 +199,8 @@ pub struct Session {
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
     pub(crate) next_guid: u64,
+    /// The host's seed, mixed into every Guid the session makes (see [`Session::fresh_guid`]).
+    guid_seed: i32,
     /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
     pub(crate) sent_notifications: Vec<[u8; 16]>,
     /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
@@ -324,11 +331,19 @@ impl Session {
 
     /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
+        // The session of a run with test data works in the restored company.
+        let host = match &engine.test_data {
+            Some(td) => host.in_company(td.provider.company()),
+            None => host,
+        };
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
         let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
-        let store =
+        let mut store =
             al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+        if let Some(td) = &engine.test_data {
+            store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
+        }
         let mut session = Session {
             global_language: host.identity.global_language(),
             host,
@@ -345,6 +360,7 @@ impl Session {
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
+            guid_seed: random_seed,
             sent_notifications: Vec::new(),
             rng: al_host::random::NetRandom::new(random_seed),
             unseeded_randomizes: 0,
@@ -496,6 +512,8 @@ impl Session {
     /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
     pub fn set_install_scope(&mut self, on: bool) {
         self.install_scope = on;
+        // Install code does not rewrite the rows of a restored company (ADR-020).
+        self.store.guard_backed_rows(on);
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
@@ -1403,6 +1421,7 @@ fn constant(c: &ir::Const) -> Value {
         ir::Const::DateTime(t) => Value::DateTime(*t),
         ir::Const::Option(i, m) => Value::Option(*i, m.clone().into()),
         ir::Const::Enum(o, v) => Value::Enum(*o, *v),
+        ir::Const::DateFormula(f) => Value::DateFormula(f.clone()),
         ir::Const::FieldPos(p) => Value::Integer(*p as i32),
     }
 }
@@ -1576,12 +1595,38 @@ impl al_builtins::native::Ctx for Session {
         Session::ui_recall_notification(self, id)
     }
     fn new_guid(&mut self) -> [u8; 16] {
-        // Deterministic ids (ADR-006: no OS randomness in the core).
+        self.fresh_guid()
+    }
+}
+
+/// A version 4 Guid (RFC 4122) that is a pure function of the host seed and a counter, so every
+/// byte looks random and a run is still repeatable (ADR-006: no OS randomness in the core;
+/// ADR-009: determinism is allowed where AL cannot tell the difference). The bytes are two
+/// SplitMix64 outputs; the version nibble is 4 and the variant bits are `10`.
+pub(crate) fn guid_for(seed: i32, n: u64) -> [u8; 16] {
+    let mut state = ((seed as u32 as u64) << 32) ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut g = [0u8; 16];
+    g[..8].copy_from_slice(&next().to_be_bytes());
+    g[8..].copy_from_slice(&next().to_be_bytes());
+    g[6] = 0x40 | (g[6] & 0x0F);
+    g[8] = 0x80 | (g[8] & 0x3F);
+    g
+}
+
+impl Session {
+    /// The next Guid of the session: `CreateGuid`, a row's SystemId, the ids of media and tasks.
+    /// The corpus pins only that it is not null and never repeats (types/TestGuid.al:12-45);
+    /// that the form is version 4 is an assumption (docs/probes-needed.md, "Probe batch 6").
+    pub(crate) fn fresh_guid(&mut self) -> [u8; 16] {
         self.next_guid += 1;
-        let mut g = [0u8; 16];
-        g[8..].copy_from_slice(&self.next_guid.to_be_bytes());
-        g[6] = 0x40;
-        g
+        guid_for(self.guid_seed, self.next_guid)
     }
 }
 

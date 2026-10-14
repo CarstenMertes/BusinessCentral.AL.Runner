@@ -493,3 +493,19 @@ fn clear_all_resets_the_global_variables_and_not_the_locals() {
             exit(Format(G) + '/' + T + '/' + Format(L.Count()) + '/' + Format(Loc)); end;");
     assert_eq!(text(run(&src, "F", vec![])), "0//0/7");
 }
+
+#[test]
+fn overloads_that_differ_only_in_the_table_of_a_record_parameter_pick_by_table() {
+    // Base Application: Price List Line has CopyTo(var Price Asset) and CopyTo(var Price Source).
+    // Microsoft's Tests-ERM (Price List Line UT.T029_ValidateAmountType) relies on the second one.
+    let src = "
+        table 50960 \"OvA\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        table 50961 \"OvB\" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C {
+            procedure Fill(var R: Record \"OvA\") begin R.Id := 1; end;
+            procedure Fill(var R: Record \"OvB\") begin R.Id := 2; end;
+            procedure F(): Text var A: Record \"OvA\"; B: Record \"OvB\"; begin
+                Fill(A); Fill(B); exit(Format(A.Id) + Format(B.Id)); end;
+        }";
+    assert_eq!(text(run(src, "F", vec![])), "12");
+}

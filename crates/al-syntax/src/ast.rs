@@ -387,40 +387,77 @@ impl Section {
         self.args_as(false)
     }
     fn args_as(&self, unquote: bool) -> Vec<String> {
+        self.split_args()
+            .into_iter()
+            .map(|sig| match sig.as_slice() {
+                [] => String::new(),
+                [one] if unquote && one.kind() == SyntaxKind::QuotedIdent => ident_text(one),
+                [first, .., last] => self.text_between(first, last),
+                [one] => one.text().to_string(),
+            })
+            .collect()
+    }
+
+    /// Argument `i` read as an object name: the parts of `Ns.Sub."Name"`, quotes removed. A lone
+    /// quoted name is one part even when it holds dots (`"Pstd. Phys. Invt. Order Hdr"`). `None`
+    /// when the argument is not a name (an expression, a type with a size).
+    pub fn arg_name_parts(&self, i: usize) -> Option<Vec<String>> {
+        let sig = self.split_args().into_iter().nth(i)?;
+        let mut parts = Vec::new();
+        let mut expect_name = true;
+        for t in &sig {
+            if expect_name {
+                if !matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent) {
+                    return None;
+                }
+                parts.push(ident_text(t));
+            } else if t.kind() != SyntaxKind::Dot {
+                return None;
+            }
+            expect_name = !expect_name;
+        }
+        (!parts.is_empty() && !expect_name).then_some(parts)
+    }
+
+    /// The significant tokens of each `;`-separated argument.
+    fn split_args(&self) -> Vec<Vec<SyntaxToken>> {
         let Some(args) = self.0.children().find(|n| n.kind() == SyntaxKind::SectionArgs) else {
             return Vec::new();
         };
         let toks: Vec<_> = args.descendants_with_tokens().filter_map(|e| e.into_token()).collect();
         let inner = &toks[1..toks.len().saturating_sub(1)];
         let mut out = Vec::new();
-        let mut cur: Vec<&SyntaxToken> = Vec::new();
-        let mut flush = |cur: &mut Vec<&SyntaxToken>| {
-            let sig: Vec<_> = cur.iter().filter(|t| !t.kind().is_trivia()).collect();
-            let text = if unquote && sig.len() == 1 && sig[0].kind() == SyntaxKind::QuotedIdent {
-                ident_text(sig[0])
-            } else {
-                cur.iter().map(|t| t.text()).collect::<String>().trim().to_string()
-            };
-            out.push(text);
-            cur.clear();
-        };
+        let mut cur: Vec<SyntaxToken> = Vec::new();
         let mut depth = 0;
         for t in inner {
             match t.kind() {
                 SyntaxKind::LParen | SyntaxKind::LBrack => depth += 1,
                 SyntaxKind::RParen | SyntaxKind::RBrack => depth -= 1,
                 SyntaxKind::Semicolon if depth == 0 => {
-                    flush(&mut cur);
+                    out.push(std::mem::take(&mut cur));
                     continue;
                 }
                 _ => {}
             }
-            cur.push(t);
+            if !t.kind().is_trivia() {
+                cur.push(t.clone());
+            }
         }
         if !inner.is_empty() {
-            flush(&mut cur);
+            out.push(cur);
         }
         out
+    }
+
+    /// The source text from token `first` to token `last`, trimmed.
+    fn text_between(&self, first: &SyntaxToken, last: &SyntaxToken) -> String {
+        let text = self.0.text().to_string();
+        let base = usize::from(self.0.text_range().start());
+        let (a, b) = (
+            usize::from(first.text_range().start()) - base,
+            usize::from(last.text_range().end()) - base,
+        );
+        text[a..b].trim().to_string()
     }
     fn members(&self) -> impl Iterator<Item = SyntaxNode> {
         self.0
@@ -558,7 +595,17 @@ impl Routine {
     }
     pub fn name(&self) -> String {
         let mut toks = significant_tokens(&self.0).skip_while(|t| !Self::is_routine_keyword(t));
-        toks.nth(1).map(|t| ident_text(&t)).unwrap_or_default()
+        let Some(first) = toks.nth(1) else {
+            return String::new();
+        };
+        let mut name = ident_text(&first);
+        // `trigger Variable::Event(...)`: the handler's name has both parts.
+        if let (Some(sep), Some(event)) = (toks.next(), toks.next()) {
+            if sep.kind() == SyntaxKind::ColonColon {
+                name = format!("{name}::{}", ident_text(&event));
+            }
+        }
+        name
     }
     /// Offset of the `procedure` or `trigger` keyword (after any attributes and modifiers).
     pub fn keyword_offset(&self) -> Option<usize> {
@@ -641,6 +688,26 @@ impl Attribute {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_section_argument_read_as_an_object_name() {
+        let f = file(
+            "report 1 R { dataset { dataitem(A; System.Utilities.Integer) { } dataitem(B; Ns.\"Q. Name\") { } dataitem(C; \"Pstd. Hdr. Q\") { } dataitem(D; Cust) { } field(E; Rec.F) { } } }",
+        );
+        let obj = f.objects().next().unwrap();
+        let secs = sections_in(obj.syntax());
+        let names = |n: usize| secs[n].arg_name_parts(1);
+        let s = |v: &[&str]| Some(v.iter().map(|x| x.to_string()).collect::<Vec<_>>());
+        assert_eq!(names(1), s(&["System", "Utilities", "Integer"]));
+        assert_eq!(names(2), s(&["Ns", "Q. Name"]));
+        assert_eq!(names(3), s(&["Pstd. Hdr. Q"]));
+        assert_eq!(names(4), s(&["Cust"]));
+        assert_eq!(secs[1].args()[1], "System.Utilities.Integer");
+        assert_eq!(secs[3].args()[1], "Pstd. Hdr. Q");
+        // `Rec.F` also reads as two parts: the caller decides whether the section takes a name.
+        assert_eq!(names(5), s(&["Rec", "F"]));
+        assert_eq!(secs[2].arg_name_parts(5), None);
+    }
 
     fn file(src: &str) -> SourceFile {
         let p = crate::parse(src, &Default::default());

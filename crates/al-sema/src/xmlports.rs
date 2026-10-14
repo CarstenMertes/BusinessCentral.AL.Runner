@@ -194,6 +194,12 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
                     .push(format!("trigger {tn} of {section_name} {name} is not supported yet"));
             }
         }
+        let mut args = args;
+        if kind == K::Table {
+            if let Some(table) = crate::types::section_object_name(&s, 1) {
+                args[1] = table;
+            }
+        }
         let idx = out.nodes.len();
         out.nodes.push(RawNode {
             name,

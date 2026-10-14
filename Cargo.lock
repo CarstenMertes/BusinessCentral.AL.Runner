@@ -25,8 +25,20 @@ name = "al-bcdb-cli"
 version = "0.1.0"
 dependencies = [
  "al-bcdb",
+ "al-bcdb-std",
  "rayon",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "al-bcdb-std"
+version = "0.1.0"
+dependencies = [
+ "al-bcdb",
+ "al-host",
+ "al-sema",
+ "al-testrun",
  "tempfile",
 ]
 
@@ -153,6 +165,7 @@ dependencies = [
  "al-ir",
  "al-sema",
  "al-version",
+ "flate2",
  "rust_decimal",
 ]
 
@@ -160,6 +173,7 @@ dependencies = [
 name = "alrunner-cli"
 version = "0.1.0"
 dependencies = [
+ "al-bcdb-std",
  "al-deps",
  "al-host",
  "al-sema",

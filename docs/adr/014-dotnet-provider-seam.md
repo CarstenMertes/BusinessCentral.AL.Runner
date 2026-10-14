@@ -269,8 +269,9 @@ item 6). The wire carries a tagged value.
   that passes in BC only because an earlier test codeunit left static state. The
   oracle run order is not recorded. A mismatch of that kind is reported as a
   probe candidate, not hidden.
-- Start-up is about 50 to 65 ms (section 12). A warm standby is allowed as an
-  optimisation behind the same trait: keep one idle, already-started sidecar
+- Start-up is about 50 to 65 ms (section 12) with the .NET files in the page cache, 1 s or more
+  on a cold CI runner. A warm standby is allowed as an
+  optimisation behind the same trait (built, see "Decided without owner review"): keep one idle, already-started sidecar
   per worker, hand it to the next Session that needs one, start the next one in
   the background. A standby has loaded no test assemblies, so it is
   indistinguishable from a fresh process.
@@ -359,7 +360,8 @@ before a request is sent. Every refusal names the type or member and the rule.
 
 - Source: `tools/dotnet-sidecar/` (C#, `net8.0`, no NuGet packages, no Microsoft
   files). It is the spike's `Program.cs` hardened (section 12).
-- Build: `dotnet publish -c Release`. Needs the .NET 8 SDK once. Core crates
+- Build: `dotnet publish -c Release --disable-build-servers -p:UseSharedCompilation=false` (a
+  VBCSCompiler server left running holds the caller's file descriptors). Needs the .NET 8 SDK once. Core crates
   have no `build.rs` for this (ADR-006 spirit: builds do not spawn tools).
 - Lookup order in `al-test-cli`:
   1. `--dotnet-sidecar PATH` or `ALRT_DOTNET_SIDECAR`.
@@ -515,7 +517,7 @@ Reading the numbers:
 - A job step `actions/setup-dotnet` with `dotnet-version: 8.0.x` in
   `.github/workflows/ci.yml`, before the corpus step. It provides both the SDK
   to build the sidecar and the runtime to run it.
-- `dotnet publish tools/dotnet-sidecar -c Release -o <dir>` once per job. No
+- `dotnet publish tools/dotnet-sidecar -c Release -o <dir> --disable-build-servers -p:UseSharedCompilation=false` once per job. No
   NuGet restore is needed beyond the SDK's own targeting packs.
 - ICU (`libicu`) is present on `ubuntu-latest`.
 - The BC platform package for the selected build is in the artifact cache
@@ -577,5 +579,44 @@ The sketches above became code with these differences. None changes a seam; they
 - Lowering refuses, with a reason, a `DotNet` value used as an operand, passed to a builtin,
   indexed, or iterated, because BC types such results from the assembly and lowering never
   opens it. Results are coerced exactly where they are stored.
-- Not built: Fallback A and B of the resolution table (phase 3), a warm standby, the
-  compile-time AL0296 check, `foreach` over `DotNet`, and a Rust-side method cache.
+- Not built: Fallback A and B of the resolution table (phase 3), the
+  compile-time AL0296 check, `foreach` over `DotNet`, and a Rust-side method cache. (The warm
+  standby was built later, see below.)
+
+## Decided without owner review (2026-10-14, branch `sidecar-start`)
+
+The warm standby of section 6 is built, for a run that has the Microsoft apps. No seam changes:
+`DotNetHost` and `DotNetSession` are as in section 2; the standby is a method of `SidecarHost`
+(`prewarm`, `shutdown`), which only the command lines call.
+
+Why. The perf budget `a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget` failed once
+on CI: two Media test codeunits took 7.4 s each, against a runtime of 0.02 s. Measured on CI, those
+two codeunits spend 1.1 to 1.3 s of their 1.2 to 1.4 s starting the sidecar (a start is 0.055 s on the
+dev box, 0.19 s with the .NET files dropped from the page cache). The runtime is 0.15 s for all
+35 requests. The 7.4 s run was the same start on a slower runner. Two sessions start a process
+each (one per session, section 6), at the moment the tests begin, on a runner whose four cores are
+all busy.
+
+What changed.
+
+1. `al-test-cli` and `alrunner` call `SidecarHost::prewarm(2)` before the compile when the run
+   loads dependency apps (not with `--no-deps`). Background threads find `dotnet` and start two
+   sidecar processes, which answer `hello` and wait. They overlap the compile (2 to 4 s on CI).
+2. A session that makes its first `DotNet` call takes one standby whole, or waits for one that is
+   still starting, or starts its own if there is none. A standby is used by one session only, so
+   static .NET state still does not leak between sessions (section 6). The host starts a
+   replacement for each one taken (so a run with more than two sessions keeps being served), and
+   `shutdown()` ends the unused ones at the end of the run (the sidecar also ends on its own when
+   the parent exits, because its stdin closes).
+3. A run without dependency apps, or with no `DotNet` call, still starts no process of its own
+   accord; a run with the Microsoft apps starts two that may go unused (about 0.1 s of CPU,
+   spread over the compile). This changes the sentence of section 6, "a run that never calls
+   `DotNet` starts nothing", for runs with the Microsoft apps.
+4. Reporting. `SidecarHost::stats()` counts processes started, the time each start took, the time
+   sessions waited for theirs (zero for a standby that was ready), the time to find `dotnet`, and
+   the requests. `--timings` prints a `dotnet:` line, `slowest test codeunits:` shows
+   `(sidecar start X s)` for the part of a codeunit spent waiting for a process, and the markdown
+   report ("How long it took") and `--json` carry the same numbers.
+5. The perf budget measures the runtime: the per-codeunit limit of 2 s is applied to a
+   codeunit's time minus its sidecar start. The start has its own limit (10 s for one process; a
+   start is about 0.05 to 1.3 s). The limit was not raised.

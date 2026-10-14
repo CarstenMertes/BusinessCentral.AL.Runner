@@ -1017,8 +1017,14 @@ fn array_get(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<
 /// the operation was not successful"; no corpus test feeds invalid JSON, see probes-needed.md).
 fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Option<&str>) -> Result<Value, Signal> {
     let h = recv(r)?;
-    let Some(text) = crate::native::text_of(&a[0]) else {
-        return unsupported("ReadFrom with an argument that is not text");
+    // ReadFrom(InStream) reads the rest of the stream and parses it like the text form.
+    let text = if matches!(&a[0], Value::Library(_, h) if matches!(&*h.borrow(), LibraryValue::InStream(_))) {
+        crate::stream::read_serialised_text(&mut a[0])?
+    } else {
+        match crate::native::text_of(&a[0]) {
+            Some(t) => t,
+            None => return unsupported("ReadFrom with an argument that is not text"),
+        }
     };
     let syntax = parse(&text)?;
     let parsed = syntax.clone().filter(|p| {
@@ -1074,6 +1080,17 @@ fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Res
     let mut out = String::new();
     write(&h, &mut out)?;
     a[0] = Value::Text(out);
+    Ok(Value::Boolean(true))
+}
+
+/// `WriteTo(OutStream)`: the compact text of `WriteTo(Text)` goes to the stream
+/// (json/TestJsonArray.al:90 pins the text; the bytes are an assumption, see
+/// [`crate::stream::write_serialised_text`]).
+fn write_to_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let mut out = String::new();
+    write(&h, &mut out)?;
+    crate::stream::write_serialised_text(&mut a[0], &out)?;
     Ok(Value::Boolean(true))
 }
 
@@ -1352,10 +1369,11 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonObject.GetTime", _) => obj_time,
         ("JsonObject.GetObject", _) => obj_get_object,
         ("JsonObject.GetArray", _) => obj_get_array,
-        ("JsonObject.ReadFrom", ["Text"]) => object_read_from,
+        ("JsonObject.ReadFrom", ["Text" | "InStream"]) => object_read_from,
         ("JsonObject.ReadFromYaml", ["Text"]) => read_from_yaml,
         ("JsonObject.WriteToYaml", ["Text"]) if first_by_var => write_to_yaml,
         ("JsonObject.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonObject.WriteTo", ["OutStream"]) => write_to_stream,
         ("JsonObject.AsToken" | "JsonArray.AsToken" | "JsonValue.AsToken", []) => as_token,
         ("JsonObject.Clone" | "JsonArray.Clone" | "JsonValue.Clone" | "JsonToken.Clone", []) => clone_token,
         ("JsonObject.Path" | "JsonArray.Path" | "JsonValue.Path" | "JsonToken.Path", []) => path,
@@ -1380,10 +1398,12 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonArray.GetTime", _) => arr_time,
         ("JsonArray.GetObject", _) => arr_get_object,
         ("JsonArray.GetArray", _) => arr_get_array,
-        ("JsonArray.ReadFrom", ["Text"]) => array_read_from,
+        ("JsonArray.ReadFrom", ["Text" | "InStream"]) => array_read_from,
         ("JsonArray.WriteTo", ["Text"]) if first_by_var => write_to_text,
-        ("JsonToken.ReadFrom" | "JsonValue.ReadFrom", ["Text"]) => any_read_from,
+        ("JsonArray.WriteTo", ["OutStream"]) => write_to_stream,
+        ("JsonToken.ReadFrom" | "JsonValue.ReadFrom", ["Text" | "InStream"]) => any_read_from,
         ("JsonToken.WriteTo" | "JsonValue.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonToken.WriteTo" | "JsonValue.WriteTo", ["OutStream"]) => write_to_stream,
         ("JsonToken.AsObject", []) => token_as_object,
         ("JsonToken.AsArray", []) => token_as_array,
         ("JsonToken.AsValue", []) => token_as_value,

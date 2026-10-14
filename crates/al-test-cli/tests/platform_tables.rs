@@ -103,6 +103,11 @@ fn outcomes(main: &str) -> Vec<(String, Outcome)> {
 
 /// [`outcomes`] with the demand roots chosen: `eager` compiles every table of the System app.
 fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outcome)> {
+    outcomes_app("main", main, roots)
+}
+
+/// [`outcomes_with`] with the id of the app under test chosen (a platform table lists apps by Guid).
+fn outcomes_app(app_id: &str, main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outcome)> {
     use al_sema::workspace::{AppKind, AppSource};
     let app = |id: &str, name: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
         id: id.into(),
@@ -112,7 +117,7 @@ fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outco
     };
     let (_, l) = al_sema::lower::compile_apps_with(
         vec![
-            app("main", "main", &[], vec![("main.al".into(), main.into())]),
+            app(app_id, "main", &[], vec![("main.al".into(), main.into())]),
             app(al_sema::workspace::PLATFORM_APP_ID, "System", &[], system_app_files()),
         ],
         vec![AppKind::Workspace, AppKind::Dependency],
@@ -125,7 +130,12 @@ fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outco
         .iter()
         .map(|o| o.iter().map(|r| r.first().cloned()).collect())
         .collect();
-    let engine = Engine::new(l.program.clone(), blocked);
+    // The two sources above carry no manifest, so no version; the app tables list an app only with one.
+    let mut program = (*l.program).clone();
+    for a in program.apps.iter_mut().filter(|a| a.version.is_empty()) {
+        a.version = "1.0.0.0".into();
+    }
+    let engine = Engine::new(std::sync::Arc::new(program), blocked);
     let oi = l
         .program
         .objects
@@ -151,6 +161,21 @@ fn a_platform_table_with_no_provider_is_refused_where_code_uses_it_and_names_tab
     let why = not_run(&o, "UsesATableWithNoProvider");
     assert!(
         why.contains("platform table 'Feature Key' (2000000211) has no provider"),
+        "{why}"
+    );
+}
+
+// A name that ends in a dot (`Metadata Permission Set Rel.`, 23 of Microsoft's permission tests) is a
+// platform table with no provider, not an object outside the workspace.
+#[test]
+fn a_platform_table_whose_name_ends_in_a_dot_names_the_missing_provider() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure UsesIt() var P: Record "Metadata Permission Set Rel."; begin if P.IsEmpty() then; end; }"#,
+    );
+    let why = not_run(&o, "UsesIt");
+    assert!(
+        why.contains("platform table 'Metadata Permission Set Rel.' (") && why.contains("has no provider"),
         "{why}"
     );
 }
@@ -435,8 +460,13 @@ codeunit 50000 "T" { Subtype = Test;
     R.SetRange("Table ID", 50003); R.SetRange("Field No.", 4); if R.Count() <> 1 then Error('plain'); R.FindFirst(); if R."Related Table ID" <> 50001 then Error('table'); if R."Related Field No." <> 1 then Error('field');
     R.SetRange("Field No.", 5); if not R.IsEmpty() then Error('soft');
     R.SetRange("Field No.", 6); if R.Count() <> 2 then Error('cond'); R.FindSet(); if R."Relation No." <> 1 then Error('first'); if R."Condition Field No." <> 2 then Error('cond field'); R.Next(); if R."Related Table ID" <> 50002 then Error('else');
-    R.SetRange("Field No.", 7); if R.Count() <> 2 then Error('two conditions %1', R.Count()); R.FindFirst(); if R."Condition Field No." <> 2 then Error('first condition'); R.Next(); if R."Condition Field No." <> 3 then Error('second condition'); end; }"#,
+    R.SetRange("Field No.", 7); if R.Count() <> 2 then Error('two conditions %1', R.Count()); R.FindFirst(); if R."Condition Field No." <> 2 then Error('first condition'); R.Next(); if R."Condition Field No." <> 3 then Error('second condition'); end;
+  [Test] procedure FieldRelation() var F: Record "Field"; begin F.Get(50003, 7); if F.RelationTableNo <> 50001 then Error('filtered relation %1', F.RelationTableNo); if F.RelationFieldNo <> 1 then Error('related field'); end;
+  [Test] procedure ConditionalRelation() var F: Record "Field"; begin F.Get(50003, 6); end; }"#,
     );
+    passes(&o, "FieldRelation");
+    let why = not_run(&o, "ConditionalRelation");
+    assert!(why.contains("conditional TableRelation"), "{why}");
     passes(&o, "Rows");
 }
 
@@ -472,4 +502,91 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Present");
     passes(&o, "TenantRow");
+}
+
+/// A platform table nothing provides rows for is still a table: a temporary record of it holds what
+/// AL inserts, a variable that is declared and never read does not stop the code that has it, and
+/// only a read or write of its persistent rows is refused, naming table and id. The corpus pins that
+/// `temporary` borrows the shape of a platform table and the provider never sees the record
+/// (record/TestTemporaryVirtualTableRecord.al, for Field, Date and Aggregate Permission Set);
+/// WMS Management keeps its error log in `Record "License Information" temporary`.
+#[test]
+fn a_platform_table_without_provider_works_as_a_temporary_record_and_is_refused_otherwise() {
+    let o = outcomes(
+        r#"codeunit 50001 "Holder" { var L: Record "License Information" temporary; G: Record "Feature Key";
+  procedure Log(N: Integer; T: Text) begin L."Line No." := N; L.Text := CopyStr(T, 1, 250); L.Insert(); end;
+  procedure Count(): Integer begin exit(L.Count()); end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure TemporaryRoundTrips() var H: Codeunit Holder; begin H.Log(1, 'a'); H.Log(2, 'b'); if H.Count() <> 2 then Error('count %1', H.Count()); end;
+  [Test] procedure DeclaredAndNeverRead() var G: Record "Feature Key"; begin end;
+  [Test] procedure PersistentReadIsRefused() var G: Record "Feature Key"; begin if G.Get('X') then; end;
+  [Test] procedure PersistentWriteIsRefused() var L: Record "License Information"; begin L."Line No." := 1; L.Insert(); end; }"#,
+    );
+    passes(&o, "TemporaryRoundTrips");
+    passes(&o, "DeclaredAndNeverRead");
+    for t in ["PersistentReadIsRefused", "PersistentWriteIsRefused"] {
+        let why = not_run(&o, t);
+        assert!(why.contains("has no provider"), "{t}: {why}");
+    }
+    let why = not_run(&o, "PersistentReadIsRefused");
+    assert!(why.contains("platform table 'Feature Key' (2000000211)"), "{why}");
+}
+
+/// Columns that the declaration describes, filled from it: the caption, card page and editability of
+/// a page, and the table name, caption, class and enabled flag of a field. Not pinned by a corpus
+/// test: Page Management reads CardPageID off the lookup page and Microsoft's tests read the others
+/// (docs/probes-needed.md, "Probe batch 5").
+#[test]
+fn declared_caption_card_page_class_and_enabled_are_read_from_the_declaration() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { Caption = 'Number'; } field(2; Total; Decimal) { FieldClass = FlowField; CalcFormula = count(Thing); Caption = 'The total'; }
+    field(3; Filt; Integer) { FieldClass = FlowFilter; } field(4; Off; Integer) { Enabled = false; } field(5; Plain; Text[10]) { } }
+  keys { key(PK; "No.") { Clustered = true; } } }
+page 50002 "Thing Card" { PageType = Card; SourceTable = Thing; Caption = 'A card'; }
+page 50003 "Thing List" { PageType = List; SourceTable = Thing; CardPageID = "Thing Card"; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Pages() var M: Record "Page Metadata"; begin M.Get(50003); if M.CardPageID <> 50002 then Error('card %1', M.CardPageID); if M.Caption <> 'Thing List' then Error('caption %1', M.Caption);
+    M.Get(50002); if M.CardPageID <> 0 then Error('no card'); if M.Caption <> 'A card' then Error('card caption %1', M.Caption); end;
+  [Test] procedure Fields() var F: Record "Field"; begin
+    F.Get(50001, 1); if F.TableName <> 'Thing' then Error('table name'); if F."Field Caption" <> 'Number' then Error('caption %1', F."Field Caption"); if F.Class <> F.Class::Normal then Error('class'); if not F.Enabled then Error('enabled');
+    F.Get(50001, 2); if F.Class <> F.Class::FlowField then Error('flowfield'); if F."Field Caption" <> 'The total' then Error('total caption');
+    F.Get(50001, 3); if F.Class <> F.Class::FlowFilter then Error('flowfilter'); if F."Field Caption" <> 'Filt' then Error('name as caption');
+    F.Get(50001, 4); if F.Enabled then Error('disabled'); end; }"#,
+    );
+    passes(&o, "Pages");
+    passes(&o, "Fields");
+}
+
+/// A key states `MaintainSIFTIndex` and `ObsoleteState`, a table its `DrillDownPageId`; the tables
+/// report them (probe batch 5: no corpus test reads them).
+#[test]
+fn a_keys_sift_flag_and_obsolete_state_and_a_tables_drill_down_page_are_read_from_the_declaration() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { DrillDownPageId = "Thing List"; fields { field(1; "No."; Integer) { } field(2; Amt; Decimal) { } }
+  keys { key(PK; "No.") { Clustered = true; } key(S1; Amt) { MaintainSIFTIndex = false; } key(S2; Amt, "No.") { ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; } } }
+page 50002 "Thing List" { PageType = List; SourceTable = Thing; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Keys() var K: Record "Key"; begin K.SetRange(TableNo, 50001); K.SetRange("No.", 1); K.FindFirst(); if not K.MaintainSIFTIndex then Error('default sift'); if K.ObsoleteState <> K.ObsoleteState::No then Error('default state');
+    K.SetRange("No.", 2); K.FindFirst(); if K.MaintainSIFTIndex then Error('sift'); K.SetRange("No.", 3); K.FindFirst(); if K.ObsoleteState <> K.ObsoleteState::Pending then Error('pending'); end;
+  [Test] procedure Table() var M: Record "Table Metadata"; begin M.Get(50001); if M.DrillDownPageId <> 50002 then Error('drill down %1', M.DrillDownPageId); end; }"#,
+    );
+    passes(&o, "Keys");
+    passes(&o, "Table");
+}
+
+#[test]
+fn a_published_application_row_passes_the_tenant_filter_of_the_retention_policy_module() {
+    // install/TestRetenPolAllowedTables_Tests.al: Base Application registers table 405 only when
+    // System Application finds its Published Application row through
+    // SetFilter("Tenant ID", '%1|%2', '', TenantId). The row must therefore satisfy that filter.
+    let o = outcomes_app(
+        "5d86850b-0d76-4eca-bd7b-951ad998e997",
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure OwnRowPassesTheTenantFilter() var P: Record "Published Application"; begin
+    P.SetRange(ID, '5d86850b-0d76-4eca-bd7b-951ad998e997');
+    P.SetFilter("Tenant ID", '%1|%2', '', 'any-tenant');
+    if not P.FindFirst() then Error('no row'); end; }"#,
+        al_sema::check::Roots::default(),
+    );
+    passes(&o, "OwnRowPassesTheTenantFilter");
 }

@@ -117,6 +117,19 @@ Each is also a line in `docs/owner-review.md`.
 17. **Code Coverage, Code Coverage Test Lookup and Code Coverage Tests Run are stored and start empty.** The
     runtime records no coverage. After `CodeCoverageLog(true, ...)` every read of them is refused until an
     unfiltered `DeleteAll` empties that table (`platform/coverage.rs`). A recording engine would replace this.
+18. **A platform table nothing provides is still a table (round 3).** It lowers and its shape is the declaration. A
+    temporary record of it is an ordinary temporary table, as the corpus pins for Field, Date and Aggregate
+    Permission Set (record/TestTemporaryVirtualTableRecord.al); a variable that is declared and never read does
+    not stop the code that holds it; a read or write of its persistent rows is refused at run time with
+    `platform table 'X' (id) has no provider` (`Virtual::Unprovided`, `Providers::new`). Before, the first mention
+    of such a table in a codeunit refused every test that reached the codeunit (about 1,900 tests on Microsoft's buckets).
+    The columns of such a table are not pinned-checked: nothing reads a persistent row.
+19. **Columns the declaration describes are filled from it** where the Microsoft buckets read them: Page Metadata
+    Caption and CardPageID, Field TableName, Class, Enabled and "Field Caption", Key MaintainSIFTIndex and
+    ObsoleteState, Report Layout List "Application ID", Table Metadata DrillDownPageId, and Field RelationTableNo for a
+    relation with a `filter(...)` condition (`Field::relation_meta`). None is pinned by a corpus test; each is a line
+    in `docs/probes-needed.md`, "Probe batch 5".
+20. **A refused store read prints as its reason** (`StoreError`'s `Debug`), so the ranking of refusals names the table.
 
 ## Consequences
 

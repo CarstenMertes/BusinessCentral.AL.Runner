@@ -335,6 +335,12 @@ fn run_version(
             return Err(format!("--require-dotnet: DotNet {why}"));
         }
     }
+    let sidecar_host = host.clone();
+    if !args.no_deps {
+        // The Microsoft apps call .NET (Media, images). Start the helper processes now so the
+        // starts overlap the compile; a run without them starts nothing (ADR-014 section 6).
+        sidecar_host.prewarm(al_test_cli::dotnet::STANDBY_SIDECARS);
+    }
     let dotnet = al_vm::dotnet::DotNetConfig {
         host,
         ..Default::default()
@@ -369,6 +375,8 @@ fn run_version(
     let opts = runtime::RunOptions {
         only,
         trace: explained.is_some(),
+        // The corpus has no test data: its oracle is a database the cases fill themselves.
+        test_data: None,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::run_suites_with(
@@ -382,6 +390,8 @@ fn run_version(
         &opts,
     );
     let p = &rt.phases;
+    let sidecar_stats = sidecar_host.stats();
+    sidecar_host.shutdown();
     let timings = report::Timings {
         bc_version: version.bc_version.clone(),
         eager: std::env::var_os("AL_EAGER_DEPENDENCIES").is_some(),
@@ -390,6 +400,7 @@ fn run_version(
         baseline_s: p.baseline.as_secs_f64(),
         tests_s: p.tests.as_secs_f64(),
         total_s: started.elapsed().as_secs_f64(),
+        dotnet: report::DotNetTimes::of(&sidecar_stats),
         suites: p
             .suites
             .iter()
@@ -419,9 +430,19 @@ fn run_version(
         let slowest: Vec<String> = p
             .slowest
             .iter()
-            .map(|(id, name, t)| format!("{id} {name} {:.2} s", t.as_secs_f64()))
+            .map(|c| {
+                let start = if c.sidecar_start.is_zero() {
+                    String::new()
+                } else {
+                    format!(" (sidecar start {:.2} s)", c.sidecar_start.as_secs_f64())
+                };
+                format!("{} {} {:.2} s{start}", c.id, c.name, c.took.as_secs_f64())
+            })
             .collect();
         eprintln!("slowest test codeunits: {}", slowest.join("; "));
+        if let Some(d) = &timings.dotnet {
+            eprintln!("dotnet: {}", d.line());
+        }
     }
     if rt.panics > 0 {
         eprintln!(

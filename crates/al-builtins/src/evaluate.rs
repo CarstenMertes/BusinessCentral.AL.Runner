@@ -211,7 +211,8 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
         Some(Value::Integer(n)) => i64::from(*n),
         Some(other) => return unsupported(format!("Evaluate format number {other:?}")),
     };
-    if number != 0 && number != 9 {
+    // Number 2 is read for a DateFormula only, as number 0 (docs/probes-needed.md).
+    if number != 0 && number != 9 && !(number == 2 && matches!(a[0], Value::DateFormula(_))) {
         return unsupported(format!(
             "Evaluate with format number {number} (not pinned by the corpus)"
         ));
@@ -243,6 +244,26 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
                     return Ok(Value::Boolean(true));
                 }
                 None => return unsupported(format!("Evaluate of `{text}` into Version (only a.b.c.d is pinned)")),
+            }
+        }
+        // An enum: format 9 reads the ordinal that `Format(Enum, 0, 9)` writes (this runtime's
+        // Format, docs/probes-needed.md); format 0 reads a member name, as the InitValue of a field does
+        // (types/TestBlankEnumInitTests.Codeunit.al:92). A text that matches no member is rejected.
+        Value::Enum(id, _) => {
+            let Some(members) = c.enum_members(*id) else {
+                return unsupported("Evaluate into an Enum without its members");
+            };
+            let found = if number == 9 {
+                text.parse::<i32>()
+                    .ok()
+                    .filter(|_| text.bytes().all(|b| b.is_ascii_digit()))
+                    .and_then(|n| members.iter().find(|(o, _)| *o == n).map(|(o, _)| *o))
+            } else {
+                members.iter().find(|(_, n)| *n == text).map(|(o, _)| *o)
+            };
+            match found {
+                Some(o) => Parsed::Value(Value::Enum(*id, o)),
+                None => Parsed::Rejected,
             }
         }
         // An ordinal into SecurityFilter: `Evaluate(Filter, '3')` gives Disallowed

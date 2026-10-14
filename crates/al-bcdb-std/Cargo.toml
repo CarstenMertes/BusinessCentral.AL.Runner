@@ -1,0 +1,16 @@
+[package]
+name = "al-bcdb-std"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The operating-system side of al-bcdb: a file byte source (pread) and the table provider that gives a run the rows of a BC database backup (ADR-020)."
+
+[dependencies]
+al-bcdb = { path = "../al-bcdb" }
+al-host.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+al-sema.workspace = true
+al-testrun.workspace = true

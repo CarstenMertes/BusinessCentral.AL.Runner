@@ -134,7 +134,19 @@ pub struct Phases {
     pub engine: std::time::Duration,
     /// The test codeunits (object id, name) that took longest, slowest first (at most
     /// [`SLOWEST`]).
-    pub slowest: Vec<(u32, String, std::time::Duration)>,
+    pub slowest: Vec<CodeunitTime>,
+}
+
+/// How long one test codeunit took.
+#[derive(Debug, Clone)]
+pub struct CodeunitTime {
+    pub id: u32,
+    pub name: String,
+    /// Wall time of the whole codeunit.
+    pub took: std::time::Duration,
+    /// The part of `took` spent starting .NET sidecar processes (ADR-014): start-up of a helper
+    /// process, not the runtime. A budget on the runtime subtracts it.
+    pub sidecar_start: std::time::Duration,
 }
 
 /// How many test codeunits `--timings` names.
@@ -155,6 +167,7 @@ struct UnitResult {
     /// The outcome of each test, or the message of a Rust panic.
     result: Result<Vec<(String, Outcome)>, String>,
     took: std::time::Duration,
+    sidecar_start: std::time::Duration,
 }
 
 /// The `[Test]` routines of a codeunit.
@@ -173,6 +186,7 @@ fn run_unit(
     observe: Option<&mut Observer>,
 ) -> UnitResult {
     let started = std::time::Instant::now();
+    crate::dotnet::take_start_time();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         run_codeunit_observed(engine, lowered, u.oi, baseline, u.isolation, observe)
     }))
@@ -188,6 +202,7 @@ fn run_unit(
         id: u.id,
         result,
         took: started.elapsed(),
+        sidecar_start: crate::dotnet::take_start_time(),
     }
 }
 
@@ -217,6 +232,9 @@ pub struct RunOptions {
     pub only: Option<Vec<(usize, u32)>>,
     /// Record where tests are refused or fail (`--explain`).
     pub trace: bool,
+    /// Rows of a restored company, read when a session first touches a table (ADR-020). `None`:
+    /// a run without test data, as every corpus run is.
+    pub test_data: Option<al_host::testdata::TestData>,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -352,6 +370,21 @@ impl CorpusRuntime {
                 ..Default::default()
             },
         );
+        // A dependency file that does not parse takes every object in it out of the compile, and the
+        // tests that need one are refused as "outside the workspace". Say so, once, with the first lines.
+        let unparsed = ws.lazy_parse_problems();
+        if !unparsed.is_empty() {
+            eprintln!(
+                "parse: {} dependency file(s) did not parse; their objects are unusable and the tests that need them are not run",
+                unparsed.len()
+            );
+            for (_, why) in unparsed.iter().take(10) {
+                eprintln!("parse: {why}");
+            }
+            if unparsed.len() > 10 {
+                eprintln!("parse: ... {} more", unparsed.len() - 10);
+            }
+        }
         if std::env::var_os("AL_REACH_REPORT").is_some() {
             eprintln!("{}", crate::reach::report(&ws, &lowered));
         }
@@ -380,6 +413,9 @@ impl CorpusRuntime {
                 dotnet.clone(),
             );
             global_triggers_find_unavailable(&mut engine, &lowered);
+            if let Some(e) = Arc::get_mut(&mut engine) {
+                e.test_data = opts.test_data.clone();
+            }
             engine
         };
         let mut engine = make_engine();
@@ -425,7 +461,7 @@ impl CorpusRuntime {
         let mut outcomes = std::collections::HashMap::new();
         let mut details = std::collections::HashMap::new();
         let mut panics = 0;
-        let mut codeunit_times: Vec<(u32, String, std::time::Duration)> = Vec::new();
+        let mut codeunit_times: Vec<CodeunitTime> = Vec::new();
         // The test codeunits to run, in the order the report lists them.
         let mut units: Vec<Unit> = Vec::new();
         let mut list: Vec<TestResult> = Vec::new();
@@ -533,7 +569,12 @@ impl CorpusRuntime {
         let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();
         for r in results {
             suite_work.push((r.si, r.took));
-            codeunit_times.push((r.id, lowered.program.objects[r.oi].name.clone(), r.took));
+            codeunit_times.push(CodeunitTime {
+                id: r.id,
+                name: lowered.program.objects[r.oi].name.clone(),
+                took: r.took,
+                sidecar_start: r.sidecar_start,
+            });
             let o = &lowered.program.objects[r.oi];
             let push = |list: &mut Vec<TestResult>, test: &str, outcome: &Outcome| {
                 list.push(TestResult {
@@ -574,7 +615,7 @@ impl CorpusRuntime {
                 )
             })
             .collect();
-        codeunit_times.sort_by_key(|c| std::cmp::Reverse(c.2));
+        codeunit_times.sort_by_key(|c| std::cmp::Reverse(c.took));
         codeunit_times.truncate(SLOWEST);
         let suites = suites.iter().map(|s| s.name.clone()).collect();
         // The workspace and the lowered program are big: dropping them takes as long as lowering

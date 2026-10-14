@@ -595,3 +595,41 @@ fn format_of_a_table_filter_field_nobody_set_is_empty() {
     );
     assert_eq!(text(r), "[]");
 }
+
+#[test]
+fn ascending_sets_and_reads_the_sort_direction_like_the_record_method() {
+    // Doc (RecordRef.Ascending): the same as Record.Ascending, which record/TestRecordSort.al:111 pins.
+    // Base Application's "Selection Filter Management" calls `TempRecRef.Ascending(true)`.
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; R: Text; begin
+            RR.Open(50900);
+            RR.Field(1).Value := 'A'; RR.Insert(); RR.Init(); RR.Field(1).Value := 'B'; RR.Insert();
+            R := Format(RR.Ascending());
+            RR.Ascending(false);
+            R += Format(RR.Ascending());
+            RR.FindSet(); R += Format(RR.Field(1).Value);
+            RR.Ascending(true); RR.FindSet(); R += Format(RR.Field(1).Value);
+            exit(R);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesNoBA");
+}
+
+#[test]
+fn set_rec_filter_filters_the_primary_key_to_the_current_values() {
+    // Doc (RecordRef.SetRecFilter): the same as Record.SetRecFilter, pinned by
+    // record/TestFilterAdvancedContracts.al:144-175 (one record, the one that was current).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; R: Text; begin
+            RR.Open(50900);
+            RR.Field(1).Value := 'A'; RR.Insert(); RR.Init(); RR.Field(1).Value := 'B'; RR.Insert();
+            RR.FindFirst();
+            RR.SetRecFilter();
+            R := Format(RR.Count()) + RR.Field(1).GetFilter();
+            exit(R);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "1A");
+}

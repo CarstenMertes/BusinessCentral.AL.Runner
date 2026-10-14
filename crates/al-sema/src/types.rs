@@ -62,6 +62,17 @@ pub fn qualified_parts(name: &str) -> Vec<String> {
     name.split(QUAL_SEP).map(str::to_string).collect()
 }
 
+/// Argument `i` of a section as the name of an object, in the form types carry: the parts of
+/// `Ns.Sub."Name"` joined by `QUAL_SEP`. `dataitem(Integer; System.Utilities.Integer)` names a
+/// namespace-qualified table; the text of the argument alone cannot tell that from a quoted name
+/// that holds dots (`"Pstd. Phys. Invt. Order Hdr"`).
+pub fn section_object_name(sec: &al_syntax::ast::Section, i: usize) -> Option<String> {
+    match sec.arg_name_parts(i) {
+        Some(parts) => Some(parts.join(QUAL_SEP)),
+        None => sec.args().get(i).cloned(),
+    }
+}
+
 /// An object name from a type, as written (`A.B.Ship. Method`), for messages.
 pub fn display_name(name: &str) -> String {
     name.replace(QUAL_SEP, ".")

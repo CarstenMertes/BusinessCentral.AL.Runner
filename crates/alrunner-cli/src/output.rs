@@ -50,10 +50,18 @@ pub fn first_line(s: &str, max: usize) -> String {
 
 /// `Tests: 12 total, 5 passed, 1 failed, 6 not run`, and the warning that goes with a run that
 /// has no test data.
-pub fn summary_line(c: &Counts) -> String {
+pub fn summary_line(c: &Counts, test_data: bool) -> String {
     format!(
-        "Tests: {} total, {} passed, {} failed, {} not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)",
-        c.total, c.pass, c.fail, c.not_run
+        "Tests: {} total, {} passed, {} failed, {} not run{}",
+        c.total,
+        c.pass,
+        c.fail,
+        c.not_run,
+        if test_data {
+            ""
+        } else {
+            " (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)"
+        }
     )
 }
 

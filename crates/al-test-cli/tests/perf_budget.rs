@@ -85,6 +85,72 @@ const WITH_APPS_BUDGET_SECS: f64 = 12.0;
 /// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date
 /// rows took 5 s of the run before.
 const SLOWEST_CODEUNIT_SECS: f64 = 2.0;
+/// The longest start of one .NET sidecar process (ADR-014), reported by `--timings` apart from the
+/// codeunit times. A start is about 0.05 s on a dev box and 1 s on a cold CI runner; one that
+/// takes this long is a broken start, not a slow machine.
+const SIDECAR_START_SECS: f64 = 10.0;
+
+/// One entry of the `slowest test codeunits:` line of `--timings`.
+#[derive(Debug, PartialEq)]
+struct CodeunitLine {
+    name: String,
+    took: f64,
+    sidecar_start: f64,
+}
+
+/// The number that ends right before `marker` in `text`: `number_before("a 1.5 s at most", " s at most")`.
+fn number_before(text: &str, marker: &str) -> Option<f64> {
+    let head = &text[..text.find(marker)?];
+    head.rsplit(' ').next()?.parse().ok()
+}
+
+/// `69934 Name 7.39 s (sidecar start 7.30 s); 60130 Other 0.50 s`: the name, the time and the part of
+/// it spent starting a sidecar (0 when the entry has none).
+fn parse_slowest(line: &str) -> Vec<CodeunitLine> {
+    line.split("; ")
+        .filter_map(|entry| {
+            let (entry, start) = match entry.rfind(" (sidecar start ") {
+                Some(i) => (&entry[..i], number_before(&entry[i..], " s)")?),
+                None => (entry, 0.0),
+            };
+            let took = entry.trim().strip_suffix(" s")?;
+            let (name, took) = took.rsplit_once(' ')?;
+            Some(CodeunitLine {
+                name: name.to_string(),
+                took: took.parse().ok()?,
+                sidecar_start: start,
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn the_slowest_line_is_read_with_and_without_a_sidecar_start() {
+    let l =
+        parse_slowest("69934 TPF Media Filled Tests 7.39 s (sidecar start 7.30 s); 60130 Test Media Png Import 0.07 s");
+    assert_eq!(
+        l,
+        vec![
+            CodeunitLine {
+                name: "69934 TPF Media Filled Tests".into(),
+                took: 7.39,
+                sidecar_start: 7.30
+            },
+            CodeunitLine {
+                name: "60130 Test Media Png Import".into(),
+                took: 0.07,
+                sidecar_start: 0.0
+            },
+        ]
+    );
+    assert_eq!(
+        number_before(
+            "2 .NET sidecar process(es) started: starting 0.12 s in total, 0.06 s at most; 35 request(s) 0.03 s",
+            " s at most"
+        ),
+        Some(0.06)
+    );
+}
 
 #[test]
 #[ignore = "perf budget: run with `cargo test --release -p al-test-cli --test perf_budget -- --ignored`"]
@@ -105,7 +171,10 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
     eprintln!(
         "full run with the apps: {wall:.1} s\n{}",
         err.lines()
-            .filter(|l| l.starts_with("timings") || l.starts_with("compile:") || l.starts_with("slowest"))
+            .filter(|l| l.starts_with("timings")
+                || l.starts_with("compile:")
+                || l.starts_with("slowest")
+                || l.starts_with("dotnet:"))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -113,18 +182,32 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
         err.contains("dependency: Base Application"),
         "the Microsoft apps were not loaded:\n{err}"
     );
-    let slowest_secs = err
+    // The limit is on the runtime. Starting a .NET helper process is not the runtime and varies
+    // with the machine (a cold runner took 1 to 7 s for it), so it is taken off a codeunit's time
+    // and checked on its own.
+    let line = err
         .lines()
         .find_map(|l| l.strip_prefix("slowest test codeunits: "))
-        .and_then(|l| l.split(';').next())
-        .and_then(|first| first.trim().strip_suffix(" s"))
-        .and_then(|first| first.rsplit(' ').next())
-        .and_then(|t| t.parse::<f64>().ok())
         .expect("a slowest codeunit in --timings");
+    let slowest = parse_slowest(line);
+    assert!(!slowest.is_empty(), "no codeunit time in: {line}");
+    let (name, runtime_secs, start_secs) = slowest
+        .iter()
+        .map(|c| (c.name.as_str(), c.took - c.sidecar_start, c.sidecar_start))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap();
     assert!(
-        slowest_secs <= SLOWEST_CODEUNIT_SECS,
-        "a test codeunit took {slowest_secs:.1} s, over {SLOWEST_CODEUNIT_SECS} s:\n{err}"
+        runtime_secs <= SLOWEST_CODEUNIT_SECS,
+        "test codeunit {name} took {runtime_secs:.1} s without its sidecar start ({start_secs:.1} s), \
+         over {SLOWEST_CODEUNIT_SECS} s:\n{err}"
     );
+    if let Some(d) = err.lines().find_map(|l| l.strip_prefix("dotnet: ")) {
+        let max = number_before(d, " s at most").expect("the longest sidecar start in the dotnet line");
+        assert!(
+            max <= SIDECAR_START_SECS,
+            "a .NET sidecar took {max:.1} s to start, over {SIDECAR_START_SECS} s:\n{err}"
+        );
+    }
     assert!(
         wall <= WITH_APPS_BUDGET_SECS,
         "the run took {wall:.1} s, over the {WITH_APPS_BUDGET_SECS} s budget:\n{err}"

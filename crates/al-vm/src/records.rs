@@ -37,6 +37,9 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
     }
 }
 
+/// The platform table "User Personalization".
+const USER_PERSONALIZATION: u32 = 2_000_000_073;
+
 impl Session {
     pub(crate) fn table(&self, rec: &Rec) -> Result<Arc<TableDef>, Signal> {
         let r = rec.borrow();
@@ -132,6 +135,21 @@ impl Session {
                 "{} not found in code of a dependency app: the rows its install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
             ));
+        }
+        // The platform creates the session user's User Personalization row when the user signs in
+        // to a client; no corpus test pins that or what the row holds (session/TestSessionSettings.al:402-407
+        // says it "depends on tenant data"). "Not found" there is not BC's answer: refuse.
+        if !exists && self.engine.program.objects[t.object as usize].id == Some(USER_PERSONALIZATION) {
+            let sid = self.host.identity.user_security_id();
+            if t.fields
+                .iter()
+                .position(|f| f.name.eq_ignore_ascii_case("User SID"))
+                .is_some_and(|p| matches!(fields[p], Value::Guid(g) if g == sid))
+            {
+                return unsupported(
+                    "the User Personalization row of the session user: BC creates it when the user signs in to a client, and no corpus test pins what it holds (docs/probes-needed.md)",
+                );
+            }
         }
         if self.ret_used {
             return Ok(Value::Boolean(false));
@@ -566,12 +584,8 @@ impl Session {
             let mut r = rec.borrow_mut();
             let unset = matches!(r.fields[i], Value::Guid(g) if g == [0; 16]);
             if unset || !keep {
-                // Deterministic ids (ADR-006: no OS randomness in the core).
-                self.next_guid += 1;
-                let mut g = [0u8; 16];
-                g[8..].copy_from_slice(&self.next_guid.to_be_bytes());
-                g[6] = 0x40;
-                r.fields[i] = Value::Guid(g);
+                // Deterministic ids that look random (ADR-006, `fresh_guid`).
+                r.fields[i] = Value::Guid(self.fresh_guid());
             }
         }
     }
@@ -895,8 +909,19 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
+                // Whether Clear also empties the table of a temporary record is not pinned
+                // (docs/probes-needed.md). Where the table holds no row both readings give the same
+                // state, so only that case runs.
                 if rec.borrow().temporary {
-                    return unsupported("Clear of a temporary record (table reset not pinned yet)");
+                    let rows = self
+                        .store_for(rec)
+                        .count(&cx, &t, &[])
+                        .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+                    if rows > 0 {
+                        return unsupported(
+                            "Clear of a temporary record that holds rows (whether the table is emptied is not pinned)",
+                        );
+                    }
                 }
                 let fresh = self.initial_fields(t.object as usize);
                 let mut r = rec.borrow_mut();

@@ -15,6 +15,7 @@ path = "src/main.rs"
 mimalloc = ["dep:mimalloc"]
 
 [dependencies]
+al-bcdb-std = { path = "../al-bcdb-std" }
 al-deps.workspace = true
 al-host.workspace = true
 al-sema.workspace = true

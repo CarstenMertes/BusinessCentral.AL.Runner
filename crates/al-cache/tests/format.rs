@@ -184,3 +184,52 @@ fn the_files_that_did_not_parse_are_kept_in_the_entry() {
     let e = Entry::open(build(&set, &key()), &key()).unwrap();
     assert_eq!(e.parse_problems(), &set.parse_problems[..]);
 }
+
+const REPORTS: &str = r#"
+table 50000 T { fields { field(1; A; Integer) { } } keys { key(PK; A) { } } }
+report 50010 R1 { ProcessingOnly = true; dataset { dataitem(D; T) { } } }
+report 50011 R2 { ProcessingOnly = true; dataset { dataitem(D; T) { } } }
+reportextension 50012 R1E1 extends R1 { trigger OnPreReport() begin end; }
+reportextension 50014 R2E2 extends R2 { trigger OnPostReport() begin end; }
+reportextension 50013 R2E1 extends R2 { trigger OnPreReport() begin end; }
+"#;
+
+/// ADR-025: the reportextensions that change a run are in the facts of the report, in object id
+/// order, for one extension and for two; they survive the entry file.
+#[test]
+fn one_and_two_report_extensions_round_trip_in_object_id_order() {
+    let apps = vec![AppSource {
+        id: "d".into(),
+        name: "d".into(),
+        dependencies: vec![],
+        files: vec![("f.al".into(), REPORTS.into())],
+    }];
+    let set = al_sema::lower::lower_for_cache(apps, &Default::default(), None);
+    let lens: Vec<usize> = set.facts.iter().map(|f| f.report_extensions.len()).collect();
+    assert!(lens.contains(&1) && lens.contains(&2), "{lens:?}");
+    let two = set.facts.iter().find(|f| f.report_extensions.len() == 2).unwrap();
+    let ids: Vec<Option<u32>> = two
+        .report_extensions
+        .iter()
+        .map(|&i| set.blocks[i as usize].object.id)
+        .collect();
+    assert_eq!(ids, vec![Some(50013), Some(50014)], "declared in the other order");
+    let bytes = build(&set, &key());
+    let e = Entry::open(bytes, &key()).expect("opens");
+    e.verify().expect("verifies");
+    for i in 0..e.len() {
+        assert_eq!(e.facts(i), &set.facts[i], "facts of object {i}");
+    }
+}
+
+/// An entry written at format 1 (one `report_extension` per report) is refused at open.
+#[test]
+fn a_format_1_entry_is_refused() {
+    let mut old = key();
+    old.format = 1;
+    let bytes = build(&set(), &old);
+    assert!(matches!(
+        Entry::open(bytes, &key()).err(),
+        Some(CacheError::Format { .. })
+    ));
+}

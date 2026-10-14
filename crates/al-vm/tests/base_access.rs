@@ -1,10 +1,10 @@
 //! Page and report extension code that names the base object's members, end to end (ADR-023).
 //!
-//! The probes of ADR-023 have not all run on real BC, so the lowering refuses these accesses by
-//! default. This test binary turns every case on with `AL_UNPINNED_BASE_ACCESS` to exercise the
-//! mechanism (checker scope, `Place::BaseGlobal`, `Expr::BaseInstance`, the instance link). The
-//! expected values are the language reference's, not BC's, until a probe pins them; each case
-//! names its probe. `base_access_refused.rs` checks the default (everything refused).
+//! The mechanism (checker scope, `Place::BaseGlobal`, `Expr::BaseInstance`, the instance link) with
+//! the probes pinned in `base_access::PINNED`. Each case names its probe and the corpus test that
+//! pins it (tests/al-language/handlers/TestPageExtensionBaseAccessContracts.al and
+//! reportextensiontrigger/TestReportExtensionBaseMembersContracts.al on the corpus branch
+//! `al-runtime-rs`). `base_access_refused.rs` checks that an unpinned case is refused.
 
 use al_builtins::native::Signal;
 use al_builtins::value::Value;
@@ -85,8 +85,6 @@ pageextension 53001 "BA Card Ext" extends "BA Card"
 "#;
 
 fn compile(src: String) -> (al_sema::workspace::Workspace, al_sema::lower::Lowered) {
-    // SAFETY: every test of this binary sets the same value before the first compile.
-    unsafe { std::env::set_var("AL_UNPINNED_BASE_ACCESS", "1") };
     let apps = vec![AppSource {
         id: "app0".into(),
         name: "app0".into(),
@@ -214,21 +212,26 @@ reportextension 53011 "BA Report Ext" extends "BA Report"
     assert_eq!(text(r), "ext-pre:base-pre;base-post:base-pre+ext:42;");
 }
 
-// Probe P6: a name declared by the extension and by its base is refused, not guessed.
+// Probe P6 (BaseAccess :20, Shadow): a variable of the extension named like a base variable is a
+// separate variable. A procedure named like a base procedure is compile error AL0440: refused.
 #[test]
-fn a_variable_declared_in_both_is_refused() {
+fn a_variable_declared_in_both_is_separate_and_a_procedure_declared_in_both_is_refused() {
     let ext = r#"
 pageextension 53003 "BA Both" extends "BA Card"
 {
-    trigger OnOpenPage() begin Counter := 1; end;
+    trigger OnOpenPage() var T: Codeunit "BA Trace"; begin T.Add('own=' + Format(Counter) + ';'); Counter := 1; end;
     var Counter: Integer;
 }"#;
-    let r = reasons(ext);
-    assert!(
-        r.iter()
-            .any(|x| x.contains("declared by the page extension and by the page")),
-        "{r:?}"
-    );
+    let r = run(ext, &format!("{OPEN} P.Close(); exit(X); end;"));
+    assert_eq!(text(r), "own=0;base-agr:5:base::1;");
+    let both = r#"
+pageextension 53005 "BA Both Proc" extends "BA Card"
+{
+    procedure Bump(By: Integer): Integer begin exit(By); end;
+    trigger OnOpenPage() begin Bump(1); end;
+}"#;
+    let r = reasons(both);
+    assert!(r.iter().any(|x| x.contains("AL0440")), "{r:?}");
 }
 
 // Probe P8: a `local` procedure and a variable that is not `protected` cannot be named.
@@ -241,53 +244,27 @@ pageextension 53004 "BA Local" extends "BA Card"
     trigger OnClosePage() begin Private := 1; end;
 }"#;
     let r = reasons(ext);
-    assert!(r.iter().filter(|x| x.contains("cannot name")).count() >= 2, "{r:?}");
+    assert!(
+        r.iter()
+            .filter(|x| x.contains("inaccessible due to its protection level"))
+            .count()
+            >= 2,
+        "{r:?}"
+    );
 }
 
 // Probe R3: a Dialog, a Record and a List that the base report declares `protected`.
-// Probe R2: a public procedure of the base report is not named by the extension's scope.
+// Probe R2 (TestReportExtensionBaseMembersContracts.al, PubProc): a public procedure of the base report
+// is callable from the extension; a non-protected variable is AL0161.
 #[test]
-fn a_report_extension_uses_a_protected_dialog_record_and_list_of_its_base() {
-    let rep = r#"
-report 53020 "BA Report 2"
-{
-    ProcessingOnly = true;
-    UseRequestPage = false;
-    dataset { dataitem(Rows; "BA Row") { } }
-    trigger OnPostReport() var T: Codeunit "BA Trace"; begin T.Add('base-post:' + Format(Names.Count()) + ':' + Buf."No." + ';'); end;
-    procedure PublicOne() begin end;
-    protected var Window: Dialog; Buf: Record "BA Row"; Names: List of [Text];
-}
-reportextension 53021 "BA Report 2 Ext" extends "BA Report 2"
-{
-    trigger OnPreReport()
-    begin
-        Window.Open('Working #1');
-        Window.Update(1, 5);
-        Window.Close();
-        Buf."No." := 'Z';
-        Names.Add('a');
-        Names.Add('b');
-    end;
-}"#;
-    let r = run(
-        rep,
-        "procedure F(): Text var T: Codeunit \"BA Trace\"; begin Report.Run(Report::\"BA Report 2\", false); exit(T.Take()); end;",
-    );
-    assert_eq!(text(r), "base-post:2:Z;");
-}
-
-// Probe R2: a public procedure of the base report is not named by the extension's scope, so the
-// call is refused (whether BC accepts it is the open question).
-#[test]
-fn a_public_procedure_of_the_base_report_is_refused() {
+fn a_public_procedure_of_the_base_report_is_callable_and_an_unprotected_variable_is_refused() {
     let src = r#"
-report 53030 "BA Report 3" { ProcessingOnly = true; dataset { dataitem(Rows; "BA Row") { } } procedure PublicOne() begin end; }
-reportextension 53031 "BA Report 3 Ext" extends "BA Report 3" { trigger OnPreReport() begin PublicOne(); end; }"#;
+report 53030 "BA Report 3" { ProcessingOnly = true; dataset { dataitem(Rows; "BA Row") { } } procedure PublicOne() begin end; var Plain: Integer; }
+reportextension 53031 "BA Report 3 Ext" extends "BA Report 3" { trigger OnPreReport() begin PublicOne(); Plain := 1; end; }"#;
     let r = reasons(src);
+    assert_eq!(r.len(), 1, "{r:?}");
     assert!(
-        r.iter()
-            .any(|x| x.contains("`PublicOne` is a variable or procedure of the report it extends")),
+        r[0].contains("'Plain' is inaccessible due to its protection level"),
         "{r:?}"
     );
 }
@@ -317,8 +294,6 @@ pageextension 53041 "BA Page 4 Ext" extends "BA Page 4" { trigger OnOpenPage() b
 /// with its extension.
 #[test]
 fn a_base_reference_in_a_dependency_app_is_reached_by_the_demand_driven_compile() {
-    // SAFETY: every test of this binary sets the same value before the first compile.
-    unsafe { std::env::set_var("AL_UNPINNED_BASE_ACCESS", "1") };
     let dep = AppSource {
         id: "dep".into(),
         name: "dep".into(),

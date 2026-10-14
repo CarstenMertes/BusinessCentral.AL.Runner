@@ -352,3 +352,48 @@ fn an_entry_nothing_used_for_a_month_goes_when_another_is_built() {
     assert!(kept.exists(), "an entry a run used lately was pruned");
     assert_eq!(files(dir.path()).len(), 2);
 }
+
+/// A dependency with a report that one and then two reportextensions change (ADR-025).
+const REPORTS: &str = r#"
+report 50110 R1 { ProcessingOnly = true; UseRequestPage = false; dataset { dataitem(D; Cust) { } } }
+report 50111 R2 { ProcessingOnly = true; UseRequestPage = false; dataset { dataitem(D; Cust) { } } }
+reportextension 50112 R1E extends R1 { trigger OnPreReport() begin end; }
+reportextension 50114 R2B extends R2 { trigger OnPostReport() begin end; }
+reportextension 50113 R2A extends R2 { trigger OnPreReport() begin end; }
+"#;
+
+/// ADR-025, decision 7: the facts of a report with one and with two reportextensions go through the
+/// file, the run that reads it decides what the uncached run decides, and an entry written at
+/// format 1 (the file name does not carry the format) is refused, removed and built again.
+#[test]
+fn reportextensions_round_trip_and_a_format_1_file_is_rejected_and_rebuilt() {
+    let base = format!("{BASE}{REPORTS}");
+    let dir = tempfile::tempdir().unwrap();
+    let want = outcomes(&run(&base, None).unwrap());
+    let first = run(&base, cache(dir.path(), false)).unwrap();
+    assert_eq!(outcomes(&first), want);
+    let second = run(&base, cache(dir.path(), true)).unwrap();
+    assert!(second.phases.cache.as_ref().unwrap().hit);
+    assert_eq!(outcomes(&second), want);
+    // A format-1 file under this key's name.
+    let (apps, _, manifests) = apps(&base);
+    let key = compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None);
+    let mut old = key.clone();
+    old.format = 1;
+    let bytes = compile_cache::build_entry(vec![apps[1].clone()], &Default::default(), None, &old);
+    let path = files(dir.path()).pop().unwrap();
+    std::fs::write(&path, bytes).unwrap();
+    let third = run(&base, cache(dir.path(), false)).unwrap();
+    let report = third.phases.cache.as_ref().unwrap();
+    assert!(!report.hit && report.built, "{report:?}");
+    assert_eq!(outcomes(&third), want);
+    assert!(
+        run(&base, cache(dir.path(), true))
+            .unwrap()
+            .phases
+            .cache
+            .as_ref()
+            .unwrap()
+            .hit
+    );
+}

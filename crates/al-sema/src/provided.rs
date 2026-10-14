@@ -48,8 +48,8 @@ pub struct DepFacts {
     /// Why a variable of the xmlport or report is refused (the first reason), if it is.
     pub xml_reason: Option<String>,
     pub report_reason: Option<String>,
-    /// The report extension that changes the run of a report, if exactly one does.
-    pub report_extension: Option<u32>,
+    /// The report extensions that change the run of a report, in object id order (ADR-025).
+    pub report_extensions: Vec<u32>,
     /// The layout of a query, which the lowering of code that uses its columns reads.
     pub query: Option<crate::queries::QueryLayout>,
 }

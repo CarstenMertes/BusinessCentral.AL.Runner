@@ -435,6 +435,8 @@ Decided without owner review (2026-10-14):
   read but a block fails, compiles without it). The first version of this ADR said the run stops. Ignoring cannot
   change an outcome and needs no manual step. `--require-compile-cache` makes any of that an error.
 - The corpus tool is opt-in (`--compile-cache`), because its baseline is recorded under the demand-driven compile.
+- A run that uses an entry sets its modification time; a run that builds an entry removes the entries nothing used for
+  30 days (an app that changes on every run would otherwise leave 13 MB behind each time).
 - `al-test-cli --build-compile-cache` builds or checks the entries and prints the build time; CI uses it. There is no
   `alrunner cache` command yet.
 - The facts and blocks of an entry hold the dependency objects only; the sources of the dependency apps are still read

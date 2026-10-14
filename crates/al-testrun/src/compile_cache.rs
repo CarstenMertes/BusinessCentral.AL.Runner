@@ -162,6 +162,38 @@ pub fn build_entry(
     al_cache::build(&set, key)
 }
 
+/// How long an entry that nothing used stays in the folder.
+pub const KEEP_DAYS: u64 = 30;
+
+/// Marks the entry as used now, so that [`prune`] keeps what runs still use. Best effort.
+pub fn touch(path: &Path) {
+    let _ = std::fs::File::options()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.set_modified(std::time::SystemTime::now()));
+}
+
+/// Removes the entries in `dir`, except `keep`, that nothing used for `KEEP_DAYS` days: an app
+/// that changes with every run would otherwise leave 13 MB behind each time. Best effort.
+pub fn prune(dir: &Path, keep: &Path) -> Vec<PathBuf> {
+    let limit = std::time::Duration::from_secs(KEEP_DAYS * 24 * 3600);
+    let mut removed = Vec::new();
+    for (path, _) in list(dir) {
+        if path == keep {
+            continue;
+        }
+        let old = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > limit);
+        if old && std::fs::remove_file(&path).is_ok() {
+            removed.push(path);
+        }
+    }
+    removed
+}
+
 /// The entry files in `dir` and their sizes.
 pub fn list(dir: &Path) -> Vec<(PathBuf, u64)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -208,6 +240,7 @@ pub fn open_or_build(
     report.open = opened.elapsed();
     if let Some(e) = entry {
         report.bytes = e.size();
+        touch(&report.file);
         return Ok((e, report));
     }
     if cc.require {
@@ -231,6 +264,7 @@ pub fn open_or_build(
         report.notes.push(note);
     }
     report.built = true;
+    prune(&cc.dir, &report.file);
     let entry = Entry::open(bytes, &key).map_err(|e| format!("a fresh compile cache entry does not open: {e}"))?;
     report.build = started.elapsed();
     Ok((entry, report))

@@ -327,3 +327,28 @@ fn the_key_changes_with_a_byte_of_source_a_symbol_or_the_target() {
         compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest()
     );
 }
+
+#[test]
+fn an_entry_nothing_used_for_a_month_goes_when_another_is_built() {
+    let dir = tempfile::tempdir().unwrap();
+    run(BASE, cache(dir.path(), false)).unwrap();
+    let old = files(dir.path()).pop().unwrap();
+    let file = std::fs::File::options().write(true).open(&old).unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 3600))
+        .unwrap();
+    drop(file);
+    // A different set of apps: a new entry, and the old one is past its time.
+    run(&BASE.replace("exit('dep')", "exit('dap')"), cache(dir.path(), false)).unwrap();
+    assert_eq!(files(dir.path()).len(), 1);
+    assert!(!old.exists(), "the entry nothing used for 40 days is still there");
+    // A hit marks the entry as used, so a run that keeps using it keeps it.
+    let kept = files(dir.path()).pop().unwrap();
+    let file = std::fs::File::options().write(true).open(&kept).unwrap();
+    file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 3600))
+        .unwrap();
+    drop(file);
+    run(&BASE.replace("exit('dep')", "exit('dap')"), cache(dir.path(), true)).unwrap();
+    run(&BASE.replace("exit('dep')", "exit('dup')"), cache(dir.path(), false)).unwrap();
+    assert!(kept.exists(), "an entry a run used lately was pruned");
+    assert_eq!(files(dir.path()).len(), 2);
+}

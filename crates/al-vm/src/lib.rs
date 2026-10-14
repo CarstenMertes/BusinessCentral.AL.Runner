@@ -1437,11 +1437,27 @@ impl Session {
             if !matches!(p, ir::Place::Field(..)) {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
                     if !Rc::ptr_eq(src, &dst) {
-                        let fields = src.borrow().fields.clone();
-                        if fields.iter().any(|f| matches!(f, Value::Blob(_))) {
-                            // Whether a copied record shares or copies its Blob is not pinned.
-                            return Err(Signal::Unsupported("record assignment with a Blob field".into()));
-                        }
+                        // A copied record holds copies of its Blobs (value semantics). The corpus
+                        // does not tell a copy from a shared Blob (record/TestFormatRecordContracts.al
+                        // only formats the copy): docs/probes-needed.md.
+                        let fields: Vec<Value> = src
+                            .borrow()
+                            .fields
+                            .iter()
+                            .map(|f| match f {
+                                Value::Blob(b) => {
+                                    let b = b.borrow();
+                                    Value::Blob(std::sync::Arc::new(al_builtins::stream::BlobCell::new(
+                                        al_builtins::stream::BlobBuf {
+                                            bytes: b.bytes.clone(),
+                                            write_pos: 0,
+                                            loaded: b.loaded,
+                                        },
+                                    )))
+                                }
+                                other => other.clone(),
+                            })
+                            .collect();
                         let load = src.borrow().load.clone();
                         let mut d = dst.borrow_mut();
                         d.fields = fields;
@@ -1633,6 +1649,9 @@ impl al_builtins::format::FormatCtx for Session {
 }
 
 impl al_builtins::native::Ctx for Session {
+    fn format_composite(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        self.format_composite_value(v)
+    }
     fn last_error(&self) -> AlError {
         self.last_error.clone()
     }

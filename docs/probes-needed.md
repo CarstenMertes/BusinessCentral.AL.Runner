@@ -42,7 +42,7 @@ comment as a corpus citation and is deleted here.
 | XML | `ReadFrom` of invalid XML returns false when the result is used (pinned); the statement form raises `The following exception was encountered when processing XML data: '<.NET message>' at line L and position P.` / `Xml:Xml`, pinned for a mismatched end tag only; the other malformed forms are refused | xml/TestXmlRuntimeContracts.al:XmlDocument_ReadFrom_Invalid_... | `xml.rs` `read_from_text` |
 | XML | `XmlDocument.GetDocumentType` is false without a DOCTYPE and raises `The XML node is not set.` / `XmlNodeNotFound` in the statement form; a DOCTYPE in the text is refused when read | xml/TestXmlRuntimeContracts.al:XmlDocument_GetDocumentType_WithoutDoctype | `xml.rs` `get_document_type` |
 | Streams | `Write(Date)` writes `2 * day number + 731` (+1 for a closing date, 0 for `0D`) and `Write(Decimal)` the 12-byte form (sign and exponent byte, 18 packed digits). Both are rules fitted to the 7 dates and 10 decimals the probe measured (all fit exactly); a Decimal of more than 18 significant digits, a closing date of no date, and reading a Date back are REFUSED. Probe wanted: a closing date other than 2024-12-31, a Decimal of 19 or more digits, a Decimal below 1E-28. `Write(Text)` of non-ASCII text, `Write(Char)`, `Write(Byte)` and `Write` with a length are refused too | streams/TestStreamsBinaryDateDecimalContracts.al:80-123 | `stream.rs` `date_bytes`, `decimal_bytes` |
-| Streams | assigning a record that has a Blob field (`:=`) and renaming a temporary record that has one are refused (BC's behaviour for these is only partly pinned) | streams/TestBlobRenameIsolation.al | `al-vm/src/lib.rs`, `records.rs` |
+| Streams | assigning a record that has a Blob field (`:=`) copies the Blob's bytes (assumed: the probe only formats the copy); renaming a temporary record that has a Blob field is refused (BC's behaviour for it is only partly pinned) | streams/TestBlobRenameIsolation.al | `al-vm/src/lib.rs`, `records.rs` |
 | Streams | `Blob.Length` of a Blob not loaded with `CalcFields` is the content length plus 6 (one measurement: `hello`, 5 bytes, reads 11); an empty unloaded Blob is refused. Probe wanted: stored sizes for 0, 1, 100, 10000 and 100000 bytes | streams/TestStreamsRuntimeContracts.al:Blob_Length_WithoutCalcFields_ReportsTheStoredSize | `stream.rs` `blob_length` |
 | Streams | `Read` into anything but Integer and Byte, `ReadText` with a length and `Position` with an argument are refused. `WriteText` and `ReadText` in MSDos behave as Windows (the probe wrote one text with both). The line terminator search of `ReadText` for UTF16 looks for the two-byte line feed | streams/TestStreamsRuntimeContracts.al | `stream.rs` |
 | Format | Milliseconds print as `.fff` (three digits, `.007` pinned) and not at all when zero (DateTime format 9 pinned; Time formats 2 and 9 and Duration format 9 assumed alike); the seconds fraction of a Duration in format 9 has its trailing zeros trimmed (`1.5S`, `0.012S`, pinned for `.5`, `.001`, `.012`, `.999`, `.005`); the same for DateTime and Time is assumed alike. Time and DateTime format 1 with zero milliseconds is refused. Standard format numbers of Time and DateTime and, for a Duration, the numbers other than 0, 1, 2 and 9 (pinned in types/TestDateFormulaDurationFormatContracts.al:75-120), and Date numbers above 9, that the probes did not measure are refused. | types/TestFormatEvaluateTextContracts.al:Format_Time_StandardFormats, Format_DateTime_StandardFormats, Format_Duration_StandardFormats; json/TestJsonRuntimeContracts.al:214 | `al-builtins/src/format.rs` |
@@ -591,12 +591,14 @@ refused (or assumed, where the row says so) until its probe is in the corpus.
    wanted: `Get(UserSecurityId())` in a test on the cloud and on-prem images (does the row exist, which
    `Profile ID`, `Language ID`, `Locale ID`, `Time Zone`, `Company`), and whether
    `SessionSettings.RequestSessionUpdate(true)` creates it. 1 test of Tests-ERM (Reminder Automation Tests).
-4. **`Format(Record)`.** REFUSED (the text of a record variable as a whole). Base Application's Global
-   Triggers subscribers compare `Format(Rec) = Format(xRec)`, which made 213 Tests-ERM tests not run
-   (plus 1 for `Format(FieldRef)`). Probe wanted: `Format(Rec)` of a record with a Code, a Text, an
-   Integer, a Decimal, a Boolean, a Date, an Option and an Enum field, a FlowField and a Blob: the exact
-   text (separator, which fields, FlowFields calculated or not), and whether two records that differ in
-   only one field format differently.
+4. **`Format(Record)`.** DONE (probe round 6, corpus `record/TestFormatRecordContracts.al`, branch `al-runtime-rs`
+   d0f5d52). The text is the fields' own `Format` joined by TAB: normal fields in field-number order, then the
+   FlowFields with the value they hold, an empty Blob is one space and a filled one `*`. `Format(RecordRef)` is
+   the same text and `Format(FieldRef)` the field's. Assumptions the probe does not pin: a FlowFilter field is
+   left out of the text (probe wanted: `Format(Rec)` of a record with a FlowFilter field, before and after
+   `SetRange` on it); a Blob that was read from the table and not loaded (no `CalcFields`) shows `*` when the
+   store holds bytes (probe wanted: `Format(Rec)` after `Get` on a row with a filled Blob); `Rec := Other` copies
+   a Blob's bytes (the probe formats the copy but never changes it afterwards).
 5. **Variables of a table object persist per record variable.** DONE (ADR-021). Probed on BC 27.5
    (corpus `tests/al-language/tableglobals/`, 58 tests, in the submodule since `eb46da5`) and
    modelled; the two `T043` tests of Tests-ERM pass. What the probes did not pin is in "Table globals

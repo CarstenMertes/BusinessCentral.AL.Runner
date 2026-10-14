@@ -618,3 +618,22 @@ Assumptions and open points beside the 58 probe tests (corpus branch `al-runtime
 | Reset of record-typed globals | `Clear` and `Reset` set every global of the table back to its initial value, record variables included (pinned for Integer and Text) | TableGlobals_Clear_*, TableGlobals_Reset_* | `records.rs` `reset_table_globals` |
 | Records in arrays and `SetTable` targets | Same per-state rules by construction; not probed | none | |
 | `Rename` | `OnRename` runs on the variable's instance like the other write triggers; not probed | none | `records.rs` |
+
+## Code coverage rows
+
+`CodeCoverageLog(true, ...)` records, and a read of Code Coverage (2000000049), Code Coverage Test Lookup (2000000288) or Code
+Coverage Tests Run (2000000289) shows what was recorded (`crates/al-vm/src/platform/coverage.rs`). Pinned by
+codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al and TestCodeCoverageTableExtension.al. What those tests do not
+pin, and the default chosen:
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| Which lines have a row | A `Trigger/Function` row per routine of an object that ran while recording (the declaration line), a `Code` row per source line that holds a statement. `begin`, `end`, `var` and comment lines have none | List all rows of a small codeunit after recording: which lines, which `Line Type` (`Object`, `Empty`) |
+| Objects never entered while recording | No rows | Whether the table lists objects that did not run |
+| `No. of Hits` of a line with several statements | The largest count of its statements | A one-line `if X then Y;` run with X true and false, loop bodies of a known count |
+| `No. of Hits` of a `Trigger/Function` row | 0 | Whether it counts the calls |
+| `Line`, `Code Coverage Status`, `Method Id` of Code Coverage | `Line` empty, `Status` NonApplicable, `Method Id` 0 | The columns of the rows above |
+| `Test ID`, `Method ID` | `Test ID` counts from 1 per session; `Method ID` is the routine's index in its object plus one. Only compared between rows (TestCodeCoveragePerTest.al header) | none |
+| A `[Test]` procedure that calls another `[Test]` procedure | Both have a Tests Run row; the methods of the inner one are noted for the inner one only | A nested test start while recording |
+| Rows after a rollback | The rows are written into the store when read, so an `asserterror` rolls them back with the other writes of the transaction | Whether BC keeps coverage rows across a rollback |
+| Recording that outlives its test | It stays on until `CodeCoverageLog(false, ...)`; the next test of the codeunit that starts while it is on is noted | |

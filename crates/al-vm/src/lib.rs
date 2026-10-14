@@ -171,8 +171,8 @@ pub struct Session {
     pub(crate) page_handler_depth: usize,
     /// `CodeCoverageLog` is recording.
     pub(crate) code_coverage: bool,
-    /// Platform ids of the code coverage tables that recording may have filled (`platform/coverage.rs`).
-    pub(crate) coverage_dirty: Vec<u32>,
+    /// What recording noted (`platform/coverage.rs`).
+    pub(crate) recorder: platform::coverage::Recorder,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
@@ -385,7 +385,7 @@ impl Session {
             committed_row_version: 0,
             page_handler_depth: 0,
             code_coverage: false,
-            coverage_dirty: Vec::new(),
+            recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
             fault_trace: false,
@@ -684,6 +684,11 @@ impl Session {
             self.error_scopes.open();
         }
         self.try_depth += usize::from(is_try);
+        let test_scope = if self.code_coverage {
+            self.coverage_enter(object, routine)
+        } else {
+            None
+        };
         self.frames.push(object);
         self.call_stack.push(CallFrame {
             routine,
@@ -698,6 +703,9 @@ impl Session {
             self.add_frame(e, object, top);
         }
         self.call_stack.pop();
+        if let Some(scope) = test_scope {
+            self.coverage_leave(scope);
+        }
         self.frames.pop();
         if collecting {
             outcome = self.close_error_scope(outcome);
@@ -840,6 +848,9 @@ impl Session {
             S::Pos(p) => {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;
+                }
+                if self.code_coverage {
+                    self.coverage_hit(*p);
                 }
                 Ok(())
             }

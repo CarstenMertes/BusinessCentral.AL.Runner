@@ -487,6 +487,26 @@ fn foreach_over_a_dotnet_value_uses_get_enumerator_move_next_and_current() {
     assert!(matches!(r.result, Ok(Value::Integer(30))), "{:?}", r.result);
 }
 
+// ---- Clear of a DotNet variable ----------------------------------------------------------
+
+#[test]
+fn clear_of_an_unassigned_dotnet_variable_changes_nothing_and_of_an_object_is_refused() {
+    let host = Fake::new(|r| match r {
+        Req::Construct(..) => reply(handle(4, "System.IO.MemoryStream")),
+        other => panic!("{other:?}"),
+    });
+    let r = run(&host, "M: DotNet MemoryStream;", "Clear(M); exit(IsNull(M));", ": Boolean");
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
+    let r = run(
+        &host,
+        "M: DotNet MemoryStream;",
+        "M := M.MemoryStream(); Clear(M); exit(IsNull(M));",
+        ": Boolean",
+    );
+    let why = unsupported(&r);
+    assert!(why.contains("Clear") && why.contains("System.IO.MemoryStream") && why.contains("not pinned"), "{why}");
+}
+
 // ---- policy ------------------------------------------------------------------------------
 
 #[test]

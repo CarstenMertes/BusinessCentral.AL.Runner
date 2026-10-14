@@ -1030,6 +1030,20 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             }
             return Ok(Value::Null);
         }
+        // An unassigned DotNet variable holds nothing, so clearing it changes nothing. One that holds
+        // an object is refused: whether BC calls Dispose on it, and so whether a stream the object
+        // wraps is flushed, is not pinned (docs/probes-needed.md, "Clear of a DotNet variable").
+        Value::Null => return Ok(Value::Null),
+        Value::DotNet(o) => {
+            let ty = match &o.kind {
+                crate::value::DotNetKind::Host { clr_type, .. } => clr_type.as_str(),
+                crate::value::DotNetKind::Enum { clr_type, .. } => clr_type.as_str(),
+                crate::value::DotNetKind::Internal { type_name, .. } => type_name.as_str(),
+            };
+            return unsupported(&format!(
+                "Clear of a DotNet variable that holds a {ty}: whether BC disposes the object is not pinned"
+            ));
+        }
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)

@@ -908,3 +908,9 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | Area | Assumption | Probe wanted |
 |---|---|---|
 | `Record.FilterGroup(-1)` | In BC the filters set in group -1 on different fields are alternatives (a row matches when any of them does), and the other groups still AND with it. The runtime applies every group as an AND, so it would select other rows. Used by Base Application's `General Posting Setup` `FilterBlankSalesDiscountAccounts` and `FilterBlankPurchDiscountAccounts` (Tests-ERM codeunit 132523, T100 and T101, and every test that sets "Discount Posting" to "All Discounts" with missing accounts). No corpus test pins it | REFUSED (`FilterGroup` with a negative value). Probe wanted: a table with fields A and B, rows with A blank only, B blank only, both blank, neither; `FilterGroup(-1); SetRange(A, ''); SetRange(B, '')`, then `FindSet` and `Count`; also with a filter in group 0 on a third field, and `GetFilters`/`HasFilter` inside and outside the group, and `FilterGroup(0)` afterwards |
+
+## Clear of a DotNet variable (ADR-024 follow-up)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `Clear(X)` with `X: DotNet T` | An unassigned variable stays unassigned (any reading agrees). A variable that holds an object is REFUSED when the line runs: whether BC calls `Dispose` on the object, and so whether a wrapped stream is flushed or closed, is not pinned. No corpus test and no probe covers it (the DotNet probe app, codeunit 61400, has none). | In the OnPrem DotNet probe app: `Writer := Writer.StreamWriter(OutStream)`, `Writer.Write('x')`, `Clear(Writer)`, then read the blob (flushed or empty); and `Memory := Memory.MemoryStream()`, keep a second variable `Other := Memory`, `Clear(Memory)`, then `Other.CanWrite` (disposed or not). |

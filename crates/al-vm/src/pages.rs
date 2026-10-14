@@ -413,9 +413,12 @@ impl Session {
                     return Err(error(format!("You tried to invoke the Page object with the ID {n}")));
                 };
                 let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
-                // RunModal(id, Record) is the lookup overload: OK reads LookupOK, Cancel LookupCancel
-                // (corpus handlers/TestPageModalHandlerStatic_Tests.al:48-72).
-                if method == "Page.RunModalStatic" && record.is_some() {
+                // The static RunModal reports the lookup values, with or without a record: OK reads
+                // LookupOK, Cancel LookupCancel (corpus handlers/TestPageModalHandlerStatic_Tests.al:48-72
+                // for the record overload; corpus branch al-runtime-rs (pending push):
+                // handlers/TestPageModalResultsAndTriggersContracts.al:RunModal_Dialog_StaticVersusVariable_ReportedAction
+                // and ..._Card_StaticWithAndWithoutRecord_... for the others). A page variable reports OK and Cancel.
+                if method == "Page.RunModalStatic" {
                     st.borrow_mut().lookup = true;
                 }
                 self.run_page_ui(&st, record, method == "Page.RunModalStatic")

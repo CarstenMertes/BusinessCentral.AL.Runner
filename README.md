@@ -49,7 +49,7 @@ Time for the corpus on BC 29.0 on a shared 12-thread machine under load
   Application, System Application and the others from source on every run, only
   what the tests reach. `alrunner test` keeps their complete compile in a compile
   cache (ADR-022, `<cache dir>/compile/`, about 13 MB per set of apps) and loads it
-  on later runs; the first run builds it (about 10 s, 4 GB). `--no-compile-cache`
+  on later runs; the first run builds it (about 5 s, 4 GB). `--no-compile-cache`
   turns it off, and `al-test-cli --compile-cache` turns it on for the corpus.
 - With `--no-deps` (the corpus alone; 4255 of 5147 tests pass): 0.4 to 0.9 s in
   five runs.

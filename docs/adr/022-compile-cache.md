@@ -433,24 +433,29 @@ lowered again from source, the corruption handling, and the CLI spelling).
 
 ### Measured with the implementation (2026-10-14, release build, 12 cores shared with other agents)
 
-One session under `flock /tmp/al-perf.lock`, back to back: uncached, cold (the entry is deleted, so the run builds it),
-hit, hit, uncached again. Wall seconds, CPU seconds (user + system), and the peak resident size of the largest
-process. The load average was 6 to 8 for the first three rows and 8 to 15 for the last, so compare the CPU column
-and the pairs, not rows. Raw output: `docs/adr/022-measurements.txt`.
+Two sessions under `flock /tmp/al-perf.lock`, each back to back: uncached, cold (the entry is deleted, so the run
+builds it), hit, hit, uncached again. Wall seconds, CPU seconds (user + system), and the peak resident size of the
+largest process. The load average is in `docs/adr/022-measurements.txt` (4 to 9 for the first three rows, 8 to 15 for
+the last), so compare the CPU column and the pairs, not rows. The first three rows are from the session at the final
+commit (`measure2`), the 32 buckets from the session before the last two merges of `main` (see the note below the table).
 
 | Run | Uncached (two runs) | Cold: build + run | Of which the build | Hit (two runs) | Memory: uncached / cold / hit |
 |---|---|---|---|---|---|
-| Small app, one test (`alrunner`, BC 29, no test data) | 2.02 s, 1.56 s; CPU 7.5, 7.0 s | 6.11 s; CPU 24.8 s | 5.28 s | 0.76 s, 0.77 s; CPU 2.6 s | 1254 / 3925 / 895 MB |
-| Corpus, BC 29, Microsoft's apps (`al-test-cli`) | 2.23 s, 2.44 s; CPU 12.0, 12.2 s | 6.52 s; CPU 28.6 s | 4.97 s | 1.80 s, 1.50 s; CPU 7.3, 7.0 s | 1433 / 3766 / 1229 MB |
-| Tests-ERM, BC 27.5, test data (`alrunner`) | 6.68 s, 6.80 s; CPU 29.8, 30.7 s | 9.95 s; CPU 40.4 s | 4.64 s | 5.58 s, 5.14 s; CPU 20.3, 19.6 s | 3094 / 4140 / 2106 MB |
-| All 32 buckets, one process, test data | 33.4 s, 30.4 s; CPU 130.8, 125.5 s | 29.2 s; CPU 124.9 s | 4.71 s | 35.0 s, 34.8 s; CPU 118.5, 116.1 s | 6310 / 4963 / 4710 MB |
+| Small app, one test (`alrunner`, BC 29, no test data) | 1.60 s, 1.51 s; CPU 7.1, 7.0 s | 5.33 s; CPU 23.6 s | 4.51 s | 0.74 s, 0.75 s; CPU 2.6 s | 1259 / 3922 / 896 MB |
+| Corpus, BC 29, Microsoft's apps (`al-test-cli`) | 2.24 s, 2.48 s; CPU 12.2, 12.5 s | 6.49 s; CPU 28.3 s | 5.00 s | 1.46 s, 1.51 s; CPU 7.1, 7.4 s | 1445 / 3766 / 1232 MB |
+| Tests-ERM, BC 27.5, test data (`alrunner`) | 12.02 s, 11.72 s; CPU 39.1, 40.7 s | 13.99 s; CPU 50.7 s | 5.76 s | 8.09 s, 8.34 s; CPU 27.8, 28.2 s | 3107 / 4183 / 2112 MB |
+| All 32 buckets, one process, test data (earlier session) | 33.4 s, 30.4 s; CPU 130.8, 125.5 s | 29.2 s; CPU 124.9 s | 4.71 s | 35.0 s, 34.8 s; CPU 118.5, 116.1 s | 6310 / 4963 / 4710 MB |
 
-- **Build.** 4.6 to 5.3 s and 3.8 to 4.1 GB, for an entry of 12.9 to 13.3 MB. The complete check of the dependency apps
+Note on the 32 buckets: `main` as of the last merge needs more than 18 GB for the combined run with test data and is
+killed, with or without the cache (the binary built from `main` in the main checkout at 18:41 too), so the row is from
+the session before. It is a regression on `main`, not an effect of the cache.
+
+- **Build.** 4.5 to 5.8 s and 3.8 to 4.2 GB, for an entry of 12.9 to 13.3 MB. The complete check of the dependency apps
   runs on all cores now (`Checker::check_objects_parallel`); before, it was serial and the build took 10 to 19 s.
 - **Hit.** The file opens in 0.03 to 0.05 s (key, read, header and index). Reading the blocks takes 0.05 to 0.17 s
-  on all cores (more when the machine is loaded). A small app runs 2 to 2.6 times faster than uncached, uses a third
-  of the CPU and 30 % less memory. The corpus runs 1.2 to 1.6 times faster. Tests-ERM runs 1.2 to 1.3 times faster
-  (the 4 s of tests with test data do not change) with a third less CPU and a third less memory.
+  on all cores (more when the machine is loaded). A small app runs 2 times faster than uncached, uses a third of
+  the CPU and 30 % less memory. The corpus runs 1.6 times faster with 40 % less CPU. Tests-ERM runs 1.45 times faster
+  (the 5 to 6 s of tests with test data do not change) with 30 % less CPU and a third less memory.
 - **All 32 buckets: no gain in wall time.** The workspace holds 91 MB of test sources, which load, check and lower the
   same with and without the cache (load 2.5 s, check 1.3 s, lowering 1.1 to 1.5 s), and 19 s of the run is the
   tests with test data. The cache replaces the demand compile of the dependency apps (about 3 s on a quiet machine)

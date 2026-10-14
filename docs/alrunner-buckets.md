@@ -79,10 +79,11 @@ Several buckets can be named in one run (all 32 together: 40300 tests, one compi
 5 s and 4 GB on 12 cores). The next runs load it. `--no-compile-cache` (or `ALRUNNER_NO_COMPILE_CACHE=1`) compiles only
 what the tests reach, as before. `--require-compile-cache` fails when there is no usable entry (CI).
 
-Tests-ERM, BC 27.5, with the CRONUS data, one run each after the entry exists: 5.1 to 5.6 s against 6.7 to 6.8 s
-without the cache, 2.1 GB against 3.1 GB. All 32 buckets in one process: 35 s against 30 to 33 s (the 91 MB of test
-sources and the 19 s of tests dominate), 4.7 GB against 6.3 GB. Outcomes: Tests-ERM has no difference; the 32 buckets
-differ in 7 of 40300 tests (they are not run with the cache, see `docs/adr/022-compile-cache.md`, "Outcomes").
+Tests-ERM, BC 27.5, with the CRONUS data, one run each after the entry exists: 8.1 to 8.3 s against 11.7 to 12.0 s
+without the cache, 2.1 GB against 3.1 GB. All 32 buckets in one process (measured before the last merges of `main`;
+the combined run of current `main` needs more than 18 GB with or without the cache): 35 s against 30 to 33 s (the 91 MB
+of test sources and the 19 s of tests dominate), 4.7 GB against 6.3 GB. Outcomes: Tests-ERM has no difference; the 32
+buckets differ in 7 of 40300 tests (they are not run with the cache, see `docs/adr/022-compile-cache.md`, "Outcomes").
 The measurements are in `docs/adr/022-measurements.txt`.
 
 ## Reading the result

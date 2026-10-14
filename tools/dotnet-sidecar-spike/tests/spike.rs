@@ -6,7 +6,7 @@ use serde_json::json;
 
 fn sidecar() -> Option<Sidecar> {
     let Some(dll) = Sidecar::locate() else {
-        eprintln!("SKIP: sidecar not built (cd sidecar && dotnet build -c Release -o bin)");
+        eprintln!("SKIP: sidecar not built (cd sidecar && dotnet build -c Release -o bin --disable-build-servers -p:UseSharedCompilation=false)");
         return None;
     };
     match Sidecar::start(&dll) {

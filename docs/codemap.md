@@ -181,7 +181,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `baseline.rs` (336): The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`, `CompanyInitializer`, `TestExecu. Entry: `BaselineRun` 22, `run` 51, `tables_written` 152.
 - `deps.rs` (158): Dependency apps for a corpus run (ADR-013). Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
 - `discover.rs` (90): Finds `Subtype = Test` codeunits and their `[Test]` procedure names in AL text, without a syntax tree. Entry: `test_codeunits`.
-- `dotnet.rs` (815): The .NET sidecar host (ADR-014). Entry: `SidecarConfig` 26, `SidecarHost` 65, `encode` 675, `decode` 695.
+- `dotnet.rs` (1084): The .NET sidecar host (ADR-014): one process per session, standby processes started at run start (`prewarm`), start-up stats. Entry: `SidecarConfig` 26, `SidecarStats` 72, `SidecarHost` 247, `prewarm` 279, `encode` 944, `decode` 964.
 - `explain.rs` (137): --explain: where a test was refused or failed, with file and line. Entry: `describe` 38, `detail` 77, `render` 90, `TestDetail` 27.
 - `host.rs` (112): The host the command line gives a session (ADR-006). Entry: `SystemClock` 10, `set_files_dir` 26, `system_host` 32, `DirFileSystem` 43.
 - `isolation.rs` (171): TestIsolation of the runner codeunit; Checkpoint for Function isolation. Entry: `TestIsolation` 27, `runner_isolation` 65, `Checkpoint` 99.

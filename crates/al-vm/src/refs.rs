@@ -104,15 +104,22 @@ fn key_count(t: &TableDef) -> usize {
 
 /// A table's fields a caller can enumerate (`FieldCount`, `FieldIndex`): in
 /// field-number order, system fields left out.
-fn enumerable_fields(t: &TableDef) -> Vec<usize> {
+fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
     let mut v: Vec<usize> = (0..t.fields.len())
-        .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE)
+        .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE && s.field_enabled(t, i))
         .collect();
     v.sort_by_key(|&i| t.fields[i].id);
     v
 }
 
 impl Session {
+    /// A field without `Enabled = false` (record/TestRowVersionFieldNumberFieldActiveContracts.al:
+    /// a disabled field is not counted, not listed, not `FieldExist` and not `FieldActive`).
+    pub(crate) fn field_enabled(&self, t: &TableDef, pos: usize) -> bool {
+        self.field_property(t, pos, "Enabled")
+            .is_none_or(|v| !v.trim().eq_ignore_ascii_case("false"))
+    }
+
     pub(crate) fn ref_op(&mut self, id: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         let Some(sig) = catalog().by_id(id) else {
             return unsupported(format!("builtin {id}"));
@@ -125,6 +132,29 @@ impl Session {
             "RecordRef" => self.recordref_op(&sig.name, &lib, args),
             "FieldRef" => self.fieldref_op(&sig.name, &lib, args),
             "KeyRef" => self.keyref_op(&sig.name, &lib, args),
+            // GetRecord answers a new RecordRef on the RecordId's table with the primary key set and
+            // nothing else loaded; the row need not exist; a null RecordId raises (recordref/
+            // TestRecordIdGetRecordContracts.al).
+            "RecordId" if sig.name == "GetRecord" => {
+                let (table, key) = match &*lib.borrow() {
+                    LibraryValue::RecordId { table, key, .. } => (*table, key.clone()),
+                    _ => {
+                        return Err(Signal::Error(al_builtins::native::AlError {
+                            message: "The record is not open.".into(),
+                            code: "RecordNotOpened".into(),
+                            call_stack: String::new(),
+                        }));
+                    }
+                };
+                let Value::Record(rec) = self.default_value(&RtType::Record(table, false)) else {
+                    return unsupported("record buffer for RecordId.GetRecord");
+                };
+                let t = self.table(&rec)?;
+                for (&p, v) in t.keys[0].iter().zip(key) {
+                    rec.borrow_mut().fields[p] = v;
+                }
+                Ok(handle("RecordRef", LibraryValue::RecordRef(rec)))
+            }
             "RecordId" => match (&*lib.borrow(), sig.name.as_str()) {
                 (LibraryValue::RecordId { table_no, .. }, "TableNo") => Ok(Value::Integer(*table_no as i32)),
                 (LibraryValue::Empty, "TableNo") => Ok(Value::Integer(0)),
@@ -372,18 +402,20 @@ impl Session {
             }
             "FieldExist" => {
                 let no = int_arg(args, 0)?;
-                Ok(Value::Boolean(
-                    t.fields.iter().any(|f| i64::from(al_field_no(f.id)) == no),
-                ))
+                // Field 0 (SystemRowVersion) and a disabled field do not exist
+                // (record/TestRowVersionFieldNumberFieldActiveContracts.al:73-75, 120-121).
+                Ok(Value::Boolean(t.fields.iter().enumerate().any(|(i, f)| {
+                    i64::from(f.id) == no && f.id != SYSTEM_ROW_VERSION_ID && self.field_enabled(&t, i)
+                })))
             }
-            "FieldCount" => Ok(Value::Integer(enumerable_fields(&t).len() as i32)),
+            "FieldCount" => Ok(Value::Integer(enumerable_fields(self, &t).len() as i32)),
             "FieldIndex" => {
                 let i = int_arg(args, 0)?;
                 // Past the count the index reaches the system fields in number order: $systemId,
                 // SystemCreatedAt, SystemCreatedBy, SystemModifiedAt, SystemModifiedBy (corpus
                 // recordref/TestRecordRefRuntimeContracts.al:RecordRef_FieldCount_ExcludesSystemFields_...);
                 // what follows them is not pinned.
-                let normal = enumerable_fields(&t);
+                let normal = enumerable_fields(self, &t);
                 let reached = usize::try_from(i - 1).ok().and_then(|i| match normal.get(i) {
                     Some(&p) => Some(p),
                     None => {
@@ -395,9 +427,12 @@ impl Session {
                 });
                 match reached {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
-                    None => unsupported(format!(
-                        "RecordRef.FieldIndex({i}) out of range (error text not pinned yet)"
-                    )),
+                    // record/TestRowVersionFieldNumberFieldActiveContracts.al:84-86.
+                    None => Err(Signal::Error(al_builtins::native::AlError {
+                        message: "Index out of bounds.".into(),
+                        code: "IndexOutOfBounds".into(),
+                        call_stack: String::new(),
+                    })),
                 }
             }
             "KeyCount" => Ok(Value::Integer(key_count(&self.base_table(&t)) as i32)),
@@ -517,9 +552,8 @@ impl Session {
     }
 
     fn fieldref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
-        let (rec, pos, via_key) = match &*lib.borrow() {
-            LibraryValue::FieldRef(r, p) => (r.clone(), *p, false),
-            LibraryValue::KeyFieldRef(r, p) => (r.clone(), *p, true),
+        let (rec, pos) = match &*lib.borrow() {
+            LibraryValue::FieldRef(r, p) | LibraryValue::KeyFieldRef(r, p) => (r.clone(), *p),
             _ => return unsupported(format!("FieldRef.{method} on a FieldRef that was never assigned")),
         };
         let t = self.table(&rec)?;
@@ -535,7 +569,10 @@ impl Session {
                 }
             },
             "Number" => Ok(Value::Integer(al_field_no(field.id))),
-            "Name" if via_key && field.id == SYSTEM_FIELD_BASE => Ok(Value::Text("$systemId".into())),
+            // SystemId is `$systemId` and the rowversion `timestamp` to a FieldRef (record/
+            // TestRowVersionFieldNumberFieldActiveContracts.al:70-72, 82-84).
+            "Name" if field.id == SYSTEM_FIELD_BASE => Ok(Value::Text("$systemId".into())),
+            "Name" if field.id == SYSTEM_ROW_VERSION_ID => Ok(Value::Text("timestamp".into())),
             "Name" => Ok(Value::Text(field.name.clone())),
             "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
             "Type" => self.field_type(&t, pos),

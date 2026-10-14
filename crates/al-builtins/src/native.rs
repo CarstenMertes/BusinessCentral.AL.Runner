@@ -476,9 +476,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Report.ObjectId#1" => {
             "the text of Report.ObjectId (the id or the name, with or without the object type) is not pinned"
         }
-        "RecordId.GetRecord#1" => {
-            "RecordId.GetRecord is in no corpus test, so whether it reads the row or returns a handle is not pinned"
-        }
         "RequestPage.Update#1" => {
             "RequestPage.Update (RequestOptionsPage.Update(SaveRecord)) is in no corpus test, so what it re-evaluates on the request page and whether it saves the record is not pinned"
         }
@@ -1105,7 +1102,12 @@ fn enum_ordinals(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> R
 /// types/TestEnumDefaultImplTests.Codeunit.al:70).
 fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let (id, _) = enum_receiver(ctx, r, "Enum.FromInteger")?;
-    match int_arg(args, 0).and_then(|n| i32::try_from(n).ok()) {
+    // An Option argument converts to its ordinal, as any Integer parameter takes it.
+    let n = match args.first() {
+        Some(Value::Option(o, _)) => Some(*o),
+        _ => int_arg(args, 0).and_then(|n| i32::try_from(n).ok()),
+    };
+    match n {
         Some(n) => Ok(Value::Enum(id, n)),
         None => unsupported("Enum.FromInteger with a number outside the Integer range"),
     }

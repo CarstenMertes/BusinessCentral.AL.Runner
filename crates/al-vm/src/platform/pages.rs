@@ -320,6 +320,7 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             continue;
         };
         let src = source_table(&c, o);
+        let mut sequence = 0;
         for (n, ctl) in page.controls.iter().enumerate() {
             if ctl.kind != ControlKind::Field {
                 continue;
@@ -327,6 +328,10 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(id as i32);
             r[pos(t, 2)] = Value::Integer(n as i32 + 1);
+            // The field controls number from 0 in declaration order, those inside a group
+            // included (record/TestTableRelationsSequenceMetadataContracts.al:107-122).
+            r[pos(t, 11)] = Value::Integer(sequence);
+            sequence += 1;
             match control_row(&c, o, src, ctl, t, &mut r) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {

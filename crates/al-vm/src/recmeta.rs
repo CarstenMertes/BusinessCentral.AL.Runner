@@ -220,14 +220,9 @@ impl Session {
             // with `Enabled = false` answers is not pinned: refused (docs/probes-needed.md).
             "FieldActive" => {
                 let pos = arg_pos(args, 0)?;
-                match self.field_property(t, pos, "Enabled") {
-                    None => Ok(Value::Boolean(true)),
-                    Some(v) if v.trim().eq_ignore_ascii_case("true") => Ok(Value::Boolean(true)),
-                    Some(v) => unsupported(format!(
-                        "FieldActive of field {} with Enabled = {v}",
-                        t.fields[pos].name
-                    )),
-                }
+                // False for `Enabled = false`, true for the rest, a Pending obsolete field included
+                // (record/TestRowVersionFieldNumberFieldActiveContracts.al:110-119).
+                Ok(Value::Boolean(self.field_enabled(t, pos)))
             }
             "RecordId" => Ok(self.record_id(rec, t)),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),

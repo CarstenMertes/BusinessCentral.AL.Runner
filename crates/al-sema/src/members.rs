@@ -330,11 +330,15 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 relation_tables: Vec::new(),
                 on_validate: None,
                 on_lookup: None,
-                // Only SystemId's caption is pinned (corpus record/TestRecordSystemId.al:178).
-                properties: if *id == 2000000000 {
-                    vec![("Caption".into(), "'System ID'".into())]
-                } else {
-                    Vec::new()
+                // SystemId's caption is pinned by record/TestRecordSystemId.al:178, the others by
+                // record/TestPlatformMetadataDeclarationContracts.al:233-250 (corpus branch al-runtime-rs d0f5d52).
+                properties: match *id {
+                    2000000000 => vec![("Caption".into(), "'System ID'".into())],
+                    2000000001 => vec![("Caption".into(), "'Created At'".into())],
+                    2000000002 => vec![("Caption".into(), "'Created By'".into())],
+                    2000000003 => vec![("Caption".into(), "'Modified At'".into())],
+                    2000000004 => vec![("Caption".into(), "'Modified By'".into())],
+                    _ => Vec::new(),
                 },
             });
         }

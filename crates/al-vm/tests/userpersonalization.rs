@@ -2,7 +2,7 @@
 //! signs in to a client. The corpus pins no such row (access-control/TestUserTableSessionUser.al
 //! only validates the relation to User; session/TestSessionSettings.al:402-407 says what the row
 //! holds "depends on tenant data"). A read that finds no row for the session user is therefore
-//! refused, not answered "not found" (docs/probes-needed.md, "Probe batch 5"). Rows a test writes
+//! refused, not answered "not found" (docs/probes-needed.md, "Probe batch 6"). Rows a test writes
 //! itself (profile/TestTenantProfileRenameCascade.al:39-80) are ordinary rows.
 
 use al_builtins::native::Signal;

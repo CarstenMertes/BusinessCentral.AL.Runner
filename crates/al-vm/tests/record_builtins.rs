@@ -840,7 +840,7 @@ fn set_current_key_on_a_field_that_is_not_stored_is_refused() {
 fn testfield_on_the_blank_member_of_an_option_or_enum_is_refused_not_guessed() {
     // Microsoft's Tests-ERM (Payment Registration UT, Price List Line UT) expect BC to say
     // "<field> must not be <member> in <table>" there, not "must have a value ...". No corpus
-    // test pins that text or what follows it (docs/probes-needed.md, "Probe batch 5"), so the
+    // test pins that text or what follows it (docs/probes-needed.md, "Probe batch 6"), so the
     // runtime refuses instead of answering with the wrong text.
     for field in ["Kind", "Kind2", "Kind3"] {
         let r = run(

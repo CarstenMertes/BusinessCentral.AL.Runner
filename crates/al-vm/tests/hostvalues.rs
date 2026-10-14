@@ -505,7 +505,7 @@ fn zero_and_negative_bounds_follow_the_service_tier() {
 // The corpus pins that CreateGuid is not null and differs on each call (types/TestGuid.al:12-45).
 // Microsoft's Tests-ERM take the first 20 characters of `Format(CreateGuid())` as a key
 // (Pos. Pay Test Unit, ERM Delete Documents), so the first bytes must differ too. The version and
-// variant bits are an assumption (docs/probes-needed.md, "Probe batch 5"): BC's CreateGuid is
+// variant bits are an assumption (docs/probes-needed.md, "Probe batch 6"): BC's CreateGuid is
 // the platform's random (version 4, RFC 4122) Guid.
 
 const GUID_SCAN: &str = "I: Integer; G: Text; Seen: List of [Text]; Bad: Integer; Dup: Integer;";

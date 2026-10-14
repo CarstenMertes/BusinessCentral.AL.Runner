@@ -1623,7 +1623,7 @@ pub(crate) fn guid_for(seed: i32, n: u64) -> [u8; 16] {
 impl Session {
     /// The next Guid of the session: `CreateGuid`, a row's SystemId, the ids of media and tasks.
     /// The corpus pins only that it is not null and never repeats (types/TestGuid.al:12-45);
-    /// that the form is version 4 is an assumption (docs/probes-needed.md, "Probe batch 5").
+    /// that the form is version 4 is an assumption (docs/probes-needed.md, "Probe batch 6").
     pub(crate) fn fresh_guid(&mut self) -> [u8; 16] {
         self.next_guid += 1;
         guid_for(self.guid_seed, self.next_guid)

@@ -138,6 +138,18 @@ fn field_row(
     );
     // Class: Normal, FlowField, FlowFilter (TestFieldDataClassificationInheritance.al, the FlowField case).
     let is_flow_field = !f.stored && !f.flow_filter;
+    r[pos(t, 7)] = blank.option(t, 7, if f.flow_filter { 2 } else { i32::from(is_flow_field) });
+    // TableName, Enabled and Field Caption come from the declaration (docs/probes-needed.md, probe batch 5):
+    // the table's name, `Enabled = false`, and the Caption (else the English CaptionML, else the name).
+    r[pos(t, 3)] = Value::Text(table.name.chars().take(30).collect());
+    r[pos(t, 8)] = Value::Boolean(fprop("Enabled").is_none_or(truthy));
+    r[pos(t, 20)] = Value::Text(
+        super::objects::declared_caption(fprop("Caption"), fprop("CaptionML"), &f.name)
+            .map_err(|e| format!("{}: {e}", what()))?
+            .chars()
+            .take(80)
+            .collect(),
+    );
     // OptionString: the member names of an option or enum field, comma-joined (TestFieldEnumTypeVirtualTable.al:19-47).
     let option_string = match &f.ty {
         RtType::Option(m) => m.join(","),
@@ -174,42 +186,39 @@ fn field_row(
     };
     r[pos(t, 27)] = blank.option(t, 27, dc);
     // RelationTableNo and RelationFieldNo (TestFieldDataClassificationVirtualTable.al:50-72).
-    match f.relation_arms.as_slice() {
-        [] if f.relation => return Err(format!("{}: the TableRelation is not understood", what())),
-        [] => {}
-        [arm] => {
-            let Some(rt) = arm.table else {
+    // The one related table of a relation: from the arms the runtime understands, or, for a relation
+    // with a `filter(...)` condition, from the tables and fields the compile kept (`relation_meta`).
+    let single: Option<(Option<usize>, Option<usize>, String)> =
+        match (f.relation_arms.as_slice(), f.relation_meta.as_slice()) {
+            ([], []) if f.relation => return Err(format!("{}: the TableRelation is not understood", what())),
+            ([], []) => None,
+            ([arm], _) => Some((arm.table, arm.field, arm.table_name.clone())),
+            ([], [m]) => Some((Some(m.table), m.field, c.objects[m.table].name.clone())),
+            _ => {
                 return Err(format!(
-                    "{}: the related table `{}` is not compiled",
-                    what(),
-                    arm.table_name
+                    "{}: a conditional TableRelation (which table it reports is not pinned)",
+                    what()
                 ));
-            };
-            let related = &c.objects[rt];
-            let Some(related_schema) = &related.table else {
-                return Err(format!(
-                    "{}: the related table `{}` is not compiled",
-                    what(),
-                    arm.table_name
-                ));
-            };
-            let field_pos = arm.field.unwrap_or_else(|| {
-                related_schema
-                    .keys
-                    .first()
-                    .and_then(|k| k.first())
-                    .copied()
-                    .unwrap_or(0)
-            });
-            r[pos(t, 21)] = Value::Integer(related.id.unwrap_or(0) as i32);
-            r[pos(t, 22)] = Value::Integer(related_schema.fields.get(field_pos).map_or(0, |x| x.id) as i32);
-        }
-        _ => {
-            return Err(format!(
-                "{}: a conditional TableRelation (which table it reports is not pinned)",
-                what()
-            ));
-        }
+            }
+        };
+    if let Some((table_index, field, table_name)) = single {
+        let Some(rt) = table_index else {
+            return Err(format!("{}: the related table `{table_name}` is not compiled", what()));
+        };
+        let related = &c.objects[rt];
+        let Some(related_schema) = &related.table else {
+            return Err(format!("{}: the related table `{table_name}` is not compiled", what()));
+        };
+        let field_pos = field.unwrap_or_else(|| {
+            related_schema
+                .keys
+                .first()
+                .and_then(|k| k.first())
+                .copied()
+                .unwrap_or(0)
+        });
+        r[pos(t, 21)] = Value::Integer(related.id.unwrap_or(0) as i32);
+        r[pos(t, 22)] = Value::Integer(related_schema.fields.get(field_pos).map_or(0, |x| x.id) as i32);
     }
     let _ = schema;
     Ok(())
@@ -250,6 +259,32 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             );
             r[pos(t, 7)] = Value::Boolean(kprop("Enabled").is_none_or(truthy));
             r[pos(t, 10)] = Value::Boolean(n == 0 || kprop("Clustered").is_some_and(truthy));
+            // MaintainSIFTIndex and ObsoleteState are the key's declared properties (AL default: true, No);
+            // not pinned by a corpus test (docs/probes-needed.md, probe batch 5).
+            r[pos(t, 9)] = Value::Boolean(kprop("MaintainSIFTIndex").is_none_or(truthy));
+            let state = match kprop("ObsoleteState") {
+                None => 0,
+                Some(v) => match ordinal_of(OBSOLETE_STATES, v) {
+                    Some(i) => i,
+                    None => {
+                        out.push(Entry::poisoned(
+                            {
+                                let mut k = blank.row();
+                                k[pos(t, 1)] = Value::Integer(tid as i32);
+                                k[pos(t, 2)] = Value::Integer(n as i32 + 1);
+                                k
+                            },
+                            format!(
+                                "key {} of table '{}': ObsoleteState `{v}` is not understood",
+                                n + 1,
+                                o.name
+                            ),
+                        ));
+                        continue;
+                    }
+                },
+            };
+            r[pos(t, 11)] = blank.option(t, 11, state);
             r[pos(t, 13)] = Value::Boolean(schema.unique_keys.get(n).copied().unwrap_or(false));
             out.push(Entry::ok(r));
         }

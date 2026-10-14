@@ -469,6 +469,12 @@ impl Session {
                     Ok(Value::Null)
                 }
             },
+            // BC does not number SystemRowVersion 2000000005 (a real project reads 0 and the corpus
+            // puts the rowversion at field id 0 for table relations, record/TestCalcFormulaSystemFieldsTests.Codeunit.al:213),
+            // but no corpus test reads this FieldRef's Number: refused (docs/probes-needed.md, batch 7).
+            "Number" if field.id == 2_000_000_005 => unsupported(
+                "FieldRef.Number of SystemRowVersion (not pinned: 0 or 2000000005, docs/probes-needed.md)",
+            ),
             "Number" => Ok(Value::Integer(field.id as i32)),
             "Name" => Ok(Value::Text(field.name.clone())),
             "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),

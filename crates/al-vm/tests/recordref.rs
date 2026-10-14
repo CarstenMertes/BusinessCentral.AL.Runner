@@ -50,6 +50,15 @@ table 50903 "ALT Library Types"
     }
     keys { key(PK; Id) { } }
 }
+table 50960 "ALT RV"
+{
+    fields { field(1; Id; Integer) { } field(2; Name; Text[20]) { } }
+    keys { key(PK; Id) { } }
+}
+tableextension 50961 "ALT RV Ext" extends "ALT RV"
+{
+    keys { key("RV Key"; SystemRowVersion) { } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -632,4 +641,41 @@ fn set_rec_filter_filters_the_primary_key_to_the_current_values() {
         "F",
     );
     assert_eq!(text(r), "1A");
+}
+
+#[test]
+fn a_tableextension_key_on_systemrowversion_is_visible_through_keyref() {
+    // A key a table extension declares on SystemRowVersion is a key of the table; KeyRef sees it
+    // after the declared keys and before the implicit SystemId key (same order as
+    // recordref/TestRecordRefRuntimeContracts.al:KeyRefAndFieldRef_Active_AreTrue_KeyCount).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; KR: KeyRef; i: Integer; s: Text; begin
+            RR.Open(50960);
+            for i := 1 to RR.KeyCount() do begin
+                KR := RR.KeyIndex(i);
+                s += Format(KR.FieldCount()) + ':' + KR.FieldIndex(1).Name() + ';';
+            end;
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "1:Id;1:SystemRowVersion;1:SystemId;");
+}
+
+#[test]
+fn the_field_number_of_systemrowversion_is_refused_until_a_probe_pins_it() {
+    // NaviPartner's npcore-partners (APIRequest.FindRowVersionKeyIndex) reads
+    // `KeyRef.FieldIndex(1).Number = 0 //FieldRef 0 is rowversion`, and corpus
+    // record/TestCalcFormulaSystemFieldsTests.Codeunit.al:213-215 says the rowversion sits at
+    // field id 0 for a table relation. No corpus test reads FieldRef.Number() of that field
+    // (docs/probes-needed.md), so the answer is refused rather than 2000000005 or 0.
+    let m = unsupported(run(
+        "procedure F(): Integer var RR: RecordRef; KR: KeyRef; begin
+            RR.Open(50960);
+            KR := RR.KeyIndex(2);
+            exit(KR.FieldIndex(1).Number());
+        end;",
+        "F",
+    ));
+    assert!(m.contains("SystemRowVersion"), "{m}");
 }

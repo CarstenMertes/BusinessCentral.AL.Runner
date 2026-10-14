@@ -31,9 +31,14 @@ impl Session {
     /// Whether a restored company (test data, ADR-020) has rows for table `object` in the session
     /// company. Reading it loads the table.
     pub fn backs_rows(&self, object: u32) -> bool {
-        self.store
-            .backed_rows(&self.cx.company, object)
-            .is_some_and(|r| !r.is_empty())
+        // A company-independent table (DataPerCompany = false) is stored under no company.
+        let own = self.engine.tables.get(object as usize).and_then(|t| t.as_ref());
+        let company = if own.is_some_and(|t| !t.per_company) {
+            ""
+        } else {
+            self.cx.company.as_str()
+        };
+        self.store.backed_rows(company, object).is_some_and(|r| !r.is_empty())
     }
 
     /// Commits and captures the session's data.

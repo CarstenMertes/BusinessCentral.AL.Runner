@@ -293,6 +293,24 @@ pub(crate) fn lower_core(
     if let Some(d) = demand {
         ws.restrict_to((0..ws.objects.len()).map(|i| d.active(i)).collect());
     }
+    if let (Some(d), Some(path)) = (demand, std::env::var_os("AL_DUMP_REACH")) {
+        // Debug aid: what the demand reached, one line per object (level) and routine.
+        let mut lines: Vec<String> = Vec::new();
+        for (i, o) in ws.objects.iter().enumerate() {
+            if ws.is_dependency(i) && d.active(i) {
+                lines.push(format!("{} {} level {}", o.kind.label(), o.name, d.level[i]));
+            }
+        }
+        for &(i, off) in &d.reached {
+            lines.push(format!(
+                "{} {} routine {off}",
+                ws.objects[i].kind.label(),
+                ws.objects[i].name
+            ));
+        }
+        lines.sort();
+        let _ = std::fs::write(path, lines.join("\n"));
+    }
     let active = |oi: usize| demand.is_none_or(|d| !ws.is_dependency(oi) || d.active(oi));
     let uncompiled_subscribers = if demand.is_some() {
         crate::check::demand::uncompiled_subscribers(ws, &active)
@@ -645,7 +663,17 @@ pub(crate) fn lower_core(
     // Per report: the reportextensions that change a run.
     let mut changing: HashMap<usize, Vec<usize>> = HashMap::new();
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::ReportExtension || !active(oi) || prov(oi) {
+        // Every reportextension of a report that is compiled counts, whether or not it was
+        // compiled itself: what changes a run is decided by the installed apps' sources, never by
+        // what a selection reached (issue 11). The demand-driven compile activates an extension with
+        // its report, so the two agree today; this keeps them from drifting.
+        if o.kind != ObjKind::ReportExtension || prov(oi) {
+            continue;
+        }
+        if !active(oi) && !ws.extension_target(oi).is_some_and(&active) {
+            continue;
+        }
+        if !ws.usable(oi) {
             continue;
         }
         let ext = ws.object_ast(oi);

@@ -1345,3 +1345,116 @@ probe!(
         ),
     ],
 );
+
+// ---------------------------------------------------------------------------------------------
+// 13. Issue 11: a test's outcome does not depend on the other test codeunits of the run.
+
+/// The outcome of the tests of codeunit `T1` when the run selects `selected` (ids of the test
+/// codeunits of the workspace; `None`: all), in the demand-driven compile or the complete one.
+fn outcomes_with_selection(
+    main: &str,
+    dep: &[(&str, &str)],
+    selected: Option<Vec<u32>>,
+    eager: bool,
+) -> Vec<(String, Outcome)> {
+    let app = |id: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
+        id: id.into(),
+        name: id.into(),
+        dependencies: deps.iter().map(|d| d.to_string()).collect(),
+        files,
+    };
+    let dep_app = app(
+        "dep",
+        &[],
+        dep.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect(),
+    );
+    let main_app = app("main", &["dep"], vec![("main.al".into(), main.to_string())]);
+    let (_, l) = al_sema::lower::compile_apps_with(
+        vec![main_app, dep_app],
+        vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+        &Default::default(),
+        None,
+        al_sema::check::Roots {
+            eager,
+            only_tests: selected.map(|ids| ids.into_iter().map(|id| (0usize, id)).collect()),
+            ..Default::default()
+        },
+    );
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let oi = l
+        .program
+        .objects
+        .iter()
+        .position(|o| o.name == "T1")
+        .expect("test codeunit T1");
+    run_codeunit(&engine, &l, oi)
+}
+
+#[test]
+fn a_tests_outcome_does_not_change_when_another_test_codeunit_activates_extensions() {
+    // Dependency: a report with two reportextensions that change a run, a page with a page
+    // extension that declares a procedure.
+    let dep = [
+        ("t.al", table("", "")),
+        (
+            "r.al",
+            "report 50200 Rp { ProcessingOnly = true; UseRequestPage = false; }".to_string(),
+        ),
+        (
+            "e1.al",
+            "reportextension 50201 RpE1 extends Rp { trigger OnPreReport() begin end; }".to_string(),
+        ),
+        (
+            "e2.al",
+            "reportextension 50202 RpE2 extends Rp { trigger OnPostReport() begin end; }".to_string(),
+        ),
+        ("p.al", card(50203, "DP", "")),
+        (
+            "pe.al",
+            "pageextension 50204 DPE extends DP { layout { } procedure Extra() begin end; }".to_string(),
+        ),
+    ];
+    let dep: Vec<(&str, &str)> = dep.iter().map(|(n, s)| (*n, s.as_str())).collect();
+    // T1 holds the report variable (the reportextension rule decides it); T2 drives the page
+    // with its extension; T3 runs the report.
+    let main = "codeunit 50001 T1 { Subtype = Test; \
+                  [Test] procedure RunsTheReport() var R: Report Rp; begin R.Run(); end; \
+                  [Test] procedure OpensThePage() var TP: TestPage DP; begin TP.OpenView(); TP.Close(); end; }\n\
+                codeunit 50002 T2 { Subtype = Test; \
+                  [Test] procedure Other() var TP: TestPage DP; R: Report Rp; begin TP.OpenView(); R.Run(); end; }";
+    for eager in [false, true] {
+        let alone = outcomes_with_selection(main, &dep, Some(vec![50001]), eager);
+        let together = outcomes_with_selection(main, &dep, Some(vec![50001, 50002]), eager);
+        let everything = outcomes_with_selection(main, &dep, None, eager);
+        assert_eq!(alone, together, "eager={eager}: T1 differs alone and with T2");
+        assert_eq!(
+            alone, everything,
+            "eager={eager}: T1 differs alone and in the whole run"
+        );
+    }
+    let demand = outcomes_with_selection(main, &dep, Some(vec![50001]), false);
+    let eager = outcomes_with_selection(main, &dep, Some(vec![50001]), true);
+    assert_eq!(demand, eager, "demand and eager differ");
+}
+probe!(
+    an_interface_that_only_a_reached_routine_returns_is_compiled,
+    SamePass,
+    vars = "C: Codeunit Maker; I: Interface IThing;",
+    body = "I := C.Make(); I.Hello();",
+    dep = [
+        ("i.al", "interface IThing { procedure Hello(); }"),
+        (
+            "impl.al",
+            "codeunit 50210 Impl implements IThing { procedure Hello() begin end; }"
+        ),
+        (
+            "m.al",
+            "codeunit 50211 Maker { procedure Make(): Interface IThing var I: Codeunit Impl; begin exit(I); end; }"
+        ),
+    ],
+);

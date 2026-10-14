@@ -176,8 +176,8 @@ jobs:
 
       # ADR-022. The measured run: every dependency app comes from the compile cache
       # (`--require-compile-cache` turns a miss into an error). Its outcomes must be those of the
-      # normal run above for every test, except the tests in tools/demand-eager-known-differences.txt
-      # (the cache holds the complete compile, like the eager run). The job summary has the times
+      # normal run above for every test, with no exception (owner decision of 2026-10-14; the
+      # list tools/demand-eager-known-differences.txt is empty). The job summary has the times
       # with the cache on; the time to build the cache is a line of its own.
       - name: Corpus with the compile cache, against the uncached run
         run: |

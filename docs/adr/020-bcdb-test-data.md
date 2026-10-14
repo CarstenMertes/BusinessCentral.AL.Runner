@@ -241,6 +241,79 @@ is 30 to 60 ms. Each table read also parsed and sorted the names of all 4,100 ta
 - `--timings` prints one `test data:` line: open time, whether the kept index was used, number of table reads,
   rows and time.
 
+## Amendment (Proposed, 2026-10-15): install code and restored rows
+
+Status: **Proposed.** Nothing below is built. It changes the guard of "Install code may not rewrite restored
+rows", so it waits for the owner.
+
+### What was found first (built, no ADR needed)
+
+The 563 Tests-ERM tests that stopped with "IsEmpty on Application Area Setup: ... the install baseline could not
+create them" were not caused by the guard. `Session::backs_rows` asked the backup for the table's rows under the
+session company. Application Area Setup is `DataPerCompany = false`, so the backup keeps its one row under no
+company, the answer was always "no rows", and the table counted as unseeded whenever Company-Initialize stopped
+early. Fixed (it asks for the table's own slot; test
+`a_company_independent_table_the_backup_holds_rows_for_is_seeded_too`). Tests-ERM 27.5 per-test outcomes are
+identical before and after (887 passed, 1 failed, 8,445 not run); the 563 moved to the next blocker (602 tests:
+`DotNet new ...AzureADGraphClient.GraphQuery` in Copilot Capability Install). Unseeded tables went from 4 to 2.
+
+### The question that remains
+
+With the enum assignment in `Electronic Document Format.InsertElectronicFormat` fixed, Company-Initialize reaches
+`InitApplicationAreasForSaaS` -> `Application Area Mgmt.SetExperienceTier`. That inserts a row if
+`GetApplicationAreaSetupRecFromCompany` finds none and then modifies the row to the tier's areas. Application Area
+Setup holds one restored row, so the guard refuses the Modify and the root stops there. Company-Initialize
+then does not reach `SatisfactionSurveyMgt.ResetCache`, `UpgradeTag.SetAllUpgradeTags` and the
+`OnCompanyInitialize` subscribers. (Not observable today: the run stops earlier, at the enum.)
+
+### What BC has in this state
+
+The backup is a database in which Company-Initialize and every install trigger already ran, when the company and
+the apps were created, and in which the demo data was loaded afterwards. A real test run starts on that database
+and does not run Company-Initialize or `OnInstallApp*` again. So in real BC, for every app the backup knows:
+
+- a row install code writes is already there, with the value install code wrote, or with a value a later step
+  (the demo-data load, a setup page) changed it to; and
+- a row the install code would insert but the backup lacks was deleted or never created, on purpose or because
+  that step is not part of the demo database.
+
+Re-running the code on top of the rows is therefore not something BC does. It is the runtime's way to get state
+that is not in the backup: the platform tables (not restored), isolated storage, number sequences (SQL sequences,
+not tables, so `bcdb` does not read them), and apps the backup does not know (the app under test and its
+non-Microsoft dependencies).
+
+### Options
+
+1. **Keep the guard.** Strict and explicit. Cost: Company-Initialize stops at SetExperienceTier on every run, so
+   the tables after it are never written by it (the restored rows cover most of them) and the
+   `OnCompanyInitialize` subscribers do not run.
+2. **A Modify (or Rename, Delete) of a restored row is allowed when it writes the values the row already has.**
+   The state afterwards is identical to not running the statement, so no outcome can differ because of the write
+   itself. A write of different values keeps the refusal. Not guessed: the rule is a comparison, and the refusal
+   still names the first differing field. Cost: SetExperienceTier may write a different tier than the demo
+   company holds (the demo company's tier is not known to me); then the root still stops there and nothing is
+   lost against today. Risk: code after the write now runs and may insert rows the backup lacks (inserts of new
+   keys were always allowed), which can change a currently passing test. Measure first.
+3. **With test data, skip the install roots and Company-Initialize of every app the backup knows**, run only the
+   roots of apps it does not know. This is BC's own order of events. Cost: loses what install code does outside
+   tables (isolated storage, number sequences, event-subscriber side effects like `OnCompanyInitialize`
+   registering rows in tables the backup does not have, and rows in the 8 platform tables not loaded), so it
+   needs a list of what only the roots provide before it is safe. It also changes which tests pass today.
+   How to tell "the backup knows the app": the app id suffix of the backup's table names and the `NAV App Installed
+   App` table, both readable without symbols.
+
+### Recommendation
+
+Option 2, then re-measure. It cannot change a state the run reads (a no-op write is skipped), it removes the stop
+at SetExperienceTier if the demo tier equals the one Company-Initialize sets, and it keeps every refusal that
+protects the restored data. Option 3 is the cleaner model of BC but needs the "what only the roots provide" list
+first; the number-sequence and isolated-storage state of the roots would be the first to check.
+
+What I need from the owner: accept option 2, 3 or 1. For option 2 I would build it test-first on a fake provider
+(equal write passes, different write refuses), measure Tests-ERM with data before and after with
+`tools/bucket_diff.py`, and run the baseline, demand/eager, cache/uncached and baseline-rule checks. It also
+needs the enum fix in `InsertElectronicFormat` to be observable on real data.
+
 ## Conformance
 
 `cargo test -p al-host -p al-data -p al-bcdb-std -p alrunner-cli` and

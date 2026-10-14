@@ -1149,6 +1149,12 @@ impl<'a> Checker<'a> {
                 if let E::PartialObj(k, mut parts) = base {
                     parts.push(mname);
                     return match self.ws.resolve_ref(sc.file, k, &parts) {
+                        // `Enum::Ns.Name` names the enum type, as `Enum::Name` does.
+                        Resolution::Found(i) if k == ObjKind::Enum => {
+                            self.touch(i);
+                            let qualified = self.ws.objects[i].name.clone();
+                            E::TypeName(Ty::Enum(qualified))
+                        }
                         Resolution::Found(i) => {
                             self.reach_named_object(sc, node, k, i);
                             let id = self.ws.objects[i].id.unwrap_or(0) as i32;
@@ -1236,6 +1242,9 @@ impl<'a> Checker<'a> {
                             return E::Val(Ty::Unknown);
                         }
                     }
+                } else if let Some(e) = self.namespaced_enum(sc, &kids[0]) {
+                    // `Ns.Sub."Enum"::Value`: the enum named through its namespace.
+                    e
                 } else {
                     self.infer(sc, &kids[0])
                 };
@@ -1260,12 +1269,23 @@ impl<'a> Checker<'a> {
                     E::PartialObj(k, parts) => E::PartialObj(k, parts),
                     E::EnumKeyword => match self.resolve(sc, ObjKind::Enum, &rhs) {
                         Some(i) => E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())),
+                        // `Enum::Acme.Docs."Kind"`: the first segment is a namespace; the next
+                        // `.` step resolves the whole name (the member branch above).
+                        None if node.parent().is_some_and(|p| p.kind() == MemberExpr) => {
+                            E::PartialObj(ObjKind::Enum, vec![rhs])
+                        }
                         None => {
                             self.diag(sc, node, "AR0002", format!("unresolved enum `{rhs}`"));
                             E::TypeName(Ty::Unknown)
                         }
                     },
                     E::TypeName(t) | E::Val(t) => {
+                        // `Kinds::Purchase` with `Kinds: array[3] of Option ...` names a member of
+                        // the element's option (Microsoft's SCM Supply Planning tests).
+                        let t = match t {
+                            Ty::Array(_, el) if matches!(*el, Ty::Option(_)) => *el,
+                            t => t,
+                        };
                         self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }
@@ -1286,6 +1306,43 @@ impl<'a> Checker<'a> {
                 }
             }
             _ => E::Val(Ty::Unknown),
+        }
+    }
+
+    /// `Ns.Sub."Enum"` before `::`: a chain of names that resolves to an enum through its namespace.
+    fn namespaced_enum(&self, sc: &Scope, node: &SyntaxNode) -> Option<E> {
+        fn parts(n: &SyntaxNode, out: &mut Vec<String>) -> bool {
+            match n.kind() {
+                SyntaxKind::NameRef => {
+                    out.push(name_of(n));
+                    true
+                }
+                SyntaxKind::MemberExpr => {
+                    let mut kids = n.children();
+                    let (Some(base), Some(member), None) = (kids.next(), kids.next(), kids.next()) else {
+                        return false;
+                    };
+                    parts(&base, out) && {
+                        out.push(name_of(&member));
+                        true
+                    }
+                }
+                _ => false,
+            }
+        }
+        if node.kind() != SyntaxKind::MemberExpr {
+            return None;
+        }
+        let mut names = Vec::new();
+        if !parts(node, &mut names) {
+            return None;
+        }
+        match self.ws.resolve_ref(sc.file, ObjKind::Enum, &names) {
+            Resolution::Found(i) => {
+                self.touch(i);
+                Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())))
+            }
+            _ => None,
         }
     }
 

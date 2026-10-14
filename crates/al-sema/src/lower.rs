@@ -3450,9 +3450,37 @@ impl Lowerer<'_> {
                     };
                     Ok(ir::Place::Field(Box::new(base), pos))
                 }
-                _ => Err(format!("`{}` is not assignable", n.text())),
+                _ if n.kind() == SyntaxKind::NameRef && n.text().to_string().trim().eq_ignore_ascii_case("this") => Err(
+                    "`this` passed by reference (`BindSubscription(this)`) is not lowered: no corpus test passes the running instance as an argument"
+                        .into(),
+                ),
+                _ => Err(self
+                    .base_page_member(n)
+                    .unwrap_or_else(|| format!("`{}` is not assignable", n.text()))),
             },
         }
+    }
+
+    /// Why a name cannot be lowered in a page extension: it is a variable or procedure of the
+    /// page the extension extends. Extension code runs on its own object, which holds none of the
+    /// base page's variables or procedures (a bare control name binds to a base variable through
+    /// `Binding::BaseVar`, corpus handlers/TestRequestPageControlErrorName.al).
+    fn base_page_member(&self, n: &SyntaxNode) -> Option<String> {
+        if self.ws.objects[self.oi].kind != ObjKind::PageExtension {
+            return None;
+        }
+        let base = self.ws.extension_target(self.oi)?;
+        let root = n
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))?;
+        let name = ast::ident_text(&root);
+        let obj = self.ws.object_ast(base);
+        let declared = obj.var_decls().any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)))
+            || obj.routines().any(|r| r.name().eq_ignore_ascii_case(&name));
+        declared.then(|| {
+            format!("`{name}` is a variable or procedure of the page it extends: page extension code on base page members is not lowered yet")
+        })
     }
 
     fn constant(&self, n: &SyntaxNode) -> L<ir::Const> {
@@ -4217,6 +4245,28 @@ page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"
         );
         let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
         assert!(reasons.is_empty(), "{reasons:?}");
+    }
+
+    /// Tests-SCM: a page extension's field `field(X; Item."Qty. on Component Lines")` names a
+    /// `protected var` of the page it extends. Extension code runs on its own object, which holds
+    /// none of the base page's variables (only a bare control name binds to one, `BaseVar`), so the
+    /// routine is refused, and the reason says why instead of "`Item.X` is not assignable".
+    #[test]
+    fn an_extension_naming_a_variable_of_its_base_page_is_refused_with_that_reason() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; \"Qty. A\"; Integer) { } } }
+page 50100 Base { SourceTable = T; layout { area(Content) { field(A; Rec.\"Qty. A\") { } } } protected var Item: Record T; }
+pageextension 50101 Ext extends Base { layout { addlast(Content) { field(\"X\"; Item.\"Qty. A\") { } } } }",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert!(
+            reasons.iter().any(|r| r.contains("of the page it extends") && !r.contains("not assignable")),
+            "{reasons:?}"
+        );
     }
 
     const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"

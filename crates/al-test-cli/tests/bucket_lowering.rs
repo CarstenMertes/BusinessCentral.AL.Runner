@@ -186,3 +186,74 @@ fn the_odata_v4_client_type_member_exists_and_differs_from_the_others() {
     );
     passes(&o, "Names");
 }
+
+/// Microsoft's tests call `BindSubscription(this)`. No corpus test passes `this` as an argument
+/// (the Spy codeunits are variables), and the IR has no place for the running instance, so the
+/// routine is refused with a reason that names `this`, not "`this` is not assignable".
+#[test]
+fn this_passed_by_reference_is_refused_with_its_own_reason() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Bind() begin BindSubscription(this); end; }"#,
+    );
+    let why = not_run(&o, "Bind");
+    assert!(why.contains("`this`") && !why.contains("not assignable"), "{why}");
+}
+
+/// `Enum::Ns.Sub."Name".FromInteger(n)` names the enum through its namespace
+/// (`Enum::Microsoft.Manufacturing.Document."Planning Create Prod. Order"` in Microsoft's code).
+/// The static members are pinned for the plain form (enum shipped-ordinal tests: types/
+/// TestEnumShippedOrdinalTests.Codeunit.al:91 `FromInteger`, types/TestDateRoundFormatStringContracts.al:221
+/// `Names`), and a namespace-qualified object name resolves as `Codeunit::A.B."X"` does
+/// (fieldref/TestFieldRefRelation.al:270-325).
+#[test]
+fn a_namespace_qualified_enum_has_the_static_members() {
+    let o = outcomes(
+        r#"namespace Acme.Sales.Docs;
+enum 50010 "Kind" { Extensible = true; value(0; Alpha) { } value(1; Beta) { } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure FromIntegerAndNames() var K: Enum "Acme.Sales.Docs"."Kind"; N: List of [Text]; begin
+    K := Enum::Acme.Sales.Docs."Kind".FromInteger(1);
+    if K <> Enum::Acme.Sales.Docs."Kind"::Beta then Error('from integer');
+    N := Enum::Acme.Sales.Docs."Kind".Names();
+    if N.Count() <> 2 then Error('names %1', N.Count()); end; }"#,
+    );
+    passes(&o, "FromIntegerAndNames");
+}
+
+/// `SupplyType[1] := SupplyType::Purchase` with `SupplyType: array[5] of Option "None",Released,
+/// FirmPlanned,Purchase` (Microsoft's SCM Supply Planning tests): `Arr::Member` names the member of
+/// the element's option, as `Opt::Member` does for a scalar option (handlers/
+/// TestPageFieldFormats_Tests.al:1160-1162 `Row.Opt::Beta`). Arrays of options themselves are
+/// listed in docs/probes-needed.md, Probe batch 4.
+#[test]
+fn an_array_of_options_names_members_with_a_double_colon() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Members() var Kind: array[3] of Option "None",Released,FirmPlanned,Purchase; begin
+    Kind[1] := Kind::Purchase; Kind[2] := Kind::Released;
+    if Kind[1] <> Kind::Purchase then Error('purchase');
+    if Kind[2] = Kind::None then Error('none');
+    if Kind[1] = Kind[2] then Error('same'); end; }"#,
+    );
+    passes(&o, "Members");
+}
+
+/// `Ns.Sub."Enum"::Value` names a member of a namespace-qualified enum without the `Enum::`
+/// keyword (`Microsoft.Manufacturing.ProductionBOM."Production BOM Line Type"::Item` in Microsoft's
+/// code). The member lookup is pinned for the plain forms (`"ALT Status"::Active`, types/
+/// TestEnumNamesContracts.al:76; `Enum::"TPEDO Kind"::Beta`, handlers/TestPageEnumDeclaredOrder_Tests.al:56)
+/// and the namespace resolution as for `Enum::Ns."Name"` above.
+#[test]
+fn a_namespace_qualified_enum_names_its_members_without_the_enum_keyword() {
+    let o = outcomes(
+        r#"namespace Acme.Sales.Docs;
+enum 50010 "Kind" { Extensible = true; value(0; Alpha) { } value(1; Beta) { } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Members() var K: Enum "Acme.Sales.Docs"."Kind"; begin
+    K := Acme.Sales.Docs."Kind"::Beta;
+    if K <> Enum::Acme.Sales.Docs."Kind"::Beta then Error('member');
+    if K.AsInteger() <> 1 then Error('ordinal'); end; }"#,
+    );
+    passes(&o, "Members");
+}

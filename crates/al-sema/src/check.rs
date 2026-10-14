@@ -190,7 +190,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
     let positions: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
     c.diags
         .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
-    let wanted = |oi: usize| !ws.is_dependency(oi) || demand.as_ref().is_some_and(|d| d.active(oi));
+    // Without a demand state (the eager compile) every dependency object is lowered, so every one
+    // needs its layout.
+    let wanted = |oi: usize| !ws.is_dependency(oi) || demand.as_ref().is_none_or(|d| d.active(oi));
     for oi in 0..ws.objects.len() {
         if wanted(oi) {
             c.query(oi);

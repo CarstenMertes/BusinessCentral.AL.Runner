@@ -825,7 +825,10 @@ pub fn lower_with_positions(
                 .iter()
                 .map(|(v, c)| (*v as i32, c.clone()))
                 .collect(),
-            table: (o.kind == ObjKind::Table)
+            // A table whose source cannot be used (a platform table nothing provides, a dependency
+            // file that does not parse) has no members, so it has no schema: the Field and Key
+            // tables report it as not compiled instead of reading fields it does not have.
+            table: (o.kind == ObjKind::Table && ws.usable(oi))
                 .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), &routine_at)),
             rec_slot,
             xrec_slot,

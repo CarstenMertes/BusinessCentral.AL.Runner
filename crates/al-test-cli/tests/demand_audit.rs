@@ -1116,6 +1116,37 @@ probe!(
 );
 
 // ---------------------------------------------------------------------------------------------
+// A dependency query the runtime refuses is refused the same way in both compiles
+
+/// A query of a dependency app with a property the runtime refuses (corpus
+/// query/TestQueryRoleCenterFromPlans.al uses Base Application's query 777, which has one). The
+/// eager compile must refuse the test that opens it, as the demand-driven compile does, and must
+/// not lower the query without a layout (a runtime panic).
+#[test]
+fn a_dependency_query_with_an_unsupported_property_is_refused_in_both_compiles() {
+    let p = Probe {
+        name: "refused_dependency_query",
+        want: Want::RanOrRefused,
+        vars: "Q: Query \"DepQ\";",
+        body: "Q.Open(); if Q.Read() then;",
+        extra: "",
+        attr: "",
+        members: "",
+        dep: &[(
+            "q.al",
+            "table 50500 DepRow { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { Clustered = true; } } }\n\
+             query 50501 DepQ { QueryType = Normal; InherentEntitlements = X;\n\
+               elements { dataitem(Row; DepRow) { column(K; K) { } } } }",
+        )],
+    };
+    let (demand, eager) = (short(&go(&p, false)), short(&go(&p, true)));
+    eprintln!("demand: {demand}\neager:  {eager}");
+    assert!(demand.contains("InherentEntitlements"), "{demand}");
+    assert!(!eager.contains("panic"), "{eager}");
+    assert_eq!(demand, eager);
+}
+
+// ---------------------------------------------------------------------------------------------
 // The guard at dispatch time, independent of what the checker reached
 
 #[test]

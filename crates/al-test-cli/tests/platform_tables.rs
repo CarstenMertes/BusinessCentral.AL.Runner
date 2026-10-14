@@ -98,6 +98,11 @@ fn no_other_app_supplies_a_table_under_a_registered_id_or_name() {
 
 /// Outcomes of the test codeunit in `main`, compiled over the real platform `System` app.
 fn outcomes(main: &str) -> Vec<(String, Outcome)> {
+    outcomes_with(main, al_sema::check::Roots::default())
+}
+
+/// [`outcomes`] with the demand roots chosen: `eager` compiles every table of the System app.
+fn outcomes_with(main: &str, roots: al_sema::check::Roots) -> Vec<(String, Outcome)> {
     use al_sema::workspace::{AppKind, AppSource};
     let app = |id: &str, name: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
         id: id.into(),
@@ -105,13 +110,15 @@ fn outcomes(main: &str) -> Vec<(String, Outcome)> {
         dependencies: deps.iter().map(|d| d.to_string()).collect(),
         files,
     };
-    let (_, l) = al_sema::lower::compile_apps(
+    let (_, l) = al_sema::lower::compile_apps_with(
         vec![
             app("main", "main", &[], vec![("main.al".into(), main.into())]),
             app(al_sema::workspace::PLATFORM_APP_ID, "System", &[], system_app_files()),
         ],
         vec![AppKind::Workspace, AppKind::Dependency],
         &symbols(),
+        None,
+        roots,
     );
     let blocked = l
         .unsupported
@@ -265,4 +272,44 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "ThisCall");
     passes(&o, "Setters");
+}
+
+/// Compiling every table of the System app (eager) must not make the Key table panic on a platform
+/// table that has no provider: it has no usable members, so it has no fields and no keys, and its
+/// Key rows are refused like those of any table nothing compiled. The tables with a real
+/// declaration still answer (corpus record/TestKeyVirtualTable.al:67-80).
+#[test]
+fn the_key_table_survives_an_eager_compile_of_platform_tables_without_a_provider() {
+    let o = outcomes_with(
+        r#"table 50001 "Probe" { fields { field(1; A; Integer) { } field(2; B; Integer) { } }
+  keys { key(PK; A) { Clustered = true; } key(S; B, A) { } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure CountsTheDeclaredKeysAndTheSystemIdKey() var K: Record "Key"; begin
+    K.SetRange(TableNo, Database::"Probe");
+    if K.Count() <> 3 then Error('count %1', K.Count()); end; }"#,
+        al_sema::check::Roots {
+            eager: true,
+            ..Default::default()
+        },
+    );
+    passes(&o, "CountsTheDeclaredKeysAndTheSystemIdKey");
+}
+
+/// Change Log Management assigns `xRecRef.ReadIsolation` on a RecordRef parameter (Base
+/// Application, ChangeLogManagement.Codeunit.al). Assigning it compiles and runs on a parameter
+/// and on a local RecordRef, as the corpus pins for a plain one (record/TestRecordLock.al:86,
+/// session/TestBCLockingContracts.al:14, both `*_IsCallable`).
+#[test]
+fn read_isolation_is_assignable_on_a_recordref_parameter_and_a_local_one() {
+    let o = outcomes(
+        r#"table 50002 "Probe" { fields { field(1; A; Integer) { } } keys { key(PK; A) { } } }
+codeunit 50001 "H" {
+  procedure OnParam(var RecRef: RecordRef; xRecRef: RecordRef) begin xRecRef.ReadIsolation := xRecRef.ReadIsolation::ReadCommitted; end;
+  procedure OnLocal() var R: RecordRef; begin R.Open(50002); R.ReadIsolation := R.ReadIsolation::ReadCommitted; end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Param() var H: Codeunit H; R: RecordRef; begin R.Open(50002); H.OnParam(R, R); end;
+  [Test] procedure Local() var H: Codeunit H; begin H.OnLocal(); end; }"#,
+    );
+    passes(&o, "Param");
+    passes(&o, "Local");
 }

@@ -36,7 +36,10 @@ fn set(t: &TableDef, filters: &[FieldFilter]) -> Result<ranges::Set, StoreError>
 }
 
 pub(super) fn get(t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
-    let n = pk.first().and_then(num).ok_or_else(|| refused("Integer: a key that is not a number"))?;
+    let n = pk
+        .first()
+        .and_then(num)
+        .ok_or_else(|| refused("Integer: a key that is not a number"))?;
     Ok((LOW..=HIGH).contains(&n).then(|| row(t, n)))
 }
 

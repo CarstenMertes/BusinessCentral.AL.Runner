@@ -4,7 +4,7 @@
 //!
 //! Needs the `corpus` submodule, including its `.alpackages` (`System.app` and the Microsoft apps).
 
-use al_builtins::platform::{REGISTRY, Provider};
+use al_builtins::platform::{Provider, REGISTRY};
 use al_deps::package::read_package;
 use al_syntax::{ast, scan::scan};
 use al_test_cli::report::Outcome;
@@ -48,9 +48,18 @@ fn every_registry_entry_is_a_bodiless_table_of_the_system_app_with_that_id_and_n
                 }
             }
         }
-        assert_eq!(found.len(), 1, "{name} ({id}) must be declared once in System.app: {found:?}", found = found.iter().map(|f| &f.0).collect::<Vec<_>>());
+        assert_eq!(
+            found.len(),
+            1,
+            "{name} ({id}) must be declared once in System.app: {found:?}",
+            found = found.iter().map(|f| &f.0).collect::<Vec<_>>()
+        );
         let (path, o) = &found[0];
-        assert!(o.name().eq_ignore_ascii_case(name), "{path}: the registry names {id} `{name}`, the declaration `{}`", o.name());
+        assert!(
+            o.name().eq_ignore_ascii_case(name),
+            "{path}: the registry names {id} `{name}`, the declaration `{}`",
+            o.name()
+        );
         // A platform table has no AL body: the platform has the behaviour (ADR-013 decision 7).
         assert!(
             ast::routines_in(o.syntax()).is_empty(),
@@ -68,7 +77,9 @@ fn no_other_app_supplies_a_table_under_a_registered_id_or_name() {
         if path.extension().is_none_or(|e| e != "app") || path.file_name().is_some_and(|n| n == "System.app") {
             continue;
         }
-        let Ok((_, files)) = read_package(&std::fs::read(&path).unwrap()) else { continue };
+        let Ok((_, files)) = read_package(&std::fs::read(&path).unwrap()) else {
+            continue;
+        };
         for (file, src) in files {
             for o in scan(&src, &syms).objects.iter().filter(|o| o.kind == "table") {
                 for (id, name, _) in REGISTRY {
@@ -144,7 +155,11 @@ fn a_virtual_platform_table_is_read_but_cannot_be_written() {
   [Test] procedure ReadsTheIntegerTable() var I: Record Integer; begin I.SetRange(Number, 3, 5); if I.Count() <> 3 then Error('count %1', I.Count()); end;
   [Test] procedure WritesTheIntegerTable() var I: Record Integer; begin I.Number := 7; I.Insert(); end; }"#,
     );
-    assert!(o.iter().any(|(n, o)| n == "ReadsTheIntegerTable" && *o == Outcome::Pass), "{o:?}");
+    assert!(
+        o.iter()
+            .any(|(n, o)| n == "ReadsTheIntegerTable" && *o == Outcome::Pass),
+        "{o:?}"
+    );
     let why = not_run(&o, "WritesTheIntegerTable");
     assert!(why.contains("virtual table 'Integer'"), "{why}");
 }
@@ -158,7 +173,10 @@ fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     );
     let why = not_run(&o, "ReadsAnUnpinnedColumn");
     assert!(why.contains("column 6 of platform table 'Field'"), "{why}");
-    assert!(!matches!(o.iter().find(|(n, _)| n == "ReadsAPinnedColumn").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("column")), "{o:?}");
+    assert!(
+        !matches!(o.iter().find(|(n, _)| n == "ReadsAPinnedColumn").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("column")),
+        "{o:?}"
+    );
 }
 
 #[test]

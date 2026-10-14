@@ -94,7 +94,10 @@ fn language_set(t: &TableDef, filters: &[FieldFilter]) -> Result<ranges::Set, St
 }
 
 pub(super) fn windows_language_get(t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
-    let id = pk.first().and_then(num).ok_or_else(|| refused("Windows Language: a key that is not a number"))?;
+    let id = pk
+        .first()
+        .and_then(num)
+        .ok_or_else(|| refused("Windows Language: a key that is not a number"))?;
     if !(1..=MAX_LCID).contains(&id) {
         return Ok(None);
     }

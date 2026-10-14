@@ -9,8 +9,8 @@
 
 use super::{Ident, pos};
 use crate::Session;
-use al_builtins::value::{RtType, Value};
 use al_builtins::native::Ctx;
+use al_builtins::value::{RtType, Value};
 use al_data::{Row, Store, TableDef};
 
 pub(super) const COMPANY: u32 = 2_000_000_006;
@@ -31,7 +31,9 @@ impl Session {
         let engine = self.engine.clone();
         let mut wrote = false;
         for (oi, o) in engine.program.objects.iter().enumerate() {
-            let (Some(id), "table") = (o.id, o.kind.as_str()) else { continue };
+            let (Some(id), "table") = (o.id, o.kind.as_str()) else {
+                continue;
+            };
             let Some(t) = engine.tables[oi].as_ref() else { continue };
             let row: Row = match id {
                 COMPANY => {

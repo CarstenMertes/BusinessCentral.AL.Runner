@@ -257,10 +257,7 @@ pub fn lower_with_positions(
         if let Some(t) = prop("SourceTable") {
             match ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()]) {
                 Resolution::Found(t) => table_of[oi] = Some(t),
-                _ => page_reasons[oi].push(format!(
-                    "source table: {}",
-                    ws.outside_workspace(ObjKind::Table, &t)
-                )),
+                _ => page_reasons[oi].push(format!("source table: {}", ws.outside_workspace(ObjKind::Table, &t))),
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));

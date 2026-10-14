@@ -505,7 +505,10 @@ impl Workspace {
     /// Whether object `i` is a table of the platform app `System` that nothing provides rows for
     /// (ADR-013 decision 7). Declared and empty would be silently wrong, so it is refused.
     pub fn platform_table_without_provider(&self, i: usize) -> bool {
-        self.platform_table(i) && self.objects[i].id.is_none_or(|id| al_builtins::platform::provider(id).is_none())
+        self.platform_table(i)
+            && self.objects[i]
+                .id
+                .is_none_or(|id| al_builtins::platform::provider(id).is_none())
     }
 
     /// Why name `name` of `kind` does not resolve: a platform table with no provider says so

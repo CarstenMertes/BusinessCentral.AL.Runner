@@ -48,20 +48,56 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_026, "Integer", Provider::Virtual(Virtual::Integer)),
     (2_000_000_007, "Date", Provider::Virtual(Virtual::Date)),
     (2_000_000_009, "Session", Provider::Virtual(Virtual::Session)),
-    (2_000_000_110, "Active Session", Provider::Virtual(Virtual::ActiveSession)),
+    (
+        2_000_000_110,
+        "Active Session",
+        Provider::Virtual(Virtual::ActiveSession),
+    ),
     (2_000_000_038, "AllObj", Provider::Virtual(Virtual::AllObj)),
-    (2_000_000_058, "AllObjWithCaption", Provider::Virtual(Virtual::AllObjWithCaption)),
-    (2_000_000_137, "CodeUnit Metadata", Provider::Virtual(Virtual::CodeunitMetadata)),
-    (2_000_000_136, "Table Metadata", Provider::Virtual(Virtual::TableMetadata)),
+    (
+        2_000_000_058,
+        "AllObjWithCaption",
+        Provider::Virtual(Virtual::AllObjWithCaption),
+    ),
+    (
+        2_000_000_137,
+        "CodeUnit Metadata",
+        Provider::Virtual(Virtual::CodeunitMetadata),
+    ),
+    (
+        2_000_000_136,
+        "Table Metadata",
+        Provider::Virtual(Virtual::TableMetadata),
+    ),
     (2_000_000_041, "Field", Provider::Virtual(Virtual::Field)),
     (2_000_000_063, "Key", Provider::Virtual(Virtual::Key)),
     (2_000_000_138, "Page Metadata", Provider::Virtual(Virtual::PageMetadata)),
-    (2_000_000_192, "Page Control Field", Provider::Virtual(Virtual::PageControlField)),
+    (
+        2_000_000_192,
+        "Page Control Field",
+        Provider::Virtual(Virtual::PageControlField),
+    ),
     (2_000_000_164, "Time Zone", Provider::Virtual(Virtual::TimeZone)),
-    (2_000_000_045, "Windows Language", Provider::Virtual(Virtual::WindowsLanguage)),
-    (2_000_000_153, "NAV App Installed App", Provider::Virtual(Virtual::NavAppInstalledApp)),
-    (2_000_000_206, "Published Application", Provider::Virtual(Virtual::PublishedApplication)),
-    (2_000_000_097, "API Webhook Entity", Provider::Virtual(Virtual::ApiWebhookEntity)),
+    (
+        2_000_000_045,
+        "Windows Language",
+        Provider::Virtual(Virtual::WindowsLanguage),
+    ),
+    (
+        2_000_000_153,
+        "NAV App Installed App",
+        Provider::Virtual(Virtual::NavAppInstalledApp),
+    ),
+    (
+        2_000_000_206,
+        "Published Application",
+        Provider::Virtual(Virtual::PublishedApplication),
+    ),
+    (
+        2_000_000_097,
+        "API Webhook Entity",
+        Provider::Virtual(Virtual::ApiWebhookEntity),
+    ),
     // Stored tables whose rows AL reads as facts about the session; the platform seeds them
     // (al-vm `platform/seed.rs`).
     (2_000_000_006, "Company", Provider::Stored),
@@ -74,7 +110,7 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_095, "API Webhook Subscription", Provider::Stored),
     (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
     (2_000_000_121, "User Property", Provider::Stored),
-    (2000000175, "Scheduled Task", Provider::Stored),
+    (2_000_000_175, "Scheduled Task", Provider::Stored),
     (2_000_000_096, "API Webhook Notification", Provider::Stored),
     (2_000_000_098, "API Webhook Notification Aggr", Provider::Stored),
 ];
@@ -112,7 +148,9 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Page Metadata: record/TestPageMetadata*.al.
     (
         2_000_000_138,
-        &[1, 2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32],
+        &[
+            1, 2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
+        ],
     ),
     // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
     (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10]),
@@ -138,7 +176,10 @@ pub fn unpinned_column(table: u32, field: u32) -> Option<String> {
     if pinned.contains(&field) {
         return None;
     }
-    let name = REGISTRY.iter().find(|(i, _, _)| *i == table).map_or("?", |(_, n, _)| *n);
+    let name = REGISTRY
+        .iter()
+        .find(|(i, _, _)| *i == table)
+        .map_or("?", |(_, n, _)| *n);
     Some(format!(
         "column {field} of platform table '{name}' ({table}) is not pinned: no corpus test fixes its value (docs/probes-needed.md)"
     ))
@@ -156,7 +197,10 @@ mod tests {
         for (i, (id, name, _)) in REGISTRY.iter().enumerate() {
             assert!(*id >= SYSTEM_OBJECT_BASE, "{name} is not a system object");
             assert!(
-                REGISTRY.iter().skip(i + 1).all(|(j, n, _)| j != id && !n.eq_ignore_ascii_case(name)),
+                REGISTRY
+                    .iter()
+                    .skip(i + 1)
+                    .all(|(j, n, _)| j != id && !n.eq_ignore_ascii_case(name)),
                 "{name} is registered twice"
             );
         }

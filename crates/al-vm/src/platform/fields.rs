@@ -25,7 +25,10 @@ const DATA_CLASSIFICATIONS: &[&str] = &[
 ];
 
 fn ordinal_of(members: &[&str], text: &str) -> Option<i32> {
-    members.iter().position(|m| m.eq_ignore_ascii_case(&ident(text))).map(|i| i as i32)
+    members
+        .iter()
+        .position(|m| m.eq_ignore_ascii_case(&ident(text)))
+        .map(|i| i as i32)
 }
 
 /// The Field "Type" member (ordinal of `TableFilter,RecordID,OemText,Date,Time,DateFormula,Decimal,
@@ -66,7 +69,10 @@ fn shell_entries(o: &Object, t: &TableDef, key_of: &dyn Fn(u32) -> Vec<(u32, Val
     }
     Entry::poisoned(
         k,
-        format!("table '{}' was not compiled, so its fields and keys are not known", o.name),
+        format!(
+            "table '{}' was not compiled, so its fields and keys are not known",
+            o.name
+        ),
     )
 }
 
@@ -80,7 +86,9 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
-        let (Some(tid), "table") = (o.id, base_kind(o)) else { continue };
+        let (Some(tid), "table") = (o.id, base_kind(o)) else {
+            continue;
+        };
         let Some((_, schema)) = table_of(&c, i) else {
             out.push(shell_entries(o, t, &|id| {
                 vec![(1, Value::Integer(id as i32)), (2, Value::Integer(1))]
@@ -121,7 +129,11 @@ fn field_row(
             .map(|(_, v)| v.trim())
     };
     r[pos(t, 4)] = Value::Text(f.name.clone());
-    r[pos(t, 5)] = option(t, 5, type_ordinal(&f.ty).ok_or_else(|| format!("{}: the type is not understood", what()))?);
+    r[pos(t, 5)] = option(
+        t,
+        5,
+        type_ordinal(&f.ty).ok_or_else(|| format!("{}: the type is not understood", what()))?,
+    );
     // Class: Normal, FlowField, FlowFilter (TestFieldDataClassificationInheritance.al, the FlowField case).
     let is_flow_field = !f.stored && !f.flow_filter;
     // OptionString: the member names of an option or enum field, comma-joined (TestFieldEnumTypeVirtualTable.al:19-47).
@@ -139,7 +151,8 @@ fn field_row(
     // ObsoleteState and ObsoleteReason (TestFieldObsoleteStateVirtualTable.al:18-45).
     let state = match fprop("ObsoleteState") {
         None => 0,
-        Some(v) => ordinal_of(OBSOLETE_STATES, v).ok_or_else(|| format!("{}: ObsoleteState `{v}` is not understood", what()))?,
+        Some(v) => ordinal_of(OBSOLETE_STATES, v)
+            .ok_or_else(|| format!("{}: ObsoleteState `{v}` is not understood", what()))?,
     };
     r[pos(t, 25)] = option(t, 25, state);
     r[pos(t, 26)] = Value::Text(fprop("ObsoleteReason").and_then(string_lit).unwrap_or_default());
@@ -148,9 +161,8 @@ fn field_row(
     let is_blob = matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("blob"));
     let dc = match (fprop("DataClassification"), is_flow_field, is_blob) {
         (_, true, _) => 6,
-        (Some(v), _, _) => {
-            ordinal_of(DATA_CLASSIFICATIONS, v).ok_or_else(|| format!("{}: DataClassification `{v}` is not understood", what()))?
-        }
+        (Some(v), _, _) => ordinal_of(DATA_CLASSIFICATIONS, v)
+            .ok_or_else(|| format!("{}: DataClassification `{v}` is not understood", what()))?,
         (None, _, true) => 0,
         (None, _, false) => match prop(table, "DataClassification") {
             None => 0,
@@ -165,17 +177,37 @@ fn field_row(
         [] => {}
         [arm] => {
             let Some(rt) = arm.table else {
-                return Err(format!("{}: the related table `{}` is not compiled", what(), arm.table_name));
+                return Err(format!(
+                    "{}: the related table `{}` is not compiled",
+                    what(),
+                    arm.table_name
+                ));
             };
             let related = &c.objects[rt];
             let Some(related_schema) = &related.table else {
-                return Err(format!("{}: the related table `{}` is not compiled", what(), arm.table_name));
+                return Err(format!(
+                    "{}: the related table `{}` is not compiled",
+                    what(),
+                    arm.table_name
+                ));
             };
-            let field_pos = arm.field.unwrap_or_else(|| related_schema.keys.first().and_then(|k| k.first()).copied().unwrap_or(0));
+            let field_pos = arm.field.unwrap_or_else(|| {
+                related_schema
+                    .keys
+                    .first()
+                    .and_then(|k| k.first())
+                    .copied()
+                    .unwrap_or(0)
+            });
             r[pos(t, 21)] = Value::Integer(related.id.unwrap_or(0) as i32);
             r[pos(t, 22)] = Value::Integer(related_schema.fields.get(field_pos).map_or(0, |x| x.id) as i32);
         }
-        _ => return Err(format!("{}: a conditional TableRelation (which table it reports is not pinned)", what())),
+        _ => {
+            return Err(format!(
+                "{}: a conditional TableRelation (which table it reports is not pinned)",
+                what()
+            ));
+        }
     }
     let _ = schema;
     Ok(())
@@ -186,7 +218,9 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
-        let (Some(tid), "table") = (o.id, base_kind(o)) else { continue };
+        let (Some(tid), "table") = (o.id, base_kind(o)) else {
+            continue;
+        };
         let Some((_, schema)) = table_of(&c, i) else {
             out.push(shell_entries(o, t, &|id| {
                 vec![(1, Value::Integer(id as i32)), (2, Value::Integer(1))]

@@ -91,7 +91,10 @@ impl MemStore {
     }
 
     fn read_only(t: &TableDef, what: &str) -> StoreError {
-        StoreError::Refused(format!("{what} on virtual table '{}': its rows are computed, not stored", t.name))
+        StoreError::Refused(format!(
+            "{what} on virtual table '{}': its rows are computed, not stored",
+            t.name
+        ))
     }
 
     /// Whether any write since the last commit or rollback is pending.

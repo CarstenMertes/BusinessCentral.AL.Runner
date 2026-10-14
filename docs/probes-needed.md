@@ -342,3 +342,25 @@ real BC and record the value an `Environment Information`-style test reads.
 | `Microsoft.Dynamics.Nav.Types.Base64UrlHelper` | all | Already on the `pure` list (`policy.txt`): the spike ran it with no session |
 | Events | A table extension's `modify(Field)` triggers `OnBeforeValidate` and `OnAfterValidate` run between the Before event and the field's own OnValidate, and between it and the After event; two extensions declaring the same one on a field: REFUSED (order not pinned). Not run when the field is validated by the platform itself (page edits go through the same `Validate`) | `record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable` | `al-vm/src/records.rs` `validate_hooks` |
 | Install | A read of a table the baseline could not fill is refused (see ADR-013 as built). Which tables an install root fills is read from its static closure (record variables' Insert/Modify/Rename/ModifyAll); RecordRef writes and rows added by event subscribers are not found, so a table filled only that way is not marked (counting subscribers marked Dimension Correction, which BC does not fill) | none | `al-test-cli/src/baseline.rs` `tables_written` |
+
+### Platform tables (ADR-019)
+
+Providers in `al-vm/src/platform/` answer from corpus pins; these are the assumptions behind them, each a probe
+wanted on real BC.
+
+| Table | What is assumed | Why nothing pins it | Code |
+|---|---|---|---|
+| Date | "Period Invariant Name" equals "Period Name" (the culture is en-US) | the declaration only calls it the language-independent name | `platform/date.rs` |
+| Field | "Type" stores the member position, not the `OptionOrdinalValues` number the declaration lists (the compiler does not know that property); `Field Caption`, `Len`, `Enabled`, `Class`, `Type Name` and the rest are refused | only comparisons with `Field.Type::X` are pinned | `platform/fields.rs`, `PINNED_COLUMNS` |
+| Static subscribers | the instance a non-`SingleInstance` static subscriber runs on (a new one per event, or one per session). Probe: a subscriber with a Boolean global that one event sets and the next reads | the corpus never reads a global across two events. A subscriber that cannot reach a global runs regardless (`subscribers.rs`) | `al-vm/src/dispatch.rs` |
+| Time Zone | the host's list; the default host lists UTC, GMT, W. Europe, Eastern and Pacific Standard Time with Windows display names | the corpus pins the shape (`No.` 1 to N, non-blank id, more than one row) | `al-host` `default_time_zones` |
+| Windows Language | only 1031, 1033 and 2057 have rows; the abbreviated name `ENG` and the code page `850` for 2057 and `850` for 1031 are from the Windows culture data, not from a test | the corpus fixes 1033 completely, 1031 and 2057 in part | `platform/host_tables.rs` |
+| Session, Active Session | "Database Name" is blank; "Login Type", "Server Instance Name", "Client Computer Name" keep the type default | only the equality of the two Database Names and the client type text are pinned | `platform/identity.rs` |
+| AllObj, AllObjWithCaption | an object of the platform app has the empty package ids; a table extension's, page extension's, ... "Object Subtype" is the id of the extended object (pinned); "AL Namespace" columns are refused | AL Runner measured the owner rule on BC; no corpus test reads the namespace of AllObj | `platform/objects.rs` |
+| Table Metadata, CodeUnit Metadata | `DrillDownPageId`, `PasteIsValid`, `ReplicateData`, `CompressionType`, `Scope`, `Access`, "App ID" are filled from the declared properties with the AL defaults and are refused where code names them | no test reads them | `platform/objects.rs` |
+| Page Metadata | page types other than the thirteen the column names and PromptDialog (20) are refused; `SourceTableView` with sorting, order or more than one condition is refused | pinned: one `where(f = const(v))`, and the fragments `SORTING(Field4)`, `ORDER(`, `WHERE(` which need BC's separators | `platform/pages.rs` |
+| Page Control Field | a declared `Visible`, `Enabled` or `Editable` is spelled in lower case; an expression is refused | only the undeclared defaults are pinned (`true`, `true`, `True`) | `platform/pages.rs` |
+| Key, Field | rows of a table that was not compiled are refused (not empty) | the program holds no fields or keys for an object nothing reached | `platform/fields.rs` |
+| Record Link | `AddLink` writes `Created` from the session clock; `DeleteLink` always compares "Company" with the session company | pinned by TestRecordLinkColumns.al; `TaskScheduler` below is not | `platform/links.rs` |
+| TaskScheduler | `CreateTask` returns a new id and the task does not run (no scheduler, and a test does not wait for a commit); `CanCreateTask`, `TaskExists`, `SetTaskReady`, `CancelTask` are refused when run | session/TestTaskSchedulerCloudBehavior.al pins only a non-empty id | `al-builtins/src/native.rs` |
+| Tenant Media, API Webhook Entity | reads are refused (the media store is a session stand-in, ADR-017; the entities of API pages are not pinned) | | `platform/mod.rs` |

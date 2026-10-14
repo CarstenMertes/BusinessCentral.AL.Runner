@@ -39,7 +39,15 @@ fn last_day() -> i64 {
 /// The most periods a read examines for a filter on a column that is not part of the key.
 const SEARCH_LIMIT: u32 = 5_000_000;
 
-const WEEKDAYS: [&str; 7] = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const WEEKDAYS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
 const MONTHS: [&str; 12] = [
     "January",
     "February",
@@ -188,7 +196,10 @@ fn plan<'a>(t: &TableDef, filters: &'a [FieldFilter]) -> Result<Plan<'a>, StoreE
     Ok(Plan {
         types: ranges::of_field(filters, p_ty, &num, 0, 4).map_err(err)?,
         starts: ranges::of_field(filters, p_start, &num, FIRST_DAY, last_day()).map_err(err)?,
-        others: filters.iter().filter(|f| f.field != p_ty && f.field != p_start).collect(),
+        others: filters
+            .iter()
+            .filter(|f| f.field != p_ty && f.field != p_start)
+            .collect(),
     })
 }
 
@@ -233,7 +244,9 @@ pub(super) fn next(t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError>
             }
             examined += 1;
             if examined > SEARCH_LIMIT {
-                return Err(refused("Date: a filter on a column that is not the key over too many periods"));
+                return Err(refused(
+                    "Date: a filter on a column that is not the key over too many periods",
+                ));
             }
             cur = Some(s);
         }
@@ -324,7 +337,16 @@ mod tests {
             object: 0,
             name: "Date".into(),
             fields: vec![
-                f(1, RtType::Option(vec!["Date".into(), "Week".into(), "Month".into(), "Quarter".into(), "Year".into()])),
+                f(
+                    1,
+                    RtType::Option(vec![
+                        "Date".into(),
+                        "Week".into(),
+                        "Month".into(),
+                        "Quarter".into(),
+                        "Year".into(),
+                    ]),
+                ),
                 f(2, RtType::Date),
                 f(3, RtType::Date),
                 f(4, RtType::Integer),

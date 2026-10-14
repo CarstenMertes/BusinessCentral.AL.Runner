@@ -178,7 +178,13 @@ impl VirtualTables for Providers {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
     }
 
-    fn get(&self, _store: &MemStore, _cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+    fn get(
+        &self,
+        _store: &MemStore,
+        _cx: &AccessContext,
+        t: &TableDef,
+        pk: &[Value],
+    ) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
@@ -187,7 +193,13 @@ impl VirtualTables for Providers {
         }
     }
 
-    fn next(&self, _store: &MemStore, _cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+    fn next(
+        &self,
+        _store: &MemStore,
+        _cx: &AccessContext,
+        t: &TableDef,
+        scan: &Scan,
+    ) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::next(t, scan),
             Virtual::Date => date::next(t, scan),
@@ -196,7 +208,13 @@ impl VirtualTables for Providers {
         }
     }
 
-    fn count(&self, _store: &MemStore, _cx: &AccessContext, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
+    fn count(
+        &self,
+        _store: &MemStore,
+        _cx: &AccessContext,
+        t: &TableDef,
+        filters: &[FieldFilter],
+    ) -> Result<usize, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::count(t, filters),
             Virtual::Date => date::count(t, filters),

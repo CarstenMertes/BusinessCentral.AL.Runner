@@ -49,7 +49,9 @@ fn source_table_id(c: &Catalog, o: &Object) -> Result<u32, String> {
     }
     match prop(o, "SourceTable") {
         None => Ok(0),
-        Some(v) => c.id_of("table", v).map_err(|why| format!("page '{}': SourceTable {why}", o.name)),
+        Some(v) => c
+            .id_of("table", v)
+            .map_err(|why| format!("page '{}': SourceTable {why}", o.name)),
     }
 }
 
@@ -58,15 +60,27 @@ fn lit_bool(o: &Object, name: &str, default: bool) -> bool {
 }
 
 fn text_prop(o: &Object, name: &str, max: usize) -> String {
-    prop(o, name).and_then(string_lit).unwrap_or_default().chars().take(max).collect()
+    prop(o, name)
+        .and_then(string_lit)
+        .unwrap_or_default()
+        .chars()
+        .take(max)
+        .collect()
 }
 
 /// `where(Field = const(2))` as BC formats a source table view: `WHERE(Field6=CONST(2))`. Only the
 /// single-condition form is pinned (TestPageMetadataSourceObject.al:61-80); a view with sorting,
 /// order or other conditions is not.
 fn view_text(o: &Object, table: Option<&Object>, table_objects: &[Object]) -> Result<String, String> {
-    let Some(v) = prop(o, "SourceTableView") else { return Ok(String::new()) };
-    let not_pinned = || format!("page '{}': SourceTableView `{v}` (only a single where(field = const(value)) is pinned)", o.name);
+    let Some(v) = prop(o, "SourceTableView") else {
+        return Ok(String::new());
+    };
+    let not_pinned = || {
+        format!(
+            "page '{}': SourceTableView `{v}` (only a single where(field = const(value)) is pinned)",
+            o.name
+        )
+    };
     let lower = v.to_ascii_lowercase();
     let inner = lower
         .trim()
@@ -100,7 +114,9 @@ fn view_text(o: &Object, table: Option<&Object>, table_objects: &[Object]) -> Re
             .position(|x| x.eq_ignore_ascii_case(value))
             .ok_or_else(not_pinned)?
             .to_string(),
-        RtType::Enum(e) => objects_enum_ordinal(table_objects, *e, value).ok_or_else(not_pinned)?.to_string(),
+        RtType::Enum(e) => objects_enum_ordinal(table_objects, *e, value)
+            .ok_or_else(not_pinned)?
+            .to_string(),
         RtType::Integer | RtType::BigInteger if value.parse::<i64>().is_ok() => value.to_string(),
         _ => return Err(not_pinned()),
     };
@@ -127,18 +143,27 @@ impl StripCi for str {
 
 /// The ids of the fields `DataCaptionFields` names, comma-joined.
 fn caption_fields(o: &Object, table: Option<&Object>) -> Result<String, String> {
-    let Some(v) = prop(o, "DataCaptionFields") else { return Ok(String::new()) };
-    let fields = table
-        .and_then(|t| t.table.as_ref())
-        .map(|t| &t.fields)
-        .ok_or_else(|| format!("page '{}': DataCaptionFields need the source table, which was not compiled", o.name))?;
+    let Some(v) = prop(o, "DataCaptionFields") else {
+        return Ok(String::new());
+    };
+    let fields = table.and_then(|t| t.table.as_ref()).map(|t| &t.fields).ok_or_else(|| {
+        format!(
+            "page '{}': DataCaptionFields need the source table, which was not compiled",
+            o.name
+        )
+    })?;
     let mut ids = Vec::new();
     for name in v.split(',') {
         let name = ident(name);
         let f = fields
             .iter()
             .find(|f| f.name.eq_ignore_ascii_case(&name))
-            .ok_or_else(|| format!("page '{}': DataCaptionFields names `{name}`, not a field of the source table", o.name))?;
+            .ok_or_else(|| {
+                format!(
+                    "page '{}': DataCaptionFields names `{name}`, not a field of the source table",
+                    o.name
+                )
+            })?;
         ids.push(f.id.to_string());
     }
     Ok(ids.join(","))
@@ -149,7 +174,9 @@ pub(super) fn page_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for o in c.objects {
-        let (Some(id), "page") = (o.id, base_kind(o)) else { continue };
+        let (Some(id), "page") = (o.id, base_kind(o)) else {
+            continue;
+        };
         let mut key = blank(t);
         key[pos(t, 1)] = Value::Integer(id as i32);
         match page_metadata_row(&c, o, t, key.clone()) {
@@ -166,18 +193,32 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
         Some(v) => {
             let name = member(&PAGE_TYPES.iter().map(|(n, _)| *n).collect::<Vec<_>>(), v)
                 .ok_or_else(|| format!("page '{}': PageType `{v}` is not pinned", o.name))?;
-            PAGE_TYPES.iter().find(|(n, _)| *n == name).map(|(_, i)| *i).unwrap_or(0)
+            PAGE_TYPES
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, i)| *i)
+                .unwrap_or(0)
         }
     };
     let src_id = source_table_id(c, o)?;
-    let src = c.objects.iter().find(|x| x.id == Some(src_id) && base_kind(x) == "table" && src_id != 0);
+    let src = c
+        .objects
+        .iter()
+        .find(|x| x.id == Some(src_id) && base_kind(x) == "table" && src_id != 0);
     // A page with no source table has no source object: its flags are all false and its texts empty
     // (AL Runner, measured on BC: docs of RecordPatches.PageMetadataSourceObject).
     let has_source = src_id != 0;
     r[pos(t, 2)] = Value::Text(o.name.clone());
     r[pos(t, 5)] = option(t, 5, page_type);
     // BC's own placeholder for a declared DataCaptionExpression (TestPageMetadataProperties.al:23-26).
-    r[pos(t, 7)] = Value::Text(if prop(o, "DataCaptionExpression").is_some() { "DataCaptionExprCode" } else { "" }.into());
+    r[pos(t, 7)] = Value::Text(
+        if prop(o, "DataCaptionExpression").is_some() {
+            "DataCaptionExprCode"
+        } else {
+            ""
+        }
+        .into(),
+    );
     r[pos(t, 8)] = Value::Boolean(lit_bool(o, "RefreshOnActivate", false));
     r[pos(t, 9)] = Value::Text(text_prop(o, "APIPublisher", 40));
     r[pos(t, 10)] = Value::Text(text_prop(o, "APIGroup", 40));
@@ -195,12 +236,26 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
     r[pos(t, 21)] = Value::Boolean(has_source && lit_bool(o, "MultipleNewLines", false));
     r[pos(t, 22)] = Value::Boolean(has_source && lit_bool(o, "SaveValues", false));
     r[pos(t, 23)] = Value::Boolean(has_source && lit_bool(o, "AutoSplitKey", false));
-    r[pos(t, 24)] = Value::Text(if has_source { caption_fields(o, src)? } else { String::new() });
+    r[pos(t, 24)] = Value::Text(if has_source {
+        caption_fields(o, src)?
+    } else {
+        String::new()
+    });
     r[pos(t, 26)] = Value::Boolean(has_source && lit_bool(o, "LinksAllowed", true));
     r[pos(t, 27)] = Value::Boolean(lit_bool(o, "ChangeTrackingAllowed", false));
     r[pos(t, 28)] = Value::Boolean(has_source && lit_bool(o, "PopulateAllFields", false));
-    r[pos(t, 30)] = Value::Text(ident(prop(o, "InherentPermissions").unwrap_or("")).chars().take(5).collect());
-    r[pos(t, 31)] = Value::Text(ident(prop(o, "InherentEntitlements").unwrap_or("")).chars().take(5).collect());
+    r[pos(t, 30)] = Value::Text(
+        ident(prop(o, "InherentPermissions").unwrap_or(""))
+            .chars()
+            .take(5)
+            .collect(),
+    );
+    r[pos(t, 31)] = Value::Text(
+        ident(prop(o, "InherentEntitlements").unwrap_or(""))
+            .chars()
+            .take(5)
+            .collect(),
+    );
     r[pos(t, 32)] = Value::Text(o.namespace.clone().unwrap_or_default());
     Ok(r)
 }
@@ -215,7 +270,10 @@ fn bool_prop(o: &Object, ctl: &al_ir::Control, name: &str, default: &str) -> Res
         Some(PropVal::Lit(v)) => {
             let t = v.trim().to_ascii_lowercase();
             if t != "true" && t != "false" {
-                return Err(format!("page '{}' control '{}': {name} `{v}` is not a literal", o.name, ctl.name));
+                return Err(format!(
+                    "page '{}' control '{}': {name} `{v}` is not a literal",
+                    o.name, ctl.name
+                ));
             }
             // How BC spells a declared value is not pinned; Evaluate reads this form
             // (TestPageControlFieldDefaults.al:52-80).
@@ -233,7 +291,9 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for o in c.objects {
-        let (Some(id), "page") = (o.id, base_kind(o)) else { continue };
+        let (Some(id), "page") = (o.id, base_kind(o)) else {
+            continue;
+        };
         let Some(page) = &o.page else {
             let mut k = blank(t);
             k[pos(t, 1)] = Value::Integer(id as i32);
@@ -286,9 +346,12 @@ fn control_row(
     let owner = ctl.owner.map_or(o, |e| &c.objects[e]);
     match &ctl.binding {
         Binding::Field(fp) => {
-            let table = src
-                .and_then(|s| s.table.as_ref())
-                .ok_or_else(|| format!("page '{}' control '{}': the source table was not compiled", o.name, ctl.name))?;
+            let table = src.and_then(|s| s.table.as_ref()).ok_or_else(|| {
+                format!(
+                    "page '{}' control '{}': the source table was not compiled",
+                    o.name, ctl.name
+                )
+            })?;
             let f = table
                 .fields
                 .get(*fp)

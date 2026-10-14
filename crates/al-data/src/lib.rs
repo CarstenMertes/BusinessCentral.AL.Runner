@@ -93,9 +93,21 @@ pub trait VirtualTables {
     fn serves(&self, t: &TableDef) -> bool;
     /// The reads take the store they are called through, so a provider can compose its rows from
     /// stored tables too (the Aggregate Permission Set lists the tenant's permission sets).
-    fn get(&self, store: &memory::MemStore, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError>;
+    fn get(
+        &self,
+        store: &memory::MemStore,
+        cx: &AccessContext,
+        t: &TableDef,
+        pk: &[Value],
+    ) -> Result<Option<Row>, StoreError>;
     /// The next row of a scan, as [`Store::next`].
-    fn next(&self, store: &memory::MemStore, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError>;
+    fn next(
+        &self,
+        store: &memory::MemStore,
+        cx: &AccessContext,
+        t: &TableDef,
+        scan: &Scan,
+    ) -> Result<Option<Row>, StoreError>;
     fn count(
         &self,
         store: &memory::MemStore,

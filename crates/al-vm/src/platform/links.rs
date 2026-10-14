@@ -25,18 +25,23 @@ impl Session {
     /// A rename moves the record's links to its new key: the current company's rows of a
     /// per-company table, every row of another table (record/TestRecordLinkColumns.al
     /// `Rename_OnAPerCompanyTable_MovesOnlyTheCurrentCompanysRows`).
-    pub(crate) fn move_record_links(
-        &mut self,
-        t: &TableDef,
-        rec: &Rec,
-        old_fields: &[Value],
-    ) -> Result<(), Signal> {
-        let Some(link_obj) = self.compiled_table(RECORD_LINK) else { return Ok(()) };
+    pub(crate) fn move_record_links(&mut self, t: &TableDef, rec: &Rec, old_fields: &[Value]) -> Result<(), Signal> {
+        let Some(link_obj) = self.compiled_table(RECORD_LINK) else {
+            return Ok(());
+        };
         if t.object as usize == link_obj {
             return Ok(());
         }
-        let link_def = self.engine.tables[link_obj].clone().expect("a compiled table has a schema");
-        let pos = |id: u32| link_def.fields.iter().position(|f| f.id == id).expect("Record Link field");
+        let link_def = self.engine.tables[link_obj]
+            .clone()
+            .expect("a compiled table has a schema");
+        let pos = |id: u32| {
+            link_def
+                .fields
+                .iter()
+                .position(|f| f.id == id)
+                .expect("Record Link field")
+        };
         let old = std::rc::Rc::new(std::cell::RefCell::new(rec.borrow().clone()));
         old.borrow_mut().fields = old_fields.to_vec();
         let old_rid = self.record_op("RecordId", &old, &mut [])?;
@@ -78,8 +83,16 @@ impl Session {
         let Some(link_obj) = self.compiled_table(RECORD_LINK) else {
             return unsupported(format!("{method}: the Record Link table was not compiled"));
         };
-        let link_def = self.engine.tables[link_obj].clone().expect("a compiled table has a schema");
-        let pos = |id: u32| link_def.fields.iter().position(|f| f.id == id).expect("Record Link field");
+        let link_def = self.engine.tables[link_obj]
+            .clone()
+            .expect("a compiled table has a schema");
+        let pos = |id: u32| {
+            link_def
+                .fields
+                .iter()
+                .position(|f| f.id == id)
+                .expect("Record Link field")
+        };
         let rid = self.record_op("RecordId", rec, &mut [])?;
         // A fresh Record Link record, filtered to the links of record `of`, and to `company` when
         // one is given.
@@ -143,7 +156,11 @@ impl Session {
                     l.fields[pos(7)] = Value::Text(description);
                     l.fields[pos(10)] = created;
                     l.fields[pos(11)] = Value::Text(user);
-                    l.fields[pos(12)] = Value::Text(if t.per_company { own_company.clone() } else { String::new() });
+                    l.fields[pos(12)] = Value::Text(if t.per_company {
+                        own_company.clone()
+                    } else {
+                        String::new()
+                    });
                 }
                 self.record_op("Insert", &link, &mut [Value::Boolean(false)])?;
                 let id = link.borrow().fields[pos(1)].clone();
@@ -191,7 +208,11 @@ impl Session {
                         l.fields[pos(2)] = rid.clone();
                         // The copy belongs to the company of the target (same file,
                         // `CopyLinks_OntoAPerCompanyTable_WritesTheCompany`, `..._LeavesCompanyEmpty`).
-                        l.fields[pos(12)] = Value::Text(if t.per_company { own_company.clone() } else { String::new() });
+                        l.fields[pos(12)] = Value::Text(if t.per_company {
+                            own_company.clone()
+                        } else {
+                            String::new()
+                        });
                     }
                     self.record_op("Insert", &link, &mut [Value::Boolean(false)])?;
                 }

@@ -52,6 +52,15 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 | xmlport | 40 | 25 | 15 | 62.5% |
 | other areas (17) | 257 | 17 | 240 | |
 
+## Platform tables (ADR-019, branch `platform-tables`)
+
+The platform `System` app loads with every app. Providers answer Integer, Date, Session, Active Session, AllObj,
+AllObjWithCaption, CodeUnit Metadata, Table Metadata, Page Metadata, Page Control Field, Field, Key, Time Zone,
+Windows Language, NAV App Installed App and Published Application; Company, User, Access Control, Record Link and
+a few tenant tables are stored (the session seeds the first three). Everything else in the System app is refused
+with `platform table 'X' (id) has no provider`. Still open: the permission tables, All Profile, the report, query
+and xmlport metadata tables, Event Subscription, Table Relations Metadata, Code Coverage, Feature Key, Page Action.
+
 ## What is implemented
 
 - **Front end.** Full lossless parse of the corpus. Namespaces and `using`s,

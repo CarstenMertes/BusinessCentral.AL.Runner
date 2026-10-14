@@ -231,7 +231,10 @@ mod tests {
         // The scan from the start reaches row 1, then would pass row 2.
         assert!(matches!(m.next(&t, &scan(&[], None, true)), Ok(Some(r)) if matches!(r[0], Value::Integer(1))));
         let after_1 = [Value::Integer(1), Value::Integer(1)];
-        assert!(m.next(&t, &scan(&[], Some(&after_1), true)).is_err(), "row 2 might be the next row");
+        assert!(
+            m.next(&t, &scan(&[], Some(&after_1), true)).is_err(),
+            "row 2 might be the next row"
+        );
         // A key filter that excludes row 2 is answered.
         let f = [id_filter(3, 9)];
         assert!(matches!(m.next(&t, &scan(&f, None, true)), Ok(Some(r)) if matches!(r[0], Value::Integer(3))));
@@ -240,7 +243,10 @@ mod tests {
         assert!(m.get(&t, &[Value::Integer(2)]).is_err());
         assert!(matches!(m.get(&t, &[Value::Integer(9)]), Ok(None)));
         assert!(matches!(m.get(&t, &[Value::Integer(3)]), Ok(Some(_))));
-        assert!(m.count(&t, &[]).is_err(), "a count over everything includes the poisoned row");
+        assert!(
+            m.count(&t, &[]).is_err(),
+            "a count over everything includes the poisoned row"
+        );
     }
 
     #[test]

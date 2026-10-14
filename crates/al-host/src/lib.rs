@@ -125,7 +125,10 @@ pub fn default_time_zones() -> Vec<TimeZoneInfo> {
     [
         ("UTC", "(UTC) Coordinated Universal Time"),
         ("GMT Standard Time", "(UTC+00:00) Dublin, Edinburgh, Lisbon, London"),
-        ("W. Europe Standard Time", "(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna"),
+        (
+            "W. Europe Standard Time",
+            "(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna",
+        ),
         ("Eastern Standard Time", "(UTC-05:00) Eastern Time (US & Canada)"),
         ("Pacific Standard Time", "(UTC-08:00) Pacific Time (US & Canada)"),
     ]

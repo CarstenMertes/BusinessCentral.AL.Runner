@@ -178,15 +178,23 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Variant2Time#1", variant_2_time),
     // Whether the host can create tasks is not pinned (corpus session/TestTaskSchedulerCloudBehavior.al
     // pins only that CreateTask returns a task id): a run that reaches the question is refused.
-    ("TaskScheduler.CanCreateTask#1", |_, _, _| unsupported("TaskScheduler.CanCreateTask (not pinned)")),
+    ("TaskScheduler.CanCreateTask#1", |_, _, _| {
+        unsupported("TaskScheduler.CanCreateTask (not pinned)")
+    }),
     // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
     // and nothing more). A task starts in a session of its own after the creating transaction
     // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).
     ("TaskScheduler.CreateTask#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
     ("TaskScheduler.CreateTask#2", |c, _, _| Ok(Value::Guid(c.new_guid()))),
-    ("TaskScheduler.SetTaskReady#1", |_, _, _| unsupported("TaskScheduler.SetTaskReady (not pinned)")),
-    ("TaskScheduler.TaskExists#1", |_, _, _| unsupported("TaskScheduler.TaskExists (not pinned)")),
-    ("TaskScheduler.CancelTask#1", |_, _, _| unsupported("TaskScheduler.CancelTask (not pinned)")),
+    ("TaskScheduler.SetTaskReady#1", |_, _, _| {
+        unsupported("TaskScheduler.SetTaskReady (not pinned)")
+    }),
+    ("TaskScheduler.TaskExists#1", |_, _, _| {
+        unsupported("TaskScheduler.TaskExists (not pinned)")
+    }),
+    ("TaskScheduler.CancelTask#1", |_, _, _| {
+        unsupported("TaskScheduler.CancelTask (not pinned)")
+    }),
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
     ("Session.StartSession#3", start_session),

@@ -647,9 +647,7 @@ impl Checker<'_> {
         // a record): compile their shape so the platform can seed and write them.
         for i in 0..self.ws.objects.len() {
             let stored = self.ws.platform_table(i)
-                && self.ws.objects[i]
-                    .id
-                    .and_then(al_builtins::platform::provider)
+                && self.ws.objects[i].id.and_then(al_builtins::platform::provider)
                     == Some(al_builtins::platform::Provider::Stored);
             if stored && self.ws.usable(i) {
                 self.raise(i, READ);

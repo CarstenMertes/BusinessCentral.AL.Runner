@@ -10,8 +10,8 @@
 //! the rule used is stated at the column.
 
 use super::mat::Entry;
-use crate::Engine;
 use super::{Providers, blank, ids, option, pos};
+use crate::Engine;
 use al_builtins::value::{RtType, Value};
 use al_data::{Row, TableDef};
 use al_ir::Object;
@@ -79,7 +79,10 @@ pub(super) fn prop<'a>(o: &'a Object, name: &str) -> Option<&'a str> {
 /// `"Quoted Name"` or `Name` as the name it spells.
 pub(super) fn ident(v: &str) -> String {
     let v = v.trim();
-    v.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(v).to_string()
+    v.strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(v)
+        .to_string()
 }
 
 /// The first string literal of a property value: `'It''s'` is `It's`. A value that does not start
@@ -133,7 +136,15 @@ const PAGE_TYPES: &[&str] = &[
     "ReportProcessingOnly",
     "UserControlHost",
 ];
-const TABLE_TYPES: &[&str] = &["Normal", "CRM", "ExternalSQL", "Exchange", "MicrosoftGraph", "Query", "Temporary"];
+const TABLE_TYPES: &[&str] = &[
+    "Normal",
+    "CRM",
+    "ExternalSQL",
+    "Exchange",
+    "MicrosoftGraph",
+    "Query",
+    "Temporary",
+];
 const QUERY_TYPES: &[&str] = &["Normal", "API"];
 const CODEUNIT_SUBTYPES: &[&str] = &["Normal", "Test", "TestRunner", "Upgrade", "Install"];
 
@@ -164,7 +175,9 @@ impl<'a> Catalog<'a> {
     /// The manifest id of the app that owns `o`; empty for the platform's own objects, which no
     /// app owns (AL Runner leaves them without an owner).
     pub(super) fn owner(&self, o: &Object) -> [u8; 16] {
-        let Some(app) = self.apps.get(o.app as usize) else { return [0; 16] };
+        let Some(app) = self.apps.get(o.app as usize) else {
+            return [0; 16];
+        };
         if app.id.eq_ignore_ascii_case(al_sema_platform_app_id()) {
             return [0; 16];
         }
@@ -174,9 +187,7 @@ impl<'a> Catalog<'a> {
     /// The id of the object of `kind` that a property value names: a number, `Page::"X"` or a name.
     pub(super) fn id_of(&self, kind: &str, value: &str) -> Result<u32, String> {
         let v = value.trim();
-        let v = v
-            .split_once("::")
-            .map_or(v, |(_, rest)| rest);
+        let v = v.split_once("::").map_or(v, |(_, rest)| rest);
         if let Ok(n) = v.parse::<u32>() {
             return Ok(n);
         }
@@ -199,7 +210,9 @@ fn truncate(s: &str, max: usize) -> String {
 
 /// The object caption: the `Caption` property's literal, else the object name.
 fn caption(o: &Object) -> String {
-    prop(o, "Caption").and_then(string_lit).unwrap_or_else(|| o.name.clone())
+    prop(o, "Caption")
+        .and_then(string_lit)
+        .unwrap_or_else(|| o.name.clone())
 }
 
 fn namespace(o: &Object) -> String {
@@ -278,7 +291,9 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         &c,
         t,
         |o| {
-            let (Some(id), Some(ty)) = (o.id, object_type(base_kind(o))) else { return None };
+            let (Some(id), Some(ty)) = (o.id, object_type(base_kind(o))) else {
+                return None;
+            };
             Some(vec![(1, option(t, 1, ty)), (3, Value::Integer(id as i32))])
         },
         |o, r| {
@@ -299,7 +314,9 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
         &c,
         t,
         |o| {
-            let (Some(id), Some(ty)) = (o.id, object_type(base_kind(o))) else { return None };
+            let (Some(id), Some(ty)) = (o.id, object_type(base_kind(o))) else {
+                return None;
+            };
             Some(vec![(1, option(t, 1, ty)), (3, Value::Integer(id as i32))])
         },
         |o, r| {
@@ -395,7 +412,10 @@ const SCOPES: &[&str] = &["Cloud", "OnPrem"];
 const ACCESS: &[&str] = &["Public", "Internal"];
 
 fn ordinal_of(members: &[&str], text: &str) -> Option<i32> {
-    members.iter().position(|m| m.eq_ignore_ascii_case(&ident(text))).map(|i| i as i32)
+    members
+        .iter()
+        .position(|m| m.eq_ignore_ascii_case(&ident(text)))
+        .map(|i| i as i32)
 }
 
 pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
@@ -434,10 +454,15 @@ pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             // PasteIsValid defaults to true in AL; no corpus test reads it.
             r[pos(t, 8)] = Value::Boolean(prop(o, "PasteIsValid").is_none_or(truthy));
             r[pos(t, 11)] = option(t, 11, opt("TableType", TABLE_TYPES, 0)?);
-            r[pos(t, 12)] = Value::Text(truncate(&prop(o, "ExternalName").and_then(string_lit).unwrap_or_default(), 248));
+            r[pos(t, 12)] = Value::Text(truncate(
+                &prop(o, "ExternalName").and_then(string_lit).unwrap_or_default(),
+                248,
+            ));
             r[pos(t, 13)] = option(t, 13, opt("ObsoleteState", OBSOLETE_STATES, 0)?);
-            r[pos(t, 14)] =
-                Value::Text(truncate(&prop(o, "ObsoleteReason").and_then(string_lit).unwrap_or_default(), 248));
+            r[pos(t, 14)] = Value::Text(truncate(
+                &prop(o, "ObsoleteReason").and_then(string_lit).unwrap_or_default(),
+                248,
+            ));
             // No DataClassification reads CustomerContent (same file, `TableDeclaringNoDataClassification_ReportsTheDefault`).
             r[pos(t, 15)] = option(t, 15, opt("DataClassification", DATA_CLASSIFICATIONS, 0)?);
             r[pos(t, 16)] = Value::Boolean(prop(o, "ReplicateData").is_none_or(truthy));

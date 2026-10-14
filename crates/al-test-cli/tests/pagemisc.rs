@@ -159,7 +159,7 @@ page 62091 "PM Kinds"
         area(Content) { label(Hint) { Caption = 'x'; } field(NoCtl; Rec."No.") { } }
         area(FactBoxes) { systempart(NotesBox; Notes) { } systempart(LinksBox; Links) { } usercontrol(Addin; "Some Add-in") { } }
     }
-    actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } action(Act) { } fileuploadaction(Upload) { trigger OnAction(Files: List of [FileUpload]) begin end; } } }
+    actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } action(Act) { trigger OnAction() begin end; } fileuploadaction(Upload) { trigger OnAction(Files: List of [FileUpload]) begin end; } } }
 }
 "#;
 

@@ -403,6 +403,37 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Query");
 }
 
+/// An xmlport that leaves `Encoding` out reads UTF16 (xmlport/TestPlatformMetadataDefaultsContracts.al:93),
+/// not UTF8; one that declares it is not pinned and its row is refused.
+#[test]
+fn an_xmlport_without_an_encoding_property_reads_utf16() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+xmlport 50002 "X" { schema { textelement(Root) { tableelement(Row; Thing) { fieldelement(No; Row."No.") { } } } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Default() var M: Record "XmlPort Metadata"; begin M.Get(50002); if M.Encoding <> M.Encoding::UTF16 then Error('encoding'); end; }"#,
+    );
+    passes(&o, "Default");
+}
+
+/// "Page Metadata"."CardPageID" is the id of the page named in CardPageId and 0 when the page states none
+/// (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:305-315).
+#[test]
+fn a_pages_card_page_id_is_the_stated_page_or_zero() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+page 50002 "Card" { PageType = Card; SourceTable = Thing; CardPageId = "Card"; layout { area(Content) { field(No; Rec."No.") { } } } }
+page 50003 "List" { PageType = List; SourceTable = Thing; CardPageId = "Card"; layout { area(Content) { repeater(R) { field(No; Rec."No.") { } } } } }
+page 50004 "Plain List" { PageType = List; SourceTable = Thing; layout { area(Content) { repeater(R) { field(No; Rec."No.") { } } } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure CardPage() var M: Record "Page Metadata"; begin
+    M.Get(50003); if M.CardPageID <> 50002 then Error('list %1', M.CardPageID);
+    M.Get(50002); if M.CardPageID <> 50002 then Error('card %1', M.CardPageID);
+    M.Get(50004); if M.CardPageID <> 0 then Error('plain %1', M.CardPageID); end; }"#,
+    );
+    passes(&o, "CardPage");
+}
+
 /// Page Action (record/TestPageActionVirtualTable.al): the area is a container row, a group and its
 /// actions nest under it.
 #[test]
@@ -439,6 +470,23 @@ codeunit 50000 "T" { Subtype = Test;
     if E."Publisher Object Type" <> E."Publisher Object Type"::Codeunit then Error('object type'); if E."Publisher Object ID" <> 50001 then Error('object id'); if not E.Active then Error('active');
     E.Get(50002, 'H2'); if E."Event Type" <> E."Event Type"::Business then Error('business');
     if E.Get(50002, 'Nope') then Error('invented'); E.SetRange("Subscriber Codeunit ID", 50001); if not E.IsEmpty() then Error('publisher'); end; }"#,
+    );
+    passes(&o, "Rows");
+}
+
+/// A table trigger event bound to a field is published as `<event> - <field>`
+/// (xmlport/TestPlatformMetadataDefaultsContracts.al:113-124).
+#[test]
+fn a_validate_subscription_on_a_field_names_the_field_in_the_published_function() {
+    let o = outcomes(
+        r#"table 50001 "Thing" { fields { field(1; "No."; Integer) { } field(2; Txt; Text[10]) { } } keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50002 "Sub" {
+  [EventSubscriber(ObjectType::Table, Database::"Thing", 'OnAfterInsertEvent', '', false, false)] local procedure H1() begin end;
+  [EventSubscriber(ObjectType::Table, Database::"Thing", 'OnBeforeValidateEvent', 'Txt', false, false)] local procedure H2() begin end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Rows() var E: Record "Event Subscription"; begin
+    E.Get(50002, 'H1'); if E."Published Function" <> 'OnAfterInsertEvent' then Error('plain %1', E."Published Function");
+    E.Get(50002, 'H2'); if E."Published Function" <> 'OnBeforeValidateEvent - Txt' then Error('field %1', E."Published Function"); end; }"#,
     );
     passes(&o, "Rows");
 }

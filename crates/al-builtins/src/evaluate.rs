@@ -279,17 +279,11 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
             }
         }
         // The blank-like texts store the empty formula; garbage fails and leaves the value
-        // (types/TestDateFormulaDurationFormatContracts.al:28-74).
-        Value::DateFormula(_) => {
-            if crate::datefns::is_blank_formula(&text) {
-                Parsed::Value(Value::DateFormula(String::new()))
-            } else if crate::datefns::is_garbage_formula(&text) {
-                Parsed::Rejected
-            } else {
-                crate::datefns::check_formula(&text)?;
-                Parsed::Value(Value::DateFormula(text.clone()))
-            }
-        }
+        // (types/TestDateFormulaDurationFormatContracts.al:28-74, TestDateFormulaEvaluateLeftoversContracts.al).
+        Value::DateFormula(_) => match crate::datefns::evaluate_formula(&text)? {
+            crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
+            crate::datefns::Evaluated::Rejected => Parsed::Rejected,
+        },
         other => return unsupported(format!("Evaluate into {other:?} (not pinned by the corpus)")),
     };
     match parsed {

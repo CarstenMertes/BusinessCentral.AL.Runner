@@ -389,23 +389,64 @@ fn is_session_active_is_false_for_an_unknown_id_and_refused_for_the_running_sess
 
 // ------------------------------------------------------------------ the transaction type
 
+// session/TestClearAllTransactionTypeContracts.al:224-238: a test starts as UpdateNoLocks (not Update), and
+// a set before any database access takes effect.
 #[test]
-fn the_current_transaction_type_reads_and_a_set_is_refused() {
-    // session/TestDatabaseExtended.al:Database_CurrentTransactionType_ReturnsType (a read must not
-    // throw); the default Update is the documented one (docs/probes-needed.md).
+fn the_transaction_type_starts_as_update_no_locks_and_a_set_before_any_write_takes_effect() {
     assert_eq!(
         text(
-            "TT: TransactionType;",
-            "TT := Database.CurrentTransactionType(); exit(Format(TT));"
+            "",
+            "exit(Format(Database.CurrentTransactionType()) + Format(Database.CurrentTransactionType(), 0, 2));"
+        ),
+        "UpdateNoLocks0"
+    );
+    assert_eq!(
+        text(
+            "",
+            "Database.CurrentTransactionType(TransactionType::Browse); \
+             exit(Format(Database.CurrentTransactionType()));"
+        ),
+        "Browse"
+    );
+}
+
+// :241-253: once the transaction has written, the type reads Update and a set to another type is ignored
+// without an error. A set to Update itself is :TestDatabaseExtended.al:Database_CurrentTransactionType_
+// SetAfterWriteOp_Throws, which expects an error whose text is not pinned: refused.
+#[test]
+fn after_a_write_the_transaction_type_is_update_and_a_set_to_another_type_is_ignored() {
+    assert_eq!(
+        text(
+            "R: Record \"ALT T\";",
+            "R.\"No.\" := 1; R.Insert(); \
+             Database.CurrentTransactionType(TransactionType::Snapshot); \
+             exit(Format(Database.CurrentTransactionType()));"
         ),
         "Update"
     );
-    // :Database_CurrentTransactionType_SetAfterWriteOp_Throws expects an error once a transaction
-    // has started; when that is, and its text, are not pinned.
-    let r = run("procedure F() begin Database.CurrentTransactionType(TransactionType::Update); end;");
+    let r = run(
+        "procedure F() var R: Record \"ALT T\"; begin R.\"No.\" := 1; R.Insert(); \
+         Database.CurrentTransactionType(TransactionType::Update); end;",
+    );
     assert!(
         matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("CurrentTransactionType")),
         "{r:?}"
+    );
+}
+
+// session/TestClearAllTransactionTypeContracts.al:245-252 (Commit, then a write) and
+// session/TestDatabaseExtended.al:Database_CurrentTransactionType_SetAfterWriteOp_Throws (the write was committed):
+// a write call has started the transaction, also a DeleteAll that finds no row.
+#[test]
+fn a_committed_write_has_started_the_transaction() {
+    assert_eq!(
+        text(
+            "R: Record \"ALT T\";",
+            "R.DeleteAll(); Commit(); \
+             Database.CurrentTransactionType(TransactionType::Snapshot); \
+             exit(Format(Database.CurrentTransactionType()));"
+        ),
+        "Update"
     );
 }
 
@@ -499,6 +540,17 @@ fn zero_and_negative_bounds_follow_the_service_tier() {
         ),
         "0"
     );
+}
+
+// types/TestRandomSeededContracts.al:84-92 (BC 27.5): the bound -2147483648 has no absolute value.
+#[test]
+fn random_of_the_smallest_integer_overflows() {
+    let r = run("procedure F() var N: Integer; begin N := Random(-2147483647 - 1); end;");
+    let Err(Signal::Error(e)) = r else {
+        panic!("expected an AL error, got {r:?}")
+    };
+    assert_eq!(e.message, "Arithmetic operation resulted in an overflow.");
+    assert_eq!(e.code, "AL:Overflow");
 }
 
 // ---------------------------------------------------------------- Guids

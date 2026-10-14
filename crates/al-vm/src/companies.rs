@@ -40,7 +40,8 @@ impl Session {
     /// company always exists; another one exists while its row does. A program that never compiled
     /// the Company table has no way to make a company, so the session company is the only one.
     pub(crate) fn find_company(&self, name: &str) -> Result<Option<String>, Signal> {
-        if !self.cx.company.is_empty() && name.eq_ignore_ascii_case(&self.cx.company) {
+        // The name is case sensitive (record/TestChangeCompanyFiltersCopyDeleteContracts.al:243-245).
+        if !self.cx.company.is_empty() && name == self.cx.company {
             return Ok(Some(self.cx.company.clone()));
         }
         let Some(t) = self.company_table() else {
@@ -54,7 +55,16 @@ impl Session {
             .store
             .get(&self.cx, &t, &[key])
             .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
-        Ok(row.and_then(|r| al_builtins::native::text_of(&r[0])))
+        // The store matches a text key without regard to case; the company's own spelling must match.
+        Ok(row
+            .and_then(|r| al_builtins::native::text_of(&r[0]))
+            .filter(|stored| stored == name))
+    }
+
+    /// The error of a company that does not exist, for `ChangeCompany` with the answer dropped and
+    /// for `RecordRef.Open` (record/TestChangeCompanyFiltersCopyDeleteContracts.al:225-227, 253-256).
+    pub(crate) fn company_missing(name: &str) -> Signal {
+        crate::transactions::al_error_code(&format!("The company \"{name}\" does not exist."), "DB:RecordNotFound")
     }
 
     /// The access context of an operation on `rec` (table `t`): the record's company, else the
@@ -62,7 +72,9 @@ impl Session {
     /// baseline made for the session company, since a company BC creates holds such rows too.
     pub(crate) fn cx_for(&self, rec: &Rec, t: &TableDef) -> Result<AccessContext, Signal> {
         let r = rec.borrow();
-        let Some(company) = r.company.as_ref() else {
+        // A temporary record keeps its rows when it changes company (record/TestChangeCompanyFiltersCopy
+        // DeleteContracts.al:133-136): its rows do not belong to a company.
+        let Some(company) = r.company.as_ref().filter(|_| !r.temporary) else {
             return Ok(self.cx.clone());
         };
         if t.per_company
@@ -94,9 +106,7 @@ impl Session {
         if name.is_empty() {
             return Ok(Some(None));
         }
-        Ok(self
-            .find_company(name)?
-            .map(|c| (!c.eq_ignore_ascii_case(&self.cx.company)).then_some(c)))
+        Ok(self.find_company(name)?.map(|c| (c != self.cx.company).then_some(c)))
     }
 
     /// `Record.ChangeCompany` and `RecordRef.ChangeCompany`: true once `rec` works in the company;
@@ -111,23 +121,18 @@ impl Session {
             },
         };
         let Some(target) = self.resolve_company(&name)? else {
-            // `Boolean?`: whether BC raises an error when the answer is dropped is not pinned.
-            if !self.ret_used {
-                return unsupported(format!(
-                    "ChangeCompany to `{name}`, which does not exist, with the result unused (not pinned)"
-                ));
+            // `Boolean?`: false when the answer is used (also on a temporary record), the error when
+            // it is dropped (record/TestChangeCompanyFiltersCopyDeleteContracts.al:221-231).
+            if !self.ret_used && !rec.borrow().temporary {
+                return Err(Self::company_missing(&name));
             }
             return Ok(Value::Boolean(false));
         };
+        // The filters, the current key and the marks stay (a mark is a primary key), and a
+        // temporary record keeps its rows (:25-30).
         let mut r = rec.borrow_mut();
         if r.company == target {
             return Ok(Value::Boolean(true));
-        }
-        if r.temporary {
-            return unsupported("ChangeCompany on a temporary record (not pinned)");
-        }
-        if !r.filters.is_empty() || !r.marks.is_empty() || r.marked_only {
-            return unsupported("ChangeCompany on a record with filters or marks (not pinned)");
         }
         r.company = target;
         Ok(Value::Boolean(true))

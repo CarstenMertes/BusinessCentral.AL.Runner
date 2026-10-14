@@ -117,8 +117,12 @@ impl Session {
     fn random_op(&mut self, args: &mut [Value]) -> Result<Value, Signal> {
         let bound = match args.first() {
             Some(Value::Integer(n)) if *n == i32::MIN => {
-                // BC raises an overflow here; the text is not pinned.
-                return unsupported("Random(-2147483648) (BC raises an overflow error, not pinned)");
+                // The absolute value of the smallest integer overflows
+                // (types/TestRandomSeededContracts.al:84-92, BC 27.5).
+                return Err(crate::transactions::al_error_code(
+                    "Arithmetic operation resulted in an overflow.",
+                    "AL:Overflow",
+                ));
             }
             Some(Value::Integer(n)) => n.abs().max(1),
             other => return unsupported(format!("Random with {other:?}")),

@@ -878,7 +878,7 @@ pub fn run_codeunit_observed(
                     session.last_error = Default::default();
                     // The AL test runner enables every application area before each test method
                     // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
-                    session.application_areas.clear();
+                    session.start_test_method();
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -998,9 +998,6 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                 let why = match kind_attr.to_ascii_lowercase().as_str() {
                     "filterpagehandler" => {
                         "no corpus test pins how FilterPageBuilder.RunModal reaches a filter page handler"
-                    }
-                    "recallnotificationhandler" => {
-                        "no corpus test pins what Notification.Recall does with a recall handler"
                     }
                     _ => "this handler kind",
                 };

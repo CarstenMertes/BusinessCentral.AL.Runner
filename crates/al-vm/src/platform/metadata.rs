@@ -36,7 +36,7 @@ const TEXT_ENCODINGS: &[&str] = &["MSDos", "UTF8", "UTF16", "Windows"];
 const FORMATS: &[&str] = &["Xml", "VariableText", "FixedText"];
 
 /// XmlPort Metadata: ID (1), Name (2), Caption (3), UseRequestPage (4), TransactionType (5),
-/// Direction (6), TextEncoding (8), Format (9), "App ID" (10).
+/// Direction (6), Encoding (7), TextEncoding (8), Format (9), "App ID" (10).
 pub(super) fn xmlport_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
@@ -53,6 +53,23 @@ pub(super) fn xmlport_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 4)] = Value::Boolean(prop(o, "UseRequestPage").is_none_or(truthy));
             r[pos(t, 5)] = option(t, 5, ordinal(o, "TransactionType", TRANSACTION_TYPES, 0)?);
             r[pos(t, 6)] = option(t, 6, ordinal(o, "Direction", DIRECTIONS, 2)?);
+            // A left-out `Encoding` reads UTF16 (xmlport/TestPlatformMetadataDefaultsContracts.al:93). A
+            // declared one reads the member of the column that it names; a name the column lacks is not
+            // pinned.
+            let Value::Option(_, members) = option(t, 7, 0) else {
+                unreachable!("an option")
+            };
+            let encoding = match prop(o, "Encoding") {
+                None => "UTF16".to_string(),
+                Some(v) => ident(v),
+            };
+            let at = members.iter().position(|m| m.eq_ignore_ascii_case(&encoding)).ok_or_else(|| {
+                format!(
+                    "xmlport '{}': the Encoding column has no member `{encoding}`, and what it reads for it is not pinned",
+                    o.name
+                )
+            })?;
+            r[pos(t, 7)] = option(t, 7, at as i32);
             r[pos(t, 8)] = option(t, 8, ordinal(o, "TextEncoding", TEXT_ENCODINGS, 1)?);
             r[pos(t, 9)] = option(t, 9, ordinal(o, "Format", FORMATS, 0)?);
             r[pos(t, 10)] = Value::Guid(c.owner(o));
@@ -196,9 +213,25 @@ fn subscription_row(
                 })
         })
     });
+    // A table trigger event bound to a field is published as `<event> - <field>`
+    // (xmlport/TestPlatformMetadataDefaultsContracts.al:113-124, `OnBeforeValidateEvent` with `'Txt'`).
+    // For another trigger event the element is not pinned.
+    let element = args.get(3).map(|e| crate::events::unquote(e)).unwrap_or_default();
     let (published, event_type) = match declared {
         Some(d) => d,
-        None if kind == "table" && is_trigger_event(&event) => (event.clone(), 0),
+        None if kind == "table" && is_trigger_event(&event) && element.is_empty() => (event.clone(), 0),
+        None if kind == "table"
+            && is_trigger_event(&event)
+            && event.to_ascii_lowercase().ends_with("validateevent") =>
+        {
+            (format!("{event} - {element}"), 0)
+        }
+        None if kind == "table" && is_trigger_event(&event) => {
+            return Err(format!(
+                "{}: the Published Function of `{event}` with the element `{element}` is not pinned",
+                what()
+            ));
+        }
         None => return Err(format!("{}: the kind of event `{event}` is not known", what())),
     };
     r[pos(t, 3)] = option(t, 3, event_type);

@@ -443,10 +443,14 @@ fn lines(ls: &[(usize, &str)]) -> String {
     ls.iter().map(|(n, t)| format!("{}{t}|", " ".repeat(*n))).collect()
 }
 
-// handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText
+// handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText. The text is the one of BC 27.5,
+// which writes no identity pair on a DataItem.
 #[test]
 fn the_data_items_block_is_written_exactly() {
-    let text = f("var H: Codeunit Helpers; begin H.Seed(); exit(H.Dataset(Report::\"Probe SaveAs Report\", '')); end;");
+    let text = match run_on(Some("27.5"), DATASET) {
+        Ok(Value::Text(t)) => t,
+        other => panic!("{other:?}"),
+    };
     let at = text.find("  <DataItems>|").expect("a DataItems block");
     let top = "<DataItem language=\"en-US\" formatRegion=\"en-US\" name=\"P\">";
     let expected = lines(&[
@@ -789,7 +793,9 @@ fn a_column_property_nothing_pins_is_refused_when_a_row_carries_the_column() {
 fn a_data_item_name_with_spaces_and_parentheses_is_written_the_way_the_corpus_shows() {
     let text = dataset_of("Probe Quoted Report", "");
     assert!(
-        text.contains("<DataItem language=\"en-US\" formatRegion=\"en-US\" name=\"Probe_Item_Parent\">"),
+        text.contains(
+            "<DataItem language=\"en-US\" formatRegion=\"en-US\" name=\"Probe_Item_Parent\" tableId=\"68300\" "
+        ),
         "{text}"
     );
 }
@@ -884,4 +890,45 @@ fn a_processing_only_report_is_refused() {
         "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Processing Report\", '', ReportFormat::Xml, Out); end;",
     );
     assert!(why.contains("ProcessingOnly"), "{why}");
+}
+
+// handlers/TestReportSaveAsDatasetContracts.al:253-300 (BC28PLUS): from BC 28 every DataItem element carries
+// ` tableId="<table id>" systemId="<guid>"` after its name, the table id of the data item's table and a different
+// lower case 36 character GUID per element; before BC 28 it carries neither.
+#[test]
+fn from_bc_28_every_data_item_carries_its_table_id_and_a_distinct_guid() {
+    for (bc, with) in [("27.5", false), ("28.5", true), ("29.0", true)] {
+        let text = match run_on(Some(bc), DATASET) {
+            Ok(Value::Text(t)) => t,
+            other => panic!("{other:?}"),
+        };
+        let items: Vec<&str> = text
+            .split('|')
+            .filter(|l| l.trim_start().starts_with("<DataItem "))
+            .collect();
+        assert_eq!(items.len(), 5, "BC {bc}");
+        if !with {
+            assert!(items.iter().all(|l| !l.contains("tableId")), "BC {bc}: {items:?}");
+            continue;
+        }
+        let mut seen = Vec::new();
+        for (l, table) in items.iter().zip(["68300", "68301", "68301", "68300", "68301"]) {
+            let at = l
+                .find(" tableId=\"")
+                .unwrap_or_else(|| panic!("BC {bc}: no tableId in {l}"));
+            assert!(
+                l[..at].ends_with(&format!("name=\"{}\"", if table == "68300" { "P" } else { "C" })),
+                "{l}"
+            );
+            let rest = &l[at + " tableId=\"".len()..];
+            assert!(rest.starts_with(&format!("{table}\" systemId=\"")), "{l}");
+            let guid = rest[table.len() + "\" systemId=\"".len()..]
+                .trim_end_matches(">")
+                .trim_end_matches('"');
+            assert_eq!(guid.len(), 36, "{l}");
+            assert_eq!(guid, guid.to_lowercase(), "{l}");
+            assert!(!seen.contains(&guid), "different per item: {l}");
+            seen.push(guid);
+        }
+    }
 }

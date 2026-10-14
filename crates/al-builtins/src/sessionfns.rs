@@ -55,6 +55,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "System.GuiAllowed#1",
     "System.IsServiceTier#1",
     "System.WindowsLanguage#1",
+    "System.TemporaryPath#1",
     "System.GlobalLanguage#1",
     "Session.CurrentClientType#1",
     "Session.DefaultClientType#1",

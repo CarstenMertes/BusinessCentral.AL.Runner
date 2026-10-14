@@ -113,6 +113,7 @@ page_methods! {
     "TestFilter.CurrentKey#1" => "TestFilter.CurrentKey",
     "TestFilter.Ascending#1" => "TestFilter.Ascending",
     // A request page is the test client's page of a report; only what the corpus uses is routed.
+    "TestRequestPage.SaveAsXml#1" => "TestRequestPage.SaveAsXml",
     "TestRequestPage.OK#1" => "TestPage.OK",
     "TestRequestPage.Cancel#1" => "TestPage.Cancel",
     "TestRequestPage.Caption#1" => "TestPage.Caption",

@@ -141,7 +141,7 @@ impl Session {
     }
 
     fn require_open(&self, st: &St) -> Result<(), Signal> {
-        if st.borrow().open { Ok(()) } else { Err(error(NOT_OPEN)) }
+        if st.borrow().open { Ok(()) } else { Err(error_code(NOT_OPEN, "TestPageNotOpened")) }
     }
 
     /// Runs page trigger `name` (lower case) if the page declares it, then the same trigger of
@@ -539,6 +539,7 @@ impl Session {
                 self.require_open(st)?;
                 Ok(Value::Boolean(false))
             }
+            "SaveAsXml" => self.request_save_as_xml(st, args),
             m @ ("OK" | "Cancel" | "Yes" | "No") => {
                 self.require_open(st)?;
                 if !self.builtin_offered(st, m) {
@@ -1986,7 +1987,7 @@ impl Session {
                 if self.is_list(st) {
                     Err(Signal::Error(e))
                 } else {
-                    Err(error(NOT_OPEN))
+                    Err(error_code(NOT_OPEN, "TestPageNotOpened"))
                 }
             }
             other => other,

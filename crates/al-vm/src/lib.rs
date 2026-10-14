@@ -1597,6 +1597,17 @@ impl Session {
             }
             flat = flat * (*d as usize) + (i as usize - 1);
         }
+        // A parameter declared with more elements than the argument has (Tests-ERM codeunit 134831 passes
+        // an `array[2]` to `var DimensionValue: array[9]`): the stored cells are the argument's. What BC does
+        // is not pinned by the corpus, so it is refused rather than indexed out of range.
+        if flat >= arr.borrow().len() {
+            return Err(Signal::Unsupported(format!(
+                "array element {} of an argument that has {} elements, passed to a parameter declared with {}; not pinned (docs/probes-needed.md)",
+                flat + 1,
+                arr.borrow().len(),
+                dims.iter().map(|d| d.to_string()).collect::<Vec<_>>().join(", ")
+            )));
+        }
         Ok((arr, flat))
     }
 }

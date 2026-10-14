@@ -896,3 +896,9 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | Event Subscription | A filter on "Number of Calls" or "Active Manual Instances" is refused; the start value of "Number of Calls" is 0 (the probe reads it relative to its start) | A fresh session's "Number of Calls" for a subscriber nobody raised | `platform/mod.rs` `with_event_stats` |
 | Tenant License State | `DeleteAll` raises the pinned error; the single-record `Delete` is not pinned and runs as an ordinary delete | `Delete` of one row | `records.rs` |
 | User Personalization | The row's Profile ID is `BUSINESS MANAGER` (the probe pins only "not blank"); Company, Time Zone and the rest are blank | The row's Profile ID, Company and Time Zone in the test runner session | `platform/seed.rs` |
+
+## An array argument smaller than its parameter (issue 18)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `var Rows: array[9] of ...` called with an `array[2]` variable | The compiler accepts it (Tests-ERM codeunit 134831, `CreateDimensionsWithNineValues(DimensionValue)` with `DimensionValue: array[2] of Record "Dimension Value"`). The runtime shares the argument's cells, so an element beyond the argument has no storage. Refused when it is touched (`ArrayLen(Rows)` still answers the parameter's 9). What BC answers (an index error, or a copy of the declared size) is not pinned | REFUSED. Probe wanted: a procedure with `var A: array[3] of Integer` called with an `array[2] of Integer`, with `ArrayLen(A)`, a read and a write of `A[3]`, and a call by value |

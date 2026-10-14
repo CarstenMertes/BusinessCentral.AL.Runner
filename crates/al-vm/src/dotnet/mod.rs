@@ -287,7 +287,7 @@ impl Session {
         for (idx, n) in &reply.streams.consumed {
             if let Some((_, h)) = book.ins.iter().find(|(i, _)| i == idx) {
                 if let LibraryValue::InStream(st) = &mut *h.borrow_mut() {
-                    st.pos = (st.pos + n).min(st.data.len());
+                    st.pos = (st.pos + n).min(st.len());
                 }
             }
         }
@@ -298,7 +298,7 @@ impl Session {
         }
         for (id, bytes) in &reply.streams.written {
             match self.dotnet.bridges.get(id) {
-                Some(blob) => blob.borrow_mut().bytes.extend_from_slice(bytes),
+                Some(blob) => al_builtins::stream::write_bytes(blob, bytes),
                 None => return unsupported(format!("DotNet {shown}: bytes for an unknown stream bridge {id}")),
             }
         }
@@ -359,7 +359,7 @@ impl Session {
             Value::Library(_, h) => match &*h.borrow() {
                 LibraryValue::InStream(st) => {
                     book.ins.push((arg, h.clone()));
-                    DotNetValue::InStream(st.data[st.pos.min(st.data.len())..].to_vec())
+                    DotNetValue::InStream(st.rest())
                 }
                 LibraryValue::OutStream(blob, _) => {
                     book.outs.push((arg, blob.clone()));

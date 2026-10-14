@@ -777,8 +777,15 @@ fn text_functions() {
         "exit(DelStr('Hello', 2, 1) + '|' + InsStr('Hello', 'x', 2) + '|' + SelectStr(2, 'A,B,C'));",
     );
     assert_eq!(t, "Hllo|Hxello|B");
-    // SelectStr with an index outside the list throws, with a text the corpus only partly pins.
-    assert!(unsupported("", "exit(SelectStr(5, 'A,B,C'));"));
+    // SelectStr with an index outside the list throws (types/TestFormatEvaluateTextContracts.al:SelectStr_IndexOutsideTheList_Throws).
+    let t = text_of(
+        "",
+        "asserterror exit(SelectStr(5, 'A,B,C')); exit(GetLastErrorText() + '|' + GetLastErrorCode());",
+    );
+    assert_eq!(
+        t,
+        "The SELECTSTR comma-string A,B,C does not contain a value for index 5.|InvalidStringFormat"
+    );
 }
 
 #[test]

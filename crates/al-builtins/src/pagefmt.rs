@@ -132,26 +132,7 @@ fn time_text(t: i64) -> String {
 }
 
 fn duration_text(ms: i64) -> String {
-    if ms == 0 {
-        return String::new();
-    }
-    let mut left = ms.abs();
-    let mut parts = Vec::new();
-    for (unit, size) in [
-        ("day", 86_400_000),
-        ("hour", 3_600_000),
-        ("minute", 60_000),
-        ("second", 1000),
-        ("millisecond", 1),
-    ] {
-        let n = left / size;
-        left %= size;
-        if n > 0 {
-            let sign = if ms < 0 { "-" } else { "" };
-            parts.push(format!("{sign}{n} {unit}{}", if n == 1 { "" } else { "s" }));
-        }
-    }
-    parts.join(" ")
+    crate::format::duration_words(ms)
 }
 
 /// The inverse of [`duration_text`]: exactly its own spelling, in milliseconds. Blank is zero
@@ -257,7 +238,7 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
         }
         Value::Duration(ms) => duration_text(*ms),
         Value::Guid(g) => guid_text(g),
-        Value::DateFormula(s) => s.clone(),
+        Value::DateFormula(s) => crate::datefns::formula_text(s),
         other => {
             let _ = Ordering::Equal;
             format!("{other:?}")

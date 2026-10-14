@@ -1,6 +1,6 @@
 //! Native builtin implementations, registered by catalog overload id (ADR-008).
 
-use crate::format::{FormatCtx, try_format};
+use crate::format::{FormatCtx, FormatFail, format_value, try_format};
 use crate::value::Value;
 use std::rc::Rc;
 
@@ -10,6 +10,15 @@ pub struct AlError {
     pub message: String,
     pub code: String,
     pub call_stack: String,
+}
+
+/// Raises an AL error with a pinned text and code.
+pub fn raise<T>(message: impl Into<String>, code: &str) -> Result<T, Signal> {
+    Err(Signal::Error(AlError {
+        message: message.into(),
+        code: code.into(),
+        call_stack: String::new(),
+    }))
 }
 
 /// Non-local control flow (ADR-002, ADR-011).
@@ -113,12 +122,6 @@ pub trait Ctx: FormatCtx {
     fn collect_error(&mut self, _info: &Value) -> bool {
         false
     }
-    /// `Clear` of a report variable that has been used: the next use makes a new instance and runs
-    /// `OnInitReport` again (corpus handlers/TestReportRuntimeContracts.al:395-414). Returns false
-    /// when `inst` is not a report.
-    fn clear_report(&mut self, _inst: &Rc<std::cell::RefCell<crate::value::Instance>>) -> bool {
-        false
-    }
     /// The session's media objects and media sets (`Media` and `MediaSet` fields).
     fn media_store(&mut self) -> Option<&mut crate::media::MediaStore> {
         None
@@ -196,6 +199,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Dialog.Update#1", |_, _, _| Ok(Value::Null)),
     ("Dialog.Close#1", |_, _, _| Ok(Value::Null)),
     // Reading the latest committed data is what this runtime always does (session/TestBCDatabaseContracts.al:170-187).
+    // Telemetry goes to the server's log, which AL cannot read (ADR-009).
+    ("Session.LogMessage#1", |_, _, _| Ok(Value::Null)),
+    ("Session.LogMessage#2", |_, _, _| Ok(Value::Null)),
     ("Database.SelectLatestVersion#1", |_, _, _| Ok(Value::Null)),
     ("Database.SelectLatestVersion#2", |_, _, _| Ok(Value::Null)),
     // Unique and not null is all the corpus asks (session/TestSystemExtended.al:306-328).
@@ -440,9 +446,16 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
-    try_format(&args[0], len, std, ctx)
+    format_value(&args[0], len, std, ctx)
         .map(Value::Text)
-        .map_err(Signal::Unsupported)
+        .map_err(|f| match f {
+            FormatFail::Unsupported(s) => Signal::Unsupported(s),
+            FormatFail::Error { message, code } => Signal::Error(AlError {
+                message,
+                code,
+                call_stack: String::new(),
+            }),
+        })
 }
 
 /// `Format(Value, Length, FormatString)`: see [`crate::formatstr`].
@@ -774,9 +787,16 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         }
         // A codeunit or report variable nothing has used yet has no instance to release, so
         // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`
-        // before `Probe.Run()`). Clearing one in use is not pinned.
+        // before `Probe.Run()`). Clearing one in use gives a fresh instance: after `Clear(TempBlob)` the
+        // blob is empty again (streams/TestStreamsRuntimeContracts.al:WriteText_ExplicitEncodings_Bytes).
         Value::Codeunit(rc) if !rc.borrow().initialized => return Ok(Value::Null),
-        Value::Codeunit(rc) if ctx.clear_report(rc) => return Ok(Value::Null),
+        Value::Codeunit(rc) => {
+            let object = rc.borrow().object;
+            Value::Codeunit(std::rc::Rc::new(std::cell::RefCell::new(crate::value::Instance {
+                object,
+                ..Default::default()
+            })))
+        }
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)
@@ -1008,28 +1028,25 @@ pub(crate) mod tests {
         );
     }
 
-    // The formats of Time, DateTime and Duration are not pinned by the corpus yet: Format of
-    // them is a refusal the test can report, not a panic that takes the whole codeunit down.
+    // A standard format number that is not measured is a refusal the test can report, not a panic
+    // that takes the whole codeunit down.
     #[test]
     fn format_of_a_value_without_a_pinned_format_is_a_refusal() {
         for v in [Value::Duration(3_600_000), Value::Time(43_200_001), Value::DateTime(5)] {
-            assert!(
-                matches!(call("System.Format#1", vec![v]), Err(Signal::Unsupported(_))),
-                "Format must refuse"
-            );
+            let args = vec![v, Value::Integer(0), Value::Integer(7)];
+            assert!(matches!(call("System.Format#1", args), Err(Signal::Unsupported(_))));
         }
     }
 
     #[test]
     fn formats_that_are_not_pinned_are_refused_not_panics() {
-        // Format of a Duration is not pinned by the corpus yet: Unsupported, so the test is
+        // A Duration with a standard format number that is not measured: Unsupported, so the test is
         // reported as not run instead of a panic taking the whole codeunit down.
         assert!(matches!(
-            call("System.Format#1", vec![Value::Duration(86_400_000)]),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            call("Text.StrSubstNo#1", vec![t("%1"), Value::Duration(5)]),
+            call(
+                "System.Format#1",
+                vec![Value::Duration(86_400_000), Value::Integer(0), Value::Integer(5)]
+            ),
             Err(Signal::Unsupported(_))
         ));
     }

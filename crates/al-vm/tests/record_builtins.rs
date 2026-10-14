@@ -743,7 +743,7 @@ fn set_ascending_outside_a_single_field_key_is_refused() {
 // A key value whose Format is not pinned (a Duration) used to panic the whole codeunit when a failed
 // write named the row; it is a refusal the test can report instead.
 #[test]
-fn a_duplicate_key_with_an_unpinned_format_is_refused_not_a_panic() {
+fn a_duplicate_key_of_a_duration_names_the_value_in_words() {
     let src = r#"
 table 50902 "ALT Dur" { fields { field(1; Span; Duration) { } } keys { key(PK; Span) { } } }
 codeunit 50100 C { procedure F() var R: Record "ALT Dur"; begin
@@ -768,6 +768,10 @@ end; }"#;
     let engine = Engine::new(l.program, blocked);
     let mut s = Session::new(engine);
     let inst = s.instance(oi);
+    // The key value is spelled with Format (types/TestFormatEvaluateTextContracts.al:Format_Duration_StandardFormats).
     let r = s.call(oi, 0, inst, vec![]);
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert!(
+        matches!(&r, Err(Signal::Error(e)) if e.message.ends_with("Span='5 seconds'")),
+        "{r:?}"
+    );
 }

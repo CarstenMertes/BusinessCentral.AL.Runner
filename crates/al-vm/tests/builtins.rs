@@ -220,12 +220,48 @@ fn number_sequence_survives_an_asserterror_rollback() {
 }
 
 #[test]
-fn number_sequence_forms_the_corpus_does_not_pin_are_refused() {
-    let r = text_of("", "NumberSequence.Insert('S'); exit('');");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+fn number_sequence_defaults_texts_and_codes_the_probe_pins() {
+    // session/TestNumberSequenceRuntimeContracts.al: Insert without arguments starts at 0 and steps by 1;
+    // Restart without a seed makes the sequence 0 again.
     let r = text_of(
         "",
-        "NumberSequence.Insert('S', 1, 1); NumberSequence.Restart('S'); exit('');",
+        "NumberSequence.Insert('S'); exit(Format(NumberSequence.Next('S')) + Format(NumberSequence.Next('S')));",
+    );
+    assert_eq!(r.unwrap(), "01");
+    let r = text_of(
+        "",
+        "NumberSequence.Insert('S', 10, 5); NumberSequence.Restart('S'); exit(Format(NumberSequence.Current('S')));",
+    );
+    assert_eq!(r.unwrap(), "0");
+    // Texts quote the name, the code is AL; an Insert of an existing name leaves the sequence gone;
+    // Range with a count of 0 is the SQL error.
+    let r = text_of(
+        "",
+        "asserterror NumberSequence.Next('M'); exit(GetLastErrorText() + '|' + GetLastErrorCode());",
+    );
+    assert_eq!(r.unwrap(), "The number sequence 'M' does not exist.|AL");
+    let r = text_of(
+        "",
+        "NumberSequence.Insert('S', 1, 1); asserterror NumberSequence.Insert('S', 1, 1);
+         exit(GetLastErrorText() + '|' + GetLastErrorCode() + '|' + Format(NumberSequence.Exists('S')));",
+    );
+    assert_eq!(r.unwrap(), "The number sequence 'S' already exists.|AL|No");
+    let r = text_of(
+        "a: BigInteger;",
+        "NumberSequence.Insert('S', 1, 1); asserterror a := NumberSequence.Range('S', 0, a);
+         exit(GetLastErrorText() + '|' + GetLastErrorCode());",
+    );
+    assert_eq!(
+        r.unwrap(),
+        "An unexpected error occurred after a database command was cancelled.|Sql:Sql"
+    );
+}
+
+#[test]
+fn number_sequence_forms_the_corpus_does_not_pin_are_refused() {
+    let r = text_of(
+        "a: BigInteger;",
+        "NumberSequence.Insert('S', 1, 1); a := NumberSequence.Range('S', -1, a); exit('');",
     );
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
@@ -1138,4 +1174,45 @@ fn a_connection_string_other_than_the_test_connection_is_refused() {
         Err(Signal::Unsupported(why)) => assert!(why.contains("@@test@@"), "{why}"),
         other => panic!("{other:?}"),
     }
+}
+
+// Session.LogMessage writes to the server's telemetry, which AL cannot observe (ADR-009): it
+// returns, whatever it is given. Base Application's `Upgrade Tag` calls it from Company-Initialize.
+#[test]
+fn log_message_is_a_telemetry_write_that_changes_nothing() {
+    let src = r#"codeunit 50100 C
+{
+    procedure Log(): Integer
+    var D: Dictionary of [Text, Text]; N: Integer;
+    begin
+        Session.LogMessage('0000AAA', 'one', Verbosity::Normal, DataClassification::SystemMetadata, TelemetryScope::ExtensionPublisher, D);
+        Session.LogMessage('0000AAB', 'two', Verbosity::Warning, DataClassification::SystemMetadata, TelemetryScope::All, 'Key', 'Value');
+        N := 7;
+        exit(N);
+    end;
+}"#;
+    assert!(matches!(run(src, "Log"), Ok(Value::Integer(7))));
+}
+
+// A table with a DateFormula field inserts with the field blank. Base Application's setup tables
+// (General Ledger Setup, Sales & Receivables Setup) have such fields and Company-Initialize
+// inserts them as `Init(); Insert();`.
+#[test]
+fn a_blank_date_formula_field_inserts() {
+    let src = r#"table 50301 Setup
+{
+    fields { field(1; "Primary Key"; Code[10]) { } field(2; Grace; DateFormula) { } }
+    keys { key(PK; "Primary Key") { } }
+}
+codeunit 50100 C
+{
+    procedure Go(): Integer
+    var S: Record Setup;
+    begin
+        S.Init();
+        S.Insert();
+        exit(S.Count());
+    end;
+}"#;
+    assert!(matches!(run(src, "Go"), Ok(Value::Integer(1))));
 }

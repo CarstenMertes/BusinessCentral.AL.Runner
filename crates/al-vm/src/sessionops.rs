@@ -28,6 +28,15 @@ fn error<T>(message: String) -> Result<T, Signal> {
     }))
 }
 
+/// An error with a pinned code.
+fn error_code<T>(message: String, code: &str) -> Result<T, Signal> {
+    Err(Signal::Error(AlError {
+        message,
+        code: code.into(),
+        call_stack: String::new(),
+    }))
+}
+
 fn big(args: &[Value], i: usize) -> Option<i64> {
     match args.get(i)? {
         Value::BigInteger(n) => Some(*n),
@@ -222,17 +231,19 @@ impl Session {
         };
         let key = self.sequence_key(args, scope)?;
         let name = key.1.clone();
-        let missing = || error::<Value>(format!("The number sequence {name} does not exist."));
+        // session/TestNumberSequenceRuntimeContracts.al:NumberSequence_MissingSequence_Texts: the name is
+        // quoted and the code is `AL`.
+        let missing = || error_code::<Value>(format!("The number sequence '{name}' does not exist."), "AL");
         match method {
-            // Documentation-only texts: the corpus pins the fragments "already exists" and "does
-            // not exist" (session/TestNumberSequence.al:177-182,188-200).
             "Insert" => {
-                // Seed and Increment have defaults in the docs, but every corpus call passes both.
-                let (Some(seed), Some(increment)) = (big(args, 1), big(args, 2)) else {
-                    return unsupported("NumberSequence.Insert without a Seed and an Increment (defaults not pinned)");
-                };
-                if self.sequences.contains_key(&key) {
-                    return error(format!("The number sequence {name} already exists."));
+                // Seed 0 and Increment 1 when omitted
+                // (session/TestNumberSequenceRuntimeContracts.al:NumberSequence_Insert_WithoutArguments_StartsAtZeroAndStepsByOne).
+                let seed = big(args, 1).unwrap_or(0);
+                let increment = big(args, 2).unwrap_or(1);
+                // Inserting a name that exists raises, and the sequence is gone afterwards, in this
+                // test and the next (:NumberSequence_Insert_OfAnExistingName_RaisesAndLeavesTheSequenceGone).
+                if self.sequences.remove(&key).is_some() {
+                    return error_code(format!("The number sequence '{name}' already exists."), "AL");
                 }
                 self.sequences.insert(
                     key,
@@ -259,6 +270,13 @@ impl Session {
                 let count = if method == "Range" {
                     match args.get(1) {
                         Some(Value::Integer(n)) if *n >= 1 => i64::from(*n),
+                        // :NumberSequence_Range_Zero_ThrowsSqlError (the sequence must exist first).
+                        Some(Value::Integer(0)) if self.sequences.contains_key(&key) => {
+                            return error_code(
+                                "An unexpected error occurred after a database command was cancelled.".to_string(),
+                                "Sql:Sql",
+                            );
+                        }
                         other => return unsupported(format!("NumberSequence.Range with Count {other:?} (not pinned)")),
                     }
                 } else {
@@ -282,9 +300,9 @@ impl Session {
                 Ok(Value::BigInteger(first))
             }
             "Restart" => {
-                let Some(seed) = big(args, 1) else {
-                    return unsupported("NumberSequence.Restart without a Seed (default not pinned)");
-                };
+                // Without a Seed the sequence restarts at 0 whatever it started at
+                // (:NumberSequence_NextRestartRange_Values).
+                let seed = big(args, 1).unwrap_or(0);
                 match self.sequences.get_mut(&key) {
                     Some(s) => {
                         s.seed = seed;

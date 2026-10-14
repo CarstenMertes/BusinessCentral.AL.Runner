@@ -184,6 +184,26 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         if let (Some(a), Some(b)) = (text_like(l), text_like(r)) {
             return Ok(V::Text(a + &b));
         }
+        // A Char next to a text is a character of it, not a number: `'line1' + S[1] + 'line2'`
+        // (corpus json/TestJsonXmlDeepContracts.al:71, which round-trips the result through JSON).
+        // Two Chars add as numbers. A lone surrogate is not a character a Rust string can hold.
+        match (l, r) {
+            (V::Text(t) | V::Code(t), V::Char(c)) | (V::Char(c), V::Text(t) | V::Code(t)) => {
+                let Some(ch) = char::from_u32(u32::from(*c)) else {
+                    return unsupported("a text joined with half of a surrogate pair".to_string());
+                };
+                let mut out = String::new();
+                if matches!(l, V::Char(_)) {
+                    out.push(ch);
+                    out.push_str(t);
+                } else {
+                    out.push_str(t);
+                    out.push(ch);
+                }
+                return Ok(V::Text(out));
+            }
+            _ => {}
+        }
     }
     match (l, r) {
         // A whole number of Durations (milliseconds); other Duration arithmetic is not pinned.

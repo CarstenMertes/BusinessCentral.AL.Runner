@@ -17,6 +17,7 @@ pub mod datatransfer;
 pub mod datefns;
 pub mod errorinfo;
 pub mod evaluate;
+pub mod file;
 pub mod filter;
 pub mod format;
 pub mod formatstr;

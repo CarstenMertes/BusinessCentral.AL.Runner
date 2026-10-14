@@ -866,6 +866,9 @@ pub enum Expr {
         op: DotNetOp,
         args: Vec<Arg>,
     },
+    /// `Text[i]` read: the character at the 1-based position `.1` of the text `.0`, as a Char. A
+    /// position outside the text is refused when it runs (the error text is not pinned).
+    CharAt(Box<Expr>, Box<Expr>),
     /// A DotNet result stored into a slot of this type. The kinds must match exactly (Text and
     /// Code, Integer and BigInteger and Decimal widen); anything else is Unsupported, because
     /// BC's conversion of a .NET result to a differently typed AL variable is not pinned.

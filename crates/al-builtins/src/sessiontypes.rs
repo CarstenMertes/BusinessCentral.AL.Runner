@@ -187,6 +187,21 @@ fn n_message(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     with_notification(r, |n| n.message = Some(t)).map(|()| Value::Null)
 }
 
+/// `Id := guid` sets, `Id` reads (handlers/TestNotificationHandler.al:55-56). Reading the id of a
+/// notification nobody gave one is not pinned.
+fn n_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    match a.first() {
+        Some(Value::Guid(g)) => {
+            let g = *g;
+            with_notification(r, |n| n.id = Some(g)).map(|()| Value::Null)
+        }
+        None => with_notification(r, |n| n.id)?.map(Value::Guid).ok_or_else(|| {
+            Signal::Unsupported("Notification.Id of a notification nobody gave one (not pinned)".into())
+        }),
+        Some(other) => unsupported(format!("Notification.Id with {other:?}")),
+    }
+}
+
 /// Setting a scope must not throw (session/TestCalcDateNotificationContracts.al:182-188); reading one
 /// back is not pinned.
 fn n_scope(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
@@ -260,6 +275,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("SessionSettings", "RequestSessionUpdate") => request_update,
         ("Notification", "Message") => n_message,
         ("Notification", "Scope") => n_scope,
+        ("Notification", "Id") => n_id,
         ("Notification", "SetData") => n_set_data,
         ("Notification", "HasData") => n_has_data,
         ("Notification", "GetData") => n_get_data,

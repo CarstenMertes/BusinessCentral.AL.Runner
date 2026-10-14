@@ -45,6 +45,9 @@ struct Args {
     dotnet_timeout_secs: Option<u64>,
     /// `--require-dotnet`: a machine without a usable .NET is an error, not a skip (CI).
     require_dotnet: bool,
+    /// `--files-dir DIR`: the `File` data type reads and writes real files under DIR. Without it
+    /// files live in memory and are gone when the test ends.
+    files_dir: Option<PathBuf>,
     /// `--no-download`: never fetch a dependency app from Microsoft's artifact feed (ADR-013).
     no_download: bool,
     /// `--cache-dir DIR`: where downloaded artifacts are kept (else `ALRUNNER_CACHE`, else
@@ -93,6 +96,7 @@ fn parse_args() -> Result<Args, String> {
             "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(val()?),
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
             "--require-dotnet" => a.require_dotnet = true,
+            "--files-dir" => a.files_dir = Some(val()?),
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(val()?),
             "--fetch-deps" => a.fetch_deps = true,
@@ -137,6 +141,9 @@ fn write(p: &Path, s: &str) -> Result<(), String> {
 
 fn run() -> Result<ExitCode, String> {
     let args = parse_args()?;
+    if let Some(dir) = &args.files_dir {
+        al_test_cli::host::set_files_dir(dir.clone());
+    }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
     if let Some(project) = &args.project {
         return fetch_project(&args, &root, project);

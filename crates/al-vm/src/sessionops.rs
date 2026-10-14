@@ -192,6 +192,24 @@ impl Session {
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
             }
+            // The type of the next transaction. A read answers Update, the documented default (docs/
+            // probes-needed.md); session/TestDatabaseExtended.al:Database_CurrentTransactionType_
+            // ReturnsType only reads it. A set is refused: BC raises an error once a transaction has
+            // started, which is at the first database call (:Database_CurrentTransactionType_
+            // SetAfterWriteOp_Throws, the text is not pinned), and this runtime does not track that.
+            "Database.CurrentTransactionType#1" => {
+                let members: std::rc::Rc<[String]> = al_builtins::sysenum::option_members("TransactionType")
+                    .expect("a system option")
+                    .into();
+                match args.first() {
+                    None | Some(Value::Null) => return Ok(Value::Option(self.transaction_type, members)),
+                    Some(_) => {
+                        return unsupported(
+                            "Database.CurrentTransactionType set (whether a transaction has started, and the error then, are not pinned)",
+                        );
+                    }
+                }
+            }
             _ => {}
         }
         if id == "System.CodeCoverageLog#1" {

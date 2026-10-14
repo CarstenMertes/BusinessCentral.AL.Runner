@@ -543,18 +543,24 @@ impl Session {
                     target: ControlTarget::BuiltIn(m.to_string()),
                 })))
             }
+            // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
+            // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
+            "Caption" if method.starts_with("Page.") => {
+                self.require_open(st)?;
+                match args.first() {
+                    Some(v) => match al_builtins::native::text_of(v) {
+                        Some(t) => {
+                            st.borrow_mut().caption = Some(t);
+                            Ok(Value::Null)
+                        }
+                        None => unsupported(format!("CurrPage.Caption with {v:?}")),
+                    },
+                    None => Ok(Value::Text(self.page_caption(st))),
+                }
+            }
             "Caption" => {
                 self.require_open(st)?;
-                let engine = self.engine();
-                let object = st.borrow().object as usize;
-                let o = &engine.program.objects[object];
-                let cap = o
-                    .properties
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
-                    .map(|(_, v)| unquote(v))
-                    .unwrap_or_else(|| o.name.clone());
-                Ok(Value::Text(cap))
+                Ok(Value::Text(self.page_caption(st)))
             }
             // `CurrPage.PromptMode := PromptMode::Prompt` states what a PromptDialog already starts in:
             // the pages of handlers/TbaPromptDeclared.Page.al and TbaPromptBare.Page.al do it in OnOpenPage
@@ -866,6 +872,7 @@ impl Session {
             s.pending = None;
             s.result = None;
             s.editable_off = false;
+            s.caption = None;
             s.opening = true;
             s.parts = Vec::new();
             s.areas = self.application_areas.clone();
@@ -3613,6 +3620,22 @@ impl Session {
                 None => Ok(default),
             },
         }
+    }
+
+    /// The caption of the page in force: what `CurrPage.Caption := x` set, else its `Caption`
+    /// property, else the page name.
+    fn page_caption(&self, st: &Rc<RefCell<PageState>>) -> String {
+        if let Some(c) = &st.borrow().caption {
+            return c.clone();
+        }
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let o = &engine.program.objects[object];
+        o.properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+            .map(|(_, v)| unquote(v))
+            .unwrap_or_else(|| o.name.clone())
     }
 
     fn page_editable(&self, st: &St) -> bool {

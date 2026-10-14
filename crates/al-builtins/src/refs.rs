@@ -162,6 +162,7 @@ record_methods! {
     "Record.FieldCaption#1" => "FieldCaption",
     "Record.FieldName#1" => "FieldName",
     "Record.FieldNo#1" => "FieldNo",
+    "Record.FieldActive#1" => "FieldActive",
     "Record.TableCaption#1" => "TableCaption",
     "Record.TableName#1" => "TableName",
     "Record.RecordId#1" => "RecordId",

@@ -78,6 +78,44 @@ pub struct Timings {
     pub total_s: f64,
     /// The tests phase split by test app. The main corpus app is named `corpus`.
     pub suites: Vec<SuiteTime>,
+    /// The .NET sidecar processes (ADR-014), when any started. Their start-up is part of the
+    /// tests phase but is not the runtime's own cost, so it is reported apart.
+    #[serde(default)]
+    pub dotnet: Option<DotNetTimes>,
+}
+
+/// What the .NET sidecar processes of a run cost (`SidecarStats`), in seconds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DotNetTimes {
+    pub processes: usize,
+    /// Spawning the processes up to their first answer, summed over all of them (they overlap
+    /// when several test codeunits start one at the same time).
+    pub start_s: f64,
+    /// The longest single start.
+    pub start_max_s: f64,
+    pub calls: usize,
+    /// Time inside `DotNet` requests after the start, summed over all sessions.
+    pub calls_s: f64,
+}
+
+impl DotNetTimes {
+    pub fn of(s: &crate::dotnet::SidecarStats) -> Option<DotNetTimes> {
+        (s.started > 0).then(|| DotNetTimes {
+            processes: s.started,
+            start_s: s.start_total.as_secs_f64(),
+            start_max_s: s.start_max.as_secs_f64(),
+            calls: s.calls,
+            calls_s: s.call_total.as_secs_f64(),
+        })
+    }
+
+    /// One line, for `--timings` and the markdown report.
+    pub fn line(&self) -> String {
+        format!(
+            "{} .NET sidecar process(es) started: starting {:.2} s in total, {:.2} s at most; {} request(s) {:.2} s",
+            self.processes, self.start_s, self.start_max_s, self.calls, self.calls_s
+        )
+    }
 }
 
 /// The time the tests of one test app took.

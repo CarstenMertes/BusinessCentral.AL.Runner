@@ -51,6 +51,12 @@ pub fn markdown(r: &Report) -> String {
             .map(|x| format!("{} {}", x.name, secs(x.tests_s)))
             .collect();
         s.push_str(&format!("\nTests by test app: {}.\n", by_app.join(", ")));
+        if let Some(d) = &t.dotnet {
+            s.push_str(&format!(
+                "\n{}. Starting a sidecar is part of Tests, not of the runtime; the perf budget leaves it out.\n",
+                d.line()
+            ));
+        }
         if t.eager {
             s.push_str("\nThis run compiled every dependency routine, not only the ones the tests reach.\n");
         }
@@ -262,6 +268,7 @@ mod tests {
                     tests_s: 1.25,
                 },
             ],
+            dotnet: None,
         }
     }
 
@@ -282,6 +289,37 @@ mod tests {
         );
         assert!(md.contains("corpus 11.00 s"), "{md}");
         assert!(md.contains("OnPrem 1.25 s"), "{md}");
+    }
+
+    #[test]
+    fn the_sidecar_start_is_reported_apart_from_the_phases() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        let mut t = timings();
+        assert!(
+            !{
+                r.timings = Some(t.clone());
+                markdown(&r)
+            }
+            .contains("sidecar")
+        );
+        t.dotnet = Some(crate::report::DotNetTimes {
+            processes: 2,
+            start_s: 2.5,
+            start_max_s: 1.5,
+            calls: 35,
+            calls_s: 0.25,
+        });
+        r.timings = Some(t);
+        let md = markdown(&r);
+        assert!(
+            md.contains(
+                "2 .NET sidecar process(es) started: starting 2.50 s in total, 1.50 s at most; 35 request(s) 0.25 s"
+            ),
+            "{md}"
+        );
+        // A report written before the field existed still reads.
+        let json = r#"{"timings":{"bc_version":"29.0","eager":false,"load_s":1.0,"compile_s":1.0,"baseline_s":1.0,"tests_s":1.0,"total_s":4.0,"suites":[]}}"#;
+        assert!(crate::report::Timings::from_report_json(json).unwrap().dotnet.is_none());
     }
 
     #[test]

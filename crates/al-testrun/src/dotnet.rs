@@ -62,9 +62,36 @@ struct Resolved {
     sidecar: PathBuf,
 }
 
+/// What the sidecars of one host cost, so start-up is reported apart from the calls
+/// (`--timings`, the perf budget). `start_*` is the time from spawning the process to its
+/// answer to `hello` (and the assembly probe), measured per process.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SidecarStats {
+    /// Processes that started (one per session that made a call).
+    pub started: usize,
+    pub start_total: Duration,
+    pub start_max: Duration,
+    /// Requests after the start, and their total time.
+    pub calls: usize,
+    pub call_total: Duration,
+}
+
+thread_local! {
+    /// Start-up time of the sidecars that threads started on this thread since the last
+    /// [`take_start_time`]: the test runner reads it after each test codeunit.
+    static START_ON_THIS_THREAD: std::cell::Cell<Duration> = const { std::cell::Cell::new(Duration::ZERO) };
+}
+
+/// The time sidecar processes started on this thread took since the last call, and resets it.
+/// A test codeunit runs on one thread, so this is the start-up share of its wall time.
+pub fn take_start_time() -> Duration {
+    START_ON_THIS_THREAD.with(|c| c.replace(Duration::ZERO))
+}
+
 pub struct SidecarHost {
     cfg: SidecarConfig,
     resolved: OnceLock<Result<Resolved, String>>,
+    stats: Arc<Mutex<SidecarStats>>,
 }
 
 impl SidecarHost {
@@ -72,7 +99,13 @@ impl SidecarHost {
         SidecarHost {
             cfg,
             resolved: OnceLock::new(),
+            stats: Arc::new(Mutex::new(SidecarStats::default())),
         }
+    }
+
+    /// Start-up and call time of every sidecar this host has run so far.
+    pub fn stats(&self) -> SidecarStats {
+        *self.stats.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The sidecar this host runs, once it has been found (or built).
@@ -101,6 +134,7 @@ impl DotNetHost for SidecarHost {
             cfg: self.cfg.clone(),
             resolved: self.resolve().clone(),
             number: n,
+            stats: self.stats.clone(),
             proc: None,
             dead: None,
             next_id: 1,
@@ -331,6 +365,7 @@ struct SidecarSession {
     cfg: SidecarConfig,
     resolved: Result<Resolved, String>,
     number: u64,
+    stats: Arc<Mutex<SidecarStats>>,
     proc: Option<Proc>,
     /// Why every further call is refused: the process died, timed out or never started.
     dead: Option<String>,
@@ -347,6 +382,7 @@ fn read_frame(r: &mut impl Read) -> Option<Vec<u8>> {
 
 impl SidecarSession {
     fn start(&mut self) -> Result<(), String> {
+        let began = std::time::Instant::now();
         let r = self.resolved.clone()?;
         let workdir = std::env::temp_dir().join(format!("al-runtime-dotnet-{}-{}", std::process::id(), self.number));
         let (cwd, home, tmp) = (workdir.join("cwd"), workdir.join("home"), workdir.join("tmp"));
@@ -440,6 +476,12 @@ impl SidecarSession {
             self.raw_request(json!({"op":"probe","dirs":dirs}))
                 .map_err(|f| format!("{f:?}"))?;
         }
+        let took = began.elapsed();
+        let mut st = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        st.started += 1;
+        st.start_total += took;
+        st.start_max = st.start_max.max(took);
+        START_ON_THIS_THREAD.with(|c| c.set(c.get() + took));
         Ok(())
     }
 
@@ -547,7 +589,12 @@ impl SidecarSession {
                 return Err(DotNetFailure::Refused(why));
             }
         }
-        self.raw_request(req)
+        let began = std::time::Instant::now();
+        let reply = self.raw_request(req);
+        let mut st = self.stats.lock().unwrap_or_else(|e| e.into_inner());
+        st.calls += 1;
+        st.call_total += began.elapsed();
+        reply
     }
 }
 

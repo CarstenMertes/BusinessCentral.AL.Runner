@@ -331,6 +331,7 @@ fn run_version(
             return Err(format!("--require-dotnet: DotNet {why}"));
         }
     }
+    let sidecar_host = host.clone();
     let dotnet = al_vm::dotnet::DotNetConfig {
         host,
         ..Default::default()
@@ -388,6 +389,7 @@ fn run_version(
         baseline_s: p.baseline.as_secs_f64(),
         tests_s: p.tests.as_secs_f64(),
         total_s: started.elapsed().as_secs_f64(),
+        dotnet: report::DotNetTimes::of(&sidecar_host.stats()),
         suites: p
             .suites
             .iter()
@@ -417,9 +419,19 @@ fn run_version(
         let slowest: Vec<String> = p
             .slowest
             .iter()
-            .map(|(id, name, t)| format!("{id} {name} {:.2} s", t.as_secs_f64()))
+            .map(|c| {
+                let start = if c.sidecar_start.is_zero() {
+                    String::new()
+                } else {
+                    format!(" (sidecar start {:.2} s)", c.sidecar_start.as_secs_f64())
+                };
+                format!("{} {} {:.2} s{start}", c.id, c.name, c.took.as_secs_f64())
+            })
             .collect();
         eprintln!("slowest test codeunits: {}", slowest.join("; "));
+        if let Some(d) = &timings.dotnet {
+            eprintln!("dotnet: {}", d.line());
+        }
     }
     if rt.panics > 0 {
         eprintln!(

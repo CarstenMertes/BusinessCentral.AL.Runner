@@ -327,6 +327,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             return Err(format!("--require-dotnet: DotNet {why}"));
         }
     }
+    let sidecar_host = host.clone();
     let dotnet = al_vm::dotnet::DotNetConfig {
         host,
         ..Default::default()
@@ -379,9 +380,27 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         let slowest: Vec<String> = p
             .slowest
             .iter()
-            .map(|(id, name, t)| format!("{id} {name} {}", secs(*t)))
+            .map(|c| {
+                let start = if c.sidecar_start.is_zero() {
+                    String::new()
+                } else {
+                    format!(" (sidecar start {})", secs(c.sidecar_start))
+                };
+                format!("{} {} {}{start}", c.id, c.name, secs(c.took))
+            })
             .collect();
         eprintln!("slowest test codeunits: {}", slowest.join("; "));
+        let d = sidecar_host.stats();
+        if d.started > 0 {
+            eprintln!(
+                "dotnet: {} .NET sidecar process(es) started: starting {} in total, {} at most; {} request(s) {}",
+                d.started,
+                secs(d.start_total),
+                secs(d.start_max),
+                d.calls,
+                secs(d.call_total)
+            );
+        }
     }
     if rt.panics > 0 {
         eprintln!(

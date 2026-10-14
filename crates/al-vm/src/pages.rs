@@ -420,7 +420,7 @@ impl Session {
                 let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
                 // The static RunModal reports the lookup values, with or without a record: OK reads
                 // LookupOK, Cancel LookupCancel (corpus handlers/TestPageModalHandlerStatic_Tests.al:48-72
-                // for the record overload; corpus branch al-runtime-rs (pending push):
+                // for the record overload; corpus branch al-runtime-rs:
                 // handlers/TestPageModalResultsAndTriggersContracts.al:RunModal_Dialog_StaticVersusVariable_ReportedAction
                 // and ..._Card_StaticWithAndWithoutRecord_... for the others). A page variable reports OK and Cancel.
                 if method == "Page.RunModalStatic" {
@@ -1131,7 +1131,7 @@ impl Session {
             .position(|m| *m == action)
             .unwrap_or(0) as i32;
         // The parts are asked first, with the action None; the host's own OnQueryClosePage follows
-        // (corpus branch al-runtime-rs (pending push): testpart/TestPartCloseLinkEditableContracts.al:
+        // (testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_CloseTriggers_AllPartsQueryClose_ThenHost_ThenPartsClose_ThenHost).
         let open_parts: Vec<St> = st
             .borrow()
@@ -2442,7 +2442,7 @@ impl Session {
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
         // SetValue through a part whose control says Editable = false writes anyway (corpus branch
-        // al-runtime-rs (pending push): testpart/TestPartCloseLinkEditableContracts.al:
+        // al-runtime-rs: testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites). New() and Next() onto the
         // new-row line of such a part are not pinned and stay refused.
         self.activate(st, idx)?;

@@ -1,6 +1,6 @@
 //! Page, part, handler and report contracts pinned by the probe tests of the corpus branch
 //! `al-runtime-rs`. AL source -> compile -> run as a test codeunit. Each test names the probe it
-//! mirrors; the probes marked "(pending push)" are local to the corpus-probes checkout.
+//! mirrors.
 
 use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
@@ -134,7 +134,7 @@ fn unhandled_ui_text_and_code() {
 }
 
 // testpart/TestPartTriggerOrderAndRefresh.al:236-247 and the close order of
-// testpart/TestPartCloseLinkEditableContracts.al (pending push)
+// testpart/TestPartCloseLinkEditableContracts.al
 #[test]
 fn part_init_and_close_order() {
     passes(&format!(
@@ -181,7 +181,7 @@ fn report_skip_break_quit_and_filters() {
     ));
 }
 
-// corpus branch al-runtime-rs (pending push): handlers/TestPageModalResultsAndTriggersContracts.al:
+// handlers/TestPageModalResultsAndTriggersContracts.al:
 // RunModal_Dialog_StaticVersusVariable_ReportedAction
 #[test]
 fn static_run_modal_reports_the_lookup_actions() {
@@ -193,7 +193,7 @@ fn static_run_modal_reports_the_lookup_actions() {
     ));
 }
 
-// corpus branch al-runtime-rs (pending push): testpart/TestPartCloseLinkEditableContracts.al:
+// testpart/TestPartCloseLinkEditableContracts.al:
 // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites
 #[test]
 fn editable_false_part_still_takes_writes() {

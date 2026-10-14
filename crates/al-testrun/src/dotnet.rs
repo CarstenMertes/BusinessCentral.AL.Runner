@@ -918,7 +918,7 @@ impl DotNetSession for SidecarSession {
         let bad = |e: String| DotNetFailure::Refused(format!("unreadable reply from the sidecar: {e}"));
         match decode(&v["value"]).map_err(bad)? {
             DotNetValue::InStream(b) => Ok(b),
-            other => Err(bad(format!("expected bytes, got {other:?}"))),
+            _ => Err(bad("expected bytes for stream_read".into())),
         }
     }
     fn release(&mut self, handles: &[DotNetHandle]) {

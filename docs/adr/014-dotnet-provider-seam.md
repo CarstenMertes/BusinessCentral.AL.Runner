@@ -360,7 +360,8 @@ before a request is sent. Every refusal names the type or member and the rule.
 
 - Source: `tools/dotnet-sidecar/` (C#, `net8.0`, no NuGet packages, no Microsoft
   files). It is the spike's `Program.cs` hardened (section 12).
-- Build: `dotnet publish -c Release`. Needs the .NET 8 SDK once. Core crates
+- Build: `dotnet publish -c Release --disable-build-servers -p:UseSharedCompilation=false` (a
+  VBCSCompiler server left running holds the caller's file descriptors). Needs the .NET 8 SDK once. Core crates
   have no `build.rs` for this (ADR-006 spirit: builds do not spawn tools).
 - Lookup order in `al-test-cli`:
   1. `--dotnet-sidecar PATH` or `ALRT_DOTNET_SIDECAR`.
@@ -516,7 +517,7 @@ Reading the numbers:
 - A job step `actions/setup-dotnet` with `dotnet-version: 8.0.x` in
   `.github/workflows/ci.yml`, before the corpus step. It provides both the SDK
   to build the sidecar and the runtime to run it.
-- `dotnet publish tools/dotnet-sidecar -c Release -o <dir>` once per job. No
+- `dotnet publish tools/dotnet-sidecar -c Release -o <dir> --disable-build-servers -p:UseSharedCompilation=false` once per job. No
   NuGet restore is needed beyond the SDK's own targeting packs.
 - ICU (`libicu`) is present on `ubuntu-latest`.
 - The BC platform package for the selected build is in the artifact cache

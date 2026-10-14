@@ -435,7 +435,7 @@ fn default_cache_dir() -> Option<PathBuf> {
     Some(Path::new(&home).join(".cache/al-runtime-rs/dotnet-sidecar"))
 }
 
-const NOT_BUILT: &str = "sidecar not built; run 'dotnet publish tools/dotnet-sidecar -c Release -o <dir>' and pass --dotnet-sidecar <dir>/AlDotNetSidecar.dll";
+const NOT_BUILT: &str = "sidecar not built; run 'dotnet publish tools/dotnet-sidecar -c Release -o <dir> --disable-build-servers' and pass --dotnet-sidecar <dir>/AlDotNetSidecar.dll";
 
 /// ADR-014 section 10, lookup order: the flag or `ALRT_DOTNET_SIDECAR`; `dotnet-sidecar/` next to
 /// this binary; a cache keyed by the source hash, built there once when the .NET SDK is present.
@@ -492,6 +492,9 @@ fn find_sidecar(cfg: &SidecarConfig, dotnet: &Path) -> Result<PathBuf, String> {
         .arg(&src)
         .args(["-c", "Release", "-o"])
         .arg(&tmp)
+        // No build servers: a VBCSCompiler left running for minutes inherits our open file
+        // descriptors (pipes, locks) and keeps whoever waits on them waiting.
+        .args(["--disable-build-servers", "-p:UseSharedCompilation=false"])
         .env("DOTNET_NOLOGO", "1")
         .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
         .output()

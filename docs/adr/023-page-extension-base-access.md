@@ -1,17 +1,18 @@
-# ADR-023: Page extension code that uses the base page's variables and procedures
+# ADR-023: Page and report extension code that uses the base object's variables and procedures
 
 - Status: Proposed
 - Date: 2026-10-14
-- Changes: how the lowering names a variable or procedure of the base page in extension code, and one field of `Instance`. Additive in the IR (`Place::BaseGlobal`, `Expr::BaseInstance`); no seam is removed. It needs the owner's decision because it adds to the IR and to `Instance` (CLAUDE.md rule 5).
+- Changes: how the lowering names a variable or procedure of the base page or base report in extension code, and one field of `Instance`. Additive in the IR (`Place::BaseGlobal`, `Expr::BaseInstance`); no seam is removed. It needs the owner's decision because it adds to the IR and to `Instance` (CLAUDE.md rule 5).
 
 ## Context
 
 AL lets a page extension use what its base page marks for it: a `protected var` variable and a
-procedure that is not `local`. The runtime refuses it. Extension code lowers on the extension's own
+procedure that is not `local`. A report extension reaches the `protected` members of its base
+report. The runtime refuses both. Extension code lowers on the extension's own
 object, whose globals and procedures are its own, so a name of the base page is "not assignable" or
-unresolved. `Lowerer::base_page_member` (`al-sema/src/lower.rs`) detects the case and gives it a
+unresolved. `Lowerer::base_member` (`al-sema/src/lower.rs`) detects the case for both kinds and gives it a
 reason: ``\`X\` is a variable or procedure of the page it extends: page extension code on base page
-members is not lowered yet``.
+members is not lowered yet`` (and the same with "report").
 
 **How much it costs.** On BC 27.5 build 46862.56320, the 32 Microsoft test buckets together
 (`alrunner test`, no test data, 40326 tests; recipe in `docs/alrunner-buckets.md`) have **2962 tests**
@@ -21,6 +22,12 @@ source expression `__source_1112` of `Mfg. ItemAvailByLocationLines`, a page ext
 Application whose field names `Item."Qty. on Component Lines"`, where `Item` is a `protected var
 Item: Record Item` of the page `Item Availability by Location Lines`. Any test that opens that page
 (or a page that hosts it as a part) stops there, Tests-SCM first (about 335 tests of that bucket).
+
+**The report side** (scope added by the owner on issue 6). A report extension names `Window` and
+`ExchangeAmtLCYToFCY` of the base report "Adjust Add. Reporting Currency" in Microsoft's "Mfg. Adjust
+Add. Rep. Currency"; about 2500 Tests-ERM tests stop there (`docs/probes-needed.md`, "ReportExtension
+and the base report's protected members", whose probe runs on the BC container machine and is not
+part of this ADR's work).
 
 **What exists today.**
 - A page extension runs on an instance of its own (`Session::page_instance`, `al-vm/src/pages.rs`),
@@ -32,7 +39,13 @@ Item: Record Item` of the page `Item Availability by Location Lines`. Any test t
   `docs/probes-needed.md` under "Request pages"). Only code is missing: statements and expressions
   in extension triggers and procedures, and control source expressions that are not a bare name
   (`Item."Qty. on Component Lines"`, `Format(BaseVar)`).
-- The checker (`al-sema/src/check.rs`, `ObjKind::PageExtension` scope) puts `Rec` and `CurrPage`
+- A report extension that changes a run gets an instance of its own per run
+  (`Session::report_prepare`, `al-vm/src/reports.rs`). Its record variables for the base data
+  items are *aliases*: `ReportExt::aliases` copies the base item's record handle into an extension
+  slot. That shares reference-like values only. A `protected var` of a value type (Integer, Text,
+  Decimal) or a `Dialog` cannot be shared by copying the handle, which is why the aliasing does not
+  extend to the Tests-ERM case.
+- The checker (`al-sema/src/check.rs`, `ObjKind::PageExtension` and `ReportExtension` scopes) puts `Rec` and `CurrPage`
   into the extension's scope and nothing of the base page's `var` section or procedures.
 
 ## What the corpus pins
@@ -68,25 +81,27 @@ lowers to a new place that reads the base instance's slot; a call to a base proc
 base instance. This is the model `Binding::BaseVar` already uses for controls, extended from
 controls to code.
 
-**C. Copy base variables into the extension on each call and write them back.** Rejected: two
+**C. Alias the handles, as `ReportExt::aliases` does today.** Rejected as the general answer: it works for records and other reference values and not for value types (above), and a write by the base after the alias was made is invisible for those.
+
+**D. Copy base variables into the extension on each call and write them back.** Rejected: two
 extensions of one page, a base trigger and the extension would each work on copies; a value changed
 by a nested call is lost or overwritten. It is also slow for record and list variables.
 
 ## Decision (proposed): option B
 
-1. **Names.** In a page extension, a name that the extension does not declare resolves, in this
+1. **Names.** In a page or report extension, a name that the extension does not declare resolves, in this
    order, to: the extension's own variable or procedure; then a `protected var` variable of the base
-   page; then a procedure of the base page that is not `local`; then the builtins (the order AL
-   uses; to be confirmed by probe 6). A name of a `local` member of the base, or one that is
-   declared in both, is refused with a reason that says so. The checker puts the base page's
-   `protected` variables and its non-local procedures into the extension's scope with their types.
+   page; then, for a page, a procedure of the base page that is not `local`; for a report, only members marked `protected` (the owner's statement on issue 6: whether a public procedure of a base report is also callable is probe R2 below); then the builtins (the order AL
+   uses; to be confirmed by probe 6). A name of a `local` member of the base (a page or report), or one that is
+   declared in both, is refused with a reason that says so. The checker puts the base object's
+   visible variables and procedures into the extension's scope with their types, for `PageExtension` and `ReportExtension`.
 2. **IR (additive).**
-   - `Place::BaseGlobal(usize)`: the global slot `n` of the *base page's instance*. It is
-     valid only in routines of a page extension; the lowering never emits it elsewhere. Reading and
+   - `Place::BaseGlobal(usize)`: the global slot `n` of the *base object's instance*. It is
+     valid only in routines of a page or report extension; the lowering never emits it elsewhere. Reading and
      writing work as for `Place::Global`, including `Index` and `Field` projections, record
      variables (ADR-021 `TableGlobals` live on the shared `RecordState`, so nothing changes) and
      `var` arguments.
-   - `Expr::BaseInstance`: evaluates to the base page's instance. `Expr::Call { instance:
+   - `Expr::BaseInstance`: evaluates to the base object's instance (page or report). `Expr::Call { instance:
      Some(BaseInstance), object: <base page>, routine }` calls a base procedure on it.
    The slot number of a base variable is its position in the base object's globals, the number
    `Binding::BaseVar` uses today, computed from the base's syntax (declaration order), not from
@@ -95,7 +110,9 @@ by a nested call is lost or overwritten. It is also slow for record and list var
 3. **VM.** `Instance` gets `base: Option<Weak<RefCell<Instance>>>` (`None` for everything that is
    not a page extension's instance). `page_instance` sets it when it builds each extension's
    instance, next to the `Rec`, `xRec` and `CurrPage` sharing it does today, and `adopt_instance`
-   keeps it. `Place::BaseGlobal` and `Expr::BaseInstance` read it from the running frame's
+   keeps it; `report_prepare` sets it on the extension instance it builds for a run, next to the
+   aliases (the base is the report instance of that run). A report run that has no extension
+   builds nothing new. `Place::BaseGlobal` and `Expr::BaseInstance` read it from the running frame's
    instance; a missing or dropped base is an internal error with a readable text, never a
    panic. A `Weak` link adds no `Rc` cycle (the page instance already points to its `PageState` through
    `CurrPage`, which points back to the extension instances).
@@ -107,15 +124,14 @@ by a nested call is lost or overwritten. It is also slow for record and list var
 5. **Refusals stay explicit.** Refused, each with its own reason: access to a `local` member; a
    name declared by two extensions of the same page (not a base member); a base procedure that is a
    `[TryFunction]`, an event publisher or has `by var` record parameters of a type the call path
-   refuses today (same reasons as a call within one object); `this` in an extension; a table or
-   report extension (a tableextension has the same problem for the table's `protected var`; see
-   "Out of scope"); anything probes 1 to 8 do not confirm.
+   refuses today (same reasons as a call within one object); `this` in an extension; a table extension
+   (see "Out of scope"); anything probes 1 to 8 do not confirm.
 6. **Triggers.** No change: base triggers run first and then the extension's, as now. A base
    variable that a base trigger set is what the extension's trigger reads.
 
 ## Consequences
 
-- Up to 2962 tests of Microsoft's buckets (without test data) can run past this reason. How many
+- Up to 2962 tests of Microsoft's buckets on the page side and about 2500 on the report side (without test data) can run past these reasons. How many
   pass is another question: most then meet the next refusal (`Report.ObjectId`, `Format of a Record`,
   the `DocumentEntries` reportextensions; `docs/alrunner-buckets.md`).
 - An extension's lowering depends on the base page's *syntax* (names, modifiers, declaration order)
@@ -142,16 +158,24 @@ by the implementation.
 9. A control source expression that names a base variable (`Item."Qty. on Component Lines"`, `Format(BaseVar)`), through a TestPage, for a field of the base page's record and for a field that is not.
 10. A base procedure called from an extension that runs a base trigger and reads `CurrPage` inside it.
 
+Report side (the first is the one already listed in `docs/probes-needed.md`, run on the BC container machine):
+
+R1. A base report sets a `protected var` in `OnPreReport`, the extension reads it in a trigger, writes it, and the base reads the write back; a protected procedure of the base called from an extension trigger and from an extension procedure.
+R2. A public (non-protected) procedure of the base report from the extension, and a non-protected variable (a compile error, with its text).
+R3. A `protected var` of type Dialog, Record and List in the base report, used from the extension (`Window.Open`, `Update`, `Close`).
+R4. Two reportextensions of one report that both change the run: today refused; whether they share the base variable (they would, under this ADR).
+
 ## Decisions needed
 
 1. **Accept option B** (instance link, `Place::BaseGlobal`, `Expr::BaseInstance`), or ask for A (one merged instance) with the cache cost described above.
 2. **Probes first, or build first.** Everything in "Decision" except the refusals is unpinned. Build first, record what is assumed in `docs/probes-needed.md` and refuse nothing the language reference allows; or probe first (about ten tests) and build exactly what they pin.
-3. **Scope.** Page extensions only, as here; or in the same step table extensions (`protected var` of a table, ADR-021 already gives the table's globals a lifetime) and report extensions (a reportextension's code reading the base report's `protected var`; controls already work).
+3. **Scope.** Page and report extensions, as here; or also table extensions in the same step (`protected var` of a table; ADR-021 already gives the table's globals a lifetime on the record variable, which would be the base instance to link to).
+4. **Report extension order.** Build the report side first (about 2500 Tests-ERM tests, one probe waiting) or the page side first (2962 tests across all buckets, probes 1 to 10 below). The mechanism is the same; the order only decides which probes are needed first.
 
 ## Out of scope
 
-Table extensions and report extensions (above), `Codeunit` access modifiers, and `internal` members across apps.
+Table extensions (a tableextension has the same problem for the table's `protected var`), `Codeunit` access modifiers, and `internal` members across apps.
 
 ## Conformance
 
-On acceptance: the probe tests above (corpus branch), the existing `an_extension_naming_a_variable_of_its_base_page_is_refused_with_that_reason` in `al-sema/src/lower.rs` replaced by tests that lower and run the same code, one VM test per decision 3 rule in `al-vm/tests/pageext.rs`, and the 2962-test measurement repeated with the recipe in `docs/alrunner-buckets.md` (report the new refusal reasons).
+On acceptance: the probe tests above (corpus branch), the existing `an_extension_naming_a_variable_of_its_base_page_is_refused_with_that_reason` in `al-sema/src/lower.rs` replaced by tests that lower and run the same code, one VM test per decision 3 rule in `al-vm/tests/pageext.rs` and `al-vm/tests/reportext_calls.rs`, and the 2962-test measurement repeated with the recipe in `docs/alrunner-buckets.md` (report the new refusal reasons).

@@ -153,6 +153,7 @@ impl Providers {
                 ));
             }
             Virtual::XmlPortMetadata => metadata::xmlport_metadata_rows(self, t),
+            Virtual::EventSubscription => metadata::event_subscription_rows(self, t),
             Virtual::QueryMetadata => metadata::query_metadata_rows(self, t),
             Virtual::ReportLayoutList => reports::layout_list_rows(self, t),
             Virtual::ReportMetadata => reports::report_metadata_rows(self, t),

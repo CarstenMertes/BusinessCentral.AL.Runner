@@ -27,7 +27,7 @@ pub(super) fn base_kind(o: &Object) -> &str {
 /// System=10, FieldNumber=11, PageExtension=14, TableExtension=15, Enum=16, EnumExtension=17,
 /// Profile=18, ProfileExtension=19, PermissionSet=20, PermissionSetExtension=21,
 /// ReportExtension=22 (the declaration of the AllObj table in the platform app).
-fn object_type(kind: &str) -> Option<i32> {
+pub(super) fn object_type(kind: &str) -> Option<i32> {
     Some(match kind {
         "table" => 1,
         "report" => 3,

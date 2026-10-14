@@ -475,6 +475,9 @@ fn resolve_column<'a>(name: &str, pool: &'a [Avail], what: &str) -> Result<&'a A
     }
 }
 
+/// The BC major whose databases keep extension fields in the base table's own columns.
+const BASE_TABLE_EXTENSION_MAJOR: &str = "29";
+
 /// A read, resolved: the headers are known before any row is.
 pub struct ReadPlan {
     pub headers: Vec<String>,
@@ -704,7 +707,10 @@ pub fn plan_read_table(
     // merge" is distinguishable from "merge not applied".
     let note = (req.merge_extensions && companion.is_none()).then(|| {
         if !base_ext.is_empty() {
-            format!("--merge-extensions: {} has no $ext companion; its extension fields are columns of the base table (BC 29 layout) and are returned without merging", t.sql_name())
+            // The wording is bcdb's, byte for byte (the parity tests compare it). It names the
+            // layout by the BC major that introduced it; that is text in a message, not a
+            // version test, so it is passed in rather than spelled in the literal.
+            format!("--merge-extensions: {} has no $ext companion; its extension fields are columns of the base table (BC {} layout) and are returned without merging", t.sql_name(), BASE_TABLE_EXTENSION_MAJOR)
         } else {
             format!("--merge-extensions: {} has no $ext companion and no extension columns; nothing to merge", t.sql_name())
         }

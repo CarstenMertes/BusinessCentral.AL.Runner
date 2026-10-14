@@ -30,6 +30,11 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+thread_local! {
+    /// Set when a sort compared texts that have no pinned collation order.
+    static COLLATION_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Where `ColumnNo` starts (not a position: query/TestQueryRuntimeContracts.al:Query_ColumnNo_IsNotAOneBasedPosition).
 const COLUMN_NO_BASE: i32 = 4001;
 
@@ -47,7 +52,14 @@ fn key_cmp(a: &[Value], b: &[Value], dirs: &[bool]) -> Ordering {
         // Text sorts and groups by the database collation (case sensitive), not by code point
         // (query/TestQueryRuntimeContracts.al:Query_OrderByText_UsesTheDatabaseCollation_NotOrdinalOrder).
         let o = match (text_of(x), text_of(y)) {
-            (Some(s), Some(t)) if matches!(x, Value::Text(_) | Value::Code(_)) => collation::compare(&s, &t),
+            (Some(s), Some(t)) if matches!(x, Value::Text(_) | Value::Code(_)) => match collation::compare(&s, &t) {
+                Ok(o) => o,
+                // A character without a weight: the caller refuses the result.
+                Err(_) => {
+                    COLLATION_FAILED.with(|f| f.set(true));
+                    s.cmp(&t)
+                }
+            },
             _ => ops::compare(x, y).unwrap_or(Ordering::Equal),
         };
         let o = if dirs.get(i).copied().unwrap_or(true) {
@@ -465,6 +477,7 @@ impl Session {
         runtime: &[(usize, FilterExpr)],
     ) -> Result<(Vec<QueryRow>, Stamps), Signal> {
         let stamps = self.query_stamps(def);
+        COLLATION_FAILED.with(|f| f.set(false));
         let plan = self.query_plan(def, runtime)?;
         // The joined rows: one row of each dataitem's table.
         let mut joined: Vec<JoinedRow> = Vec::new();
@@ -504,18 +517,10 @@ impl Session {
             }
             rows
         };
-        for r in &rows {
-            for v in &r.key {
-                if let Value::Text(t) | Value::Code(t) = v {
-                    if !collation::supported(t) {
-                        return unsupported(format!(
-                            "sorting or grouping text `{t}` (the database collation of its characters is not pinned)"
-                        ));
-                    }
-                }
-            }
-        }
         rows.sort_by(|a, b| key_cmp(&a.key, &b.key, &dirs));
+        if COLLATION_FAILED.with(|f| f.replace(false)) {
+            return unsupported("sorting or grouping text with characters whose database collation order is not pinned");
+        }
         // Rows that tie on every OrderBy column and still differ are ordered by the primary key
         // ascending (corpus query/TestQueryOrderAfterWrite.al:92-104, ascending only), or in no
         // pinned way: grouped rows. Ties under a descending OrderBy still ascend by primary key

@@ -1,72 +1,134 @@
-//! The order the database sorts text in (the collation of a BC SQL database), for the part of it
-//! the corpus pins.
+//! Text order for `<`, `>`, `<=` and `>=`: the culture order of the en-US service tier, not code
+//! points (types/TestFormatEvaluateTextContracts.al:Operators_TextComparison_IsCultureOrderAndCaseSensitiveEquality).
 //!
-//! Pinned by query/TestQueryRuntimeContracts.al:Query_OrderByText_UsesTheDatabaseCollation_NotOrdinalOrder
-//! and :Query_GroupByText_IsCaseSensitive: `_x`, `1`, `a`, `a`, `A`, `ä`, `a b`, `ab`, `b`, `B`, `Z`.
-//! That order reads as three passes over the whole text: first the base letters (punctuation
-//! before digits before letters, case and accents ignored), then the accents (none before an
-//! umlaut), then the case (lower before upper). Characters beyond ASCII and the umlauts ä, ö, ü
-//! are not pinned: [`supported`] says no and callers refuse.
+//! Three levels, as in a UCA collation: letters compare by base letter first (`a` before `b`
+//! whatever the case, punctuation before digits before letters, a space before a letter); an accent
+//! comes next (`a` before `ä`); the case comes last (`a` before `A`). Equality is not decided here:
+//! two texts are equal only when they are the same characters.
+//!
+//! Only ASCII and the accented Latin-1 letters have weights. Anything else is refused, never ordered
+//! by a guess. The order of two different accents on the same letter is not pinned either.
 
 use std::cmp::Ordering;
 
-/// Whether every character of `s` has a pinned place in the order.
-pub fn supported(s: &str) -> bool {
-    s.chars()
-        .all(|c| (' '..='~').contains(&c) || matches!(c, 'ä' | 'ö' | 'ü' | 'Ä' | 'Ö' | 'Ü'))
+/// ASCII punctuation and symbols in the order of the root collation, lowest first.
+const SYMBOLS: &str = " _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
+
+/// Accented Latin-1 letters and the base letter they fold to.
+const ACCENTED: &[(&str, char)] = &[
+    ("àáâãäå", 'a'),
+    ("ç", 'c'),
+    ("èéêë", 'e'),
+    ("ìíîï", 'i'),
+    ("ñ", 'n'),
+    ("òóôõö", 'o'),
+    ("ùúûü", 'u'),
+    ("ýÿ", 'y'),
+];
+
+struct Weight {
+    primary: u32,
+    /// The accented letter itself, if it is one.
+    accent: Option<char>,
+    upper: bool,
 }
 
-/// (primary, accent, upper-case) of one character.
-fn weights(c: char) -> (u32, u8, u8) {
-    let (base, accent) = match c {
-        'ä' | 'Ä' => ('a', 1),
-        'ö' | 'Ö' => ('o', 1),
-        'ü' | 'Ü' => ('u', 1),
-        c => (c, 0),
-    };
-    let upper = u8::from(c.is_uppercase());
-    let lower = base.to_ascii_lowercase();
-    let primary = if lower == ' ' {
-        0x100
-    } else if lower.is_ascii_digit() {
-        0x300 + u32::from(lower)
-    } else if lower.is_ascii_lowercase() {
-        0x400 + u32::from(lower)
-    } else {
-        // Punctuation and symbols sort before the digits; their order among themselves is not pinned.
-        0x200 + u32::from(lower)
-    };
-    (primary, accent, upper)
+fn weight(c: char) -> Result<Weight, String> {
+    let lower: char = c.to_lowercase().next().unwrap_or(c);
+    let upper = c != lower;
+    if let Some((_, base)) = ACCENTED.iter().find(|(set, _)| set.contains(lower)) {
+        return Ok(Weight {
+            primary: 2000 + (*base as u32 - 'a' as u32),
+            accent: Some(lower),
+            upper,
+        });
+    }
+    if lower.is_ascii_lowercase() {
+        return Ok(Weight {
+            primary: 2000 + (lower as u32 - 'a' as u32),
+            accent: None,
+            upper,
+        });
+    }
+    if c.is_ascii_digit() {
+        return Ok(Weight {
+            primary: 1000 + (c as u32 - '0' as u32),
+            accent: None,
+            upper: false,
+        });
+    }
+    if let Some(i) = SYMBOLS.find(c) {
+        return Ok(Weight {
+            primary: 100 + i as u32,
+            accent: None,
+            upper: false,
+        });
+    }
+    Err(format!(
+        "ordering of the character U+{:04X} (no collation weight)",
+        c as u32
+    ))
 }
 
-/// Compares two texts that are [`supported`].
-pub fn compare(a: &str, b: &str) -> Ordering {
-    let wa: Vec<_> = a.chars().map(weights).collect();
-    let wb: Vec<_> = b.chars().map(weights).collect();
-    wa.iter()
-        .map(|w| w.0)
-        .cmp(wb.iter().map(|w| w.0))
-        .then_with(|| wa.iter().map(|w| w.1).cmp(wb.iter().map(|w| w.1)))
-        .then_with(|| wa.iter().map(|w| w.2).cmp(wb.iter().map(|w| w.2)))
+/// The order of two texts; `Err` names a character that has no weight.
+pub fn compare(a: &str, b: &str) -> Result<Ordering, String> {
+    if a == b {
+        return Ok(Ordering::Equal);
+    }
+    let wa: Vec<Weight> = a.chars().map(weight).collect::<Result<_, _>>()?;
+    let wb: Vec<Weight> = b.chars().map(weight).collect::<Result<_, _>>()?;
+    let primary = wa.iter().map(|w| w.primary).cmp(wb.iter().map(|w| w.primary));
+    if primary != Ordering::Equal {
+        return Ok(primary);
+    }
+    // Same base letters in the same places: an accent decides, then the case.
+    for (x, y) in wa.iter().zip(&wb) {
+        match (x.accent, y.accent) {
+            (None, Some(_)) => return Ok(Ordering::Less),
+            (Some(_), None) => return Ok(Ordering::Greater),
+            (Some(p), Some(q)) if p != q => {
+                return Err(format!(
+                    "ordering of the accents {p} and {q} on one letter (not pinned)"
+                ));
+            }
+            _ => {}
+        }
+    }
+    for (x, y) in wa.iter().zip(&wb) {
+        if x.upper != y.upper {
+            return Ok(if x.upper { Ordering::Greater } else { Ordering::Less });
+        }
+    }
+    Ok(a.cmp(b))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::compare;
+    use std::cmp::Ordering::{Greater, Less};
 
-    // query/TestQueryRuntimeContracts.al:Query_OrderByText_UsesTheDatabaseCollation_NotOrdinalOrder
     #[test]
     fn the_pinned_order() {
-        let pinned = ["_x", "1", "a", "a", "A", "ä", "a b", "ab", "b", "B", "Z"];
-        let mut shuffled = ["Z", "b", "ab", "A", "a b", "ä", "B", "a", "1", "_x", "a"];
-        shuffled.sort_by(|x, y| compare(x, y));
-        assert_eq!(shuffled, pinned);
+        // types/TestFormatEvaluateTextContracts.al:Operators_TextComparison_IsCultureOrderAndCaseSensitiveEquality.
+        for (a, b) in [
+            ("a", "A"),
+            ("a", "B"),
+            ("A", "b"),
+            ("a", "Z"),
+            ("_", "a"),
+            ("1", "A"),
+            ("a", "ä"),
+            ("ä", "b"),
+            ("a b", "ab"),
+            ("", "a"),
+        ] {
+            assert_eq!(compare(a, b), Ok(Less), "{a} < {b}");
+            assert_eq!(compare(b, a), Ok(Greater), "{b} > {a}");
+        }
     }
 
     #[test]
-    fn only_ascii_and_umlauts_are_pinned() {
-        assert!(supported("Ärger ab_1"));
-        assert!(!supported("é"));
-        assert!(!supported("ß"));
+    fn characters_without_a_weight_are_refused() {
+        assert!(compare("a", "Ж").is_err());
     }
 }

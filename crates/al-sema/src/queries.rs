@@ -59,6 +59,10 @@ const HARMLESS_QUERY_PROPERTIES: &[&str] = &[
     // wrote itself through a ReadOnly query (query/TestQueryDataItemTableFilterDatabaseConst.al:
     // 109-136, Base App's query 522).
     "dataaccessintent",
+    // Help texts of the object: no corpus test sets them on a query, and they have no effect on the
+    // rows (docs/probes-needed.md, issue 24).
+    "abouttitle",
+    "abouttext",
 ];
 
 /// The text inside `raw` when `raw` is exactly one single-quoted AL string.
@@ -277,7 +281,7 @@ impl Builder<'_> {
             };
             if !unquote(&who).eq_ignore_ascii_case(&pname) {
                 self.reason(format!(
-                    "DataItemLink `{part}` links to {who}, which is not the enclosing dataitem {pname}"
+                    "DataItemLink `{part}` links to {who}, which is not the enclosing dataitem {pname}: a link to an outer dataitem is not pinned (docs/probes-needed.md)"
                 ));
                 continue;
             }

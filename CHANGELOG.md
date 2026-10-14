@@ -30,6 +30,7 @@ All notable changes to this project are documented here. Format based on
 - **server:** affectedOnly selects previously failing tests by coverage (includeFailing opt-in), and a packaged app under test stops making its callers unknown
 
 ### Fixed
+- **test-data:** say so when --no-auto-provision uses a managed-slot backup reader that differs from the pin
 - **tools:** agent_scratchpad refuses an identity with no session token
 - **emit:** PARTIAL-EMIT-DROP names the dropped file's recorded AL diagnostics
 - **server:** --server and --per-suite refuse a module whose dropped file took an unnamed test codeunit

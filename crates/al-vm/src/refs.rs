@@ -34,11 +34,7 @@ const SYSTEM_FIELD_BASE: u32 = 2_000_000_000;
 /// No corpus test names the number itself: docs/probes-needed.md, batch 7. The other system fields
 /// keep 2000000000 to 2000000004.
 pub(crate) fn al_field_no(id: u32) -> i32 {
-    if id == SYSTEM_ROW_VERSION_ID {
-        0
-    } else {
-        id as i32
-    }
+    if id == SYSTEM_ROW_VERSION_ID { 0 } else { id as i32 }
 }
 
 /// The internal id of SystemRowVersion, which AL code sees as field 0.
@@ -365,7 +361,9 @@ impl Session {
             }
             "FieldExist" => {
                 let no = int_arg(args, 0)?;
-                Ok(Value::Boolean(t.fields.iter().any(|f| i64::from(al_field_no(f.id)) == no)))
+                Ok(Value::Boolean(
+                    t.fields.iter().any(|f| i64::from(al_field_no(f.id)) == no),
+                ))
             }
             "FieldCount" => Ok(Value::Integer(enumerable_fields(&t).len() as i32)),
             "FieldIndex" => {

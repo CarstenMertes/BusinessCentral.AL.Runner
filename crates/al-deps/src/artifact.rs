@@ -131,11 +131,11 @@ fn rank_by_name<'a, T>(items: &'a [T], name_of: impl Fn(&T) -> &str, dep: &DepDe
     // The platform itself (`System`) is not an application: its package sits in the archive's
     // `ModernDev/pfiles/microsoft dynamics nav/<version>/al development environment/` folder.
     if name == "system" {
-        out.extend(
-            items
-                .iter()
-                .filter(|e| name_of(e).to_ascii_lowercase().ends_with("/al development environment/system.app")),
-        );
+        out.extend(items.iter().filter(|e| {
+            name_of(e)
+                .to_ascii_lowercase()
+                .ends_with("/al development environment/system.app")
+        }));
     }
     out
 }
@@ -868,12 +868,18 @@ mod tests {
             &app_json(ANY, "Any", &[]),
             &[("Any.Codeunit.al", "codeunit 130500 Any { }")],
         );
-        put("Applications/TestFramework/TestLibraries/Any/Source/Any.Source.zip", &any);
+        put(
+            "Applications/TestFramework/TestLibraries/Any/Source/Any.Source.zip",
+            &any,
+        );
         let mock = source_zip(
             &app_json(MOCK, "Permissions Mock", &[]),
             &[("M.Codeunit.al", "codeunit 131006 \"Permissions Mock\" { }")],
         );
-        put("Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip", &mock);
+        put(
+            "Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip",
+            &mock,
+        );
         let satl = source_zip(
             &app_json(
                 SATL,
@@ -882,7 +888,10 @@ mod tests {
             ),
             &[("P.Codeunit.al", "codeunit 132916 \"Azure AD Plan Test Library\" { }")],
         );
-        put("Applications/System Application/Test/System Application Test Library.Source.zip", &satl);
+        put(
+            "Applications/System Application/Test/System Application Test Library.Source.zip",
+            &satl,
+        );
         put(SYSTEM_APP_ENTRY, &system_app());
         // Filler a walk must not need to read.
         put("ServiceTier/big.dll", &[0u8; 100]);
@@ -914,7 +923,13 @@ mod tests {
         assert_eq!(cdn.index_calls.get(), 0, "an exact local build needs no feed");
         assert_eq!(cdn.platform_calls.get(), 0);
         // The source of an app read from there fills Microsoft's build variables with that build.
-        assert!(out.log.iter().any(|l| l.contains("27.5.46862.48827") && l.contains("local")), "{:?}", out.log);
+        assert!(
+            out.log
+                .iter()
+                .any(|l| l.contains("27.5.46862.48827") && l.contains("local")),
+            "{:?}",
+            out.log
+        );
     }
 
     #[test]
@@ -935,7 +950,10 @@ mod tests {
         f.local_artifacts = Some(sandbox);
         let out = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap();
         let used = out.artifact.unwrap();
-        assert_eq!((used.build.to_string().as_str(), used.origin), ("27.5.46862.56249", Origin::Published));
+        assert_eq!(
+            (used.build.to_string().as_str(), used.origin),
+            ("27.5.46862.56249", Origin::Published)
+        );
     }
 
     #[test]

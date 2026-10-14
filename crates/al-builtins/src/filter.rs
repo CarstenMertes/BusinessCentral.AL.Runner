@@ -180,7 +180,11 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
             // active. No corpus test substitutes such a text (docs/probes-needed.md, batch 7), so it
             // is refused instead of matched literally.
             if let Value::Text(t) | Value::Code(t) = &arg {
-                if let Some(ch) = t.chars().find(|ch| "@*?&|()=<>'".contains(*ch)).or_else(|| t.contains("..").then_some('.')) {
+                if let Some(ch) = t
+                    .chars()
+                    .find(|ch| "@*?&|()=<>'".contains(*ch))
+                    .or_else(|| t.contains("..").then_some('.'))
+                {
                     return Err(format!(
                         "placeholder %{n} holds a text with the filter character `{ch}`: how BC quotes it is not pinned"
                     ));

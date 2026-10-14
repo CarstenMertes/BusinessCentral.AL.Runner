@@ -933,7 +933,11 @@ impl Run {
         };
         let mine: Vec<usize> = (0..x.added.len()).filter(under).collect();
         let at = |out: &[ItemRef], base: usize| out.iter().position(|c| *c == ItemRef::Base(base));
-        for &c in mine.iter().rev().filter(|&&c| x.added[c].place == ir::AddedPlace::First) {
+        for &c in mine
+            .iter()
+            .rev()
+            .filter(|&&c| x.added[c].place == ir::AddedPlace::First)
+        {
             out.insert(0, ItemRef::Added(c));
         }
         for &c in &mine {

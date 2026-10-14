@@ -989,11 +989,7 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
         };
         let item = item_ir(&o, raw, Some(n + j), parent, parent_table, &mut reasons);
         // Two items at the same spot would need an order the corpus does not pin.
-        if place != ir::AddedPlace::Last
-            && added
-                .iter()
-                .any(|a| a.base_parent == base_parent && a.place == place)
-        {
+        if place != ir::AddedPlace::Last && added.iter().any(|a| a.base_parent == base_parent && a.place == place) {
             reasons.push(format!(
                 "two data items added to the same place ({}) (their order is not pinned)",
                 raw.target.as_deref().unwrap_or_default()

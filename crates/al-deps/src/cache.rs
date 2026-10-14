@@ -49,7 +49,9 @@ pub fn cache_root_from_env(flag: Option<&Path>) -> PathBuf {
 /// artifacts there are extracted: `<build>/platform/Applications/**` holds the same files as the
 /// platform archive the feed serves.
 pub fn bcartifacts_sandbox(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
-    let home = env("HOME").or_else(|| env("USERPROFILE")).filter(|v| !v.trim().is_empty())?;
+    let home = env("HOME")
+        .or_else(|| env("USERPROFILE"))
+        .filter(|v| !v.trim().is_empty())?;
     let dir = PathBuf::from(home).join(".bcartifacts.cache").join("sandbox");
     dir.is_dir().then_some(dir)
 }

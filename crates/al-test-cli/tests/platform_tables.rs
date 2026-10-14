@@ -569,6 +569,35 @@ fn code_coverage_tables_hold_what_was_recorded_and_delete_all_empties_them() {
     passes(&o, "ARecordingAfterDeleteAllStartsFromNothing");
 }
 
+/// codeunit/TestCodeCoverageLineTextContracts.al: the `begin` and `end` lines have `Empty` rows, every row's `Line` holds the
+/// platform's text for an app without source, and the status is Covered, Not Covered or Non Applicable.
+#[test]
+fn code_coverage_rows_of_an_app_without_source_hold_the_platform_text_and_a_status() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Branch(V: Integer): Integer
+  begin
+    if V > 1 then
+      exit(1);
+    exit(0);
+  end;
+  [Test] procedure Rows()
+  var C: Record "Code Coverage"; Rows: Text;
+  begin
+    CodeCoverageLog(false, false); C.DeleteAll();
+    CodeCoverageLog(true, false); Branch(5); CodeCoverageLog(false, false);
+    C.SetRange("Object ID", 50000); C.SetRange("Line No.", 2, 7);
+    C.FindSet();
+    repeat
+      if not C.Line.StartsWith('The extension that declares this object has its manifest property ShowMyCode') then Error('line text %1', C.Line);
+      Rows += Format(C."Line No.") + ' ' + Format(C."Line Type") + ' ' + Format(C."No. of Hits") + ' ' + Format(C."Code Coverage Status") + '|';
+    until C.Next() = 0;
+    if Rows <> '2 Trigger/Function 0 Non Applicable|3 Empty 0 Non Applicable|4 Code 1 Covered|5 Code 1 Covered|6 Code 0 Not Covered|7 Empty 0 Non Applicable|' then Error(Rows);
+  end; }"#,
+    );
+    passes(&o, "Rows");
+}
+
 /// A `[Test]` procedure that starts while recording has a Tests Run row, and the methods that run
 /// inside it a Test Lookup row each; a call outside any test leaves none
 /// (codeunit/TestCodeCoveragePerTest.al).

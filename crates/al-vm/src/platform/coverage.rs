@@ -21,10 +21,14 @@
 //!   leaves no per-test row (same file, `PerTestTables_NoTestStartedWhileRecording_AreEmpty...`).
 //! - `Test ID` and `Method ID` are only compared between rows, never to a literal.
 //!
+//! - Of an app compiled without its source in the symbols, every row's `Line` holds the platform's
+//!   "source cannot be viewed" text; the `begin` and `end` lines are `Empty` rows; the status is
+//!   Covered, Not Covered or Non Applicable (codeunit/TestCodeCoverageLineTextContracts.al).
+//!
 //! Not pinned, and set to a stated default (docs/probes-needed.md, "Code coverage rows"): which
-//! source lines besides statements and declarations have a row, `Line` (the source text), `Code
-//! Coverage Status`, the `Method Id` column, the hits of a `Trigger/Function` row, whether an
-//! object that was never entered while recording has rows.
+//! other source lines have a row, `Line` of an app that shows its source, the `Method Id` column,
+//! the hits of a `Trigger/Function` row, whether an object that was never entered while recording
+//! has rows.
 
 use crate::Session;
 use al_builtins::filter::FieldFilter;
@@ -37,6 +41,11 @@ pub(crate) const CODE_COVERAGE: u32 = 2_000_000_049;
 pub(crate) const TEST_LOOKUP: u32 = 2_000_000_288;
 pub(crate) const TESTS_RUN: u32 = 2_000_000_289;
 pub(crate) const COVERAGE_TABLES: [u32; 3] = [CODE_COVERAGE, TEST_LOOKUP, TESTS_RUN];
+
+/// What `Line` holds for an app compiled without its source in the symbols, the default
+/// (codeunit/TestCodeCoverageLineTextContracts.al). An app with `ShowMyCode` or
+/// `IncludeSourceInSymbolFile` would show the source text: not pinned (docs/probes-needed.md).
+const NO_SOURCE: &str = "The extension that declares this object has its manifest property ShowMyCode (being deprecated) or IncludeSourceInSymbolFile set to false. This means that the source code cannot be viewed.";
 
 /// What recording noted since the tables were last emptied.
 #[derive(Default)]
@@ -184,11 +193,20 @@ impl Session {
         // Per object: the declaration lines, and the statement lines with their hits.
         let mut headers: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
         let mut header_ids: BTreeSet<u32> = BTreeSet::new();
+        // The `begin` and `end` lines of a routine are `Empty` rows (codeunit/TestCodeCoverageLineTextContracts.al:
+        // 26 and 30 of the probe procedure).
+        let mut frame_lines: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
         for &oi in &rec.entered {
             for r in &program.objects[oi].routines {
                 if let Some(p) = program.pos(r.pos) {
                     headers.entry(oi).or_default().insert(p.line);
                     header_ids.insert(r.pos);
+                    for id in [r.begin_pos, r.end_pos] {
+                        if let Some(p) = program.pos(id) {
+                            frame_lines.entry(oi).or_default().insert(p.line);
+                            header_ids.insert(id);
+                        }
+                    }
                 }
             }
         }
@@ -210,7 +228,14 @@ impl Session {
             r[super::pos(t, 2)] = Value::Integer(o.id.unwrap_or(0) as i32);
             r[super::pos(t, 3)] = Value::Integer(line as i32);
             r[super::pos(t, 4)] = Self::option_member(t, 4, kind);
+            r[super::pos(t, 5)] = Value::Text(NO_SOURCE.into());
             r[super::pos(t, 6)] = Value::Integer(hits as i32);
+            let status = match (kind, hits) {
+                ("Code", 0) => "NotCovered",
+                ("Code", _) => "Covered",
+                _ => "NonApplicable",
+            };
+            r[super::pos(t, 7)] = Self::option_member(t, 7, status);
             out.push(r);
         };
         for (oi, lines) in &headers {
@@ -219,6 +244,16 @@ impl Session {
             }
             for &line in lines {
                 row(*oi, line, "Trigger/Function", 0);
+            }
+        }
+        for (oi, lines) in &frame_lines {
+            if program.objects[*oi].id.is_none() {
+                continue;
+            }
+            for &line in lines {
+                if !headers.get(oi).is_some_and(|h| h.contains(&line)) && !code.contains_key(&(*oi, line)) {
+                    row(*oi, line, "Empty", 0);
+                }
             }
         }
         for ((oi, line), hits) in &code {

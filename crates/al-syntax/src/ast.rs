@@ -620,6 +620,28 @@ impl Routine {
             .find(Self::is_routine_keyword)
             .map(|t| usize::from(t.text_range().start()))
     }
+    /// Offset of the `begin` that opens the body (a routine without a body has none).
+    pub fn begin_offset(&self) -> Option<usize> {
+        let tok = self.body()?.first_token()?;
+        tok.text()
+            .eq_ignore_ascii_case("begin")
+            .then(|| usize::from(tok.text_range().start()))
+    }
+    /// Offset of the `end` that closes the body (a routine without a body has none).
+    pub fn end_offset(&self) -> Option<usize> {
+        let mut t = self.0.last_token();
+        while let Some(tok) = t {
+            if tok.kind().is_trivia() || tok.text() == ";" {
+                t = tok.prev_token();
+            } else {
+                return tok
+                    .text()
+                    .eq_ignore_ascii_case("end")
+                    .then(|| usize::from(tok.text_range().start()));
+            }
+        }
+        None
+    }
     fn has_modifier(&self, m: &str) -> bool {
         significant_tokens(&self.0)
             .take_while(|t| !Self::is_routine_keyword(t))

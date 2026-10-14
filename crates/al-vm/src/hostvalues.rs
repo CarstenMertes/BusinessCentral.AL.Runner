@@ -96,10 +96,11 @@ impl Session {
             "Database.TenantId#1" => Ok(Value::Text(self.host.identity.tenant_id())),
             "System.GuiAllowed#1" => Ok(Value::Boolean(self.host.identity.gui_allowed())),
             "System.IsServiceTier#1" => Ok(Value::Boolean(self.host.identity.is_service_tier())),
-            // The folder AL code writes scratch files to. The corpus only builds file names from it
-            // (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al); what BC answers on the
-            // Linux tier is not recorded, so the runtime's own virtual folder is used (docs/probes-needed.md).
-            "System.TemporaryPath#1" => Ok(Value::Text("/tmp/".into())),
+            // The folder AL code writes scratch files to. BC's answer ends with `TEMP\` on the Linux tier
+            // too (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:TemporaryPath_EndsWithTheTempFolderAndABackslash);
+            // the part before it is not pinned, so the path is the relative `TEMP\`, which the files
+            // directory (or the in-memory files) keeps inside the run (docs/owner-review.md).
+            "System.TemporaryPath#1" => Ok(Value::Text("TEMP\\".into())),
             "System.WindowsLanguage#1" => Ok(Value::Integer(self.host.identity.windows_language())),
             "System.GlobalLanguage#1" => match args.first() {
                 None => Ok(Value::Integer(self.global_language)),

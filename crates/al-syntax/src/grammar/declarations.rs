@@ -112,7 +112,9 @@ pub(crate) fn type_ref(p: &mut Parser) {
             }
         }
         "option" => loop {
-            if matches!(p.current(), Ident | QuotedIdent | Integer) {
+            // `Option var X: ..` (a bare return type, then the var section) has no members.
+            let keyword = p.current() == Ident && (p.at_kw("var") || p.at_kw("begin"));
+            if !keyword && matches!(p.current(), Ident | QuotedIdent | Integer) {
                 p.bump_any();
             }
             if !p.eat(Comma) {
@@ -328,6 +330,15 @@ mod tests {
             t("Label 'Hi %1', Comment = '%1 = name', Locked = true, MaxLength = 10"),
             "(TypeRef Label 'Hi %1' , (Property Comment = (PropertyValue '%1 = name')) , (Property Locked = (PropertyValue true)) , (Property MaxLength = (PropertyValue 10)))"
         );
+    }
+
+    #[test]
+    fn a_bare_option_return_type_does_not_take_the_next_keyword_as_a_member() {
+        // Base Application's `procedure ConvertPostingType(): Option var FAJnlLine: ...`: the `var`
+        // that follows is the next section, not an option member.
+        assert_eq!(errors("procedure P(): Option var X: Integer; begin end;", routine), 0);
+        assert_eq!(errors("procedure P(): Option begin end;", routine), 0);
+        assert_eq!(t("Option A,B"), "(TypeRef Option A , B)");
     }
 
     #[test]

@@ -268,10 +268,22 @@ pub fn extension_columns<'s>(
     sym: Option<&'s SymbolStore>,
     t: &BcTable,
 ) -> Result<(Option<BcTable>, Vec<ExtColumn<'s>>)> {
+    extension_columns_in(src, sym, &bc_tables(src)?, t)
+}
+
+/// [`extension_columns`] over a table list the caller already parsed (parsing every table name
+/// of a backup costs milliseconds; a caller that reads many tables parses once).
+pub fn extension_columns_in<'s>(
+    src: &dyn BcSource,
+    sym: Option<&'s SymbolStore>,
+    tables: &[BcTable],
+    t: &BcTable,
+) -> Result<(Option<BcTable>, Vec<ExtColumn<'s>>)> {
     let want = format!("{}$ext", t.table_name);
-    let companion = bc_tables(src)?
-        .into_iter()
-        .find(|x| x.company == t.company && x.app_id == t.app_id && eq_ci(&x.table_name, &want));
+    let companion = tables
+        .iter()
+        .find(|x| x.company == t.company && x.app_id == t.app_id && eq_ci(&x.table_name, &want))
+        .cloned();
     let mut out = Vec::new();
     let Some(c) = companion else { return Ok((None, out)) };
     for col in src.columns(&c.table)? {
@@ -531,6 +543,17 @@ pub fn plan_read_table(
     t: &BcTable,
     req: &ReadRequest,
 ) -> Result<ReadPlan> {
+    plan_read_table_in(src, sym, &bc_tables(src)?, t, req)
+}
+
+/// [`plan_read_table`] over a table list the caller already parsed.
+pub fn plan_read_table_in(
+    src: &dyn BcSource,
+    sym: Option<&SymbolStore>,
+    tables: &[BcTable],
+    t: &BcTable,
+    req: &ReadRequest,
+) -> Result<ReadPlan> {
     let t = t.clone();
     let al_table = sym.and_then(|s| s.find_for_sql_table(strip_ext(&t.table_name), t.app_id.as_deref()));
     if sym.is_some() && al_table.is_none() {
@@ -552,7 +575,7 @@ pub fn plan_read_table(
     let mut key_cols: Vec<SysColumn> = Vec::new(); // the join key as base-table columns
     let mut comp_key: Vec<SysColumn> = Vec::new(); // the same key as companion columns, same order
     if req.merge_extensions {
-        let (c, e) = extension_columns(src, sym, &t)?;
+        let (c, e) = extension_columns_in(src, sym, tables, &t)?;
         companion = c;
         ext_cols = e;
         if let Some(c) = &companion {

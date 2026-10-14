@@ -130,6 +130,11 @@ pub trait TableProvider: Send + Sync {
     fn source(&self) -> String;
     /// Reads the rows of the table from the source.
     fn read(&self, table: &TableRequest) -> Result<Arc<TableRows>, TableError>;
+    /// What opening the source and reading from it cost so far, for `--timings`. Additive: a
+    /// provider that does not measure answers `None`.
+    fn cost(&self) -> Option<String> {
+        None
+    }
 }
 
 type Read = Result<Arc<TableRows>, TableError>;

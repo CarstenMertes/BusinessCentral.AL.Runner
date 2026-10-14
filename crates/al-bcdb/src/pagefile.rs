@@ -115,8 +115,33 @@ pub struct CrossCheck {
     pub last_wins_disagreements: Vec<i32>,
 }
 
+/// Where a caller keeps the page-map index of a backup between runs. The core does no OS access
+/// (ADR-006); a command line implements this over a file.
+pub trait IndexStore: Send + Sync {
+    /// The bytes saved by an earlier [`save`](IndexStore::save), if any.
+    fn load(&self) -> Option<Vec<u8>>;
+    /// Keeps the bytes; a failure to keep them is the store's to ignore.
+    fn save(&self, bytes: &[u8]);
+}
+
+const INDEX_MAGIC: &[u8; 8] = b"ALBXPMAP";
+const INDEX_VERSION: u32 = 1;
+
 impl PageFile {
     pub fn open(src: Box<dyn ByteSource>) -> Result<PageFile> {
+        Self::open_with(src, None)
+    }
+
+    /// Opens the backup, taking the page map from `store` when it holds one made for this very
+    /// file (same length, same data regions). Building the map verifies the lead block of every
+    /// extent, one small read each, which on a cold 900 MB backup costs seconds; a saved map
+    /// costs one read of about a megabyte. A map that does not fit the file, or is damaged, is
+    /// ignored, rebuilt and saved again.
+    pub fn open_indexed(src: Box<dyn ByteSource>, store: &dyn IndexStore) -> Result<PageFile> {
+        Self::open_with(src, Some(store))
+    }
+
+    fn open_with(src: Box<dyn ByteSource>, store: Option<&dyn IndexStore>) -> Result<PageFile> {
         let mtf = MtfFile::parse(&*src)?;
         let mut pf = PageFile {
             src,
@@ -128,10 +153,112 @@ impl PageFile {
             file_pages: 0,
             pfs: Vec::new(),
         };
-        pf.build_map()?;
+        let restored = store
+            .and_then(|s| s.load())
+            .is_some_and(|bytes| pf.restore_index(&bytes));
+        if !restored {
+            pf.build_map()?;
+            if let Some(s) = store {
+                s.save(&pf.index_bytes());
+            }
+        }
         let n = pf.file_pages / PFS_INTERVAL + 2;
         pf.pfs = (0..n).map(|_| OnceLock::new()).collect();
         Ok(pf)
+    }
+
+    /// The page map as bytes: a header naming the file it was made for (length and data
+    /// regions), the counts, then one little-endian offset per page id.
+    fn index_bytes(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(96 + self.map.len() * 8);
+        b.extend_from_slice(INDEX_MAGIC);
+        b.extend_from_slice(&INDEX_VERSION.to_le_bytes());
+        b.extend_from_slice(&self.src.len().to_le_bytes());
+        b.extend_from_slice(&(self.mtf.mqda_regions.len() as u32).to_le_bytes());
+        for r in &self.mtf.mqda_regions {
+            b.extend_from_slice(&r.data_offset.to_le_bytes());
+            b.extend_from_slice(&r.block_count.to_le_bytes());
+        }
+        for v in [
+            self.mapped,
+            self.superseded,
+            self.gam_intervals,
+            self.file_pages,
+            self.map.len(),
+        ] {
+            b.extend_from_slice(&(v as u64).to_le_bytes());
+        }
+        for &o in &self.map {
+            b.extend_from_slice(&o.to_le_bytes());
+        }
+        b
+    }
+
+    /// Takes the page map from `bytes` when they were made for this file; false otherwise (and
+    /// the page file is left as it was).
+    fn restore_index(&mut self, bytes: &[u8]) -> bool {
+        let at = std::cell::Cell::new(0usize);
+        let take = |n: usize| -> Option<&[u8]> {
+            let from = at.get();
+            let s = bytes.get(from..from.checked_add(n)?)?;
+            at.set(from + n);
+            Some(s)
+        };
+        let ok = (|| -> Option<(Vec<u64>, [usize; 4])> {
+            if take(8)? != INDEX_MAGIC || u32::from_le_bytes(take(4)?.try_into().ok()?) != INDEX_VERSION {
+                return None;
+            }
+            if u64::from_le_bytes(take(8)?.try_into().ok()?) != self.src.len() {
+                return None;
+            }
+            let regions = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+            if regions != self.mtf.mqda_regions.len() {
+                return None;
+            }
+            for r in &self.mtf.mqda_regions {
+                let off = u64::from_le_bytes(take(8)?.try_into().ok()?);
+                let blocks = u64::from_le_bytes(take(8)?.try_into().ok()?);
+                if off != r.data_offset || blocks != r.block_count {
+                    return None;
+                }
+            }
+            let mut counts = [0usize; 5];
+            for c in &mut counts {
+                *c = usize::try_from(u64::from_le_bytes(take(8)?.try_into().ok()?)).ok()?;
+            }
+            let n = counts[4];
+            if bytes.len().checked_sub(at.get())? != n.checked_mul(8)? {
+                return None;
+            }
+            let len = self.src.len();
+            let mut map = Vec::with_capacity(n);
+            let mut mapped = 0usize;
+            for chunk in take(n * 8)?.chunks_exact(8) {
+                let o = u64::from_le_bytes(chunk.try_into().ok()?);
+                if o != NONE {
+                    if o.checked_add(PAGE_SIZE as u64)? > len {
+                        return None;
+                    }
+                    mapped += 1;
+                }
+                map.push(o);
+            }
+            if mapped != counts[0] {
+                return None;
+            }
+            Some((map, [counts[0], counts[1], counts[2], counts[3]]))
+        })();
+        match ok {
+            Some((map, [mapped, superseded, gam_intervals, file_pages])) => {
+                self.map = map;
+                self.mapped = mapped;
+                self.superseded = superseded;
+                self.gam_intervals = gam_intervals;
+                self.file_pages = file_pages;
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn mtf(&self) -> &MtfFile {

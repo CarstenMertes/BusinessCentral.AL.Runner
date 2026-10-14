@@ -380,6 +380,18 @@ fn run_version(
             p.tests.as_secs_f64(),
             started.elapsed().as_secs_f64()
         );
+        let c = &p.compile_parts;
+        eprintln!(
+            "compile: load {:.2} s, members {:.2} s, check workspace {:.2} s, baseline roots {:.2} s, demand {:.2} s, check rest {:.2} s, lower {:.2} s, engine {:.2} s",
+            c.load.as_secs_f64(),
+            c.members.as_secs_f64(),
+            c.check.workspace.as_secs_f64(),
+            c.check.baseline.as_secs_f64(),
+            c.check.demand.as_secs_f64(),
+            c.check.rest.as_secs_f64(),
+            c.lower.as_secs_f64(),
+            p.engine.as_secs_f64()
+        );
         let slowest: Vec<String> = p
             .slowest
             .iter()

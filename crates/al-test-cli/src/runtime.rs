@@ -111,6 +111,10 @@ pub struct Phases {
     pub compile: std::time::Duration,
     pub baseline: std::time::Duration,
     pub tests: std::time::Duration,
+    /// The parts of the compile.
+    pub compile_parts: al_sema::lower::CompileTimings,
+    /// Building the engine from the lowered program.
+    pub engine: std::time::Duration,
     /// The test codeunits (object id, name) that took longest, slowest first (at most
     /// [`SLOWEST`]).
     pub slowest: Vec<(u32, String, std::time::Duration)>,
@@ -272,8 +276,10 @@ impl CorpusRuntime {
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
+        let engine_started = std::time::Instant::now();
         let mut engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
         global_triggers_find_unavailable(&mut engine, &lowered);
+        let engine_time = engine_started.elapsed();
         let compile_time = compile_started.elapsed();
         let started = std::time::Instant::now();
         let baseline = if baseline {
@@ -392,6 +398,8 @@ impl CorpusRuntime {
                 compile: compile_time,
                 baseline: baseline_time,
                 tests: tests_time,
+                compile_parts: lowered.timings,
+                engine: engine_time,
                 slowest: codeunit_times,
             },
             details,

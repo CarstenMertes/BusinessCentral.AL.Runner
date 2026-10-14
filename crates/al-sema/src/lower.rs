@@ -13,7 +13,19 @@ use std::collections::HashMap;
 
 /// (lower-case attribute name, argument constants) per attribute.
 
+/// Wall time of the parts of a compile (`--timings`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CompileTimings {
+    /// Reading the apps: parsing the workspace's files, scanning the dependencies'.
+    pub load: std::time::Duration,
+    pub members: std::time::Duration,
+    pub check: crate::check::CheckTimings,
+    pub lower: std::time::Duration,
+}
+
 pub struct Lowered {
+    /// Zero unless the compile ran through `compile_apps_with`.
+    pub timings: CompileTimings,
     pub program: ir::Program,
     /// Per object, per routine: why it cannot run (empty = it can).
     pub unsupported: Vec<Vec<Vec<String>>>,
@@ -90,6 +102,7 @@ pub fn lower_with_positions(
         .flat_map(|(oi, offsets)| offsets.iter().enumerate().map(move |(ri, &at)| ((oi, at), ri)))
         .collect();
     let mut out = Lowered {
+        timings: CompileTimings::default(),
         program: ir::Program {
             objects: Vec::new(),
             apps: ws
@@ -3578,10 +3591,21 @@ fn compile_with_roots(
     catalog: &al_builtins::catalog::Catalog,
     roots: crate::check::Roots,
 ) -> (Workspace, Lowered) {
+    let started = std::time::Instant::now();
     let ws = Workspace::load_apps(apps, kinds, symbols);
+    let load = started.elapsed();
+    let started = std::time::Instant::now();
     let members = crate::members::build(&ws);
+    let members_time = started.elapsed();
     let checked = crate::check::check_with(&ws, &members, catalog, roots);
-    let lowered = lower(&ws, &members, &checked);
+    let started = std::time::Instant::now();
+    let mut lowered = lower(&ws, &members, &checked);
+    lowered.timings = CompileTimings {
+        load,
+        members: members_time,
+        check: checked.timings,
+        lower: started.elapsed(),
+    };
     (ws, lowered)
 }
 

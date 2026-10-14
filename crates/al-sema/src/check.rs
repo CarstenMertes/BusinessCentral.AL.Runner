@@ -132,7 +132,21 @@ impl<V> PosMap<V> {
     }
 }
 
+/// Wall time of the parts of a check (`--timings`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CheckTimings {
+    /// The workspace's own objects.
+    pub workspace: std::time::Duration,
+    /// The install baseline's roots.
+    pub baseline: std::time::Duration,
+    /// The demand fixpoint over the dependency apps.
+    pub demand: std::time::Duration,
+    /// Sorting the diagnostics and laying out the queries.
+    pub rest: std::time::Duration,
+}
+
 pub struct CheckResult {
+    pub timings: CheckTimings,
     pub diagnostics: Vec<Diagnostic>,
     /// Inferred type of every expression, keyed by (file index, start offset, end offset).
     pub types: PosMap<Ty>,
@@ -226,6 +240,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
+    let mut timings = CheckTimings::default();
     let mut c = Checker::new(ws, members, catalog, system_enums(catalog), demand_mode);
     // The files of the dependency objects the checker reaches are parsed ahead on other
     // threads; parsing is a third of the cost and the checker only waits for what is not ready.
@@ -248,28 +263,37 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
                 });
             }
             c.prefetch = Some(tx);
+            let started = std::time::Instant::now();
             for oi in 0..ws.objects.len() {
                 if !ws.is_dependency(oi) && !skip(oi) {
                     c.check_object(oi);
                     c.take_calls();
                 }
             }
+            timings.workspace = started.elapsed();
+            let started = std::time::Instant::now();
             if roots.baseline {
                 c.reach_baseline();
             }
+            timings.baseline = started.elapsed();
+            let started = std::time::Instant::now();
             let demand = c.run_demand(roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32)));
+            timings.demand = started.elapsed();
             c.prefetch = None;
             demand
         })
     } else {
+        let started = std::time::Instant::now();
         for oi in 0..ws.objects.len() {
             if !skip(oi) {
                 c.check_object(oi);
             }
             c.take_calls();
         }
+        timings.workspace = started.elapsed();
         None
     };
+    let rest_started = std::time::Instant::now();
     let positions: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
     c.diags
         .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
@@ -287,7 +311,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         .enumerate()
         .map(|(oi, cell)| cell.into_inner().flatten().filter(|_| wanted(oi)))
         .collect();
+    timings.rest = rest_started.elapsed();
     CheckResult {
+        timings,
         diagnostics: c.diags,
         types: c.types,
         resolutions: c.resolutions,

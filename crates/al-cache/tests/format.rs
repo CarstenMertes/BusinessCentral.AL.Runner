@@ -170,7 +170,10 @@ fn the_files_that_did_not_parse_are_kept_in_the_entry() {
             dependencies: vec![],
             files: vec![
                 ("good.al".into(), SRC.into()),
-                ("bad.al".into(), "codeunit 59999 Broken { procedure P( begin end; }".into()),
+                (
+                    "bad.al".into(),
+                    "codeunit 59999 Broken { procedure P( begin end; }".into(),
+                ),
             ],
         }],
         &Default::default(),

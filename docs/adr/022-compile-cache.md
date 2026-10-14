@@ -61,7 +61,9 @@ runtime has no SQL schema step, so a cache can be opened by reading an index and
      No level 19 (8 % smaller, not worth the time). No source positions (dependency IR has none).
    - The entry is about 16 to 19 MB per BC build.
 
-3. **Loading costs as little as possible.**
+3. **Loading costs as little as possible.** (The first implementation keeps three parts of this for later; see
+   "Not done" below: the event index and the member tables are not stored, the sources of the dependency apps are
+   still read, and the blocks are decoded at the start, not on first touch.)
    - Open = read the header and the index. Nothing else.
    - The event index and the member tables are used as stored. They are not rebuilt from objects.
    - The objects the install baseline reaches are decoded in parallel at start (4 threads: 70 to 90 ms), because every
@@ -429,6 +431,58 @@ lowered again from source, the corruption handling, and the CLI spelling).
   cache only with `--compile-cache`; the ratchet runs without it. `alrunner test` uses it unless
   `--no-compile-cache` or `ALRUNNER_NO_COMPILE_CACHE=1`.
 
+### Measured with the implementation (2026-10-14, release build, 12 cores shared with other agents)
+
+One session under `flock /tmp/al-perf.lock`, back to back: uncached, cold (the entry is deleted, so the run builds it),
+hit, hit, uncached again. Wall seconds, CPU seconds (user + system), and the peak resident size of the largest
+process. The load average was 6 to 8 for the first three rows and 8 to 15 for the last, so compare the CPU column
+and the pairs, not rows. Raw output: `docs/adr/022-measurements.txt`.
+
+| Run | Uncached (two runs) | Cold: build + run | Of which the build | Hit (two runs) | Memory: uncached / cold / hit |
+|---|---|---|---|---|---|
+| Small app, one test (`alrunner`, BC 29, no test data) | 2.02 s, 1.56 s; CPU 7.5, 7.0 s | 6.11 s; CPU 24.8 s | 5.28 s | 0.76 s, 0.77 s; CPU 2.6 s | 1254 / 3925 / 895 MB |
+| Corpus, BC 29, Microsoft's apps (`al-test-cli`) | 2.23 s, 2.44 s; CPU 12.0, 12.2 s | 6.52 s; CPU 28.6 s | 4.97 s | 1.80 s, 1.50 s; CPU 7.3, 7.0 s | 1433 / 3766 / 1229 MB |
+| Tests-ERM, BC 27.5, test data (`alrunner`) | 6.68 s, 6.80 s; CPU 29.8, 30.7 s | 9.95 s; CPU 40.4 s | 4.64 s | 5.58 s, 5.14 s; CPU 20.3, 19.6 s | 3094 / 4140 / 2106 MB |
+| All 32 buckets, one process, test data | 33.4 s, 30.4 s; CPU 130.8, 125.5 s | 29.2 s; CPU 124.9 s | 4.71 s | 35.0 s, 34.8 s; CPU 118.5, 116.1 s | 6310 / 4963 / 4710 MB |
+
+- **Build.** 4.6 to 5.3 s and 3.8 to 4.1 GB, for an entry of 12.9 to 13.3 MB. The complete check of the dependency apps
+  runs on all cores now (`Checker::check_objects_parallel`); before, it was serial and the build took 10 to 19 s.
+- **Hit.** The file opens in 0.03 to 0.05 s (key, read, header and index). Reading the blocks takes 0.05 to 0.17 s
+  on all cores (more when the machine is loaded). A small app runs 2 to 2.6 times faster than uncached, uses a third
+  of the CPU and 30 % less memory. The corpus runs 1.2 to 1.6 times faster. Tests-ERM runs 1.2 to 1.3 times faster
+  (the 4 s of tests with test data do not change) with a third less CPU and a third less memory.
+- **All 32 buckets: no gain in wall time.** The workspace holds 91 MB of test sources, which load, check and lower the
+  same with and without the cache (load 2.5 s, check 1.3 s, lowering 1.1 to 1.5 s), and 19 s of the run is the
+  tests with test data. The cache replaces the demand compile of the dependency apps (about 3 s on a quiet machine)
+  by reading the blocks (0.15 s). The CPU time is 8 % lower, the peak memory 25 % lower.
+- **Not reached: the projections of the measurement section** (small app 4 to 6 times, corpus 1.4 to 2.3 times). The
+  sources of the dependency apps are still read, inflated, hashed and scanned on every run (0.2 to 0.35 s), every
+  block of the objects the workspace does not change is decoded at the start (more objects than a run reaches), and
+  the whole program is built (the engine reads every object). Skipping these needs the object index and the member
+  tables in the entry, a workspace without dependency sources, and a lazily filled `Program::objects`; see "Not done".
+- **Outcomes.** The program of the cached compile equals the program of the complete compile object for object
+  (`provided.rs` tests, the 78 probes of `demand_audit.rs`), every corpus test of BC 27, 28 and 29 and of the OnPrem
+  and isolation suites has the outcome it has in the eager run, and Tests-ERM with test data and all 40300 tests of the
+  32 buckets have the outcome of the eager run (0 differences). Against the uncached run (demand-driven compile): the
+  corpus differs in the 5 tests of `tools/demand-eager-known-differences.txt` (on all three versions), Tests-ERM in
+  none, and the 32 buckets in 7 of 40300 tests (a test that passes or fails uncached is not run with the cache). The
+  cause is the same as in the corpus: a routine that only the complete compile has is in the static call graph of a
+  page variable, for example `Navigate.OnAction` through a `RunObject` action of a dependency page.
+
+### Not done
+
+- **Skipping the load of the dependency sources, and lazy objects.** The object index and the member tables are not in
+  the entry; the sources of the dependency apps are read and scanned on every run; every needed block is decoded at
+  the start. `Program::objects` is a plain list and the engine reads all of it (tables, the event registry), so lazy
+  decode needs those whole-program passes stored in the entry first.
+- **The same outcome as the uncached run for every test.** The cached run gives the complete compile's outcome, which
+  differs from the demand-driven one in the tests above. Making the two equal means changing what the static call
+  graph of a page variable follows (parts and `RunObject` links of dependency pages) in both paths, so that it does not
+  depend on how much was compiled. That changes the outcomes of the uncached path and is the owner's decision.
+- **`alrunner cache` (list, verify, prune)**; CI prunes with a shell step and verifies with
+  `al-test-cli --build-compile-cache`.
+- **The install-baseline snapshot** (owner decision: not in version 1).
+
 Decided without owner review (2026-10-14):
 
 - A damaged, cut or foreign file is ignored with a note, removed, and the run builds a new one (or, if the entry was
@@ -446,17 +500,21 @@ Decided without owner review (2026-10-14):
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an
   IR type changes the runtime build id and so invalidates all entries; no migration code is needed.
-- **`Program` changes shape** (lazy object slots, entry-local indexes) and the compile pipeline must produce output
-  per app. Today `Program` is one list for all apps. Additive, but not small.
-- **First run is slow.** Building the entries is the eager compile of the whole closure: estimated 10-30 s per Base
-  App version, to be measured. The runner prints one line to stderr saying it is building the cache once. Later
-  runs, and every CI run after the cache-build step, do not pay it.
-- **Memory:** the builder holds an eager compile in memory once. A cached run holds only the index and decoded
-  objects, which may be below today's demand compile; the spike measures it.
-- **Disk:** an entry per app version, left behind after each hotfix. `alrunner cache prune` and `alrunner doctor`
-  (ADR-016) report and remove it.
+- **The program order changes, `Program` does not.** The dependency apps come first in the program of a cached run, so
+  an object index means the same in the entry and in the run; `CorpusRuntime` maps the caller's app indices both ways.
+  Lazy object slots are not built yet (see "Not done").
+- **First run is slow.** Building the entry is the complete compile of the dependency set: measured 4.6 to 5.3 s and
+  3.8 to 4.1 GB for Business Foundation, System Application and Base Application of BC 27.5 to 29 (it was 10 to 19 s
+  while the complete check ran on one thread). The runner prints one line to stderr saying it is building the cache
+  once. Later runs, and every CI run after the cache-build step, do not pay it.
+- **Memory:** the builder holds the complete compile in memory once (3.8 to 4.1 GB measured, so it needs a cap of at
+  least 5 GB). A cached run holds the decoded program: 0.9 GB for a small app, 1.2 GB for the corpus, 2.1 GB for
+  Tests-ERM, against 1.3, 1.4 and 3.1 GB uncached.
+- **Disk:** an entry per set of dependency apps (13 MB), left behind after each hotfix. A run that builds an entry
+  removes the ones nothing used for 30 days. `alrunner cache` and `alrunner doctor` (ADR-016) are not built.
 - **Two paths stay.** The demand-driven compile remains (cache off, WebAssembly, differential), so both are
-  maintained. The cached path adds no new behaviour: it must give the outcomes of the uncached path (ADR-009).
+  maintained. The cached path adds no new behaviour: it gives the outcomes of the complete compile, which are those of
+  the uncached path except in a few tests (see "Outcomes" above and the open question in `docs/owner-review.md`).
 - **ADR-016's rule** (no feature that only hides start-up or run cost) is not broken: this is the owner's explicit
   request, placed after the performance work, with a go/no-go gate.
 

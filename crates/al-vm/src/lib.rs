@@ -549,7 +549,16 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            base: None,
         }))
+    }
+
+    /// A fresh instance of page or report extension `object` that is linked to `base`, the
+    /// instance of the page or report it extends (ADR-023).
+    pub(crate) fn extension_instance(&mut self, object: usize, base: &Rc<RefCell<Instance>>) -> Rc<RefCell<Instance>> {
+        let ext = self.instance(object);
+        ext.borrow_mut().base = Some(Rc::downgrade(base));
+        ext
     }
 
     /// A fresh instance of a table or table extension for one record variable (ADR-021). Its `Rec`
@@ -580,6 +589,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            base: None,
         }))
     }
 
@@ -1032,6 +1042,7 @@ impl Session {
                 };
                 self.finish_call(*object, *routine, inst, args, *try_call, f)
             }
+            E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::InterfaceCall {
                 receiver,
                 targets,
@@ -1284,6 +1295,23 @@ impl Session {
         self.singletons[&object].clone()
     }
 
+    /// The instance of the page or report that the running extension extends (ADR-023). A missing
+    /// or dropped link is reported, never a panic.
+    fn base_instance(&self, f: &Frame) -> Result<Rc<RefCell<Instance>>, Signal> {
+        f.instance
+            .borrow()
+            .base
+            .as_ref()
+            .and_then(std::rc::Weak::upgrade)
+            .ok_or_else(|| {
+                Signal::Unsupported(
+                    "internal error: extension code named a member of its base object, but the extension's instance \
+                     has no live link to the base object's instance"
+                        .into(),
+                )
+            })
+    }
+
     fn place_type(&self, p: &ir::Place, f: &Frame) -> RtType {
         let r = &self.engine.program.objects[f.object].routines[f.routine];
         match p {
@@ -1292,6 +1320,13 @@ impl Session {
                 let o = f.instance.borrow().object as usize;
                 self.engine.program.objects[o].globals[*i].ty.clone()
             }
+            ir::Place::BaseGlobal(i) => match self.base_instance(f) {
+                Ok(b) => {
+                    let o = b.borrow().object as usize;
+                    self.engine.program.objects[o].globals[*i].ty.clone()
+                }
+                Err(_) => RtType::Variant,
+            },
             ir::Place::Index(base, _) => match self.place_type(base, f) {
                 RtType::Array(_, el) => *el,
                 other => other,
@@ -1309,6 +1344,11 @@ impl Session {
         match p {
             ir::Place::Local(i) => Ok(f.locals[*i].clone()),
             ir::Place::Global(i) => Ok(f.instance.borrow().globals[*i].clone()),
+            ir::Place::BaseGlobal(i) => {
+                let base = self.base_instance(f)?;
+                let v = base.borrow().globals.get(*i).cloned();
+                v.ok_or_else(|| base_slot_missing(*i))
+            }
             ir::Place::Index(base, idx) => {
                 let (arr, flat) = self.element(base, idx, f)?;
                 let v = arr.borrow()[flat].clone();
@@ -1403,6 +1443,14 @@ impl Session {
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
+            ir::Place::BaseGlobal(i) => {
+                let base = self.base_instance(f)?;
+                let mut b = base.borrow_mut();
+                match b.globals.get_mut(*i) {
+                    Some(slot) => *slot = v,
+                    None => return Err(base_slot_missing(*i)),
+                }
+            }
             ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_)) => {
                 return self.write_char(base, idx, v, f);
             }
@@ -1735,6 +1783,12 @@ impl Session {
         self.next_guid += 1;
         guid_for(self.guid_seed, self.next_guid)
     }
+}
+
+fn base_slot_missing(slot: usize) -> Signal {
+    Signal::Unsupported(format!(
+        "internal error: the base object's instance has no global slot {slot}"
+    ))
 }
 
 #[cfg(test)]

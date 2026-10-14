@@ -723,6 +723,10 @@ pub struct Instance {
     pub object: u32,
     pub globals: Vec<Value>,
     pub initialized: bool,
+    /// For the instance of a page or report extension: the instance of the page or report it
+    /// extends (ADR-023). `Weak`, so the link adds no reference cycle. `None` for every other
+    /// instance.
+    pub base: Option<std::rc::Weak<RefCell<Instance>>>,
 }
 
 /// State behind a library-type handle; grows with the builtins that need it.

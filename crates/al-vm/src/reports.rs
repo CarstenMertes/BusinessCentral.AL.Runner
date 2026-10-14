@@ -650,7 +650,7 @@ impl Session {
         let ext = match report.extension {
             None => None,
             Some(e) => {
-                let ext_inst = self.instance(e);
+                let ext_inst = self.extension_instance(e, inst);
                 let eir = self.engine.program.objects[e]
                     .report_ext
                     .as_ref()
@@ -1182,7 +1182,7 @@ impl Session {
         for &e in &page.extensions {
             let ext = match &run.ext {
                 Some((i, re)) if *re == e => i.clone(),
-                _ => self.instance(e),
+                _ => self.extension_instance(e, inst),
             };
             exts.push((e, ext));
         }

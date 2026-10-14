@@ -504,6 +504,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             secs(c.lower),
             secs(p.engine)
         );
+        if let Some(line) = p.baseline_line() {
+            eprintln!("{line}");
+        }
         if let Some(c) = &p.cache {
             eprintln!(
                 "compile cache: {}; {} {}",

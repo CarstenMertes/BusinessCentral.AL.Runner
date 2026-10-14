@@ -1,0 +1,634 @@
+//! Whether a selected test can observe the install baseline (ADR-013 decision 5, "Install
+//! baseline only when needed", ADR-020 implementation note).
+//!
+//! The baseline is the data a session holds after the dependency apps' install code ran. A test
+//! sees it only through rows, the counters that must not repeat (system ids, row versions,
+//! AutoIncrement, time stamps of writes), isolated storage and number sequences (`al_vm::Baseline`
+//! holds nothing else), and through the engine's set of tables the baseline could not seed (a
+//! `Get` in dependency code). Every one of those is reached through a database access, a
+//! `CreateGuid`, an `IsolatedStorage` or `NumberSequence` call, or an event whose subscribers do
+//! one of those.
+//!
+//! The rule is a whitelist over the lowered IR, so that anything it does not know is "may
+//! observe" and the baseline runs. The reach starts at every routine of every selected test
+//! codeunit (handlers are routines of the codeunit) and follows direct calls and interface
+//! targets. It says "pure" only when all of this holds for everything reached:
+//!
+//! * the object is a codeunit, and every slot (global, local, parameter, return value) has a type
+//!   that holds no database state: no `Record`, `RecordRef`, `Query`, page, report, `.NET` or
+//!   other handle type;
+//! * every statement and expression is plain computation, a call into the reach, or a builtin
+//!   from the whitelist below (text, list, dictionary, JSON, XML, date and time functions, `Format`,
+//!   `Evaluate`, `Error`, `Message` and friends);
+//! * no routine called is an event publisher (its subscribers could do anything);
+//! * the run has no custom test runner codeunit.
+//!
+//! Whether a test finds the answer it expects when the baseline is missing does not matter: a
+//! pure reach never reads what the baseline holds.
+
+use al_builtins::value::RtType;
+use al_ir::{Arg, Const, Expr, Object, Place, Routine, SetElem, Stmt};
+use al_sema::lower::Lowered;
+use std::collections::HashSet;
+
+/// Builtin receivers whose methods work on values in memory only.
+const PURE_RECEIVERS: &[&str] = &[
+    "Text",
+    "Label",
+    "TextConst",
+    "List",
+    "Dictionary",
+    "JsonArray",
+    "JsonObject",
+    "JsonValue",
+    "JsonToken",
+    "TextBuilder",
+    "BigText",
+    "BigInteger",
+    "Date",
+    "Time",
+    "DateTime",
+    "Enum",
+    "Version",
+    "ErrorInfo",
+    "Variant",
+    "Dialog",
+    "SecretText",
+    "XmlDocument",
+    "XmlElement",
+    "XmlNode",
+    "XmlAttribute",
+    "XmlText",
+    "XmlCData",
+    "XmlComment",
+    "XmlDeclaration",
+    "XmlProcessingInstruction",
+    "XmlNamespaceManager",
+    "XmlAttributeCollection",
+    "XmlDocumentType",
+];
+
+/// The methods of `System` that touch nothing but their arguments, the host clock or the
+/// session's own settings. Left out on purpose: `CreateGuid` (the counter the baseline advanced),
+/// encryption, code coverage, streams, URLs and anything that loads a type.
+const PURE_SYSTEM: &[&str] = &[
+    "Abs",
+    "ArrayLen",
+    "CalcDate",
+    "Clear",
+    "ClearAll",
+    "ClearCollectedErrors",
+    "ClearLastError",
+    "ClosingDate",
+    "CompressArray",
+    "CopyArray",
+    "CreateDateTime",
+    "CurrentDateTime",
+    "Date2DMY",
+    "Date2DWY",
+    "DaTi2Variant",
+    "DMY2Date",
+    "DT2Date",
+    "DT2Time",
+    "DWY2Date",
+    "Evaluate",
+    "Format",
+    "GetCollectedErrors",
+    "GetLastErrorCallStack",
+    "GetLastErrorCode",
+    "GetLastErrorObject",
+    "GetLastErrorText",
+    "GlobalLanguage",
+    "GuiAllowed",
+    "HasCollectedErrors",
+    "IsCollectingErrors",
+    "IsNull",
+    "IsNullGuid",
+    "IsServiceTier",
+    "NormalDate",
+    "Power",
+    "Random",
+    "Randomize",
+    "Round",
+    "RoundDateTime",
+    "Sleep",
+    "TemporaryPath",
+    "Time",
+    "Today",
+    "Variant2Date",
+    "Variant2Time",
+    "WindowsLanguage",
+    "WorkDate",
+];
+
+/// Methods of `Guid` that only convert a value.
+const PURE_GUID: &[&str] = &["ToText"];
+
+/// Library types (`RtType::Library`) that are plain values in memory.
+const PURE_LIBRARY: &[&str] = &[
+    "JsonObject",
+    "JsonArray",
+    "JsonToken",
+    "JsonValue",
+    "TextBuilder",
+    "BigText",
+    "ErrorInfo",
+    "Version",
+    "SecretText",
+    "Dialog",
+    "XmlDocument",
+    "XmlElement",
+    "XmlNode",
+    "XmlAttribute",
+    "XmlText",
+    "XmlCData",
+    "XmlComment",
+    "XmlDeclaration",
+    "XmlProcessingInstruction",
+    "XmlNamespaceManager",
+    "XmlAttributeCollection",
+    "XmlDocumentType",
+];
+
+/// The attributes that make a procedure an event publisher.
+const PUBLISHER_ATTRIBUTES: &[&str] = &[
+    "IntegrationEvent",
+    "BusinessEvent",
+    "InternalEvent",
+    "ExternalBusinessEvent",
+];
+
+/// Why a test of `tests` (object indices of the selected test codeunits) may observe the install
+/// baseline, or `None` when none of them can. The reason names the first routine and construct
+/// that could.
+pub fn may_observe_baseline(lowered: &Lowered, tests: &[usize]) -> Option<String> {
+    let objects = &lowered.program.objects;
+    let mut walk = Walk {
+        objects,
+        seen_objects: HashSet::new(),
+        seen_routines: HashSet::new(),
+        queue: Vec::new(),
+    };
+    for &t in tests {
+        if walk.seen_objects.insert(t) {
+            if let Err(why) = walk.check_object(t) {
+                return Some(why);
+            }
+        }
+        for r in 0..objects[t].routines.len() {
+            walk.reach(t, r);
+        }
+    }
+    while let Some((o, r)) = walk.queue.pop() {
+        let routine = &objects[o].routines[r];
+        let at = |why: String| format!("{}.{}: {why}", objects[o].name, routine.name);
+        if let Err(why) = walk.routine(routine) {
+            return Some(at(why));
+        }
+    }
+    None
+}
+
+/// Words that make a test codeunit unlikely to be free of data access.
+const DATA_WORDS: &[&str] = &[
+    "record",
+    "query",
+    "page",
+    "report",
+    "xmlport",
+    "isolatedstorage",
+    "numbersequence",
+    "createguid",
+    "database",
+    "dotnet",
+    "session",
+    "codeunit.run",
+];
+
+/// A cheap look at the source of the selected test codeunits (`only`: their app and id; `None`:
+/// every file of the workspace) before anything is compiled: `false` when a word shows that they
+/// probably use data. It only decides whether to try compiling without the install baseline; a
+/// wrong answer costs time, never an outcome, because [`may_observe_baseline`] decides.
+pub fn text_looks_pure(ws: &al_sema::Workspace, only: Option<&[(usize, u32)]>) -> bool {
+    let looks = |text: &str| {
+        let lower = text.to_ascii_lowercase();
+        !DATA_WORDS.iter().any(|w| lower.contains(w))
+    };
+    let Some(only) = only else {
+        return ws
+            .files
+            .iter()
+            .filter(|f| ws.kinds[f.app] == al_sema::AppKind::Workspace)
+            .all(|f| looks(&ws.apps[f.app].files[f.file_in_app].1));
+    };
+    only.iter().all(|&(app, id)| {
+        ws.objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.app == app && o.id == Some(id) && o.kind == al_sema::ObjKind::Codeunit)
+            .all(|(_, o)| {
+                let f = &ws.files[o.file];
+                let text = &ws.apps[f.app].files[f.file_in_app].1;
+                let end = ws
+                    .objects
+                    .iter()
+                    .filter(|p| p.file == o.file && p.offset > o.offset)
+                    .map(|p| p.offset)
+                    .min()
+                    .unwrap_or(text.len());
+                text.get(o.offset..end).is_none_or(looks)
+            })
+    })
+}
+
+struct Walk<'a> {
+    objects: &'a [Object],
+    seen_objects: HashSet<usize>,
+    seen_routines: HashSet<(usize, usize)>,
+    queue: Vec<(usize, usize)>,
+}
+
+type Check = Result<(), String>;
+
+impl Walk<'_> {
+    fn check_object(&self, o: usize) -> Check {
+        let obj = &self.objects[o];
+        if obj.kind != "codeunit" {
+            return Err(format!("{} {} is not a codeunit", obj.kind, obj.name));
+        }
+        for g in &obj.globals {
+            ty(&g.ty).map_err(|w| format!("{} {} has a global `{}`: {w}", obj.kind, obj.name, g.name))?;
+        }
+        Ok(())
+    }
+
+    fn reach(&mut self, o: usize, r: usize) {
+        if self.seen_routines.insert((o, r)) {
+            self.queue.push((o, r));
+        }
+    }
+
+    fn enter(&mut self, o: usize, r: usize) -> Check {
+        if o >= self.objects.len() || r >= self.objects[o].routines.len() {
+            return Err("a call to a routine that is not in the program".into());
+        }
+        if self.seen_objects.insert(o) {
+            self.check_object(o)?;
+        }
+        let callee = &self.objects[o].routines[r];
+        if callee
+            .attributes
+            .iter()
+            .any(|a| PUBLISHER_ATTRIBUTES.iter().any(|p| a.name.eq_ignore_ascii_case(p)))
+        {
+            return Err(format!(
+                "calls the event publisher {}.{}, whose subscribers may do anything",
+                self.objects[o].name, callee.name
+            ));
+        }
+        self.reach(o, r);
+        Ok(())
+    }
+
+    fn routine(&mut self, r: &Routine) -> Check {
+        for s in &r.locals {
+            ty(&s.ty).map_err(|w| format!("local `{}`: {w}", s.name))?;
+        }
+        if let Some(t) = &r.ret {
+            ty(t).map_err(|w| format!("return value: {w}"))?;
+        }
+        self.stmts(&r.body)
+    }
+
+    fn stmts(&mut self, body: &[Stmt]) -> Check {
+        for s in body {
+            self.stmt(s)?;
+        }
+        Ok(())
+    }
+
+    fn stmt(&mut self, s: &Stmt) -> Check {
+        match s {
+            Stmt::Assign(p, e) => {
+                self.place(p)?;
+                self.expr(e)
+            }
+            Stmt::Expr(e) => self.expr(e),
+            Stmt::If(c, a, b) => {
+                self.expr(c)?;
+                self.stmts(a)?;
+                self.stmts(b)
+            }
+            Stmt::While(c, b) => {
+                self.expr(c)?;
+                self.stmts(b)
+            }
+            Stmt::Repeat(b, c) => {
+                self.stmts(b)?;
+                self.expr(c)
+            }
+            Stmt::For {
+                var, from, to, body, ..
+            } => {
+                self.place(var)?;
+                self.expr(from)?;
+                self.expr(to)?;
+                self.stmts(body)
+            }
+            Stmt::Foreach {
+                var, collection, body, ..
+            } => {
+                self.place(var)?;
+                self.expr(collection)?;
+                self.stmts(body)
+            }
+            Stmt::Case {
+                scrutinee,
+                branches,
+                otherwise,
+            } => {
+                self.expr(scrutinee)?;
+                for (elems, body) in branches {
+                    for e in elems {
+                        self.set_elem(e)?;
+                    }
+                    self.stmts(body)?;
+                }
+                self.stmts(otherwise)
+            }
+            Stmt::Exit(e) => e.as_ref().map_or(Ok(()), |e| self.expr(e)),
+            Stmt::AssertError(b) => self.stmts(b),
+            Stmt::Break | Stmt::Pos(_) => Ok(()),
+        }
+    }
+
+    fn set_elem(&mut self, e: &SetElem) -> Check {
+        match e {
+            SetElem::One(e) => self.expr(e),
+            SetElem::Range(a, b) => {
+                a.as_ref().map_or(Ok(()), |e| self.expr(e))?;
+                b.as_ref().map_or(Ok(()), |e| self.expr(e))
+            }
+        }
+    }
+
+    fn place(&mut self, p: &Place) -> Check {
+        match p {
+            Place::Local(_) | Place::Global(_) => Ok(()),
+            Place::Index(inner, idx) => {
+                self.place(inner)?;
+                idx.iter().try_for_each(|e| self.expr(e))
+            }
+            Place::Field(..) => Err("reads or writes a record field".into()),
+            Place::BaseGlobal(_) => Err("uses a variable of a base page or report".into()),
+        }
+    }
+
+    fn arg(&mut self, a: &Arg) -> Check {
+        match a {
+            Arg::Value(e) => self.expr(e),
+            Arg::Ref(p) => self.place(p),
+        }
+    }
+
+    fn expr(&mut self, e: &Expr) -> Check {
+        match e {
+            Expr::Const(c) => constant(c),
+            Expr::Load(p) => self.place(p),
+            Expr::CharAt(a, b) | Expr::Binary(_, a, b) => {
+                self.expr(a)?;
+                self.expr(b)
+            }
+            Expr::Unary(_, a) => self.expr(a),
+            Expr::In(a, set) => {
+                self.expr(a)?;
+                set.iter().try_for_each(|s| self.set_elem(s))
+            }
+            Expr::Ternary(a, b, c) => {
+                self.expr(a)?;
+                self.expr(b)?;
+                self.expr(c)
+            }
+            Expr::Convert(t, a) => {
+                ty(t)?;
+                self.expr(a)
+            }
+            Expr::Call {
+                object,
+                routine,
+                instance,
+                args,
+                ..
+            } => {
+                self.enter(*object, *routine)?;
+                if let Some(i) = instance {
+                    self.expr(i)?;
+                }
+                args.iter().try_for_each(|a| self.arg(a))
+            }
+            Expr::InterfaceCall {
+                receiver,
+                targets,
+                args,
+            } => {
+                for &(o, r) in targets {
+                    self.enter(o, r)?;
+                }
+                self.expr(receiver)?;
+                args.iter().try_for_each(|a| self.arg(a))
+            }
+            Expr::InterfaceTest { value, .. } => self.expr(value),
+            Expr::Builtin { id, receiver, args, .. } => {
+                builtin(id)?;
+                if let Some(r) = receiver {
+                    self.arg(r)?;
+                }
+                args.iter().try_for_each(|a| self.arg(a))
+            }
+            Expr::BaseInstance => Err("uses the base page or report".into()),
+            Expr::EnumImpl { .. } => Err("creates the codeunit an enum value implements".into()),
+            Expr::Control { .. } => Err("reads a control of a test page".into()),
+            Expr::QueryColumn { .. } => Err("reads a query column".into()),
+            Expr::DotNet { .. } | Expr::DotNetCoerce(..) | Expr::DotNetOperand(..) => Err("calls into .NET".into()),
+        }
+    }
+}
+
+fn constant(_: &Const) -> Check {
+    Ok(())
+}
+
+/// Whether a builtin (a catalog overload id such as `Text.StrLen#1`) works on values in memory.
+fn builtin(id: &str) -> Check {
+    let method = id.split('#').next().unwrap_or(id);
+    let Some((receiver, name)) = method.split_once('.') else {
+        return Err(format!("calls the builtin `{id}`"));
+    };
+    let ok = match receiver {
+        "System" => PURE_SYSTEM.iter().any(|m| m.eq_ignore_ascii_case(name)),
+        "Guid" => PURE_GUID.iter().any(|m| m.eq_ignore_ascii_case(name)),
+        r => PURE_RECEIVERS.iter().any(|p| p.eq_ignore_ascii_case(r)),
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("calls the builtin `{id}`"))
+    }
+}
+
+/// Whether a slot of this type holds only values in memory.
+fn ty(t: &RtType) -> Check {
+    match t {
+        RtType::Boolean
+        | RtType::Integer
+        | RtType::BigInteger
+        | RtType::Decimal
+        | RtType::Byte
+        | RtType::Char
+        | RtType::Text(_)
+        | RtType::Code(_)
+        | RtType::Date
+        | RtType::Time
+        | RtType::DateTime
+        | RtType::Duration
+        | RtType::Guid
+        | RtType::DateFormula
+        | RtType::Option(_)
+        | RtType::Enum(_)
+        | RtType::Variant
+        | RtType::Codeunit(_)
+        | RtType::Interface(_) => Ok(()),
+        RtType::List(t) | RtType::Array(_, t) => ty(t),
+        RtType::Dictionary(k, v) => {
+            ty(k)?;
+            ty(v)
+        }
+        RtType::Library(n) if PURE_LIBRARY.iter().any(|p| p.eq_ignore_ascii_case(n)) => Ok(()),
+        RtType::Library(n) => Err(format!("a variable of type {n}")),
+        RtType::Record(..) => Err("a record variable".into()),
+        RtType::TestPage(_) | RtType::Page(_) => Err("a page variable".into()),
+        RtType::Query(_) => Err("a query variable".into()),
+        RtType::DotNet(_) => Err("a DotNet variable".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use al_sema::workspace::AppSource;
+
+    fn verdict(src: &str, tests: &[&str]) -> Option<String> {
+        let (ws, l) = al_sema::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let t: Vec<usize> = l
+            .program
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| tests.contains(&o.name.as_str()))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(t.len(), tests.len());
+        may_observe_baseline(&l, &t)
+    }
+
+    const TABLE: &str = "table 60900 S { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { } } }\n";
+
+    #[test]
+    fn plain_computation_cannot_observe_the_baseline() {
+        let src = "enum 60000 Tier { value(0; Low) { } value(1; High) { } }
+            codeunit 60001 Logic { procedure Pick(A: Decimal): Enum Tier begin if A > 10 then exit(Tier::High); exit(Tier::Low); end; }
+            codeunit 60002 T { Subtype = Test; var L: Codeunit Logic;
+                [Test] procedure P() var Items: List of [Text]; B: TextBuilder; begin
+                    Items.Add(Format(L.Pick(20))); B.Append(Items.Get(1));
+                    if StrLen(B.ToText()) <> 4 then Error('x'); end; }";
+        assert_eq!(verdict(src, &["T"]), None);
+    }
+
+    #[test]
+    fn a_record_variable_may_observe_it() {
+        let src =
+            format!("{TABLE}codeunit 60002 T {{ Subtype = Test; [Test] procedure P() var R: Record S; begin end; }}");
+        assert!(verdict(&src, &["T"]).unwrap().contains("record variable"));
+    }
+
+    #[test]
+    fn a_helper_that_reads_a_table_may_observe_it() {
+        let src = format!(
+            "{TABLE}codeunit 60001 H {{ procedure N(): Integer var R: Record S; begin exit(R.Count()); end; }}
+            codeunit 60002 T {{ Subtype = Test; var Hp: Codeunit H; [Test] procedure P() begin if Hp.N() <> 0 then Error('x'); end; }}"
+        );
+        let why = verdict(&src, &["T"]).unwrap();
+        assert!(why.starts_with("H.N"), "{why}");
+    }
+
+    #[test]
+    fn a_routine_that_is_never_called_does_not_count() {
+        let src = format!(
+            "{TABLE}codeunit 60001 H {{ procedure Unused(): Integer var R: Record S; begin exit(R.Count()); end; procedure Used(): Integer begin exit(1); end; }}
+            codeunit 60002 T {{ Subtype = Test; var Hp: Codeunit H; [Test] procedure P() begin if Hp.Used() <> 1 then Error('x'); end; }}"
+        );
+        // The codeunit H is reached through Used; Unused has a record variable, but only
+        // the routines called are entered.
+        assert_eq!(verdict(&src, &["T"]), None);
+    }
+
+    #[test]
+    fn create_guid_may_observe_it() {
+        let src =
+            "codeunit 60002 T { Subtype = Test; [Test] procedure P() var G: Guid; begin G := CreateGuid(); end; }";
+        assert!(verdict(src, &["T"]).unwrap().contains("CreateGuid"));
+    }
+
+    #[test]
+    fn isolated_storage_and_number_sequences_may_observe_it() {
+        let a = "codeunit 60002 T { Subtype = Test; [Test] procedure P() var V: Text; begin IsolatedStorage.Get('k', V); end; }";
+        assert!(verdict(a, &["T"]).unwrap().contains("IsolatedStorage"));
+        let b = "codeunit 60002 T { Subtype = Test; [Test] procedure P() begin NumberSequence.Insert('s'); end; }";
+        assert!(verdict(b, &["T"]).unwrap().contains("NumberSequence"));
+    }
+
+    #[test]
+    fn an_event_publisher_may_observe_it() {
+        let src = "codeunit 60001 H { [IntegrationEvent(false, false)] procedure Raise() begin end; }
+            codeunit 60002 T { Subtype = Test; var Hp: Codeunit H; [Test] procedure P() begin Hp.Raise(); end; }";
+        assert!(verdict(src, &["T"]).unwrap().contains("event publisher"));
+    }
+
+    #[test]
+    fn running_a_codeunit_by_id_may_observe_it() {
+        let src = "codeunit 60001 H { trigger OnRun() begin end; }
+            codeunit 60002 T { Subtype = Test; [Test] procedure P() begin Codeunit.Run(60001); end; }";
+        assert!(verdict(src, &["T"]).unwrap().contains("Codeunit.Run"));
+    }
+
+    #[test]
+    fn a_call_through_an_interface_enters_every_implementation() {
+        let src = format!(
+            "{TABLE}interface IFoo {{ procedure N(): Integer; }}
+            codeunit 60001 Pure implements IFoo {{ procedure N(): Integer begin exit(1); end; }}
+            codeunit 60003 Dirty implements IFoo {{ procedure N(): Integer var R: Record S; begin exit(R.Count()); end; }}
+            codeunit 60002 T {{ Subtype = Test; [Test] procedure P() var F: Interface IFoo; begin F := Pure; if F.N() <> 1 then Error('x'); end; }}"
+        );
+        let why = verdict(&src, &["T"]).unwrap_or_default();
+        assert!(why.contains("Dirty") && why.contains("record variable"), "{why}");
+    }
+
+    #[test]
+    fn only_the_selected_test_codeunits_count() {
+        let src = format!(
+            "{TABLE}codeunit 60002 T {{ Subtype = Test; [Test] procedure P() begin end; }}
+            codeunit 60003 U {{ Subtype = Test; [Test] procedure Q() var R: Record S; begin R.DeleteAll(); end; }}"
+        );
+        assert_eq!(verdict(&src, &["T"]), None);
+        assert!(verdict(&src, &["T", "U"]).is_some());
+    }
+}

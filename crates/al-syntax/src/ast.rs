@@ -590,37 +590,32 @@ impl Routine {
     pub fn is_trigger(&self) -> bool {
         self.0.kind() == SyntaxKind::Trigger
     }
-    fn keyword_pos(&self) -> Vec<SyntaxToken> {
-        significant_tokens(&self.0).collect()
+    fn is_routine_keyword(t: &SyntaxToken) -> bool {
+        t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger")
     }
     pub fn name(&self) -> String {
-        let toks = self.keyword_pos();
-        let kw = toks
-            .iter()
-            .position(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"));
-        let Some(first) = kw.and_then(|i| toks.get(i + 1)) else {
+        let mut toks = significant_tokens(&self.0).skip_while(|t| !Self::is_routine_keyword(t));
+        let Some(first) = toks.nth(1) else {
             return String::new();
         };
-        let mut name = ident_text(first);
+        let mut name = ident_text(&first);
         // `trigger Variable::Event(...)`: the handler's name has both parts.
-        if let (Some(sep), Some(event)) = (toks.get(kw.unwrap_or(0) + 2), toks.get(kw.unwrap_or(0) + 3)) {
+        if let (Some(sep), Some(event)) = (toks.next(), toks.next()) {
             if sep.kind() == SyntaxKind::ColonColon {
-                name = format!("{name}::{}", ident_text(event));
+                name = format!("{name}::{}", ident_text(&event));
             }
         }
         name
     }
     /// Offset of the `procedure` or `trigger` keyword (after any attributes and modifiers).
     pub fn keyword_offset(&self) -> Option<usize> {
-        self.keyword_pos()
-            .iter()
-            .find(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"))
+        significant_tokens(&self.0)
+            .find(Self::is_routine_keyword)
             .map(|t| usize::from(t.text_range().start()))
     }
     fn has_modifier(&self, m: &str) -> bool {
-        self.keyword_pos()
-            .iter()
-            .take_while(|t| !t.text().eq_ignore_ascii_case("procedure") && !t.text().eq_ignore_ascii_case("trigger"))
+        significant_tokens(&self.0)
+            .take_while(|t| !Self::is_routine_keyword(t))
             .any(|t| t.text().eq_ignore_ascii_case(m))
     }
     pub fn is_local(&self) -> bool {

@@ -14,6 +14,7 @@
 use super::mat::Entry;
 use super::objects::{Catalog, base_kind, ident, prop, truthy};
 use super::{Providers, blank, ids, option, pos};
+use al_builtins::describe::Describe;
 use al_builtins::value::{RtType, Value};
 use al_data::TableDef;
 use al_ir::{Object, Table};
@@ -82,7 +83,7 @@ fn layout_row(o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &mut al_data::
     };
     r[pos(t, 17)] = match &t.fields[pos(t, 17)].ty {
         RtType::Enum(e) => Value::Enum(*e, sheets),
-        other => return Err(format!("field 17 is a {other:?}, not an enum")),
+        other => return Err(format!("field 17 is a {}, not an enum", other.describe())),
     };
     Ok(())
 }

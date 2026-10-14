@@ -1,6 +1,7 @@
 //! Filters on one integer-like field as a sorted set of closed intervals, for the generated
 //! tables (Integer, Date), whose rows cannot be listed before a filter bounds them.
 
+use al_builtins::describe::Describe;
 use al_builtins::filter::{FieldFilter, FilterExpr};
 use al_builtins::value::Value;
 
@@ -58,7 +59,7 @@ fn complement(x: &[Iv], lo: i64, hi: i64) -> Set {
 /// The intervals within `lo..=hi` that `e` accepts. `num` reads a filter value as a number.
 /// An expression that is not a set of numeric ranges (`Like`) is an error.
 pub(crate) fn of_expr(e: &FilterExpr, num: &dyn Fn(&Value) -> Option<i64>, lo: i64, hi: i64) -> Result<Set, String> {
-    let n = |v: &Value| num(v).ok_or_else(|| format!("filter value {v:?} is not a number of this field"));
+    let n = |v: &Value| num(v).ok_or_else(|| format!("filter value {} is not a number of this field", v.describe()));
     Ok(match e {
         FilterExpr::Range(a, b) => {
             let a = a.as_ref().map(n).transpose()?.unwrap_or(lo).max(lo);

@@ -5,6 +5,7 @@
 use crate::explain::{self, TestDetail};
 use crate::isolation::{Checkpoint, TestIsolation, runner_isolation};
 use crate::{CaseId, Outcome};
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_sema::lower::Lowered;
 use al_vm::{Engine, Session, UiKind};
@@ -384,6 +385,9 @@ impl CorpusRuntime {
             if unparsed.len() > 10 {
                 eprintln!("parse: ... {} more", unparsed.len() - 10);
             }
+        }
+        if std::env::var_os("AL_REACH_REPORT").is_some() {
+            eprintln!("{}", crate::reach::report(&ws, &lowered));
         }
         // Nothing else holds the program yet, so this does not copy it.
         for (app, m) in std::sync::Arc::make_mut(&mut lowered.program)
@@ -928,7 +932,7 @@ pub fn run_codeunit_observed(
                             session.rollback_transaction();
                             Outcome::NotRun(r)
                         }
-                        Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
+                        Err(other) => Outcome::Fail(format!("unexpected signal {}", other.describe())),
                     }
                 }
             }

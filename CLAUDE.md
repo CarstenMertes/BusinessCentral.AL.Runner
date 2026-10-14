@@ -64,6 +64,8 @@ before you open a source file.
   4. Before committing, one full run: `--baseline-diff` lists, by area, what newly passes and which
      baseline cases stopped passing. `--update-baseline` refuses while a selection is active.
   5. `--timings` says where a run spent its time (load, compile, install baseline, tests).
+  6. `AL_REACH_REPORT=1` prints, after the compile, how many routines each kind of root pulls in, which are refused,
+     and how many only matter through a refused routine (slow on a bucket: it walks every test).
 - `./check.sh` before every commit: fmt, clippy -D warnings, all tests, and the
   corpus ratchet. It fails on the first error.
 - Perf budgets (cold compile of the corpus ≤ 1 s, parser ≥ 50 MB/s) are
@@ -82,3 +84,7 @@ before you open a source file.
 - Shell hygiene: never build a file list with `$(grep -l …)` that can come back
   empty. `grep PATTERN` with no files waits on stdin forever; use `grep -rn
   PATTERN dir/`.
+- Working method for implementation agents (gates, memory caps, report):
+  `docs/agents/brief.md`.
+- A session on another machine that takes GitHub issues (setup and task loop):
+  `docs/agents/remote-worker.md`.

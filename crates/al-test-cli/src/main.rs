@@ -14,6 +14,10 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(all(feature = "mimalloc", not(target_family = "wasm")))]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() -> ExitCode {
     // The tree-walking VM recurses on the native stack per AL call; give it room.
     let worker = std::thread::Builder::new()
@@ -156,7 +160,7 @@ fn run_version(
     .map_err(|e| format!("BC {}: {e}", version.bc_version))?;
     let started = Instant::now();
     let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
-    let all_cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
+    let all_cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
     // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
     let mut suite_data = Vec::new();
@@ -176,7 +180,7 @@ fn run_version(
             config::OracleFormat::Junit => oracle::parse_junit(&text),
             config::OracleFormat::Xunit => oracle::parse_xunit(&text).map(|v| v.into_iter().map(|c| c.case).collect()),
         }
-        .map_err(|e| format!("{}: {e:?}", path.display()))?;
+        .map_err(|e| format!("{}: {e}", path.display()))?;
         let suite_index = corpus::discover(&root.join(&suite.app)).map_err(|e| format!("{}: {e}", suite.app))?;
         suite_data.push((cases, suite_index));
     }

@@ -8,6 +8,7 @@
 
 use crate::Session;
 use al_builtins::catalog::Catalog;
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{LibraryValue, RecordState, RtType, Value};
@@ -56,7 +57,7 @@ fn int_arg(args: &[Value], i: usize) -> Result<i64, Signal> {
     match args.get(i) {
         Some(Value::Integer(n)) => Ok(i64::from(*n)),
         Some(Value::BigInteger(n)) => Ok(*n),
-        other => unsupported(format!("integer argument {i}: {other:?}")),
+        other => unsupported(format!("integer argument {i}: {}", other.describe())),
     }
 }
 
@@ -104,7 +105,7 @@ impl Session {
         };
         let lib: Lib = match recv {
             Some(Value::Library(_, l)) => l.clone(),
-            other => return unsupported(format!("{id} on {other:?}")),
+            other => return unsupported(format!("{id} on {}", other.describe())),
         };
         match sig.receiver.as_str() {
             "RecordRef" => self.recordref_op(&sig.name, &lib, args),
@@ -247,7 +248,7 @@ impl Session {
             // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
             "GetTable" => {
                 let Some(Value::Record(src)) = args.first() else {
-                    return unsupported(format!("RecordRef.GetTable of {:?}", args.first()));
+                    return unsupported(format!("RecordRef.GetTable of {}", args.first().describe()));
                 };
                 let copy = src.borrow().clone();
                 *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));
@@ -293,7 +294,7 @@ impl Session {
                 let mut positions = Vec::with_capacity(args.len());
                 for a in args.iter() {
                     let Value::Integer(n) = a else {
-                        return unsupported(format!("RecordRef.{method} with {a:?}"));
+                        return unsupported(format!("RecordRef.{method} with {}", a.describe()));
                     };
                     match t.fields.iter().position(|f| i64::from(f.id) == i64::from(*n)) {
                         Some(p) => positions.push(Value::Integer(p as i32)),
@@ -317,9 +318,9 @@ impl Session {
                                 "RecordRef.Get of a RecordId of another table (error text not pinned yet)",
                             );
                         }
-                        other => return unsupported(format!("RecordRef.Get of {other:?}")),
+                        other => return unsupported(format!("RecordRef.Get of {}", other.describe())),
                     },
-                    other => return unsupported(format!("RecordRef.Get of {other:?}")),
+                    other => return unsupported(format!("RecordRef.Get of {}", other.describe())),
                 };
                 let mut a = key;
                 self.record_op("Get", &rec, &mut a)
@@ -437,7 +438,7 @@ impl Session {
             // ref (recordref/TestRecordRefGetSetTableContracts.al:78-104).
             "SetTable" => {
                 let Some(Value::Record(dst)) = args.first() else {
-                    return unsupported(format!("RecordRef.SetTable of {:?}", args.first()));
+                    return unsupported(format!("RecordRef.SetTable of {}", args.first().describe()));
                 };
                 let (same_table, same_kind) = {
                     let (s, d) = (rec.borrow(), dst.borrow());
@@ -581,7 +582,7 @@ impl Session {
             "Active" => Ok(Value::Boolean(true)),
             "Length" => match &field.ty {
                 RtType::Text(Some(n)) | RtType::Code(Some(n)) => Ok(Value::Integer(*n as i32)),
-                other => unsupported(format!("FieldRef.Length of a {other:?} field")),
+                other => unsupported(format!("FieldRef.Length of a {} field", other.describe())),
             },
             "SetRange" | "SetFilter" => {
                 let mut a = vec![Value::Integer(pos as i32)];
@@ -619,9 +620,9 @@ impl Session {
                 "tablefilter" => "TableFilter",
                 "media" => "Media",
                 "mediaset" => "MediaSet",
-                _ => return unsupported(format!("FieldRef.Type of a {:?} field", t.fields[pos].ty)),
+                _ => return unsupported(format!("FieldRef.Type of a {} field", t.fields[pos].ty.describe())),
             },
-            other => return unsupported(format!("FieldRef.Type of a {other:?} field")),
+            other => return unsupported(format!("FieldRef.Type of a {} field", other.describe())),
         };
         let members = al_builtins::sysenum::option_members("FieldType").expect("known");
         let ord = members.iter().position(|m| m == name).expect("listed") as i32;

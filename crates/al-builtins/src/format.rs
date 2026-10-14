@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn options_and_enums() {
         // record tests: Format(option 1 of " ,Draft") = 'Draft'; quoting stripped.
-        let members: Rc<[String]> = Rc::from(vec!["".to_string(), "Draft".to_string()]);
+        let members: std::sync::Arc<[String]> = std::sync::Arc::from(vec!["".to_string(), "Draft".to_string()]);
         assert_eq!(f(Value::Option(1, members.clone())), "Draft");
         assert_eq!(
             f2(Value::Option(1, members)),

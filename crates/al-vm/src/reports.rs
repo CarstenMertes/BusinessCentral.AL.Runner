@@ -9,6 +9,7 @@ use crate::dataset::{self, Column, Dataset};
 use crate::pages::RequestClosed;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{Session, Signal};
+use al_builtins::describe::Describe;
 use al_builtins::ops;
 use al_builtins::value::{Instance, Value};
 use al_ir as ir;
@@ -128,12 +129,15 @@ impl Session {
                 let window = match args.get(1) {
                     None => true,
                     Some(Value::Boolean(b)) => *b,
-                    Some(other) => return unsupported(format!("{id} with RequestWindow {other:?}")),
+                    Some(other) => return unsupported(format!("{id} with RequestWindow {}", other.describe())),
                 } && schema.report().use_request_page != Some(false);
                 match args.get(2) {
                     None | Some(Value::Boolean(false)) => {}
                     Some(other) => {
-                        return unsupported(format!("{id} with SystemPrinter {other:?} (printing is not supported)"));
+                        return unsupported(format!(
+                            "{id} with SystemPrinter {} (printing is not supported)",
+                            other.describe()
+                        ));
                     }
                 }
                 let quit = self.report_init(&inst)?;
@@ -209,7 +213,7 @@ impl Session {
                     None => None,
                     Some(Value::Text(s)) if s.is_empty() => None,
                     Some(Value::Text(s)) => Some(s.clone()),
-                    Some(other) => return unsupported(format!("{id} seeded with {other:?}")),
+                    Some(other) => return unsupported(format!("{id} seeded with {}", other.describe())),
                 };
                 // RunRequestPage always shows the page, so it always enters a transaction world
                 // (record/TestTxModelReportExec.al:77-102, Test02 and Test03).
@@ -235,7 +239,7 @@ impl Session {
                 }
                 Ok((rc, quit))
             }
-            other => unsupported(format!("a Report method on {other:?}")),
+            other => unsupported(format!("a Report method on {}", other.describe())),
         }
     }
 
@@ -300,7 +304,12 @@ impl Session {
     ) -> Result<(), Signal> {
         match parameters {
             Some(Value::Text(s)) if s.is_empty() => {}
-            other => return unsupported(format!("{id} with the parameters {other:?} (only '' is pinned)")),
+            other => {
+                return unsupported(format!(
+                    "{id} with the parameters {} (only '' is pinned)",
+                    other.describe()
+                ));
+            }
         }
         if record_ref.is_some() {
             return unsupported(format!("{id} with a RecordRef (not pinned)"));
@@ -427,7 +436,11 @@ impl Session {
     fn base_item_record(&self, inst: &Inst, item: &ir::ReportItem) -> Result<Rec, Signal> {
         match item.slot.map(|s| inst.borrow().globals[s].clone()) {
             Some(Value::Record(rc)) => Ok(rc),
-            other => unsupported(format!("dataitem {} holds {other:?}", item.name)),
+            other => unsupported(format!(
+                "dataitem {} holds {other}",
+                item.name,
+                other = other.describe()
+            )),
         }
     }
 
@@ -441,9 +454,9 @@ impl Session {
             Some(Value::Record(view)) => view.clone(),
             Some(Value::Library(_, h)) => match &*h.borrow() {
                 al_builtins::value::LibraryValue::RecordRef(rec) => rec.clone(),
-                _ => return unsupported(format!("a table view of {:?}", h.borrow())),
+                _ => return unsupported(format!("a table view of {}", h.borrow().describe())),
             },
-            other => return unsupported(format!("a table view of {other:?}")),
+            other => return unsupported(format!("a table view of {}", other.describe())),
         };
         let table = view.borrow().table;
         let items: Vec<&ir::ReportItem> = schema
@@ -754,7 +767,11 @@ impl Session {
         let (owner, _) = run.owner(r);
         match item.slot.map(|s| owner.borrow().globals[s].clone()) {
             Some(Value::Record(rc)) => Ok(rc),
-            other => unsupported(format!("dataitem {} holds {other:?}", item.name)),
+            other => unsupported(format!(
+                "dataitem {} holds {other}",
+                item.name,
+                other = other.describe()
+            )),
         }
     }
 
@@ -983,18 +1000,18 @@ impl Session {
         let at = usize::from(id == "Report.SaveAs#2");
         let parameters = match args.get(at) {
             Some(Value::Text(s)) => s.clone(),
-            other => return unsupported(format!("{id} with the parameters {other:?}")),
+            other => return unsupported(format!("{id} with the parameters {}", other.describe())),
         };
         let format = match args.get(at + 1) {
             Some(Value::Option(n, names)) => names.get(*n as usize).cloned().unwrap_or_default(),
-            other => return unsupported(format!("{id} with the format {other:?}")),
+            other => return unsupported(format!("{id} with the format {}", other.describe())),
         };
         let blob = match args.get(at + 2) {
             Some(Value::Library(_, h)) => match &*h.borrow() {
                 al_builtins::value::LibraryValue::OutStream(blob, _) => blob.clone(),
-                other => return unsupported(format!("{id} to {other:?}, which is not an OutStream")),
+                other => return unsupported(format!("{id} to {}, which is not an OutStream", other.describe())),
             },
-            other => return unsupported(format!("{id} to {other:?}")),
+            other => return unsupported(format!("{id} to {}", other.describe())),
         };
         let record_ref = args.get(at + 3);
         let (inst, schema, quit) = if at == 0 {
@@ -1331,8 +1348,9 @@ impl Session {
             }
             other => {
                 return unsupported(format!(
-                    "report column {} holds {other:?}, a type the dataset has no pinned text for",
-                    c.name
+                    "report column {} holds {other}, a type the dataset has no pinned text for",
+                    c.name,
+                    other = other.describe()
                 ));
             }
         };

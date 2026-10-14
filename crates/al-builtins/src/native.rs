@@ -1,5 +1,6 @@
 //! Native builtin implementations, registered by catalog overload id (ADR-008).
 
+use crate::describe::Describe;
 use crate::format::{FormatCtx, FormatFail, format_value, try_format};
 use crate::value::Value;
 use std::rc::Rc;
@@ -251,7 +252,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     }),
     // Measured on real BC: session/TestEnvironmentUserTenantContracts.al:237-241.
     ("Session.CurrentExecutionMode#1", |_, _, _| {
-        let members: Rc<[String]> = crate::sysenum::option_members("ExecutionMode")
+        let members: std::sync::Arc<[String]> = crate::sysenum::option_members("ExecutionMode")
             .expect("a system option")
             .into();
         Ok(Value::Option(0, members))
@@ -551,7 +552,7 @@ pub fn text_of(v: &Value) -> Option<String> {
 
 fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
     args.get(i).and_then(text_of).map_or_else(
-        || unsupported(&format!("text argument {i} of type {:?}", args.get(i))),
+        || unsupported(&format!("text argument {i} of type {}", args.get(i).describe())),
         Ok,
     )
 }
@@ -585,7 +586,7 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
         Value::Decimal(d) => Value::Decimal(d.abs()),
         Value::Integer(i) => Value::Decimal(i.unsigned_abs().into()),
         Value::BigInteger(i) => Value::Decimal(i.unsigned_abs().into()),
-        other => return unsupported(&format!("Abs of {other:?}")),
+        other => return unsupported(&format!("Abs of {}", other.describe())),
     })
 }
 
@@ -654,7 +655,7 @@ fn confirm(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
     let default = match args.get(1) {
         None => false,
         Some(Value::Boolean(b)) => *b,
-        Some(other) => return unsupported(&format!("Confirm default {other:?}")),
+        Some(other) => return unsupported(&format!("Confirm default {}", other.describe())),
     };
     Ok(Value::Boolean(ctx.ui_confirm(question, default)?))
 }
@@ -735,7 +736,8 @@ fn variant_2_date(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) ->
     match args.first() {
         Some(d @ Value::Date(..)) => Ok(d.clone()),
         other => unsupported(&format!(
-            "Variant2Date of {other:?} (the conversion error is not pinned)"
+            "Variant2Date of {other} (the conversion error is not pinned)",
+            other = other.describe()
         )),
     }
 }
@@ -745,7 +747,8 @@ fn variant_2_time(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) ->
     match args.first() {
         Some(t @ Value::Time(_)) => Ok(t.clone()),
         other => unsupported(&format!(
-            "Variant2Time of {other:?} (the conversion error is not pinned)"
+            "Variant2Time of {other} (the conversion error is not pinned)",
+            other = other.describe()
         )),
     }
 }
@@ -954,7 +957,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
 }
 
 fn context_value(c: &dyn Ctx) -> Value {
-    let members: Rc<[String]> = crate::sysenum::option_members("ExecutionContext")
+    let members: std::sync::Arc<[String]> = crate::sysenum::option_members("ExecutionContext")
         .expect("a system option")
         .into();
     // Install inside an install codeunit, Normal anywhere else (install/TestInstallEnvVisible_Tests.al:90-127).
@@ -973,7 +976,7 @@ fn module_execution_context(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Val
             return unsupported("GetModuleExecutionContext(AppId) inside install code (not pinned)");
         }
         let Value::Guid(g) = id else {
-            return unsupported(&format!("GetModuleExecutionContext with {id:?}"));
+            return unsupported(&format!("GetModuleExecutionContext with {}", id.describe()));
         };
         if !matches!(c.module_by_id(g), ModuleLookup::Found(_)) {
             return unsupported("GetModuleExecutionContext of an app the workspace does not hold (not pinned)");
@@ -986,7 +989,7 @@ fn module_execution_context(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Val
 fn enum_as_integer(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     match r {
         Some(Value::Enum(_, o)) => Ok(Value::Integer(*o)),
-        other => unsupported(&format!("AsInteger of {other:?}")),
+        other => unsupported(&format!("AsInteger of {}", other.describe())),
     }
 }
 
@@ -1037,14 +1040,13 @@ fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
 
 /// The kind of a value for a refusal reason: the variant name, never its contents.
 fn value_kind(v: &Value) -> String {
-    let d = format!("{v:?}");
+    let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use std::rc::Rc;
 
     #[derive(Default)]
     pub(crate) struct TestCtx {
@@ -1359,7 +1361,7 @@ pub(crate) mod tests {
             f(&mut TestCtx::default(), Some(&mut v), &mut []),
             Ok(Value::Boolean(true))
         ));
-        let mut v = Value::Option(0, Rc::from(vec![]));
+        let mut v = Value::Option(0, std::sync::Arc::from(vec![]));
         let f = lookup("Variant.IsOption#1").unwrap();
         assert!(matches!(
             f(&mut TestCtx::default(), Some(&mut v), &mut []),

@@ -77,7 +77,7 @@ impl Session {
                 if rec.borrow().table != wants {
                     return unsupported("RunObject of a codeunit whose TableNo is not the host's source table");
                 }
-                self.record_instance(cu, rec, None)?
+                self.enter_record(cu, rec, None)?.0
             }
             None => self.instance(cu),
         };

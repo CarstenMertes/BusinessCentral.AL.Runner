@@ -6,10 +6,10 @@
 //! session's view of the clock forward, which is all AL can observe of a wait.
 
 use crate::Session;
+use al_builtins::describe::Describe;
 use al_builtins::format::day_from_civil;
 use al_builtins::native::Signal;
 use al_builtins::value::Value;
-use std::rc::Rc;
 
 const MS_PER_DAY: i64 = 86_400_000;
 
@@ -59,7 +59,10 @@ impl Session {
                     self.waited_ms += i64::from(*n);
                     Ok(Value::Null)
                 }
-                other => unsupported(format!("Sleep with {other:?} (only a non-negative number is pinned)")),
+                other => unsupported(format!(
+                    "Sleep with {} (only a non-negative number is pinned)",
+                    other.describe()
+                )),
             },
             "System.Random#1" => self.random_op(args),
             "System.Randomize#1" => match args.first() {
@@ -76,7 +79,7 @@ impl Session {
                     self.rng = al_host::random::NetRandom::new(seed);
                     Ok(Value::Null)
                 }
-                Some(other) => unsupported(format!("Randomize with {other:?}")),
+                Some(other) => unsupported(format!("Randomize with {}", other.describe())),
             },
             "Database.UserId#1" => Ok(Value::Text(self.host.identity.user_id())),
             "Database.UserSecurityId#1" => Ok(Value::Guid(self.host.identity.user_security_id())),
@@ -85,7 +88,8 @@ impl Session {
             "Session.IsSessionActive#1" => match args.first() {
                 Some(Value::Integer(n)) if *n != self.host.identity.session_id() => Ok(Value::Boolean(false)),
                 other => unsupported(format!(
-                    "Session.IsSessionActive({other:?}): only an id other than the running session's is pinned"
+                    "Session.IsSessionActive({other}): only an id other than the running session's is pinned",
+                    other = other.describe()
                 )),
             },
             "Database.ServiceInstanceId#1" => Ok(Value::Integer(self.host.identity.service_instance_id())),
@@ -100,7 +104,8 @@ impl Session {
                     Ok(Value::Null)
                 }
                 other => unsupported(format!(
-                    "GlobalLanguage with {other:?} (only a positive language id is pinned)"
+                    "GlobalLanguage with {other} (only a positive language id is pinned)",
+                    other = other.describe()
                 )),
             },
             "Session.CurrentClientType#1" => Ok(client_type(self.host.identity.current_client_type())),
@@ -125,7 +130,7 @@ impl Session {
                 ));
             }
             Some(Value::Integer(n)) => n.abs().max(1),
-            other => return unsupported(format!("Random with {other:?}")),
+            other => return unsupported(format!("Random with {}", other.describe())),
         };
         Ok(Value::Integer(self.rng.next_below(bound) + 1))
     }
@@ -150,14 +155,15 @@ impl Session {
             }
             // Whether the undefined date resets the work date to today is not pinned.
             Some(other) => unsupported(format!(
-                "WorkDate({other:?}): only a defined, non-closing Date is pinned"
+                "WorkDate({other}): only a defined, non-closing Date is pinned",
+                other = other.describe()
             )),
         }
     }
 }
 
 fn client_type(t: al_host::ClientType) -> Value {
-    let members: Rc<[String]> = al_builtins::sysenum::option_members("ClientType")
+    let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("ClientType")
         .expect("a system option")
         .into();
     let ordinal = members
@@ -190,7 +196,7 @@ fn changed(t: &al_data::TableDef, stored: &[Value], buffer: &[Value]) -> bool {
             return false;
         }
         match (&stored[i], &buffer[i]) {
-            (Value::Blob(a), Value::Blob(b)) => !Rc::ptr_eq(a, b) && a.borrow().bytes != b.borrow().bytes,
+            (Value::Blob(a), Value::Blob(b)) => !std::sync::Arc::ptr_eq(a, b) && a.borrow().bytes != b.borrow().bytes,
             (a, b) => al_builtins::ops::compare(a, b).map_or(true, |o| o != std::cmp::Ordering::Equal),
         }
     })

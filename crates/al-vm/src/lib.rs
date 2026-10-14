@@ -1,6 +1,7 @@
 //! Tree-walking interpreter over the typed IR (ADR-011). `Engine` is the
 //! immutable program (ADR-001); `Session` holds all mutable state.
 
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{Instance, RecordState, RtType, Value};
@@ -502,6 +503,7 @@ impl Session {
                     auto_calc: Vec::new(),
                     load: Default::default(),
                     touched: false,
+                    globals: Default::default(),
                 })))
             }
             other => Value::default_for(other),
@@ -543,6 +545,37 @@ impl Session {
             .map(|g| g.ty.clone())
             .collect();
         let globals = tys.iter().map(|t| self.default_value(t)).collect();
+        Rc::new(RefCell::new(Instance {
+            object: object as u32,
+            globals,
+            initialized: true,
+        }))
+    }
+
+    /// A fresh instance of a table or table extension for one record variable (ADR-021). Its `Rec`
+    /// and `xRec` slots hold `Null` until a call fills them (`Session::enter_record`), so no
+    /// record state is built for them.
+    pub(crate) fn table_instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
+        let (rs, xs) = {
+            let o = &self.engine.program.objects[object];
+            (o.rec_slot, o.xrec_slot)
+        };
+        let tys: Vec<RtType> = self.engine.program.objects[object]
+            .globals
+            .iter()
+            .map(|g| g.ty.clone())
+            .collect();
+        let globals = tys
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                if Some(i) == rs || Some(i) == xs {
+                    Value::Null
+                } else {
+                    self.default_value(t)
+                }
+            })
+            .collect();
         Rc::new(RefCell::new(Instance {
             object: object as u32,
             globals,
@@ -793,7 +826,7 @@ impl Session {
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
                     other => match al_builtins::xml::node_list_items(&other) {
                         Some(items) => items,
-                        None => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                        None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
                 };
                 for item in items {
@@ -955,8 +988,14 @@ impl Session {
                     None => f.instance.clone(),
                     Some(e) => match self.eval(e, f)? {
                         Value::Codeunit(i) => self.shared_instance(i),
-                        // A table procedure runs with the record as its Rec.
-                        Value::Record(rc) => self.record_instance(*object, rc, None)?,
+                        // A table procedure runs with the record as its Rec, on the record
+                        // variable's own globals (ADR-021).
+                        Value::Record(rc) => {
+                            let (inst, saved) = self.enter_record(*object, rc, None)?;
+                            let r = self.finish_call(*object, *routine, inst.clone(), args, *try_call, f);
+                            Self::leave_record(&inst, saved);
+                            return r;
+                        }
                         // A query procedure runs with the query it was called on as its own state.
                         Value::Query(q) => self.query_instance(*object, q),
                         // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
@@ -1014,7 +1053,7 @@ impl Session {
             E::CharAt(text, index) => {
                 let t = self.eval(text, f)?;
                 let Some(t) = al_builtins::native::text_of(&t) else {
-                    return Err(Signal::Unsupported(format!("indexing {t:?} as a text")));
+                    return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
                 };
                 let i = int(&self.eval(index, f)?)?;
                 usize::try_from(i - 1)
@@ -1093,7 +1132,7 @@ impl Session {
                                 self.application_areas = t;
                                 Ok(Value::Null)
                             }
-                            other => Err(Signal::Unsupported(format!("ApplicationArea({other:?})"))),
+                            other => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
                         },
                         Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
                     };
@@ -1298,7 +1337,7 @@ impl Session {
                     }
                     Ok(v)
                 }
-                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+                other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             },
         }
     }
@@ -1347,7 +1386,7 @@ impl Session {
                     }
                     Ok(())
                 }
-                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+                other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             };
         }
         match p {
@@ -1391,7 +1430,8 @@ impl Session {
         let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
         let (Some(unit), true) = (unit, in_range) else {
             return Err(Signal::Unsupported(format!(
-                "assigning {v:?} to character {i} of a text (only the next position within the length is pinned)"
+                "assigning {v} to character {i} of a text (only the next position within the length is pinned)",
+                v = v.describe()
             )));
         };
         let i = i as usize - 1;
@@ -1412,7 +1452,7 @@ impl Session {
         };
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
-            other => return Err(Signal::Unsupported(format!("indexing {other:?}"))),
+            other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),
         };
         let mut flat = 0usize;
         for (d, e) in dims.iter().zip(idx) {
@@ -1452,13 +1492,13 @@ fn int(v: &Value) -> Result<i64, Signal> {
         Value::BigInteger(i) => Ok(*i),
         Value::Byte(b) => Ok(i64::from(*b)),
         Value::Char(c) => Ok(i64::from(*c)),
-        other => Err(Signal::Unsupported(format!("{other:?} used as an integer"))),
+        other => Err(Signal::Unsupported(format!("{} used as an integer", other.describe()))),
     }
 }
 
 /// The kind of a value for a refusal reason: the variant name, never its contents.
 pub(crate) fn value_kind(v: &Value) -> String {
-    let d = format!("{v:?}");
+    let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
@@ -1507,7 +1547,10 @@ impl al_builtins::native::Ctx for Session {
                 let rc = rc.clone();
                 self.record_op(method, &rc, args)
             }
-            other => Err(Signal::Unsupported(format!("record method {method} on {other:?}"))),
+            other => Err(Signal::Unsupported(format!(
+                "record method {method} on {}",
+                other.describe()
+            ))),
         }
     }
     fn page(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {

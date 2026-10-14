@@ -152,11 +152,29 @@ impl std::fmt::Display for Ty {
             Ty::TestFilter(n) => write!(f, "TestFilter \"{}\"", display_name(n)),
             Ty::List(t) => write!(f, "List of [{t}]"),
             Ty::Dictionary(k, v) => write!(f, "Dictionary of [{k}, {v}]"),
-            Ty::Array(d, t) => write!(f, "array{d:?} of {t}"),
+            Ty::Array(d, t) => {
+                let dims: Vec<String> = d.iter().map(u32::to_string).collect();
+                write!(f, "array[{}] of {t}", dims.join(", "))
+            }
             Ty::Builtin(n) => write!(f, "{n}"),
             Ty::DotNet(a) if a.is_empty() => write!(f, "DotNet"),
             Ty::DotNet(a) => write!(f, "DotNet {a}"),
-            other => write!(f, "{other:?}"),
+            Ty::Integer => f.write_str("Integer"),
+            Ty::BigInteger => f.write_str("BigInteger"),
+            Ty::Decimal => f.write_str("Decimal"),
+            Ty::Boolean => f.write_str("Boolean"),
+            Ty::Char => f.write_str("Char"),
+            Ty::Byte => f.write_str("Byte"),
+            Ty::Date => f.write_str("Date"),
+            Ty::Time => f.write_str("Time"),
+            Ty::DateTime => f.write_str("DateTime"),
+            Ty::Duration => f.write_str("Duration"),
+            Ty::DateFormula => f.write_str("DateFormula"),
+            Ty::Guid => f.write_str("Guid"),
+            Ty::Option(_) => f.write_str("Option"),
+            Ty::Label => f.write_str("Label"),
+            Ty::Variant => f.write_str("Variant"),
+            Ty::Unknown => f.write_str("an unknown type"),
         }
     }
 }
@@ -246,5 +264,19 @@ mod tests {
         assert_eq!(ty("Variant"), Ty::Variant);
         assert_eq!(ty("JsonObject"), Ty::Builtin("JsonObject".into()));
         assert_eq!(ty("recordref"), Ty::Builtin("RecordRef".into()));
+    }
+
+    #[test]
+    fn display_reads_as_al_and_never_as_a_rust_dump() {
+        assert_eq!(ty("Option").to_string(), "Option");
+        assert_eq!(ty("Integer").to_string(), "Integer");
+        assert_eq!(Ty::Label.to_string(), "Label");
+        assert_eq!(ty("Variant").to_string(), "Variant");
+        assert_eq!(Ty::Unknown.to_string(), "an unknown type");
+        assert_eq!(Ty::Option(vec!["A".into(), "B".into()]).to_string(), "Option");
+        assert_eq!(
+            Ty::Array(vec![3, 4], Box::new(Ty::Integer)).to_string(),
+            "array[3, 4] of Integer"
+        );
     }
 }

@@ -7,6 +7,7 @@
 //! (ADR-003): a FlowField reads the persistent table, one row at a time.
 
 use crate::Session;
+use al_builtins::describe::Describe;
 use al_builtins::filter::{FieldFilter, FilterExpr, parse_filter_with};
 use al_builtins::native::{AlError, Signal, text_of};
 use al_builtins::ops;
@@ -84,7 +85,7 @@ fn type_name(t: &RtType) -> String {
         RtType::Code(_) => "Code".into(),
         RtType::Option(_) => "Option".into(),
         RtType::Enum(_) => "Enum".into(),
-        other => format!("{other:?}"),
+        other => other.describe(),
     }
 }
 
@@ -320,7 +321,7 @@ impl Session {
         let src_t = self.engine.tables[calc.table].clone().expect("table");
         self.unseeded_read(&src_t, rec.borrow().temporary, "a FlowField")?;
         let cx = self.cx_for(rec, &src_t)?;
-        let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e:?}"));
+        let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e}"));
         use ir::CalcMethod as M;
         let value = match calc.method {
             M::Count => {
@@ -537,7 +538,7 @@ impl Session {
                         after: after.as_deref(),
                     },
                 )
-                .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+                .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
             let Some(row) = next else { return Ok(()) };
             f(&row)?;
             after = Some(position(t, 0, &row));
@@ -640,7 +641,7 @@ impl Session {
             .iter()
             .map(|a| match a {
                 Value::Integer(p) => Ok(*p as usize),
-                other => unsupported(format!("field argument {other:?}")),
+                other => unsupported(format!("field argument {}", other.describe())),
             })
             .collect::<Result<_, _>>()?;
         match method {

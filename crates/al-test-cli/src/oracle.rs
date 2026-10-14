@@ -18,6 +18,15 @@ pub enum OracleError {
     BadCodeunit(String),
 }
 
+impl std::fmt::Display for OracleError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OracleError::Xml(why) => write!(f, "not valid XML: {why}"),
+            OracleError::BadCodeunit(what) => write!(f, "bad codeunit in the oracle: {what}"),
+        }
+    }
+}
+
 /// The BC 28 and 29 corpus legs run through a hybrid test runner that reports one
 /// pseudo-case with this name per test codeunit. It is not a test procedure: no
 /// corpus codeunit declares one, so it is skipped by rule (ADR-015 1.6).

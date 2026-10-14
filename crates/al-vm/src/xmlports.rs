@@ -9,6 +9,7 @@
 use crate::records::Rec;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{AlError, Session, Signal};
+use al_builtins::describe::Describe;
 use al_builtins::ops;
 use al_builtins::value::{Instance, LibraryValue, RtType, Value};
 use al_builtins::xmlport::{Elem, Node, ReadFailure};
@@ -102,7 +103,7 @@ impl Session {
                         inst.borrow_mut().globals[slot] = v.clone();
                         Ok(Value::Null)
                     }
-                    other => unsupported(format!("{id} with {other:?}")),
+                    other => unsupported(format!("{id} with {}", other.describe())),
                 }
             }
             "Xmlport.SetTableView#1" => {
@@ -150,7 +151,7 @@ impl Session {
                     Some(v @ Value::Library(n, _)) if n.eq_ignore_ascii_case(want) => {
                         inst.borrow_mut().globals[slot] = v.clone();
                     }
-                    other => return unsupported(format!("{id} with the stream {other:?}")),
+                    other => return unsupported(format!("{id} with the stream {}", other.describe())),
                 }
                 // The record only seeds the table view
                 // (xmlport/TestXmlPortObject.al:XmlPort_Import_StaticWithRecord_GivenVariableUnchangedWithoutExplicitGet,
@@ -171,7 +172,7 @@ impl Session {
                 self.ensure_initialized(&rc);
                 Ok(rc)
             }
-            other => unsupported(format!("an XmlPort method on {other:?}")),
+            other => unsupported(format!("an XmlPort method on {}", other.describe())),
         }
     }
 
@@ -194,7 +195,11 @@ impl Session {
     fn xp_record(&self, inst: &Inst, node: &ir::XmlNode) -> Result<Rec, Signal> {
         match node.slot.map(|s| inst.borrow().globals[s].clone()) {
             Some(Value::Record(rc)) => Ok(rc),
-            other => unsupported(format!("table element {} holds {other:?}", node.name)),
+            other => unsupported(format!(
+                "table element {} holds {other}",
+                node.name,
+                other = other.describe()
+            )),
         }
     }
 
@@ -209,7 +214,7 @@ impl Session {
             ));
         };
         let Some(Value::Record(view)) = view else {
-            return unsupported(format!("SetTableView with {view:?}"));
+            return unsupported(format!("SetTableView with {}", view.describe()));
         };
         let target = self.xp_record(inst, first)?;
         let v = view.borrow();
@@ -619,7 +624,10 @@ impl Session {
                     None => Err(evaluate_error(text, "Enum")),
                 }
             }
-            other => unsupported(format!("XmlPort import into a field of type {other:?} (not pinned)")),
+            other => unsupported(format!(
+                "XmlPort import into a field of type {} (not pinned)",
+                other.describe()
+            )),
         }
     }
 
@@ -766,7 +774,7 @@ impl Session {
         let stored = self
             .store_for(&rec)
             .get(&cx, &t, &pk)
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
         let modify = stored.is_some() && (n.auto_update || n.auto_replace);
         let (before, after) = if modify {
             ("onbeforemodifyrecord", "onaftermodifyrecord")
@@ -1040,7 +1048,7 @@ impl Session {
         let slot = schema.node(node).slot.expect("text nodes have a slot");
         match &inst.borrow().globals[slot] {
             Value::Text(s) | Value::Code(s) => Ok(s.clone()),
-            other => unsupported(format!("XmlPort export of the variable {other:?}")),
+            other => unsupported(format!("XmlPort export of the variable {}", other.describe())),
         }
     }
 
@@ -1071,7 +1079,10 @@ impl Session {
                     .or_else(|why| unsupported(format!("XmlPort export of a value: {why}")))?;
                 Ok(if t.is_empty() { " ".to_string() } else { t })
             }
-            other => unsupported(format!("XmlPort export of {other:?} (the text form is not pinned)")),
+            other => unsupported(format!(
+                "XmlPort export of {} (the text form is not pinned)",
+                other.describe()
+            )),
         }
     }
 

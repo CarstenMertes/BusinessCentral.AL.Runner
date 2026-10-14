@@ -610,7 +610,7 @@ codeunit 50100 C
     let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
     let ri = |n: &str| l.program.objects[oi].routines.iter().position(|r| r.name == n).unwrap();
     let mut s = al_vm::Session::new(engine);
-    assert_eq!(s.set_company(""), "My Company");
+    assert_eq!(s.set_company(""), "CRONUS International Ltd.");
     let inst = s.instance(oi);
     assert!(matches!(
         s.call(oi, ri("Shared"), inst.clone(), vec![]),
@@ -620,6 +620,6 @@ codeunit 50100 C
         s.call(oi, ri("Own"), inst.clone(), vec![]),
         Err(Signal::Unsupported(r)) if r.contains("no company chosen")
     ));
-    s.set_company("My Company");
+    s.set_company("CRONUS International Ltd.");
     assert!(s.call(oi, ri("Own"), inst, vec![]).is_ok());
 }

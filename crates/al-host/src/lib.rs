@@ -164,8 +164,10 @@ impl Identity for AlRunnerIdentity {
     fn user_security_id(&self) -> [u8; 16] {
         USER_SECURITY_ID
     }
+    /// The company of the oracle's test database (session/TestEnvironmentUserTenantContracts.al:238);
+    /// AL Runner's `My Company` (ADR-013 decision 9) is superseded.
     fn company_name(&self) -> String {
-        "My Company".into()
+        "CRONUS International Ltd.".into()
     }
     /// AL Runner draws the session id from a counter that starts at 1 (`SessionPatches.cs`), and
     /// the corpus asks for a positive id. ADR-013 listed 0 before codeunit 60023 pinned this.
@@ -308,7 +310,7 @@ mod tests {
     fn default_identity_mirrors_al_runner() {
         let i = AlRunnerIdentity;
         assert_eq!(i.user_id(), "TESTUSER");
-        assert_eq!(i.company_name(), "My Company");
+        assert_eq!(i.company_name(), "CRONUS International Ltd.");
         // {C0A1BDFA-0000-0000-0000-545553545553}
         let text: String = USER_SECURITY_ID.iter().map(|b| format!("{b:02X}")).collect();
         assert_eq!(text, "C0A1BDFA000000000000545553545553");

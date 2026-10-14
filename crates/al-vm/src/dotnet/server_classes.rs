@@ -3,9 +3,8 @@
 //! tenant or the service configuration. The runtime provides them itself, so they are never
 //! forwarded to the sidecar.
 //!
-//! A value measured on real BC 27.5 is pinned by a probe (`Pin::Probe`): the probe files are in
-//! the corpus-probes branch `al-runtime-rs` (head c542144) and reach the corpus submodule with
-//! its next bump. The rest mirrors AL Runner v2 until a probe covers it (`Pin::AlRunner`, with the
+//! A value measured on real BC is pinned by a probe test of the corpus (`Pin::Probe`, a path under
+//! `tests/` with its line). The rest mirrors AL Runner v2 until a probe covers it (`Pin::AlRunner`, with the
 //! AL Runner file and line). AL Runner runs BC's real classes on a faked session, so a value is
 //! what the real class answers on that session. Where the probe and AL Runner differ, the probe
 //! wins: the oracle tenant is a sandbox on Azure-like topology, AL Runner's is Production on
@@ -37,8 +36,8 @@ fn no_args(args: Args, what: &str) -> Result<(), Signal> {
 
 /// The `ALConfigSettings` flags are measured on real BC 27.5. They equal the `ConfigSetting`
 /// attribute defaults of `ServerUserSettings` (Nav.Types 27.5), which AL Runner v2 answers.
-const CFG_PIN: &str = "probe tests/al-language-onprem/session/TestServerSettingContracts.al:31-48 \
-    (corpus-probes c542144); AL Runner v2 agrees: it patches nothing here (no ALConfigSettings in AlRunner/), \
+const CFG_PIN: &str = "probe tests/al-language-onprem/session/TestServerSettingContracts.al:31-48; \
+    AL Runner v2 agrees: it patches nothing here (no ALConfigSettings in AlRunner/), \
     so the real ServerUserSettings answers its attribute default, and AlRunner/Patches/\
     RecordPatches.AggregatePermissionSetVirtualTable.cs:9 states UsePermissionSetsFromExtensions is true";
 
@@ -169,12 +168,17 @@ fn environment_application_setting(_: &mut Session, _: Option<&Rc<DotNetObject>>
     text("NavTenantSettingsHelper.GetEnvironmentApplicationSetting", args, 1, "")
 }
 
-/// `!NavEnvironment.Topology.IsServiceRunningInLocalEnvironment`. The oracle answers true
-/// (probe: `IsSaaSInfrastructure` is true), where AL Runner's `StandardServiceTopology` answers
-/// false; the probe wins.
-fn is_azure(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+/// `!NavEnvironment.Topology.IsServiceRunningInLocalEnvironment`, which is
+/// `Environment Information.IsSaaSInfrastructure`. The oracle answers true on BC 27.5 and 28.5 and
+/// false on 29.0 (`Gate::NotSaaSInfrastructure`; corpus
+/// `session/TestEnvironmentUserTenantContracts.al:164-174`). AL Runner's `StandardServiceTopology`
+/// answers false throughout; the probe wins where it says true.
+fn is_azure(s: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "NavUserAccountHelper.IsAzure")?;
-    Ok(Value::Boolean(true))
+    Ok(Value::Boolean(!al_version::gate_on(
+        s.engine.target.as_ref(),
+        al_version::Gate::NotSaaSInfrastructure,
+    )))
 }
 
 /// `NavUserAccountHelper.GetEffectivePermissionForObject(user, company, objectType, objectId)`:
@@ -231,7 +235,7 @@ fn member(name: &str, pin: Pin, f: MemberFn) -> RegistryMember {
 }
 
 fn probe(what: &str) -> Pin {
-    Pin::Probe(format!("{ENV_PROBE}:{what} (corpus-probes c542144)"))
+    Pin::Probe(format!("{ENV_PROBE}:{what}"))
 }
 
 fn al_runner(what: &str) -> Pin {
@@ -269,17 +273,17 @@ pub fn types() -> Vec<RegistryType> {
         RegistryType {
             clr_name: TENANT_SETTINGS_HELPER.into(),
             members: vec![
-                member("IsSandbox", probe("119 (IsSandbox true, IsSaaS true)"), is_sandbox),
-                member("IsProduction", probe("120 (IsProduction false)"), is_production),
+                member("IsSandbox", probe("156 (IsSandbox true, IsSaaS true)"), is_sandbox),
+                member("IsProduction", probe("157 (IsProduction false)"), is_production),
                 member(
                     "GetEnvironmentName",
-                    probe("125 ('Sandbox' through the wrapper; the raw name is not observable)"),
+                    probe("180 ('Sandbox' through the wrapper; the raw name is not observable)"),
                     environment_name,
                 ),
-                member("GetApplicationFamily", probe("126 ('W1')"), application_family),
+                member("GetApplicationFamily", probe("181 ('W1')"), application_family),
                 member(
                     "GetLinkedPowerPlatformEnvironmentId",
-                    probe("128 ('')"),
+                    probe("190 ('')"),
                     power_platform_environment_id,
                 ),
                 member(
@@ -294,7 +298,7 @@ pub fn types() -> Vec<RegistryType> {
         RegistryType {
             clr_name: USER_ACCOUNT_HELPER.into(),
             members: vec![
-                member("IsAzure", probe("124 (IsSaaSInfrastructure true)"), is_azure),
+                member("IsAzure", probe("164-174 (IsSaaSInfrastructure true on 27 and 28, false from 29)"), is_azure),
                 member(
                     "GetEffectivePermissionForObject",
                     Pin::Corpus("session/TestSessionCompanyInfoExperienceClose.al:62-90".into()),
@@ -306,7 +310,7 @@ pub fn types() -> Vec<RegistryType> {
             clr_name: TEST_EXECUTION.into(),
             members: vec![member(
                 "IsInTestMode",
-                probe("127 (CanStartSession false behind IsInTestMode true)"),
+                probe("189 (CanStartSession false behind IsInTestMode true)"),
                 is_in_test_mode,
             )],
         },

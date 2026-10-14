@@ -63,8 +63,8 @@ reviewed it.
   others) are provided in Rust through the registry.
   - Their values mirror AL Runner v2 until a probe on real BC pins them.
   - This is not a fake of an AL object, so hard rule 7 does not apply.
-  - The work is on branch `dotnet-registry`. Probe batch 3 (corpus-probes
-    c542144) pinned the values it covers, and the probe wins where it differs
+  - The work is on branch `dotnet-registry`. Probe batch 3 (corpus
+    c542144, now in the submodule) pinned the values it covers, and the probe wins where it differs
     from AL Runner: the oracle tenant is a sandbox on Azure topology
     (`IsSandbox` true, `IsAzure` true), AL Runner's is Production on premises.
     ADR-013's "Production by default" is therefore superseded for the registry.
@@ -186,6 +186,10 @@ reviewed it.
   `DefaultClientType()` is `Web`.
 - 2026-10-13, ADR-013, host values: `CompanyName()` is `My Company` instead of the
   placeholder `CRONUS`.
+- 2026-10-14, corpus bump 3: `CompanyName()` is `CRONUS International Ltd.`, not `My Company`. The oracle pins it
+  (session/TestEnvironmentUserTenantContracts.al:238, hard rule 6: observable values match real BC). Decided without owner
+  review; it supersedes the 2026-10-13 line above and ADR-013 decision 9 for the name. The Company row seeded at session start
+  (ADR-019) follows the host name.
 - 2026-10-13, ADR-013, host values: temporary records are not stamped with the system
   created and modified fields.
 - 2026-10-14, ADR-012, pages-misc: a `Page` variable is constructed (OnInit once) at its first procedure call.

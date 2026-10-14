@@ -123,6 +123,70 @@ pub struct Phases {
 /// How many test codeunits `--timings` names.
 pub const SLOWEST: usize = 8;
 
+/// A test codeunit to run: its object, id and the isolation of the runner it belongs to.
+struct Unit {
+    si: usize,
+    oi: usize,
+    id: u32,
+    isolation: TestIsolation,
+}
+
+struct UnitResult {
+    si: usize,
+    oi: usize,
+    id: u32,
+    /// The outcome of each test, or the message of a Rust panic.
+    result: Result<Vec<(String, Outcome)>, String>,
+    took: std::time::Duration,
+}
+
+/// The `[Test]` routines of a codeunit.
+fn test_routines(o: &al_ir::Object) -> impl Iterator<Item = &al_ir::Routine> {
+    o.routines
+        .iter()
+        .filter(|r| r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")))
+}
+
+/// Runs one test codeunit. A Rust panic is a runtime bug; it is contained to this codeunit.
+fn run_unit(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    baseline: Option<&al_vm::Baseline>,
+    u: &Unit,
+    observe: Option<&mut Observer>,
+) -> UnitResult {
+    let started = std::time::Instant::now();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_codeunit_observed(engine, lowered, u.oi, baseline, u.isolation, observe)
+    }))
+    .map_err(|p| {
+        p.downcast_ref::<String>()
+            .cloned()
+            .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default()
+    });
+    UnitResult {
+        si: u.si,
+        oi: u.oi,
+        id: u.id,
+        result,
+        took: started.elapsed(),
+    }
+}
+
+/// How many threads run test codeunits. `AL_TEST_THREADS` sets it (1 runs them one after the
+/// other on the calling thread); the default is the number of cores.
+fn test_workers() -> usize {
+    std::env::var("AL_TEST_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .clamp(1, 64)
+}
+
+/// Stack of a test thread: the VM recurses on the native stack per AL call (`MAX_CALL_DEPTH`).
+const TEST_STACK: usize = 256 << 20;
+
 /// Drops `value` on another thread. The process does not wait for it when it ends.
 pub fn retire<T: Send + 'static>(value: T) {
     std::thread::spawn(move || drop(value));
@@ -281,23 +345,42 @@ impl CorpusRuntime {
             app.version = m.version.clone();
             app.resources = m.resources.clone();
         }
-        let blocked = lowered
+        let blocked: Vec<Vec<Option<String>>> = lowered
             .unsupported
             .iter()
             .map(|o| o.iter().map(|r| r.first().cloned()).collect())
             .collect();
+        let workers = if opts.trace { 1 } else { test_workers() };
         let engine_started = std::time::Instant::now();
-        let mut engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
-        global_triggers_find_unavailable(&mut engine, &lowered);
+        let make_engine = || {
+            let mut engine = Engine::with_config(
+                lowered.program.clone(),
+                blocked.clone(),
+                target.cloned(),
+                dotnet.clone(),
+            );
+            global_triggers_find_unavailable(&mut engine, &lowered);
+            engine
+        };
+        let mut engine = make_engine();
         let engine_time = engine_started.elapsed();
         let compile_time = compile_started.elapsed();
         let started = std::time::Instant::now();
-        let baseline = if baseline {
+        let baseline_run = if baseline {
             crate::baseline::run(&engine, &lowered)
         } else {
             None
         };
-        if let Some(b) = &baseline {
+        // The tests run against an engine that knows which tables the install baseline could not
+        // seed. The baseline itself ran before it knew; with several test threads, which each run
+        // the baseline again (its data is not for sharing between threads), the engine that ran it
+        // stays as it was and the tests get another.
+        let unseeded: std::collections::HashSet<usize> = baseline_run
+            .as_ref()
+            .map(|b| b.unseeded.iter().map(|&t| t as usize).collect())
+            .unwrap_or_default();
+        let baseline_engine = (workers > 1 && baseline_run.is_some()).then(|| engine.clone());
+        if let Some(b) = &baseline_run {
             for n in &b.notes {
                 eprintln!("baseline: {n}");
             }
@@ -309,17 +392,22 @@ impl CorpusRuntime {
                 b.unseeded.len(),
                 started.elapsed().as_secs_f64()
             );
+            if baseline_engine.is_some() {
+                engine = make_engine();
+            }
             if let Some(e) = Arc::get_mut(&mut engine) {
-                e.unseeded = b.unseeded.iter().map(|&t| t as usize).collect();
+                e.unseeded = unseeded;
             }
         }
         let baseline_time = started.elapsed();
-        let baseline = baseline.map(|b| b.baseline);
+        let baseline = baseline_run.map(|b| b.baseline);
         let tests_started = std::time::Instant::now();
         let mut outcomes = std::collections::HashMap::new();
         let mut details = std::collections::HashMap::new();
         let mut panics = 0;
         let mut codeunit_times: Vec<(u32, String, std::time::Duration)> = Vec::new();
+        // The test codeunits to run, in the order the report lists them.
+        let mut units: Vec<Unit> = Vec::new();
         for (si, suite) in suites.iter().enumerate() {
             let isolation = match suite.runner {
                 None => Ok(TestIsolation::default()),
@@ -337,23 +425,25 @@ impl CorpusRuntime {
                         .iter()
                         .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
                 let Some(id) = o.id.filter(|_| is_test) else { continue };
-                let tests = || {
-                    o.routines
-                        .iter()
-                        .filter(|r| r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")))
-                };
-                let isolation = match &isolation {
-                    Ok(i) => *i,
+                match &isolation {
+                    Ok(i) => units.push(Unit {
+                        si,
+                        oi,
+                        id,
+                        isolation: *i,
+                    }),
                     Err(why) => {
-                        for r in tests() {
+                        for r in test_routines(o) {
                             outcomes.insert((si, id, r.name.to_lowercase()), Outcome::NotRun(why.clone()));
                         }
-                        continue;
                     }
-                };
-                let codeunit_started = std::time::Instant::now();
-                // A Rust panic is a runtime bug; contain it to this codeunit and report it.
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                }
+            }
+        }
+        let results: Vec<UnitResult> = if workers <= 1 || units.len() < 2 {
+            units
+                .iter()
+                .map(|u| {
                     let mut observe = |name: &str, _: &Outcome, seen: &Observed| {
                         let mut d = explain::detail(
                             &lowered.program,
@@ -367,31 +457,65 @@ impl CorpusRuntime {
                         d.refused_in = seen
                             .refused_in
                             .map(|(o, r)| explain::describe(&lowered.program, o, r, al_ir::NO_POS));
-                        details.insert((si, id, name.to_lowercase()), d);
+                        details.insert((u.si, u.id, name.to_lowercase()), d);
                     };
                     let trace: Option<&mut Observer> = opts.trace.then_some(&mut observe);
-                    run_codeunit_observed(&engine, &lowered, oi, baseline.as_ref(), isolation, trace)
-                }));
-                codeunit_times.push((id, o.name.clone(), codeunit_started.elapsed()));
-                match result {
-                    Ok(list) => {
-                        for (name, outcome) in list {
-                            outcomes.insert((si, id, name.to_lowercase()), outcome);
-                        }
+                    run_unit(&engine, &lowered, baseline.as_ref(), u, trace)
+                })
+                .collect()
+        } else {
+            // Test codeunits run on a session each and do not share anything (the install
+            // baseline is put back for each), so worker threads take them in turn. A worker
+            // sets up its own copy of the baseline.
+            let next = std::sync::atomic::AtomicUsize::new(0);
+            let pull = |baseline: Option<&al_vm::Baseline>| {
+                let mut done = Vec::new();
+                loop {
+                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(u) = units.get(k) else { return done };
+                    done.push(run_unit(&engine, &lowered, baseline, u, None));
+                }
+            };
+            std::thread::scope(|scope| {
+                let mut handles = Vec::new();
+                for _ in 1..workers.min(units.len()) {
+                    let spawned = std::thread::Builder::new()
+                        .stack_size(TEST_STACK)
+                        .spawn_scoped(scope, || {
+                            let own = baseline_engine
+                                .as_ref()
+                                .and_then(|e| crate::baseline::run(e, &lowered))
+                                .map(|b| b.baseline);
+                            pull(own.as_ref())
+                        });
+                    match spawned {
+                        Ok(h) => handles.push(h),
+                        // No room for another thread (an address space limit): fewer will do.
+                        Err(_) => break,
                     }
-                    Err(p) => {
-                        panics += 1;
-                        let msg = p
-                            .downcast_ref::<String>()
-                            .cloned()
-                            .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                            .unwrap_or_default();
-                        for r in tests() {
-                            outcomes.insert(
-                                (si, id, r.name.to_lowercase()),
-                                Outcome::NotRun(format!("runtime panic (bug): {msg}")),
-                            );
-                        }
+                }
+                let mut done = pull(baseline.as_ref());
+                for h in handles {
+                    done.extend(h.join().expect("a test worker panicked"));
+                }
+                done
+            })
+        };
+        for r in results {
+            codeunit_times.push((r.id, lowered.program.objects[r.oi].name.clone(), r.took));
+            match r.result {
+                Ok(list) => {
+                    for (name, outcome) in list {
+                        outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
+                    }
+                }
+                Err(msg) => {
+                    panics += 1;
+                    for t in test_routines(&lowered.program.objects[r.oi]) {
+                        outcomes.insert(
+                            (r.si, r.id, t.name.to_lowercase()),
+                            Outcome::NotRun(format!("runtime panic (bug): {msg}")),
+                        );
                     }
                 }
             }

@@ -243,6 +243,30 @@ pub(crate) fn blank(t: &TableDef) -> Row {
     t.fields.iter().map(|f| Value::default_for(&f.ty)).collect()
 }
 
+/// A row of default values made once, for a listing that starts every row from one: copying it
+/// shares the member lists of the option columns instead of building each again.
+pub(crate) struct Blank {
+    row: Row,
+}
+
+impl Blank {
+    pub(crate) fn new(t: &TableDef) -> Blank {
+        Blank { row: blank(t) }
+    }
+
+    pub(crate) fn row(&self) -> Row {
+        self.row.clone()
+    }
+
+    /// An `Option` value of field `id` with ordinal `n`.
+    pub(crate) fn option(&self, t: &TableDef, id: u32, n: i32) -> Value {
+        match &self.row[pos(t, id)] {
+            Value::Option(_, m) => Value::Option(n, m.clone()),
+            other => panic!("field {id} of '{}' is not an option: {other:?}", t.name),
+        }
+    }
+}
+
 /// An `Option` value of field `id` with ordinal `n`.
 pub(crate) fn option(t: &TableDef, id: u32, n: i32) -> Value {
     match Value::default_for(&t.fields[pos(t, id)].ty) {

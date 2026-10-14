@@ -156,11 +156,11 @@ fn not_run(o: &[(String, Outcome)], test: &str) -> String {
 fn a_platform_table_with_no_provider_is_refused_where_code_uses_it_and_names_table_and_id() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure UsesATableWithNoProvider() var P: Record "Feature Key"; begin if P.IsEmpty() then; end; }"#,
+  [Test] procedure UsesATableWithNoProvider() var P: Record "MCP Configuration"; begin if P.IsEmpty() then; end; }"#,
     );
     let why = not_run(&o, "UsesATableWithNoProvider");
     assert!(
-        why.contains("platform table 'Feature Key' (2000000211) has no provider"),
+        why.contains("platform table 'MCP Configuration' (2000000292) has no provider"),
         "{why}"
     );
 }
@@ -201,10 +201,10 @@ fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
   [Test] procedure ReadsAPinnedColumn() var F: Record Field; begin F.SetRange(TableNo, 50000); if F.IsEmpty() then; end;
-  [Test] procedure ReadsAnUnpinnedColumn() var F: Record Field; L: Integer; begin L := F.Len; end; }"#,
+  [Test] procedure ReadsAnUnpinnedColumn() var F: Record Field; L: Text; begin L := F."Type Name"; end; }"#,
     );
     let why = not_run(&o, "ReadsAnUnpinnedColumn");
-    assert!(why.contains("column 6 of platform table 'Field'"), "{why}");
+    assert!(why.contains("column 9 of platform table 'Field'"), "{why}");
     assert!(
         !matches!(o.iter().find(|(n, _)| n == "ReadsAPinnedColumn").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("column")),
         "{o:?}"
@@ -346,8 +346,8 @@ codeunit 50000 "T" { Subtype = Test;
 fn the_id_of_a_platform_table_with_no_provider_can_be_named() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure NamesTheId() var Id: Integer; begin Id := Database::"Feature Key"; if Id <> 2000000211 then Error('id %1', Id); end;
-  [Test] procedure ReadingTheRowsIsStillRefused() var P: Record "Feature Key"; begin if P.IsEmpty() then; end; }"#,
+  [Test] procedure NamesTheId() var Id: Integer; begin Id := Database::"MCP Configuration"; if Id <> 2000000292 then Error('id %1', Id); end;
+  [Test] procedure ReadingTheRowsIsStillRefused() var P: Record "MCP Configuration"; begin if P.IsEmpty() then; end; }"#,
     );
     passes(&o, "NamesTheId");
     let why = not_run(&o, "ReadingTheRowsIsStillRefused");
@@ -510,11 +510,11 @@ codeunit 50000 "T" { Subtype = Test;
     R.SetRange("Field No.", 6); if R.Count() <> 2 then Error('cond'); R.FindSet(); if R."Relation No." <> 1 then Error('first'); if R."Condition Field No." <> 2 then Error('cond field'); R.Next(); if R."Related Table ID" <> 50002 then Error('else');
     R.SetRange("Field No.", 7); if R.Count() <> 2 then Error('two conditions %1', R.Count()); R.FindFirst(); if R."Condition Field No." <> 2 then Error('first condition'); R.Next(); if R."Condition Field No." <> 3 then Error('second condition'); end;
   [Test] procedure FieldRelation() var F: Record "Field"; begin F.Get(50003, 7); if F.RelationTableNo <> 50001 then Error('filtered relation %1', F.RelationTableNo); if F.RelationFieldNo <> 1 then Error('related field'); end;
-  [Test] procedure ConditionalRelation() var F: Record "Field"; begin F.Get(50003, 6); end; }"#,
+  [Test] procedure ConditionalRelation() var F: Record "Field"; begin F.Get(50003, 6); if (F.RelationTableNo <> 0) or (F.RelationFieldNo <> 0) then Error('conditional relation reads 0/0'); end; }"#,
     );
     passes(&o, "FieldRelation");
-    let why = not_run(&o, "ConditionalRelation");
-    assert!(why.contains("conditional TableRelation"), "{why}");
+    // record/TestPlatformMetadataDeclarationContracts.al:262-264.
+    passes(&o, "ConditionalRelation");
     passes(&o, "Rows");
 }
 
@@ -567,6 +567,35 @@ fn code_coverage_tables_hold_what_was_recorded_and_delete_all_empties_them() {
     passes(&o, "DeleteAllEmptiesIt");
     passes(&o, "AFilteredDeleteAllLeavesTheOtherRows");
     passes(&o, "ARecordingAfterDeleteAllStartsFromNothing");
+}
+
+/// codeunit/TestCodeCoverageLineTextContracts.al: the `begin` and `end` lines have `Empty` rows, every row's `Line` holds the
+/// platform's text for an app without source, and the status is Covered, Not Covered or Non Applicable.
+#[test]
+fn code_coverage_rows_of_an_app_without_source_hold_the_platform_text_and_a_status() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Branch(V: Integer): Integer
+  begin
+    if V > 1 then
+      exit(1);
+    exit(0);
+  end;
+  [Test] procedure Rows()
+  var C: Record "Code Coverage"; Rows: Text;
+  begin
+    CodeCoverageLog(false, false); C.DeleteAll();
+    CodeCoverageLog(true, false); Branch(5); CodeCoverageLog(false, false);
+    C.SetRange("Object ID", 50000); C.SetRange("Line No.", 2, 7);
+    C.FindSet();
+    repeat
+      if not C.Line.StartsWith('The extension that declares this object has its manifest property ShowMyCode') then Error('line text %1', C.Line);
+      Rows += Format(C."Line No.") + ' ' + Format(C."Line Type") + ' ' + Format(C."No. of Hits") + ' ' + Format(C."Code Coverage Status") + '|';
+    until C.Next() = 0;
+    if Rows <> '2 Trigger/Function 0 Non Applicable|3 Empty 0 Non Applicable|4 Code 1 Covered|5 Code 1 Covered|6 Code 0 Not Covered|7 Empty 0 Non Applicable|' then Error(Rows);
+  end; }"#,
+    );
+    passes(&o, "Rows");
 }
 
 /// A `[Test]` procedure that starts while recording has a Tests Run row, and the methods that run
@@ -627,13 +656,13 @@ codeunit 50000 "T" { Subtype = Test;
 #[test]
 fn a_platform_table_without_provider_works_as_a_temporary_record_and_is_refused_otherwise() {
     let o = outcomes(
-        r#"codeunit 50001 "Holder" { var L: Record "License Information" temporary; G: Record "Feature Key";
+        r#"codeunit 50001 "Holder" { var L: Record "License Information" temporary; G: Record "MCP Configuration";
   procedure Log(N: Integer; T: Text) begin L."Line No." := N; L.Text := CopyStr(T, 1, 250); L.Insert(); end;
   procedure Count(): Integer begin exit(L.Count()); end; }
 codeunit 50000 "T" { Subtype = Test;
   [Test] procedure TemporaryRoundTrips() var H: Codeunit Holder; begin H.Log(1, 'a'); H.Log(2, 'b'); if H.Count() <> 2 then Error('count %1', H.Count()); end;
-  [Test] procedure DeclaredAndNeverRead() var G: Record "Feature Key"; begin end;
-  [Test] procedure PersistentReadIsRefused() var G: Record "Feature Key"; begin if G.Get('X') then; end;
+  [Test] procedure DeclaredAndNeverRead() var G: Record "MCP Configuration"; begin end;
+  [Test] procedure PersistentReadIsRefused() var G: Record "MCP Configuration"; begin if G.Get('X') then; end;
   [Test] procedure PersistentWriteIsRefused() var L: Record "License Information"; begin L."Line No." := 1; L.Insert(); end; }"#,
     );
     passes(&o, "TemporaryRoundTrips");
@@ -643,7 +672,7 @@ codeunit 50000 "T" { Subtype = Test;
         assert!(why.contains("has no provider"), "{t}: {why}");
     }
     let why = not_run(&o, "PersistentReadIsRefused");
-    assert!(why.contains("platform table 'Feature Key' (2000000211)"), "{why}");
+    assert!(why.contains("platform table 'MCP Configuration' (2000000292)"), "{why}");
 }
 
 /// Columns that the declaration describes, filled from it: the caption, card page and editability of
@@ -677,11 +706,11 @@ codeunit 50000 "T" { Subtype = Test;
 fn a_keys_sift_flag_and_obsolete_state_and_a_tables_drill_down_page_are_read_from_the_declaration() {
     let o = outcomes(
         r#"table 50001 "Thing" { DrillDownPageId = "Thing List"; fields { field(1; "No."; Integer) { } field(2; Amt; Decimal) { } }
-  keys { key(PK; "No.") { Clustered = true; } key(S1; Amt) { MaintainSIFTIndex = false; } key(S2; Amt, "No.") { ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; } } }
+  keys { key(PK; "No.") { Clustered = true; } key(S1; Amt) { MaintainSIFTIndex = false; } key(S2; Amt, "No.") { SumIndexFields = "No."; ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; } } }
 page 50002 "Thing List" { PageType = List; SourceTable = Thing; }
 codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure Keys() var K: Record "Key"; begin K.SetRange(TableNo, 50001); K.SetRange("No.", 1); K.FindFirst(); if not K.MaintainSIFTIndex then Error('default sift'); if K.ObsoleteState <> K.ObsoleteState::No then Error('default state');
-    K.SetRange("No.", 2); K.FindFirst(); if K.MaintainSIFTIndex then Error('sift'); K.SetRange("No.", 3); K.FindFirst(); if K.ObsoleteState <> K.ObsoleteState::Pending then Error('pending'); end;
+  [Test] procedure Keys() var K: Record "Key"; begin K.SetRange(TableNo, 50001); K.SetRange("No.", 1); K.FindFirst(); if K.MaintainSIFTIndex then Error('default sift'); if K.ObsoleteState <> K.ObsoleteState::No then Error('default state');
+    K.SetRange("No.", 2); K.FindFirst(); if K.MaintainSIFTIndex then Error('sift'); K.SetRange("No.", 3); K.FindFirst(); if not K.MaintainSIFTIndex then Error('sum index fields'); if K.ObsoleteState <> K.ObsoleteState::Pending then Error('pending'); end;
   [Test] procedure Table() var M: Record "Table Metadata"; begin M.Get(50001); if M.DrillDownPageId <> 50002 then Error('drill down %1', M.DrillDownPageId); end; }"#,
     );
     passes(&o, "Keys");

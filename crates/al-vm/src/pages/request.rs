@@ -61,7 +61,7 @@ impl Session {
         inst: &Inst,
         object: usize,
         seed: Option<&str>,
-        run_ext: Option<(usize, Inst)>,
+        run_ext: Vec<(usize, Inst)>,
         want_parameters: bool,
     ) -> Result<(RequestClosed, Option<String>), Signal> {
         let engine = self.engine();
@@ -92,9 +92,9 @@ impl Session {
         // writes into the extension's variables is what its triggers read.
         let mut exts = Vec::new();
         for &e in &page.extensions {
-            let ext = match &run_ext {
-                Some((re, i)) if *re == e => i.clone(),
-                _ => self.instance(e),
+            let ext = match run_ext.iter().find(|(re, _)| *re == e) {
+                Some((_, i)) => i.clone(),
+                None => self.instance(e),
             };
             exts.push((e, ext));
         }
@@ -158,13 +158,20 @@ impl Session {
         if schema.report().transaction_type.is_some() {
             return unsupported("SaveAsXml of a report that declares a TransactionType (not pinned)");
         }
-        let ext = {
-            let want = schema.report().extension;
-            st.borrow()
-                .ext_instances
+        let ext: Vec<(Inst, usize)> = {
+            let state = st.borrow();
+            schema
+                .report()
+                .extensions
                 .iter()
-                .find(|(e, _)| Some(*e) == want)
-                .map(|(e, i)| (i.clone(), *e))
+                .filter_map(|want| {
+                    state
+                        .ext_instances
+                        .iter()
+                        .find(|(e, _)| e == want)
+                        .map(|(e, i)| (i.clone(), *e))
+                })
+                .collect()
         };
         let run = self.report_run_for(object, &inst, ext, true);
         let outer = self.dataset.replace(crate::dataset::Dataset::default());
@@ -194,18 +201,20 @@ impl Session {
     }
 
     /// The parameters file of `SaveAsXml`: a byte order mark, then `ArrayOfReportParameter` with the user id
-    /// and the execution time. The corpus asserts the start, the user id value, the second parameter's name
-    /// and the end; the rest (the closing of `Name`, the execution time's spelling) is assumed.
+    /// and the execution time. LF line ends, none after the last element; each parameter name is followed by a
+    /// fixed 32 digit GUID; the execution time has seven fraction digits and `+00:00`
+    /// (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:SaveAsXml_ParametersFile_RawForm).
     fn save_as_xml_parameters(&self) -> Vec<u8> {
         let ms = self.now_millis();
         let day = ms.div_euclid(86_400_000) + i64::from(al_builtins::format::day_from_civil(1970, 1, 1));
         let (y, mo, d) = al_builtins::format::civil_from_day(day as i32);
         let in_day = ms.rem_euclid(86_400_000);
         let time = format!(
-            "{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}",
+            "{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}.{:03}0000+00:00",
             in_day / 3_600_000,
             in_day / 60_000 % 60,
-            in_day / 1000 % 60
+            in_day / 1000 % 60,
+            in_day % 1000
         );
         let one = |name: &str, value: &str| {
             format!(
@@ -213,9 +222,12 @@ impl Session {
             )
         };
         let text = format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ArrayOfReportParameter xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n{}{}</ArrayOfReportParameter>\n",
-            one("NavUserId", &xml_escape(&self.host.identity.user_id())),
-            one("ExecutionTime", &time)
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ArrayOfReportParameter xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n{}{}</ArrayOfReportParameter>",
+            one(
+                "NavUserIdAE6AEB42076449B78A3E78A5EE366751",
+                &xml_escape(&self.host.identity.user_id())
+            ),
+            one("ExecutionTime7587CE19257C4965B7E6066BDFF21EE3", &time)
         );
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(text.as_bytes());

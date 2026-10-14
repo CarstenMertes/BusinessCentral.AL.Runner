@@ -31,6 +31,7 @@ pub enum Virtual {
     TableMetadata,
     Field,
     Key,
+    FeatureKey,
     PageMetadata,
     PageControlField,
     TimeZone,
@@ -89,6 +90,14 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
         Provider::Virtual(Virtual::TableMetadata),
     ),
     (2_000_000_041, "Field", Provider::Virtual(Virtual::Field)),
+    // Pinned for BC 27 only (record/TestFieldLenAndFeatureKeyContracts.al, `#if not BC28PLUS`).
+    (2_000_000_211, "Feature Key", Provider::Virtual(Virtual::FeatureKey)),
+    // Ordinary stored tables that take Insert and Delete (record/TestPlatformTablesWritableContracts.al:
+    // Tenant License State refuses Delete, in al-vm records.rs).
+    (2_000_000_196, "Object Options", Provider::Stored),
+    (2_000_000_237, "Privacy Notice", Provider::Stored),
+    (2_000_000_078, "Chart", Provider::Stored),
+    (2_000_000_189, "Tenant License State", Provider::Stored),
     (2_000_000_063, "Key", Provider::Virtual(Virtual::Key)),
     (2_000_000_138, "Page Metadata", Provider::Virtual(Virtual::PageMetadata)),
     (
@@ -232,8 +241,10 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Table Metadata: record/TestTableMetadataVirtualTable.al.
     (2_000_000_136, &[1, 2, 3, 4, 5, 6, 11, 12, 13, 15]),
     // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al. TableName, Class, Enabled and "Field Caption"
-    // are read from the declaration (probe batch 5); Len (6), Type Name (9), ExternalName (10) and the rest are not.
-    (2_000_000_041, &[1, 2, 3, 4, 5, 7, 8, 20, 21, 22, 24, 25, 26, 27]),
+    // are read from the declaration (probe batch 5); Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
+    (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27]),
+    // Feature Key (BC 27): ID (1) and Data Update Required (8), record/TestFieldLenAndFeatureKeyContracts.al.
+    (2_000_000_211, &[1, 8]),
     // Key: record/TestKeyVirtualTable.al.
     (2_000_000_063, &[1, 2, 4, 7, 9, 10, 11, 13]),
     // Page Metadata: record/TestPageMetadata*.al. Caption (3) and CardPageID (6) are read from the declaration (probe batch 5).
@@ -243,8 +254,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
             1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
         ],
     ),
-    // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
-    (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10]),
+    // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) is not read; Sequence (11): record/TestTableRelationsSequenceMetadataContracts.al.
+    (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
     // NAV App Installed App: record/TestNavAppInstalledAppSysTable.al. The compatibility, hash and extension columns are not read.
     (2_000_000_153, &[1, 2, 3, 4, 5, 6, 7, 8]),
     // Published Application: install/TestRetenPolAllowedTables_Tests.al reads the package ids through System Application code;
@@ -265,8 +276,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_005, &[1, 3, 4, 6, 7, 8, 9, 10]),
     // All Profile: profile/TestAllProfileTable.al, TestCopyProfile.al. The obsolete columns and "Disable Personalization" are not read.
     (2_000_000_178, &[1, 2, 3, 4, 5, 6, 14, 15, 16, 17]),
-    // Report Layout List: handlers/TestSourceReportLayoutFlags.al, TestPrecompiledReportLayouts.al.
-    (2_000_000_234, &[1, 2, 7, 11, 16, 17]),
+    // Report Layout List: handlers/TestSourceReportLayoutFlags.al, TestPrecompiledReportLayouts.al; Caption (3) and Description (10): record/TestEventSubscriptionColumnsReportLayoutListContracts.al.
+    (2_000_000_234, &[1, 2, 3, 7, 10, 11, 16, 17]),
     // Report Metadata, Report Data Items: handlers/TestReportMetadataColumns.al.
     (2_000_000_139, &[1, 4, 9, 17, 18]),
     (2_000_000_203, &[1, 2, 3, 4, 5, 6, 7, 8]),
@@ -275,14 +286,15 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_280, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
     // Query Metadata: query/TestQueryMetadataVirtualTable.al. Category (9) is not read.
     (2_000_000_142, &[1, 2, 3, 4, 5, 6, 7, 8, 10]),
-    // Event Subscription: record/TestEventSubscriptionVirtualTable.al. "Number of Calls" and later columns are not read.
-    (2_000_000_140, &[1, 2, 3, 4, 5, 6, 7]),
+    // Event Subscription: record/TestEventSubscriptionVirtualTable.al. "Number of Calls" (8), "Error Information" (9), "Subscriber Instance" (12) and "Active Manual Instances" (13): record/TestEventSubscriptionColumnsReportLayoutListContracts.al. The package and app name are not read.
+    (2_000_000_140, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13]),
     // Page Action: record/TestPageActionVirtualTable.al. Captions, tool tips, Promoted and the Run* columns but RunObjectID are not read.
     (2_000_000_143, &[1, 2, 3, 4, 5, 6, 8, 16]),
-    // Table Relations Metadata: record/TestTableRelationsMetadataVirtualTable.al. The condition type and value and the names are not read.
-    (2_000_000_141, &[1, 2, 3, 4, 5, 6, 8]),
-    // Code Coverage tables: codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al. "Line" and the status and method id of a line are not read.
-    (2_000_000_049, &[1, 2, 3, 4, 6]),
+    // Table Relations Metadata: record/TestTableRelationsMetadataVirtualTable.al. The condition type, value and the two flags: record/TestTableRelationsSequenceMetadataContracts.al. The names are not read.
+    (2_000_000_141, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]),
+    // Code Coverage tables: codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al, and "Line" (5) and
+    // "Code Coverage Status" (7) from TestCodeCoverageLineTextContracts.al. The method id of a line is not read.
+    (2_000_000_049, &[1, 2, 3, 4, 5, 6, 7]),
     (2_000_000_288, &[1, 2, 3, 4]),
     (2_000_000_289, &[1, 2, 3, 4, 5]),
     // Windows Language: record/TestWindowsLanguageTable.al.

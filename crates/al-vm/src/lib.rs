@@ -182,6 +182,15 @@ pub struct Session {
     /// The routine and current statement position of every frame, parallel to `frames`
     /// (`callstack.rs`).
     pub(crate) call_stack: Vec<CallFrame>,
+    /// The test runner's frames below a test, in `Callstack` form (`callstack.rs`); empty
+    /// outside a test run.
+    pub(crate) runner_frames: String,
+    /// `publish` is about to raise its event: the next `raise` has an event frame on the stack.
+    pub(crate) publish_frame: bool,
+    /// Events being raised that have no publisher routine (table, page and Global Triggers
+    /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
+    /// live call stack is not answered while one runs.
+    pub(crate) unpinned_event_depth: usize,
     /// `faultsite.rs`: whether to record where errors and refusals leave from, and the last one.
     fault_trace: bool,
     fault_site: Vec<faultsite::FaultFrame>,
@@ -236,6 +245,8 @@ pub struct Session {
     pub(crate) ret_used: bool,
     /// Manual event subscriptions made by `BindSubscription`.
     pub(crate) bindings: Vec<dispatch::Binding>,
+    /// What the Event Subscription table reports (calls handled, bound instances).
+    pub(crate) event_stats: Rc<platform::EventStats>,
     /// The parameters of the routine that just failed with an error, as it left them:
     /// the caller writes its `var` arguments back before it handles the error.
     pub(crate) error_finals: Option<Vec<Value>>,
@@ -356,8 +367,12 @@ impl Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
         let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
-        let mut store =
-            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+        let event_stats = Rc::new(platform::EventStats::default());
+        let mut store = al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(
+            &engine,
+            ident.clone(),
+            event_stats.clone(),
+        )));
         if let Some(td) = &engine.test_data {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }
@@ -393,6 +408,7 @@ impl Session {
             baseline_rows: Default::default(),
             ret_used: true,
             bindings: Vec::new(),
+            event_stats,
             error_finals: None,
             committed_row_version: 0,
             page_handler_depth: 0,
@@ -400,6 +416,9 @@ impl Session {
             recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
+            runner_frames: String::new(),
+            publish_frame: false,
+            unpinned_event_depth: 0,
             fault_trace: false,
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
@@ -762,6 +781,7 @@ impl Session {
         };
         self.frames.push(object);
         self.call_stack.push(CallFrame {
+            event: false,
             routine,
             pos: ir::NO_POS,
         });
@@ -950,9 +970,9 @@ impl Session {
             S::AssertError(body) => {
                 // A caught error rolls the transaction back to the last commit, also inside a modal
                 // page handler: the write pending before the page opened and the handler's own
-                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
-                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
-                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
+                // earlier writes are lost with it
+                // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit).
                 match self.exec_block(body, f) {
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
@@ -1616,6 +1636,9 @@ type Cells = Rc<RefCell<Vec<Value>>>;
 /// A routine on the call stack and the position of the statement it is running.
 #[derive(Clone, Copy)]
 pub(crate) struct CallFrame {
+    /// An event publisher's frame (`dispatch::publish`): shown as `(Event)` at the line of the
+    /// routine's `end`, whatever `pos` says.
+    pub(crate) event: bool,
     pub(crate) routine: usize,
     /// `Program::positions` id of the current statement; `NO_POS` before the first one.
     pub(crate) pos: u32,
@@ -1753,6 +1776,9 @@ impl al_builtins::native::Ctx for Session {
             .apps
             .get(self.engine.program.objects[obj].app as usize)?;
         Some((app.name.clone(), app.resources.clone()))
+    }
+    fn runner_call_stack(&self) -> String {
+        self.runner_frames.clone()
     }
     fn module_callstack(&self, skip: usize) -> Vec<al_builtins::value::ModuleInfoState> {
         let mut seen = Vec::new();

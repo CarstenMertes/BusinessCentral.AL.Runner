@@ -390,8 +390,8 @@ fn filter_groups_combine_as_and_and_reset_clears_all() {
     assert_eq!(text(r), "02|1..3||3|22..5|5");
 }
 
-// SetRecFilter keeps the filters on other fields (corpus branch al-runtime-rs, pending push:
-// record/TestRecordViewCopyMarkContracts.al:SetRecFilter_KeepsFiltersOnOtherFields_...).
+// SetRecFilter keeps the filters on other fields (record/TestRecordViewCopyMarkContracts.al:41,
+// SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey).
 #[test]
 fn setrecfilter_keeps_a_filter_on_another_field() {
     let r = run(
@@ -871,8 +871,8 @@ fn field_active_is_true_for_an_enabled_field() {
 }
 
 #[test]
-fn field_active_of_a_disabled_field_is_refused_until_a_probe_pins_it() {
-    // Nothing in the corpus pins FieldActive for an `Enabled = false` field (docs/probes-needed.md).
+fn field_active_of_a_disabled_field_is_false() {
+    // record/TestRowVersionFieldNumberFieldActiveContracts.al:FieldActive_FalseForADisabledField_TrueForPendingObsolete.
     let src = r#"
 table 50935 T2 { fields { field(1; A; Integer) { } field(2; B; Integer) { Enabled = false; } } keys { key(PK; A) { } } }
 codeunit 50101 C2 { procedure F(): Boolean var R: Record T2; begin exit(R.FieldActive(B)); end; }
@@ -897,7 +897,7 @@ codeunit 50101 C2 { procedure F(): Boolean var R: Record T2; begin exit(R.FieldA
     let mut s = Session::new(engine);
     let inst = s.instance(oi);
     let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
 
 #[test]

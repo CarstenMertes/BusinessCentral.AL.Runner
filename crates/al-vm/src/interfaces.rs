@@ -14,8 +14,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 /// A call on an interface variable that holds no implementation
-/// (codeunit/TestInterfaceRuntimeContracts.al:Interface_CallOnUnassignedVariable_Throws_
-/// InterfaceNotInitialized, corpus branch al-runtime-rs, probe on BC 27.5).
+/// (codeunit/TestInterfaceRuntimeContracts.al:76,
+/// Interface_CallOnUnassignedVariable_Throws_InterfaceNotInitialized).
 fn not_initialized() -> Signal {
     Signal::Error(AlError {
         message: "Interface not initialized".into(),
@@ -73,8 +73,8 @@ impl Session {
                     ))),
                 }
             }
-            // codeunit/TestInterfaceRuntimeContracts.al:Interface_CallOnUnassignedVariable_Throws_
-            // InterfaceNotInitialized (corpus branch al-runtime-rs, probe on BC 27.5).
+            // codeunit/TestInterfaceRuntimeContracts.al:76
+            // (Interface_CallOnUnassignedVariable_Throws_InterfaceNotInitialized).
             Value::Null => Err(not_initialized()),
             other => Err(Signal::Unsupported(format!("interface call on {}", other.describe()))),
         }
@@ -95,8 +95,8 @@ impl Session {
         let object = match by_ordinal.iter().find(|(o, _)| *o == ordinal) {
             Some((_, c)) => *c,
             // An ordinal the enum does not declare and no UnknownValueImplementation to answer for
-            // it: codeunit/TestInterfaceRuntimeContracts.al:Interface_CastUndeclaredEnumOrdinal
-            // WithoutUnknownImplementation_Throws (corpus branch al-runtime-rs, probe on BC 27.5).
+            // it: codeunit/TestInterfaceRuntimeContracts.al:90
+            // (Interface_CastUndeclaredEnumOrdinalWithoutUnknownImplementation_Throws).
             None => unknown.ok_or_else(|| {
                 Signal::Error(AlError {
                     message: format!("Enum does not contain value {ordinal}."),

@@ -133,6 +133,18 @@ page 62013 "PM Rowset"
     end;
 }
 page 62090 "PM Dialog" { PageType = StandardDialog; }
+page 62096 "PM Close List"
+{
+    PageType = List; SourceTable = "PM Row";
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
+    trigger OnQueryClosePage(CloseAction: Action): Boolean var P: Codeunit "PM Probe"; begin P.Note('List ' + Format(CloseAction) + ';'); exit(true); end;
+}
+page 62097 "PM Close Document"
+{
+    PageType = Document; SourceTable = "PM Row";
+    layout { area(Content) { field("No."; Rec."No.") { } } }
+    trigger OnQueryClosePage(CloseAction: Action): Boolean var P: Codeunit "PM Probe"; begin P.Note('Document ' + Format(CloseAction) + ';'); exit(true); end;
+}
 report 62092 "PM Scheduled"
 {
     ProcessingOnly = true; AllowScheduling = true;
@@ -494,8 +506,8 @@ fn a_commit_in_a_worker_is_refused() {
     );
 }
 
-// corpus branch al-runtime-rs (pending push): record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
-// Asserterror_InAModalHandler_RollsBackToTheLastCommit (probe on BC 27.5). An asserterror inside a
+// record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143
+// (Asserterror_InAModalHandler_RollsBackToTheLastCommit). An asserterror inside a
 // modal handler rolls back everything since the last Commit: the write pending before the page
 // opened, the handler's own earlier write and the write inside the asserterror.
 #[test]
@@ -609,44 +621,67 @@ fn reaching_set_selection_filter_or_get_record_is_refused() {
     );
 }
 
-// `P.Editable := false` and `P.Editable(false)` on a Page variable that has not run: Base App's "Reminder Level
-// Communication" does it before `RunModal`. It raised "The TestPage is not open", an error BC does not raise. What BC
-// does with it is in no corpus test, so reaching it is refused (docs/probes-needed.md, "Page variable Editable").
+// `P.Editable := false` and `P.Editable(false)` on a Page variable that has not run are accepted without an error; the
+// variable reads what it was set to, and true before (handlers/TestPageVariableEditableContracts.al:
+// EditableBeforeRun_IsTrue_AndAssignmentIsAccepted).
 #[test]
-fn editable_on_a_page_variable_that_has_not_run_is_refused_not_an_error() {
-    let o = outcomes(&format!(
+fn editable_on_a_page_variable_that_has_not_run_is_accepted_and_read_back() {
+    passes(&format!(
         "{HELPERS}
         [Test]
-        procedure Assigns() var P: Page \"PM Selection\"; begin P.Editable := false; end;
-        [Test]
-        procedure Calls() var P: Page \"PM Selection\"; begin P.Editable(false); end;"
+        procedure Assigns() var P: Page \"PM Selection\"; begin
+            Check('Yes', Format(P.Editable())); P.Editable := false; Check('No', Format(P.Editable()));
+            P.Editable(true); Check('Yes', Format(P.Editable())); P.Editable(false); Check('No', Format(P.Editable())); end;"
     ));
-    for (name, outcome) in &o {
-        assert!(
-            matches!(outcome, Outcome::NotRun(why) if why.contains("Editable") && why.contains("not pinned")),
-            "{name}: {outcome:?}"
-        );
-    }
 }
 
-// A control bound to a variable with its own MinValue/MaxValue: a value inside the bounds is written, one outside is
-// refused (Base App's "Document Search" page; no corpus test pins the control-level bound).
+// The value set before the run is what the page opens with, for RunModal (handlers/TestPageVariableEditableContracts.al:
+// RunModal_AfterEditableFalse_OpensANonEditablePage, :RunModal_AfterAssigningEditableTrue_OpensAnEditablePage).
 #[test]
-fn a_variable_control_with_bounds_takes_inside_values_and_refuses_the_others() {
+fn a_page_variable_set_non_editable_opens_the_page_non_editable() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('Handler')]
+        procedure Off() var P: Page \"PM Selection\"; begin P.Editable(false); P.RunModal(); end;
+        [ModalPageHandler] procedure Handler(var T: TestPage \"PM Selection\") begin Check('No', Format(T.Editable())); end;"
+    ));
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('Handler')]
+        procedure On() var P: Page \"PM Selection\"; begin P.Editable := true; P.RunModal(); end;
+        [ModalPageHandler] procedure Handler(var T: TestPage \"PM Selection\") begin Check('Yes', Format(T.Editable())); end;"
+    ));
+}
+
+// A control bound to a variable with its own MinValue/MaxValue: a value inside the bounds is written, one outside raises
+// the TestValidation error with the pinned text and keeps the old value (handlers/TestPageVariableMinMaxContracts.al:
+// IntegerVariable_OutsideTheBounds_RaisesATestValidationError, DecimalVariable_OutsideTheBounds_...).
+#[test]
+fn a_variable_control_with_bounds_takes_inside_values_and_raises_a_validation_error_for_the_others() {
     passes(&format!(
         "{HELPERS}
         [Test]
         procedure Inside() var P: TestPage \"PM Bounded\"; begin
-            P.OpenEdit(); P.Tol.SetValue(50); Check('50.00', P.Tol.Value()); P.Close(); end;"
+            P.OpenEdit(); P.Tol.SetValue(50); Check('50.00', P.Tol.Value());
+            asserterror P.Tol.SetValue(150);
+            Check('Validation error for Field: Tol,  Message = ''The value must be less than or equal to 100. Value: 150.00.''', GetLastErrorText());
+            Check('TestValidation', GetLastErrorCode());
+            Check('50.00', P.Tol.Value());
+            asserterror P.Tol.SetValue(-1);
+            Check('Validation error for Field: Tol,  Message = ''The value must be greater than or equal to 0. Value: -1.00.''', GetLastErrorText());
+            P.Close(); end;"
     ));
-    let o = outcomes(&format!(
+}
+
+// handlers/TestPageCloseActionByPageTypeContracts.al:TestPageClose_IsOk_ForEveryPageType: TestPage.Close() reports OK to
+// OnQueryClosePage for a list and a document, not only a card; a dialog still reports Cancel.
+#[test]
+fn test_page_close_reports_ok_for_list_and_document_pages() {
+    passes(&format!(
         "{HELPERS}
         [Test]
-        procedure Outside() var P: TestPage \"PM Bounded\"; begin
-            P.OpenEdit(); P.Tol.SetValue(150); P.Close(); end;"
+        procedure CloseIsOk() var L: TestPage \"PM Close List\"; D: TestPage \"PM Close Document\"; P: Codeunit \"PM Probe\"; begin
+            P.Reset(); L.OpenView(); L.Close(); D.OpenView(); D.Close();
+            Check('List OK;Document OK;', P.Trace()); end;"
     ));
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("MinValue")),
-        "{o:?}"
-    );
 }

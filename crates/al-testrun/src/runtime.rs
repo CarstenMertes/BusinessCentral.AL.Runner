@@ -454,6 +454,10 @@ impl CorpusRuntime {
         let opts_only = only;
         // A dependency file that does not parse takes every object in it out of the compile, and the
         // tests that need one are refused as "outside the workspace". Say so, once, with the first lines.
+        // A file whose second parse gave another result is a defect, not a property of the file (issue 15).
+        for flake in ws.parse_flakes() {
+            eprintln!("parse: WARNING {flake}");
+        }
         let mut unparsed = ws.lazy_parse_problems();
         // The files the cache supplies were parsed when it was built.
         if let Some(c) = &cache_report {
@@ -938,6 +942,37 @@ pub fn run_codeunit_limited(
     run_codeunit_full(engine, lowered, object, baseline, isolation, None, &mut Vec::new(), limit)
 }
 
+/// The frames BC's test runner has below a test, as `SessionInformation.Callstack` shows them
+/// (corpus session/TestSessionInformationCallstackContracts.al:89-97 and the failure texts of the
+/// corpus CI on 27.5, 28.5 and 29.0, where the lines are the same). The runner's own app is
+/// `Test Runner by Microsoft`; its version is the loaded app's, else the run's BC version.
+fn runner_frames(program: &al_ir::Program, engine: &Engine) -> String {
+    let version = program
+        .apps
+        .iter()
+        .find(|a| a.name == "Test Runner" && a.publisher == "Microsoft")
+        .map(|a| a.version.clone())
+        .or_else(|| {
+            engine
+                .target
+                .as_ref()
+                .map(|t| format!("{}.{}.0.0", t.bc.major, t.bc.minor))
+        })
+        .unwrap_or_else(|| "0.0.0.0".into());
+    const FRAMES: [&str; 6] = [
+        "\"Test Runner - Mgt\"(CodeUnit 130454).RunTests line 26",
+        "\"Test Runner - Isol. Codeunit\"(CodeUnit 130450).OnRun(Trigger) line 4",
+        "\"Test Suite Mgt.\"(CodeUnit 130456).RunTests line 2",
+        "\"Test Suite Mgt.\"(CodeUnit 130456).RunSelectedTests line 35",
+        "\"Test Suite Mgt.\"(CodeUnit 130456).RunNextTest line 20",
+        "\"Command Line Test Tool\"(Page 130455).\"RunNextTest - OnAction\"(Trigger) line 7",
+    ];
+    FRAMES
+        .iter()
+        .map(|f| format!("{f} - Test Runner by Microsoft version {version}\\"))
+        .collect()
+}
+
 /// [`run_codeunit_observed`] that also collects, for each test that failed with an AL error, the AL
 /// call stack of that error as `(test name, stack)` (`GetLastErrorCallStack` form, innermost first).
 pub fn run_codeunit_full(
@@ -1068,7 +1103,9 @@ pub fn run_codeunit_full(
                     let commits_before = session.commits;
                     session.clear_stop();
                     let watchdog = limit.map(|l| Watchdog::start(session.stop_flag(), l));
+                    session.set_runner_frames(runner_frames(&lowered.program, engine));
                     let result = session.call(object, r, instance.clone(), Vec::new());
+                    session.set_runner_frames(String::new());
                     let timed_out = watchdog.is_some_and(Watchdog::finish);
                     // The reason names the limit; the VM only knows that it was stopped.
                     let result = match result {
@@ -1437,6 +1474,9 @@ pub struct Blocked {
 pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<Blocked> {
     let mut seen = BTreeSet::new();
     let mut stack = vec![(object, routine)];
+    // `AL_BLOCK_PATH=1` prints the chain of calls from the root to the routine with the reason.
+    let trace = std::env::var_os("AL_BLOCK_PATH").is_some();
+    let mut parent = std::collections::BTreeMap::new();
     while let Some((o, r)) = stack.pop() {
         if !seen.insert((o, r)) {
             continue;
@@ -1444,13 +1484,31 @@ pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<
         if let Some(reason) = lowered.unsupported[o][r].first() {
             let name = &lowered.program.objects[o].routines[r].name;
             let obj = &lowered.program.objects[o].name;
+            if trace {
+                let mut at = (o, r);
+                let mut chain = vec![at];
+                while let Some(&p) = parent.get(&at) {
+                    chain.push(p);
+                    at = p;
+                }
+                for (co, cr) in chain.iter().rev() {
+                    let ob = &lowered.program.objects[*co];
+                    eprintln!("  via {} {} .{}", ob.kind, ob.name, ob.routines[*cr].name);
+                }
+            }
             return Some(Blocked {
                 object: o,
                 routine: r,
                 text: format!("{obj}.{name}: {reason}"),
             });
         }
+        let before = stack.len();
         lowered.calls_into(o, r, &mut stack);
+        if trace {
+            for &next in &stack[before..] {
+                parent.entry(next).or_insert((o, r));
+            }
+        }
     }
     None
 }
@@ -1703,8 +1761,8 @@ mod tests {
                     if not Ok then Error('guarded run refused'); end;
                 [Test] procedure DefaultWrites() var R: Record S; begin
                     // The guarded run of NextStartsClean committed its row 'RUN': it survives an
-                    // AutoRollback test (codeunit/TestCodeunitRunErrorTextsAndModels.al:
-                    // AutoRollback_Test04, corpus branch al-runtime-rs, probe on BC 27.5).
+                    // AutoRollback test (codeunit/TestCodeunitRunErrorTextsAndModels.al:259,
+                    // AutoRollback_Test04_SuccessfulGuardedRun_RowSurvivesTheTestBoundary).
                     R.DeleteAll();
                     R.K := 'D'; R.Insert();
                     if not Database.IsInWriteTransaction() then Error('no write transaction after an insert'); end;
@@ -1747,7 +1805,7 @@ mod tests {
         assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
         assert_eq!(o[2].1, Outcome::Pass, "{o:?}");
         // DeleteAll under None is refused with the Insert text
-        // (codeunit/TestWriteTxNoneModelContracts.al:Test04, corpus branch al-runtime-rs, BC 27.5).
+        // (codeunit/TestWriteTxNoneModelContracts.al:91, NoneModel_Test04_DeleteAll_IsRefused).
         assert_eq!(
             o[3].1,
             Outcome::Fail("A transaction must be started before changes can be made to the database.".into()),

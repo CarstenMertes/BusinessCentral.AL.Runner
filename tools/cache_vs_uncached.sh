@@ -53,7 +53,7 @@ run() {
   rm -f "$dir"/runtime-junit*.xml "$dir"/cached-junit*.xml
   # One corpus run at a time, under a memory cap (a run must stay under 3 GB).
   local cap=()
-  command -v systemd-run >/dev/null && cap=(systemd-run --user --scope -q -p MemoryMax=3G)
+  command -v systemd-run >/dev/null && cap=(systemd-run --user --scope -q --slice=al-work.slice -p MemoryMax=3G)
   (cd "$dir" && "${cap[@]}" "$bin" --root "$root" --all-versions --require-dotnet --no-ratchet \
     --junit runtime-junit.xml > normal.log 2>&1) || { echo "uncached run failed, see $dir/normal.log" >&2; status=1; }
   (cd "$dir" && "${cap[@]}" "$bin" --root "$root" --all-versions --require-dotnet --no-ratchet --compile-cache \

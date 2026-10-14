@@ -102,6 +102,11 @@ pub trait Ctx: FormatCtx {
     fn module_callstack(&self, _skip: usize) -> Vec<crate::value::ModuleInfoState> {
         Vec::new()
     }
+    /// The frames of the test runner below the test, in `Callstack` form (backslash after each
+    /// frame); empty where the context has no runner (al-vm/callstack.rs).
+    fn runner_call_stack(&self) -> String {
+        String::new()
+    }
     /// The name and packaged resources of the app that owns the running code.
     fn app_resources(&self) -> Option<AppResources> {
         None
@@ -466,8 +471,14 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Report.ObjectId#1" => {
             "the text of Report.ObjectId (the id or the name, with or without the object type) is not pinned"
         }
-        "RecordId.GetRecord#1" => {
-            "RecordId.GetRecord is in no corpus test, so whether it reads the row or returns a handle is not pinned"
+        "RequestPage.Update#1" => {
+            "RequestPage.Update (RequestOptionsPage.Update(SaveRecord)) is in no corpus test, so what it re-evaluates on the request page and whether it saves the record is not pinned"
+        }
+        "Report.Preview#1" => {
+            "Report.Preview is in no corpus test, so whether a run of a test (Run, SaveAs, a request page) is a preview is not pinned"
+        }
+        "FileUpload.CreateInStream#1" | "FileUpload.CreateInStream#2" => {
+            "FileUpload.CreateInStream is in no corpus test, so what a FileUpload holds without a client and the stream it opens is not pinned"
         }
         "Record.FieldError#3" | "FieldRef.FieldError#3" => {
             "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
@@ -656,7 +667,18 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
         // the function (error-handling/TestGetLastError.al) still passes.
         return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string()));
     }
-    Ok(Value::Text(e.call_stack))
+    if e.call_stack.is_empty() {
+        return Ok(Value::Text(String::new()));
+    }
+    // The frames are separated by a backslash and the text ends with one, the runner's frames
+    // below the test's (session/TestSessionInformationCallstackContracts.al:200-218).
+    let mut out = String::with_capacity(e.call_stack.len() + 64);
+    for frame in e.call_stack.split('\n') {
+        out.push_str(frame);
+        out.push('\\');
+    }
+    out.push_str(&ctx.runner_call_stack());
+    Ok(Value::Text(out))
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -1067,7 +1089,12 @@ fn enum_ordinals(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> R
 /// types/TestEnumDefaultImplTests.Codeunit.al:70).
 fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let (id, _) = enum_receiver(ctx, r, "Enum.FromInteger")?;
-    match int_arg(args, 0).and_then(|n| i32::try_from(n).ok()) {
+    // An Option argument converts to its ordinal, as any Integer parameter takes it.
+    let n = match args.first() {
+        Some(Value::Option(o, _)) => Some(*o),
+        _ => int_arg(args, 0).and_then(|n| i32::try_from(n).ok()),
+    };
+    match n {
         Some(n) => Ok(Value::Enum(id, n)),
         None => unsupported("Enum.FromInteger with a number outside the Integer range"),
     }

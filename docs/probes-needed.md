@@ -468,7 +468,7 @@ Microsoft's code compiles on real BC, so the syntax below is valid AL. What it m
 | Name resolution | A table that moved between apps stays in the old app as a stub marked `ObsoleteState = Moved` (Base Application's "No. Series", "No. Series Line", "Source Code Setup" and others, now in Business Foundation). **Assumed:** a name that matches a stub and a real object resolves to the real object; two stubs stay ambiguous. Without it `Record "No. Series"` in Microsoft's test libraries was unresolved and about 1900 Tests-ERM tests were refused. Probe wanted: app A declares table T, app B (depends on A) declares a table of the same id, name and namespace with `ObsoleteState = Moved; MovedTo = A`, app C depends on both and has `Record T`; does it compile, and which table does `Database::T` / `RecordRef.Open` read? | Microsoft's own test libraries compile with both visible; nothing in the corpus | `al-sema/src/workspace.rs` `pick_real`, `lookup` |
 | Property forms | `Rec.Mark := b`, `Rec.MarkedOnly := b`, `Rec.Ascending := b`, `Rec.FilterGroup := n`, `Report.UseRequestPage := b`, `WorkDate := d`, and `ErrorInfo.Message := t` (also DetailedMessage, Title, ControlName, FieldNo, PageNo, TableId, Verbosity, DataClassification, Collectible, ErrorType, CustomDimensions) are lowered as the call form with one argument. **Assumed:** the assignment and the call are the same operation. Unqualified in a table, page or report dataitem trigger the Record members act on the implicit `Rec` (the dataitem record in a report). Probe wanted: one test per member that assigns and reads back through the call form and the other way round | the call forms are pinned (record/TestRecordFind.al:237-284, handlers/TestPartOwnSortVsSubPageView.al:187, handlers/TestReportGetFilterInTriggers.al:66, session/TestSessionFunctions.al:63-65, errorinfo/TestErrorInfoType.al:249-345); the assignment forms only by Microsoft's compiling code | `al-sema/src/lower.rs` `is_property_setter` |
 | ErrorInfo | `ErrorInfo.RecordId := rid` is REFUSED when it runs. Probe wanted: assign a RecordId to a fresh `ErrorInfo.Create()` and read `RecordId()` and `TableId()` (does the assignment set the table id too?), and read `RecordId()` of a fresh one (the default is not pinned either) | errorinfo/TestErrorInfoType.al:360-377 pins only `Create(.., Record)` | `al-builtins/src/errorinfo.rs` `record_id` |
-| Report | `CurrReport.Language := n` (and `Report.NewPagePerRecord`, `PrintOnlyIfDetail` as properties) is REFUSED statically. Probe wanted: set `Language` in a report trigger and read `CurrReport.Language()`; does it change `Format` or captions? | none (the corpus has no `Language` on a report) | `al-sema/src/lower.rs` |
+| Report | `CurrReport.Language := n` is kept and reads back at once; `CurrReport.FormatRegion := t` is accepted and reads back empty (a run that renders no layout), as handlers/TestReportCurrReportLanguage.al:58-84 pins. NOT pinned and refused: language 0 (BC raises an error that names the language; its text is in no corpus line), reading `Language` before any set. The runtime's culture stays en-US: the language changes no formatting. `Report.NewPagePerRecord` and `PrintOnlyIfDetail` as properties are still REFUSED statically. Probe wanted: the error text of `Language := 0`; whether `Format` of a date or number changes after `Language := 1031`; the value of `Language` before any set | handlers/TestReportCurrReportLanguage.al:58-103 | `al-vm/src/reports.rs` `Report.Language#1`, `al-sema/src/lower.rs` |
 | TestPage | `TestPage.Field.Value := 'x'` is REFUSED. Assumed the same as `Field.SetValue('x')` (OnValidate runs); probe wanted: assign `.Value` on an editable and on a non-editable field and compare with `SetValue` | `SetValue` is pinned widely; `.Value` is only read | `al-sema/src/lower.rs` |
 | TestPage | A bare control name as a `TestField` argument, `Page.FindFirstField(Name, v)` and `FindNextField`, is REFUSED. Probe wanted: the same call where a local variable and a control share the name; which wins | handlers/TestBCReportHandlerContracts.al:247 pins the qualified form `ListPage."Integer Field"` | `al-sema/src/lower.rs` (`TestField` argument) |
 | ClientType | The member `ClientType::ODataV4` exists (Microsoft's code names it); it is appended after `ChildSession` and its ordinal is not pinned. Probe wanted: `Format(ClientType::ODataV4, 0, 2)` and the full member list in order | session/TestFinalCoverage.al:110,120 name only Default and Web | `al-builtins/src/sysenum.rs` |
@@ -820,3 +820,45 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
     Integer(n)`); `DateTime + Duration` is pinned (session/TestDateTimeContracts.al:50-75). 98 tests, from the
     project's `CurrentDateTime + (Seconds * 1000)`. Probe wanted: `DT + 1000` for an `Integer`, a `BigInteger` and a
     `Decimal` constant and variable (milliseconds? a compile error?), `DT - 1000`, and `DT + 1000.5` (rounding).
+
+## DotNet values typed at run time (ADR-024, Proposed)
+
+Nothing is implemented. The corpus app is `Cloud` (`corpus/tests/al-language/app.json:63`), so these need an
+`OnPrem` probe app first (ADR-024, decision 2). Today the four cases are refused statically (`no_dotnet_operand`,
+`System.CopyStream`, `System.Format`, `foreach` in `al-sema/src/lower.rs`). Counts: BC 27.5.46862.48827, Tests-ERM
+and NP Retail, tests whose first refusal it is (ADR-024, Context).
+
+1. **Kind seen by AL for each CLR result.** A member returning `int`, `long`, `short`, `byte`, `char`, `float`,
+   `double`, `decimal`, `bool`, `string`, `DateTime`, `TimeSpan`, `Guid`, an enum, a null `string`, a null
+   object: `Variant.IsInteger`, `IsBigInteger`, `IsDecimal`, `IsText`, ... and `Format`. Then `Count - 1`,
+   `Count / 2`, `Length() - 1` as a `for` bound, `Scheme = 'HTTPS'` (is the compare case-insensitive).
+2. **A null `string` result as an operand.** `s = ''`, `StrLen(s)`, `s + 'x'`, `Format(s)`, assigned to a `Variant`.
+3. **`Format` of a `DotNet` object.** `System.Type` (Business Chart compares it with CLR type names),
+   an enum, `StringBuilder`, a null object; with `Format(x, 0, 2)` too. Is it `ToString()`?
+4. **`DotNet` enum operators.** Flags `+` (`NumberStyles.Number + NumberStyles.AllowCurrencySymbol`, 8 tests),
+   `=` between enums, an enum against an `Integer` or an `Option`.
+5. **`foreach` over a `DotNet` value.** `string[]` (`Array`), `MatchCollection`, `Queue`, `List<string>`,
+   `Dictionary` (element type), a `string` (chars), a null collection (error text and code), a collection modified
+   in the loop (exception text), a loop variable of the wrong type, a `Text` variable over `int` elements, and
+   whether the enumerator is disposed at the end, on `break`, on `exit` and on an error. 101 Tests-ERM and 59 NP
+   Retail tests.
+6. **`CopyStream` with a `DotNet` stream.** Target a `DotNet MemoryStream` (content through `ToArray`, `Position`
+   after), source `ZipArchiveEntry.Open()` or a `MemoryStream` into a blob, with and without the byte count, a
+   source stream already at a non-zero position, a read-only target (exception text), a non-`Stream` object as
+   the target (compile error or run-time text). 561 Tests-ERM and 345 NP Retail tests.
+7. **`=` and `<>` between `DotNet` objects.** Same object, two equal strings held in `object` variables, `IsNull`.
+8. **`DateTimeOffset.LocalDateTime - Offset`.** The AL type of the result; `DateTime` minus `Duration`.
+
+Documentation-only assumption if the owner approves it (ADR-024, decision 3): a result of a kind the marshalling
+table maps to an AL scalar (ADR-014 section 4) is that AL scalar wherever it is used; `CopyStream` copies the
+unread bytes and advances the source; `foreach` calls `GetEnumerator`, `MoveNext`, `Current` and settles each
+element into the loop variable. Null, objects, enums and `Format` of an object stay refused.
+
+## Tests-ERM defects (issue 9)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `DataItemLinkReference` | REFUSED. Base Application links a data item to an ancestor that is not its parent (`DataItemLinkReference = AccScheduleName` under an `Integer` data item; 155 uses; 115 Tests-ERM tests). The corpus pins only the link to the enclosing data item (handlers/TestReportNestedLinkImplicitParent.al). Expected: the link fields refer to the named data item's current row | A report with an `Integer` data item between a parent and a child that names the parent in `DataItemLinkReference`: which child rows each parent row carries, with and without the reference |
+| A character assigned into a Code (`Letter: Code[1]; Letter[1] := c`) | REFUSED (was "indexing a non-array"). Base Application's `Company Information.IsDigit` does it | `Letter[1] := 'a'; Letter` in a Code[1]: is it `A`? And in a Code[10] at position 3 |
+| Control add-ins (`usercontrol`, `CurrPage.BusinessChart` passed to a `var ControlAddIn` parameter) | REFUSED with the name of the control add-in (was "is not assignable"); 38 + 12 Tests-ERM tests of the chart pages. Nothing in the corpus uses one | What a test can observe of a control add-in: calls into it from AL, the `ControlAddIn` events, and what `Initialize`/`Update` of the Business Chart Buffer do without a client |
+| An array of records | Every element is a record variable of its own (fixed: it was `Null`, so `A[1].Init()` raised "record method Init on an unassigned Variant"). Nothing to probe: the language reference says so and `collections/TestArray.al` pins arrays of simple values | none |

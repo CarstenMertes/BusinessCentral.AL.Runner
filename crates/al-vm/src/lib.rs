@@ -303,6 +303,8 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
+    /// `CurrReport.Language` of the running report (`reports.rs`); `None` until a trigger sets it.
+    pub(crate) curr_report_language: Option<i32>,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,
@@ -353,6 +355,7 @@ impl Session {
         }
         let mut session = Session {
             global_language: host.identity.global_language(),
+            curr_report_language: None,
             host,
             waited_ms: 0,
             temp_files: 0,
@@ -505,6 +508,13 @@ impl Session {
                     touched: false,
                     globals: Default::default(),
                 })))
+            }
+            // Each element of an array is a variable of its own: an array of records holds records, not
+            // nulls (Tests-ERM "Discount Setup Notifications": `A: array[2] of Record "General Posting Setup"`).
+            RtType::Array(dims, el) => {
+                let n = dims.iter().map(|d| *d as usize).product();
+                let cells: Vec<Value> = (0..n).map(|_| self.default_value(el)).collect();
+                Value::Array(Rc::new(RefCell::new(cells)))
             }
             other => Value::default_for(other),
         }
@@ -1458,7 +1468,7 @@ impl Session {
                     None => return Err(base_slot_missing(*i)),
                 }
             }
-            ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_)) => {
+            ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_) | RtType::Code(_)) => {
                 return self.write_char(base, idx, v, f);
             }
             ir::Place::Index(base, idx) => {
@@ -1477,6 +1487,12 @@ impl Session {
     fn write_char(&mut self, base: &ir::Place, idx: &[ir::Expr], v: Value, f: &mut Frame) -> Result<(), Signal> {
         let max = match self.place_type(base, f) {
             RtType::Text(m) => m,
+            // Base Application's `Company Information.IsDigit` does `Letter: Code[1]; Letter[1] := c`.
+            RtType::Code(_) => {
+                return Err(Signal::Unsupported(
+                    "assigning a character into a Code: whether BC upper-cases it is not pinned (docs/probes-needed.md)".into(),
+                ));
+            }
             _ => None,
         };
         let [e] = idx else {

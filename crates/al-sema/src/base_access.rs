@@ -14,20 +14,22 @@ use al_syntax::ast;
 
 /// Probe ids whose behavior a corpus test pins. The ids are the ones of ADR-023: `P1` to `P10` for
 /// pages, `R1` to `R4` for reports. Pinned on BC 27.5 by the corpus branch `al-runtime-rs`
-/// (tests/al-language/...; the submodule bump is pending, cite by that path):
-/// - P1, P2, P5: handlers/TestPageExtensionBaseAccessContracts.al:275 (reads), :288 (writes seen by
-///   the base and a second extension, also Record filters, List, Dictionary).
-/// - P4, P10: same file :310 (public and protected base procedures, return value, var parameter,
-///   changing a variable, CurrPage.Update/Editable/Caption).
-/// - P9: same file :326 (control sources naming a base variable or a field of a base Record).
-/// - R1, R3: reportextensiontrigger/TestReportExtensionBaseMembersContracts.al:256 (and the header
-///   comment, lines 9-15: protected Integer, Decimal, Record, Dialog, List, protected and public
+/// (tests/al-language/..., cite by that path until the submodule bump):
+///
+/// - P1, P2, P5: handlers/TestPageExtensionBaseAccessContracts.al:275 (reads), :288 (writes seen
+///   by the base and a second extension, also Record filters, List, Dictionary).
+/// - P4, P10: the same file :310 (public and protected base procedures, return value, var
+///   parameter, changing a variable, CurrPage.Update/Editable/Caption).
+/// - P9: the same file :326 (control sources naming a base variable or a field of a base Record).
+/// - R1, R3: reportextensiontrigger/TestReportExtensionBaseMembersContracts.al:256 and its header
+///   comment (lines 9-15: protected Integer, Decimal, Record, Dialog, List, protected and public
 ///   procedure; Window.Open/Update/Close).
-/// P3 and R4 (several extensions share the base's variables) are in the same two files. P6 is
-/// settled without a gate: an extension variable with the name of a base variable is a separate
-/// variable (BaseAccess :20, Shadow); an extension procedure named like a base procedure is compile
-/// error AL0440, a non-protected base variable or a local base procedure AL0161, both refused here
-/// because BC never runs them.
+///
+/// P3 and R4 (several extensions share the base's variables) are in the same files. P6 is settled
+/// without a gate: an extension variable named like a base variable is a separate variable (line
+/// 20 of the page file, `Shadow`); an extension procedure named like a base procedure is compile
+/// error AL0440, a non-protected base variable or a local base procedure AL0161; both are refused
+/// here because BC never runs them.
 pub const PINNED: &[&str] = &["P1", "P2", "P4", "P5", "P9", "P10", "R1", "R3"];
 
 /// The value of `AL_UNPINNED_BASE_ACCESS`, if set.

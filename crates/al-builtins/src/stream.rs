@@ -306,6 +306,11 @@ fn in_state<'a>(r: Option<&'a mut Value>) -> Result<std::cell::RefMut<'a, Librar
     }
 }
 
+/// Reads the rest of an `InStream` value and moves its position to the end.
+pub(crate) fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
+    with_in(Some(v), |s| Ok(s.drain()))
+}
+
 fn with_in<T>(r: Option<&mut Value>, f: impl FnOnce(&mut InState) -> Result<T, Signal>) -> Result<T, Signal> {
     let mut g = in_state(r)?;
     match &mut *g {

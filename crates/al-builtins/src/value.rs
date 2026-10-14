@@ -707,10 +707,25 @@ pub struct SessionSettingsState {
 }
 
 /// What an `HttpRequestMessage` holds (corpus network/TestHttpRequestMessage.al). Nothing is sent.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct HttpRequestState {
     pub method: Option<String>,
     pub uri: Option<String>,
+    /// The `Content` set on the request: the `HttpContent` handle itself, so the request and the
+    /// variable it was set from share it (nothing pins a copy; no corpus test tells them apart).
+    pub content: Option<Value>,
+}
+
+/// The headers of an `HttpContent`, shared with every `HttpHeaders` that `GetHeaders` handed out.
+pub type HttpHeaderList = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+
+/// What an `HttpContent` holds (corpus network/TestHttpRequestMessage.al:34-43).
+#[derive(Debug, Clone, Default)]
+pub struct HttpContentState {
+    pub body: Option<String>,
+    /// Bytes written from an `InStream`: how `ReadAs(Text)` decodes them is not pinned.
+    pub bytes: Option<Vec<u8>>,
+    pub headers: HttpHeaderList,
 }
 
 /// What a `Notification` holds.
@@ -814,6 +829,10 @@ pub enum LibraryValue {
     DataTransfer(Option<(i32, i32)>),
     /// An `HttpRequestMessage` that was configured (an untouched one is `Empty`).
     HttpRequest(HttpRequestState),
+    /// An `HttpContent` that was written to or asked for its headers (an untouched one is `Empty`).
+    HttpContent(HttpContentState),
+    /// An `HttpHeaders` handed out by `HttpContent.GetHeaders`: the content's own list.
+    HttpHeaders(HttpHeaderList),
     /// A `Version`: major, minor, build, revision.
     Version([i32; 4]),
     /// An `ErrorInfo` (the zero-argument `Create` and `Create(Message, ...)` build one).

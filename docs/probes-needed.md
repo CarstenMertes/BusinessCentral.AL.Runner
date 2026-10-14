@@ -684,7 +684,7 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
     and `..`; before this batch the value was matched literally, which is wrong where `@` or a wildcard stays active).
     The project filters e-mail addresses with `SetFilter("E-Mail", '%1', '@' + Email)` and expects the match to
     ignore case, to keep `*` and `?` active, and to quote `& | ( ) = < > ' ..` (its helper sends text with a wildcard
-    through `SetRange` for that reason). 7 tests of 4 codeunits. Probe wanted, on a Text field holding
+    through `SetRange` for that reason). 4 tests failed on it (they now stop). Probe wanted, on a Text field holding
     `John@Example.com`, `a&b@x.com`, `a|b`, `a(b)`, `a<b`, `a=b`, `a'b`, `a..b`, `a*b` and `axb`: `SetFilter(F, '%1',
     '@john@example.com')` (count), `SetFilter(F, '%1', 'a*b')`, and `SetFilter(F, '%1', X)` for X each of the stored
     values, with and without a leading `@`; then `GetFilter(F)` (the text BC built, with its quotes).
@@ -699,7 +699,7 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
     `FieldIndex(FieldCount + 5)` (is the rowversion the sixth system field there), and the same for
     `SystemModifiedAt` (pinned to `2000000003` only by being equal to the key's number).
 12. **`Record.FieldActive(Field)` of a field with `Enabled = false`.** The enabled field answers `true`
-    (record/TestRecordTriggers.al:223-231); a disabled one is REFUSED. 1859 tests of the project stop on
+    (record/TestRecordTriggers.al:223-231); a disabled one is REFUSED. About 1480 tests of the project stopped on
     `FieldActive` without this (Microsoft's `Library - ERM`.FindPaymentTermsCode calls it). Probe wanted: a table
     with `field(2; B; Integer) { Enabled = false; }` and one with `ObsoleteState = Removed` (`Pending` too): the
     answer for each, and whether `Enabled = false` is conditional on a feature (`FieldActive` on a field whose

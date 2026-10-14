@@ -213,6 +213,14 @@ fn is_azure(s: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result
     )))
 }
 
+/// `NavUserAccountHelper.IsUserDelegatedAdmin()`: false. The session user is not a delegated user
+/// (corpus `session/TestEnvironmentUserTenantContracts.al:245`, `IsUserDelegated` false) and a
+/// delegated admin is a delegated user. The member itself is in no corpus test (docs/probes-needed.md).
+fn is_user_delegated_admin(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "NavUserAccountHelper.IsUserDelegatedAdmin")?;
+    Ok(Value::Boolean(false))
+}
+
 /// `NavUserAccountHelper.GetEffectivePermissionForObject(user, company, objectType, objectId)`:
 /// five comma-separated Permission ordinals (Read, Insert, Modify, Delete, Execute) of the
 /// session user. A test session is SUPER; on table data it holds the four data rights and no
@@ -353,6 +361,14 @@ pub fn types() -> Vec<RegistryType> {
                     "IsAzure",
                     probe("164-174 (IsSaaSInfrastructure true on 27 and 28, false from 29)"),
                     is_azure,
+                ),
+                member(
+                    "IsUserDelegatedAdmin",
+                    Pin::Corpus(
+                        "session/TestEnvironmentUserTenantContracts.al:245 (IsUserDelegated false; a delegated admin is a delegated user)"
+                            .into(),
+                    ),
+                    is_user_delegated_admin,
                 ),
                 member(
                     "GetEffectivePermissionForObject",

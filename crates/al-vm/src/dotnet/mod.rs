@@ -102,6 +102,8 @@ enum Target {
     Host(DotNetHandle, String),
     /// An object the registry created.
     Internal(Rc<DotNetObject>, String),
+    /// A primitive the variable holds, with the CLR type its kind boxes to (ADR-024).
+    Boxed(DotNetValue, String),
 }
 
 /// Streams passed in one call, kept so the reply's effects can be applied.
@@ -188,11 +190,21 @@ impl Session {
                     ));
                 }
             },
-            (_, other) => return unsupported(format!("DotNet member '{member}' on {}", other.describe())),
+            // A primitive the variable holds (a `DotNet DateTime` that got a `DateTime`): the host boxes
+            // it for the call (ADR-024).
+            (_, other) => match boxed_clr_type(other) {
+                Some(t) => {
+                    let wire = self
+                        .value_to_wire(other, 0, &mut StreamBook::default())
+                        .map_err(|e| prefix(e, t))?;
+                    Target::Boxed(wire, t.to_string())
+                }
+                None => return unsupported(format!("DotNet member '{member}' on {}", other.describe())),
+            },
         };
         let clr_type = match &target {
             Target::Static(d) => d.name.clone(),
-            Target::Host(_, t) | Target::Internal(_, t) => t.clone(),
+            Target::Host(_, t) | Target::Internal(_, t) | Target::Boxed(_, t) => t.clone(),
         };
         let shown = if kind == MemberKind::Construct {
             format!("new {clr_type}")
@@ -867,10 +879,28 @@ fn stream_failure<T>(clr_type: &str, r: Result<T, DotNetFailure>) -> Result<T, S
     }
 }
 
+/// The CLR type an AL primitive boxes to when a `DotNet` variable holds it.
+fn boxed_clr_type(v: &Value) -> Option<&'static str> {
+    Some(match v {
+        Value::Boolean(_) => "System.Boolean",
+        Value::Integer(_) => "System.Int32",
+        Value::BigInteger(_) => "System.Int64",
+        Value::Decimal(_) => "System.Decimal",
+        Value::Byte(_) => "System.Byte",
+        Value::Char(_) => "System.Char",
+        Value::Text(_) | Value::Code(_) => "System.String",
+        Value::DateTime(_) => "System.DateTime",
+        Value::Duration(_) => "System.TimeSpan",
+        Value::Guid(_) => "System.Guid",
+        _ => return None,
+    })
+}
+
 fn host_target(t: &Target) -> DotNetTarget {
     match t {
         Target::Static(d) => DotNetTarget::Static(d.clone()),
         Target::Host(h, _) => DotNetTarget::Instance(*h),
+        Target::Boxed(v, _) => DotNetTarget::Value(v.clone()),
         Target::Internal(..) => unreachable!("registry objects never reach the host"),
     }
 }
@@ -928,7 +958,7 @@ pub(crate) fn fit(v: Value, t: &RtType) -> Result<Value, Signal> {
             | (Value::Time(_), T::Time)
             | (Value::Duration(_), T::Duration)
             | (Value::Guid(_), T::Guid)
-    );
+    ) || (matches!(t, T::DotNet(_)) && boxed_clr_type(&v).is_some());
     if !ok {
         return unsupported(format!(
             "a .NET result of kind {} stored into {t}: BC's conversion is not pinned (ADR-014 section 4)",
@@ -937,7 +967,8 @@ pub(crate) fn fit(v: Value, t: &RtType) -> Result<Value, Signal> {
         ));
     }
     match (&v, t) {
-        (Value::DotNet(_) | Value::Null, T::DotNet(_)) => Ok(v),
+        // A DotNet variable holds the primitive a member returned (ADR-024).
+        (_, T::DotNet(_)) => Ok(v),
         _ => ops::convert(v, t),
     }
 }

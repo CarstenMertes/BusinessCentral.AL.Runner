@@ -42,6 +42,22 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Query(_), T::Query(_)) => v,
         // A DotNet variable shares the object it is assigned (ADR-014; probe pending).
         (v @ Value::DotNet(_), T::DotNet(_)) => v,
+        // A DotNet variable holds the AL primitive stored into it, as the .NET value it marshals to
+        // (a `DotNet Byte` takes a Byte; ADR-014 section 4, ADR-024). Date and Time have no pinned mapping.
+        (
+            v @ (Value::Boolean(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Decimal(_)
+            | Value::Byte(_)
+            | Value::Char(_)
+            | Value::Text(_)
+            | Value::Code(_)
+            | Value::DateTime(_)
+            | Value::Duration(_)
+            | Value::Guid(_)),
+            T::DotNet(_),
+        ) => v,
         (v @ Value::TestPage(_), T::TestPage(_) | T::Page(_)) => v,
         (v @ Value::Blob(_), T::Library(n)) if n.eq_ignore_ascii_case("Blob") => v,
         (v @ Value::Guid(_), T::Library(n))

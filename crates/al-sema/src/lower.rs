@@ -1300,6 +1300,10 @@ const EXTENSION_PAGE_TRIGGERS: &[&str] = &[
     "onaftergetrecord",
     "onaftergetcurrrecord",
     "onnewrecord",
+    // Both the page's and the extensions' answers count, and both must be true to close
+    // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+    // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose).
+    "onqueryclosepage",
 ];
 
 /// The triggers a `modify` block can add to a control, which the client runs.

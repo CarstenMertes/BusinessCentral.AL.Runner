@@ -226,6 +226,52 @@ impl Session {
         })
     }
 
+    /// `OnQueryClosePage` of a page and of the extensions that declare it: all of them run, the page's first
+    /// and then each extension's in application order, whatever the earlier ones answered. The page closes
+    /// only when every trigger that states an answer says true (corpus
+    /// handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+    /// OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose). `Some(false)` vetoes; `None` when
+    /// none states an answer.
+    fn query_close_answer(&mut self, st: &St, args: Vec<Value>) -> Result<Option<bool>, Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let page = page_of(&engine, st);
+        let mut answers = Vec::new();
+        let mut calls: Vec<(usize, usize, Option<usize>)> = Vec::new();
+        if let Some(r) = page.triggers.iter().find(|(n, _)| n == "onqueryclosepage").map(|(_, r)| *r) {
+            calls.push((object, r, None));
+        }
+        for (n, e, r) in &page.ext_triggers {
+            if n == "onqueryclosepage" {
+                calls.push((*e, *r, Some(*e)));
+            }
+        }
+        let mut failure = None;
+        for (obj, routine, owner) in calls {
+            let states = has_value_exit(&engine.program.objects[obj].routines[routine].body);
+            let inst = self.owner_instance(st, owner);
+            match self.call(obj, routine, inst, args.clone()) {
+                Ok((Value::Boolean(b), _)) if states => answers.push(b),
+                Ok(_) => {}
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            }
+        }
+        self.end_page_call(st);
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        Ok(if answers.contains(&false) {
+            Some(false)
+        } else if answers.is_empty() {
+            None
+        } else {
+            Some(true)
+        })
+    }
+
     /// Raises the platform event `event` that BC publishes after the page's own trigger of that name
     /// (corpus handlers/TestPageTriggerEvents.al:1-20): the page's own trigger runs first, the event is
     /// the platform's last word. `allow` is the `var Allow...` parameter some of them carry; the
@@ -1148,7 +1194,16 @@ impl Session {
     /// `TestPage.Close()`: the page closes the way a Cancel does (corpus
     /// testpageclose/TestPageClosingActions.al:Dialog arms, `qcp:Cancel` after Close()).
     fn page_close(&mut self, st: &St) -> Result<Value, Signal> {
-        let r = self.close_with(st, "Cancel", false, false);
+        // A Card reports OK (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+        // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose); the dialogs report Cancel.
+        // Other page types are not pinned and keep Cancel.
+        let object = st.borrow().object as usize;
+        let card = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("PageType") && v.trim().eq_ignore_ascii_case("card"));
+        let action = if card && !st.borrow().modal { "OK" } else { "Cancel" };
+        let r = self.close_with(st, action, false, false);
         // A refused TestPage.Close() leaves the variable not open all the same (corpus
         // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen).
         if r.is_ok() {
@@ -1226,11 +1281,7 @@ impl Session {
             if !part.borrow().parts.is_empty() {
                 return unsupported("closing a host whose part page has parts of its own (close order not pinned)");
             }
-            let answer = match self.page_trigger_answer(
-                part,
-                "onqueryclosepage",
-                vec![Value::Option(none_ordinal, members.clone())],
-            ) {
+            let answer = match self.query_close_answer(part, vec![Value::Option(none_ordinal, members.clone())]) {
                 Err(Signal::Error(_)) => {
                     return unsupported("an error in a part's OnQueryClosePage (not pinned)");
                 }
@@ -1242,7 +1293,7 @@ impl Session {
         }
         // An AL error raised in OnQueryClosePage is shown as a message and refuses the close
         // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
-        let veto = match self.page_trigger_answer(st, "onqueryclosepage", vec![Value::Option(ordinal, members)]) {
+        let veto = match self.query_close_answer(st, vec![Value::Option(ordinal, members)]) {
             Err(Signal::Error(e)) => {
                 self.ui_message(e.message)?;
                 st.borrow_mut().close_error = true;

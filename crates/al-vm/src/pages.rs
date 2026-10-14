@@ -141,7 +141,11 @@ impl Session {
     }
 
     fn require_open(&self, st: &St) -> Result<(), Signal> {
-        if st.borrow().open { Ok(()) } else { Err(error_code(NOT_OPEN, "TestPageNotOpened")) }
+        if st.borrow().open {
+            Ok(())
+        } else {
+            Err(error_code(NOT_OPEN, "TestPageNotOpened"))
+        }
     }
 
     /// Runs page trigger `name` (lower case) if the page declares it, then the same trigger of
@@ -238,7 +242,12 @@ impl Session {
         let page = page_of(&engine, st);
         let mut answers = Vec::new();
         let mut calls: Vec<(usize, usize, Option<usize>)> = Vec::new();
-        if let Some(r) = page.triggers.iter().find(|(n, _)| n == "onqueryclosepage").map(|(_, r)| *r) {
+        if let Some(r) = page
+            .triggers
+            .iter()
+            .find(|(n, _)| n == "onqueryclosepage")
+            .map(|(_, r)| *r)
+        {
             calls.push((object, r, None));
         }
         for (n, e, r) in &page.ext_triggers {
@@ -2810,7 +2819,9 @@ impl Session {
                 })
             };
             if out_of_bounds {
-                return unsupported("SetValue outside the MinValue/MaxValue of a control bound to a variable (not pinned)");
+                return unsupported(
+                    "SetValue outside the MinValue/MaxValue of a control bound to a variable (not pinned)",
+                );
             }
         }
         // MinValue / MaxValue are enforced on a control write, not on Rec.Validate (corpus

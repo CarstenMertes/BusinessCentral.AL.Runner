@@ -1105,7 +1105,18 @@ mod tests {
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
         assert_eq!(
             names(&l),
-            ["CG", "CG>Cnt", "CG>CueAct", "FX", "FX>Txt", "FX>RR", "RR>Amt", "GR", "GR>GRA", "GRA>Flag"]
+            [
+                "CG",
+                "CG>Cnt",
+                "CG>CueAct",
+                "FX",
+                "FX>Txt",
+                "FX>RR",
+                "RR>Amt",
+                "GR",
+                "GR>GRA",
+                "GRA>Flag"
+            ]
         );
         assert_eq!(l.controls[0].kind, al_ir::ControlKind::CueGroup);
     }

@@ -250,10 +250,18 @@ impl Dataset {
             if self.rows == 0 {
                 self.flat_ok = true;
             }
-            self.flat
-                .push(columns.iter().map(|c| (c.name.clone(), c.schema_type, c.text.clone())).collect());
+            self.flat.push(
+                columns
+                    .iter()
+                    .map(|c| (c.name.clone(), c.schema_type, c.text.clone()))
+                    .collect(),
+            );
             // A second data item (its rows have other columns) is not one table.
-            if self.flat.len() > 1 && self.flat[0].iter().map(|c| &c.0).ne(self.flat[self.flat.len() - 1].iter().map(|c| &c.0))
+            if self.flat.len() > 1
+                && self.flat[0]
+                    .iter()
+                    .map(|c| &c.0)
+                    .ne(self.flat[self.flat.len() - 1].iter().map(|c| &c.0))
             {
                 self.flat_ok = false;
             }
@@ -318,7 +326,9 @@ impl Dataset {
     /// anything else is refused.
     pub(crate) fn finish_data_set(self) -> Result<Vec<u8>, Signal> {
         if !self.flat_ok || self.flat.is_empty() {
-            return unsupported("a SaveAsXml data file of a report that is not one flat data item with rows (not pinned)");
+            return unsupported(
+                "a SaveAsXml data file of a report that is not one flat data item with rows (not pinned)",
+            );
         }
         let mut out = String::new();
         out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\n<DataSet>\n");
@@ -328,9 +338,13 @@ impl Dataset {
         out.push_str("          <xs:element name=\"Result\" msdata:Locale=\"en-US\">\n            <xs:complexType>\n              <xs:sequence>\n");
         for (name, ty, _) in &self.flat[0] {
             let Some(ty) = ty else {
-                return unsupported(format!("the SaveAsXml data file column {name}, a type with no pinned .NET type"));
+                return unsupported(format!(
+                    "the SaveAsXml data file column {name}, a type with no pinned .NET type"
+                ));
             };
-            out.push_str(&format!("                <xs:element name=\"{name}\" type=\"{ty}\" minOccurs=\"0\" />\n"));
+            out.push_str(&format!(
+                "                <xs:element name=\"{name}\" type=\"{ty}\" minOccurs=\"0\" />\n"
+            ));
         }
         out.push_str("              </xs:sequence>\n            </xs:complexType>\n          </xs:element>\n");
         out.push_str("        </xs:choice>\n      </xs:complexType>\n    </xs:element>\n  </xs:schema>\n");
@@ -339,7 +353,9 @@ impl Dataset {
             for (name, _, text) in row {
                 // An empty value is no element in a DataSet; the probe has none, so it is refused.
                 if text.is_empty() {
-                    return unsupported(format!("an empty value of column {name} in a SaveAsXml data file (not pinned)"));
+                    return unsupported(format!(
+                        "an empty value of column {name} in a SaveAsXml data file (not pinned)"
+                    ));
                 }
                 out.push_str(&format!("    <{name}>{text}</{name}>\n"));
             }

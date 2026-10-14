@@ -625,5 +625,8 @@ fn a_variable_control_with_bounds_takes_inside_values_and_refuses_the_others() {
         procedure Outside() var P: TestPage \"PM Bounded\"; begin
             P.OpenEdit(); P.Tol.SetValue(150); P.Close(); end;"
     ));
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("MinValue")), "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("MinValue")),
+        "{o:?}"
+    );
 }

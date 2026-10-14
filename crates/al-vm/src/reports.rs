@@ -602,7 +602,9 @@ impl Session {
         match closed? {
             (RequestClosed::Cancel, _) => Ok(String::new()),
             (RequestClosed::Ok, parameters) => Ok(parameters.expect("parameters were asked for")),
-            (RequestClosed::SavedAsXml, _) => unsupported("SaveAsXml in the request page of a RunRequestPage (not pinned)"),
+            (RequestClosed::SavedAsXml, _) => {
+                unsupported("SaveAsXml in the request page of a RunRequestPage (not pinned)")
+            }
         }
     }
 

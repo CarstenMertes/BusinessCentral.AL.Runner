@@ -173,7 +173,10 @@ impl Session {
             Ok(true) => {}
             Ok(false) => return unsupported("CurrReport.Quit during a SaveAsXml (not pinned)"),
             Err(Signal::Error(e)) => {
-                return unsupported(format!("an error in a SaveAsXml run (what the handler sees is not pinned): {}", e.message));
+                return unsupported(format!(
+                    "an error in a SaveAsXml run (what the handler sees is not pinned): {}",
+                    e.message
+                ));
             }
             Err(other) => return Err(other),
         }

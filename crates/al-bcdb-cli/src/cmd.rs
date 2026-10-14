@@ -551,16 +551,9 @@ fn export(src: &dyn BcSource, o: &HashMap<String, String>) -> Result<u8, String>
         .map_err(|e| e.to_string())?;
     pool.install(|| {
         todo.par_iter().for_each(|t| {
-            let req = ReadRequest {
-                sel: TableSelector {
-                    table: Some(t.sql_name().to_string()),
-                    company: None,
-                    app: None,
-                },
-                ..Default::default()
-            };
+            let req = ReadRequest::default();
             let result = (|| -> Result<(u64, u64), String> {
-                let plan = plan_read(src, sym.as_ref(), &req).map_err(|e| e.to_string())?;
+                let plan = query::plan_read_table(src, sym.as_ref(), t, &req).map_err(|e| e.to_string())?;
                 let mut counter = CountingWriter;
                 let mut file;
                 let sink: &mut dyn Write = match &out_dir {

@@ -65,18 +65,12 @@ impl Value {
         }
     }
 
-    /// Append the tsv text to `out` without an intermediate string where the type allows.
+    /// Append the tsv text to `out`.
     pub fn write_tsv(&self, out: &mut String) {
         match self {
             Value::Null => out.push_str("NULL"),
             Value::Bool(b) => out.push(if *b { '1' } else { '0' }),
-            Value::Text(s) => out.push_str(s),
-            Value::Int(i) => {
-                let _ = write!(out, "{i}");
-            }
-            v => {
-                let _ = write!(out, "{v}");
-            }
+            v => v.append_text(out),
         }
     }
 
@@ -92,7 +86,12 @@ impl Value {
             Value::Real(f) => out.push_str(&format_real(*f)),
             Value::Float(f) => out.push_str(&format_float(*f)),
             Value::Text(s) => json_string(s, out),
-            v => json_string(&v.to_string(), out),
+            // the other typed values print as plain ASCII that needs no escaping
+            v => {
+                out.push('"');
+                v.append_text(out);
+                out.push('"');
+            }
         }
     }
 }
@@ -100,6 +99,11 @@ impl Value {
 /// bcdb's `J()`: a JSON string with only the escapes it makes.
 pub fn json_string(s: &str, out: &mut String) {
     out.push('"');
+    if !s.bytes().any(|b| b < 0x20 || b == b'"' || b == b'\\') {
+        out.push_str(s);
+        out.push('"');
+        return;
+    }
     for ch in s.chars() {
         match ch {
             '\\' => out.push_str("\\\\"),
@@ -121,25 +125,169 @@ impl fmt::Display for Value {
         match self {
             Value::Null => f.write_str("NULL"),
             Value::Bool(b) => f.write_str(if *b { "True" } else { "False" }),
-            Value::Int(i) => write!(f, "{i}"),
-            Value::Real(x) => f.write_str(&format_real(*x)),
-            Value::Float(x) => f.write_str(&format_float(*x)),
+            Value::Text(s) => f.write_str(s),
+            v => {
+                let mut s = String::new();
+                v.append_text(&mut s);
+                f.write_str(&s)
+            }
+        }
+    }
+}
+
+const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+/// Both hex digits of every byte value.
+const HEX2: [[u8; 2]; 256] = {
+    let mut t = [[0u8; 2]; 256];
+    let mut i = 0;
+    while i < 256 {
+        t[i] = [HEX[i >> 4], HEX[i & 15]];
+        i += 1;
+    }
+    t
+};
+
+/// Upper-case hex of `b`. Done in one pass over a byte buffer: pushing a `char` per nibble
+/// was most of the time of an export dominated by one large blob table.
+fn push_hex(out: &mut String, b: &[u8]) {
+    let mut buf = vec![0u8; b.len() * 2];
+    for (pair, &x) in buf.chunks_exact_mut(2).zip(b) {
+        pair.copy_from_slice(&HEX2[x as usize]);
+    }
+    // only ASCII hex digits were written
+    out.push_str(std::str::from_utf8(&buf).expect("hex is ASCII"));
+}
+
+fn push_pad2(out: &mut String, v: u32) {
+    out.push((b'0' + (v / 10 % 10) as u8) as char);
+    out.push((b'0' + (v % 10) as u8) as char);
+}
+
+fn push_int(out: &mut String, mut v: u128) {
+    let mut tmp = [0u8; 40];
+    let mut i = tmp.len();
+    loop {
+        i -= 1;
+        tmp[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    out.push_str(std::str::from_utf8(&tmp[i..]).unwrap());
+}
+
+fn push_padded(out: &mut String, v: u128, width: usize) {
+    let mark = out.len();
+    push_int(out, v);
+    let digits = out.len() - mark;
+    if digits < width {
+        out.insert_str(mark, &"0".repeat(width - digits));
+    }
+}
+
+impl Value {
+    /// Append the text `Display` gives, without an intermediate string or `format!`.
+    pub fn append_text(&self, out: &mut String) {
+        match self {
+            Value::Null => out.push_str("NULL"),
+            Value::Bool(b) => out.push_str(if *b { "True" } else { "False" }),
+            Value::Int(i) => {
+                if *i < 0 {
+                    out.push('-');
+                }
+                push_int(out, i.unsigned_abs() as u128);
+            }
+            Value::Real(x) => out.push_str(&format_real(*x)),
+            Value::Float(x) => out.push_str(&format_float(*x)),
             Value::Decimal {
                 negative,
                 magnitude,
                 scale,
-            } => f.write_str(&format_scaled(*negative, *magnitude, *scale)),
-            Value::DateTime { days, ticks } => f.write_str(&format_datetime(*days, *ticks)),
-            Value::Date { days } => f.write_str(&format_date(*days)),
-            Value::Time { units, scale } => f.write_str(&format_time(*units, *scale)),
-            Value::DateTime2 { days, units, scale } => {
-                write!(f, "{} {}", format_date(*days), format_time(*units, *scale))
+            } => {
+                if *negative && *magnitude != 0 {
+                    out.push('-');
+                }
+                if *scale == 0 {
+                    push_int(out, *magnitude);
+                } else {
+                    let p = 10u128.pow(*scale as u32);
+                    push_int(out, magnitude / p);
+                    out.push('.');
+                    push_padded(out, magnitude % p, *scale as usize);
+                }
             }
-            Value::Guid(b) => f.write_str(&format_guid(b)),
-            Value::Binary(b) => f.write_str(&format_binary(b)),
-            Value::RowVersion(v) => write!(f, "0x{v:016X}"),
-            Value::Text(s) => f.write_str(s),
+            Value::DateTime { days, ticks } => {
+                let ms = ((ticks % 300) as f64 * 10.0 / 3.0).round() as u32;
+                let total_secs = *days as i64 * SECS_PER_DAY + (ticks / 300) as i64;
+                let day = total_secs.div_euclid(SECS_PER_DAY) + DAYS_0001_TO_1900;
+                let sec = total_secs.rem_euclid(SECS_PER_DAY) as u32;
+                push_date(out, day);
+                out.push(' ');
+                push_pad2(out, sec / 3600);
+                out.push(':');
+                push_pad2(out, sec / 60 % 60);
+                out.push(':');
+                push_pad2(out, sec % 60);
+                out.push('.');
+                push_padded(out, ms as u128, 3);
+            }
+            Value::Date { days } => push_date(out, *days),
+            Value::Time { units, scale } => push_time(out, *units, *scale),
+            Value::DateTime2 { days, units, scale } => {
+                push_date(out, *days);
+                out.push(' ');
+                push_time(out, *units, *scale);
+            }
+            Value::Guid(b) => {
+                for (i, &x) in [3usize, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15]
+                    .iter()
+                    .enumerate()
+                {
+                    if matches!(i, 4 | 6 | 8 | 10) {
+                        out.push('-');
+                    }
+                    out.push(HEX[(b[x] >> 4) as usize] as char);
+                    out.push(HEX[(b[x] & 15) as usize] as char);
+                }
+            }
+            Value::Binary(b) => {
+                out.push_str("0x");
+                push_hex(out, b);
+            }
+            Value::RowVersion(v) => {
+                out.push_str("0x");
+                for sh in (0..16).rev() {
+                    out.push(HEX[((v >> (sh * 4)) & 15) as usize] as char);
+                }
+            }
+            Value::Text(s) => out.push_str(s),
         }
+    }
+}
+
+fn push_date(out: &mut String, days_since_0001: i64) {
+    let (y, m, d) = civil_from_days(days_since_0001);
+    push_padded(out, y.max(0) as u128, 4);
+    out.push('-');
+    push_pad2(out, m);
+    out.push('-');
+    push_pad2(out, d);
+}
+
+fn push_time(out: &mut String, units: i64, scale: u8) {
+    let per_second = 10i64.pow(scale as u32);
+    let seconds = units / per_second;
+    let frac = units % per_second;
+    push_pad2(out, ((seconds / 3600) % 24) as u32);
+    out.push(':');
+    push_pad2(out, ((seconds / 60) % 60) as u32);
+    out.push(':');
+    push_pad2(out, (seconds % 60) as u32);
+    if scale > 0 {
+        out.push('.');
+        push_padded(out, frac as u128, scale as usize);
     }
 }
 

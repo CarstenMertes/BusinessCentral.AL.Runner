@@ -520,6 +520,18 @@ fn distinct_by_name(cols: impl Iterator<Item = SysColumn>) -> Vec<SysColumn> {
 
 pub fn plan_read(src: &dyn BcSource, sym: Option<&SymbolStore>, req: &ReadRequest) -> Result<ReadPlan> {
     let t = resolve_table(src, &req.sel)?;
+    plan_read_table(src, sym, &t, req)
+}
+
+/// [`plan_read`] for a table already in hand (`req.sel` is not consulted): a caller that
+/// walks every table does not need to find each one by name again.
+pub fn plan_read_table(
+    src: &dyn BcSource,
+    sym: Option<&SymbolStore>,
+    t: &BcTable,
+    req: &ReadRequest,
+) -> Result<ReadPlan> {
+    let t = t.clone();
     let al_table = sym.and_then(|s| s.find_for_sql_table(strip_ext(&t.table_name), t.app_id.as_deref()));
     if sym.is_some() && al_table.is_none() {
         return Err(Error::Argument(format!(

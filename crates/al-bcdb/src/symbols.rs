@@ -52,12 +52,55 @@ pub struct SymbolStore {
 
 // ---- the JSON shape --------------------------------------------------------------------
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StrOrOther {
-    S(String),
-    #[allow(dead_code)]
-    Other(serde::de::IgnoredAny),
+/// A JSON value kept when it is a string and skipped otherwise. A property's value can be
+/// anything; reading it into a generic value tree first was a fifth of loading the Base
+/// Application's 58 MB of symbols.
+struct StrOrOther(Option<String>);
+
+impl<'de> Deserialize<'de> for StrOrOther {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        use serde::de::{IgnoredAny, MapAccess, SeqAccess, Visitor};
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = StrOrOther;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("any JSON value")
+            }
+            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(Some(v.to_string())))
+            }
+            fn visit_string<E>(self, v: String) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(Some(v)))
+            }
+            fn visit_bool<E>(self, _: bool) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(None))
+            }
+            fn visit_i64<E>(self, _: i64) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(None))
+            }
+            fn visit_u64<E>(self, _: u64) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(None))
+            }
+            fn visit_f64<E>(self, _: f64) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(None))
+            }
+            fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(None))
+            }
+            fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+                Ok(StrOrOther(None))
+            }
+            fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> std::result::Result<Self::Value, A::Error> {
+                while a.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+                Ok(StrOrOther(None))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> std::result::Result<Self::Value, A::Error> {
+                while a.next_element::<IgnoredAny>()?.is_some() {}
+                Ok(StrOrOther(None))
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 #[derive(Deserialize)]
@@ -126,14 +169,21 @@ struct RawNs {
     namespaces: Option<Vec<RawNs>>,
 }
 
+/// The root has the same shape as a namespace plus the app's id and name. Not
+/// `#[serde(flatten)]`: flatten reads the whole object into a generic tree first, which was
+/// most of the time spent on the Base Application's 58 MB of symbols.
 #[derive(Deserialize)]
 struct RawRoot {
     #[serde(rename = "AppId")]
     app_id: Option<String>,
     #[serde(rename = "Name")]
     name: Option<String>,
-    #[serde(flatten)]
-    ns: RawNs,
+    #[serde(rename = "Tables")]
+    tables: Option<Vec<RawTable>>,
+    #[serde(rename = "TableExtensions")]
+    table_extensions: Option<Vec<RawExt>>,
+    #[serde(rename = "Namespaces")]
+    namespaces: Option<Vec<RawNs>>,
 }
 
 fn parse_fields(fields: Option<Vec<RawField>>, origin: &str) -> Result<Vec<AlField>> {
@@ -151,7 +201,7 @@ fn parse_fields(fields: Option<Vec<RawField>>, origin: &str) -> Result<Vec<AlFie
         let mut field_class = "Normal".to_string();
         for p in f.properties.unwrap_or_default() {
             if p.name.as_deref() == Some("FieldClass") {
-                if let Some(StrOrOther::S(s)) = p.value {
+                if let Some(StrOrOther(Some(s))) = p.value {
                     field_class = s;
                 }
             }
@@ -194,7 +244,12 @@ impl SymbolStore {
         if app_id.is_empty() {
             return Err(crate::invalid!("{origin}: SymbolReference.json has no AppId"));
         }
-        self.walk(root.ns, &app_id, &app_name, origin)
+        let ns = RawNs {
+            tables: root.tables,
+            table_extensions: root.table_extensions,
+            namespaces: root.namespaces,
+        };
+        self.walk(ns, &app_id, &app_name, origin)
     }
 
     fn walk(&mut self, ns: RawNs, app_id: &str, app_name: &str, origin: &str) -> Result<()> {

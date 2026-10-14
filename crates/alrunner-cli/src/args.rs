@@ -27,6 +27,8 @@ pub struct TestArgs {
     /// `--filter TEXT`: select the tests whose name contains TEXT (any case).
     pub filters: Vec<String>,
     pub junit: Option<PathBuf>,
+    /// `--explain TEST`: run one test and say where it was refused or failed.
+    pub explain: Option<String>,
     /// `--top-refusals [N]`: how many refusal reasons to list (default 10).
     pub top_refusals: Option<usize>,
     /// `--top-failures [N]`: how many failure messages to list, ranked (default 10).
@@ -45,10 +47,26 @@ pub struct TestArgs {
     pub files_dir: Option<PathBuf>,
     /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
     pub test_data: bool,
+    /// `--no-test-data`: run without company data. Test data is on by default (ADR-020, owner
+    /// decision of 2026-10-14).
+    pub no_test_data: bool,
     /// The `.bak` or `.bacpac` named; else the cached artifact for the selected BC build.
     pub test_data_path: Option<PathBuf>,
     /// `--test-data-company NAME`: which company of the backup (default: the demo company).
     pub test_data_company: Option<String>,
+}
+
+impl TestArgs {
+    /// Whether the run restores a company: unless `--no-test-data` says otherwise.
+    pub fn wants_test_data(&self) -> bool {
+        !self.no_test_data
+    }
+
+    /// Whether the command line asked for test data (a backup or `--test-data`), so a failure to
+    /// find it stops the run instead of turning the data off with a message.
+    pub fn test_data_asked_for(&self) -> bool {
+        self.test_data || self.test_data_path.is_some()
+    }
 }
 
 /// Whether `v` names a database backup, which is how `--test-data PATH` tells a path from an APP.
@@ -79,15 +97,22 @@ DEPENDENCIES
     --bc-version V       BC major, major.minor or an exact build (four numbers). An exact build
                          also fills Microsoft's $(app_...) variables in source archives that
                          lie outside a folder named for their build.
-    --no-download        Never fetch Microsoft's apps from the artifact feed.
-    Microsoft's apps, and the platform's System.app, come from the artifact feed. A build named
-    exactly (four numbers) that is in ~/.bcartifacts.cache/sandbox is read from there, without
-    the feed; any matching build there is the fallback when the feed has none or is offline.
+    --no-download        Never fetch from the artifact feed (apps, System.app, demo data).
+    Microsoft's apps, and the platform's System.app, come from the artifact feed. Without
+    --bc-version they come from the build of the tests when the tests are Microsoft's (a
+    Tests-*.Source.zip or .app in a folder named for its build, or with the build as its
+    version); if that build is gone from the feed the newest match is used and the run says so.
+    A build named exactly (four numbers) that is in ~/.bcartifacts.cache/sandbox is read from
+    there, without the feed; any matching build there is the fallback when the feed has none or
+    is offline.
     --cache-dir DIR      Where downloaded artifacts are kept (else $ALRUNNER_CACHE).
 
 SELECTION (a test is selected when any option matches it)
     --codeunit ID        A test codeunit by object id. Repeatable.
     --filter TEXT        Tests whose name contains TEXT, any case. Repeatable.
+    --explain TEST       Run one test (its name, or a part of it that only one test has) and print
+                         its outcome and, for a failure or a refusal, the routines and source
+                         lines it left from. Selects that test like --filter.
     A selected test's codeunit runs whole (tests of a codeunit share state); only the selected
     tests are reported. Only the selected codeunits are compiled.
 
@@ -112,14 +137,17 @@ EXIT CODES
     Order when several apply: 2, 6, 1, 7.
 
 TEST DATA
-    Without --test-data a run has no company data. Microsoft's tests expect a CRONUS company, so
-    many of them fail on missing setup data; do not trust the failures of such a run.
-    --test-data [PATH]   Restore a company from a BC database backup (.bak or .bacpac). A table
-                         is read the first time a test touches it; the rest is never read.
-                         Without PATH: the cached Microsoft artifact of the selected BC build,
-                         ~/.bcartifacts.cache/sandbox/<version>/w1/BusinessCentral-W1.bak.
-                         Write `--test-data=PATH` or end the name in .bak/.bacpac: a bare name
-                         after --test-data is an APP.
+    On by default for a run that uses Microsoft's apps: the CRONUS demo company of the build is
+    restored. Microsoft's tests expect it, and many of them fail on missing setup data without it.
+    A table is read the first time a test touches it; the rest is never read. The backup is found
+    in this order: the build of the Microsoft apps in ~/.bcartifacts.cache/sandbox/<build>/w1,
+    then the artifact cache, then it is downloaded once from the artifact feed (about 520 MB,
+    progress on stderr) into the cache, then a backup of another build of the same BC version
+    (the line says which). If none can be had, test data is off and the run says why.
+    --no-test-data       Run without company data.
+    --test-data [PATH]   Name a backup (.bak or .bacpac), or insist on test data: a missing
+                         backup then stops the run. Write `--test-data=PATH` or end the name in
+                         .bak/.bacpac: a bare name after --test-data is an APP.
     --test-data-company NAME  The company to restore (exact name or prefix). Default: the only
                          company, else 'CRONUS International Ltd.'.
     The summary says what was loaded and every exclusion: tables the runtime could not rebuild,
@@ -215,6 +243,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--package-cache" => a.package_caches.push(text()?.into()),
             "--bc-version" => a.bc_version = Some(text()?),
             "--no-download" => a.no_download = true,
+            "--no-test-data" => a.no_test_data = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--codeunit" => {
                 let v = text()?;
@@ -224,6 +253,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--filter" | "--test" => a.filters.push(text()?),
             "--refusal-detail" => a.refusal_detail = Some(text()?),
             "--junit" => a.junit = Some(text()?.into()),
+            "--explain" => a.explain = Some(text()?),
             "--allow-not-run" => a.allow_not_run = true,
             "--verbose" | "-v" => a.verbose = true,
             "--quiet" | "-q" => a.quiet = true,
@@ -254,8 +284,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     if a.apps.is_empty() {
         return Err("alrunner test needs at least one APP (an app folder or a *.Source.zip)".into());
     }
-    if a.test_data_company.is_some() && !a.test_data {
-        return Err("--test-data-company needs --test-data".into());
+    if a.no_test_data && a.test_data_asked_for() {
+        return Err("--test-data and --no-test-data cannot be combined".into());
+    }
+    if a.no_test_data && a.test_data_company.is_some() {
+        return Err("--test-data-company cannot be combined with --no-test-data".into());
     }
     if a.verbose && a.quiet {
         return Err("--verbose and --quiet cannot be combined".into());
@@ -345,10 +378,37 @@ mod tests {
         assert_eq!(a.test_data_path, Some(PathBuf::from("some/Demo.BACPAC")));
         let a = test_args("test A --test-data --test-data-company CRONUS");
         assert_eq!(a.test_data_company.as_deref(), Some("CRONUS"));
+        // Test data is on by default, so a company can be named without --test-data.
+        let a = test_args("test A --test-data-company X");
+        assert!(!a.no_test_data && a.test_data_company.as_deref() == Some("X"));
+    }
+
+    #[test]
+    fn test_data_is_on_unless_no_test_data_turns_it_off() {
+        let a = test_args("test A");
         assert!(
-            p("test A --test-data-company X")
+            !a.no_test_data && !a.test_data,
+            "no flag: the default decides, not the user"
+        );
+        assert!(a.wants_test_data() && !a.test_data_asked_for());
+        let a = test_args("test A --no-test-data");
+        assert!(a.no_test_data && !a.wants_test_data());
+        let a = test_args("test A --test-data");
+        assert!(a.wants_test_data() && a.test_data_asked_for());
+        assert!(
+            p("test A --test-data --no-test-data")
                 .unwrap_err()
-                .contains("needs --test-data")
+                .contains("cannot be combined")
+        );
+        assert!(
+            p("test A --test-data=x.bak --no-test-data")
+                .unwrap_err()
+                .contains("cannot be combined")
+        );
+        assert!(
+            p("test A --no-test-data --test-data-company X")
+                .unwrap_err()
+                .contains("--no-test-data")
         );
     }
 

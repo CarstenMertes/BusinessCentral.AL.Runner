@@ -646,7 +646,13 @@ impl Session {
                 other => unsupported(format!("CurrPage.PromptMode with {}", other.describe())),
             },
             "Editable" if method.starts_with("Page.") => {
-                self.require_open(st)?;
+                // A Page variable that has not run (Base App sets `Languages.Editable := false` before
+                // `RunModal`): BC does not raise "not open" there, and no corpus test says what it does.
+                if !st.borrow().open {
+                    return unsupported(
+                        "Page.Editable on a page variable that is not running: what BC does is not pinned (docs/probes-needed.md)",
+                    );
+                }
                 match args.first() {
                     // CurrPage.Editable(false) in OnOpenPage makes the page, page-variable controls
                     // included, read-only; Editable(true) there does not widen a View page. Calls

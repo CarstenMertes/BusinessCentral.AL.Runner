@@ -4,6 +4,7 @@ mod apps;
 mod args;
 mod output;
 mod run;
+mod testdata;
 
 use args::Command;
 use std::process::ExitCode;

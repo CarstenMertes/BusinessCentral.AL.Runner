@@ -154,7 +154,7 @@ fn a_bad_invocation_exits_2_and_says_why() {
     for (args, why) in [
         (vec!["test"], "at least one APP"),
         (vec!["test", ".", "--nope"], "unknown option"),
-        (vec!["test", ".", "--test-data-company", "X"], "needs --test-data"),
+        (vec!["test", ".", "--test-data", "--no-test-data"], "cannot be combined"),
         (vec!["test", ".", "--test-data", "/no/such/Demo.bak"], "Demo.bak"),
         (vec!["serve"], "not implemented yet"),
     ] {
@@ -477,4 +477,47 @@ fn top_failures_ranks_the_failure_messages_with_numbers_folded() {
         "{t}"
     );
     assert!(t.contains("boom N"), "{t}");
+}
+
+#[test]
+fn explain_shows_where_a_failing_test_raised_its_error() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--explain", "Fails"]);
+    let t = text(&o);
+    assert!(t.contains("runtime: FAIL"), "{t}");
+    assert!(t.contains("error: boom 5"), "{t}");
+    assert!(t.contains("raised in (innermost first):"), "{t}");
+    assert!(t.contains("Mixed Tests") && t.contains("Fails"), "{t}");
+    assert!(t.contains("src/Tests.al:"), "the source position is named: {t}");
+    assert_eq!(code(&o), 1, "{t}");
+}
+
+#[test]
+fn explain_shows_where_a_refused_test_was_refused() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--explain", "Refused"]);
+    let t = text(&o);
+    assert!(t.contains("runtime: NOT RUN (refused)"), "{t}");
+    assert!(t.contains("reason: "), "{t}");
+    assert_eq!(code(&o), 7, "{t}");
+}
+
+#[test]
+fn explain_needs_exactly_one_test() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--explain", "Pass"]);
+    let t = text(&o);
+    assert!(t.contains("matches 2 tests"), "{t}");
+    assert_eq!(code(&o), 2, "{t}");
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--explain",
+        "NoSuchTest",
+    ]);
+    assert_eq!(code(&o), 6, "{}", text(&o));
 }

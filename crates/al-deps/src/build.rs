@@ -110,6 +110,11 @@ pub struct BuildQuery {
     pub explicit: bool,
     /// The higher of `application` and `platform` in app.json, as (major, minor).
     pub floor: Option<(u32, u32)>,
+    /// The build the tests themselves come from (a Microsoft test archive or package names it).
+    /// Without `--bc-version`, the Microsoft apps, the platform `System.app` and the demo data
+    /// come from this build when it is cached, on disk or still published; otherwise the usual
+    /// rules pick and the selection warns.
+    pub preferred: Option<BuildId>,
 }
 
 impl BuildQuery {
@@ -122,13 +127,29 @@ impl BuildQuery {
                 prefix: p.trim().to_string(),
                 explicit: true,
                 floor,
+                preferred: None,
             },
             None => BuildQuery {
                 prefix: target_major.to_string(),
                 explicit: false,
                 floor,
+                preferred: None,
             },
         }
+    }
+
+    /// Sets the build of the tests (see [`BuildQuery::preferred`]).
+    pub fn with_preferred(mut self, build: Option<BuildId>) -> BuildQuery {
+        self.preferred = build;
+        self
+    }
+
+    /// The one whole build this query names: `--bc-version` written as a build, else the
+    /// build of the tests when nothing was requested.
+    pub fn exact(&self) -> Option<BuildId> {
+        BuildId::parse(&self.prefix)
+            .ok()
+            .or_else(|| self.preferred.clone().filter(|_| !self.explicit))
     }
 
     fn admits(&self, b: &BuildId) -> bool {
@@ -221,7 +242,12 @@ pub fn select_build(
     published: Option<&[BuildId]>,
     cache_dir: &str,
 ) -> Result<Selection, BuildError> {
-    let (build, origin) = if let Some(b) = q.pick(cached) {
+    let preferred = q.preferred.as_ref().filter(|_| !q.explicit);
+    let (build, origin) = if let Some(b) = preferred.filter(|p| cached.contains(p)) {
+        (b.clone(), Origin::Cache)
+    } else if let Some(b) = preferred.filter(|p| published.is_some_and(|ps| ps.contains(p))) {
+        (b.clone(), Origin::Published)
+    } else if let Some(b) = q.pick(cached) {
         (b.clone(), Origin::Cache)
     } else if let Some(b) = published.and_then(|p| q.pick(p)) {
         (b.clone(), Origin::Published)
@@ -245,7 +271,12 @@ pub fn select_build(
             cache_dir: cache_dir.to_string(),
         });
     };
-    let warnings = q.floor_warning(&build).into_iter().collect();
+    let mut warnings: Vec<String> = q.floor_warning(&build).into_iter().collect();
+    if let Some(p) = q.preferred.as_ref().filter(|p| !q.explicit && **p != build) {
+        warnings.push(format!(
+            "the tests are build {p}, which is neither cached nor published; the Microsoft apps come from build {build}"
+        ));
+    }
     Ok(Selection {
         build,
         origin,
@@ -421,5 +452,57 @@ mod tests {
             e.contains("builds available: none") || e.contains("builds available: "),
             "{e}"
         );
+    }
+    #[test]
+    fn the_build_of_the_tests_wins_when_it_is_listed() {
+        let cached = bs(&["27.5.46862.48827"]);
+        let published = bs(&["27.5.46862.48827", "27.5.46862.56249", "28.1.1.1"]);
+        let q = BuildQuery::new(None, 27, None).with_preferred(Some(b("27.5.46862.48827")));
+        let s = select_build(&q, &[], Some(&published), DIR).unwrap();
+        assert_eq!(s.build.to_string(), "27.5.46862.48827");
+        assert!(s.warnings.is_empty(), "{:?}", s.warnings);
+        let s = select_build(&q, &cached, Some(&published), DIR).unwrap();
+        assert_eq!(
+            (s.build.to_string().as_str(), s.origin),
+            ("27.5.46862.48827", Origin::Cache)
+        );
+        assert_eq!(q.exact(), Some(b("27.5.46862.48827")));
+    }
+
+    #[test]
+    fn the_build_of_the_tests_beats_another_cached_build() {
+        let cached = bs(&["27.5.46862.56249"]);
+        let published = bs(&["27.5.46862.48827", "27.5.46862.56249"]);
+        let q = BuildQuery::new(None, 27, None).with_preferred(Some(b("27.5.46862.48827")));
+        let s = select_build(&q, &cached, Some(&published), DIR).unwrap();
+        assert_eq!(
+            (s.build.to_string().as_str(), s.origin),
+            ("27.5.46862.48827", Origin::Published)
+        );
+    }
+
+    #[test]
+    fn a_build_of_the_tests_that_is_gone_falls_back_to_the_newest_and_says_so() {
+        let published = bs(&["27.5.46862.56249", "28.1.1.1"]);
+        let q = BuildQuery::new(None, 27, None).with_preferred(Some(b("27.5.46862.48827")));
+        let s = select_build(&q, &[], Some(&published), DIR).unwrap();
+        assert_eq!(s.build.to_string(), "27.5.46862.56249");
+        assert!(
+            s.warnings
+                .iter()
+                .any(|w| w.contains("27.5.46862.48827") && w.contains("27.5.46862.56249")),
+            "{:?}",
+            s.warnings
+        );
+    }
+
+    #[test]
+    fn an_explicit_request_beats_the_build_of_the_tests() {
+        let published = bs(&["27.4.1.1", "27.5.46862.48827", "27.5.46862.56249"]);
+        let q = BuildQuery::new(Some("27.4"), 27, None).with_preferred(Some(b("27.5.46862.48827")));
+        let s = select_build(&q, &[], Some(&published), DIR).unwrap();
+        assert_eq!(s.build.to_string(), "27.4.1.1");
+        assert!(s.warnings.is_empty());
+        assert_eq!(q.exact(), None);
     }
 }

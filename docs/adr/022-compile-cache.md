@@ -1,6 +1,6 @@
-# ADR-022: Compile cache: one entry per dependency app version
+# ADR-022: Compile cache: one entry per dependency set
 
-- Status: Proposed (owner answered the open questions on 2026-10-14; the measurement below is done; decision 2 does not work as written, see "Proposed amendments"; building waits for the owner)
+- Status: Accepted (owner, 2026-10-14; the measurement below amended decisions 2 to 4 and the owner accepted the amendments)
 - Date: 2026-10-14
 - Amends: ADR-013 (decision 6: its "persistent cache only if the warm start needs it" becomes a design; its
   "lowered IR is not cached" is lifted for dependency apps), ADR-016 (the deferral of persistent dependency
@@ -37,61 +37,72 @@ runtime has no SQL schema step, so a cache can be opened by reading an index and
      compile of ADR-013 stays as it is. It is the reference path and the fallback.
    - Only dependency apps are cached. The workspace apps (the code under test) compile on every run.
 
-2. **One entry per app id + version**, not per stack. (The measurement below found this cannot work as written: the IR refers to other objects by position in one global list. See "Can lowering be done per app?" and the proposed amendments.) Base Application is shared by all projects, and a customer
-   extension, which depends on Base Application and is not part of its entry, never invalidates it. An entry holds:
+2. **One entry per dependency set** (owner, 2026-10-14, open question 5; design A of the measurement). The set is every
+   non-workspace app of a run, in dependency order. Workspace apps are ordered after them in the program, so the
+   position of every dependency object and every base field is the same in every run with that set and needs no
+   remap. (Per-app entries were measured and do not work: the IR refers to objects and fields by position. See
+   "Can lowering be done per app?".) A customer extension never invalidates the entry. A Base Application hotfix
+   rebuilds the whole entry, which is 79 % of the objects under either unit. An entry holds:
    - a header: magic, format integer, the key (decision 4), a checksum of the index;
    - an object index: object type + id -> offset and length of its block;
-   - one string table for the whole entry (names, texts, reasons); blocks refer to strings by number;
-   - the event-subscriber index, precomputed (publisher -> subscribers), including subscribers of objects in other
-     apps, by name;
+   - the event-subscriber index, precomputed (publisher -> subscribers), by name;
    - the member and type tables the workspace is checked against (fields, enum values, procedure signatures,
      extension fields the app adds to other apps' tables);
-   - **one block per object**: its lowered IR, compressed on its own with zstd, with its own checksum;
-   - per routine, the refusal reason if lowering refused it (decision 7);
-   - optionally, per app set, the install-baseline result (ADR-004 snapshot; open question 2).
-
-   Positions, source-file numbers and `Object::app` are local to the entry and remapped when it is loaded.
+   - one shared zstd dictionary (level 3, about 512 KB) for all blocks;
+   - **one block per object**: its lowered IR (serde + postcard), compressed on its own with zstd level 3 and the
+     shared dictionary, with its own checksum. The block lists the objects whose extension or implementer set it
+     embeds (the "whole-program facts" of the measurement: `InterfaceCall::targets`, `InterfaceTest::objects`,
+     `EnumImpl::by_ordinal`, table and page extension lists, merged page controls). **A block whose listed object is
+     extended or implemented by a workspace object is not loaded; it is lowered again from source with the demand
+     path.** About 4 % of the objects are affected;
+   - per routine, the refusal reason if lowering refused it (decision 7).
+   - No string table (the dictionary reaches nearly the same size with no format change). No call graph in the
+     blocks (three quarters of the raw bytes; derived from the IR where `baseline.rs` and the explanations need it).
+     No level 19 (8 % smaller, not worth the time). No source positions (dependency IR has none).
+   - The entry is about 16 to 19 MB per BC build.
 
 3. **Loading costs as little as possible.**
    - Open = read the header and the index. Nothing else.
    - The event index and the member tables are used as stored. They are not rebuilt from objects.
-   - A block is read, checked and decoded the first time a test touches its object. An object no test touches is never
-     decoded. `Program` therefore gets lazily filled object slots (`OnceLock`, because test codeunits run on worker
+   - The objects the install baseline reaches are decoded in parallel at start (4 threads: 70 to 90 ms), because every
+     run reaches about 3 100 of them. A block is otherwise read, checked and decoded the first time a test touches its
+     object. An object no test touches is never decoded. Per-routine laziness is not needed. `Program` therefore gets lazily filled object slots (`OnceLock`, because test codeunits run on worker
      threads). This changes how the engine reaches `Program::objects` and needs an accessor (ADR-011, additive).
    - The format code is a core crate over bytes (ADR-006). The file access (read, rename, directory) sits next to
      the existing download cache in `al-deps/src/cache.rs`.
 
 4. **The key** has five inputs. Every one must be in it, and a test proves each one misses when it changes:
-   1. app id and 2. app version;
-   3. a hash of the app's source. For an artifact the hash is made once when the artifact is stored (ADR-013
+   1. app id and 2. app version, for every app of the set, in order;
+   3. a hash of each app's source. For an artifact the hash is made once when the artifact is stored (ADR-013
       decision 13 keeps CRC-32 and size per entry). For `.alpackages` and `--deps` files it is a hash of the zip
       central directory (name, size and CRC-32 of every entry), which needs no data read;
    4. the target BC version, with the runtime version (`Target`, ADR-015: gates change lowering);
    5. the runtime build id. Any compiler change must invalidate. Decided here: the hash of the running executable
-      (it cannot miss a crate; a hash of source files can). The measurement section times it; if it costs too
-      much, the build script hashes all workspace sources and `Cargo.lock` instead.
+      (it cannot miss a crate; a hash of source files can). Measured at 6 to 8 ms; there is no build-script fallback.
 
-   The entry of an app also takes the keys of the entries of its dependencies, because its lowering was checked
-   against their member tables. A dependency hotfix therefore rebuilds the apps that depend on it, and nothing else.
-   The format integer is part of the key as well; a mismatch is a miss and rebuilds, never an error (ADR-016).
+   The key of the entry is the ordered list of these per-app inputs plus inputs 4 and 5. Any hotfix of any app in the
+   set is a miss and rebuilds the whole entry. The format integer is part of the key as well; a mismatch is a miss and rebuilds, never an error (ADR-016).
 
    **No input can be forgotten.** The key is one struct. The hash function destructures it field by field without
-   `..`, so adding a field that is not hashed does not compile. The install-baseline key (if built) takes the keys of
-   every entry in the set plus the test-data and normalization inputs, built the same way.
+   `..`, so adding a field that is not hashed does not compile. The install-baseline key (if built) takes the key of
+   the entry plus the test-data and normalization inputs, built the same way.
 
 5. **Writing is safe and local.**
    - Write to a temporary file in the cache folder, then rename. A reader sees the whole old file or the whole new
      file. Two parallel runs may both build the same entry; the last rename wins, and the bytes are the same
      (the build is deterministic, a test checks it).
    - A damaged file is refused and rebuilt, never used: the header and index checksum are checked at open, a block
-     checksum at first touch. A failed check stops the run with a named error (not a test failure and not a pass),
-     deletes the entry, and the next run rebuilds. `alrunner cache verify` reads every block, for CI.
+     checksum at first touch. A failed check (named reason on stderr) ignores the entry, the run
+     continues from a rebuild (or the demand path), and the damaged file is replaced. A damaged cache never changes an
+     outcome and never fails a run. `alrunner cache verify` reads every block, for CI.
    - **Licensing (ADR-013, "cache only"):** the cache is a local file made on the user's machine from source the
      user downloaded. Nothing compiled from Microsoft code is committed, released, uploaded as a release asset or
      shared outside the user's own CI cache.
-   - Location: open question 3.
+   - Location: `<cache root>/compile/` (owner decision 3 below).
 
-6. **CI** caches the cache folder between pipeline runs with `actions/cache`.
+6. **CI** caches the cache files between pipeline runs with `actions/cache` (owner, 2026-10-14: short-lived key per BC build; a
+   separate step builds or verifies the cache before the measured run, so the measured run is always a hit; the job
+   summary reports the times with the cache on and the cache build time separately).
    - The `actions/cache` key is built from the same inputs as decision 4: the output of `--print-builds`
      (the app versions), the runtime build id and the format integer. No `restore-keys`: an entry of another version
      is never usable.
@@ -320,24 +331,18 @@ dependency object (to compare two closures). `cargo run --release -p al-test-cli
 DEMAND.json...` opens a written file and times the decode. The corpus run is
 `al-test-cli --root . --bc-version 29`; the bucket runs are the recipe in `docs/alrunner-buckets.md`.
 
-## Proposed amendments to this ADR (need the owner's decision; the accepted answers above stay as they are)
+## Amendments adopted (owner, 2026-10-14)
 
-1. **Decision 2: the entry is per dependency set, not per app** (design A). Key: the ordered list of the per-app
-   inputs of decision 4, plus the other inputs. Workspace apps are ordered after the dependency apps in the program.
-2. **Decision 2: add to each block the list of objects whose extension or implementer set it embeds.** At load, a block
-   whose listed object is extended or implemented by a workspace object is lowered from source with the demand path
-   instead of being loaded.
-3. **Decision 2: leave the call graph out of the blocks**; derive it where `baseline.rs` and the explanations need it.
-4. **Decision 2: per-object zstd level 3 with one shared dictionary per entry**; no string table; no level 19.
-5. **Decision 3: decode the objects the baseline reaches in parallel at start (4 threads: 70 to 90 ms).** Per-object
-   laziness stays; per-routine laziness is not needed (decode of everything is 0.19 s on 4 threads).
-6. **Decision 4.5: hash the executable.** Measured 6 to 8 ms; drop the build-script fallback.
-7. **Consequences:** the first-run cost is 9 to 13 s and 5 GB of memory (builder), not 10 to 30 s. Entry size is
-   16 to 19 MB per BC build.
+The owner accepted all seven amendments the measurement proposed. They are folded into the decisions above:
+(1) the entry is per dependency set; (2) blocks list the objects whose extension or implementer set they embed and are
+lowered again when the workspace extends or implements one; (3) no call graph in the blocks; (4) per-object zstd
+level 3 with one shared dictionary, no string table, no level 19; (5) the objects the baseline reaches are decoded in
+parallel at start; (6) the executable is hashed, no build-script fallback; (7) the first-run cost is 9 to 13 s and
+5 GB of memory in the builder, and an entry is 16 to 19 MB per BC build.
 
-## Open questions for the project owner
+## Open questions (all answered, see "Owner decisions")
 
-Each is one decision. The recommendation comes first.
+Each was one decision. The recommendation came first.
 
 1. **How are blocks serialized?**
    - Recommended: **serde + postcard (or bincode) + per-object zstd.** The IR already derives serde. Small change,
@@ -375,12 +380,18 @@ Each is one decision. The recommendation comes first.
 
 ## Owner decisions (2026-10-14)
 
-The owner accepted every recommendation above:
+The owner accepted every recommendation above and answered question 5:
 
 1. Blocks are serialized with serde + postcard (or bincode) and compressed per object with zstd.
 2. The install-baseline snapshot is not in version 1.
 3. The cache lives in `<cache root>/compile/`, under the root the download cache already uses.
 4. WebAssembly has no compile cache in version 1.
+5. **One cache entry per dependency set**, not per app (design A). Workspace apps are ordered last.
+6. CI caches the cache files with `actions/cache`; a separate step builds or verifies the cache; the measured run is a
+   cache hit; the job summary reports the run time with the cache on and the cache build time apart.
+
+Decided without owner review (2026-10-14): see `docs/owner-review.md` (the file layout of an entry, the way a block is
+lowered again from source, the corruption handling, and the CLI spelling).
 
 ## Consequences
 
@@ -410,7 +421,7 @@ The owner accepted every recommendation above:
   the entry is deleted and rebuilt, and the corrupted bytes are never executed. A truncated file does the same.
 - **Atomic and parallel.** Several processes build the same entry at once; every reader sees a whole file. Two
   builds produce identical bytes.
-- **Sharing.** Two projects with different own extensions load the same Base Application entry without rewriting it.
+- **Sharing.** Two projects with different own extensions load the same dependency-set entry without rewriting it.
   A customer table extension on a Base table and a customer event subscriber give the same outcomes as an uncached
   run.
 - **Outcome identity.** The corpus with caching on and with `--no-compile-cache` gives the same outcome and the

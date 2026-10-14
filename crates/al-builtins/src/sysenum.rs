@@ -77,6 +77,10 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // The members in the order the documentation lists them. The corpus names Xml, Pdf and Html
         // (handlers/TestReportSaveAsDatasetContracts.al) and never prints or compares the number,
         // so the ordinals are not pinned and nothing may print them.
+        // The report layout kinds, in the documentation's order. A documentation-only assumption: no corpus
+        // test names the members or pins an ordinal, so nothing may print the number (docs/probes-needed.md,
+        // "ReportLayoutType"). Base Application compares it with `ReportLayoutType::Word` and `::RDLC`.
+        "reportlayouttype" => Some(&["RDLC", "Word", "Excel", "Custom"]),
         "reportformat" => Some(&["Pdf", "Word", "Excel", "Html", "Xml"]),
         "errortype" => Some(&["Client", "Internal"]),
         // The ordinals are not pinned: the corpus only calls `Session.CurrentClientType()` and

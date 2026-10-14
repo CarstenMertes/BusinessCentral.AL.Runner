@@ -5,8 +5,13 @@
 pub mod bacpac;
 pub mod bak;
 pub mod bcp;
+pub mod catalog;
 pub mod error;
 pub mod io;
+pub mod lob;
+pub mod mtf;
+pub mod pagefile;
+pub mod records;
 pub mod scsu;
 pub mod source;
 pub mod types;

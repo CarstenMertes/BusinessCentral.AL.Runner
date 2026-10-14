@@ -12,7 +12,6 @@ use al_syntax::{SyntaxKind, SyntaxNode, ast};
 use std::collections::HashMap;
 
 /// (lower-case attribute name, argument constants) per attribute.
-type Attrs = Vec<(String, Vec<ir::Const>)>;
 
 pub struct Lowered {
     pub program: ir::Program,
@@ -469,6 +468,7 @@ pub fn lower_with_positions(
     // tree is built before the extensions are lowered, and binds their controls to these slots.
     let ext_slots: std::cell::RefCell<Vec<HashMap<String, usize>>> =
         std::cell::RefCell::new(vec![HashMap::new(); ws.objects.len()]);
+    let memo = Memo::default();
     let new_lowerer = |oi: usize| Lowerer {
         rec_slot: None,
         table_of: &table_of,
@@ -489,7 +489,7 @@ pub fn lower_with_positions(
         layouts: &layouts,
         xmlports: &xml_irs,
         reports: &report_irs,
-        attrs: Default::default(),
+        memo: &memo,
         ret_ty: None,
         ret_decl: None,
         routine_nodes: &routine_nodes,
@@ -1135,8 +1135,8 @@ struct Lowerer<'a> {
     xmlports: &'a [Option<ir::XmlPort>],
     /// Per object: the dataset of a report (its `unsupported` says why a variable is refused).
     reports: &'a [Option<ir::Report>],
-    /// `routine_attributes` memo, by (object, routine offset).
-    attrs: std::cell::RefCell<HashMap<(usize, usize), Attrs>>,
+    /// Answers many routines ask for, computed once per program.
+    memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
     ret_ty: Option<RtType>,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
@@ -1155,6 +1155,17 @@ struct Lowerer<'a> {
     emit_pos: bool,
     /// Index of the routine being lowered in its object.
     routine_idx: usize,
+}
+
+/// What lowering asks about an object again and again. Each answer is computed on first use and
+/// shared by every routine of the program: walking the syntax tree for it per use was a third of
+/// the lowering time.
+#[derive(Default)]
+struct Memo {
+    /// The codeunits that implement an interface (or one that extends it), in object order.
+    implementers: std::cell::RefCell<HashMap<usize, std::rc::Rc<Vec<usize>>>>,
+    /// The `TableType` property of a table, trimmed.
+    table_type: std::cell::RefCell<HashMap<usize, std::rc::Rc<Vec<String>>>>,
 }
 
 /// Line starts of a source file, for turning offsets into the author's line and column.
@@ -2090,10 +2101,41 @@ impl Lowerer<'_> {
         }
     }
 
+    /// The `TableType` properties of table `table`, trimmed, in source order.
+    fn table_types(&self, table: usize) -> std::rc::Rc<Vec<String>> {
+        if let Some(hit) = self.memo.table_type.borrow().get(&table) {
+            return hit.clone();
+        }
+        let kinds: std::rc::Rc<Vec<String>> = std::rc::Rc::new(
+            self.ws
+                .object_ast(table)
+                .properties()
+                .filter(|p| p.name().eq_ignore_ascii_case("TableType"))
+                .map(|p| p.value_text().trim().to_string())
+                .collect(),
+        );
+        self.memo.table_type.borrow_mut().insert(table, kinds.clone());
+        kinds
+    }
+
     fn is_temporary_table(&self, table: usize) -> bool {
-        self.ws.object_ast(table).properties().any(|p| {
-            p.name().eq_ignore_ascii_case("TableType") && p.value_text().trim().eq_ignore_ascii_case("temporary")
-        })
+        self.table_types(table)
+            .iter()
+            .any(|k| k.eq_ignore_ascii_case("temporary"))
+    }
+
+    /// The codeunits that implement `iface` (or an interface that extends it), in object order.
+    fn implementers(&self, iface: usize) -> std::rc::Rc<Vec<usize>> {
+        if let Some(hit) = self.memo.implementers.borrow().get(&iface) {
+            return hit.clone();
+        }
+        let found: std::rc::Rc<Vec<usize>> = std::rc::Rc::new(
+            (0..self.ws.objects.len())
+                .filter(|&cu| self.ws.objects[cu].kind == ObjKind::Codeunit && self.implements(cu, iface))
+                .collect(),
+        );
+        self.memo.implementers.borrow_mut().insert(iface, found.clone());
+        found
     }
 
     fn rt(&self, t: &Ty) -> L<RtType> {
@@ -2174,12 +2216,7 @@ impl Lowerer<'_> {
             Ty::Record { table, temporary } => {
                 let t = self.resolve_obj(ObjKind::Table, table)?;
                 // A table of another type (CRM, ExternalSQL, ...) is served by a table connection.
-                let kind = self
-                    .ws
-                    .object_ast(t)
-                    .properties()
-                    .find(|p| p.name().eq_ignore_ascii_case("TableType"))
-                    .map(|p| p.value_text().trim().to_string());
+                let kind = self.table_types(t).first().cloned();
                 if let Some(k) =
                     kind.filter(|k| !k.eq_ignore_ascii_case("normal") && !k.eq_ignore_ascii_case("temporary"))
                 {
@@ -2203,7 +2240,7 @@ impl Lowerer<'_> {
     fn implements(&self, cu: usize, iface: usize) -> bool {
         let file = self.ws.objects[cu].file;
         let family = self.ws.interface_family(iface);
-        self.ws.object_ast(cu).implements_parts().iter().any(
+        self.ws.objects[cu].implements.iter().any(
             |p| matches!(self.ws.resolve_ref(file, ObjKind::Interface, p), Resolution::Found(i) if family.contains(&i)),
         )
     }
@@ -2305,10 +2342,7 @@ impl Lowerer<'_> {
         }
         let name = crate::check::type_name_text(&kids[1]);
         let iface = self.resolve_obj(ObjKind::Interface, &name)?;
-        let objects: Vec<u32> = (0..self.ws.objects.len())
-            .filter(|&cu| self.ws.objects[cu].kind == ObjKind::Codeunit && self.implements(cu, iface))
-            .map(|cu| cu as u32)
-            .collect();
+        let objects: Vec<u32> = self.implementers(iface).iter().map(|&cu| cu as u32).collect();
         let value = Box::new(self.expr(&kids[0])?);
         Ok(ir::Expr::InterfaceTest {
             value,
@@ -2339,10 +2373,7 @@ impl Lowerer<'_> {
             .ok_or("interface procedure signature")?
             .clone();
         let mut targets = Vec::new();
-        for cu in 0..self.ws.objects.len() {
-            if self.ws.objects[cu].kind != ObjKind::Codeunit || !self.implements(cu, iface) {
-                continue;
-            }
+        for &cu in self.implementers(iface).iter() {
             let same_shape: Vec<_> = self.members[cu]
                 .procedures
                 .iter()
@@ -3153,41 +3184,6 @@ impl Lowerer<'_> {
         })
     }
 
-    /// (lower-case name, argument constants) of each attribute of the routine
-    /// at `offset` in `object`.
-    fn routine_attributes(&self, object: usize, offset: usize) -> Attrs {
-        if let Some(hit) = self.attrs.borrow().get(&(object, offset)) {
-            return hit.clone();
-        }
-        let attrs = self.routine_attributes_uncached(object, offset);
-        self.attrs.borrow_mut().insert((object, offset), attrs.clone());
-        attrs
-    }
-
-    fn routine_attributes_uncached(&self, object: usize, offset: usize) -> Attrs {
-        // The routine starts at `offset`, so it encloses the token there: walk up
-        // from it instead of scanning every node of the object.
-        let obj = self.ws.object_ast(object);
-        let Some(tok) = obj.syntax().token_at_offset((offset as u32).into()).right_biased() else {
-            return Vec::new();
-        };
-        tok.parent_ancestors()
-            .filter_map(ast::Routine::cast)
-            .find(|r| usize::from(r.syntax().text_range().start()) == offset)
-            .map(|r| {
-                r.attributes()
-                    .map(|a| {
-                        let args = a
-                            .args()
-                            .map(|l| l.children().filter_map(|e| self.constant(&e).ok()).collect())
-                            .unwrap_or_default();
-                        (a.name().to_ascii_lowercase(), args)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     /// An operand whose type is only known at run time is refused (ADR-014): BC types it from the
     /// assembly, which lowering never opens.
     fn no_dotnet_operand(&self, n: &SyntaxNode) -> L<()> {
@@ -3344,8 +3340,10 @@ impl Lowerer<'_> {
                     }
                 }
                 self.calls.push((object, routine));
-                let attrs = self.routine_attributes(object, offset);
-                let try_call = attrs.iter().any(|(a, _)| a == "tryfunction");
+                // The routine node is the one `routine_at` numbered, so no search by offset.
+                let try_call = self.routine_nodes[object]
+                    .get(routine)
+                    .is_some_and(|r| r.attributes().any(|a| a.name().eq_ignore_ascii_case("tryfunction")));
                 Ok(ir::Expr::Call {
                     object,
                     routine,

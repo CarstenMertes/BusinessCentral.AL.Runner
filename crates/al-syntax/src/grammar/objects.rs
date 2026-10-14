@@ -124,6 +124,9 @@ fn member(p: &mut Parser) {
         p.finish();
     } else if p.at(Ident) && matches!(p.nth(1), LParen | LBrace) {
         section(p);
+    } else if p.at_kw("event") && matches!(p.nth(1), Ident | QuotedIdent) && p.nth(2) == LParen {
+        // `event Name(Params);` of a control add-in.
+        section(p);
     } else if p.at(Semicolon) {
         // Stray separator after a section's closing brace.
         p.bump_any();
@@ -134,7 +137,12 @@ fn member(p: &mut Parser) {
 
 fn section(p: &mut Parser) {
     p.start(Section);
+    let is_event = p.at_kw("event") && matches!(p.nth(1), Ident | QuotedIdent);
     p.bump_any();
+    if is_event {
+        // `event Name(...)`: the name follows the keyword.
+        p.bump_any();
+    }
     if p.at(LParen) {
         p.start(SectionArgs);
         p.bump_any();
@@ -158,6 +166,10 @@ fn section(p: &mut Parser) {
     }
     if p.at(LBrace) {
         body(p);
+    } else if is_event {
+        // Microsoft's control add-ins leave the `;` off an event now and then
+        // (`BarcodeScannerProviderAddIn.ControlAddIn.al`), and the AL compiler accepts it.
+        p.eat(Semicolon);
     } else {
         p.expect(Semicolon);
     }
@@ -258,6 +270,17 @@ mod tests {
         assert_eq!(
             f("codeunit 1 A { }\ncodeunit 2 B { }"),
             "(Object codeunit 1 A (ObjectBody { })) (Object codeunit 2 B (ObjectBody { }))"
+        );
+    }
+
+    #[test]
+    fn control_add_in_events_and_bodiless_procedures() {
+        // System Application `ControlAddIns/src/BusinessChart.ControlAddin.al`.
+        let src = "controladdin BusinessChart { RequestedHeight = 320; event DataPointClicked(Point: JsonObject); event AddInReady(); procedure Update(ChartData: JsonObject); event Last(A: Text) }";
+        assert_eq!(errors(src, source_file), 0);
+        assert_eq!(
+            f(src),
+            "(Object controladdin BusinessChart (ObjectBody { (Property RequestedHeight = (PropertyValue 320) ;) (Section event DataPointClicked (SectionArgs ( Point : JsonObject )) ;) (Section event AddInReady (SectionArgs ( )) ;) (Procedure procedure Update (ParamList ( (Param ChartData : (TypeRef JsonObject)) )) ;) (Section event Last (SectionArgs ( A : Text ))) }))"
         );
     }
 

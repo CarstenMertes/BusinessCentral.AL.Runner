@@ -175,7 +175,8 @@ impl Builder<'_> {
     fn item(&mut self, sec: &ast::Section, parent: Option<usize>) {
         let args = sec.args();
         let name = args.first().cloned().unwrap_or_default();
-        let table = match args.get(1) {
+        let table_name = crate::types::section_object_name(sec, 1);
+        let table = match table_name.as_ref() {
             Some(t) => match self
                 .ws
                 .resolve_ref(self.file, ObjKind::Table, &crate::types::qualified_parts(t))

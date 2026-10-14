@@ -574,12 +574,17 @@ impl Workspace {
     pub fn outside_workspace(&self, kind: ObjKind, name: &str) -> String {
         let bare = name.trim().trim_matches('"');
         if kind == ObjKind::Table {
-            let no_provider = self
-                .by_name
-                .get(&(kind, bare.rsplit('.').next().unwrap_or(bare).to_lowercase()))
-                .into_iter()
-                .flatten()
-                .find(|&&i| self.platform_table_without_provider(i));
+            // `bare` is the name with its namespace, dots between the parts. A name holds dots too
+            // (`Metadata Permission Set Rel.`, `Pstd. Phys. Invt. Order Hdr`), so try the whole
+            // text, then what follows each dot.
+            let suffixes = std::iter::once(0).chain(bare.match_indices('.').map(|(i, _)| i + 1));
+            let no_provider = suffixes.into_iter().find_map(|at| {
+                self.by_name
+                    .get(&(kind, bare[at..].trim().to_lowercase()))
+                    .into_iter()
+                    .flatten()
+                    .find(|&&i| self.platform_table_without_provider(i))
+            });
             if let Some(&i) = no_provider {
                 return self.unusable_reason(i).unwrap_or_default();
             }

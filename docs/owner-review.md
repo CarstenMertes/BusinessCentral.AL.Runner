@@ -13,6 +13,17 @@ reviewed it.
 - XmlPort constructs the corpus does not pin now refuse when the port runs, not when it is declared (so Base App's xmlport 1
   can sit behind a cancelled request page).
 
+## Decided without the owner (report-saveas, 2026-10-14)
+
+- `Report.SaveAs` writes the dataset for `ReportFormat::Xml` only; a rendered format is refused. No seam changed, so no
+  ADR. Review first: the documentation-only assumptions in `docs/probes-needed.md` ("Report.SaveAs dataset": the header
+  elements the probe does not pin, an Option column as its ordinal, `decimalformatter` for decimals that state
+  `AutoFormatType`, no `DataItems` element when it would be empty, a failing report with an RDLC layout answering false).
+- The tableId/systemId pair of BC 28.5 and later is not written: the gate rules need a `BC28PLUS` guard in the corpus.
+- Side changes the dataset needed, all additive: `UseTemporary` on a data item; `Report::"X"` named in workspace code reaches
+  the report's whole code (a test passes the id to a helper); the request page of `RunRequestPage` has OK; `CompanyProperty.DisplayName`
+  is the company name; `XmlDocument.ReadFrom(InStream)`; `foreach` over `XmlNodeList`.
+
 ## Open questions (not decided)
 
 - ADR-020 (Proposed), `al-bcdb`: the Rust port of bcdb, and the proposed way to load CRONUS
@@ -287,3 +298,6 @@ reviewed it.
 - 2026-10-14, ADR-013, alrunner-cli: an app with an `application` or `platform` floor depends on `Application` / `System` and on what `Application` propagates (Base Application, System Application, Business Foundation); the loader adds them to its visibility when `Request::application_implies_dependencies` is set (only `alrunner`). Source archives with Microsoft's `$(app_...)` variables are read with the build in their path or an exact `--bc-version`.
 - 2026-10-14, ADR-011, alrunner-cli: lowering refuses a binary expression with a missing operand instead of panicking (found by Tests-ERM, see the ADR-016 section).
 - 2026-10-14, ADR-013, bucket-demand: a panic while checking or lowering one routine refuses that routine ("internal error while checking/lowering: ...") instead of ending the run; the parser accepts `Option` return types with no members, `trigger Var::Event`, `ControlAddIn Name` parameters and control add-in `event` declarations.
+- 2026-10-14, ADR-009, bucket-misc, Random: `Random(N)` and `Randomize` are implemented without a corpus pin (docs/probes-needed.md, "Random"). The generator is .NET's legacy `System.Random` (`al-host/src/random.rs`), one per session, so `Randomize(seed)` then `Random(n)` repeats and has .NET's values. Unseeded, a session starts from the host's `random_seed` (1) and `Randomize()` moves to that seed plus a per-session count, so runs are repeatable; BC draws from the clock. `Random(0)` acts as 1 and a negative bound as its absolute value, as the service tier's `ALSystemNumeric.ALRandom` reads (not a corpus test). Say no to run these only after a probe.
+- 2026-10-14, ADR-018, bucket-misc: `Notification.Send` goes to the `[SendNotificationHandler]` (needs `true` back) and `Recall` of a notification a handler took does nothing; `Send` without a handler, a handler answering `false`, `Recall` of an unsent notification and `[RecallNotificationHandler]` stay refused.
+- 2026-10-14, ADR-009, bucket-misc: report property `AdditionalSearchTerms` (and `...ML`) is accepted like `Caption` and `UsageCategory`: it only feeds the client's Tell Me search and no AL code or test client reads it. A reportextension `addafter(X)` stays refused: `add` columns now reach the SaveAs dataset (report-saveas), and where `addafter` puts them is not pinned.

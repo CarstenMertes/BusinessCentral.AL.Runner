@@ -1709,6 +1709,13 @@ mod tests {
             &dep,
         );
         assert!(!compiled(&named, "Rep", "OnPreReport"));
+        // Handed to a procedure as an argument, workspace code may run it there
+        // (corpus handlers/TestReportDatasetHelpLink.al: `RenderDataset(Report::"G/L Register")`).
+        let (_, passed) = compile(
+            "codeunit 1 Main { procedure Go() begin Show(Report::Rep); end; procedure Show(Id: Integer) begin end; }",
+            &dep,
+        );
+        assert!(compiled(&passed, "Rep", "OnPreReport"));
     }
 
     #[test]

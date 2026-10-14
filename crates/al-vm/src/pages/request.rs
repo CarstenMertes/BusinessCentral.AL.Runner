@@ -33,6 +33,9 @@ impl Session {
     /// The built-in actions of a request page. Plain OK is the confirmation of a processing-only
     /// report and is not offered otherwise; Cancel is always offered
     /// (handlers/TestReportRunWithRequestPage.al:Report_Run_NonProcessingOnlyRequestPageHasNoOKAction).
+    /// The page `RunRequestPage` opens has OK whatever the report renders: it confirms the
+    /// parameters (handlers/TestReportRunRequestPage.al:TestReport_CapturedParameters_ReplayThroughSaveAs_
+    /// FilterTheDataset, a report with an RDLC layout).
     pub(super) fn request_builtin_offered(&self, st: &St, which: &str) -> bool {
         let object = st.borrow().object as usize;
         let processing_only = self.engine.program.objects[object]
@@ -40,7 +43,7 @@ impl Session {
             .as_ref()
             .is_some_and(|r| r.processing_only);
         match which {
-            "OK" => processing_only,
+            "OK" => processing_only || st.borrow().parameters_wanted,
             "Cancel" => true,
             _ => false,
         }
@@ -78,6 +81,7 @@ impl Session {
             let mut s = st.borrow_mut();
             s.instance = Some(inst.clone());
             s.modal = true;
+            s.parameters_wanted = want_parameters;
         }
         inst.borrow_mut().globals[page.curr_page_slot] = Value::TestPage(st.clone());
         // Each reportextension that extends the request page runs on an instance of its own: the

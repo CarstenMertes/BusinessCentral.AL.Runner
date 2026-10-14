@@ -16,6 +16,7 @@ pub use baseline::Baseline;
 pub use faultsite::FaultFrame;
 mod callstack;
 mod companies;
+mod dataset;
 mod dispatch;
 pub mod dotnet;
 mod errorcollect;
@@ -70,6 +71,8 @@ pub struct Engine {
     pub uid: u64,
     /// The tables a non-manual subscriber listens to the delete events of (see
     /// `autoinc::tables_with_delete_subscribers`), found when `Truncate` first asks.
+    /// The profiles that get an All Profile row (see `platform::profiles::profile_seeds`).
+    pub(crate) profile_seeds: std::sync::OnceLock<Vec<(usize, i32)>>,
     pub(crate) delete_subscribed: std::sync::OnceLock<std::collections::HashSet<String>>,
 }
 
@@ -149,6 +152,7 @@ impl Engine {
             unevaluable_init,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
+            profile_seeds: Default::default(),
         })
     }
 }
@@ -190,6 +194,12 @@ pub struct Session {
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
     pub(crate) next_guid: u64,
+    /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
+    pub(crate) sent_notifications: Vec<[u8; 16]>,
+    /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
+    pub(crate) rng: al_host::random::NetRandom,
+    /// How many `Randomize()` calls without a seed the session has seen.
+    pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
     /// Last AutoIncrement value handed out per table (and company). It is not part of the
     /// store: a rollback undoes rows but not the counter (corpus
@@ -292,6 +302,8 @@ pub struct Session {
     /// none (al-vm pages/runobject.rs).
     pub(crate) lenient_bind: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
+    pub(crate) dataset: Option<crate::dataset::Dataset>,
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
@@ -313,6 +325,7 @@ impl Session {
     /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
+        let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
         let store =
             al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
@@ -332,6 +345,9 @@ impl Session {
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
+            sent_notifications: Vec::new(),
+            rng: al_host::random::NetRandom::new(random_seed),
+            unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
             truncate_undo: Default::default(),
@@ -379,6 +395,7 @@ impl Session {
             report_trigger: None,
             report_flow: None,
             report_executed: Vec::new(),
+            dataset: None,
             lenient_bind: false,
         };
         session.seed_platform_rows(&ident);
@@ -717,7 +734,11 @@ impl Session {
             S::Foreach { var, collection, body } => {
                 let items: Vec<Value> = match self.eval(collection, f)? {
                     Value::List(l) => l.borrow().clone(),
-                    other => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                    // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
+                    other => match al_builtins::xml::node_list_items(&other) {
+                        Some(items) => items,
+                        None => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                    },
                 };
                 for item in items {
                     self.write(var, item, f)?;
@@ -1547,6 +1568,12 @@ impl al_builtins::native::Ctx for Session {
     }
     fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
         Session::ui_session_settings(self, settings)
+    }
+    fn ui_send_notification(&mut self, notification: Value, id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Session::ui_send_notification(self, notification, id)
+    }
+    fn ui_recall_notification(&mut self, id: Option<[u8; 16]>) -> Result<(), Signal> {
+        Session::ui_recall_notification(self, id)
     }
     fn new_guid(&mut self) -> [u8; 16] {
         // Deterministic ids (ADR-006: no OS randomness in the core).

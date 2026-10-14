@@ -876,7 +876,7 @@ impl<'a> Checker<'a> {
                 let a = s.args();
                 match s.name().to_ascii_lowercase().as_str() {
                     "dataitem" => a.get(1).cloned(),
-                    "modify" => a.first().and_then(|n| base_items.get(&n.to_lowercase()).cloned()),
+                    "modify" | "add" => a.first().and_then(|n| base_items.get(&n.to_lowercase()).cloned()),
                     _ => None,
                 }
             });
@@ -1191,12 +1191,14 @@ impl<'a> Checker<'a> {
                 if let E::PartialObj(k, mut parts) = base {
                     parts.push(mname);
                     return match self.ws.resolve_ref(sc.file, k, &parts) {
+                        // `Enum::Ns.Name` names the enum type, as `Enum::Name` does.
+                        Resolution::Found(i) if k == ObjKind::Enum => {
+                            self.touch(i);
+                            let qualified = self.ws.objects[i].name.clone();
+                            E::TypeName(Ty::Enum(qualified))
+                        }
                         Resolution::Found(i) => {
-                            if k == ObjKind::Codeunit {
-                                self.reach_run(i);
-                            } else {
-                                self.touch_schema(i);
-                            }
+                            self.reach_named_object(sc, node, k, i);
                             let id = self.ws.objects[i].id.unwrap_or(0) as i32;
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
@@ -1282,6 +1284,9 @@ impl<'a> Checker<'a> {
                             return E::Val(Ty::Unknown);
                         }
                     }
+                } else if let Some(e) = self.namespaced_enum(sc, &kids[0]) {
+                    // `Ns.Sub."Enum"::Value`: the enum named through its namespace.
+                    e
                 } else {
                     self.infer(sc, &kids[0])
                 };
@@ -1289,11 +1294,7 @@ impl<'a> Checker<'a> {
                     E::ObjKeyword(k) => match self.resolve_quiet(sc.file, k, &rhs) {
                         Some(i) => {
                             // `Database::"X"`, `Page::"X"`: the object's id. A codeunit named so can run.
-                            if k == ObjKind::Codeunit {
-                                self.reach_run(i);
-                            } else {
-                                self.touch_schema(i);
-                            }
+                            self.reach_named_object(sc, node, k, i);
                             let id = self.ws.objects[i].id.unwrap_or(0) as i32;
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
@@ -1310,12 +1311,23 @@ impl<'a> Checker<'a> {
                     E::PartialObj(k, parts) => E::PartialObj(k, parts),
                     E::EnumKeyword => match self.resolve(sc, ObjKind::Enum, &rhs) {
                         Some(i) => E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())),
+                        // `Enum::Acme.Docs."Kind"`: the first segment is a namespace; the next
+                        // `.` step resolves the whole name (the member branch above).
+                        None if node.parent().is_some_and(|p| p.kind() == MemberExpr) => {
+                            E::PartialObj(ObjKind::Enum, vec![rhs])
+                        }
                         None => {
                             self.diag(sc, node, "AR0002", format!("unresolved enum `{rhs}`"));
                             E::TypeName(Ty::Unknown)
                         }
                     },
                     E::TypeName(t) | E::Val(t) => {
+                        // `Kinds::Purchase` with `Kinds: array[3] of Option ...` names a member of
+                        // the element's option (Microsoft's SCM Supply Planning tests).
+                        let t = match t {
+                            Ty::Array(_, el) if matches!(*el, Ty::Option(_)) => *el,
+                            t => t,
+                        };
                         self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }
@@ -1336,6 +1348,43 @@ impl<'a> Checker<'a> {
                 }
             }
             _ => E::Val(Ty::Unknown),
+        }
+    }
+
+    /// `Ns.Sub."Enum"` before `::`: a chain of names that resolves to an enum through its namespace.
+    fn namespaced_enum(&self, sc: &Scope, node: &SyntaxNode) -> Option<E> {
+        fn parts(n: &SyntaxNode, out: &mut Vec<String>) -> bool {
+            match n.kind() {
+                SyntaxKind::NameRef => {
+                    out.push(name_of(n));
+                    true
+                }
+                SyntaxKind::MemberExpr => {
+                    let mut kids = n.children();
+                    let (Some(base), Some(member), None) = (kids.next(), kids.next(), kids.next()) else {
+                        return false;
+                    };
+                    parts(&base, out) && {
+                        out.push(name_of(&member));
+                        true
+                    }
+                }
+                _ => false,
+            }
+        }
+        if node.kind() != SyntaxKind::MemberExpr {
+            return None;
+        }
+        let mut names = Vec::new();
+        if !parts(node, &mut names) {
+            return None;
+        }
+        match self.ws.resolve_ref(sc.file, ObjKind::Enum, &names) {
+            Resolution::Found(i) => {
+                self.touch(i);
+                Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())))
+            }
+            _ => None,
         }
     }
 
@@ -1378,6 +1427,24 @@ impl<'a> Checker<'a> {
                 self.diag(sc, node, "AR1000", format!("unresolved name `{}`", name_of(node)));
                 E::Val(Ty::Unknown)
             }
+        }
+    }
+
+    /// `Codeunit::"X"`, `Page::"X"`, ...: the object's id is used. A codeunit named so can run. A test
+    /// hands `Report::"X"` to a helper that runs it
+    /// (handlers/TestReportDatasetHelpLink.al:RenderDataset(Report::"G/L Register")), so the call that
+    /// runs it names no constant: code of the workspace that passes a report's id to a call may run it. A
+    /// dependency's mention (a report id in a setup table) does not.
+    fn reach_named_object(&self, sc: &Scope, node: &SyntaxNode, k: ObjKind, i: usize) {
+        if k == ObjKind::Codeunit {
+            self.reach_run(i);
+        } else {
+            self.touch_schema(i);
+        }
+        // Only as an argument of a call; `I := Report::"X"` just names the id (check/demand.rs pins that).
+        let is_argument = node.parent().is_some_and(|p| p.kind() == SyntaxKind::ArgList);
+        if k == ObjKind::Report && is_argument && !self.ws.is_dependency(sc.oi) {
+            self.touch_full(i);
         }
     }
 

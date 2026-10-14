@@ -29,6 +29,9 @@ pub enum UiKind {
     /// `[SessionSettingsHandler]`: answers `SessionSettings.RequestSessionUpdate` (corpus
     /// session/TestSessionSettings.al:464-545).
     SessionSettings,
+    /// `[SendNotificationHandler]`: answers `Notification.Send` (corpus
+    /// handlers/TestNotificationHandler.al:15-26,74-85).
+    SendNotification,
 }
 
 impl UiKind {
@@ -42,6 +45,7 @@ impl UiKind {
             "modalpagehandler" => Some(UiKind::ModalPage),
             "requestpagehandler" => Some(UiKind::RequestPage),
             "sessionsettingshandler" => Some(UiKind::SessionSettings),
+            "sendnotificationhandler" => Some(UiKind::SendNotification),
             _ => None,
         }
     }
@@ -55,6 +59,7 @@ impl UiKind {
             UiKind::ModalPage => "ModalPage",
             UiKind::RequestPage => "RequestPage",
             UiKind::SessionSettings => "SessionSettings",
+            UiKind::SendNotification => "SendNotification",
         }
     }
 }
@@ -109,6 +114,11 @@ impl Session {
                 r.params == 1
                     && r.by_var == [true]
                     && matches!(ty(0), Some(RtType::Library(n)) if n == "SessionSettings")
+            }
+            // SendNotificationHandler(var Notification: Notification): Boolean
+            // (handlers/TestNotificationHandler.al:74-85).
+            UiKind::SendNotification => {
+                r.params == 1 && r.by_var == [true] && matches!(ty(0), Some(RtType::Library(n)) if n == "Notification")
             }
         };
         let page = match ty(0) {
@@ -230,6 +240,50 @@ impl Session {
             other => Err(Signal::Unsupported(format!(
                 "a [SessionSettingsHandler] that answers {other:?} (only true is pinned)"
             ))),
+        }
+    }
+
+    /// `Notification.Send()`: the bound `[SendNotificationHandler]` gets a copy and must answer
+    /// true (handlers/TestNotificationHandler.al:15-26,74-85). With no handler bound BC's text is
+    /// not pinned, and what a handler's `false` means is not pinned either: both are refused.
+    pub(crate) fn ui_send_notification(&mut self, notification: Value, id: Option<[u8; 16]>) -> Result<(), Signal> {
+        let bound = self
+            .ui
+            .as_ref()
+            .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::SendNotification));
+        if !bound {
+            return Err(Signal::Unsupported(
+                "Notification.Send without a [SendNotificationHandler] (the Unhandled UI text is not pinned)".into(),
+            ));
+        }
+        let (answer, _) = self.dispatch_ui_returning(UiKind::SendNotification, "", vec![notification])?;
+        match answer {
+            Value::Boolean(true) => {
+                if let Some(id) = id {
+                    if !self.sent_notifications.contains(&id) {
+                        self.sent_notifications.push(id);
+                    }
+                }
+                Ok(())
+            }
+            other => Err(Signal::Unsupported(format!(
+                "a [SendNotificationHandler] that answers {other:?} (only true is pinned)"
+            ))),
+        }
+    }
+
+    /// `Notification.Recall()` of a notification a handler took: nothing happens, with no recall
+    /// handler bound (handlers/TestNotificationHandler.al:60-72). A notification nobody sent is
+    /// not pinned.
+    pub(crate) fn ui_recall_notification(&mut self, id: Option<[u8; 16]>) -> Result<(), Signal> {
+        match id.and_then(|id| self.sent_notifications.iter().position(|s| *s == id)) {
+            Some(i) => {
+                self.sent_notifications.remove(i);
+                Ok(())
+            }
+            None => Err(Signal::Unsupported(
+                "Notification.Recall of a notification that was not sent (not pinned)".into(),
+            )),
         }
     }
 

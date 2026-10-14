@@ -380,11 +380,18 @@ impl Section {
     /// The `;`-separated arguments in parentheses, each as trimmed source text
     /// (a lone quoted identifier loses its quotes).
     pub fn args(&self) -> Vec<String> {
+        self.args_as(true)
+    }
+    /// `args`, with a lone quoted identifier keeping its quotes: the text can be put back into code.
+    pub fn args_raw(&self) -> Vec<String> {
+        self.args_as(false)
+    }
+    fn args_as(&self, unquote: bool) -> Vec<String> {
         self.split_args()
             .into_iter()
             .map(|sig| match sig.as_slice() {
                 [] => String::new(),
-                [one] if one.kind() == SyntaxKind::QuotedIdent => ident_text(one),
+                [one] if unquote && one.kind() == SyntaxKind::QuotedIdent => ident_text(one),
                 [first, .., last] => self.text_between(first, last),
                 [one] => one.text().to_string(),
             })

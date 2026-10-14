@@ -103,7 +103,8 @@ fn power(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         };
         return Ok(Value::Decimal(d.normalize()));
     }
-    let n = i64::try_from(exp.trunc().mantissa() / 10i128.pow(exp.scale())).unwrap_or(i64::MAX);
+    use rust_decimal::prelude::ToPrimitive;
+    let n = exp.trunc().to_i64().unwrap_or(i64::MAX);
     let mut result = Decimal::ONE;
     for _ in 0..n.unsigned_abs() {
         result = match result.checked_mul(base) {
@@ -232,13 +233,9 @@ mod tests {
         refused(p("2", Value::Integer(10_001)));
     }
 
-    // FOUND BY MUTATION TESTING (not fixed here: this task changes no runtime behaviour). `power`
-    // reads the whole exponent as `exp.trunc().mantissa() / 10^exp.scale()`. `trunc()` already
-    // drops the scale, so an exponent written with one (3.0, or 6 / 2 computed as 3.0) is divided
-    // by ten once too often: Power(2, 3.0) answers 1, not 8. The fix is
-    // `exp.trunc().to_i64()`. Remove the #[ignore] with the fix.
+    // Found by mutation testing: an exponent written with a scale (3.0, or 6 / 2 computed as 3.0) was
+    // divided by ten once too often, so Power(2, 3.0) answered 1.
     #[test]
-    #[ignore = "bug: Power with an exponent that carries a scale (3.0) answers 1"]
     fn power_exponent_written_with_a_scale_is_still_a_whole_number() {
         let p = |a: &str, b: Value| call("System.Power#1", vec![d(a), b]);
         is_dec(p("2", d("3.0")), "8");

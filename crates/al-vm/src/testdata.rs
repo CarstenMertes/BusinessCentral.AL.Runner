@@ -16,6 +16,7 @@
 //! (it reads as empty, and the summary says so); a default is never put in its place.
 
 use crate::Engine;
+use al_builtins::describe::Describe;
 use al_builtins::format::day_from_civil;
 use al_builtins::value::{RtType, Value};
 use al_data::memory::{Backing, Rows};
@@ -24,7 +25,6 @@ use al_host::testdata::{Cell, Dropped, Outcome, Refusal, TableError, TableReques
 use rust_decimal::Decimal;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 /// The first object id of the platform's tables (`Company`, `Field`, ...): the runtime keeps
@@ -75,7 +75,7 @@ enum Kind {
     Int,
     BigInt,
     Byte,
-    Option(Rc<[String]>),
+    Option(std::sync::Arc<[String]>),
     Enum(u32),
     Decimal,
     Date,
@@ -104,7 +104,7 @@ fn kind_of_field(ty: &RtType, compressed: bool) -> Kind {
         RtType::Integer => Kind::Int,
         RtType::BigInteger => Kind::BigInt,
         RtType::Byte => Kind::Byte,
-        RtType::Option(names) => Kind::Option(Rc::from(names.as_slice())),
+        RtType::Option(names) => Kind::Option(std::sync::Arc::from(names.as_slice())),
         RtType::Enum(id) => Kind::Enum(*id),
         RtType::Decimal => Kind::Decimal,
         RtType::Date => Kind::Date,
@@ -113,7 +113,7 @@ fn kind_of_field(ty: &RtType, compressed: bool) -> Kind {
         RtType::Duration => Kind::Duration,
         RtType::Guid => Kind::Guid,
         RtType::Library(n) if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet") => Kind::Guid,
-        other => Kind::Unsupported(format!("{other:?}")),
+        other => Kind::Unsupported(other.describe()),
     }
 }
 
@@ -168,7 +168,7 @@ fn convert(cell: &Cell, kind: &Kind, default: &Value) -> Result<Value, String> {
     if matches!(cell, Cell::Null) {
         return Ok(blank());
     }
-    let bad = |what: &str| Err(format!("expected {what}, got {cell:?}"));
+    let bad = |what: &str| Err(format!("expected {what}, got {}", cell));
     Ok(match kind {
         Kind::Text | Kind::Code => match cell {
             Cell::Text(s) => {
@@ -211,11 +211,11 @@ fn convert(cell: &Cell, kind: &Kind, default: &Value) -> Result<Value, String> {
                 magnitude,
                 scale,
             } => {
-                let m = i128::try_from(*magnitude).map_err(|_| format!("the decimal {cell:?} is too large"))?;
+                let m = i128::try_from(*magnitude).map_err(|_| format!("the decimal {} is too large", cell))?;
                 let m = if *negative { -m } else { m };
                 match Decimal::try_from_i128_with_scale(m, u32::from(*scale)) {
                     Ok(d) => Value::Decimal(d.normalize()),
-                    Err(_) => return Err(format!("the decimal {cell:?} does not fit a Decimal")),
+                    Err(_) => return Err(format!("the decimal {} does not fit a Decimal", cell)),
                 }
             }
             Cell::Int(i) => Value::Decimal(Decimal::from(*i)),
@@ -230,9 +230,7 @@ fn convert(cell: &Cell, kind: &Kind, default: &Value) -> Result<Value, String> {
             } else if matches!(cell, Cell::DateTime { .. }) && day < day_from_civil(1754, 1, 1) {
                 // BC writes no real date below 1754-01-01 to a `datetime` column, so this is not a
                 // value it stored.
-                return Err(format!(
-                    "the date {cell:?} is before 1754-01-01 and not the blank marker"
-                ));
+                return Err(format!("the date {cell} is before 1754-01-01 and not the blank marker"));
             } else {
                 Value::Date(day, false)
             }

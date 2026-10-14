@@ -164,7 +164,7 @@ impl Session {
             match self
                 .store
                 .next(cx, t, &scan)
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?
             {
                 Some(row) => {
                     after = Some(al_data::position(t, 0, &row));
@@ -287,7 +287,7 @@ impl Session {
             if let Some(mut prop) = self
                 .store
                 .get(&cx, &up, &[sid])
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?
             {
                 let object_id = pos(&up, P_OBJECT_ID);
                 if changed {

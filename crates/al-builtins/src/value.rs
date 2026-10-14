@@ -89,7 +89,7 @@ pub enum Value {
     Guid([u8; 16]),
     DateFormula(String),
     /// Ordinal and the option's member names (needed by Format).
-    Option(i32, Rc<[String]>),
+    Option(i32, std::sync::Arc<[String]>),
     Enum(u32, i32),
     List(Rc<RefCell<Vec<Value>>>),
     Dictionary(Rc<RefCell<Vec<(Value, Value)>>>),
@@ -779,6 +779,33 @@ pub enum LibraryValue {
 }
 
 impl Value {
+    /// Whether the value holds no `Rc` handle: plain data (`Option` member lists and blob buffers
+    /// are `Arc`s), so
+    /// that rows made of such values can be read from several threads.
+    pub fn is_plain(&self) -> bool {
+        matches!(
+            self,
+            Value::Null
+                | Value::Boolean(_)
+                | Value::Integer(_)
+                | Value::BigInteger(_)
+                | Value::Decimal(_)
+                | Value::Byte(_)
+                | Value::Char(_)
+                | Value::Text(_)
+                | Value::Code(_)
+                | Value::Date(..)
+                | Value::Time(_)
+                | Value::DateTime(_)
+                | Value::Duration(_)
+                | Value::Guid(_)
+                | Value::DateFormula(_)
+                | Value::Option(..)
+                | Value::Enum(..)
+                | Value::Blob(_)
+        )
+    }
+
     pub fn default_for(t: &RtType) -> Value {
         match t {
             RtType::Boolean => Value::Boolean(false),
@@ -795,7 +822,7 @@ impl Value {
             RtType::Duration => Value::Duration(0),
             RtType::Guid => Value::Guid([0; 16]),
             RtType::DateFormula => Value::DateFormula(String::new()),
-            RtType::Option(m) => Value::Option(0, Rc::from(m.as_slice())),
+            RtType::Option(m) => Value::Option(0, std::sync::Arc::from(m.as_slice())),
             RtType::Enum(id) => Value::Enum(*id, 0),
             RtType::Variant => Value::Null,
             RtType::List(_) => Value::List(Rc::default()),
@@ -962,8 +989,23 @@ mod tests {
         assert!(!Value::Integer(1).is("Decimal"));
         assert!(Value::Code("A".into()).is("code"));
         assert!(!Value::Code("A".into()).is("Text"));
-        assert!(Value::Option(1, Rc::from(vec![])).is("Option"));
+        assert!(Value::Option(1, std::sync::Arc::from(vec![])).is("Option"));
         assert!(Value::Enum(1, 0).is("Option"));
         assert!(!Value::Null.is("Integer"));
+    }
+
+    #[test]
+    fn scalars_and_options_are_plain_and_handles_are_not() {
+        let plain = [
+            Value::Null,
+            Value::Integer(1),
+            Value::Text("a".into()),
+            Value::Guid([1; 16]),
+            Value::Enum(1, 2),
+            Value::Option(1, std::sync::Arc::from(vec!["a".to_string()])),
+        ];
+        assert!(plain.iter().all(Value::is_plain));
+        assert!(!Value::List(Default::default()).is_plain());
+        assert!(!Value::Library("X".into(), Default::default()).is_plain());
     }
 }

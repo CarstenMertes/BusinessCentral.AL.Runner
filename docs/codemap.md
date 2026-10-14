@@ -65,6 +65,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `catalog.rs` (432): Generating the signature catalog from the docs scrape (ADR-008). Entry: `Catalog` 54, `load` 65, `for_target` 72, `generate` 219.
 - `collation.rs` (135): Text order for `<`, `>`, `<=` and `>=`. Entry: `compare` 74.
 - `collections.rs` (286): List and Dictionary methods.
+- `describe.rs` (330): How a value or type reads in a refusal reason or internal error (AL type and a short value, never a debug dump). Entry: `Describe` 12.
 - `datatransfer.rs` (74): DataTransfer (install and upgrade code only). Entry: `native_for` 58.
 - `datefns.rs` (769): Date, Time and DateTime builtins. Entry: `formula_text` 237, `check_formula` 323.
 - `errorinfo.rs` (307): ErrorInfo: the property bag, Error(ErrorInfo), collected errors. Entry: `raise` 239, `copy_of` 263, `native_for` 283.
@@ -186,6 +187,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `host.rs` (112): The host the command line gives a session (ADR-006). Entry: `SystemClock` 10, `set_files_dir` 26, `system_host` 32, `DirFileSystem` 43.
 - `isolation.rs` (171): TestIsolation of the runner codeunit; Checkpoint for Function isolation. Entry: `TestIsolation` 27, `runner_isolation` 65, `Checkpoint` 99.
 - `lib.rs` (32): Running test codeunits and reading the result, shared by `al-test-cli` and `alrunner-cli` (ADR-016 section 2). `Outcome` and `CaseId` live here. Entry: `Outcome`, `CaseId`.
+- `reach.rs` (415): The reach report (`AL_REACH_REPORT=1`): which roots and edges pull the routines in, how many are refused, how many only matter through a refused routine. Entry: `report`.
 - `refusals.rs` (222): Ranking not-run reasons with names and numbers folded (`--top-refusals` of both command lines). Entry: `normalise_reason`, `rank`, `render_top`.
 - `runtime.rs` (2651): Runs test codeunits the way BC's test runner does; one Session per codeunit; install baseline; handlers. Entry: `CorpusRuntime` 96, `run_suites_with` 235, `run_codeunit_observed` 517, `run_codeunit_isolated` 492, `blocked_site` 951, `RunOptions` 118, `resolve_handlers` 710.
 - `target.rs` (99): Reads the version fields of an app.json (ADR-015 step 4). Entry: `build_query` 13, `read_app_versions` 19, `app_versions_from_json` 25.

@@ -1,6 +1,7 @@
 //! Tree-walking interpreter over the typed IR (ADR-011). `Engine` is the
 //! immutable program (ADR-001); `Session` holds all mutable state.
 
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{Instance, RecordState, RtType, Value};
@@ -810,7 +811,7 @@ impl Session {
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
                     other => match al_builtins::xml::node_list_items(&other) {
                         Some(items) => items,
-                        None => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                        None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
                 };
                 for item in items {
@@ -1037,7 +1038,7 @@ impl Session {
             E::CharAt(text, index) => {
                 let t = self.eval(text, f)?;
                 let Some(t) = al_builtins::native::text_of(&t) else {
-                    return Err(Signal::Unsupported(format!("indexing {t:?} as a text")));
+                    return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
                 };
                 let i = int(&self.eval(index, f)?)?;
                 usize::try_from(i - 1)
@@ -1116,7 +1117,7 @@ impl Session {
                                 self.application_areas = t;
                                 Ok(Value::Null)
                             }
-                            other => Err(Signal::Unsupported(format!("ApplicationArea({other:?})"))),
+                            other => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
                         },
                         Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
                     };
@@ -1319,7 +1320,7 @@ impl Session {
                     }
                     Ok(v)
                 }
-                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+                other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             },
         }
     }
@@ -1367,7 +1368,7 @@ impl Session {
                     }
                     Ok(())
                 }
-                other => Err(Signal::Unsupported(format!("field of {other:?}"))),
+                other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             };
         }
         match p {
@@ -1411,7 +1412,8 @@ impl Session {
         let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
         let (Some(unit), true) = (unit, in_range) else {
             return Err(Signal::Unsupported(format!(
-                "assigning {v:?} to character {i} of a text (only the next position within the length is pinned)"
+                "assigning {v} to character {i} of a text (only the next position within the length is pinned)",
+                v = v.describe()
             )));
         };
         let i = i as usize - 1;
@@ -1432,7 +1434,7 @@ impl Session {
         };
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
-            other => return Err(Signal::Unsupported(format!("indexing {other:?}"))),
+            other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),
         };
         let mut flat = 0usize;
         for (d, e) in dims.iter().zip(idx) {
@@ -1472,13 +1474,13 @@ fn int(v: &Value) -> Result<i64, Signal> {
         Value::BigInteger(i) => Ok(*i),
         Value::Byte(b) => Ok(i64::from(*b)),
         Value::Char(c) => Ok(i64::from(*c)),
-        other => Err(Signal::Unsupported(format!("{other:?} used as an integer"))),
+        other => Err(Signal::Unsupported(format!("{} used as an integer", other.describe()))),
     }
 }
 
 /// The kind of a value for a refusal reason: the variant name, never its contents.
 pub(crate) fn value_kind(v: &Value) -> String {
-    let d = format!("{v:?}");
+    let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
@@ -1527,7 +1529,10 @@ impl al_builtins::native::Ctx for Session {
                 let rc = rc.clone();
                 self.record_op(method, &rc, args)
             }
-            other => Err(Signal::Unsupported(format!("record method {method} on {other:?}"))),
+            other => Err(Signal::Unsupported(format!(
+                "record method {method} on {}",
+                other.describe()
+            ))),
         }
     }
     fn page(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {

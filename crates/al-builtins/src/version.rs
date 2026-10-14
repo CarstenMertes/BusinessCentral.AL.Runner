@@ -1,6 +1,7 @@
 //! `Version`: four numbers read by `Evaluate` (corpus session/TestMiscTypes.al:44-80).
 //! `Create` and `ToText` are not pinned and are not implemented.
 
+use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, Value};
@@ -10,10 +11,11 @@ fn part(r: Option<&mut Value>, i: usize) -> Result<Value, Signal> {
         Some(Value::Library(_, cell)) => match &*cell.borrow() {
             LibraryValue::Version(v) => Ok(Value::Integer(v[i])),
             other => Err(Signal::Unsupported(format!(
-                "a Version part of {other:?} (never evaluated)"
+                "a Version part of {other} (never evaluated)",
+                other = other.describe()
             ))),
         },
-        other => Err(Signal::Unsupported(format!("a Version part of {other:?}"))),
+        other => Err(Signal::Unsupported(format!("a Version part of {}", other.describe()))),
     }
 }
 

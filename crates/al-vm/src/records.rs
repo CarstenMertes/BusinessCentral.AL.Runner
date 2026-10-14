@@ -5,6 +5,7 @@
 
 use crate::Session;
 use crate::globaltriggers::GlobalOp;
+use al_builtins::describe::Describe;
 use al_builtins::filter::{FieldFilter, FilterExpr, key_cmp};
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
@@ -33,7 +34,7 @@ fn arg_bool(args: &[Value], i: usize) -> Result<bool, Signal> {
 fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
     match args.get(i) {
         Some(Value::Integer(p)) => Ok(*p as usize),
-        other => unsupported(format!("field argument {other:?}")),
+        other => unsupported(format!("field argument {}", other.describe())),
     }
 }
 
@@ -353,7 +354,7 @@ impl Session {
         match self
             .store_for(rec)
             .delete(&cx, t, &pk)
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+            .map_err(|e| Signal::Unsupported(format!("{e}")))?
         {
             WriteOutcome::Done => {
                 if let Some(name) = company {
@@ -419,7 +420,7 @@ impl Session {
             if self
                 .store_for(rec)
                 .get(&cx, t, &pk)
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 .is_some()
             {
                 return Ok(None);
@@ -429,7 +430,7 @@ impl Session {
             Some(pk) => self
                 .store_for(rec)
                 .get(&cx, t, pk)
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?,
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?,
             None => None,
         };
         for k in unique {
@@ -444,7 +445,7 @@ impl Session {
             let mut n = self
                 .store_for(rec)
                 .count(&cx, t, &filters)
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?;
             // The row being rewritten matches itself when its key values do not change.
             if let Some(old) = &current {
                 if t.keys[k]
@@ -713,7 +714,7 @@ impl Session {
                         after: after.as_deref(),
                     },
                 )
-                .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+                .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
             match row {
                 // MarkedOnly narrows the set to the marked rows (corpus record/TestRecordFind.al:258-290).
                 Some(row) if marked_only && !Self::is_marked(rec, t, &row) => after = Some(position(t, key, &row)),
@@ -776,7 +777,7 @@ impl Session {
         let taken = self
             .store_for(rec)
             .count(&cx, t, &filters)
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
         if taken == 0 {
             return Ok(());
         }
@@ -860,7 +861,7 @@ impl Session {
                 stored = self
                     .store_for(rec)
                     .get(&cx, &t, &pk)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?;
             }
             let Some(Value::Blob(src)) = stored.as_ref().map(|row| row[pos].clone()) else {
                 return unsupported("CalcFields of a Blob whose row is gone (error text not pinned)");
@@ -1014,7 +1015,7 @@ impl Session {
                     let rows = self
                         .store_for(rec)
                         .count(&cx, &t, &[])
-                        .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+                        .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
                     if rows > 0 {
                         return unsupported(
                             "Clear of a temporary record that holds rows (whether the table is emptied is not pinned)",
@@ -1125,7 +1126,7 @@ impl Session {
                 match self
                     .store_for(rec)
                     .insert(&cx, &t, stored.clone())
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     InsertOutcome::Inserted => {
                         if let (Some(a), false) = (auto, taken) {
@@ -1196,7 +1197,7 @@ impl Session {
                 let stored = self
                     .store_for(rec)
                     .get(&cx, &t, &pk)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                 // A buffer older than a committed change to its row cannot be saved
                 // (record/TestRecordStaleBufferWrite.al); before a commit the last writer wins.
                 if let (Some(row), Some(i)) = (&stored, t.fields.iter().position(|f| f.id == 2_000_000_005)) {
@@ -1267,7 +1268,7 @@ impl Session {
                 match self
                     .store_for(rec)
                     .modify(&cx, &t, stored.clone())
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     WriteOutcome::Done => {
                         if run {
@@ -1298,7 +1299,7 @@ impl Session {
                 let n = self
                     .store_for(rec)
                     .count(&cx, &t, &filters)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                 // No row, no trigger and no event. The platform still asks for the table's Global
                 // Triggers setup, as the first write to the table (session/TestEnvironmentUserTenantContracts.al:289-290,
                 // `GtTable.DeleteAll()` on an empty table). A temporary record is not pinned and stays as it was.
@@ -1350,7 +1351,7 @@ impl Session {
                 }
                 self.store_for(rec)
                     .delete_all(&cx, &t, &filters)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                 Ok(Value::Null)
             }
             "Get" => {
@@ -1365,7 +1366,7 @@ impl Session {
                 match self
                     .store_for(rec)
                     .get(&cx, &t, &pk)
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     Some(row) => {
                         self.load(rec, row)?;
@@ -1407,7 +1408,7 @@ impl Session {
                         let row = self
                             .store_for(rec)
                             .get(&cx, &t, &pk)
-                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                         match row {
                             Some(row) if self.row_passes(rec, &t, &row)? || Self::on_own_row(rec, &pk) => Some(row),
                             _ => None,
@@ -1432,7 +1433,7 @@ impl Session {
                         let exact = self
                             .store_for(rec)
                             .get(&cx, &t, &pk)
-                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                         let exact = match exact {
                             Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
                             _ => None,
@@ -1480,7 +1481,7 @@ impl Session {
                 let steps = match args.first() {
                     Some(Value::Integer(n)) => *n,
                     None => 1,
-                    other => return unsupported(format!("Next({other:?})")),
+                    other => return unsupported(format!("Next({})", other.describe())),
                 };
                 let (key, asc) = {
                     let r = rec.borrow();
@@ -1505,7 +1506,7 @@ impl Session {
                 let n = if flow_field_filters.is_empty() && !rec.borrow().marked_only {
                     self.store_for(rec)
                         .count(&cx, &t, &filters)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                        .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 } else {
                     // Rows are tested one by one against the calculated FlowFields.
                     let mut n = 0;
@@ -1737,7 +1738,7 @@ impl Session {
                     match self
                         .store_for(rec)
                         .modify(&cx, &t, stored.clone())
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                        .map_err(|e| Signal::Unsupported(format!("{e}")))?
                     {
                         WriteOutcome::Done => RenameOutcome::Renamed,
                         WriteOutcome::NotFound => RenameOutcome::NotFound,
@@ -1745,7 +1746,7 @@ impl Session {
                 } else {
                     self.store_for(rec)
                         .rename(&cx, &t, &old_pk, stored.clone())
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                        .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 };
                 match outcome {
                     RenameOutcome::Renamed => {

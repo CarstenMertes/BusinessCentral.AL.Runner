@@ -10,6 +10,10 @@ description = "alrunner: the user command line of AL Runner v3 (ADR-016)"
 name = "alrunner"
 path = "src/main.rs"
 
+[features]
+# Links mimalloc as the global allocator (ADR-016: musl's allocator is slow).
+mimalloc = ["dep:mimalloc"]
+
 [dependencies]
 al-bcdb-std = { path = "../al-bcdb-std" }
 al-deps.workspace = true
@@ -19,6 +23,9 @@ al-testrun.workspace = true
 al-version.workspace = true
 al-vm.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mimalloc = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

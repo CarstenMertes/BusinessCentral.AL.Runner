@@ -3,6 +3,7 @@
 //! `TableCaption`, `TableName`.
 
 use crate::Session;
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{RecordState, Value};
@@ -69,14 +70,14 @@ pub(crate) fn is_blank(v: &Value) -> Result<bool, Signal> {
         Value::Option(o, _) => *o == 0,
         Value::Enum(_, o) => *o == 0,
         Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Char(_) => false,
-        other => return unsupported(format!("TestField of a {other:?} field")),
+        other => return unsupported(format!("TestField of a {} field", other.describe())),
     })
 }
 
 fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
     match args.get(i) {
         Some(Value::Integer(p)) => Ok(*p as usize),
-        other => unsupported(format!("field argument {other:?}")),
+        other => unsupported(format!("field argument {}", other.describe())),
     }
 }
 
@@ -122,7 +123,7 @@ impl Session {
             | Value::Guid(_)
             | Value::Date(..)
             | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
-            other => unsupported(format!("a {other:?} value in an error message")),
+            other => unsupported(format!("a {} value in an error message", other.describe())),
         }
     }
 
@@ -269,7 +270,7 @@ impl Session {
                         }
                         Ok(Value::Null)
                     }
-                    Some(other) => unsupported(format!("{method}({other:?})")),
+                    Some(other) => unsupported(format!("{method}({})", other.describe())),
                 }
             }
             "GetPosition" => {
@@ -366,7 +367,7 @@ impl Session {
                 if let Some(v) = args.first() {
                     r.filter_group = match v {
                         Value::Integer(n) => *n,
-                        other => return unsupported(format!("FilterGroup({other:?})")),
+                        other => return unsupported(format!("FilterGroup({})", other.describe())),
                     };
                 }
                 Ok(Value::Integer(r.filter_group))
@@ -397,7 +398,7 @@ impl Session {
             // group or a conversion between types behaves is not pinned.
             "CopyFilter" => {
                 let [Value::Integer(from), Value::Record(dst), Value::Integer(to)] = args else {
-                    return unsupported(format!("CopyFilter with {args:?}"));
+                    return unsupported(format!("CopyFilter with {}", args.describe()));
                 };
                 let (from, to) = (*from as usize, *to as usize);
                 let dt = self.table(dst)?;
@@ -425,7 +426,7 @@ impl Session {
             }
             "CopyFilters" => {
                 let Some(Value::Record(src)) = args.first() else {
-                    return unsupported(format!("CopyFilters from {:?}", args.first()));
+                    return unsupported(format!("CopyFilters from {}", args.first().describe()));
                 };
                 if !Rc::ptr_eq(src, rec) {
                     let filters = src.borrow().filters.clone();
@@ -437,7 +438,7 @@ impl Session {
             // key and direction come over; a temporary target keeps its own rows and stays temporary.
             "Copy" => {
                 let Some(Value::Record(src)) = args.first() else {
-                    return unsupported(format!("Copy from {:?}", args.first()));
+                    return unsupported(format!("Copy from {}", args.first().describe()));
                 };
                 let share = match args.get(1) {
                     Some(v) => ops::truthy(v)?,
@@ -601,7 +602,7 @@ impl Session {
     /// another type is skipped or refused (corpus record/TestRecordTransferFields.al:14-95).
     fn transfer_fields(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
         let Some(Value::Record(src)) = args.first() else {
-            return unsupported(format!("TransferFields from {:?}", args.first()));
+            return unsupported(format!("TransferFields from {}", args.first().describe()));
         };
         let init_pk = match args.get(1) {
             Some(v) => ops::truthy(v)?,
@@ -657,7 +658,7 @@ impl Session {
             return unsupported("GetBySystemId on a table without SystemId");
         };
         let Some(Value::Guid(g)) = args.first() else {
-            return unsupported(format!("GetBySystemId of {:?}", args.first()));
+            return unsupported(format!("GetBySystemId of {}", args.first().describe()));
         };
         let found = if *g == [0; 16] {
             None
@@ -679,7 +680,7 @@ impl Session {
                         after: None,
                     },
                 )
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                .map_err(|e| Signal::Unsupported(format!("{e}")))?
         };
         match found {
             Some(row) => {

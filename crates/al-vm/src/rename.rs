@@ -164,7 +164,7 @@ impl Session {
                             after: after.as_deref(),
                         },
                     )
-                    .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                 let Some(row) = next else { break };
                 after = Some(position(&child, 0, &row));
                 rows.push(row);
@@ -204,7 +204,7 @@ impl Session {
                     match self
                         .store
                         .rename(&cx, &child, &old_pk, changed)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                        .map_err(|e| Signal::Unsupported(format!("{e}")))?
                     {
                         RenameOutcome::Renamed => true,
                         RenameOutcome::NotFound => true,
@@ -214,7 +214,7 @@ impl Session {
                     matches!(
                         self.store
                             .modify(&cx, &child, changed)
-                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?,
+                            .map_err(|e| Signal::Unsupported(format!("{e}")))?,
                         WriteOutcome::Done | WriteOutcome::NotFound
                     )
                 };

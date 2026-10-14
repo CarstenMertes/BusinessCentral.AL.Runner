@@ -22,6 +22,7 @@
 //!   pending (codeunit/TestIsolatedEventSubscriberError.al).
 
 use crate::Session;
+use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::value::{Instance, Value};
@@ -278,7 +279,7 @@ impl Session {
     /// `BindSubscription(Codeunit)` (`bind`) and `UnbindSubscription(Codeunit)`.
     pub(crate) fn subscription(&mut self, bind: bool, cu: Value, ret_used: bool) -> Result<Value, Signal> {
         let Value::Codeunit(rc) = cu else {
-            return unsupported(format!("BindSubscription of {cu:?}"));
+            return unsupported(format!("BindSubscription of {}", cu.describe()));
         };
         let inst = self.shared_instance(rc);
         let object = inst.borrow().object as usize;

@@ -2733,6 +2733,30 @@ impl Session {
             }
         };
         let parsed = ops::convert(parsed, &ty)?;
+        // A control's own MinValue / MaxValue (on a control bound to a variable) is not pinned: only the
+        // field's is (below). A value outside the bounds is refused instead of written.
+        if self.control_field(st, idx).is_none() {
+            let out_of_bounds = {
+                let engine = self.engine();
+                let ctl = &page_of(&engine, st).controls[idx];
+                let bound = |n: &str| match ctl.prop(n) {
+                    Some(ir::PropVal::Lit(v)) => v.trim().parse::<rust_decimal::Decimal>().ok(),
+                    _ => None,
+                };
+                let value = match &parsed {
+                    Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
+                    Value::BigInteger(i) => Some(rust_decimal::Decimal::from(*i)),
+                    Value::Decimal(d) => Some(*d),
+                    _ => None,
+                };
+                value.is_some_and(|v| {
+                    bound("minvalue").is_some_and(|m| v < m) || bound("maxvalue").is_some_and(|m| v > m)
+                })
+            };
+            if out_of_bounds {
+                return unsupported("SetValue outside the MinValue/MaxValue of a control bound to a variable (not pinned)");
+            }
+        }
         // MinValue / MaxValue are enforced on a control write, not on Rec.Validate (corpus
         // handlers/TestPageFieldMinMaxValue_Tests.al:20-110).
         if let Some(f) = self.control_field(st, idx) {
@@ -3041,6 +3065,9 @@ impl Session {
             "Visible" => Ok(Value::Boolean(self.control_visible(st, idx)?)),
             "Invoke" => self.action_invoke(st, idx),
             "DrillDown" | "AssistEdit" | "Lookup" => self.control_navigate(st, idx, m),
+            // SetValue on a field of a cuegroup does nothing and raises nothing
+            // (handlers/TestPageCueGroupFixedGridContracts.al:CueGroup_SetValue_IsSilentlyIgnored).
+            "SetValue" if self.in_cue_group(st, idx) => Ok(Value::Null),
             "SetValue" => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
@@ -3638,6 +3665,8 @@ impl Session {
                 Ok(v)
             }
             ir::Binding::Expr(r) => self.control_routine(st, idx, r),
+            // A label shows its caption (handlers/TestPageLabelControlContracts.al:Label_IsATestPageMember_WithItsCaption).
+            ir::Binding::Caption => Ok(Value::Text(self.control_caption(st, idx)?)),
             ir::Binding::None => unsupported("a control without a source"),
         }
     }
@@ -3901,7 +3930,36 @@ impl Session {
             ir::Binding::Var(_) | ir::Binding::BaseVar(_)
         ) || (st.borrow().lookup && self.is_list_page(st))
             || st.borrow().editable_off;
+        // A label is never editable (handlers/TestPageLabelControlContracts.al). A cuegroup with
+        // `Editable = false` makes its fields read No (handlers/TestPageCueGroupFixedGridContracts.al:
+        // CueGroup_SetValue_IsSilentlyIgnored).
+        if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Caption) {
+            return Ok(false);
+        }
+        let mut cue = page_of(&engine, st).controls[idx].parent;
+        while let Some(p) = cue {
+            if page_of(&engine, st).controls[p].kind == ir::ControlKind::CueGroup
+                && !self.prop_bool_now(st, p, "editable", true)?
+            {
+                return Ok(false);
+            }
+            cue = page_of(&engine, st).controls[p].parent;
+        }
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
+    }
+
+    /// Whether control `idx` sits inside a `cuegroup`.
+    fn in_cue_group(&self, st: &St, idx: usize) -> bool {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let mut at = page.controls[idx].parent;
+        while let Some(p) = at {
+            if page.controls[p].kind == ir::ControlKind::CueGroup {
+                return true;
+            }
+            at = page.controls[p].parent;
+        }
+        false
     }
 
     fn control_enabled(&mut self, st: &St, idx: usize) -> Result<bool, Signal> {
@@ -3913,7 +3971,10 @@ impl Session {
         let page = page_of(&engine, st);
         // Own Visible is the open-time value; a group's is live and so are the groups around the
         // control (corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
-        let own = if page.controls[idx].kind == ir::ControlKind::Group {
+        let own = if matches!(
+            page.controls[idx].kind,
+            ir::ControlKind::Group | ir::ControlKind::CueGroup
+        ) {
             self.prop_bool_now(st, idx, "visible", true)?
         } else {
             st.borrow().frozen_visible.get(idx).copied().unwrap_or(true)

@@ -404,8 +404,22 @@ impl Tree {
                 return;
             }
             "field" => K::Field,
+            // A label IS a member of the TestPage: Visible, Enabled, Caption and Value (its caption), and not
+            // Editable (handlers/TestPageLabelControlContracts.al:Label_IsATestPageMember_WithItsCaption).
+            "label" => K::Field,
             "group" if in_actions => K::ActionGroup,
             "group" => K::Group,
+            // The TestPage has no member for a cuegroup, fixed or grid control itself, but its fields and a
+            // cuegroup's actions are members of the page (handlers/TestPageCueGroupFixedGridContracts.al:
+            // CueGroup_Fields_ReadAndTheActionRuns, FixedAndGrid_Fields_ReadAndTakeSetValueLikeListFields,
+            // FixedWithRepeater_MovesBetweenRowsLikeAList). They are groups that hold the controls.
+            "cuegroup" => K::CueGroup,
+            "fixed" | "grid" => K::Group,
+            // The `actions` of a cuegroup hold its actions (PartPage_WithACueGroup_ReadsAndRunsItsAction).
+            "actions" if !in_actions => {
+                self.add_children(into, s, true, owner);
+                return;
+            }
             "repeater" => K::Repeater,
             // An actionref is a control that delegates to its action (corpus
             // handlers/TestPageActionRunObject_Tests.al:ActionrefToARunObjectActionOpensTheSameTarget,
@@ -416,13 +430,13 @@ impl Tree {
             // The TestPage has no member for a system part (Notes, Links, MyNotes, ...), and the corpus
             // tests that open Base App pages declaring one (for example
             // handlers/TestPagePlatformPageSourceTable_Tests.al:77, handlers/TestReportRunFromPrecompiledCaller.al:31)
-            // never reach it. A label (handlers/TestPrecompiledOptionCaption.al:81) and a customaction (Power Automate;
+            // never reach it. A customaction (Power Automate;
             // pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69) and a usercontrol (a control add-in; likewise a fileuploadaction:
             // pageapplicationarea/TestPageApplicationAreaPrecompiledActionRemoval.al:39 opens Item List, which hosts one in a part) are treated the same way:
             // docs/probes-needed.md says what is not pinned. They stay in the tree so that `addafter`/
             // `modify` can name them, and are dropped from the controls the page lowers, so a TestPage
             // reference to one is refused ("control ... is not in the page layout"), never answered.
-            "systempart" | "label" | "customaction" | "usercontrol" | "fileuploadaction" => {
+            "systempart" | "customaction" | "usercontrol" | "fileuploadaction" => {
                 let idx = self.nodes.len();
                 self.nodes.push(Node {
                     name: arg0,
@@ -455,7 +469,7 @@ impl Tree {
             anchor_only: false,
         });
         into.push(idx);
-        if matches!(kind, K::Group | K::Repeater | K::ActionGroup) {
+        if matches!(kind, K::Group | K::Repeater | K::ActionGroup | K::CueGroup) {
             let mut kids = Vec::new();
             self.add_children(&mut kids, s, in_actions, owner);
             self.nodes[idx].children = kids;
@@ -519,6 +533,7 @@ impl Tree {
                             if matches!(
                                 self.nodes[n].kind,
                                 al_ir::ControlKind::Group
+                                    | al_ir::ControlKind::CueGroup
                                     | al_ir::ControlKind::Repeater
                                     | al_ir::ControlKind::ActionGroup
                             ) =>
@@ -1023,7 +1038,8 @@ mod tests {
         let ext = "pageextension 50101 E extends P { layout { addafter(Control1) { field(AfterNotes; Rec.F) { } } } }";
         let l = merged(base, &[ext]);
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
-        assert_eq!(names(&l), ["A", "AfterNotes", "Flow"]);
+        // A label is a control (handlers/TestPageLabelControlContracts.al); the others are not.
+        assert_eq!(names(&l), ["A", "Hint", "AfterNotes", "Flow"]);
     }
 
     // A customaction (or a label, a systempart, a usercontrol) stays in the tree as an anchor and is no control
@@ -1076,6 +1092,22 @@ mod tests {
         let ext = "pageextension 50101 E extends P { actions { addfirst(Nowhere) { action(Act) { } } } }";
         let l = merged(base, &[ext]);
         assert_eq!(l.reasons.len(), 1, "{:?}", l.reasons);
+    }
+
+    // handlers/TestPageCueGroupFixedGridContracts.al: cuegroup, fixed and grid hold controls; a cuegroup's
+    // `actions` hold its actions; a repeater may sit inside a fixed control.
+    #[test]
+    fn cuegroup_fixed_and_grid_hold_their_controls() {
+        let base = "page 50100 P { layout { area(Content) { cuegroup(CG) { field(Cnt; Rec.Cnt) { } actions { action(CueAct) { } } }
+            fixed(FX) { field(Txt; Rec.Txt) { } repeater(RR) { field(Amt; Rec.Amt) { } } }
+            grid(GR) { group(GRA) { field(Flag; Rec.Flag) { } } } } } }";
+        let l = merged(base, &[]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(
+            names(&l),
+            ["CG", "CG>Cnt", "CG>CueAct", "FX", "FX>Txt", "FX>RR", "RR>Amt", "GR", "GR>GRA", "GRA>Flag"]
+        );
+        assert_eq!(l.controls[0].kind, al_ir::ControlKind::CueGroup);
     }
 
     // Corpus handlers/TestPagePromotedActionref_Page.al: an actionref is a control that names its target.

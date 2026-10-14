@@ -2210,7 +2210,9 @@ impl Lowerer<'_> {
                 }
             }
             let mut binding = ir::Binding::None;
-            if raw.kind == ir::ControlKind::Field {
+            if raw.kind == ir::ControlKind::Field && sec.name().eq_ignore_ascii_case("label") {
+                binding = ir::Binding::Caption;
+            } else if raw.kind == ir::ControlKind::Field {
                 let args = sec.args();
                 match args.get(1).map(|a| crate::pages::classify_source(a, &ow.names)) {
                     Some(crate::pages::Source::RecField(f)) => {

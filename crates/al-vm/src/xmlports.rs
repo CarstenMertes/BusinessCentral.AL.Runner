@@ -680,7 +680,8 @@ impl Session {
                 )),
             },
             other => unsupported(format!(
-                "XmlPort import into a field of type {other:?} with FormatEvaluate = Xml (the XML form is not pinned)"
+                "XmlPort import into a field of type {} with FormatEvaluate = Xml (the XML form is not pinned)",
+                other.describe()
             )),
         }
     }
@@ -1100,7 +1101,8 @@ impl Session {
             Value::Date(..) | Value::DateTime(_) => al_builtins::format::try_format(v, 0, 9, self)
                 .or_else(|why| unsupported(format!("XmlPort export of a value: {why}"))),
             other => unsupported(format!(
-                "XmlPort export of {other:?} with FormatEvaluate = Xml (the XML form is not pinned)"
+                "XmlPort export of {} with FormatEvaluate = Xml (the XML form is not pinned)",
+                other.describe()
             )),
         }
     }

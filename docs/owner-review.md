@@ -24,6 +24,12 @@ reviewed it.
   the report's whole code (a test passes the id to a helper); the request page of `RunRequestPage` has OK; `CompanyProperty.DisplayName`
   is the company name; `XmlDocument.ReadFrom(InStream)`; `foreach` over `XmlNodeList`.
 
+## Decided without the owner (data-3, 2026-10-14)
+
+- Dataset text for a Decimal keeps the scale of the value (`25.0`, `18.5185170`), because the pinned `18.5185170` shows BC does; a Decimal read back from the store keeps its own scale, which may differ from BC's. Review `al-vm/src/reports.rs` `dataset_column`.
+- A temporary record with rows handed to a Variant parameter is refused (docs/probes-needed.md, "Temporary record and Variant"): the bucket oracle shows BC shares or copies the rows, the corpus pins neither.
+- Items sitting at one place of a reportextension, and columns added next to a column, are refused rather than ordered by declaration.
+
 ## Open questions (not decided)
 
 - ADR-020 (Proposed), `al-bcdb`: the Rust port of bcdb, and the proposed way to load CRONUS

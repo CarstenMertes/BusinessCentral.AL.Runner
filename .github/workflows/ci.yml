@@ -96,13 +96,21 @@ jobs:
       # compares the main app and every extra suite and prints each difference with both reasons;
       # locally, `tools/demand_vs_eager.sh run` makes the runs and the comparison.
       #
-      # A corpus run uses one core. The runner has four, so the normal run (all versions, one
-      # process: it prints the comparison across versions) goes beside one eager run per version,
-      # and the step takes as long as the normal run alone. The runs share no files (the
-      # dependency cache is only read after the step above) and each stays well under 3 GB.
+      # The normal run (all versions, one process: it prints the comparison across versions) goes
+      # first and alone, so the times in its "How long it took" tables are the runtime's own, not
+      # slowed by other runs. Then one eager run per version goes side by side (a corpus run uses
+      # one core, the runner has four). The runs share no files (the dependency cache is only read
+      # after the step above) and each stays well under 3 GB.
       - name: Corpus pass rate, and the demand-driven compile against the eager compile
         run: |
           step_start=$(date +%s)
+          status=0
+          ./target/release/al-test-cli --all-versions --require-dotnet \
+            --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml || status=1
+          normal_end=$(date +%s)
+          # Each version's file has its own "How long it took" table: the runtime's own cost.
+          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
+
           # --no-ratchet: the allow-listed differences fail the ratchet; compare_junit is the check.
           # --json keeps each eager run's phase times (every report has them).
           eager_pids=()
@@ -111,14 +119,6 @@ jobs:
               --junit eager-junit-$v.xml --json eager-report-$v.json > eager-$v.log 2>&1 &
             eager_pids+=($!)
           done
-
-          status=0
-          ./target/release/al-test-cli --all-versions --require-dotnet \
-            --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml || status=1
-          normal_end=$(date +%s)
-          # Each version's file has its own "How long it took" table: the runtime's own cost.
-          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
-
           i=0
           eager_reports=()
           for v in 27 28 29; do
@@ -138,20 +138,19 @@ jobs:
 
           {
             echo
-            echo "## Why this step takes longer than the runtime"
+            echo "## How the time of this step adds up"
             echo
-            echo "- This step took $((step_end - step_start)) s in total."
-            echo "- The normal run of all versions took $((normal_end - step_start)) s."
-            echo "- Waiting for the three runs that compile every dependency took $((eager_end - normal_end)) s more."
-            echo "- The comparison of the two took $((step_end - eager_end)) s."
+            echo "- The normal run of all versions, alone on the runner: $((normal_end - step_start)) s."
+            echo "- The three runs that compile every dependency, side by side: $((eager_end - normal_end)) s."
+            echo "- The comparison of the two: $((step_end - eager_end)) s."
+            echo "- The step in total: $((step_end - step_start)) s."
             echo
-            echo "On this 4-vCPU runner the normal run and three runs that compile every dependency"
-            echo "(for the comparison) run side by side. They share the CPUs, and the step waits for the"
-            echo "slowest one. So the step time is not the runtime's time. The runtime's own time per"
-            echo "version is in the \"How long it took\" tables above."
+            echo "The \"How long it took\" tables above are from the normal run, which had the runner to"
+            echo "itself. The runs that compile every dependency exist only to check that the normal run"
+            echo "skips nothing a test needs. They are not part of the runtime's time."
             if [ ${#eager_reports[@]} -gt 0 ]; then
               echo
-              echo "Runs that compile every dependency, for comparison:"
+              echo "Runs that compile every dependency, for comparison (three at a time on 4 vCPUs):"
               echo
               ./target/release/al-test-cli "${eager_reports[@]}"
             fi

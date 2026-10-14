@@ -34,6 +34,42 @@ exactly with `--bc-version 27.5.46862.48827` is read from `~/.bcartifacts.cache/
 is there, without asking the feed (the feed lists only recent builds); any matching build there is also the
 fallback when the feed has none or cannot be reached.
 
+## The plain command (zero configuration, 2026-10-14, branch `zero-config`)
+
+`alrunner test "$A/BaseApp/Test/Tests-ERM.Source.zip"` with no option and no environment variable now gives the
+same result as the recipe, test by test (`tools/bucket_diff.py` on both JUnit files: every test has the same
+outcome). The run does these things for you:
+
+1. Reads the build of the tests from the folder of the archive (`.../<build>/platform/...`) or from its version.
+2. Takes the Microsoft apps, the test libraries and the platform `System.app` from that build: from
+   `~/.bcartifacts.cache/sandbox/<build>` when it is there, else from the feed by range reads into the artifact cache.
+   If the build is gone from the feed (it keeps recent ones) the newest match is used and a `warning:` line names both
+   builds.
+3. Restores the CRONUS demo company of the same build (ADR-020, owner decision of 2026-10-14: test data is on by
+   default). It is looked for on disk, then in the cache, then downloaded once (the `.bak` is 517 MB stored, 900 MB
+   inflated) with progress on stderr. A failed download turns test data off with a `note:` line that gives the reason;
+   `--no-test-data` turns it off on purpose.
+
+| Bucket (BC 27.5) | Plain: passed / failed / not run | Recipe + `--test-data` | Tests with a different outcome |
+|---|---|---|---:|
+| Tests-SMB, build 48827 on disk | 12 / 3 / 1015 | 12 / 3 / 1015 | 0 |
+| Tests-ERM, build 48827 on disk | 557 / 3 / 8773 | 557 / 3 / 8773 | 0 |
+
+Before: plain Tests-ERM gave 185 passed, 60 failed, 9088 not run (no `System.app`, no test data, the newest feed
+build next to tests of an older one).
+
+Times (12 cores, no thread option; the machine was shared, load average 20 to 30, so read them as upper bounds):
+
+| Run | First (downloads) | Second (cached) |
+|---|---:|---:|
+| Tests-SMB 27.5.46862.56249 from the feed, empty HOME and cache | 20 s wall (load 13.6 s, of which 11 s the demo download) | 5 s |
+| Tests-ERM 27.5.46862.56249 from the feed, empty HOME and cache | 24 s wall | 11 s |
+| Tests-ERM 48827 on disk (plain) | 18.3 s total | same |
+| Tests-ERM 48827 on disk (recipe) | 15.5 s total | same |
+
+The plain run needed 12 threads (one per core) and 3.1 GB at the peak, as the recipe does. The cache after a feed run
+holds the `.bak` (902 MB) beside the entries fetched by range.
+
 Several buckets can be named in one run (all 32 together: 40300 tests, one compile).
 
 ## Reading the result
@@ -42,7 +78,7 @@ Without `--test-data` there is no company data. Microsoft's tests expect a CRONU
 missing setup data. The not-run counts and their reasons are the measurement; use `--top-refusals N`. The failures
 are not.
 
-With `--test-data` (ADR-020) the cached demo backup of the same build (`~/.bcartifacts.cache/sandbox/27.5.46862.48827/w1/`)
+Test data is on by default now (see "The plain command"); `--no-test-data` gives the figures of "off". With it (ADR-020) the cached demo backup of the same build (`~/.bcartifacts.cache/sandbox/27.5.46862.48827/w1/`)
 is restored table by table when a test first touches the table: add `--test-data` to the command above, and
 `--top-failures N` to rank the failure messages. Measured on 2026-10-14 (branch `test-data`; 4 threads each for
 check, lowering and tests; one run each; under `MemoryMax=4G`):

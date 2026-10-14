@@ -3,6 +3,7 @@
 use crate::apps::{self, AppInput};
 use crate::args::{DEFAULT_TOP, TestArgs};
 use crate::output::{self, Counts};
+use crate::testdata;
 use al_bcdb_std::BackupProvider;
 use al_deps::load::WorkspaceApp;
 use al_host::dotnet::DotNetHost;
@@ -93,21 +94,94 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Opens the backup `--test-data` names, else the cached artifact whose build is one of `builds`
-/// (the versions of the Microsoft apps the run loaded), else the newest of the target's BC version.
-fn open_test_data(
-    a: &TestArgs,
-    builds: &[String],
-    major: u16,
-    minor: Option<u16>,
-) -> Result<(TestData, PathBuf), String> {
-    let path = match &a.test_data_path {
-        Some(p) => p.clone(),
-        None => al_bcdb_std::default_backup(builds, major, minor).map_err(|e| format!("--test-data: {e}"))?,
-    };
+/// Opens a backup file.
+fn open_backup(a: &TestArgs, path: PathBuf) -> Result<(TestData, PathBuf), String> {
     let provider = BackupProvider::open(&path, a.test_data_company.as_deref())
         .map_err(|e| format!("--test-data {}: {e}", path.display()))?;
     Ok((TestData::new(Arc::new(provider)), path))
+}
+
+/// What the test data of a run came to.
+struct DataChoice {
+    data: Option<(TestData, PathBuf)>,
+    /// Lines for stderr: where the data is from when that is not the build of the apps, why it is
+    /// off, what failed on the way.
+    notes: Vec<String>,
+}
+
+/// Finds and opens the demo backup (ADR-020): the build of the Microsoft apps first, on disk, then
+/// in the cache, then downloaded; see [`testdata::locate`]. A default run whose backup cannot be
+/// found or opened has test data off and says why; a run that asked for test data fails instead.
+fn choose_test_data(
+    a: &TestArgs,
+    builds: &[String],
+    downloadable: &[al_deps::build::BuildId],
+    major: u16,
+    minor: Option<u16>,
+) -> Result<DataChoice, String> {
+    let asked = a.test_data_asked_for();
+    let fail = |why: String| -> Result<DataChoice, String> {
+        if asked {
+            Err(format!("--test-data: {why}"))
+        } else {
+            Ok(DataChoice {
+                data: None,
+                notes: vec![format!(
+                    "test data is off: {why}. Microsoft's tests expect a CRONUS company; failures of such a run are mostly missing setup data. Name a backup with --test-data PATH.bak"
+                )],
+            })
+        }
+    };
+    let (path, mut notes) = match &a.test_data_path {
+        Some(p) => (p.clone(), Vec::new()),
+        None => {
+            let cache_root = al_deps::cache::cache_root_from_env(a.cache_dir.as_deref());
+            let local = al_deps::cache::bcartifacts_sandbox_from_env();
+            let download = (!a.no_download).then_some(|build: &al_deps::build::BuildId| -> Result<PathBuf, String> {
+                let cdn = al_deps::artifact::HttpCdn::from_env();
+                let mut printed = 0u64;
+                let t = Instant::now();
+                eprintln!("test data: downloading the demo data of build {build} (about 520 MB, once) ...");
+                let got = al_deps::demo::ensure_demo_backup(&cdn, &cache_root, build, "w1", &mut |read, total| {
+                    let pct = (read * 100).checked_div(total).unwrap_or(100);
+                    if pct >= printed + 10 || (pct == 100 && printed < 100) {
+                        printed = pct - pct % 10;
+                        eprintln!(
+                            "test data: {pct}% ({} of {} MB, {:.0} s)",
+                            read >> 20,
+                            total >> 20,
+                            t.elapsed().as_secs_f64()
+                        );
+                    }
+                })?;
+                Ok(got.path)
+            });
+            let found = testdata::locate(
+                builds,
+                downloadable,
+                major,
+                minor,
+                testdata::Where {
+                    local_root: local.as_deref(),
+                    cache_root: &cache_root,
+                    download,
+                },
+                "w1",
+            );
+            match found.path {
+                Some(p) => (p, found.notes),
+                None => return fail(found.off.unwrap_or_default()),
+            }
+        }
+    };
+    match open_backup(a, path) {
+        Ok(d) => Ok(DataChoice {
+            data: Some(d),
+            notes: std::mem::take(&mut notes),
+        }),
+        Err(e) if asked => Err(e),
+        Err(e) => fail(e),
+    }
 }
 
 pub fn test(a: &TestArgs) -> Result<u8, String> {
@@ -121,10 +195,11 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
     // A backup named on the command line is opened before the long part: a wrong path or company
     // fails here. The cached artifact is chosen once the Microsoft apps are known.
-    let mut test_data = match (a.test_data, &a.test_data_path) {
-        (true, Some(_)) => Some(open_test_data(a, &[], NEWEST_VERIFIED, None)?),
+    let mut test_data = match (a.wants_test_data(), &a.test_data_path) {
+        (true, Some(p)) => Some(open_backup(a, p.clone())?),
         _ => None,
     };
+    let mut data_notes: Vec<String> = Vec::new();
     let inputs = a
         .apps
         .iter()
@@ -196,7 +271,8 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     let provision = Provision {
         cache_dir: a.cache_dir.clone(),
         download: !a.no_download,
-        query: target::build_query(a.bc_version.as_deref(), &chosen, floor_versions),
+        query: target::build_query(a.bc_version.as_deref(), &chosen, floor_versions)
+            .with_preferred(apps::own_build(&inputs)),
         local_artifacts: al_deps::cache::bcartifacts_sandbox_from_env(),
     };
     let dependencies = deps::load_project(
@@ -207,21 +283,47 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         a.bc_version.as_deref(),
         true,
     )?;
-    if a.test_data && test_data.is_none() {
+    if a.wants_test_data() && test_data.is_none() {
         // The build of the Microsoft apps is the build of the data: what the feed gave, what
         // --bc-version named, then the versions of the loaded packages and of the APPs
         // (Microsoft's test archives carry the build as their version).
         let mut builds: Vec<String> = Vec::new();
         builds.extend(dependencies.build.as_ref().map(|u| u.build.to_string()));
         builds.extend(a.bc_version.clone());
+        builds.extend(apps::own_build(&inputs).map(|b| b.to_string()));
         builds.extend(dependencies.manifests.iter().map(|m| m.version.clone()));
         builds.extend(inputs.iter().map(|i| i.manifest.version.clone()));
-        test_data = Some(open_test_data(
-            a,
-            &builds,
-            chosen.target.bc.major,
-            Some(chosen.target.bc.minor),
-        )?);
+        let mut downloadable: Vec<al_deps::build::BuildId> = Vec::new();
+        let named = dependencies
+            .build
+            .as_ref()
+            .map(|u| u.build.clone())
+            .into_iter()
+            .chain(
+                a.bc_version
+                    .as_deref()
+                    .and_then(|v| al_deps::build::BuildId::parse(v).ok()),
+            )
+            .chain(apps::own_build(&inputs));
+        for b in named {
+            if !downloadable.contains(&b) {
+                downloadable.push(b);
+            }
+        }
+        // A default run with no Microsoft app has no use for the CRONUS company.
+        let microsoft = inputs.iter().any(|i| apps::is_microsoft(&i.manifest.publisher))
+            || dependencies.manifests.iter().any(|m| apps::is_microsoft(&m.publisher));
+        if microsoft || a.test_data_asked_for() {
+            let chosen_data = choose_test_data(
+                a,
+                &builds,
+                &downloadable,
+                chosen.target.bc.major,
+                Some(chosen.target.bc.minor),
+            )?;
+            test_data = chosen_data.data;
+            data_notes = chosen_data.notes;
+        }
     }
     let mut bc_build = None;
     if let Some(u) = &dependencies.build {
@@ -232,7 +334,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     let mut seen = BTreeSet::new();
     let mut hidden = 0;
     for line in &dependencies.log {
-        let is_problem = line.starts_with("dependency skipped") || line.starts_with("dependency note");
+        let is_problem = line.starts_with("dependency skipped")
+            || line.starts_with("dependency note")
+            || line.starts_with("warning:");
         if (a.verbose || is_problem) && seen.insert(line.as_str()) {
             if a.verbose || seen.len() <= 12 {
                 // A missing-dependency line repeats the whole search list; the start says it all.
@@ -251,6 +355,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
     if hidden > 0 {
         eprintln!("... {hidden} more dependency notes (--verbose lists them)");
+    }
+    for note in &data_notes {
+        eprintln!("note: {note}");
     }
 
     if !a.quiet {

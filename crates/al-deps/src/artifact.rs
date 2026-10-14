@@ -33,6 +33,9 @@ pub trait Cdn {
     fn index(&self) -> Result<Vec<u8>, RemoteError>;
     /// The platform artifact of a build: its URL, for messages, and a range source for it.
     fn platform(&self, build: &BuildId) -> (String, Self::Src);
+    /// The country artifact of a build (`w1`): its URL, for messages, and a range source for it.
+    /// It holds the demo database backup (ADR-020).
+    fn country(&self, build: &BuildId, country: &str) -> (String, Self::Src);
 }
 
 pub struct HttpCdn {
@@ -71,6 +74,11 @@ impl Cdn for HttpCdn {
 
     fn platform(&self, build: &BuildId) -> (String, HttpSource) {
         let url = format!("{}/{build}/platform", self.base);
+        (url.clone(), HttpSource::new(self.agent.clone(), url))
+    }
+
+    fn country(&self, build: &BuildId, country: &str) -> (String, HttpSource) {
+        let url = format!("{}/{build}/{country}", self.base);
         (url.clone(), HttpSource::new(self.agent.clone(), url))
     }
 }
@@ -131,11 +139,11 @@ fn rank_by_name<'a, T>(items: &'a [T], name_of: impl Fn(&T) -> &str, dep: &DepDe
     // The platform itself (`System`) is not an application: its package sits in the archive's
     // `ModernDev/pfiles/microsoft dynamics nav/<version>/al development environment/` folder.
     if name == "system" {
-        out.extend(
-            items
-                .iter()
-                .filter(|e| name_of(e).to_ascii_lowercase().ends_with("/al development environment/system.app")),
-        );
+        out.extend(items.iter().filter(|e| {
+            name_of(e)
+                .to_ascii_lowercase()
+                .ends_with("/al development environment/system.app")
+        }));
     }
     out
 }
@@ -176,7 +184,7 @@ struct LocalPlatform {
 /// build (four numbers) picks, and it picks that build or none.
 fn pick_local(root: &Path, q: &BuildQuery, exact_only: bool) -> Option<Selection> {
     let builds = local_builds(root);
-    if exact_only && BuildId::parse(&q.prefix).is_err() {
+    if exact_only && !q.exact().is_some_and(|e| builds.contains(&e)) {
         return None;
     }
     let mut sel = select_build(q, &builds, None, &root.display().to_string()).ok()?;
@@ -263,7 +271,13 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
         if chosen.is_none() {
             // Layer A, first look: the cache. A cached build needs no network to be chosen.
             let cached = store.list_builds();
-            if let Ok(sel) = select_build(&fetch.query, &cached, None, &cache_dir) {
+            // The build of the tests, when the query names one, must itself be cached: another
+            // cached build waits until the build of the tests is looked for on disk and on the feed.
+            let usable = fetch.query.exact().is_none_or(|e| cached.contains(&e));
+            if let Some(sel) = usable
+                .then(|| select_build(&fetch.query, &cached, None, &cache_dir).ok())
+                .flatten()
+            {
                 log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
                 chosen = Some((store.build(&sel.build), sel));
                 continue; // resolve again with the cached build's apps in the pool
@@ -274,7 +288,12 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             }
         }
         if chosen.is_none() && !fetch.download {
-            // Offline: any matching build on disk.
+            // Offline: any cached build, else any matching build on disk.
+            if let Ok(sel) = select_build(&fetch.query, &store.list_builds(), None, &cache_dir) {
+                log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
+                chosen = Some((store.build(&sel.build), sel));
+                continue;
+            }
             if let Some((root, sel)) = local_root.and_then(|r| pick_local(r, &fetch.query, false).map(|s| (r, s))) {
                 chosen = choose_local(sel, &mut local, root, &mut log);
             }
@@ -613,6 +632,9 @@ mod tests {
                 .unwrap_or_else(|| PathBuf::from("/nonexistent/platform.zip"));
             (format!("https://cdn.test/{build}/platform"), FileSource(p))
         }
+        fn country(&self, _: &BuildId, _: &str) -> (String, FileSource) {
+            panic!("the country artifact was requested")
+        }
     }
 
     /// A feed nobody may call.
@@ -627,6 +649,9 @@ mod tests {
         }
         fn platform(&self, _: &BuildId) -> (String, FileSource) {
             panic!("the platform artifact was requested")
+        }
+        fn country(&self, _: &BuildId, _: &str) -> (String, FileSource) {
+            panic!("the country artifact was requested")
         }
     }
 
@@ -868,12 +893,18 @@ mod tests {
             &app_json(ANY, "Any", &[]),
             &[("Any.Codeunit.al", "codeunit 130500 Any { }")],
         );
-        put("Applications/TestFramework/TestLibraries/Any/Source/Any.Source.zip", &any);
+        put(
+            "Applications/TestFramework/TestLibraries/Any/Source/Any.Source.zip",
+            &any,
+        );
         let mock = source_zip(
             &app_json(MOCK, "Permissions Mock", &[]),
             &[("M.Codeunit.al", "codeunit 131006 \"Permissions Mock\" { }")],
         );
-        put("Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip", &mock);
+        put(
+            "Applications/TestFramework/TestLibraries/permissions mock/Permissions Mock.Source.zip",
+            &mock,
+        );
         let satl = source_zip(
             &app_json(
                 SATL,
@@ -882,7 +913,10 @@ mod tests {
             ),
             &[("P.Codeunit.al", "codeunit 132916 \"Azure AD Plan Test Library\" { }")],
         );
-        put("Applications/System Application/Test/System Application Test Library.Source.zip", &satl);
+        put(
+            "Applications/System Application/Test/System Application Test Library.Source.zip",
+            &satl,
+        );
         put(SYSTEM_APP_ENTRY, &system_app());
         // Filler a walk must not need to read.
         put("ServiceTier/big.dll", &[0u8; 100]);
@@ -914,7 +948,13 @@ mod tests {
         assert_eq!(cdn.index_calls.get(), 0, "an exact local build needs no feed");
         assert_eq!(cdn.platform_calls.get(), 0);
         // The source of an app read from there fills Microsoft's build variables with that build.
-        assert!(out.log.iter().any(|l| l.contains("27.5.46862.48827") && l.contains("local")), "{:?}", out.log);
+        assert!(
+            out.log
+                .iter()
+                .any(|l| l.contains("27.5.46862.48827") && l.contains("local")),
+            "{:?}",
+            out.log
+        );
     }
 
     #[test]
@@ -935,7 +975,104 @@ mod tests {
         f.local_artifacts = Some(sandbox);
         let out = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap();
         let used = out.artifact.unwrap();
-        assert_eq!((used.build.to_string().as_str(), used.origin), ("27.5.46862.56249", Origin::Published));
+        assert_eq!(
+            (used.build.to_string().as_str(), used.origin),
+            ("27.5.46862.56249", Origin::Published)
+        );
+    }
+
+    #[test]
+    fn the_build_of_the_tests_is_taken_from_the_local_artifacts_before_the_feed() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = dir.path().join("sandbox");
+        extracted_artifact(&sandbox, "27.5.46862.48827");
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache"), true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        f.local_artifacts = Some(sandbox);
+        let out = run(&alpackages(dir.path()), &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        let used = out.artifact.unwrap();
+        assert_eq!(
+            (used.build.to_string().as_str(), used.origin),
+            ("27.5.46862.48827", Origin::Local)
+        );
+        assert_eq!(cdn.index_calls.get(), 0);
+    }
+
+    #[test]
+    fn the_build_of_the_tests_is_taken_from_the_feed_when_it_is_still_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.48827", "27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache"), true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        let out = run(&alpackages(dir.path()), &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(out.artifact.unwrap().build.to_string(), "27.5.46862.48827");
+    }
+
+    #[test]
+    fn a_build_of_the_tests_that_is_gone_is_replaced_by_the_newest_and_the_log_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let mut f = fetch(&dir.path().join("cache"), true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        let out = run(&alpackages(dir.path()), &f, &cdn, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(out.artifact.unwrap().build.to_string(), "27.5.46862.56249");
+        assert!(
+            out.log
+                .iter()
+                .any(|l| l.contains("27.5.46862.48827") && l.contains("56249")),
+            "{:?}",
+            out.log
+        );
+    }
+
+    #[test]
+    fn the_build_of_the_tests_is_taken_from_the_local_artifacts_even_when_another_build_is_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let sandbox = dir.path().join("sandbox");
+        extracted_artifact(&sandbox, "27.5.46862.48827");
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        // A first run without the tests' build caches the newest published one.
+        let cache = dir.path().join("cache");
+        let first = run(
+            &alpkg,
+            &fetch(&cache, true, None),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert_eq!(first.artifact.unwrap().build.to_string(), "27.5.46862.56249");
+        let mut f = fetch(&cache, true, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        f.local_artifacts = Some(sandbox);
+        let out = run(&alpkg, &f, &NoNetwork, MissingPolicy::Error, &project()).unwrap();
+        let used = out.artifact.unwrap();
+        assert_eq!(
+            (used.build.to_string().as_str(), used.origin),
+            ("27.5.46862.48827", Origin::Local)
+        );
+    }
+
+    #[test]
+    fn offline_a_cached_build_is_used_when_the_tests_build_is_nowhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        run(
+            &alpkg,
+            &fetch(&cache, true, None),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        let mut f = fetch(&cache, false, None);
+        f.query = f.query.with_preferred(BuildId::parse("27.5.46862.48827").ok());
+        let out = run(&alpkg, &f, &NoNetwork, MissingPolicy::Error, &project()).unwrap();
+        assert_eq!(out.artifact.unwrap().build.to_string(), "27.5.46862.56249");
     }
 
     #[test]

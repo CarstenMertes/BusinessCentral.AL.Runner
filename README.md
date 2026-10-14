@@ -81,7 +81,8 @@ Main flags by purpose (`--help` lists all of them):
 ```
 alrunner test ./MyApp                                       # an app folder with app.json
 alrunner test ./MyApp --filter Posting --verbose            # selected tests, one line per test
-alrunner test Tests-SMB.Source.zip --dep LIB --test-data    # Microsoft's tests with CRONUS data
+alrunner test Tests-ERM.Source.zip                          # Microsoft's tests: apps, System.app and CRONUS data fetched
+alrunner test ./MyApp --no-test-data                        # without the CRONUS company
 ```
 
 Exit codes: 0 all selected tests passed, 1 a test failed, 2 bad invocation,
@@ -96,8 +97,11 @@ Microsoft's is committed to this repository.
 1. `alrunner` searches `--dep` and `--package-cache` first, then each app's
    `.alpackages` folder. The corpus ships System Application, Base Application
    and Business Foundation in its `.alpackages`, with source.
-2. What is still missing comes from Microsoft's artifact feed. Downloads are
-   kept in a local cache (`--cache-dir`). `--no-download` turns the feed off.
+2. What is still missing comes from Microsoft's artifact feed: the apps, the
+   test libraries, the platform `System.app` and the demo data. For Microsoft's
+   own test archives the build is the build of the tests when it is still
+   available. Downloads are kept in a local cache (`--cache-dir`).
+   `--no-download` turns the feed off.
 3. Only the objects the selected tests reach are compiled.
 
 `al-test-cli` searches `.alpackages` first, then another folder of `.app`
@@ -105,10 +109,15 @@ packages given with `--deps DIR`, then the feed.
 
 ## Test data
 
-`alrunner test --test-data` restores the CRONUS demo company from a cached BC
-backup (`.bak` or `.bacpac`). A table is read the first time a test touches it.
-Without it, Microsoft's tests find an empty database and many fail on missing
-setup data. Those failures are not trusted.
+Test data is on by default. A run that uses Microsoft's apps restores the CRONUS
+demo company of the same BC build from its backup (`.bak`); a table is read the
+first time a test touches it. The backup is looked for in
+`~/.bcartifacts.cache/sandbox/<build>/w1`, then in the artifact cache, then it is
+downloaded once (about 520 MB, progress on stderr) from the artifact feed into the
+cache. If none can be had, test data is off and the run says why.
+`--no-test-data` turns it off; `--test-data PATH.bak` names a backup.
+Without test data, Microsoft's tests find an empty database and many fail on
+missing setup data. Those failures are not trusted.
 
 `al-bcdb` is the reader behind this: a Rust port of bcdb for BC `.bak` and
 `.bacpac` files, with no SQL Server. It is also a command line
@@ -125,8 +134,8 @@ that into an error, for CI.
 
 `alrunner` can run Microsoft's own Base Application test buckets. Most of these
 tests are still refused, not run. On 2026-10-14, the 32 buckets together held
-40300 tests: 1083 passed, 858 failed and 38359 were not run. These runs had no
-test data, so most of the failures are missing setup data. `--test-data` fixes
+40300 tests: 1083 passed, 858 failed and 38359 were not run. Those runs had no
+test data, so most of the failures are missing setup data. Test data fixes
 part of that: on Tests-ERM it raises the passes from 241 to 487, with 5
 failures. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
 the failure analysis. Speed numbers of such a run cannot be compared with other

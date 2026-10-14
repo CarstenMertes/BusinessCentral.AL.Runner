@@ -220,7 +220,7 @@ fn parse_warm(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
         }
     }
     if a.test_data_path.is_none() && a.bc_version.is_none() {
-        return Err("alrunner warm needs a backup (PATH.bak) or a build (--bc-version 27.5.46862.48827)".into());
+        return Err("alrunner warm needs a backup (PATH.bak) or a build (--bc-version BUILD)".into());
     }
     Ok(Command::Warm(Box::new(a)))
 }

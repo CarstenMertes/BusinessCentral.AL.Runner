@@ -539,7 +539,7 @@ impl Session {
                 d.load.buffer = s.load.buffer;
                 d.load.partial = s.load.partial;
                 if share && s.temporary {
-                    d.temp_id = s.temp_id;
+                    d.temp_id = s.temp_id.clone();
                 }
                 Ok(Value::Null)
             }

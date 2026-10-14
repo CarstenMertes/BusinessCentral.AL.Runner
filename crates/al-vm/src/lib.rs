@@ -199,6 +199,8 @@ pub struct Session {
     /// Private tables of temporary records, by temp id.
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
+    /// Ids of temporary tables whose last record variable has gone (`TempId`); freed on the next use of a temporary table.
+    pub(crate) temp_release: Rc<RefCell<Vec<u64>>>,
     pub(crate) next_guid: u64,
     /// The host's seed, mixed into every Guid the session makes (see [`Session::fresh_guid`]).
     guid_seed: i32,
@@ -369,6 +371,7 @@ impl Session {
             global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
+            temp_release: Default::default(),
             next_guid: 0,
             guid_seed: random_seed,
             sent_notifications: Vec::new(),
@@ -477,10 +480,7 @@ impl Session {
                         .any(|(k, v)| {
                             k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")
                         }));
-                let temp_id = temporary.then(|| {
-                    self.next_temp += 1;
-                    self.next_temp
-                });
+                let temp_id = temporary.then(|| self.new_temp_id());
                 Value::Record(Rc::new(RefCell::new(RecordState {
                     table: *table,
                     temporary: *temporary,
@@ -539,6 +539,21 @@ impl Session {
             dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
             synthesized: false,
         })
+    }
+
+    /// How many private tables of temporary records the session holds (a table is freed once no record
+    /// variable uses it any more).
+    pub fn temporary_tables_held(&mut self) -> usize {
+        for dead in self.temp_release.borrow_mut().drain(..) {
+            self.temps.remove(&dead);
+        }
+        self.temps.len()
+    }
+
+    /// The identity of a new private table for a temporary record.
+    pub(crate) fn new_temp_id(&mut self) -> al_builtins::value::TempId {
+        self.next_temp += 1;
+        al_builtins::value::TempId::new(self.next_temp, self.temp_release.clone())
     }
 
     /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
@@ -616,8 +631,7 @@ impl Session {
     pub(crate) fn record_by_value(&mut self, rc: &Rc<RefCell<RecordState>>) -> Value {
         let mut st = rc.borrow().clone();
         if st.temporary {
-            self.next_temp += 1;
-            st.temp_id = Some(self.next_temp);
+            st.temp_id = Some(self.new_temp_id());
         }
         Value::Record(Rc::new(RefCell::new(st)))
     }
@@ -690,7 +704,8 @@ impl Session {
                         let s = rc.borrow();
                         s.temporary
                             && s.temp_id
-                                .and_then(|id| self.temps.get(&id))
+                                .as_ref()
+                                .and_then(|id| self.temps.get(&id.id()))
                                 .is_some_and(|store| store.has_rows(s.table))
                     } =>
                 {

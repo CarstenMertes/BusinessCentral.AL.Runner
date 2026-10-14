@@ -412,6 +412,40 @@ pub struct ControlRef {
     pub target: ControlTarget,
 }
 
+/// The identity of the private table of a temporary record. Records that share the table (a record
+/// state clone, `Copy(x, true)`) hold clones of one `TempId`; when the last is dropped the id goes onto
+/// the session's release queue and the session frees the table, as `DotNetObject` hands its handle back
+/// (`Drop` never reaches into the session).
+#[derive(Clone)]
+pub struct TempId(Rc<TempToken>);
+
+struct TempToken {
+    id: u64,
+    release: Rc<RefCell<Vec<u64>>>,
+}
+
+impl Drop for TempToken {
+    fn drop(&mut self) {
+        self.release.borrow_mut().push(self.id);
+    }
+}
+
+impl TempId {
+    pub fn new(id: u64, release: Rc<RefCell<Vec<u64>>>) -> TempId {
+        TempId(Rc::new(TempToken { id, release }))
+    }
+
+    pub fn id(&self) -> u64 {
+        self.0.id
+    }
+}
+
+impl std::fmt::Debug for TempId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TempId({})", self.0.id)
+    }
+}
+
 /// Everything a record variable carries.
 #[derive(Debug, Clone)]
 pub struct RecordState {
@@ -419,7 +453,7 @@ pub struct RecordState {
     pub table: u32,
     pub temporary: bool,
     /// Identity of the private table behind a temporary record (shared by `Copy(x, true)`).
-    pub temp_id: Option<u64>,
+    pub temp_id: Option<TempId>,
     /// The company set by `ChangeCompany` or `RecordRef.Open(.., Company)`, as the Company table
     /// names it; `None` is the session company.
     pub company: Option<String>,

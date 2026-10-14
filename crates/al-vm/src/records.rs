@@ -81,8 +81,17 @@ impl Session {
     }
 
     pub(crate) fn store_for(&mut self, rec: &Rec) -> &mut MemStore {
-        match rec.borrow().temp_id {
-            Some(id) => self.temps.entry(id).or_default(),
+        let id = rec.borrow().temp_id.as_ref().map(|t| t.id());
+        match id {
+            Some(id) => {
+                // Tables whose last record variable is gone are freed first.
+                if !self.temp_release.borrow().is_empty() {
+                    for dead in self.temp_release.borrow_mut().drain(..) {
+                        self.temps.remove(&dead);
+                    }
+                }
+                self.temps.entry(id).or_default()
+            }
             None => &mut self.store,
         }
     }
@@ -879,7 +888,10 @@ impl Session {
     /// session/TestCrmTableNoConnectionContracts.al:15-17,111-118. With a connection registered what
     /// the table does is not pinned.
     pub(crate) fn connection_check(&self, rec: &Rec) -> Result<(), Signal> {
-        if !rec.borrow().crm {
+        // A temporary record of a CRM table is an in-memory table of its own and needs no connection (not
+        // pinned by a corpus line; Base Application's `CRM Synch. Helper.ClearCache` relies on it,
+        // docs/probes-needed.md).
+        if !rec.borrow().crm || rec.borrow().temporary {
             return Ok(());
         }
         if self.table_connections.iter().any(|(kind, _)| *kind == 0) {

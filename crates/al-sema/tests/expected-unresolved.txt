@@ -6,7 +6,7 @@
   15 unresolved table `Aggregate Permission Set`
   21 unresolved table `All Profile`
   25 unresolved table `AllObjWithCaption`
-  19 unresolved table `AllObj`
+  20 unresolved table `AllObj`
    4 unresolved table `Code Coverage Test Lookup`
    6 unresolved table `Code Coverage Tests Run`
    9 unresolved table `Code Coverage`

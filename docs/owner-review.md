@@ -251,6 +251,8 @@ reviewed it.
 - 2026-10-14, ADR-007: the corpus bump to 348a744 appends one test to an existing file
   (`handlers/TestPageRuntimeContracts.al`, `TestPage_List_Window_IsRepopulatedAroundAGoToKeyOutsideIt`). All three
   oracles are on the pin, so the older-commit check is not involved. A bump that used it would have been refused.
+- 2026-10-14, ADR-007: the corpus bump to 6219bf4 (probe batch 3: 35 new cases and 3 new OnPrem cases) only adds 8 files under
+  `tests/`. All three oracles are on the pin. No baseline case stopped passing, so nothing was removed.
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
   passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.

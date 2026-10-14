@@ -72,6 +72,20 @@ holds the `.bak` (902 MB) beside the entries fetched by range.
 
 Several buckets can be named in one run (all 32 together: 40300 tests, one compile).
 
+## The compile cache (ADR-022, branch `compile-cache`, 2026-10-14)
+
+`alrunner test` keeps the complete compile of the dependency apps in `<cache dir>/compile/` (13 MB per set of apps;
+`--cache-dir`, `$ALRUNNER_CACHE`, default `~/.cache/al-runtime`). The first run with a new set of apps builds it (about
+5 s and 4 GB on 12 cores). The next runs load it. `--no-compile-cache` (or `ALRUNNER_NO_COMPILE_CACHE=1`) compiles only
+what the tests reach, as before. `--require-compile-cache` fails when there is no usable entry (CI).
+
+Tests-ERM, BC 27.5, with the CRONUS data, one run each after the entry exists: 8.1 to 8.3 s against 11.7 to 12.0 s
+without the cache, 2.1 GB against 3.1 GB. All 32 buckets in one process (measured before the last merges of `main`;
+the combined run of current `main` needs more than 18 GB with or without the cache): 35 s against 30 to 33 s (the 91 MB
+of test sources and the 19 s of tests dominate), 4.7 GB against 6.3 GB. Outcomes: Tests-ERM has no difference; the 32
+buckets differ in 7 of 40300 tests (they are not run with the cache, see `docs/adr/022-compile-cache.md`, "Outcomes").
+The measurements are in `docs/adr/022-measurements.txt`.
+
 ## Reading the result
 
 Without `--test-data` there is no company data. Microsoft's tests expect a CRONUS company, so most failures are
@@ -171,6 +185,42 @@ pass or are refused, and belongs in its own task with the baselines as the check
 
 `tools/bucket_diff.py --a <JUnit of each bucket> --b <JUnit of the combined run>` prints the table above for any two
 sets of runs. A bucket name with a space needs quoting in the shell.
+
+## All buckets with test data (issue 10, 2026-10-14)
+
+The 32 buckets with tests (every `Tests-*.Source.zip` except `Tests-TestLibraries` and `Tests-Local`) in one
+`alrunner test --test-data` process, BC 27.5 build 46862.56320, 4 threads each for check, lowering and tests,
+one run. Codeunit 136106 "Service Response Time" is left out (see below): 40315 tests.
+
+| | Passed | Failed | Not run | Peak memory | Total |
+|---|---:|---:|---:|---:|---:|
+| Issue 10 start (perf-3 merge, with the 40300 tests of the first measurement) | 1862 | 216 | 38222 | 5918 MB | 28.9 s |
+| Data-3 merge, 32 buckets (40326 tests) | 2178 | 257 | 37891 | 6566 MB | 28.9 s |
+| main at a861bcf | did not finish: over 11 GB, killed (the leak below) | | | | |
+| This branch | 2166 | 68 | 38081 | 6419 MB | 36.6 s |
+
+Main had a memory leak that the Tests-SCM-Service codeunit 136106 exposed: it loops over `Calendar Management`,
+a codeunit that holds a temporary record and that every call creates anew, and the private table of a temporary
+record was kept for the whole session (13 KB per record variable that used it). That one test took 8 GB. Fixed
+(`TempId`, `al-vm/tests/temp_tables.rs`). The test itself still does not finish in reasonable time here:
+`Library - Service`.`GetFirstWorkingDay` loops over days until a day has a Service Hour row, the restored
+CRONUS company has none (`al-bcdb read ... --table "Service Hour"` lists no row), and the loop ends only when
+`CalcDate` leaves the date range in the year 9999. In Microsoft's pipeline the rows exist. The figures above
+leave the codeunit out by removing its file from a local copy of the bucket archive.
+
+Causes of the failures that remain (68), by message:
+
+| Tests | Message | Cause |
+|---:|---|---|
+| 17 | `There are no records within the filters specified for table Cost Type` | Data: the restored company holds no Cost Type row (`al-bcdb read ... --table "Cost Type"`), which `Library - Cost Accounting` expects |
+| 8 | `The TestPage is not open.` | Skipped by the issue (its own task) |
+| 2 | `An error was expected inside an ASSERTERROR statement.` | Microsoft's Tests-Misc T120 to T122 expect a field declared `ObsoleteState = Removed` to be left out of `RecordRef` (FieldCount, FieldExist, Field raises). The runtime lists it. Refusing the calls stopped 252 passing Base Application tests, which call `RecordRef.Field` on such fields and pass in BC, so no refusal is added. Not pinned: `docs/probes-needed.md` |
+| 2 | `Tests cannot call the Commit function if TransactionModel property is set to AutoRollback.` | Not a defect: the first test that runs in the codeunit is the one with AutoRollback because the earlier tests are refused (the same cause as in issue 5) |
+| 2 | `The payment that you are trying to export is different from the specified Generic Export` | Not looked at |
+| 2 | `You cannot create a task of type Meeting because you're not using an on-premises deployment.` | Depends on the deployment type the runtime reports (`docs/probes-needed.md`, environment) |
+
+Not in the list any more, as measured on this main: `Table N already added to backup` (25), `The binding of codeunit
+N was unsuccessful` (11), `The Dimension does not exist` (20). Other work fixed them.
 
 ## Measured (4 threads each for check, lowering and tests; one run per bucket; under `MemoryMax=3G`; 2026-10-14, afternoon, main after `fixes-8`)
 

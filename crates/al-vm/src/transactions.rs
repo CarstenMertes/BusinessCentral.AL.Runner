@@ -59,8 +59,8 @@ impl CommitBehavior {
 }
 
 /// Refusal of a guarded `Codeunit.Run` while the caller holds an uncommitted write: the full text
-/// and the code `DB:Ok` are pinned by codeunit/TestCodeunitRunErrorTextsAndModels.al:75-90
-/// (corpus branch al-runtime-rs, probe on BC 27.5). The same text refuses a guarded XmlPort
+/// and the code `DB:Ok` are pinned by codeunit/TestCodeunitRunErrorTextsAndModels.al:75-90.
+/// The same text refuses a guarded XmlPort
 /// import and a report run with a write pending.
 pub(crate) const TRANSACTION_STOPPED: &str =
     "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.";
@@ -75,8 +75,7 @@ pub(crate) fn transaction_stopped() -> Signal {
 const COMMIT_UNDER_AUTO_ROLLBACK: &str =
     "Tests cannot call the Commit function if TransactionModel property is set to AutoRollback.";
 
-/// error-handling/TestCommitBehaviorErrorText.al:34-35 (corpus branch al-runtime-rs, probe on
-/// BC 27.5): the full text, with code `DB:Ok`.
+/// error-handling/TestCommitBehaviorErrorText.al:34-35: the full text, with code `DB:Ok`.
 const COMMIT_PROHIBITED: &str =
     "Commit is prohibited in the current scope. The operation cannot continue. Contact your system administrator.";
 
@@ -87,7 +86,7 @@ pub(crate) const NO_TRANSACTION: &str = "A transaction must be started before ch
 const NO_TRANSACTION_CODE: &str = "DB:BWTMissing";
 
 /// codeunit/TestCodeunitRunErrorTextsAndModels.al:48-52 and :64-91: the two sentences joined by
-/// one space, with the code `TestCodeUnitNestedInvocation` (corpus branch al-runtime-rs, BC 27.5).
+/// one space, with the code `TestCodeUnitNestedInvocation`.
 fn nested_test_codeunit(id: u32, name: &str) -> Signal {
     al_error_code(
         &format!(
@@ -128,8 +127,7 @@ fn emit_version(major: u16) -> u32 {
 impl Session {
     /// The error BC raises when code names an object that no app declares
     /// (codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196 for `CodeUnit`,
-    /// recordref/TestRecordRefRuntimeContracts.al:30 for `Table`; corpus branch al-runtime-rs,
-    /// probe on BC 27.5). The text names the calling object, which is the object whose code
+    /// recordref/TestRecordRefRuntimeContracts.al:30 for `Table`). The text names the calling object, which is the object whose code
     /// runs now.
     pub(crate) fn missing_object(&self, kind: &str, id: i64) -> Signal {
         let caller = self
@@ -230,8 +228,7 @@ impl Session {
                     }
                     // The object is resolved before the run begins, so the guarded form raises
                     // too (codeunit/TestCodeunitRunMissing.al). Text and code:
-                    // codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196 (corpus branch
-                    // al-runtime-rs, probe on BC 27.5).
+                    // codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196.
                     return Err(self.missing_object("CodeUnit", i64::from(*n)));
                 };
                 let fresh = self.instance(object);
@@ -261,8 +258,7 @@ impl Session {
         // (handlers/TestPageActionRunObjectKinds_Tests.al:ProbeControlEachTargetRecordsItsOwnExecution,
         // :143-150, reads Rec.Descr in OnRun). The record is passed by reference: a change OnRun
         // makes to Rec reaches the caller's variable, in the guarded and the statement form
-        // (codeunit/TestCodeunitRunErrorTextsAndModels.al:198-220, corpus branch al-runtime-rs,
-        // probe on BC 27.5). What Rec holds when no record is passed is not pinned and is refused
+        // (codeunit/TestCodeunitRunErrorTextsAndModels.al:198-220). What Rec holds when no record is passed is not pinned and is refused
         // before the run (docs/probes-needed.md).
         if has_property("TableNo") {
             let Some(slot) = obj.rec_slot else {
@@ -295,7 +291,7 @@ impl Session {
             if self.in_write_transaction() {
                 // The same refusal under AutoRollback, and inside a TryFunction, which traps it
                 // and returns false (codeunit/TestCodeunitRunErrorTextsAndModels.al:93-160 and
-                // :248-262, corpus branch al-runtime-rs, probe on BC 27.5).
+                // :248-262).
                 return Err(transaction_stopped());
             }
         }
@@ -325,7 +321,7 @@ impl Session {
                 // (TestCodeunitRunWriteTransaction.al:GuardedRun_LeavingUncommittedWrite_CommitsItWithTheRunsOwnTransaction).
                 // Under AutoRollback it commits too: the run's row survives the test, and only the
                 // test's own writes roll back (codeunit/TestCodeunitRunErrorTextsAndModels.al:
-                // 262-275, AutoRollback_Test03/Test04, corpus branch al-runtime-rs, BC 27.5).
+                // 247-275, AutoRollback_Test03/Test04).
                 // The refusal above guarantees nothing of the test's own is pending here.
                 //
                 // In a page background worker the run's transaction is the worker's own and holds

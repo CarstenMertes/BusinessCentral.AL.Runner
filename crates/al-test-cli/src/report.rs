@@ -82,6 +82,55 @@ pub struct Timings {
     /// tests phase but is not the runtime's own cost, so it is reported apart.
     #[serde(default)]
     pub dotnet: Option<DotNetTimes>,
+    /// The compile cache of the dependency apps (ADR-022), when the run used it.
+    #[serde(default)]
+    pub compile_cache: Option<CacheTimes>,
+}
+
+/// What the compile cache did for a run, in seconds.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CacheTimes {
+    /// The entry was there and used as it was.
+    pub hit: bool,
+    /// This run built the entry. Its time is in `build_s`, and in `compile_s` too.
+    pub built: bool,
+    /// Making the key and reading and opening the file.
+    pub open_s: f64,
+    /// Building and writing the entry; zero on a hit.
+    pub build_s: f64,
+    pub mb: f64,
+    /// Dependency objects of the entry, and how many of them the run compiled again because the
+    /// workspace extends or implements what they embed.
+    pub objects: usize,
+    pub relowered: usize,
+}
+
+impl CacheTimes {
+    pub fn of(r: &al_testrun::compile_cache::CacheReport) -> CacheTimes {
+        CacheTimes {
+            hit: r.hit,
+            built: r.built,
+            open_s: r.open.as_secs_f64(),
+            build_s: r.build.as_secs_f64(),
+            mb: r.bytes as f64 / 1e6,
+            objects: r.objects,
+            relowered: r.relowered,
+        }
+    }
+
+    pub fn line(&self) -> String {
+        let how = if self.hit {
+            format!("hit, opened in {:.2} s", self.open_s)
+        } else if self.built {
+            format!("miss, built in {:.2} s", self.build_s)
+        } else {
+            "not used".to_string()
+        };
+        format!(
+            "{how}; {:.1} MB, {} dependency objects, {} compiled again because the workspace extends or implements what they embed",
+            self.mb, self.objects, self.relowered
+        )
+    }
 }
 
 /// What the .NET sidecar processes of a run cost (`SidecarStats`), in seconds.

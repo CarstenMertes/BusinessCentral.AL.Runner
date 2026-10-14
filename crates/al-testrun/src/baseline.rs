@@ -344,7 +344,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
             out: &mut out,
         }
         .stmts(&rt.body);
-        stack.extend(lowered.calls[o][r].iter().copied());
+        lowered.calls_into(o, r, &mut stack);
     }
     // Rows that event subscribers of those writes add are not counted: which of them run depends on
     // data (a subscriber that writes a table when something else is configured), and counting every

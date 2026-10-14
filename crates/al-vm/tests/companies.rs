@@ -452,6 +452,28 @@ fn a_record_of_a_crm_table_fails_on_first_use_without_a_connection() {
     }
 }
 
+// A temporary record of a CRM table is an in-memory table: no connection is needed. Not pinned by a corpus
+// line. Base Application's `CRM Synch. Helper.ClearCache` does `Reset()` and `DeleteAll()` on temporary
+// `CRM Pricelevel`, `CRM Transactioncurrency` and the like, and Microsoft's tests run it with no connection
+// registered (22 tests of Tests-CRM integration start with `LibraryCRMIntegration.ResetEnvironment`).
+// Listed in docs/probes-needed.md.
+#[test]
+fn a_temporary_record_of_a_crm_table_needs_no_connection() {
+    let r = run_with(
+        CRM_TABLE,
+        "T: Record \"CRM Entity\" temporary;",
+        "T.Reset(); T.DeleteAll(); T.Name := 'x'; T.Insert(); exit(Format(T.Count()));",
+    );
+    assert!(matches!(&r, Ok(Value::Text(s)) if s == "1"), "{r:?}");
+    // A record that is not temporary still needs it.
+    let r = run_with(
+        CRM_TABLE,
+        "E: Record \"CRM Entity\";",
+        "asserterror E.Init(); exit(GetLastErrorCode());",
+    );
+    assert!(matches!(&r, Ok(Value::Text(s)) if s == "Argument"), "{r:?}");
+}
+
 // record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212: a renamed company takes its data with it
 // and the old name answers false; a company deleted with triggers takes its data, and a new company of
 // the same name starts empty.

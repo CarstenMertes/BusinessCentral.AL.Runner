@@ -179,6 +179,15 @@ pub struct Session {
     /// The routine and current statement position of every frame, parallel to `frames`
     /// (`callstack.rs`).
     pub(crate) call_stack: Vec<CallFrame>,
+    /// The test runner's frames below a test, in `Callstack` form (`callstack.rs`); empty
+    /// outside a test run.
+    pub(crate) runner_frames: String,
+    /// `publish` is about to raise its event: the next `raise` has an event frame on the stack.
+    pub(crate) publish_frame: bool,
+    /// Events being raised that have no publisher routine (table, page and Global Triggers
+    /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
+    /// live call stack is not answered while one runs.
+    pub(crate) unpinned_event_depth: usize,
     /// `faultsite.rs`: whether to record where errors and refusals leave from, and the last one.
     fault_trace: bool,
     fault_site: Vec<faultsite::FaultFrame>,
@@ -199,6 +208,8 @@ pub struct Session {
     /// Private tables of temporary records, by temp id.
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
+    /// Ids of temporary tables whose last record variable has gone (`TempId`); freed on the next use of a temporary table.
+    pub(crate) temp_release: Rc<RefCell<Vec<u64>>>,
     pub(crate) next_guid: u64,
     /// The host's seed, mixed into every Guid the session makes (see [`Session::fresh_guid`]).
     guid_seed: i32,
@@ -375,6 +386,7 @@ impl Session {
             global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
+            temp_release: Default::default(),
             next_guid: 0,
             guid_seed: random_seed,
             sent_notifications: Vec::new(),
@@ -398,6 +410,9 @@ impl Session {
             recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
+            runner_frames: String::new(),
+            publish_frame: false,
+            unpinned_event_depth: 0,
             fault_trace: false,
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
@@ -484,10 +499,7 @@ impl Session {
                         .any(|(k, v)| {
                             k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")
                         }));
-                let temp_id = temporary.then(|| {
-                    self.next_temp += 1;
-                    self.next_temp
-                });
+                let temp_id = temporary.then(|| self.new_temp_id());
                 Value::Record(Rc::new(RefCell::new(RecordState {
                     table: *table,
                     temporary: *temporary,
@@ -546,6 +558,21 @@ impl Session {
             dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
             synthesized: false,
         })
+    }
+
+    /// How many private tables of temporary records the session holds (a table is freed once no record
+    /// variable uses it any more).
+    pub fn temporary_tables_held(&mut self) -> usize {
+        for dead in self.temp_release.borrow_mut().drain(..) {
+            self.temps.remove(&dead);
+        }
+        self.temps.len()
+    }
+
+    /// The identity of a new private table for a temporary record.
+    pub(crate) fn new_temp_id(&mut self) -> al_builtins::value::TempId {
+        self.next_temp += 1;
+        al_builtins::value::TempId::new(self.next_temp, self.temp_release.clone())
     }
 
     /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
@@ -623,8 +650,7 @@ impl Session {
     pub(crate) fn record_by_value(&mut self, rc: &Rc<RefCell<RecordState>>) -> Value {
         let mut st = rc.borrow().clone();
         if st.temporary {
-            self.next_temp += 1;
-            st.temp_id = Some(self.next_temp);
+            st.temp_id = Some(self.new_temp_id());
         }
         Value::Record(Rc::new(RefCell::new(st)))
     }
@@ -697,7 +723,8 @@ impl Session {
                         let s = rc.borrow();
                         s.temporary
                             && s.temp_id
-                                .and_then(|id| self.temps.get(&id))
+                                .as_ref()
+                                .and_then(|id| self.temps.get(&id.id()))
                                 .is_some_and(|store| store.has_rows(s.table))
                     } =>
                 {
@@ -747,6 +774,7 @@ impl Session {
         };
         self.frames.push(object);
         self.call_stack.push(CallFrame {
+            event: false,
             routine,
             pos: ir::NO_POS,
         });
@@ -913,9 +941,9 @@ impl Session {
             S::AssertError(body) => {
                 // A caught error rolls the transaction back to the last commit, also inside a modal
                 // page handler: the write pending before the page opened and the handler's own
-                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
-                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
-                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
+                // earlier writes are lost with it
+                // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit).
                 match self.exec_block(body, f) {
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
@@ -1579,6 +1607,9 @@ type Cells = Rc<RefCell<Vec<Value>>>;
 /// A routine on the call stack and the position of the statement it is running.
 #[derive(Clone, Copy)]
 pub(crate) struct CallFrame {
+    /// An event publisher's frame (`dispatch::publish`): shown as `(Event)` at the line of the
+    /// routine's `end`, whatever `pos` says.
+    pub(crate) event: bool,
     pub(crate) routine: usize,
     /// `Program::positions` id of the current statement; `NO_POS` before the first one.
     pub(crate) pos: u32,
@@ -1716,6 +1747,9 @@ impl al_builtins::native::Ctx for Session {
             .apps
             .get(self.engine.program.objects[obj].app as usize)?;
         Some((app.name.clone(), app.resources.clone()))
+    }
+    fn runner_call_stack(&self) -> String {
+        self.runner_frames.clone()
     }
     fn module_callstack(&self, skip: usize) -> Vec<al_builtins::value::ModuleInfoState> {
         let mut seen = Vec::new();

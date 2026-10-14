@@ -9,11 +9,11 @@ comment as a corpus citation and is deleted here.
 |---|---|---|---|
 | StrCheckSum | The result is `(M - (sum of digit*weight) mod M) mod M` with M defaulting to 10, a short weight string padded with `1` at the end, an empty source giving 0. A non-digit, a weight string longer than the source and a modulus below 1 are REFUSED (the documentation gives no text) | doc `text-strchecksum-method.md` (its example); corpus `session/TestSystemExtended.al:218-256` pins range and non-zero only | `al-builtins/src/native.rs` `strchecksum` |
 | SessionSettings | `RequestSessionUpdate(false)` calls the `[SessionSettingsHandler]` once with a copy of the settings; a handler answering false, `RequestSessionUpdate(true)` (writes User Personalization) and a call without a handler are REFUSED. Reading a property nobody set stays REFUSED, which keeps 3 of the 4 handler tests (their handler reads `TimeZone()` of untouched settings) from running: probe wanted for what a pristine `TimeZone()` and `LanguageId()` read | corpus `session/TestSessionSettings.al:464-545` | `al-vm/src/ui.rs` `ui_session_settings`, `al-builtins/src/sessiontypes.rs` `request_update` |
-| Pages | A `systempart`, `usercontrol`, `customaction` and `fileuploadaction` are no controls of a TestPage or a request page (pinned: handlers/TestPageLabelControlContracts.al, TestPageSystemPartListWindowContracts.al); they stay anchors for `addafter`/`modify`, and a reference is refused. A `label` is a field-like member (Value and Caption are its caption, not editable). `cuegroup`, `fixed` and `grid` hold controls and are no members; a cuegroup field ignores `SetValue` (handlers/TestPageCueGroupFixedGridContracts.al). Not pinned and refused: `SetValue` on a variable control with its own MinValue/MaxValue outside the bounds (Base App "Document Search"); the Visible = false rule is pinned for cuegroup fields only (other kinds keep the old rule). | handlers/TestPageCueGroupFixedGridContracts.al, TestPageLabelControlContracts.al | `al-sema/src/pages.rs` `add_one` |
+| Pages | A `systempart`, `usercontrol`, `customaction` and `fileuploadaction` are no controls of a TestPage or a request page (pinned: handlers/TestPageLabelControlContracts.al, TestPageSystemPartListWindowContracts.al); they stay anchors for `addafter`/`modify`, and a reference is refused. A `label` is a field-like member (Value and Caption are its caption, not editable). `cuegroup`, `fixed` and `grid` hold controls and are no members; a cuegroup field ignores `SetValue` (handlers/TestPageCueGroupFixedGridContracts.al). `SetValue` on a variable control with its own MinValue/MaxValue outside the bounds is pinned (TestValidation error, handlers/TestPageVariableMinMaxContracts.al); a decimal value with more than two decimals outside the bounds is refused (how BC shows it is not pinned); the Visible = false rule is pinned for cuegroup fields only (other kinds keep the old rule). | handlers/TestPageCueGroupFixedGridContracts.al, TestPageLabelControlContracts.al | `al-sema/src/pages.rs` `add_one` |
 | Pages | A page extension may `addfirst`/`addlast` to the `Processing` and `Prompting` action areas and `addafter` the `Category_Process` group of a page that declares none (Microsoft's extension of "Error Messages" does, and the oracle passes the tests that open it). The other implicit areas and `Category_*` groups are still refused. Probe wanted: extend a page with no `actions` through `addfirst(Navigation)`, `addlast(Creation)`, `addlast(Reporting)`, `addafter(Category_New)`, `addafter(Category_Report)`, and open it | handlers/TestPageModalHandler_PrecompiledPage.al:31,55 (the oracle passes them) | `al-sema/src/pages.rs` `merge` |
 | Reports | The report property `AllowScheduling` refuses when the report is run, not when a page only names the report in a variable. No corpus test runs a report with it. Probe wanted: run a ProcessingOnly report with `AllowScheduling = true` and `false`, observe that the run is the same | handlers/TestPrecompiledOptionCaption.al:81 only opens a page that names such a report | `al-sema/src/reports.rs` `layout` |
 | Request pages | A reportextension that only adds request page controls does not change the run. A control of an extension that names a `protected var` of the base report binds to the base report's variable (read, write, parameters text). A bare name that is no variable of the base is REFUSED | handlers/TestRequestPageControlErrorName.al (Ext5803Handler, cases 21-24) | `al-sema/src/lower.rs`, `al-ir` `Binding::BaseVar` |
-| Request pages | `TestRequestPage.SaveAsXml`: the parameters file is a UTF-8 byte order mark, `ArrayOfReportParameter` with `NavUserId` (the user name) and `ExecutionTime`. The corpus asserts the start, the user id value, the second parameter's name and the end; assumed: `Name` is closed on its line, the execution time is `yyyy-MM-ddTHH:mm:ss`, LF line ends. The data file (a .NET DataSet) is pinned for one data item with Integer and Text columns of non-empty values; every other column type, an empty value, nested or several data items are REFUSED. A `ParametersFile` / data file written inside a RunRequestPage handler is refused. `TemporaryPath()` answers `/tmp/` (what BC answers is not recorded) | al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al | `al-vm/src/pages/request.rs` `request_save_as_xml`, `dataset.rs` `finish_data_set` |
+| Request pages | `TestRequestPage.SaveAsXml`: the parameters file is a UTF-8 byte order mark, `ArrayOfReportParameter` with `NavUserId` (the user name) and `ExecutionTime`. The corpus asserts the start, the user id value, the second parameter's name and the end; LF line ends and no line feed after the last element; each name is followed by a fixed GUID (`NavUserIdAE6AEB42076449B78A3E78A5EE366751`, `ExecutionTime7587CE19257C4965B7E6066BDFF21EE3`); the time is `yyyy-MM-ddTHH:mm:ss.fffffff+00:00` (pinned by TestRequestPageSaveAsXmlContracts.al). The data file (a .NET DataSet) is pinned for one data item with Integer and Text columns of non-empty values; every other column type, an empty value, nested or several data items are REFUSED. A `ParametersFile` / data file written inside a RunRequestPage handler is refused. `TemporaryPath()` answers the relative `TEMP\` (BC's ends with `TEMP\`, also on Linux; the part before it is not recorded) | al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al | `al-vm/src/pages/request.rs` `request_save_as_xml`, `dataset.rs` `finish_data_set` |
 | Request pages | `ShowFilter = false` on a request page: the page opens and its controls work. Touching a data item of it (`RP.<Item>.SetFilter`, `RunRequestPage` parameters) is REFUSED. Probe wanted: `RunRequestPage` on a report whose request page says `ShowFilter = false`, with data items: does the parameters text still list `<DataItem>`, and does `RP.<Item>` compile | none | `al-vm/src/pages/request.rs` `require_filters_shown` |
 | Pages | A control bound to a field of a page-global temporary record (`field(C; TempBuf.Value)`) reads, but `SetValue` is REFUSED ("control whose type is not known"). The corpus test pins that a write through one control is seen by the other; whether the field's table `OnValidate` runs is not pinned | handlers/TestPageFieldSharedBinding_Tests.al:137 | `al-vm/src/pages.rs` `control_type` |
 | Record | Rename of a temporary record with a Blob: unpersisted write survives (pinned), a write persisted with Modify before the Rename is lost (pinned), but no single model of the temp store gives both; REFUSED. 3 tests | corpus `streams/TestBlobRenameIsolation.al:192-300` | `al-vm/src/records.rs` `Rename` |
@@ -49,7 +49,7 @@ comment as a corpus citation and is deleted here.
 | Text | `Trim`/`TrimStart`/`TrimEnd` without characters remove Unicode white space (the corpus only has spaces); with a character set they remove those characters | text/TestStringMethodContracts.al, handlers/TestReportNestedLinkImplicitParent.al:108 | `al-builtins/src/textfns.rs` `trim_with` |
 | Text | `TextBuilder` operations outside the text, `IndexOf`/`LastIndexOf` of an empty text with a start index, `LastIndexOf` with a start index outside the text, `Substring` with a start below 1 or a negative count, `DelStr`/`InsStr` at a position below 1, `DelStr` with a length past the end, `IncStr` with an increment, `ConvertStr` are refused where the probes did not measure them | none | `textfns.rs` |
 | Text | `DelChr(String, Where)` without `Which` removes spaces | text/TestTextExtended.al DelChr_TrimLeadingAndTrailingSpaces | `textfns.rs` `del_chr` |
-| Errors | `GetLastErrorCallStack` after an error lists the AL frames the error unwound through, one per line, innermost first, in the form `"Object Name"(CodeUnit 60212).RaiseError line 2 - App by Publisher version 1.0.0.0`. A trigger is `OnRun(Trigger)`. `line` is the line of the statement that was running minus the line of the `procedure`/`trigger` keyword. Pinned: `(CodeUnit N)`, ` line `, ` by `, ` version `, `OnRun(Trigger)`, no `(Trigger)` on a procedure, and `''` with no error. Not pinned, and taken from AL Runner v2 (which measured them on BC 27/28: `AlCallStackCapture.FormatFrame`, `AlSourceSpanCodec.RelativeLine`, its `InlineScopeEmitTests`): the quoted object name, `Table` for table triggers, the exact line count, the ` - App by Publisher version V` tail, the `\n` separator (BC may use CR LF), and the frame of the catching routine. Frames the format is not known for (pages, reports, queries, xmlports, extensions, field triggers, routines with a made-up name, routines with no source) put an unreadable marker in the stack, so a test that inspects it is not run. No test-runner frames are added below the test's own frame | codeunit/TestCodeunitAlCallStack.al | `al-vm/src/callstack.rs`, `al-builtins/src/native.rs` `UNTRACKED_CALL_STACK` |
+| Errors | `GetLastErrorCallStack` after an error lists the AL frames the error unwound through, innermost first, a backslash after every frame (so the text ends with one), the test runner's frames below the test's (see "SessionInformation.Callstack"). Frame form `"Object Name"(CodeUnit 60212).RaiseError line 2 - App by Publisher version 1.0.0.0`; a trigger is `OnRun(Trigger)`, a table trigger `OnInsert(Trigger)`, a field trigger `"Val - OnValidate"(Trigger)`, an event publisher `OnEvent(Event)` at the line of its `end`. `line` counts from the `procedure`/`trigger` keyword (header 0, first statement after `begin` 2); a caller shows the line of its call. PINNED by session/TestSessionInformationCallstackContracts.al (BC 27.5, not truncated). Still unpinned and left unreadable (a marker in the stack, so a test that inspects it is not run): pages, reports, queries, xmlports, extensions, routines with a made-up name or no source, and the frames BC adds around table, page and platform events | codeunit/TestCodeunitAlCallStack.al, session/TestSessionInformationCallstackContracts.al | `al-vm/src/callstack.rs`, `al-builtins/src/native.rs` `get_last_error_call_stack` |
 | Errors | `ErrorInfo.Callstack()` and the call stack in error dialogs are not implemented: no corpus test reads them (errorinfo/TestErrorInfoType.al only compiles them). Refused | none | `al-builtins` (no implementation) |
 | SetFilter | inside a quoted expression only the filter operators are literal; a leading `@` and the wildcards `*`/`?` stay active | record/TestFilterQuotedLiterals.al | `al-builtins/src/filter.rs` `single` |
 | Events | `DeleteAll(true)` raises the delete events (Before, After) once per row, with the trigger, like `Delete(true)` per row; the corpus pins only the per-row OnDelete trigger | corpus `record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord` (trigger only); Truncate guard text "use DeleteAll" | `al-vm/src/records.rs` `DeleteAll` |
@@ -631,9 +631,12 @@ submodule since `eb46da5`; `Holders` is TestTableGlobalsHolders.al, `Record` is 
 
 ## Page variable Editable
 
-| Area | Assumption | Probe wanted |
-|---|---|---|
-| `P.Editable := false` and `P.Editable(false)` on a Page variable before it runs | REFUSED. Base Application's "Reminder Level Communication" action "Add New Language" does it before `RunModal` (`Languages.Editable := false; Languages.LookupMode(true); Languages.RunModal()`); the runtime used to raise "The TestPage is not open", which BC does not. Only `CurrPage.Editable` in `OnOpenPage` is pinned (handlers/TestPageControlEditableRoutes.al:536-555, TestPageEditable_Tests.al:150-180) | A page variable with `Editable := false` before `RunModal` and before `Run`: does the page open, and does the TestPage in the handler report `Editable()` false and refuse `SetValue`; also `Editable` read on a page variable that has not run |
+PINNED (handlers/TestPageVariableEditableContracts.al, BC 27.5): `P.Editable := false` and `P.Editable(false)` on a Page
+variable that has not run are accepted; the variable reads true until set and then what it was set to; the page opens
+with that value for `Run` and `RunModal`, and the TestPage in the handler reports `Editable()` false for the page and its
+fields. The TestPage does not enforce it: `SetValue` on a field still works. `PageState::editable_preset`
+(`al-vm/src/pages.rs`, `Editable` arm). Not probed: a View-mode page given `Editable(true)`, `CurrPage.Editable` read
+before the page opens.
 
 ## Code coverage rows
 
@@ -644,11 +647,11 @@ pin, and the default chosen:
 
 | Area | Assumption | Probe wanted |
 |---|---|---|
-| Which lines have a row | A `Trigger/Function` row per routine of an object that ran while recording (the declaration line), a `Code` row per source line that holds a statement. `begin`, `end`, `var` and comment lines have none | List all rows of a small codeunit after recording: which lines, which `Line Type` (`Object`, `Empty`) |
+| Which lines have a row | A `Trigger/Function` row per routine of an object that ran while recording (the declaration line), an `Empty` row for its `begin` and `end` lines (pinned), a `Code` row per source line that holds a statement. `var` and comment lines have none (not probed) | List all rows of a small codeunit after recording: which lines, which `Line Type` (`Object`, `Empty`) |
 | Objects never entered while recording | No rows | Whether the table lists objects that did not run |
 | `No. of Hits` of a line with several statements | The largest count of its statements | A one-line `if X then Y;` run with X true and false, loop bodies of a known count |
 | `No. of Hits` of a `Trigger/Function` row | 0 | Whether it counts the calls |
-| `Line`, `Code Coverage Status`, `Method Id` of Code Coverage | `Line` empty, `Status` NonApplicable, `Method Id` 0 | The columns of the rows above |
+| `Line`, `Code Coverage Status` of Code Coverage | PINNED for an app compiled without its source in the symbols (the default; codeunit/TestCodeCoverageLineTextContracts.al): every row's `Line` is the platform's text "The extension that declares this object has its manifest property ShowMyCode (being deprecated) or IncludeSourceInSymbolFile set to false. This means that the source code cannot be viewed."; the `begin` and `end` lines of a routine are `Empty` rows; `Trigger/Function` and `Empty` rows are Non Applicable with 0 hits, a `Code` row is Covered with hits and Not Covered with 0. Assumed: the same text for every app, including a dependency app and an app whose manifest sets `ShowMyCode` or `IncludeSourceInSymbolFile` (BC would show the source line there). `Method Id` stays unread | An app with `showMyCode = true`: the `Line` text, trimmed or not; rows for `var`, comment and blank lines |
 | `Test ID`, `Method ID` | `Test ID` counts from 1 per session; `Method ID` is the routine's index in its object plus one. Only compared between rows (TestCodeCoveragePerTest.al header) | none |
 | A `[Test]` procedure that calls another `[Test]` procedure | Both have a Tests Run row; the methods of the inner one are noted for the inner one only | A nested test start while recording |
 | Rows after a rollback | The rows are written into the store when read, so an `asserterror` rolls them back with the other writes of the transaction | Whether BC keeps coverage rows across a rollback |
@@ -669,60 +672,28 @@ Found by Tests-ERM with test data (issue 8). The lowering refuses each with the 
 
 ## SessionInformation.Callstack
 
-`SessionInformation.Callstack` is REFUSED (`builtin SessionInformation.Callstack#N is not implemented`). No corpus test reads
-it (`session/TestMiscTypes.al` calls the other `SessionInformation` methods only). It stops 337 Tests-ERM tests (with test
-data, BC 27.5.46862.56320) through one caller: Base Application's `Error Message Management.GetCurrCallStack`, which the
-`Error Message` table calls to store the stack (`SetErrorCallStack`). That caller reads the text, so the refusal cannot be
-turned into an opaque value: it calls `StrPos` on it for the frame `"Error Message Management"(CodeUnit 28)`, keeps what
-follows the last such frame, then cuts at the first `\`. Two facts follow from that code alone (Microsoft's source, not a
-corpus pin, so nothing is built on them yet):
+PINNED (session/TestSessionInformationCallstackContracts.al, BC 27.5; the runner frames are the same on 28.5 and 29.0
+in the corpus CI failure texts). Built in `al-vm/src/callstack.rs` (`live_call_stack`) and `sessionops.rs`.
 
-- the frames of the value are separated by a backslash, not by a line feed (the same code splits `GetLastErrorCallstack` at
-  `\` in `GetCallStackTop`, while the runtime separates the frames of `GetLastErrorCallStack` by `\n`; see the "Errors"
-  row above, which notes that BC may differ);
-- a frame reads `"Error Message Management"(CodeUnit 28)...`, the form `GetLastErrorCallStack` has, and the stack lists the
-  innermost frame first, so what follows the last codeunit 28 frame are the callers.
+- Frames separated by a backslash, the text ends with one, no line feed, not truncated.
+- Innermost first: the procedure that reads `Callstack`, its callers, then the runner frames.
+- Frame form and line counting: see the "Errors" row for `GetLastErrorCallStack`. A trigger (`OnValidate`, `OnInsert`,
+  `OnRun`) and a subscriber (subscriber frame, then `"Publisher"(CodeUnit n).Event(Event) line 2`, then the firing
+  procedure) are pinned. `Codeunit.Run` and `Run` of a codeunit variable give the same `OnRun(Trigger)` frame.
+- `GetLastErrorCallStack` uses the same separator and form; its failing frame has the line of the `Error` call.
 
-What is not known, and what the probe must show. Run on the machine with the BC container, in a test codeunit
-(`Subtype = Test`) of an app with a known name, publisher and version, and write the text out with `Error(Txt)` or read it
-character by character:
+Our runner's bottom frames (decision in `docs/owner-review.md`): the six frames of BC's runner, with the lines of the
+corpus CI texts, are appended below the test only while a `[Test]` procedure runs (`runtime.rs` `runner_frames`), so a test
+can see them and nothing else does. Their app is `Test Runner by Microsoft`; its version is the loaded Test Runner
+app's, else the BC major.minor of the run followed by `.0.0` (the build number is not observable to a test that does not
+print it).
 
-```al
-local procedure Inner(): Text
-begin
-    exit(SessionInformation.Callstack);
-end;
+Still refused (`Signal::Unsupported`): a stack that has a frame of a page, report, query, xmlport or extension, or that
+is inside an event with no publisher routine (table events, page events, Global Triggers). BC puts frames there that no
+probe recorded.
 
-local procedure Middle(): Text
-begin
-    exit(Inner());
-end;
-
-[Test]
-procedure Probe()
-var
-    Txt: Text;
-    i: Integer;
-    Codes: Text;
-begin
-    Txt := Middle();
-    for i := 1 to StrLen(Txt) do
-        if Txt[i] < 32 then
-            Codes += StrSubstNo('[%1@%2]', Txt[i], i);   // the separator characters and where they are
-    Error('LEN=%1 CODES=%2 TEXT=%3', StrLen(Txt), Codes, Txt);
-end;
-```
-
-Read from it: (1) the separator between frames (a backslash, CR LF, LF); (2) the order (is `Inner` first); (3) the form of
-each frame: quoting of the object name, `(CodeUnit N)`, `.Procedure`, ` line N`, ` - App by Publisher version V`, whether
-`line` is relative to the procedure as in `GetLastErrorCallStack`; (4) whether the frame that calls `Callstack` is the first
-line; (5) what lies below the test procedure (runner codeunits, a platform frame) and whether the text is cut at a length;
-(6) the same from a trigger (`OnRun`, `OnValidate` of a field, a page trigger), from an event subscriber, inside
-`asserterror` and through `Codeunit.Run`; (7) the text of `GetLastErrorCallStack` after an `asserterror Inner()` in the same
-codeunit, to settle the separator there too. With those, implement it beside `al-vm/src/callstack.rs` (which already holds
-the frames of the running stack) and add the corpus citation.
-
-The test of the Error Message table that reads the stored stack, if any, is Base Application's own; no corpus test reads it.
+Probes wanted: `Callstack` read from a page trigger, a report trigger, inside a table event subscriber
+(`OnAfterInsertEvent`), from a pageextension, and from a procedure with a quoted name.
 
 ## Probe batch 7 (a real project: NaviPartner npcore-partners)
 
@@ -823,7 +794,16 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
     project's `CurrentDateTime + (Seconds * 1000)`. Probe wanted: `DT + 1000` for an `Integer`, a `BigInteger` and a
     `Decimal` constant and variable (milliseconds? a compile error?), `DT - 1000`, and `DT + 1000.5` (rounding).
 
+## All buckets with test data (issue 10)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| A temporary record of a `TableType = CRM` table | Needs no table connection: its table is in memory (was: the connection error of a non-temporary record). Not pinned by a corpus line: Base Application's `CRM Synch. Helper.ClearCache` does `Reset()` and `DeleteAll()` on temporary CRM records and Microsoft's CRM tests run it with no connection registered (22 tests of Tests-CRM integration start with `ResetEnvironment`) | A temporary variable of the ALT CRM Entity fixture (60291) with no connection registered: Init, Insert, Count, Reset, DeleteAll |
+| A field declared `ObsoleteState = Removed` in `RecordRef` | Listed like any field (FieldCount, FieldIndex, FieldExist, Field(n)), as before. Microsoft's Tests-Misc T120 to T122 expect it to be left out and `Field(n)` to raise "Field X (n) of table Y (id) is obsoleted". Refusing `Field`/`FieldExist` for it stopped 252 passing Base Application tests (`General Ledger Setup` field 110 and others), so the behavior is left and not refused | A table with a removed field: `FieldCount`, `FieldExist`, `Field(n)` and `FieldIndex` loops, and the error text; and whether Base Application's `RecRef.Field(110)` of General Ledger Setup (field declared Removed) raises there |
+| Data: Cost Type, Service Hour | The restored CRONUS holds no row (Cost Accounting and Service Hours are not set up in the demo backup). Not a runtime question | none |
+
 ## DotNet values typed at run time (ADR-024, Proposed)
+## DotNet values typed at run time (ADR-024, Accepted, build deferred)
 
 Nothing is implemented. The corpus app is `Cloud` (`corpus/tests/al-language/app.json:63`), so these need an
 `OnPrem` probe app first (ADR-024, decision 2). Today the four cases are refused statically (`no_dotnet_operand`,
@@ -855,6 +835,44 @@ Documentation-only assumption if the owner approves it (ADR-024, decision 3): a 
 table maps to an AL scalar (ADR-014 section 4) is that AL scalar wherever it is used; `CopyStream` copies the
 unread bytes and advances the source; `foreach` calls `GetEnumerator`, `MoveNext`, `Current` and settles each
 element into the loop variable. Null, objects, enums and `Format` of an object stay refused.
+
+### Probe results (al-language-onprem/dotnet/TestDotNetValueKindsContracts.al, BC 27.5)
+
+Every probe above is now pinned, on a Target = OnPrem app (decision 2 is moot). None is built: each needs the
+run-time settle of a DotNet result (`Expr::DotNetOperand`, ADR-024 decision 1), because the checker types a member
+result as `DotNet("")` and lowering refuses it before the run. Read before the build:
+
+1. **Kind map.** CLR `int` and `short` are Integer, `long` BigInteger, `byte` Byte, `char` Char (`Format` gives the
+   letter), `float`, `double`, `decimal` Decimal, `bool` Boolean, `string` Text, `TimeSpan` Duration, `Guid` Guid,
+   `DateTime` DateTime. An enum value stays a DotNet object (`Format` is the member name). A null string is an
+   empty Variant (neither Text nor DotNet). `Count - 1`, `Length / 2` and `Length - 1` as a `for` bound are Integer
+   arithmetic.
+2. **String compare.** A string property compared with a Text literal is case SENSITIVE (`'https' = 'HTTPS'` is false).
+   A null string result: `= ''` true, `Format` gives `''`, `+ 'x'` gives `'x'`, assigned to Text its `StrLen` is 0.
+3. **Uncatchable errors.** `StrLen(null string)` and `Format(null object)` raise "Unexpected CLR exception thrown.:
+   System.ArgumentNullException", which `asserterror` does not catch. Not modelled: a failure that `asserterror`
+   cannot catch needs a new `Signal` (a seam); the call stays refused, and so does any null reaching `StrLen` or `Format`.
+4. **Format of a DotNet object is `ToString()`.** A `Type` reads `System.Text.StringBuilder`, an enum its member name,
+   a `StringBuilder` its content; `Format(x, 0, 2)` and `Format(x, 0, 0)` give the same text. `IsNull` is true for an
+   unassigned object. Building it needs the settle step (to tell a null object, which is the uncatchable error, from
+   a null string, which is `''`).
+5. **Enum operators.** `=` and `<>` between two enum values compare; `+` adds them as numbers (`Number` 111 +
+   `AllowCurrencySymbol` 256 is 367). `=` between two objects of a class, or of different DotNet types, does not
+   compile (AL0175), so the runtime need not model it.
+6. **foreach.** Over a `string[]` (Text elements), an `ArrayList` of ints (Integer or Variant elements), a `Queue`
+   (not consumed) and a string (chars). A Text loop variable over int elements: "Invalid Conversion. Source: Int32,
+   Destination: NavText." / `Argument`. A Date variable over text elements: "Unable to convert from
+   Microsoft.Dynamics.Nav.Runtime.NavText to System.DateTime." / `Conversion`. A null collection: "A DotNet variable
+   has not been instantiated. Attempting to call System.Collections.ArrayList.GetEnumerator in CodeUnit <name>:
+   <procedure>" / `DotNetVariableNotCreated`. A collection modified in the loop: "A call to
+   System.Collections.ArrayList+ArrayListEnumeratorSimple.MoveNext failed with this message: Collection was
+   modified; enumeration operation may not execute." / `DotNetInvoke:InvalidOperation` after the first element.
+7. **CopyStream with a MemoryStream.** InStream into MemoryStream copies all bytes and leaves the AL source at its
+   end and the MemoryStream position at the end. MemoryStream into an OutStream copies the WHOLE stream whatever the
+   position and resets the position to 0. With a count of 5 it copies the first 5 bytes and leaves Position 5. An
+   InStream already read by one byte copies the remaining ten.
+8. **DateTimeOffset.** `LocalDateTime` is a DotNet DateTime that converts to an AL DateTime; `Offset` converts to a
+   Duration (blank when zero); `DateTime - Duration` works.
 
 ## Tests-ERM defects (issue 9)
 

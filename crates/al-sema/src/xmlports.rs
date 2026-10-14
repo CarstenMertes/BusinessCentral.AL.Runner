@@ -128,8 +128,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
             // UseRequestPage only matters for Run, which is not implemented: Export and Import
             // never open the request page.
             "userequestpage" => {}
-            // xmlport/TestXmlPortTextFormatsContracts.al (corpus branch al-runtime-rs, pending
-            // push): VariableText and FixedText pin these; an Xml port's encoding is not pinned.
+            // xmlport/TestXmlPortTextFormatsContracts.al: VariableText and FixedText pin these; an Xml port's encoding is not pinned.
             "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => out.utf8 = true,
             "fieldseparator" => out.field_separator = Some(unquote(&value)),
             "fielddelimiter" => out.field_delimiter = Some(unquote(&value)),
@@ -276,7 +275,7 @@ pub struct Context<'a> {
     /// The object's global slots, by lower-case name.
     pub slots: &'a HashMap<String, usize>,
     /// (object, source offset) to routine index.
-    pub routine_at: &'a HashMap<(usize, usize), usize>,
+    pub routine_at: &'a crate::lower::RoutineAt,
     pub source_slot: usize,
     pub destination_slot: usize,
 }
@@ -310,7 +309,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
             .filter_map(|t| {
                 cx.routine_at
                     .get(&(cx.oi, usize::from(t.syntax().text_range().start())))
-                    .map(|r| (t.name().to_ascii_lowercase(), *r))
+                    .map(|r| (t.name().to_ascii_lowercase(), r))
             })
             .collect();
         let mut node = ir::XmlNode {

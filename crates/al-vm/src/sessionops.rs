@@ -168,6 +168,16 @@ impl Session {
         if let Some(answer) = self.host_op(id, args) {
             return answer;
         }
+        if id == "SessionInformation.Callstack#1" {
+            // Frames innermost first, a backslash after each, the runner's below
+            // (session/TestSessionInformationCallstackContracts.al:130-143).
+            return match self.live_call_stack() {
+                Some(text) => Ok(Value::Text(text)),
+                None => unsupported(
+                    "SessionInformation.Callstack with a frame whose format is not pinned (an event of a table, page or the platform, or an object type not measured)",
+                ),
+            };
+        }
         if id == "Database.IsInWriteTransaction#1" {
             // An uncommitted write opens one, a Commit and the test boundary close it
             // (codeunit/TestWriteTxTestBoundary.al:93,103,142). Writes to temporary tables are

@@ -5,18 +5,19 @@
 //! is raised: each frame it unwinds through adds its own line, innermost first, and the frame
 //! that catches it (`asserterror`, a TryFunction call, a guarded `Codeunit.Run`) adds the last.
 //!
-//! The corpus pins only parts of the text (codeunit/TestCodeunitAlCallStack.al: `(CodeUnit N)`,
-//! ` line `, ` by `, ` version `, `OnRun(Trigger)` and no `(Trigger)` on a procedure). The frame
-//! format and the line counting follow AL Runner v2, which measured them on real BC
-//! (`AlCallStackCapture.FormatFrame`, `AlSourceSpanCodec.RelativeLine`):
+//! The corpus pins the text (codeunit/TestCodeunitAlCallStack.al, and on BC 27.5
+//! session/TestSessionInformationCallstackContracts.al for codeunit, table, field-trigger and event
+//! frames and for the line counting):
 //!
 //! ```text
 //! "Object Name"(CodeUnit 60212).RaiseError line 2 - App Name by Publisher version 1.0.0.0
 //! ```
 //!
-//! One frame per line, innermost first; a trigger is `OnRun(Trigger)`; `line` is the line of the
+//! One frame per line, innermost first (`SessionInformation.Callstack` and `GetLastErrorCallStack`
+//! show a backslash after each frame instead of the line feed kept here; corpus
+//! session/TestSessionInformationCallstackContracts.al:12-14); a trigger is `OnRun(Trigger)`; `line` is the line of the
 //! statement that was running minus the line of the `procedure` or `trigger` keyword. A frame the
-//! format is not known for (an object type that has not been measured, a field trigger, a routine
+//! format is not known for (an object type that has not been measured, a routine
 //! with no source) puts `UNTRACKED_CALL_STACK` in the stack, and no text function reads a text
 //! that holds it.
 
@@ -30,6 +31,27 @@ impl Session {
         if let (Some(&object), Some(&frame)) = (self.frames.last(), self.call_stack.last()) {
             self.add_frame(e, object, frame);
         }
+    }
+
+    /// Sets the frames of the test runner that stand below a test's frames (the corpus job and
+    /// `alrunner` set them; a session without a runner has none).
+    pub fn set_runner_frames(&mut self, frames: String) {
+        self.runner_frames = frames;
+    }
+
+    /// `SessionInformation.Callstack`: the live frames, innermost first, a backslash after each,
+    /// then the runner's. `None` where a frame has no pinned format (the caller refuses).
+    pub(crate) fn live_call_stack(&self) -> Option<String> {
+        if self.unpinned_event_depth > 0 {
+            return None;
+        }
+        let mut out = String::new();
+        for (&object, &frame) in self.frames.iter().zip(&self.call_stack).rev() {
+            out.push_str(&frame_line(&self.engine.program, object, frame)?);
+            out.push('\\');
+        }
+        out.push_str(&self.runner_frames);
+        Some(out)
     }
 
     /// Adds the line of routine `frame` of `object` to the error's stack.
@@ -54,19 +76,34 @@ fn frame_line(program: &ir::Program, object: usize, frame: CallFrame) -> Option<
         "table" => "Table",
         _ => return None,
     };
-    // A field trigger (`Name - OnValidate`) and a routine with an unusual name are not measured.
-    if routine.field.is_some() || !routine.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    // A routine with an unusual name is not measured.
+    if !routine.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return None;
     }
-    let stmt = program.pos(frame.pos)?;
+    // The event frame of a publisher stands at its `end` (corpus
+    // session/TestSessionInformationCallstackContracts.al:187: an empty publisher is line 2).
+    let stmt = program.pos(if frame.event { routine.end_pos } else { frame.pos })?;
     let signature = program.pos(routine.pos)?;
     let line = stmt.line.checked_sub(signature.line)?;
+    let name = match routine.field {
+        // "<field> - OnValidate" is one quoted name (same file:186).
+        Some(f) => {
+            let field = obj.table.as_ref()?.fields.get(f)?;
+            format!("\"{} - {}\"", field.name, routine.name)
+        }
+        None => routine.name.clone(),
+    };
     let mut out = format!(
-        "\"{}\"({kind} {}).{}{} line {line}",
+        "\"{}\"({kind} {}).{name}{} line {line}",
         obj.name.replace('"', "\"\""),
         obj.id?,
-        routine.name,
-        if routine.is_trigger { "(Trigger)" } else { "" },
+        if frame.event {
+            "(Event)"
+        } else if routine.is_trigger {
+            "(Trigger)"
+        } else {
+            ""
+        },
     );
     if let Some(app) = program.apps.get(obj.app as usize) {
         if !app.publisher.is_empty() && !app.version.is_empty() {

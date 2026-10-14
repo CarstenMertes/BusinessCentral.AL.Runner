@@ -390,8 +390,8 @@ fn filter_groups_combine_as_and_and_reset_clears_all() {
     assert_eq!(text(r), "02|1..3||3|22..5|5");
 }
 
-// SetRecFilter keeps the filters on other fields (corpus branch al-runtime-rs, pending push:
-// record/TestRecordViewCopyMarkContracts.al:SetRecFilter_KeepsFiltersOnOtherFields_...).
+// SetRecFilter keeps the filters on other fields (record/TestRecordViewCopyMarkContracts.al:41,
+// SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey).
 #[test]
 fn setrecfilter_keeps_a_filter_on_another_field() {
     let r = run(

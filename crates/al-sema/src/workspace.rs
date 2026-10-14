@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::OnceLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum ObjKind {
     Table,
     TableExtension,
@@ -392,7 +392,7 @@ impl Workspace {
 
     /// The interfaces interface `i` extends, nearest first (`interface I extends J`, and J's own
     /// base after it). A cycle ends the list. Pinned by codeunit/TestInterfaceRuntimeContracts.al:
-    /// `Probe IBar extends Probe IFoo` (corpus branch al-runtime-rs, probe on BC 27.5).
+    /// `Probe IBar extends Probe IFoo` (:19).
     pub fn interface_bases(&self, i: usize) -> Vec<usize> {
         let mut out = Vec::new();
         let mut at = i;

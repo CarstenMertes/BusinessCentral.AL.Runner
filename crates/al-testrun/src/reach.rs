@@ -64,7 +64,8 @@ fn build(lowered: &Lowered) -> Graph {
         g.reached[i] = !stub;
         g.refused[i] = !stub && !reasons.is_empty();
         g.dep[i] = lowered.dependency[o];
-        g.edges[i] = lowered.calls[o][r]
+        g.edges[i] = lowered
+            .calls_of(o, r)
             .iter()
             .filter(|&&(co, cr)| co < objects.len() && cr < objects[co].routines.len())
             .map(|&(co, cr)| g.base[co] + cr)

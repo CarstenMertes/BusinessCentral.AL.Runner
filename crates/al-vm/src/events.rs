@@ -578,7 +578,7 @@ mod tests {
             element: element.into(),
             subscriber: "codeunit \"S\"".into(),
         };
-        l.program.uncompiled_subscribers = vec![
+        std::sync::Arc::make_mut(&mut l.program).uncompiled_subscribers = vec![
             uncompiled(
                 al_ir::PlatformPublisher::None,
                 Some(0),

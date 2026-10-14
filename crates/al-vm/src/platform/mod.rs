@@ -335,7 +335,7 @@ mod tests {
     use super::*;
 
     fn engine() -> Arc<Engine> {
-        Engine::new(Default::default(), Vec::new())
+        Engine::new(al_ir::Program::default(), Vec::new())
     }
 
     fn some_mat() -> Rc<mat::Mat> {

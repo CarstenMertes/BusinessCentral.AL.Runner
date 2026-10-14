@@ -1115,7 +1115,7 @@ mod tests {
         let l = crate::lower::lower_with_workers(&ws, &members, &checked, true, lower);
         format!(
             "{}\n{:?}\n{:?}\n{:?}",
-            serde_json::to_string(&l.program).unwrap(),
+            serde_json::to_string(&*l.program).unwrap(),
             l.unsupported,
             l.calls,
             ws.diagnostics

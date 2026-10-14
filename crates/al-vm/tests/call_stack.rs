@@ -22,8 +22,8 @@ fn run(src: &str, routine: &str) -> Result<Value, Signal> {
         &Default::default(),
     );
     assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-    l.program.apps[0].publisher = "Tester".into();
-    l.program.apps[0].version = "1.2.3.4".into();
+    l.program_mut().apps[0].publisher = "Tester".into();
+    l.program_mut().apps[0].version = "1.2.3.4".into();
     let blocked = l
         .unsupported
         .iter()

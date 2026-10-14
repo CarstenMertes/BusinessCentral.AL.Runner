@@ -123,6 +123,11 @@ pub struct Phases {
 /// How many test codeunits `--timings` names.
 pub const SLOWEST: usize = 8;
 
+/// Drops `value` on another thread. The process does not wait for it when it ends.
+pub fn retire<T: Send + 'static>(value: T) {
+    std::thread::spawn(move || drop(value));
+}
+
 /// What a run is asked to do beyond running everything.
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
@@ -255,7 +260,7 @@ impl CorpusRuntime {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
         let compile_started = std::time::Instant::now();
-        let (_ws, mut lowered) = al_sema::lower::compile_apps_with(
+        let (ws, mut lowered) = al_sema::lower::compile_apps_with(
             apps,
             kinds,
             symbols,
@@ -266,7 +271,12 @@ impl CorpusRuntime {
                 ..Default::default()
             },
         );
-        for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
+        // Nothing else holds the program yet, so this does not copy it.
+        for (app, m) in std::sync::Arc::make_mut(&mut lowered.program)
+            .apps
+            .iter_mut()
+            .zip(manifests)
+        {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
             app.resources = m.resources.clone();
@@ -390,6 +400,10 @@ impl CorpusRuntime {
         codeunit_times.sort_by(|a, b| b.2.cmp(&a.2));
         codeunit_times.truncate(SLOWEST);
         let suites = suites.iter().map(|s| s.name.clone()).collect();
+        // The workspace and the lowered program are big: dropping them takes as long as lowering
+        // a tenth of the corpus, and nothing waits for it.
+        let compile_parts = lowered.timings;
+        retire((ws, lowered));
         CorpusRuntime {
             outcomes,
             suites,
@@ -398,7 +412,7 @@ impl CorpusRuntime {
                 compile: compile_time,
                 baseline: baseline_time,
                 tests: tests_time,
-                compile_parts: lowered.timings,
+                compile_parts,
                 engine: engine_time,
                 slowest: codeunit_times,
             },
@@ -2438,5 +2452,21 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
         // Under Codeunit isolation the same Commit is the pinned default behaviour.
         let o = outcomes_isolated(&src, TestIsolation::Codeunit);
         assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+    }
+
+    #[test]
+    fn retire_drops_the_value_on_another_thread() {
+        struct Marker(std::sync::mpsc::Sender<std::thread::ThreadId>);
+        impl Drop for Marker {
+            fn drop(&mut self) {
+                let _ = self.0.send(std::thread::current().id());
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        super::retire(Marker(tx));
+        let dropped_on = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the value is dropped");
+        assert_ne!(dropped_on, std::thread::current().id());
     }
 }

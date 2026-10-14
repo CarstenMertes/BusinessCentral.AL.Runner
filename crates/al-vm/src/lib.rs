@@ -47,7 +47,7 @@ pub use ui::{UiHandler, UiKind};
 static NEXT_ENGINE_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub struct Engine {
-    pub program: ir::Program,
+    pub program: Arc<ir::Program>,
     /// Per object, per routine: why it cannot run, if it cannot.
     pub blocked: Vec<Vec<Option<String>>>,
     /// Store schema per table object.
@@ -70,13 +70,13 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn new(program: ir::Program, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
+    pub fn new(program: impl Into<Arc<ir::Program>>, blocked: Vec<Vec<Option<String>>>) -> Arc<Engine> {
         Engine::with_config(program, blocked, None, dotnet::DotNetConfig::default())
     }
 
     /// An engine that runs as `target`: version-gated behaviour follows it (ADR-015 3.4).
     pub fn with_target(
-        program: ir::Program,
+        program: impl Into<Arc<ir::Program>>,
         blocked: Vec<Vec<Option<String>>>,
         target: Option<al_version::Target>,
     ) -> Arc<Engine> {
@@ -85,7 +85,7 @@ impl Engine {
 
     /// An engine whose `DotNet` calls are served by `dotnet` (ADR-014). `new` uses no .NET.
     pub fn with_dotnet(
-        program: ir::Program,
+        program: impl Into<Arc<ir::Program>>,
         blocked: Vec<Vec<Option<String>>>,
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
@@ -94,11 +94,12 @@ impl Engine {
 
     /// Target and .NET host together.
     pub fn with_config(
-        program: ir::Program,
+        program: impl Into<Arc<ir::Program>>,
         blocked: Vec<Vec<Option<String>>>,
         target: Option<al_version::Target>,
         dotnet: dotnet::DotNetConfig,
     ) -> Arc<Engine> {
+        let program: Arc<ir::Program> = program.into();
         let tables = program
             .objects
             .iter()

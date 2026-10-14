@@ -1170,13 +1170,15 @@ fn raising_an_event_with_a_declared_but_uncompiled_subscriber_is_refused() {
         Default::default(),
     );
     let table = l.program.objects.iter().position(|o| o.name == "WsRow").unwrap();
-    l.program.uncompiled_subscribers.push(al_ir::UncompiledSubscriber {
-        publisher: Some(table as u32),
-        platform: al_ir::PlatformPublisher::None,
-        event: "onafterinsertevent".into(),
-        element: String::new(),
-        subscriber: "codeunit \"Elsewhere\"".into(),
-    });
+    std::sync::Arc::make_mut(&mut l.program)
+        .uncompiled_subscribers
+        .push(al_ir::UncompiledSubscriber {
+            publisher: Some(table as u32),
+            platform: al_ir::PlatformPublisher::None,
+            event: "onafterinsertevent".into(),
+            element: String::new(),
+            subscriber: "codeunit \"Elsewhere\"".into(),
+        });
     let blocked = l
         .unsupported
         .iter()

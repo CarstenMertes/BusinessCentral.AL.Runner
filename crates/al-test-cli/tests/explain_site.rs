@@ -106,7 +106,7 @@ fn run() -> (al_ir::Program, Vec<(String, Outcome, explain::TestDetail)>) {
             (name, outcome, d)
         })
         .collect();
-    (l.program.clone(), rows)
+    ((*l.program).clone(), rows)
 }
 
 fn of<'a>(

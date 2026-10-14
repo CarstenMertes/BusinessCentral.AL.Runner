@@ -26,13 +26,22 @@ pub struct CompileTimings {
 pub struct Lowered {
     /// Zero unless the compile ran through `compile_apps_with`.
     pub timings: CompileTimings,
-    pub program: ir::Program,
+    /// Shared with the engine that runs it: the program is big, and copying it cost as much as
+    /// lowering the workspace's own code.
+    pub program: std::sync::Arc<ir::Program>,
     /// Per object, per routine: why it cannot run (empty = it can).
     pub unsupported: Vec<Vec<Vec<String>>>,
     /// Per object, per routine: the routines it calls directly, as (object, routine).
     pub calls: Vec<Vec<Vec<(usize, usize)>>>,
     /// Per object: it belongs to a dependency app, so no test or install code of it runs (ADR-013).
     pub dependency: Vec<bool>,
+}
+
+impl Lowered {
+    /// The program, to change: copies it only if an engine already holds it.
+    pub fn program_mut(&mut self) -> &mut ir::Program {
+        std::sync::Arc::make_mut(&mut self.program)
+    }
 }
 
 pub fn lower(ws: &Workspace, members: &MemberTable<'_>, checked: &CheckResult) -> Lowered {
@@ -91,45 +100,46 @@ pub fn lower_with_workers(
         .enumerate()
         .flat_map(|(oi, offsets)| offsets.iter().enumerate().map(move |(ri, &at)| ((oi, at), ri)))
         .collect();
+    let mut program = ir::Program {
+        objects: Vec::new(),
+        apps: ws
+            .apps
+            .iter()
+            .enumerate()
+            .map(|(i, a)| ir::AppInfo {
+                id: a.id.clone(),
+                name: a.name.clone(),
+                publisher: String::new(),
+                version: String::new(),
+                dependencies: a.dependencies.clone(),
+                resources: Vec::new(),
+                dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
+            })
+            .collect(),
+        dotnet_types: ws
+            .dotnet
+            .iter()
+            .map(|d| ir::DotNetDecl {
+                alias: d.decl.alias.clone(),
+                assembly: d.decl.assembly.clone(),
+                version: d.decl.version.clone(),
+                culture: d.decl.culture.clone(),
+                public_key_token: d.decl.public_key_token.clone(),
+                type_name: d.decl.type_name.clone(),
+            })
+            .collect(),
+        uncompiled_subscribers,
+        ..Default::default()
+    };
     let mut out = Lowered {
         timings: CompileTimings::default(),
-        program: ir::Program {
-            objects: Vec::new(),
-            apps: ws
-                .apps
-                .iter()
-                .enumerate()
-                .map(|(i, a)| ir::AppInfo {
-                    id: a.id.clone(),
-                    name: a.name.clone(),
-                    publisher: String::new(),
-                    version: String::new(),
-                    dependencies: a.dependencies.clone(),
-                    resources: Vec::new(),
-                    dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
-                })
-                .collect(),
-            dotnet_types: ws
-                .dotnet
-                .iter()
-                .map(|d| ir::DotNetDecl {
-                    alias: d.decl.alias.clone(),
-                    assembly: d.decl.assembly.clone(),
-                    version: d.decl.version.clone(),
-                    culture: d.decl.culture.clone(),
-                    public_key_token: d.decl.public_key_token.clone(),
-                    type_name: d.decl.type_name.clone(),
-                })
-                .collect(),
-            uncompiled_subscribers,
-            ..Default::default()
-        },
+        program: Default::default(),
         unsupported: Vec::new(),
         calls: Vec::new(),
         dependency: (0..ws.objects.len()).map(|oi| ws.is_dependency(oi)).collect(),
     };
     if positions {
-        out.program.sources = ws
+        program.sources = ws
             .files
             .iter()
             .map(|f| ir::SourceFile {
@@ -568,7 +578,7 @@ pub fn lower_with_workers(
                     &local,
                     &seq,
                     oi,
-                    &mut out.program.positions,
+                    &mut program.positions,
                     &mut line_cache,
                 ));
             }
@@ -598,10 +608,11 @@ pub fn lower_with_workers(
         }
     }
     for piece in pieces.into_iter().flatten() {
-        out.program.objects.push(piece.object);
+        program.objects.push(piece.object);
         out.unsupported.push(piece.unsupported);
         out.calls.push(piece.calls);
     }
+    out.program = std::sync::Arc::new(program);
     out
 }
 

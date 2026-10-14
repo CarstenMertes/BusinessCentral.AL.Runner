@@ -64,7 +64,7 @@ fn main() {
     }
     writeln!(f, "unsupported {:?}", lowered.unsupported).unwrap();
     writeln!(f, "calls {:?}", lowered.calls).unwrap();
-    writeln!(f, "program {}", serde_json::to_string(&lowered.program).unwrap()).unwrap();
+    writeln!(f, "program {}", serde_json::to_string(&*lowered.program).unwrap()).unwrap();
 }
 
 fn hash_of<T: serde::Serialize + ?Sized>(v: &T) -> u64 {

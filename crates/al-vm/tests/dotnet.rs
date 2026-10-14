@@ -140,7 +140,11 @@ struct Ran {
     session: Option<Session>,
 }
 
-fn compile(vars: &str, body: &str, ret: &str) -> (al_ir::Program, Vec<Vec<Option<String>>>, usize, usize) {
+fn compile(
+    vars: &str,
+    body: &str,
+    ret: &str,
+) -> (std::sync::Arc<al_ir::Program>, Vec<Vec<Option<String>>>, usize, usize) {
     let src = format!("{DOTNET}{TABLE}\ncodeunit 50100 C {{ procedure F(){ret} var {vars} begin {body} end; }}");
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
@@ -1036,7 +1040,7 @@ fn the_declared_result_types_match_the_registry() {
             "GetEffectivePermissionForObject" => continue, // needs a Guid; the AL test above runs it
             _ => vec![],
         };
-        let mut s = Session::new(Engine::new(Default::default(), vec![]));
+        let mut s = Session::new(Engine::new(al_ir::Program::default(), vec![]));
         let v = (m.call)(&mut s, None, &args).unwrap_or_else(|e| panic!("{clr}.{member}: {e:?}"));
         let ok = match ret {
             Ret::Boolean => matches!(v, Value::Boolean(_)),

@@ -7,6 +7,7 @@ pub mod deps;
 pub mod dotnet;
 pub mod drift;
 pub mod host;
+pub mod isolation;
 pub mod oracle;
 pub mod output;
 pub mod pin;

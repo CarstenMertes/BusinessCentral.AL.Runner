@@ -1109,37 +1109,38 @@ fn runrequestpage_is_refused_with_a_pending_write() {
 // ---------------------------------------------------------------- refusals
 
 #[test]
-fn a_request_page_that_would_open_is_refused() {
-    // handlers/TestReportRunWithRequestPage.al:78-99: the page opens for a run that does not
-    // switch it off, and only a handler can answer it. Request pages are not implemented.
-    let why = refusal(
-        "var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; begin
-            H.Seed(); Commit(); R.Run(); exit('ran');
-        end;",
+fn a_request_page_that_would_open_with_no_handler_raises_unhandled_ui() {
+    // handlers/TestReportRuntimeContracts.al:416-430: the page opens for a run that does not
+    // switch it off, and with no handler the run raises the Unhandled UI error.
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; begin
+            H.Seed(); Commit(); asserterror R.Run(); exit(GetLastErrorText() + '|' + GetLastErrorCode());
+        end;"),
+        "Unhandled UI: RequestPage 60026|MissingUIHandler"
     );
-    assert!(why.contains("request page"), "{why}");
 }
 
 #[test]
-fn a_report_without_a_request_page_section_still_counts_as_using_one_by_default() {
-    // No corpus test runs such a report without switching the page off, so whether an empty
-    // default page opens is not pinned: the run is refused.
-    let why = refusal(
-        "var H: Codeunit Helpers; begin
-            H.Seed(); Commit(); Report.Run(Report::\"Default Page Report\"); exit('ran');
-        end;",
+fn a_report_without_a_request_page_section_opens_its_page_by_default() {
+    // handlers/TestReportRuntimeContracts.al:416-430: even without a requestpage section.
+    assert_eq!(
+        f("var H: Codeunit Helpers; begin
+            H.Seed(); Commit(); asserterror Report.Run(Report::\"Default Page Report\");
+            exit(GetLastErrorText());
+        end;"),
+        "Unhandled UI: RequestPage 60876"
     );
-    assert!(why.contains("request page"), "{why}");
 }
 
 #[test]
-fn currreport_skip_is_refused_statically() {
-    let why = refusal(
-        "var R: Report \"Skipper Report\"; H: Codeunit Helpers; begin
+fn currreport_skip_in_on_after_get_record_skips_the_row() {
+    // handlers/TestReportRuntimeContracts.al:322-337.
+    assert_eq!(
+        f("var R: Report \"Skipper Report\"; H: Codeunit Helpers; begin
             H.Seed(); R.UseRequestPage(false); R.Run(); exit('ran');
-        end;",
+        end;"),
+        "ran"
     );
-    assert!(why.contains("Report.Skip"), "{why}");
 }
 
 #[test]
@@ -1243,23 +1244,22 @@ fn an_empty_extension_changes_nothing() {
 
 // ---- mutation-testing additions (docs/status.md debt) ----
 
-// UseRequestPage(true) on a report that declares UseRequestPage = false is not pinned; on a report
-// with a request page, and UseRequestPage(false) anywhere, it is accepted.
+// UseRequestPage(true) overrides a report that declares UseRequestPage = false, and the getter
+// answers what the next Run does (handlers/TestReportRuntimeContracts.al:416-440).
 #[test]
-fn use_request_page_true_is_refused_only_on_a_report_that_declares_false() {
-    let why = refusal("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(true); exit('set'); end;");
-    assert!(
-        why.contains("UseRequestPage(true) on a report declaring UseRequestPage = false"),
-        "{why}"
+fn use_request_page_overrides_the_report_property_and_the_getter_reads_it() {
+    assert_eq!(
+        f("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(true); exit(Format(R.UseRequestPage())); end;"),
+        "Yes"
+    );
+    assert_eq!(
+        f("var R: Report \"TxRpt Plain Marker\"; begin exit(Format(R.UseRequestPage())); end;"),
+        "No"
     );
     assert_eq!(
         f(
             "var R: Report \"TxRpt ReqPage Marker\"; begin R.UseRequestPage(true); R.UseRequestPage(false); exit('set'); end;"
         ),
-        "set"
-    );
-    assert_eq!(
-        f("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(false); exit('set'); end;"),
         "set"
     );
 }
@@ -1292,12 +1292,13 @@ fn a_report_variable_is_cleared_after_run() {
     );
 }
 
-// Only the call straight from OnInitReport is pinned for CurrReport.Quit.
+// CurrReport.Quit in OnPreReport ends the run (handlers/TestReportRuntimeContracts.al:355-358).
 #[test]
-fn quit_outside_oninitreport_is_refused() {
-    let why =
-        refusal("var H: Codeunit Helpers; R: Report \"MX Quit In Pre\"; begin H.Seed(); R.Run(); exit('ran'); end;");
-    assert!(why.contains("outside the OnInitReport trigger"), "{why}");
+fn quit_in_onprereport_ends_the_run() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"MX Quit In Pre\"; begin H.Seed(); R.Run(); exit('ran'); end;"),
+        "ran"
+    );
 }
 
 // A table view that is more than filters (marked only, re-sorted, descending, temporary) is

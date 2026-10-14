@@ -261,30 +261,34 @@ fn format_datetime(ms: i64, standard: i32) -> Result<String, FormatFail> {
 /// handlers/TestPageFieldFormats_Tests.al:599-602, handlers/TestPageRuntimeContracts.al:162);
 /// format 9 is `P1DT1H1M1.001S` (types/TestFormatEvaluateTextContracts.al:Format_Duration_StandardFormats)
 /// with `.0` for whole seconds (json/TestJsonRuntimeContracts.al:214, `P0DT0H0M5.0S`).
+/// The words of a Duration (`1 day 1 hour`, every unit negative for a negative one, blank for zero).
+/// A TestPage control shows the same text (`pagefmt`).
+pub(crate) fn duration_words(ms: i64) -> String {
+    if ms == 0 {
+        return String::new();
+    }
+    let sign = if ms < 0 { "-" } else { "" };
+    let mut left = ms.abs();
+    let mut parts = Vec::new();
+    for (unit, size) in [
+        ("day", 86_400_000),
+        ("hour", 3_600_000),
+        ("minute", 60_000),
+        ("second", 1000),
+        ("millisecond", 1),
+    ] {
+        let n = left / size;
+        left %= size;
+        if n > 0 {
+            parts.push(format!("{sign}{n} {unit}{}", if n == 1 { "" } else { "s" }));
+        }
+    }
+    parts.join(" ")
+}
+
 fn format_duration(ms: i64, standard: i32) -> Result<String, FormatFail> {
     match standard {
-        0 | 1 => {
-            if ms == 0 {
-                return Ok(String::new());
-            }
-            let sign = if ms < 0 { "-" } else { "" };
-            let mut left = ms.abs();
-            let mut parts = Vec::new();
-            for (unit, size) in [
-                ("day", 86_400_000),
-                ("hour", 3_600_000),
-                ("minute", 60_000),
-                ("second", 1000),
-                ("millisecond", 1),
-            ] {
-                let n = left / size;
-                left %= size;
-                if n > 0 {
-                    parts.push(format!("{sign}{n} {unit}{}", if n == 1 { "" } else { "s" }));
-                }
-            }
-            Ok(parts.join(" "))
-        }
+        0 | 1 => Ok(duration_words(ms)),
         9 => {
             if ms < 0 {
                 return Err("Format 9 of a negative Duration (not pinned)".to_string().into());

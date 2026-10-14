@@ -29,6 +29,48 @@ pub struct VersionEntry {
     pub junit: String,
     /// Ratchet path, relative to the repository root.
     pub baseline: String,
+    /// The other test apps the corpus holds (`[[version.suite]]`): each has its own oracle file,
+    /// ratchet and report line. The main corpus app is the version's own `junit` and `baseline`.
+    #[serde(default, rename = "suite")]
+    pub suites: Vec<SuiteEntry>,
+}
+
+/// How an oracle file is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OracleFormat {
+    /// The corpus CI's JUnit (Linux legs).
+    #[default]
+    Junit,
+    /// BcContainerHelper's XUnit (the Windows nightly).
+    Xunit,
+}
+
+/// A test app beyond the main corpus app, with the real-BC run that is its oracle.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SuiteEntry {
+    /// The report name and the suffix of its output files; unique within a version.
+    pub name: String,
+    /// The app folder, relative to the repository root.
+    pub app: String,
+    /// Oracle path, relative to the directory of `oracle.toml`.
+    pub oracle: String,
+    #[serde(default)]
+    pub format: OracleFormat,
+    /// The test runner codeunit of the app the real run used (`-testRunnerCodeunitId`). Its
+    /// `TestIsolation` property is how this suite is run. Absent: Microsoft's `Test Runner - Isol.
+    /// Codeunit`, as for the main app.
+    pub runner: Option<u32>,
+    /// The BC build the oracle came from, when it is not the version's own leg (the isolation
+    /// probe only runs in the Windows nightly).
+    pub bc_version: Option<String>,
+    /// The corpus commit of the oracle run, when it is older than the version's. Accepted only
+    /// like `VersionEntry::corpus_commit` (ADR-007).
+    pub corpus_commit: Option<String>,
+    pub workflow_run: Option<u64>,
+    pub artifact_id: Option<u64>,
+    /// Ratchet path, relative to the repository root.
+    pub baseline: String,
 }
 
 impl VersionEntry {
@@ -62,6 +104,12 @@ impl OracleFile {
             }
             if !seen.insert(v.major) {
                 return Err(format!("major {} is listed twice", v.major));
+            }
+            let mut names = std::collections::BTreeSet::new();
+            for suite in &v.suites {
+                if !names.insert(suite.name.as_str()) {
+                    return Err(format!("version {}: suite `{}` is listed twice", v.major, suite.name));
+                }
             }
         }
         Ok(f)
@@ -129,6 +177,47 @@ baseline = "metrics/28/passing.txt"
 
     fn file() -> OracleFile {
         OracleFile::parse(TOML).unwrap()
+    }
+
+    #[test]
+    fn a_version_lists_its_other_test_apps() {
+        let t = format!(
+            r#"{TOML}
+[[version.suite]]
+name = "onprem"
+app = "corpus/tests/al-language-onprem"
+oracle = "28/junit-onprem.xml"
+baseline = "metrics/28/passing-onprem.txt"
+
+[[version.suite]]
+name = "isolation-function"
+app = "corpus/tests/al-language-isolation-probe"
+format = "xunit"
+runner = 61300
+bc_version = "28.4"
+corpus_commit = "old"
+oracle = "28/xunit-isolation-function.xml"
+baseline = "metrics/28/passing-isolation-function.txt"
+"#
+        );
+        let f = OracleFile::parse(&t).unwrap();
+        // The suites belong to the last [[version]] table, which is major 28 in TOML.
+        let v = f.versions.iter().find(|v| v.major == 28).unwrap();
+        assert_eq!(v.suites.len(), 2);
+        assert_eq!(v.suites[0].format, OracleFormat::Junit);
+        assert_eq!(v.suites[0].runner, None);
+        assert_eq!(v.suites[1].format, OracleFormat::Xunit);
+        assert_eq!(v.suites[1].runner, Some(61300));
+        assert_eq!(v.suites[1].corpus_commit.as_deref(), Some("old"));
+        assert!(f.versions.iter().find(|v| v.major == 27).unwrap().suites.is_empty());
+    }
+
+    #[test]
+    fn a_suite_name_is_unique_within_its_version() {
+        let t = format!(
+            "{TOML}\n[[version.suite]]\nname = \"a\"\napp = \"x\"\noracle = \"o\"\nbaseline = \"b\"\n[[version.suite]]\nname = \"a\"\napp = \"y\"\noracle = \"o\"\nbaseline = \"b\"\n"
+        );
+        assert!(OracleFile::parse(&t).unwrap_err().contains("listed twice"));
     }
 
     #[test]

@@ -40,6 +40,16 @@ reviewed it.
 - Probe batch 2 push: done (2026-10-14). Batches 2 and 2b are in the corpus at 348a744 (53 new cases). All three
   oracles come from that commit. The failing and not-run ones are the next fix round.
 
+## Decided without owner review (2026-10-14), isolation branch
+
+- Extra oracles for the OnPrem app (all three majors) and the isolation probe (BC 28.4 only, from
+  the Windows nightly, XUnit): ADR-007 decision 4. There is no isolation oracle for 27 and 29.
+- `TestIsolation = Function` is implemented (restore to the state after `OnRun` after each
+  method). `Disabled`, a runner without the property, and a `Commit()` inside a Function-isolated
+  test are refused: `docs/probes-needed.md`.
+- A test codeunit is the unit of future parallel scheduling under every isolation mode, because
+  its methods share instance state (`al-test-cli/src/isolation.rs`).
+
 ## Decided by the owner (recorded)
 
 - 2026-10-14, performance phase: run tests in parallel at the test runner's

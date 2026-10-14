@@ -256,3 +256,42 @@ fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
     let (code, _, err) = cli(&["--dotnet-sidecar", "/nonexistent/AlDotNetSidecar.dll"]);
     assert_eq!(code, 0, "{err}");
 }
+
+// BC 28 holds the main app and three more oracles (oracle/oracle.toml `[[version.suite]]`): the
+// OnPrem app and the isolation probe under its two runners. Their cases stay out of `overall`.
+#[test]
+fn the_other_test_apps_are_reported_apart_from_the_main_one() {
+    require_corpus();
+    let (code, r) = json(&["--bc-version", "28"]);
+    assert_eq!(code, 0);
+    assert_eq!(r["overall"]["total"], 5112);
+    let suites = r["suites"].as_array().unwrap();
+    let get = |n: &str| {
+        suites
+            .iter()
+            .find(|s| s["name"] == n)
+            .unwrap_or_else(|| panic!("no suite {n}"))
+    };
+    assert_eq!(get("onprem")["counts"]["total"], 61);
+    assert_eq!(get("isolation-function")["counts"]["total"], 7);
+    assert_eq!(get("isolation-function")["counts"]["pass"], 7);
+    // The control: real BC fails T5 under Codeunit isolation, and the runtime fails it too.
+    let control = get("isolation-codeunit");
+    assert_eq!(control["counts"]["pass"], 6);
+    assert_eq!(control["bc_failed"], 1);
+    assert_eq!(control["bc_failed_reproduced"], 1);
+}
+
+// BC 27 and 29 have no isolation oracle (the probe only ran in the BC 28.4 nightly).
+#[test]
+fn a_version_without_an_isolation_oracle_lists_only_the_onprem_app() {
+    require_corpus();
+    let (_, r) = json(&["--bc-version", "27"]);
+    let names: Vec<_> = r["suites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["onprem"]);
+}

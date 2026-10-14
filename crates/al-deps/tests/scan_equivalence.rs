@@ -101,7 +101,11 @@ fn differences(name: &str, src: &str) -> Vec<String> {
             .map(|l| (l.name.clone(), l.properties.clone()))
             .collect();
         if o.kind().eq_ignore_ascii_case("report") {
-            note(&format!("{who} layouts"), format!("{layouts:?}"), format!("{scanned:?}"));
+            note(
+                &format!("{who} layouts"),
+                format!("{layouts:?}"),
+                format!("{scanned:?}"),
+            );
         }
         let subs = ast::routines_in(o.syntax())
             .iter()

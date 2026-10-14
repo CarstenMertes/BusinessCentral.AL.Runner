@@ -55,7 +55,8 @@ impl Session {
                     .objects
                     .iter()
                     .filter(|p| {
-                        p.kind.strip_prefix("uncompiled ").unwrap_or(&p.kind) == "page" && p.name.eq_ignore_ascii_case(&want)
+                        p.kind.strip_prefix("uncompiled ").unwrap_or(&p.kind) == "page"
+                            && p.name.eq_ignore_ascii_case(&want)
                     })
                     .filter_map(|p| p.id)
                     .collect::<Vec<_>>()

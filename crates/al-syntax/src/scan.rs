@@ -357,7 +357,9 @@ fn scan_layouts(src: &str, body: &[Tok]) -> Vec<ScannedLayout> {
                         LBrace => d += 1,
                         RBrace => d -= 1,
                         Ident
-                            if d == 1 && body[k].is_kw("layout") && body.get(k + 1).is_some_and(|t| t.kind == LParen) =>
+                            if d == 1
+                                && body[k].is_kw("layout")
+                                && body.get(k + 1).is_some_and(|t| t.kind == LParen) =>
                         {
                             let mut m = k + 2;
                             let mut name = String::new();
@@ -369,7 +371,9 @@ fn scan_layouts(src: &str, body: &[Tok]) -> Vec<ScannedLayout> {
                             if body.get(m + 1).is_some_and(|t| t.kind == LBrace) {
                                 m += 2;
                                 while m < body.len() && body[m].kind != RBrace {
-                                    if matches!(body[m].kind, Ident | QuotedIdent) && body.get(m + 1).is_some_and(|n| n.kind == Eq) {
+                                    if matches!(body[m].kind, Ident | QuotedIdent)
+                                        && body.get(m + 1).is_some_and(|n| n.kind == Eq)
+                                    {
                                         let mut e = m + 2;
                                         while e < body.len() && body[e].kind != Semicolon && body[e].kind != RBrace {
                                             e += 1;

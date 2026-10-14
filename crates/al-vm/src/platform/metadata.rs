@@ -24,7 +24,10 @@ fn ordinal(o: &Object, name: &str, members: &[&str], default: i32) -> Result<i32
 }
 
 fn text(o: &Object, name: &str, max: usize) -> String {
-    prop(o, name).and_then(string_lit).map(|s| truncate(&s, max)).unwrap_or_default()
+    prop(o, name)
+        .and_then(string_lit)
+        .map(|s| truncate(&s, max))
+        .unwrap_or_default()
 }
 
 const TRANSACTION_TYPES: &[&str] = &["UpdateNoLocks", "Update", "Snapshot", "Browse", "Report"];
@@ -125,7 +128,11 @@ pub(super) fn event_subscription_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             continue;
         }
         for r in &o.routines {
-            let Some(a) = r.attributes.iter().find(|a| a.name.eq_ignore_ascii_case("EventSubscriber")) else {
+            let Some(a) = r
+                .attributes
+                .iter()
+                .find(|a| a.name.eq_ignore_ascii_case("EventSubscriber"))
+            else {
                 continue;
             };
             let mut key = blank(t);
@@ -149,9 +156,10 @@ fn subscription_row(
     mut r: al_data::Row,
 ) -> Result<al_data::Row, String> {
     let what = || format!("subscriber '{}' of codeunit '{}'", routine, o.name);
-    if o.properties.iter().any(|(k, v)| {
-        k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual")
-    }) {
+    if o.properties
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"))
+    {
         return Err(format!("{}: a manual instance is not pinned (Active)", what()));
     }
     let args = crate::events::split_args(&a.text);
@@ -163,7 +171,9 @@ fn subscription_row(
         return Err(format!("{}: publisher kind `{kind}` is not listed", what()));
     };
     let (target, _) = crate::events::publisher_name(args[1].rsplit("::").next().unwrap_or(""));
-    let publisher_id = c.id_of(&kind, &target).map_err(|e| format!("{}: publisher {e}", what()))?;
+    let publisher_id = c
+        .id_of(&kind, &target)
+        .map_err(|e| format!("{}: publisher {e}", what()))?;
     let event = crate::events::unquote(&args[2]);
     // The publisher's own routine says which kind of event it is; a table's database triggers are
     // the platform's (event names `On{Before,After}{Insert,Modify,Delete,Rename,Validate}Event`).
@@ -176,12 +186,14 @@ fn subscription_row(
             if !pr.name.eq_ignore_ascii_case(&event) {
                 return None;
             }
-            pr.attributes.iter().find_map(|pa| match pa.name.to_ascii_lowercase().as_str() {
-                "businessevent" => Some((pr.name.clone(), 1)),
-                "integrationevent" => Some((pr.name.clone(), 2)),
-                "internalevent" => Some((pr.name.clone(), 3)),
-                _ => None,
-            })
+            pr.attributes
+                .iter()
+                .find_map(|pa| match pa.name.to_ascii_lowercase().as_str() {
+                    "businessevent" => Some((pr.name.clone(), 1)),
+                    "integrationevent" => Some((pr.name.clone(), 2)),
+                    "internalevent" => Some((pr.name.clone(), 3)),
+                    _ => None,
+                })
         })
     });
     let (published, event_type) = match declared {
@@ -258,7 +270,10 @@ fn page_actions(
     let mut next = 1;
     for area in &page.action_areas {
         if area.name.is_empty() {
-            return Err(format!("page '{}': actions written outside an area are not pinned", o.name));
+            return Err(format!(
+                "page '{}': actions written outside an area are not pinned",
+                o.name
+            ));
         }
         let container = next;
         let mut r = key.clone();
@@ -347,7 +362,10 @@ pub(super) fn table_relations_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             out.push(Entry::poisoned_prefix(
                 key,
                 1,
-                format!("table '{}' was not compiled, so the relations of its fields are not known", o.name),
+                format!(
+                    "table '{}' was not compiled, so the relations of its fields are not known",
+                    o.name
+                ),
             ));
             continue;
         };

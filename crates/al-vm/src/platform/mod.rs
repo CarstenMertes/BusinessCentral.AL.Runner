@@ -19,13 +19,13 @@ mod ids;
 mod integer;
 mod links;
 mod mat;
+mod metadata;
 mod objects;
 mod pages;
-mod metadata;
 mod permissions;
-mod reports;
 pub(crate) mod profiles;
 pub(crate) mod ranges;
+mod reports;
 mod seed;
 
 use crate::Engine;

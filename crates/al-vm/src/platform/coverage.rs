@@ -14,8 +14,8 @@ use crate::Session;
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
-use al_builtins::native::Signal;
 use al_builtins::filter::FieldFilter;
+use al_builtins::native::Signal;
 use al_data::TableDef;
 
 pub(crate) const COVERAGE_TABLES: [u32; 3] = [2_000_000_049, 2_000_000_288, 2_000_000_289];

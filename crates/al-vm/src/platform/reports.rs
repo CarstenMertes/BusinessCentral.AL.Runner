@@ -340,7 +340,8 @@ mod tests {
 
     #[test]
     fn a_view_splits_into_its_words_and_bracketed_texts() {
-        let v = view_segments("sorting(\"No.\", Name) ORDER(descending) where(Kind = const(B), \"A (b)\" = const(1))").unwrap();
+        let v = view_segments("sorting(\"No.\", Name) ORDER(descending) where(Kind = const(B), \"A (b)\" = const(1))")
+            .unwrap();
         assert_eq!(
             v,
             vec![

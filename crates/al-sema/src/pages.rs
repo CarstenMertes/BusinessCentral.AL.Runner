@@ -217,11 +217,16 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
         // goes right after the column, inside the data item, so that the record is in scope.
         if kind.starts_with("report") {
             for (ordinal, sec) in column_sections(&obj).iter().enumerate() {
-                let Some(expr) = sec.args_raw().get(1).cloned() else { continue };
+                let Some(expr) = sec.args_raw().get(1).cloned() else {
+                    continue;
+                };
                 let at = usize::from(sec.syntax().text_range().end());
                 inserts.push((
                     at,
-                    format!("\nprocedure {}(): Variant begin exit({expr}); end;", column_name(ordinal)),
+                    format!(
+                        "\nprocedure {}(): Variant begin exit({expr}); end;",
+                        column_name(ordinal)
+                    ),
                 ));
             }
         }

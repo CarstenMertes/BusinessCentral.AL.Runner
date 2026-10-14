@@ -157,7 +157,12 @@ impl Header {
         element(out, 4, "CompanyId", &self.company_id)?;
         element(out, 4, "UserName", &self.user_name)?;
         let (y, mo, d, h, mi) = self.now;
-        element(out, 4, "DateAndTime", &format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:00"))?;
+        element(
+            out,
+            4,
+            "DateAndTime",
+            &format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:00"),
+        )?;
         element(out, 4, "Language", LANGUAGE)?;
         element(out, 4, "FormatRegion", LANGUAGE)?;
         element(out, 4, "Year", &y.to_string())?;
@@ -312,8 +317,14 @@ mod tests {
     // handlers/TestReportNestedLinkImplicitParent.al:98 (`//DataItem[@name="Change_Log_Setup_Table"]`)
     #[test]
     fn a_name_with_spaces_and_parentheses_is_spelled_the_way_the_example_shows() {
-        assert_eq!(dataset_name("Change Log Setup (Table)").unwrap(), "Change_Log_Setup_Table");
-        assert_eq!(dataset_name("Change Log Setup (Field)").unwrap(), "Change_Log_Setup_Field");
+        assert_eq!(
+            dataset_name("Change Log Setup (Table)").unwrap(),
+            "Change_Log_Setup_Table"
+        );
+        assert_eq!(
+            dataset_name("Change Log Setup (Field)").unwrap(),
+            "Change_Log_Setup_Field"
+        );
     }
 
     #[test]

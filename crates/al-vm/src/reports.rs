@@ -925,7 +925,8 @@ impl Run {
 
 /// The text BC raises when the default layout cannot produce the format asked for
 /// (handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Html_WithAnRdlcLayout_IsRefused).
-const FORMAT_NOT_SUPPORTED_BY_LAYOUT: &str = "The Html output format is not supported by the current report layout format.";
+const FORMAT_NOT_SUPPORTED_BY_LAYOUT: &str =
+    "The Html output format is not supported by the current report layout format.";
 
 impl Session {
     /// `Report.SaveAs(Parameters, Format, OutStream[, RecordRef])` and the static form with the
@@ -982,6 +983,12 @@ impl Session {
         }
         if let Some(why) = schema.report().dataset_unsupported.first() {
             return unsupported(format!("Report.SaveAs of \"{}\": {why}", schema.name()));
+        }
+        if schema.report().processing_only {
+            return unsupported(format!(
+                "Report.SaveAs of \"{}\", which is ProcessingOnly (what SaveAs writes for it is not pinned)",
+                schema.name()
+            ));
         }
         if schema.report().transaction_type.is_some() {
             return unsupported(format!(
@@ -1134,12 +1141,7 @@ impl Session {
     /// (handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText); an Option is
     /// written as its ordinal, which docs/probes-needed.md lists as an assumption. Every other type is
     /// refused.
-    fn dataset_column(
-        &mut self,
-        c: &ir::ReportColumn,
-        owner: &Inst,
-        object: usize,
-    ) -> Result<Column, Signal> {
+    fn dataset_column(&mut self, c: &ir::ReportColumn, owner: &Inst, object: usize) -> Result<Column, Signal> {
         let name = dataset::dataset_name(&c.name)?;
         if let Some(why) = &c.unsupported {
             return unsupported(format!("report column {}: {why}", c.name));
@@ -1184,7 +1186,14 @@ impl Session {
         let id: String = {
             let g = self.host.identity.company_id();
             let h: String = g.iter().map(|b| format!("{b:02x}")).collect();
-            format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+            format!(
+                "{}-{}-{}-{}-{}",
+                &h[0..8],
+                &h[8..12],
+                &h[12..16],
+                &h[16..20],
+                &h[20..32]
+            )
         };
         Ok(dataset::Header {
             extension_id: app.map(|a| a.id.clone()).unwrap_or_default(),

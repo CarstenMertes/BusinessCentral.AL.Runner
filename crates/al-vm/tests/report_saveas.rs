@@ -273,6 +273,35 @@ reportextension 68318 "Probe Plain Ext" extends "Probe Plain Report"
     end;
 }
 
+// A processing-only report: SaveAs of it is not pinned.
+report 68320 "Probe Processing Report"
+{
+    ProcessingOnly = true;
+
+    dataset
+    {
+        dataitem(P; "Probe Rep Parent")
+        {
+            column(PNo; Id) { }
+        }
+    }
+}
+
+// A data item over a temporary record: it holds only what code inserts, not the table's rows.
+report 68319 "Probe Temporary Report"
+{
+    ProcessingOnly = false;
+
+    dataset
+    {
+        dataitem(T; "Probe Rep Child")
+        {
+            UseTemporary = true;
+            column(TNo; Id) { }
+        }
+    }
+}
+
 codeunit 68304 Helpers
 {
     procedure Seed()
@@ -377,7 +406,11 @@ fn run_on(bc: Option<&str>, body: &str) -> Result<Value, Signal> {
         .map(|o| o.iter().map(|r| r.first().cloned()).collect())
         .collect();
     let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
-    let ri = l.program.objects[oi].routines.iter().position(|r| r.name == "F").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
     if let Some(Some(r)) = blocked.get(oi).and_then(|o| o.get(ri)) {
         return Err(Signal::Unsupported(r.clone()));
     }
@@ -464,23 +497,29 @@ fn the_data_items_block_is_written_exactly() {
     assert_eq!(&text[at..], expected);
 }
 
-const DATASET: &str = "var H: Codeunit Helpers; begin H.Seed(); exit(H.Dataset(Report::\"Probe SaveAs Report\", '')); end;";
+const DATASET: &str =
+    "var H: Codeunit Helpers; begin H.Seed(); exit(H.Dataset(Report::\"Probe SaveAs Report\", '')); end;";
 
 // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_WritesAByteOrderMarkDeclarationAndHeader (:206-212)
 #[test]
 fn the_stream_starts_with_a_byte_order_mark_a_declaration_and_the_root_element() {
     assert_eq!(
-        f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin
+        f(
+            "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin
             H.Seed();
             Buf.Data.CreateOutStream(Out);
             Report.SaveAs(Report::\"Probe SaveAs Report\", '', ReportFormat::Xml, Out);
             exit(H.BomBytes(Buf));
-        end;"),
+        end;"
+        ),
         "239.187.191"
     );
     let text = f(DATASET);
     let mut lines = text.split('|');
-    assert_eq!(lines.next().unwrap().trim_start_matches('\u{feff}'), "<?xml version=\"1.0\" standalone=\"yes\"?>");
+    assert_eq!(
+        lines.next().unwrap().trim_start_matches('\u{feff}'),
+        "<?xml version=\"1.0\" standalone=\"yes\"?>"
+    );
     assert_eq!(
         lines.next().unwrap(),
         "<ReportDataSet name=\"Probe SaveAs Report\" id=\"68302\" language=\"en-US\" formatRegion=\"en-US\">"
@@ -529,10 +568,16 @@ fn the_header_lists_its_elements_in_the_order_the_probe_pins() {
 #[test]
 fn the_header_names_the_report_and_the_company() {
     let text = f(DATASET);
-    assert!(text.contains("      <ReportName>Probe SaveAs Report</ReportName>|"), "{text}");
+    assert!(
+        text.contains("      <ReportName>Probe SaveAs Report</ReportName>|"),
+        "{text}"
+    );
     assert!(text.contains("<ReportId>68302</ReportId>|"), "{text}");
     let company = f("begin exit(CompanyName()); end;");
-    assert!(text.contains(&format!("<CompanyName>{company}</CompanyName>|")), "{text}");
+    assert!(
+        text.contains(&format!("<CompanyName>{company}</CompanyName>|")),
+        "{text}"
+    );
 }
 
 const FILTERED: &str = "<?xml version=\"1.0\" standalone=\"yes\"?><ReportParameters name=\"Probe SaveAs Report\" id=\"68302\"><Options><Field name=\"Prefix\">PFX</Field></Options><DataItems><DataItem name=\"P\">VERSION(1) SORTING(Field1) WHERE(Field1=1(2))</DataItem><DataItem name=\"C\">VERSION(1) SORTING(Field1)</DataItem></DataItems></ReportParameters>";
@@ -553,13 +598,15 @@ fn the_parameters_string_filters_the_dataset() {
 #[test]
 fn html_of_a_report_with_an_rdlc_layout_answers_false_with_the_layout_error_and_writes_nothing() {
     assert_eq!(
-        f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; Ok: Boolean; begin
+        f(
+            "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; Ok: Boolean; begin
             H.Seed();
             Buf.Data.CreateOutStream(Out);
             ClearLastError();
             Ok := Report.SaveAs(Report::\"Probe SaveAs Report\", '', ReportFormat::Html, Out);
             exit(Format(Ok) + '|' + GetLastErrorText() + '|' + H.Lines(Buf));
-        end;"),
+        end;"
+        ),
         "No|The Html output format is not supported by the current report layout format.|"
     );
 }
@@ -621,12 +668,14 @@ fn an_error_in_a_report_without_a_layout_reaches_the_caller() {
 #[test]
 fn an_error_in_a_report_with_an_rdlc_layout_answers_false() {
     assert_eq!(
-        f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; Ok: Boolean; begin
+        f(
+            "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; Ok: Boolean; begin
             H.Seed();
             Buf.Data.CreateOutStream(Out);
             Ok := Report.SaveAs(Report::\"Probe Layout Guard Report\", '', ReportFormat::Xml, Out);
             exit(Format(Ok) + '|' + H.Lines(Buf));
-        end;"),
+        end;"
+        ),
         "No|"
     );
 }
@@ -648,7 +697,6 @@ fn a_filtered_recordref_limits_the_data_item_over_its_table() {
     assert!(!text.contains("<Column name=\"PNo\">1</Column>"), "{text}");
 }
 
-
 fn dataset_of(report: &str, parameters: &str) -> String {
     f(&format!(
         "var H: Codeunit Helpers; begin H.Seed(); exit(H.Dataset(Report::\"{report}\", '{parameters}')); end;"
@@ -661,7 +709,11 @@ fn dataset_of(report: &str, parameters: &str) -> String {
 fn a_flowfield_column_is_calculated_for_every_row_before_the_trigger() {
     let text = dataset_of("Probe Flow Report", "");
     // Parent 1 has two children, parent 2 one.
-    let cells: Vec<&str> = text.split('|').map(str::trim).filter(|l| l.starts_with("<Column ")).collect();
+    let cells: Vec<&str> = text
+        .split('|')
+        .map(str::trim)
+        .filter(|l| l.starts_with("<Column "))
+        .collect();
     assert_eq!(
         cells,
         [
@@ -677,7 +729,11 @@ fn a_flowfield_column_is_calculated_for_every_row_before_the_trigger() {
 #[test]
 fn a_column_an_extension_adds_is_written_after_the_columns_of_the_item() {
     let text = dataset_of("Probe Plain Report", "");
-    let cells: Vec<&str> = text.split('|').map(str::trim).filter(|l| l.starts_with("<Column ")).collect();
+    let cells: Vec<&str> = text
+        .split('|')
+        .map(str::trim)
+        .filter(|l| l.starts_with("<Column "))
+        .collect();
     assert_eq!(
         cells,
         [
@@ -706,14 +762,17 @@ fn a_skipped_row_is_not_written() {
 fn an_option_is_written_as_its_ordinal_and_a_decimal_expression_gets_the_default_formatter() {
     let text = dataset_of("Probe Types Report", "");
     assert!(text.contains("<Column name=\"KindCol\">0</Column>"), "{text}");
-    assert!(text.contains("<Column name=\"DecExpr\" decimalformatter=\"#,##0.00\">25</Column>"), "{text}");
+    assert!(
+        text.contains("<Column name=\"DecExpr\" decimalformatter=\"#,##0.00\">25</Column>"),
+        "{text}"
+    );
 }
 
 #[test]
 fn a_column_type_nothing_pins_is_refused_when_a_row_carries_it() {
-    let why = refusal(&format!(
-        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); end;"
-    ));
+    let why = refusal(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); end;",
+    );
     assert!(why.contains("AtCol") && why.contains("no pinned text"), "{why}");
 }
 
@@ -729,18 +788,23 @@ fn a_column_property_nothing_pins_is_refused_when_a_row_carries_the_column() {
 #[test]
 fn a_data_item_name_with_spaces_and_parentheses_is_written_the_way_the_corpus_shows() {
     let text = dataset_of("Probe Quoted Report", "");
-    assert!(text.contains("<DataItem language=\"en-US\" formatRegion=\"en-US\" name=\"Probe_Item_Parent\">"), "{text}");
+    assert!(
+        text.contains("<DataItem language=\"en-US\" formatRegion=\"en-US\" name=\"Probe_Item_Parent\">"),
+        "{text}"
+    );
 }
 
 // Assumption (docs/probes-needed.md): a DataItems element is written only when it holds a DataItem.
 #[test]
 fn a_dataset_without_rows_has_no_data_items_element() {
-    let text = f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin
+    let text = f(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin
             Buf.DeleteAll();
             Buf.Data.CreateOutStream(Out);
             Report.SaveAs(Report::\"Probe SaveAs Report\", '', ReportFormat::Xml, Out);
             exit(H.Lines(Buf));
-        end;");
+        end;",
+    );
     assert!(!text.contains("DataItems"), "{text}");
     assert!(text.ends_with("  </BCReportInformation>|</ReportDataSet>|"), "{text}");
 }
@@ -771,5 +835,53 @@ fn a_parent_row_without_child_rows_has_no_nested_data_items_element() {
         end;");
     let third = text.rsplit("<Column name=\"PNo\">3</Column>|").next().unwrap();
     assert!(third.starts_with("        <Column name=\"PName\"></Column>|"), "{text}");
-    assert!(third.contains("      </Columns>|    </DataItem>|  </DataItems>|</ReportDataSet>|"), "{third}");
+    assert!(
+        third.contains("      </Columns>|    </DataItem>|  </DataItems>|</ReportDataSet>|"),
+        "{third}"
+    );
+}
+
+// handlers/TestReportDatasetHelpLink.al:RenderDataset reads the stream back with XmlDocument.ReadFrom, and
+// handlers/TestReportFlowFieldColumnAutoCalc.al walks the rows with SelectNodes and foreach.
+#[test]
+fn the_dataset_reads_back_as_xml() {
+    assert_eq!(
+        f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; Inp: InStream; Doc: XmlDocument; Rows: XmlNodeList; Row: XmlNode; Cell: XmlNode; Result: Text; begin
+            H.Seed();
+            Buf.Data.CreateOutStream(Out);
+            Report.SaveAs(Report::\"Probe SaveAs Report\", '', ReportFormat::Xml, Out);
+            Buf.CalcFields(Data);
+            Buf.Data.CreateInStream(Inp);
+            if not XmlDocument.ReadFrom(Inp, Doc) then exit('unreadable');
+            Doc.SelectNodes('//DataItem[@name=''P'']', Rows);
+            foreach Row in Rows do begin
+                Row.SelectSingleNode('Columns/Column[@name=''PName'']', Cell);
+                Result += Cell.AsXmlElement().InnerText() + ';';
+            end;
+            Doc.SelectSingleNode('/ReportDataSet/BCReportInformation/ReportMetadata/ReportId', Cell);
+            exit(Result + Cell.AsXmlElement().InnerText());
+        end;"),
+        "one <&>;two;68302"
+    );
+}
+
+// docs/probes-needed.md, "Report.SaveAs dataset": UseTemporary makes the item's record temporary.
+#[test]
+fn a_data_item_over_a_temporary_record_has_no_rows_of_the_table() {
+    let text = dataset_of("Probe Temporary Report", "");
+    assert!(!text.contains("DataItems"), "{text}");
+}
+
+// session/TestBCPlatformContracts.al:CompanyProperty_DisplayName_NonEmpty
+#[test]
+fn the_company_display_name_is_not_empty() {
+    assert_ne!(f("begin exit(CompanyProperty.DisplayName()); end;"), "");
+}
+
+#[test]
+fn a_processing_only_report_is_refused() {
+    let why = refusal(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Processing Report\", '', ReportFormat::Xml, Out); end;",
+    );
+    assert!(why.contains("ProcessingOnly"), "{why}");
 }

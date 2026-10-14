@@ -126,7 +126,9 @@ fn default_layout(obj: &ast::Object) -> ir::ReportLayout {
             ir::ReportLayout::Other
         };
     }
-    let declares_any = ["RDLCLayout", "WordLayout", "ExcelLayout"].iter().any(|n| prop(n).is_some())
+    let declares_any = ["RDLCLayout", "WordLayout", "ExcelLayout"]
+        .iter()
+        .any(|n| prop(n).is_some())
         || obj.sections().any(|s| {
             ["rendering", "rdlclayout", "wordlayout", "excellayout"]
                 .iter()
@@ -197,7 +199,12 @@ pub fn layout(obj: &ast::Object) -> Layout {
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             // Rendering-only: how the report prints. `PreviewMode` belongs to the Base Application's
             // G/L Register (handlers/TestReportDatasetHelpLink.al runs its SaveAs).
-            "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" | "previewmode" => out
+            "defaultlayout"
+            | "defaultrenderinglayout"
+            | "rdlclayout"
+            | "wordlayout"
+            | "excellayout"
+            | "previewmode" => out
                 .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
             // The Schedule button of the request page. Nothing pins what a run does with it, but a
@@ -425,7 +432,8 @@ fn visit(
         let table = args.get(1).cloned().unwrap_or_default();
         for p in s.properties() {
             let pn = p.name().to_ascii_lowercase();
-            let temporary_ok = pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
+            let temporary_ok =
+                pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
             if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
                 && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
                 && !temporary_ok

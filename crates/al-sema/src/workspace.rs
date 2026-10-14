@@ -544,9 +544,6 @@ impl Workspace {
     /// Whether object `i` can be used: its file is a workspace file, or parses cleanly.
     pub fn usable(&self, i: usize) -> bool {
         let o = &self.objects[i];
-        if self.platform_table_without_provider(i) {
-            return false;
-        }
         if !self.files[o.file].lazy {
             return true;
         }
@@ -560,7 +557,9 @@ impl Workspace {
     }
 
     /// Whether object `i` is a table of the platform app `System` that nothing provides rows for
-    /// (ADR-013 decision 7). Declared and empty would be silently wrong, so it is refused.
+    /// (ADR-013 decision 7). Declared and empty would be silently wrong, so its persistent rows are
+    /// refused when they are read or written (`platform::Virtual::Unprovided`); a temporary record
+    /// of it is an ordinary temporary table.
     pub fn platform_table_without_provider(&self, i: usize) -> bool {
         self.platform_table(i)
             && self.objects[i]
@@ -568,40 +567,14 @@ impl Workspace {
                 .is_none_or(|id| al_builtins::platform::provider(id).is_none())
     }
 
-    /// Why name `name` of `kind` does not resolve: a platform table with no provider says so
-    /// (`platform table 'Date' (2000000007) has no provider`), anything else is outside the
-    /// workspace. `name` is as written in the source.
+    /// Why name `name` of `kind` does not resolve. `name` is as written in the source.
     pub fn outside_workspace(&self, kind: ObjKind, name: &str) -> String {
         let bare = name.trim().trim_matches('"');
-        if kind == ObjKind::Table {
-            // `bare` is the name with its namespace, dots between the parts. A name holds dots too
-            // (`Metadata Permission Set Rel.`, `Pstd. Phys. Invt. Order Hdr`), so try the whole
-            // text, then what follows each dot.
-            let suffixes = std::iter::once(0).chain(bare.match_indices('.').map(|(i, _)| i + 1));
-            let no_provider = suffixes.into_iter().find_map(|at| {
-                self.by_name
-                    .get(&(kind, bare[at..].trim().to_lowercase()))
-                    .into_iter()
-                    .flatten()
-                    .find(|&&i| self.platform_table_without_provider(i))
-            });
-            if let Some(&i) = no_provider {
-                return self.unusable_reason(i).unwrap_or_default();
-            }
-        }
         format!("{} `{}` is outside the workspace", kind.label(), bare)
     }
 
     /// Why object `i` is unusable, for messages.
     pub fn unusable_reason(&self, i: usize) -> Option<String> {
-        if self.platform_table_without_provider(i) {
-            let o = &self.objects[i];
-            return Some(format!(
-                "platform table '{}' ({}) has no provider",
-                o.name,
-                o.id.map_or_else(String::new, |id| id.to_string())
-            ));
-        }
         let fi = self.objects[i].file;
         match self.file_problem(fi) {
             Some(p) => Some(format!("dependency source does not parse: {p}")),
@@ -686,8 +659,7 @@ impl Workspace {
     }
 
     /// The id of the platform table `parts` names when nothing provides rows for it. The id is
-    /// a constant of its declaration, so `Database::"X"` can name it; every use as a record is
-    /// still refused (`usable`).
+    /// a constant of its declaration, so `Database::"X"` can name it.
     pub fn unprovided_platform_table_id(&self, file: usize, parts: &[String]) -> Option<i32> {
         match self.resolve_in_scope(file, ObjKind::Table, parts, false, false) {
             Resolution::Found(i) if self.platform_table_without_provider(i) => self.objects[i].id.map(|id| id as i32),

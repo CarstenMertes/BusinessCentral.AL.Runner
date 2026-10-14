@@ -44,7 +44,7 @@ pub struct AccessContext {
 
 pub type Row = Vec<Value>;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum StoreError {
     Conflict,
     Deadlock,
@@ -52,6 +52,19 @@ pub enum StoreError {
     /// The store will not do this and says why (a write to a table whose rows are computed on
     /// read, a read it cannot answer without guessing). Callers report it as unsupported.
     Refused(String),
+}
+
+/// A refusal prints as its reason, so a report that formats the error with `{:?}` reads the reason
+/// itself and not `Refused("...")`.
+impl std::fmt::Debug for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StoreError::Conflict => f.write_str("Conflict"),
+            StoreError::Deadlock => f.write_str("Deadlock"),
+            StoreError::ChangedByAnotherUser => f.write_str("ChangedByAnotherUser"),
+            StoreError::Refused(why) => f.write_str(why),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +104,10 @@ pub struct Scan<'a> {
 pub trait VirtualTables {
     /// Whether table `t` is answered by this provider.
     fn serves(&self, t: &TableDef) -> bool;
+    /// Why a write to table `t` is refused, when the provider has a reason of its own.
+    fn write_refusal(&self, _t: &TableDef) -> Option<String> {
+        None
+    }
     /// The reads take the store they are called through, so a provider can compose its rows from
     /// stored tables too (the Aggregate Permission Set lists the tenant's permission sets).
     fn get(

@@ -488,3 +488,31 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Present");
     passes(&o, "TenantRow");
 }
+
+/// A platform table nothing provides rows for is still a table: a temporary record of it holds what
+/// AL inserts, a variable that is declared and never read does not stop the code that has it, and
+/// only a read or write of its persistent rows is refused, naming table and id. The corpus pins that
+/// `temporary` borrows the shape of a platform table and the provider never sees the record
+/// (record/TestTemporaryVirtualTableRecord.al, for Field, Date and Aggregate Permission Set);
+/// WMS Management keeps its error log in `Record "License Information" temporary`.
+#[test]
+fn a_platform_table_without_provider_works_as_a_temporary_record_and_is_refused_otherwise() {
+    let o = outcomes(
+        r#"codeunit 50001 "Holder" { var L: Record "License Information" temporary; G: Record "Feature Key";
+  procedure Log(N: Integer; T: Text) begin L."Line No." := N; L.Text := CopyStr(T, 1, 250); L.Insert(); end;
+  procedure Count(): Integer begin exit(L.Count()); end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure TemporaryRoundTrips() var H: Codeunit Holder; begin H.Log(1, 'a'); H.Log(2, 'b'); if H.Count() <> 2 then Error('count %1', H.Count()); end;
+  [Test] procedure DeclaredAndNeverRead() var G: Record "Feature Key"; begin end;
+  [Test] procedure PersistentReadIsRefused() var G: Record "Feature Key"; begin if G.Get('X') then; end;
+  [Test] procedure PersistentWriteIsRefused() var L: Record "License Information"; begin L."Line No." := 1; L.Insert(); end; }"#,
+    );
+    passes(&o, "TemporaryRoundTrips");
+    passes(&o, "DeclaredAndNeverRead");
+    for t in ["PersistentReadIsRefused", "PersistentWriteIsRefused"] {
+        let why = not_run(&o, t);
+        assert!(why.contains("has no provider"), "{t}: {why}");
+    }
+    let why = not_run(&o, "PersistentReadIsRefused");
+    assert!(why.contains("platform table 'Feature Key' (2000000211)"), "{why}");
+}

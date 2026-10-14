@@ -57,6 +57,9 @@ pub enum Virtual {
     EventSubscription,
     PageAction,
     TableRelations,
+    /// A table of the platform app that is not in [`REGISTRY`]: it lowers, a temporary record of it is
+    /// an ordinary temporary table, and every read or write of its persistent rows is refused.
+    Unprovided,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.

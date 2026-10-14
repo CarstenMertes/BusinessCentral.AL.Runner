@@ -94,7 +94,9 @@ SELECTION (a test is selected when any option matches it)
     tests are reported. Only the selected codeunits are compiled.
 
 OUTPUT
-    Default: header, one line per failing test, the top refusal reasons, a summary.
+    Default: header, one line per failing test with the AL call stack of its error below it (a
+    frame whose format is not known reads as such), the top refusal reasons, a summary.
+    --junit also holds the stack as the text of each <failure>.
     --verbose            One line per test (PASS, FAIL, NOT RUN with its reason).
     --quiet              Summary only.
     --top-refusals [N]   List the N most common reasons tests were not run (default 10).

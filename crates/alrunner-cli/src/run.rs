@@ -441,13 +441,17 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
                         continue;
                     }
                     shown_failures += 1;
-                    format!(
+                    let mut line = format!(
                         "FAIL    {} {}.{}: {}",
                         r.codeunit,
                         r.codeunit_name,
                         r.test,
                         output::first_line(why, 300)
-                    )
+                    );
+                    for frame in output::stack_lines(&r.call_stack) {
+                        line.push_str(&format!("\n          {frame}"));
+                    }
+                    line
                 }
                 _ => continue,
             };

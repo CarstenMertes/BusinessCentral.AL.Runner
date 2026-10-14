@@ -650,3 +650,60 @@ pin, and the default chosen:
 | A `[Test]` procedure that calls another `[Test]` procedure | Both have a Tests Run row; the methods of the inner one are noted for the inner one only | A nested test start while recording |
 | Rows after a rollback | The rows are written into the store when read, so an `asserterror` rolls them back with the other writes of the transaction | Whether BC keeps coverage rows across a rollback |
 | Recording that outlives its test | It stays on until `CodeCoverageLog(false, ...)`; the next test of the codeunit that starts while it is on is noted | |
+
+## SessionInformation.Callstack
+
+`SessionInformation.Callstack` is REFUSED (`builtin SessionInformation.Callstack#N is not implemented`). No corpus test reads
+it (`session/TestMiscTypes.al` calls the other `SessionInformation` methods only). It stops 337 Tests-ERM tests (with test
+data, BC 27.5.46862.56320) through one caller: Base Application's `Error Message Management.GetCurrCallStack`, which the
+`Error Message` table calls to store the stack (`SetErrorCallStack`). That caller reads the text, so the refusal cannot be
+turned into an opaque value: it calls `StrPos` on it for the frame `"Error Message Management"(CodeUnit 28)`, keeps what
+follows the last such frame, then cuts at the first `\`. Two facts follow from that code alone (Microsoft's source, not a
+corpus pin, so nothing is built on them yet):
+
+- the frames of the value are separated by a backslash, not by a line feed (the same code splits `GetLastErrorCallstack` at
+  `\` in `GetCallStackTop`, while the runtime separates the frames of `GetLastErrorCallStack` by `\n`; see the "Errors"
+  row above, which notes that BC may differ);
+- a frame reads `"Error Message Management"(CodeUnit 28)...`, the form `GetLastErrorCallStack` has, and the stack lists the
+  innermost frame first, so what follows the last codeunit 28 frame are the callers.
+
+What is not known, and what the probe must show. Run on the machine with the BC container, in a test codeunit
+(`Subtype = Test`) of an app with a known name, publisher and version, and write the text out with `Error(Txt)` or read it
+character by character:
+
+```al
+local procedure Inner(): Text
+begin
+    exit(SessionInformation.Callstack);
+end;
+
+local procedure Middle(): Text
+begin
+    exit(Inner());
+end;
+
+[Test]
+procedure Probe()
+var
+    Txt: Text;
+    i: Integer;
+    Codes: Text;
+begin
+    Txt := Middle();
+    for i := 1 to StrLen(Txt) do
+        if Txt[i] < 32 then
+            Codes += StrSubstNo('[%1@%2]', Txt[i], i);   // the separator characters and where they are
+    Error('LEN=%1 CODES=%2 TEXT=%3', StrLen(Txt), Codes, Txt);
+end;
+```
+
+Read from it: (1) the separator between frames (a backslash, CR LF, LF); (2) the order (is `Inner` first); (3) the form of
+each frame: quoting of the object name, `(CodeUnit N)`, `.Procedure`, ` line N`, ` - App by Publisher version V`, whether
+`line` is relative to the procedure as in `GetLastErrorCallStack`; (4) whether the frame that calls `Callstack` is the first
+line; (5) what lies below the test procedure (runner codeunits, a platform frame) and whether the text is cut at a length;
+(6) the same from a trigger (`OnRun`, `OnValidate` of a field, a page trigger), from an event subscriber, inside
+`asserterror` and through `Codeunit.Run`; (7) the text of `GetLastErrorCallStack` after an `asserterror Inner()` in the same
+codeunit, to settle the separator there too. With those, implement it beside `al-vm/src/callstack.rs` (which already holds
+the frames of the running stack) and add the corpus citation.
+
+The test of the Error Message table that reads the stored stack, if any, is Base Application's own; no corpus test reads it.

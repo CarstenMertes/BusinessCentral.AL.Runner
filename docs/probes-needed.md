@@ -406,6 +406,11 @@ wanted on real BC.
 | TestPage.FindFirstField (fixes-7) | A bare control name in the field position is a control of the page. A miss with the result unused raises `The row does not exist on the TestPage.` (code `TestRowNotFound`, as for a part); the same for FindNextField and FindPreviousField is not pinned and they keep answering false | handlers/TestPagePlatformPageSourceTable_Tests.al:66,125-131 | `al-vm/src/pages.rs` `page_find_field` |
 | Install roots (fixes-7) | Still stopped: "Performance Profiler Installer" (needs platform table "Performance Profile Scheduler"), "MCP Install" (needs "MCP Configuration"), Company-Initialize (a DotNet value as an operand, `UriBuilder.Path + '/'` in "OAuth2 Impl.", ADR-014). No corpus test pins what the two platform tables hold, so no provider is added | install/ | `al-testrun/src/baseline.rs` |
 | Hyperlink (fixes-7) | `Hyperlink(Url)` is REFUSED when it runs, not when the routine that contains it is compiled, so pages with a `Hyperlink` call in an unused routine (Base Application CRM actions) stay usable. Probe wanted: what a test run does with it (nothing, an error, a handler) | none | `al-builtins/src/native.rs` `hyperlink` |
+| Test data | A restored table's AutoIncrement counter continues above the largest value of the field among the restored rows (`Rows::auto_increment_floor`). **Assumed:** a SQL identity column continues above its last value after a restore. The real counter can be higher than the largest row (rows deleted before the backup). Nothing in the corpus can pin it: it needs a restored database | none | `al-vm/src/autoinc.rs` `counter` |
+| Test data | A restored `DateFormula` is decoded from BC's token string: the characters 1 to 7 are the quantors `C D WD W M Q Y` (`FormatSettings.GlobalDateQuantor` in the platform's Microsoft.Dynamics.Nav.Ncl 27.5, read with ilspy; the demo database agrees: Payment Terms "10 DAYS" holds `10` and 2), everything else as stored, bracketed (`<1M+CM>`). Nothing in the corpus pins the stored form. Probe wanted: `Evaluate` formulas into a DateFormula field of a table and read the column on a restored database, or a corpus test that restores one | platform assembly (documentation only) | `al-vm/src/testdata.rs` `date_formula_text` |
+| Test data | A non-empty `RecordId` or `TableFilter` cell is REFUSED. v2 reads them as a 448-byte and a 504-byte buffer padded with zeros; this runtime has no pinned stored form for either | none | `al-vm/src/testdata.rs` `Kind::Unsupported` |
+| Test data | `SystemRowVersion` of a restored row is its `timestamp`, but new rows still count from 1 in a session, so they sort before restored rows. BC's counter is database wide. Not modelled; no probe can pin it without a restored database | none | `al-vm/src/records.rs` `bump_row_version` |
+| Test data | The Company table is a platform table the runtime keeps itself, so `CompanyId` is the runtime's fixed id, not the `Id` of the restored company's row, and a second company of the backup (`My Company`) is not a company of the session | none | `al-vm/src/testdata.rs` |
 
 ## Probe batch 4 (from Microsoft buckets)
 
@@ -474,6 +479,75 @@ Microsoft's code compiles on real BC, so the syntax below is valid AL. What it m
 | Namespaces | `Enum::Ns.Sub."Name".FromInteger(n)` / `.Names()`, `Ns.Sub."Name"::Value` and `Enum::Ns.Sub."Name"::Value` resolve the enum through its namespace like the plain forms. **Assumed** the same as for `Database::Ns."X"`; probe wanted: each form with a namespaced enum, and the same names with a `using` instead of the qualification | the plain forms: types/TestEnumShippedOrdinalTests.Codeunit.al:91, types/TestEnumNamesContracts.al:76; namespace resolution of objects: fieldref/TestFieldRefRelation.al:270-325 | `al-sema/src/check.rs` (`namespaced_enum`, `ScopeExpr`) |
 | `this` | `BindSubscription(this)` and any `this` passed by reference are REFUSED. Probe wanted: a manual-subscriber codeunit that binds itself with `BindSubscription(this)`, then raises its event | none (the corpus binds a variable) | `al-sema/src/lower.rs` (`place`) |
 | Page extensions | An extension's code naming a variable or procedure of the page it extends (`protected var Item: Record Item` of the base page used in `field(X; Item."Qty. on Component Lines")`, or a call to a base page procedure) is REFUSED with a reason naming the base page. Only a bare control name binds to a base variable. The runtime runs extension code on its own object, so this needs a design (ADR) before it needs a probe; probe wanted afterwards: an extension that reads and writes a `protected var` of its base page and a base procedure that changes it | handlers/TestRequestPageControlErrorName.al (bare control name only) | `al-sema/src/lower.rs` `base_page_member` |
+
+## Probe batch 5 (platform tables, from Microsoft buckets)
+
+Found by running Microsoft's 32 BaseApp test buckets under `alrunner test` on branch `platform-3` (BC 27.5, one
+process, 40,300 tests). Counts are tests whose first refusal is the line's table or column. A line either names a
+value that is read from the declaration and is NOT pinned (the provider fills it, the probe confirms it) or a value
+that stays refused (the probe unblocks it). A probe is a corpus test that passes on real BC.
+
+Values probe batch 4 pinned (XmlPort Metadata `Encoding` is UTF16; All Profile `Enabled` Yes and `Promoted` No for a
+profile that declares neither; Event Subscription event types) are NOT implemented: they arrive with the next corpus
+bump.
+
+**Stays refused**
+
+1. **Feature Key (2000000211)**, 80 tests that still stop on it (1142 before the change below: most only declared it).
+   The row set is the platform's own list. Measure on BC 27, 28 and 29: `FindSet` over the table printing every
+   `ID`, `Enabled`, `Mandatory`, and the other columns Feature Management reads
+   (`Feature Management Impl.` reads `ID`, `Enabled`, `Mandatory`, `"Will Be Enabled On"`, `"Data Update Required"`);
+   as an assertion per ID that Base Application names (`SalesPrices`, `AlternativeSalesPricesAndDiscounts`, ...). The list differs by version.
+2. **Field.Len (column 6)**, 242. Measure one field of each type in one table: Text[30], Code[20], Integer,
+   BigInteger, Decimal, Boolean, Date, Time, DateTime, Duration, GUID, Option, an Enum, BLOB, Media, MediaSet,
+   RecordID, DateFormula: the `Len` of each. Text and Code are probably the declared length; the rest are not derivable.
+3. **Published Application, "Tenant Visible" (column 30)**, 44. Measure it for an app published by the test (this
+   corpus app), for System Application, Base Application and the platform `System` app, and with `Installed` true and false.
+4. **Table Relations Metadata, "Condition Type" (7), "Condition Value" (9), "Test Table Relation" (10), "Validate Table Relation" (11)**, 31.
+   Measure for `if (Kind = const(A))` (value `A`? `0`?), an option and an enum condition, `filter(<> X)`,
+   `ValidateTableRelation = false`, `TestTableRelation = false`.
+5. **Field.RelationTableNo and RelationFieldNo of a conditional relation**, 54 (`Customer.City`,
+   `Sales Line."No."`, `Gen. Journal Line."Account No."`). Measure which arm is reported for
+   `if (A = const(X)) T1 else T2`: the first, the last, or 0; and for a relation whose first arm has a `filter(...)` condition.
+6. **Code Coverage, "Line" (column 5)**, 18: the text of a covered line (trimmed? with its indentation?).
+   Measure `CodeCoverageLog(true)` over `DoubleIfAboveOne` in codeunit/TestCodeCoverageTable.al and read lines 33 to 38.
+   Also needed for the tables to hold rows at all: which rows exist after recording one called procedure.
+7. **Event Subscription, "Subscriber Instance" (12), "Active Manual Instances" (13), "Number of Calls" (8),
+   "Error Information" (9)**, 11. Measure for a static subscriber, a `Manual` one with and without `BindSubscription`.
+8. **Page Control Field, Sequence (11)**, 12. Measure the numbers of three fields in declaration order, and of a field in a group.
+9. **Permission, "Security Filter" (11)**, 3; **Metadata Permission, column 14**, 10; **All Profile, "Disable Personalization" (13)**, 1;
+    **Published Application, Description (15, a Blob)**, 1.
+10. **Tables with no provider** (reads and writes of their persistent rows are refused; a temporary record works):
+    Object Options 43, Tenant License State 19 (also stops the install of Copilot, Entity Text and No. Series Copilot),
+    Document Service 4, Tenant Report Layout Selection 2, and one test each for Media Resources, Privacy Notice,
+    Signup Context, Tenant Profile Page Metadata, Tenant Web Service, Web Service, Chart; MCP Configuration and Performance
+    Profile Scheduler stop an install trigger. For each: the rows a fresh test tenant holds (count and key
+    columns), and whether `Insert`, `Modify` and `Delete` are allowed from AL. A table that is empty and writable can
+    then be registered as stored, like Scheduled Task.
+11. **Report Layout List, "Layout" (column 6)**, 2: a Media column; `HasValue` and the content size for a built-in layout.
+
+**Read from the declaration, not pinned** (the provider fills these; the probe turns the line into a pin)
+
+12. **Page Metadata, Caption (3) and CardPageID (6)**, 774 together. Caption is the `Caption` literal, else the
+    English `CaptionML`, else the page name; CardPageID is the id of the page `CardPageID` names, 0 when the page
+    declares none. Measure a list page with `CardPageID`, a page with `Caption` only, with `CaptionML = ENU=...,DEU=...`
+    only, with neither, and a `Caption` that carries `Locked = true`; and a CardPageID that names a page of another app.
+13. **Field, TableName (3), Class (7), Enabled (8), "Field Caption" (20)**, 473 together. TableName is the table's
+    name; Class is Normal, FlowField (`FieldClass = FlowField`) or FlowFilter; Enabled is true unless the field declares
+    `Enabled = false`; "Field Caption" follows the same rule as Page Metadata Caption. Measure one field of each class,
+    a field with `Enabled = false`, one with `CaptionML` only, one with no caption, one with `Caption` in a table extension.
+14. **Key, MaintainSIFTIndex (9) and ObsoleteState (11)**, 2. Both are the key's declared properties (true and No when
+    undeclared). Measure a key with `MaintainSIFTIndex = false`, one with `SumIndexFields` and the default, and one `ObsoleteState = Pending`.
+15. **Report Layout List, "Application ID" (11)**, 13: the id of the app that owns the report. Measure for a report of
+    this app, of Base Application, and a layout a reportextension adds.
+16. **Table Metadata, DrillDownPageId (6)**, 1: the id of the page `DrillDownPageId` names, 0 when none. Measure with
+    the property set on a table, set on a table extension, and unset.
+17. **A temporary record of any platform table is an ordinary temporary table.** The corpus pins it for Field, Date
+    and Aggregate Permission Set (record/TestTemporaryVirtualTableRecord.al). This round extends it to every
+    platform table nothing provides (`License Information` in WMS Management, 532 tests). Measure with
+    `Record "License Information" temporary`, `"Feature Key" temporary`, `"Object Options" temporary`: Insert, Get,
+    Modify, Delete, Count, and that the persistent table is not touched.
+
 | Test data | A restored table's AutoIncrement counter continues above the largest value of the field among the restored rows (`Rows::auto_increment_floor`). **Assumed:** a SQL identity column continues above its last value after a restore. The real counter can be higher than the largest row (rows deleted before the backup). Nothing in the corpus can pin it: it needs a restored database | none | `al-vm/src/autoinc.rs` `counter` |
 | Test data | A restored `DateFormula` is decoded from BC's token string: the characters 1 to 7 are the quantors `C D WD W M Q Y` (`FormatSettings.GlobalDateQuantor` in the platform's Microsoft.Dynamics.Nav.Ncl 27.5, read with ilspy; the demo database agrees: Payment Terms "10 DAYS" holds `10` and 2), everything else as stored, bracketed (`<1M+CM>`). Nothing in the corpus pins the stored form. Probe wanted: `Evaluate` formulas into a DateFormula field of a table and read the column on a restored database, or a corpus test that restores one | platform assembly (documentation only) | `al-vm/src/testdata.rs` `date_formula_text` |
 | Test data | A non-empty `RecordId` or `TableFilter` cell is REFUSED. v2 reads them as a 448-byte and a 504-byte buffer padded with zeros; this runtime has no pinned stored form for either | none | `al-vm/src/testdata.rs` `Kind::Unsupported` |
@@ -490,3 +564,49 @@ Microsoft's code compiles on real BC, so the syntax below is valid AL. What it m
 | RecordRef.Open of a CRM table | With no CRM table connection registered it raises the connection error (code Argument); with one registered it is refused (not pinned) | session/TestCrmTableNoConnectionContracts.al:111-118 | `refs.rs` |
 | Page.GetRecord / SetSelectionFilter | `GetRecord` copies the row the page closed on; `SetSelectionFilter` on a list filters an unfiltered record to its current row. Multiple selected rows and a filtered target are not pinned (refused) | handlers/TestPageCloseTriggersSelectionCardPageContracts.al:239-285 | `pages.rs` |
 | Page action with no behaviour | An action with no OnAction trigger and no RunObject is not on the TestPage: `The action with ID = n is not found on the page.` / TestActionNotFound. The id in the text is the generated control id (not pinned); other kinds of behaviour (RunPageLink alone) are not pinned | handlers/TestPageLabelControlContracts.al:131-145 | `pages.rs` |
+
+## Probe batch 6 (from Microsoft buckets with test data)
+
+Gaps found by running Tests-SMB and Tests-ERM with `--test-data` (2026-10-14, branch `fixes-8`). Each stays
+refused (or assumed, where the row says so) until its probe is in the corpus.
+
+1. **Guid form.** `CreateGuid`, `CreateSequentialGuid` and a row's SystemId are version 4 Guids (version nibble
+   4, variant bits `10`) whose bytes come from a seeded generator (the host's `random_seed` and a counter),
+   so a run repeats. The corpus pins only that they are not null and differ on each call (types/TestGuid.al:12-45);
+   Tests-ERM takes `CopyStr(Format(CreateGuid()), 1, 20)` as a key, which needs the first bytes to differ
+   too. **Assumed:** BC's `CreateGuid` is the platform's random Guid (RFC 4122 version 4). Probe wanted: 50
+   `CreateGuid()` values, `Format(G)` characters 15 and 20 (version and variant), the number of distinct
+   20-character prefixes; the same for `CreateSequentialGuid` (does it keep the version nibble, does the
+   prefix change between calls) and for `SystemId` of 50 inserted rows. `CreateSequentialGuid` is not
+   ordered here; BC's is ascending in SQL order.
+2. **`TestField` on an Option or Enum field holding its zero member.** REFUSED. Microsoft's tests expect
+   `<field> must not be <member> in <table>` (Payment Registration UT: `Bal. Account Type must not be   in
+   Payment Registration Setup` for the blank member, Price List Line UT: `Product Type must not be (All)`
+   for an Enum whose zero member has the caption `(All)`), not the "must have a value" text. Not in the
+   corpus. Probe wanted, for an Option with a blank first member, an Option with a named first member,
+   an Enum with a blank zero member with and without a `Caption`, and an Enum with a named zero member:
+   the full `GetLastErrorText()` of `TestField(F)` (is the key list `: key=value` appended, is the member
+   the caption or the name), `GetLastErrorCode()`, and whether `TestField(F, Value)` on the same fields
+   changes. 7 tests of Tests-ERM (Payment Registration UT, Price List Line UT, Price Worksheet Line UT).
+3. **User Personalization row of the session user.** A `Get` of that row that finds nothing is REFUSED:
+   BC creates the row when a user signs in to a client, and the corpus pins neither that nor its
+   columns (session/TestSessionSettings.al:402-407 says what it holds "depends on tenant data"). Probe
+   wanted: `Get(UserSecurityId())` in a test on the cloud and on-prem images (does the row exist, which
+   `Profile ID`, `Language ID`, `Locale ID`, `Time Zone`, `Company`), and whether
+   `SessionSettings.RequestSessionUpdate(true)` creates it. 1 test of Tests-ERM (Reminder Automation Tests).
+4. **`Format(Record)`.** REFUSED (the text of a record variable as a whole). Base Application's Global
+   Triggers subscribers compare `Format(Rec) = Format(xRec)`, which made 213 Tests-ERM tests not run
+   (plus 1 for `Format(FieldRef)`). Probe wanted: `Format(Rec)` of a record with a Code, a Text, an
+   Integer, a Decimal, a Boolean, a Date, an Option and an Enum field, a FlowField and a Blob: the exact
+   text (separator, which fields, FlowFields calculated or not), and whether two records that differ in
+   only one field format differently.
+5. **Variables of a table object persist per record variable.** NOT MODELLED (a gap, not a refusal): a
+   `var` section of a table holds state that lives as long as the record variable (a trigger sets
+   `Hold := 10`, a later trigger or procedure of the same variable reads it). Each trigger and each
+   procedure call here gets a fresh table instance, so the state is lost. Price List Line relies on
+   it (the global `PriceAsset` set in the Asset Type trigger is read in the Amount Type trigger), and
+   Tests-ERM's `T043_AmountTypeMustBeDiscountForItemDiscGroup` (two tests) fails on it. Probe wanted:
+   a table with `var Hold: Integer; Buf: Record X temporary`, field A's OnValidate sets both, field B's
+   OnValidate reads them, and a procedure reads them: on the same record variable, on a copy made by
+   `:=`, by `Copy`, by value parameter, on `TransferFields`, after `Init()` and `Clear()`, and a
+   second variable of the same table.

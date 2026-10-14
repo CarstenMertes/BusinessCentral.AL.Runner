@@ -199,6 +199,8 @@ pub struct Session {
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
     pub(crate) next_guid: u64,
+    /// The host's seed, mixed into every Guid the session makes (see [`Session::fresh_guid`]).
+    guid_seed: i32,
     /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
     pub(crate) sent_notifications: Vec<[u8; 16]>,
     /// Ids of the notifications `Recall` has taken back.
@@ -364,6 +366,7 @@ impl Session {
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
+            guid_seed: random_seed,
             sent_notifications: Vec::new(),
             recalled_notifications: Vec::new(),
             rng: al_host::random::NetRandom::new(random_seed),
@@ -1620,12 +1623,38 @@ impl al_builtins::native::Ctx for Session {
         Session::ui_recall_notification(self, notification, id)
     }
     fn new_guid(&mut self) -> [u8; 16] {
-        // Deterministic ids (ADR-006: no OS randomness in the core).
+        self.fresh_guid()
+    }
+}
+
+/// A version 4 Guid (RFC 4122) that is a pure function of the host seed and a counter, so every
+/// byte looks random and a run is still repeatable (ADR-006: no OS randomness in the core;
+/// ADR-009: determinism is allowed where AL cannot tell the difference). The bytes are two
+/// SplitMix64 outputs; the version nibble is 4 and the variant bits are `10`.
+pub(crate) fn guid_for(seed: i32, n: u64) -> [u8; 16] {
+    let mut state = ((seed as u32 as u64) << 32) ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut g = [0u8; 16];
+    g[..8].copy_from_slice(&next().to_be_bytes());
+    g[8..].copy_from_slice(&next().to_be_bytes());
+    g[6] = 0x40 | (g[6] & 0x0F);
+    g[8] = 0x80 | (g[8] & 0x3F);
+    g
+}
+
+impl Session {
+    /// The next Guid of the session: `CreateGuid`, a row's SystemId, the ids of media and tasks.
+    /// The corpus pins only that it is not null and never repeats (types/TestGuid.al:12-45);
+    /// that the form is version 4 is an assumption (docs/probes-needed.md, "Probe batch 6").
+    pub(crate) fn fresh_guid(&mut self) -> [u8; 16] {
         self.next_guid += 1;
-        let mut g = [0u8; 16];
-        g[8..].copy_from_slice(&self.next_guid.to_be_bytes());
-        g[6] = 0x40;
-        g
+        guid_for(self.guid_seed, self.next_guid)
     }
 }
 

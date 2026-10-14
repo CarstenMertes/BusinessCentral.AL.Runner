@@ -207,16 +207,24 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
     // (AL Runner, measured on BC: docs of RecordPatches.PageMetadataSourceObject).
     let has_source = src_id != 0;
     r[pos(t, 2)] = Value::Text(o.name.clone());
-    r[pos(t, 5)] = option(t, 5, page_type);
-    // BC's own placeholder for a declared DataCaptionExpression (TestPageMetadataProperties.al:23-26).
-    // The page named in CardPageId, 0 when it states none
-    // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:305-315).
-    r[pos(t, 6)] = Value::Integer(match prop(o, "CardPageId") {
+    // Caption and CardPageID come from the declaration (docs/probes-needed.md, probe batch 5): the
+    // `Caption` (else the English `CaptionML`, else the name), and the id of the page `CardPageID`
+    // names, 0 when none. Page Management reads the card page off the lookup page of a table.
+    r[pos(t, 3)] = Value::Text(
+        super::objects::declared_caption(prop(o, "Caption"), prop(o, "CaptionML"), &o.name)
+            .map_err(|e| format!("page '{}': {e}", o.name))?
+            .chars()
+            .take(80)
+            .collect(),
+    );
+    r[pos(t, 6)] = Value::Integer(match prop(o, "CardPageID") {
         None => 0,
         Some(v) => c
             .id_of("page", v)
-            .map_err(|why| format!("page '{}': CardPageId {why}", o.name))? as i32,
+            .map_err(|e| format!("page '{}': CardPageID {e}", o.name))? as i32,
     });
+    r[pos(t, 5)] = option(t, 5, page_type);
+    // BC's own placeholder for a declared DataCaptionExpression (TestPageMetadataProperties.al:23-26).
     r[pos(t, 7)] = Value::Text(
         if prop(o, "DataCaptionExpression").is_some() {
             "DataCaptionExprCode"

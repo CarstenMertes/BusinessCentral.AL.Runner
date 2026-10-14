@@ -2,7 +2,7 @@
 # (the empty [workspace] table below keeps cargo from looking upward).
 #
 # Run it:
-#   (cd sidecar && dotnet build -c Release -o bin)      # .NET 8 SDK
+#   (cd sidecar && dotnet build -c Release -o bin --disable-build-servers -p:UseSharedCompilation=false)      # .NET 8 SDK
 #   cargo test --release                                  # checks; skips when .NET is missing
 #   cargo run --release --bin bench                       # start-up and latency numbers
 # Env: ALRT_DOTNET_SIDECAR (path to the sidecar dll), ALRT_BC_SERVICE_DIR (a cached

@@ -134,10 +134,22 @@ impl Providers {
             .objects
             .iter()
             .map(|o| {
-                if o.kind == "table" {
-                    o.id.and_then(al_builtins::platform::virtual_table)
-                } else {
-                    None
+                if o.kind != "table" {
+                    return None;
+                }
+                let id = o.id?;
+                match al_builtins::platform::provider(id) {
+                    Some(_) => al_builtins::platform::virtual_table(id),
+                    // A table of the platform app that nothing provides: its rows are refused.
+                    None if engine
+                        .program
+                        .apps
+                        .get(o.app as usize)
+                        .is_some_and(|a| a.id.eq_ignore_ascii_case(objects::al_sema_platform_app_id())) =>
+                    {
+                        Some(Virtual::Unprovided)
+                    }
+                    None => None,
                 }
             })
             .collect();
@@ -197,6 +209,13 @@ impl Providers {
                 return Err(refused(
                     "API Webhook Entity: the entities of the API pages are listed by the platform and no corpus test pins them",
                 ));
+            }
+            Virtual::Unprovided => {
+                return Err(refused(format!(
+                    "platform table '{}' ({}) has no provider",
+                    t.name,
+                    self.engine().program.objects[t.object as usize].id.unwrap_or(0)
+                )));
             }
             Virtual::TenantMedia => {
                 return Err(refused(
@@ -294,6 +313,16 @@ pub(crate) fn refused(why: impl Into<String>) -> StoreError {
 impl VirtualTables for Providers {
     fn serves(&self, t: &TableDef) -> bool {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
+    }
+
+    fn write_refusal(&self, t: &TableDef) -> Option<String> {
+        (self.served.get(t.object as usize) == Some(&Some(Virtual::Unprovided))).then(|| {
+            format!(
+                "platform table '{}' ({}) has no provider",
+                t.name,
+                self.engine().program.objects[t.object as usize].id.unwrap_or(0)
+            )
+        })
     }
 
     fn get(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {

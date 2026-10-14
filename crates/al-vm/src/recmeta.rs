@@ -487,6 +487,16 @@ impl Session {
         match args.get(1) {
             None => {
                 if is_blank(&current)? {
+                    // Microsoft's tests (Tests-ERM Payment Registration UT, Price List Line UT) expect
+                    // "<field> must not be <member> in <table>" for the zero member of an Option or
+                    // Enum. No corpus test pins that text or what follows it (docs/probes-needed.md,
+                    // "Probe batch 6"), and "must have a value" is wrong there: refuse.
+                    if matches!(current, Value::Option(..) | Value::Enum(..)) {
+                        return unsupported(format!(
+                            "TestField of {}.{}, an Option or Enum field holding its zero member (the error text is not pinned)",
+                            t.name, t.fields[pos].name
+                        ));
+                    }
                     let key = self.key_text(t, &row)?;
                     return Err(error(
                         format!("{caption} must have a value in {table}: {key}. It cannot be zero or empty."),

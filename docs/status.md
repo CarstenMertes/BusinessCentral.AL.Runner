@@ -1,6 +1,7 @@
 # Status and roadmap
 
-As of `main` on 2026-10-13. Oracle: BC 27.5, corpus `cf6e546`, CI run 38306086475.
+As of `main` on 2026-10-14. Oracles: BC 27.5, 28.5 and 29.0 (corpus CI runs 38534169906,
+38536067343 and 38537727198), corpus `6219bf4`.
 Regenerate the numbers with
 `./target/release/al-test-cli --root . --markdown pass-rate.md`; CI uploads
 the same report as a `pass-rate-<date>` artifact.
@@ -10,14 +11,16 @@ the same report as a `pass-rate-<date>` artifact.
 One oracle and one ratchet per BC major. `al-test-cli --root .` runs the newest;
 `--bc-version N` picks one; `--all-versions` runs all three and compares them.
 
-| BC major | Oracle leg | Baseline | Passing | Version gates active |
-|---|---|---|---:|---|
-| 27 | 27.5 | `metrics/27/passing.txt` | 3600 | none |
-| 28 | 28.5 | `metrics/28/passing.txt` | 3600 | none |
-| 29 | 29.0 | `metrics/29/passing.txt` | 3600 | Integer sum into BigInteger FlowField; min and max over SystemRowVersion |
+| BC major | Oracle leg | Baseline | Passing | Failing | Not run | Version gates active |
+|---|---|---|---:|---:|---:|---|
+| 27 | 27.5 | `metrics/27/passing.txt` | 4913 of 5147 | 0 | 234 | none |
+| 28 | 28.5 | `metrics/28/passing.txt` | 4913 of 5147 | 0 | 234 | none |
+| 29 | 29.0 | `metrics/29/passing.txt` | 4913 of 5147 | 0 | 234 | Integer sum into BigInteger FlowField; min and max over SystemRowVersion |
 
-The numbers in the rest of this file are from before the version work and are
-refreshed after merging.
+The same 5147 cases run on every version, and the same 234 are not run. On BC 28.5 and 29.0 the
+corpus compiles Microsoft's apps from the corpus's 27.5 `.alpackages`. Only the test libraries
+(Any, System Application Test Library, Permissions Mock) come from the artifact of the matching
+version.
 
 ### Other test apps (2026-10-14)
 
@@ -26,7 +29,7 @@ Each has its own oracle, ratchet and report line, and is not part of the overall
 
 | App | Oracle | Pass | Total | Why the rest does not run |
 |---|---|---:|---:|---|
-| OnPrem (27, 28, 29) | CI run, small artifact | 0 | 61 | Every test needs an OnPrem-only platform table (User, User Property, Object, Object Metadata, Published Application, All Profile): no row provider yet (`platform-tables`). No `DotNet` in the app |
+| OnPrem (27, 28, 29) | CI run, small artifact | 42 | 64 | 22 are not run. 16 need a platform table with no row provider yet (Object Metadata 12, Object 2, Tenant Profile Page Metadata 2), 4 need Published Application columns that no corpus test pins, 2 compare Blob values. No `DotNet` in the app |
 | Isolation probe under a Function runner (28) | Windows nightly, BC 28.4 | 7 | 7 | |
 | Isolation probe under a Codeunit runner (28) | same artifact | 6 | 6 | BC fails `T5` here on purpose; so does the runtime |
 
@@ -34,36 +37,36 @@ There is no isolation oracle for BC 27 and 29 (`docs/probes-needed.md`).
 
 ## Overall
 
-**2412 / 4836 pass (49.9%), 0 fail, 2424 not run.** Compiling the corpus
-takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
+**4913 / 5147 pass (95.5%), 0 fail, 234 not run**, the same on BC 27.5, 28.5 and 29.0.
+Measured on 2026-10-14 on a shared 12-thread machine under load: the corpus run takes 2.9 to
+6.2 s with Microsoft's apps (six runs) and 0.4 to 0.9 s with `--no-deps` (five runs). Base
+Application and the other Microsoft apps are compiled from source on every run; nothing is cached.
 
 | Area | Total | Pass | Not run | Rate |
 |---|---:|---:|---:|---:|
-| xml | 90 | 89 | 1 | 98.9% |
-| testpageteardown | 105 | 105 | 0 | 100% |
-| text | 132 | 126 | 6 | 95.5% |
-| testpageclose | 36 | 34 | 2 | 94.4% |
-| streams | 47 | 44 | 3 | 93.6% |
-| json | 117 | 108 | 9 | 92.3% |
-| autoformat | 39 | 36 | 3 | 92.3% |
-| recordref | 108 | 99 | 9 | 91.7% |
-| collections | 84 | 71 | 13 | 84.5% |
-| error-handling | 81 | 62 | 19 | 76.5% |
-| tableextension | 31 | 22 | 9 | 71.0% |
-| types | 350 | 236 | 114 | 67.4% |
-| pageupdate | 32 | 20 | 12 | 62.5% |
-| codeunit | 245 | 149 | 96 | 60.8% |
-| fieldref | 126 | 68 | 58 | 54.0% |
-| record | 1018 | 533 | 485 | 52.4% |
-| tableextensiontrigger | 13 | 6 | 7 | 46.2% |
-| handlers | 1115 | 497 | 618 | 44.6% |
-| session | 427 | 80 | 347 | 18.7% |
-| testpart | 80 | 71 | 9 | 88.8% |
-| query | 129 | 0 | 129 | 0% |
-| permissions | 58 | 0 | 58 | 0% |
-| pageapplicationarea | 76 | 0 | 76 | 0% |
-| xmlport | 40 | 25 | 15 | 62.5% |
-| other areas (17) | 257 | 17 | 240 | |
+| collections | 84 | 83 | 1 | 98.8% |
+| error-handling | 82 | 81 | 1 | 98.8% |
+| text | 132 | 130 | 2 | 98.5% |
+| types | 392 | 381 | 11 | 97.2% |
+| fieldref | 126 | 122 | 4 | 96.8% |
+| record | 1076 | 1034 | 42 | 96.1% |
+| query | 146 | 140 | 6 | 95.9% |
+| handlers | 1171 | 1121 | 50 | 95.7% |
+| codeunit | 281 | 268 | 13 | 95.4% |
+| streams | 60 | 57 | 3 | 95.0% |
+| session | 447 | 410 | 37 | 91.7% |
+| errorinfo | 23 | 21 | 2 | 91.3% |
+| media | 23 | 21 | 2 | 91.3% |
+| pageapplicationarea | 76 | 69 | 7 | 90.8% |
+| xmlport | 62 | 55 | 7 | 88.7% |
+| profile | 16 | 14 | 2 | 87.5% |
+| tableextensiontrigger | 13 | 10 | 3 | 76.9% |
+| permissions | 58 | 37 | 21 | 63.8% |
+| pageextensioncontrol | 28 | 17 | 11 | 60.7% |
+| reportextensiontrigger | 10 | 6 | 4 | 60.0% |
+| network | 5 | 0 | 5 | 0.0% |
+
+Every test passes in 19 more areas (836 tests): access-control, autoformat, dateformulacontrol, extensionevents, filterpage, install, json, pageextensionpart, pageextensiontrigger, pagefindrecord, pagesave, pageupdate, recordref, tableextension, testfilter, testpageclose, testpageteardown, testpart, xml.
 
 ## Platform tables (ADR-019)
 
@@ -73,8 +76,8 @@ Time Zone, Windows Language, NAV App Installed App, Published Application, the p
 List, Report Metadata, Report Data Items, XmlPort Metadata, Query Metadata, Event Subscription (compiled
 subscribers) and Table Relations Metadata. Company, User, Access Control, All Profile, Record Link, the code
 coverage tables and a few tenant tables are stored (the session seeds the first four). Everything else in the
-System app is refused with `platform table 'X' (id) has no provider`. Still open: Feature Key and Tenant License
-State, a coverage recorder (the coverage tables are refused after a recording), and Event Subscription rows for
+System app lowers, works as a temporary record, and has its persistent rows refused with `platform table 'X' (id) has no provider`. Still open: Tenant License
+State, MCP Configuration, a coverage recorder (the coverage tables are refused after a recording), and Event Subscription rows for
 uncompiled codeunits.
 
 ## What is implemented
@@ -100,8 +103,8 @@ uncompiled codeunits.
 - **XmlPorts (Format = Xml).** `Import` and `Export` (instance and static),
   `SetSource`, `SetDestination`, `SetTableView`; table, field, text elements and
   attributes, nested table elements with `LinkFields`, `AutoSave`, `AutoUpdate`,
-  `AutoReplace`, `UseTemporary`, and the triggers the corpus uses. The 15
-  remaining xmlport tests need dependency apps (ADR-013).
+  `AutoReplace`, `UseTemporary`, and the triggers the corpus uses. 55 of the 62 xmlport tests pass; the
+  other 7 are not run.
 - **Test runner.** Install codeunits. `[HandlerFunctions]` with Message,
   Confirm, StrMenu, page and modal page handlers.
 - **Pages (ADR-012).** TestPage on Card and List pages: lifecycle,
@@ -110,37 +113,50 @@ uncompiled codeunits.
   control-text formatting. Parts and `TestPart` (SubPageLink, SubPageView,
   Provider, navigation, new rows with AutoSplitKey, `CurrPage.<Part>.Page`
   calls), `TestFilter`, `Page.SetRecord`, SourceTableTemporary pages.
+- **Queries, page extensions, request pages, reports.** 140 of 146 query tests pass. Page
+  extensions: 44 of 55 tests in the three `pageextension*` areas pass. All 32 filter page tests
+  pass. 6 of 10 report extension trigger tests pass. `Report.SaveAs` writes the XML dataset only.
+- **Dependency apps (ADR-013).** Microsoft's System Application, Business Foundation and Base
+  Application are compiled from source, on demand, with no cache. Platform tables are served by
+  row providers (ADR-019). `DotNet` calls go to an optional .NET 8 helper process (ADR-014); the
+  server classes that need a service tier are provided by the runtime.
+- **Other command lines.** `alrunner` runs the tests of any app and of Microsoft's test buckets
+  (`docs/alrunner-buckets.md`). `al-bcdb` reads `.bak` and `.bacpac` files, and
+  `alrunner test --test-data` restores CRONUS from one (ADR-020, `docs/bcdb.md`).
 
 ## Largest remaining blockers
 
-Each test is counted under the first thing that stops it.
+234 tests are not run on each BC version, for 107 distinct reasons
+(`al-test-cli --root . --top-refusals 15`, BC 29.0). Each test is counted under the first thing
+that stops it. The 15 most common reasons:
 
-| Tests | Blocker | Plan |
-|---:|---|---|
-| 461 | Objects outside the workspace: all platform system tables (Date, Field, AllObj, Company, Record Link, permission and metadata tables, ...) and the Permissions Mock test library | ADR-013 (Accepted): Microsoft's apps now compile from `.alpackages`, on demand; next are the platform tables' row providers and the two test-library apps (download) |
-| 23 | Tests that use parts but stop on something else: `DMY2Date` (7), `Session.ApplicationArea` (5), RunObject action (4), the Integer system table (4), page extensions (3) | Each is counted under its own blocker |
-| 121 | Query objects | Not started |
-| 80 | Request pages and filter pages, done except what waits on others: Base App reports and pages, enums and the Temp Blob codeunit (53, ADR-013); the Integer system table (27, `deps`) | ADR-012 follow-up, built on branch `requestpages` |
-| 94 | Page extensions | ADR-012 follow-up |
-| 73 | Global Triggers events are raised by the runtime, but Base Application's own subscribers to them cannot run yet (`API Webhook Subscription` and `Database::User` need providers), so a write on a table whose database events are enabled is refused | `platform-tables`, then the skip in `global_triggers_find_unavailable` goes |
-| 73 | RunObject actions | ADR-012 follow-up |
-| 58 | `[TransactionModel]` | Not started; corpus pins it (record/TestTransactionModelAutoRollback.al) |
-| 43 | Guarded `Codeunit.Run` (`if Codeunit.Run(...)`) | Not started |
-| ~50 | Single builtins that remain: Session.ApplicationArea, TestFilter, FilterPageBuilder and Report.Run (page and report infrastructure), Today, CurrentDateTime and WorkDate (host clock), UserSecurityId and SessionId (host identity), Record.SetLoadFields (partial records), error collection (`[ErrorBehavior]`) | Needs the objects or host values named; see `docs/probes-needed.md` for what the done ones assume |
-| 31 | SystemCreatedAt/By and SystemModifiedAt/By are not stamped | Needs the clock and identity host values (ADR-013 identity table) |
+| Tests | What stops it |
+|---:|---|
+| 16 | Permissions of tenant sets: the platform keeps the last composed set per setup version, which is not modelled (`TestMetadataExpandedPermission.al:196-207`) |
+| 13 | `RecordId.GetRecord` is not implemented |
+| 11 | `foreach` over a `DotNet` value is refused until a corpus test pins it (ADR-014) |
+| 9 | A table with `TableType = CRM` is served by a table connection, which the runtime does not model |
+| 6 | `OnQueryClosePage` in a page extension is not supported |
+| 5 | `DotNet` class `Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper` is neither registered nor classified pure (ADR-014) |
+| 5 | A part page with a control of kind `cuegroup` is not supported |
+| 5 | A `DotNet` value passed to `Format`: its type is only known at run time |
+| 5 | Reading Code Coverage Tests Run after a coverage recording: the runtime records no coverage |
+| 5 | Reading Code Coverage after a coverage recording: same |
+| 4 | Page extension code on members of the base page is not lowered yet |
+| 4 | `Report.DefaultLayout` is not implemented |
+| 4 | The User Personalization row of the session user: BC creates it at client sign-in and no corpus test pins its content (`docs/probes-needed.md`) |
+| 3 | `Evaluate` into DateTime with a format that no corpus test pins |
+| 3 | `GetRangeMin` without a filter: the error text is not pinned |
+
+The other 92 reasons account for 136 tests.
 
 ## Open decisions for the project owner
 
-ADR-013 (Proposed, revised 2026-10-13) now waits on one question and on the
-owner accepting the revision.
+The open items are listed in `docs/owner-review.md`. ADR-013 (dependency apps), ADR-014
+(`DotNet`) and ADR-020 (`al-bcdb` and test data) are accepted and built. ADR-015 (BC versions)
+and ADR-016 (release) are still Proposed (`docs/adr/README.md`).
 
-1. **`DotNet` types in Microsoft's AL.** Decided (ADR-014, accepted
-   2026-10-13) and implemented on the branch `dotnet-impl`: a .NET 8 sidecar
-   process serves the calls; the runtime provides the server classes itself
-   through a registry that waits for probes (`docs/probes-needed.md`). No corpus
-   test reaches `DotNet` until the dependency apps (ADR-013) load.
-
-Answered on 2026-10-13 and recorded in ADR-013:
+Answered on 2026-10-13 and recorded in ADR-013 (and, for `DotNet`, on 2026-10-13 in ADR-014):
 
 - Licensing: download Microsoft's app source into a local cache and a CI cache,
   compile it, commit nothing.
@@ -149,7 +165,8 @@ Answered on 2026-10-13 and recorded in ADR-013:
 - Version selection: driven by the project's `app.json`, using the same
   mechanism as AL Runner. Not corpus-specific. The corpus harness passes the
   oracle's BC minor.
-- Budget: demand-driven compilation. A persistent cache is an optimisation.
+- Budget: demand-driven compilation. A persistent cache comes last, after the remaining gaps and
+  the performance work (`docs/owner-review.md`, 2026-10-14).
 - Install triggers and Company-Initialize: mirror AL Runner.
 
 ## Known issues and debt
@@ -167,24 +184,18 @@ Answered on 2026-10-13 and recorded in ADR-013:
   TestPage core, 520 mutants) and the rest of `datefns.rs` were not swept; of the 47
   `pages/*` survivors only 14 were rechecked against the corpus ratchet (9 caught, 5
   survive both: `pages/areas.rs` check_areas_pinned, `pages/parts.rs`
-  resync_parts_linked_by, `pages/runobject.rs` run_object_codeunit); and
-  `Power` with an exponent that carries a scale (`Power(2, 3.0)` answers 1) is a
-  known bug with an `#[ignore]`d test (`al-builtins/src/mathfns.rs`).
-- About 135 assumptions in `docs/probes-needed.md` wait for probes on real BC.
+  resync_parts_linked_by, `pages/runobject.rs` run_object_codeunit).
+- About 400 assumptions in `docs/probes-needed.md` wait for probes on real BC.
   They include the exact "Unhandled UI" text, JSON and XML `WriteTo`
   formatting, and the `Format` of Time and DateTime.
-- `al-host` holds only the `DotNet` capability so far. Clock, identity and network go through it
-  once ADR-013 lands.
+- `al-host` holds the capability traits the core crates use: the clock, identity and session
+  defaults, the random seed, `DotNet` and the test-data tables. The network is not there yet.
 
-## Next targets after the corpus (owner, 2026-10-13)
+## Next targets (owner, 2026-10-13; state on 2026-10-14)
 
-Start these when the corpus is green or nearly green and nothing big is left:
-
-1. **Microsoft's own Base App test buckets.** AL Runner has a skill for this:
-   `BusinessCentral.AL.Runner/.claude/skills/running-ms-test-buckets/SKILL.md`.
-   It measures how many of Microsoft's own test cases this runtime can run.
-   The tests need CRONUS demo data (`--test-data`), not an empty database.
-2. **CRONUS demo data in native Rust.** `bcdb` (repo `BusinessCentral.BakReader`, C#) reads BC
-   data straight from a `.bak` or `.bacpac` file, with no SQL Server. AL Runner uses it
-   for `--test-data`. Port it to Rust: here at first, possibly in that repo later.
-   This gives speed and native support for loading CRONUS into the store.
+1. **Microsoft's own Base App test buckets.** Started. `alrunner` runs them
+   (`docs/alrunner-buckets.md`). All 32 buckets together hold 40300 tests; without test data
+   1083 pass, 858 fail and 38359 are not run. With `--test-data`, Tests-ERM has 487 passing
+   and 5 failing. The refusal reasons are ranked with `--top-refusals`.
+2. **CRONUS demo data in native Rust.** Done: `al-bcdb` is the Rust port of bcdb, and
+   `alrunner test --test-data` loads CRONUS into the store, table by table (ADR-020).

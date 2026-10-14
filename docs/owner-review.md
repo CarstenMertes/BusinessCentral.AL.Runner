@@ -6,7 +6,7 @@ reviewed it.
 
 ## Open questions (not decided)
 
-- Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
+- (answered 2026-10-14, see below) Push the second batch of probe tests to the corpus branch `al-runtime-rs`?
   - It is about 60 tests in 8 files, at local head b06fdc0 in corpus-probes.
   - All of them pass on the local BC 27.5 container, and the corpus gate
     scripts pass.
@@ -43,6 +43,13 @@ reviewed it.
   `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
 
 ## Decided by the owner (recorded)
+
+- 2026-10-14, ADR-016: release path is "separate now, decide later". The runtime
+  gets a new binary name, stays in this repo, and has a clean CLI. The cutover
+  decision is made at the preview gate. Questions 1, 2 and 4 are answered;
+  the binary name itself is still to pick.
+- 2026-10-14: push all probe tests to the corpus branch. Done: 348a744, with
+  the BC29PLUS dispatch fix.
 
 - 2026-10-13, ADR-016: server mode, watch mode and `--affected` are deferred
   while start-up is not a concern. Revisit after dependency loading is

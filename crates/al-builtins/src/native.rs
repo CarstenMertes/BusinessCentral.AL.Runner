@@ -592,13 +592,11 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
-    if matches!(&args[0], Value::Record(_))
-        || matches!(&args[0], Value::Library(n, _) if n == "RecordRef" || n == "FieldRef")
-    {
-        if std == 0 {
-            if let Some(r) = ctx.format_composite(&args[0]) {
-                return r.map(|t| Value::Text(crate::format::pad(t, len)));
-            }
+    let composite = matches!(&args[0], Value::Record(_))
+        || matches!(&args[0], Value::Library(n, _) if n == "RecordRef" || n == "FieldRef");
+    if composite && std == 0 {
+        if let Some(r) = ctx.format_composite(&args[0]) {
+            return r.map(|t| Value::Text(crate::format::pad(t, len)));
         }
     }
     format_value(&args[0], len, std, ctx)

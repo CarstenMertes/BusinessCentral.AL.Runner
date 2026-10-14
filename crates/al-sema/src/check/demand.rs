@@ -1087,6 +1087,11 @@ mod tests {
     /// The program, the refusals, the call graph and the diagnostics of a compile of `main` over
     /// `dep` with `workers` check threads.
     fn compile_with_workers(main: &str, dep: &[(String, String)], workers: usize) -> String {
+        compile_with_both(main, dep, workers, workers)
+    }
+
+    /// Like `compile_with_workers`, with `check` threads checking and `lower` threads lowering.
+    fn compile_with_both(main: &str, dep: &[(String, String)], check: usize, lower: usize) -> String {
         let app = |id: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
             id: id.into(),
             name: id.into(),
@@ -1094,19 +1099,20 @@ mod tests {
             files,
         };
         let roots = crate::check::Roots {
-            workers: Some(workers),
+            workers: Some(check),
             ..Default::default()
         };
-        let (ws, l) = crate::lower::compile_apps_with(
+        let ws = Workspace::load_apps(
             vec![
                 app("main", &["dep"], vec![("main.al".into(), main.into())]),
                 app("dep", &[], dep.to_vec()),
             ],
             vec![AppKind::Workspace, AppKind::Dependency],
             &Default::default(),
-            None,
-            roots,
         );
+        let members = crate::members::build(&ws);
+        let checked = crate::check::check_with(&ws, &members, &al_builtins::catalog::Catalog::load(), roots);
+        let l = crate::lower::lower_with_workers(&ws, &members, &checked, true, lower);
         format!(
             "{}\n{:?}\n{:?}\n{:?}",
             serde_json::to_string(&l.program).unwrap(),
@@ -1144,6 +1150,8 @@ mod tests {
         assert!(one.contains("Helper"), "the fixture compiles something");
         assert_eq!(one, compile_with_workers(&main, &dep, 4));
         assert_eq!(one, compile_with_workers(&main, &dep, 7));
+        // Lowering the dependency objects on several threads does not change the program either.
+        assert_eq!(one, compile_with_both(&main, &dep, 1, 5));
     }
 
     #[test]

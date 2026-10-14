@@ -1429,15 +1429,14 @@ fn a_single_instance_static_subscriber_keeps_its_globals_between_events() {
     assert_eq!(int(run(STATEFUL_SUB, "F")), 2);
 }
 
-// A non-single-instance static subscriber that keeps globals is refused, because its instance
-// lifetime is not pinned. `SingleInstance = false` is not SingleInstance.
+// A static subscriber that is not SingleInstance gets a fresh instance for every event, so its
+// globals never reach another instance (corpus record/TestTableEventSequenceContracts.al:
+// Insert_EventsAndTrigger_WithAndWithoutRunTrigger, hits=1 then hits=0). `SingleInstance = false`
+// is not SingleInstance: the caller's own instance of the codeunit sees nothing.
 #[test]
-fn a_static_subscriber_with_globals_and_single_instance_false_is_refused() {
+fn a_static_subscriber_with_globals_and_single_instance_false_gets_a_fresh_instance() {
     let src = STATEFUL_SUB.replace("SingleInstance = true;", "SingleInstance = false;");
-    match run(&src, "F") {
-        Err(Signal::Unsupported(m)) => assert!(m.contains("keeps global variables"), "{m}"),
-        other => panic!("expected a refusal, got {other:?}"),
-    }
+    assert_eq!(int(run(&src, "F")), 0);
 }
 
 // Only a *Manual* EventSubscriberInstance is manual. Naming the default, StaticAutomatic,

@@ -227,8 +227,17 @@ fn the_ratchet_checks_only_the_selected_baseline_cases() {
     assert!(bad.err.contains("NoSuchProcedure_OutsideTheSelection"), "{}", bad.err);
 }
 
-/// (passing names, refused names) of one codeunit, from the JUnit the runtime writes.
+/// (passing names, refused names) of one codeunit, from the JUnit the runtime writes. Two tests
+/// ask for `SMALL_CU`; the run is made once.
 fn outcomes_of_codeunit(cu: u32) -> (Vec<String>, Vec<String>) {
+    static SMALL: std::sync::OnceLock<(Vec<String>, Vec<String>)> = std::sync::OnceLock::new();
+    if cu == SMALL_CU {
+        return SMALL.get_or_init(|| run_outcomes_of_codeunit(cu)).clone();
+    }
+    run_outcomes_of_codeunit(cu)
+}
+
+fn run_outcomes_of_codeunit(cu: u32) -> (Vec<String>, Vec<String>) {
     let dir = tempfile::tempdir().unwrap();
     let f = dir.path().join("j.xml");
     let r = cli(&[

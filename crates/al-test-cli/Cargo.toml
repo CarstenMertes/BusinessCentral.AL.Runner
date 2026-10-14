@@ -5,6 +5,23 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+# On by default. The tests that run the built `al-test-cli` over the whole pinned corpus
+# (`corpus_harness`, `dev_tooling`) need this feature. CI's debug test job builds with
+# `--no-default-features` and the release job runs them against the release binary, about ten
+# times faster than the unoptimised one; the CI workflow explains the split. Never turn it off
+# to skip a failing test.
+default = ["cli-e2e"]
+cli-e2e = []
+
+[[test]]
+name = "corpus_harness"
+required-features = ["cli-e2e"]
+
+[[test]]
+name = "dev_tooling"
+required-features = ["cli-e2e"]
+
 [dependencies]
 al-data.workspace = true
 al-deps.workspace = true

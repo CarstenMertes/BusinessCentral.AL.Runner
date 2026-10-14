@@ -102,6 +102,9 @@ pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayo
                 Ok(n) if n >= 0 => top = n,
                 _ => b.reasons.push(format!("TopNumberOfRows = {}", p.value_text())),
             },
+            // ReadUncommitted reads the session's own uncommitted rows and the committed ones, as every
+            // read here does (query/TestQueryReadStateContracts.al); ReadCommitted needs runtime 18.
+            "readstate" if p.value_text().trim().eq_ignore_ascii_case("ReadUncommitted") => {}
             n if HARMLESS_QUERY_PROPERTIES.contains(&n) => {}
             _ => b
                 .reasons

@@ -4,117 +4,15 @@
 //! (oracle and corpus disagree, unreadable input, bad arguments).
 
 use al_host::dotnet::DotNetHost;
+use al_test_cli::args::{self, Args, Parsed};
 use al_test_cli::dotnet::{SidecarConfig, SidecarHost};
-use al_test_cli::{config, corpus, deps, drift, oracle, output, pin, report, runner::Runner, runtime, target};
+use al_test_cli::{
+    config, corpus, deps, drift, explain, insight, oracle, output, pin, report, runner::Runner, runtime, select, target,
+};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::time::Duration;
-
-#[derive(Default)]
-struct Args {
-    root: Option<PathBuf>,
-    oracle: Option<PathBuf>,
-    baseline: Option<PathBuf>,
-    /// `--suite-baseline NAME=FILE` (repeatable): the ratchet file of an extra test app. With
-    /// `--baseline` the extra apps are ratcheted only when named here.
-    suite_baselines: Vec<(String, PathBuf)>,
-    json: Option<PathBuf>,
-    markdown: Option<PathBuf>,
-    junit: Option<PathBuf>,
-    update_baseline: bool,
-    /// `--no-ratchet`: report only; do not compare with the baseline (for running the corpus
-    /// without the dependency apps its baseline needs).
-    no_ratchet: bool,
-    /// Extra directories of `.app` packages, searched after the project's `.alpackages`.
-    deps: Vec<PathBuf>,
-    /// Run without dependency apps (the corpus alone).
-    no_deps: bool,
-    /// `--bc-version PREFIX`: which oracle to run (default: the newest).
-    bc_version: Option<String>,
-    /// `--all-versions`: run every version in `oracle.toml`, one after the other.
-    all_versions: bool,
-    /// `--dotnet-sidecar PATH`: the built sidecar (default: next to this binary, else built once
-    /// into a cache from `tools/dotnet-sidecar`).
-    dotnet_sidecar: Option<PathBuf>,
-    /// `--dotnet-assembly-dir DIR` (repeatable): where community assemblies are searched.
-    dotnet_assembly_dirs: Vec<PathBuf>,
-    /// `--dotnet-allow-roll-forward`: run the sidecar on a newer .NET major than 8, with a warning.
-    dotnet_allow_roll_forward: bool,
-    /// `--dotnet-timeout-secs N`: the deadline of one `DotNet` call (default 60).
-    dotnet_timeout_secs: Option<u64>,
-    /// `--require-dotnet`: a machine without a usable .NET is an error, not a skip (CI).
-    require_dotnet: bool,
-    /// `--files-dir DIR`: the `File` data type reads and writes real files under DIR. Without it
-    /// files live in memory and are gone when the test ends.
-    files_dir: Option<PathBuf>,
-    /// `--no-download`: never fetch a dependency app from Microsoft's artifact feed (ADR-013).
-    no_download: bool,
-    /// `--cache-dir DIR`: where downloaded artifacts are kept (else `ALRUNNER_CACHE`, else
-    /// `~/.cache/al-runtime`).
-    cache_dir: Option<PathBuf>,
-    /// `--fetch-deps`: resolve and download the dependency apps, then stop (warms the cache).
-    fetch_deps: bool,
-    /// `--print-builds`: print the newest published build for each version and stop. CI keys its
-    /// artifact cache by this.
-    print_builds: bool,
-    /// `--project DIR` (with `--fetch-deps`): any AL project, not the corpus. The BC build comes
-    /// from `--bc-version`, else from the app.json floor (ADR-013 Layer A, ADR-015 3.2).
-    project: Option<PathBuf>,
-}
-
-fn parse_args() -> Result<Args, String> {
-    let mut a = Args::default();
-    let mut it = std::env::args().skip(1);
-    while let Some(flag) = it.next() {
-        let mut val = || {
-            it.next()
-                .map(PathBuf::from)
-                .ok_or_else(|| format!("{flag} needs a value"))
-        };
-        match flag.as_str() {
-            "--root" => a.root = Some(val()?),
-            "--oracle" => a.oracle = Some(val()?),
-            "--baseline" => a.baseline = Some(val()?),
-            "--suite-baseline" => {
-                let v = val()?.to_string_lossy().into_owned();
-                let (name, file) = v
-                    .split_once('=')
-                    .ok_or_else(|| format!("{flag} needs NAME=FILE, got `{v}`"))?;
-                a.suite_baselines.push((name.to_string(), PathBuf::from(file)));
-            }
-            "--json" => a.json = Some(val()?),
-            "--markdown" => a.markdown = Some(val()?),
-            "--junit" => a.junit = Some(val()?),
-            "--update-baseline" => a.update_baseline = true,
-            "--no-ratchet" => a.no_ratchet = true,
-            "--deps" => a.deps.push(val()?),
-            "--no-deps" => a.no_deps = true,
-            "--all-versions" => a.all_versions = true,
-            "--bc-version" => a.bc_version = Some(val()?.to_string_lossy().into_owned()),
-            "--dotnet-sidecar" => a.dotnet_sidecar = Some(val()?),
-            "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(val()?),
-            "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
-            "--require-dotnet" => a.require_dotnet = true,
-            "--files-dir" => a.files_dir = Some(val()?),
-            "--no-download" => a.no_download = true,
-            "--cache-dir" => a.cache_dir = Some(val()?),
-            "--fetch-deps" => a.fetch_deps = true,
-            "--print-builds" => a.print_builds = true,
-            "--project" => a.project = Some(val()?),
-            "--dotnet-timeout-secs" => {
-                let v = val()?;
-                a.dotnet_timeout_secs = Some(
-                    v.to_string_lossy()
-                        .parse()
-                        .map_err(|_| format!("{flag} needs a number of seconds"))?,
-                );
-            }
-            _ => return Err(format!("unknown argument `{flag}`")),
-        }
-    }
-    Ok(a)
-}
+use std::time::{Duration, Instant};
 
 fn main() -> ExitCode {
     // The tree-walking VM recurses on the native stack per AL call; give it room.
@@ -140,7 +38,13 @@ fn write(p: &Path, s: &str) -> Result<(), String> {
 }
 
 fn run() -> Result<ExitCode, String> {
-    let args = parse_args()?;
+    let args = match args::parse(std::env::args().skip(1))? {
+        Parsed::Help => {
+            print!("{}", args::HELP);
+            return Ok(ExitCode::SUCCESS);
+        }
+        Parsed::Run(a) => *a,
+    };
     if let Some(dir) = &args.files_dir {
         al_test_cli::host::set_files_dir(dir.clone());
     }
@@ -242,9 +146,93 @@ fn run_version(
         &cfg.corpus_commit,
     )
     .map_err(|e| format!("BC {}: {e}", version.bc_version))?;
+    let started = Instant::now();
     let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
-    let cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
+    let all_cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e:?}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
+    // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
+    let mut suite_data = Vec::new();
+    for suite in &version.suites {
+        pin::check(
+            &root.join(&cfg.corpus_repo),
+            suite
+                .corpus_commit
+                .as_deref()
+                .unwrap_or_else(|| version.oracle_commit(&cfg.corpus_commit)),
+            &cfg.corpus_commit,
+        )
+        .map_err(|e| format!("BC {} {}: {e}", version.bc_version, suite.name))?;
+        let path = oracle_path.parent().unwrap_or(Path::new(".")).join(&suite.oracle);
+        let text = read(&path)?;
+        let cases = match suite.format {
+            config::OracleFormat::Junit => oracle::parse_junit(&text),
+            config::OracleFormat::Xunit => oracle::parse_xunit(&text).map(|v| v.into_iter().map(|c| c.case).collect()),
+        }
+        .map_err(|e| format!("{}: {e:?}", path.display()))?;
+        let suite_index = corpus::discover(&root.join(&suite.app)).map_err(|e| format!("{}: {e}", suite.app))?;
+        suite_data.push((cases, suite_index));
+    }
+    // The cases this run is about: everything, the selection, or the one `--explain` names.
+    let explained = match &args.explain {
+        Some(pattern) => match find_explained(pattern, &args.select, &all_cases, &index, &suite_data, version)? {
+            Some(found) => Some(found),
+            None if !args.all_versions => {
+                return Err(format!("--explain: no test matches `{pattern}`"));
+            }
+            None => {
+                // A test an older oracle does not list is not an error across versions.
+                println!("BC {}: no test matches `{pattern}`", version.bc_version);
+                return Ok(VersionRun {
+                    code: 0,
+                    oracle: Default::default(),
+                    passing: Default::default(),
+                });
+            }
+        },
+        None => None,
+    };
+    let selecting = args.select.is_active() || explained.is_some();
+    let (cases, suite_cases_all): (Vec<oracle::OracleCase>, Vec<Vec<oracle::OracleCase>>) = match &explained {
+        Some((suite, case)) => (
+            if suite.is_none() {
+                vec![case.clone()]
+            } else {
+                Vec::new()
+            },
+            (0..suite_data.len())
+                .map(|i| {
+                    if *suite == Some(i) {
+                        vec![case.clone()]
+                    } else {
+                        Vec::new()
+                    }
+                })
+                .collect(),
+        ),
+        None => (
+            args.select.filter(&all_cases, &index),
+            suite_data.iter().map(|(c, ix)| args.select.filter(c, ix)).collect(),
+        ),
+    };
+    if selecting && cases.is_empty() && suite_cases_all.iter().all(Vec::is_empty) {
+        return Err(format!(
+            "BC {}: the selection ({}) matches no test",
+            version.bc_version,
+            args.select.describe()
+        ));
+    }
+    if selecting {
+        println!(
+            "selection: {} of {} cases{}",
+            cases.len() + suite_cases_all.iter().map(Vec::len).sum::<usize>(),
+            all_cases.len() + suite_data.iter().map(|(c, _)| c.len()).sum::<usize>(),
+            if args.select.is_active() {
+                format!(" ({})", args.select.describe())
+            } else {
+                String::new()
+            }
+        );
+    }
 
     // ADR-015 3.2: the corpus runs as the oracle's BC version with the corpus app's runtime.
     let leg = version.bc();
@@ -354,7 +342,45 @@ fn run_version(
             runner: suite.runner,
         });
     }
-    let rt = runtime::CorpusRuntime::run_suites(apps, kinds, &manifests, &symbols, Some(&chosen.target), dotnet, &runs);
+    // A selection roots the compile at the selected test codeunits (app index, object id).
+    let only = selecting.then(|| {
+        let mut v: Vec<(usize, u32)> = cases.iter().map(|c| (1, c.id.codeunit)).collect();
+        for (suite, cases) in version.suites.iter().zip(&suite_cases_all) {
+            if let Some((_, app)) = app_index.iter().find(|(a, _)| *a == suite.app) {
+                v.extend(cases.iter().map(|c| (*app, c.id.codeunit)));
+            }
+        }
+        v.sort_unstable();
+        v.dedup();
+        v
+    });
+    let opts = runtime::RunOptions {
+        only,
+        trace: explained.is_some(),
+    };
+    let load_time = started.elapsed();
+    let rt = runtime::CorpusRuntime::run_suites_with(
+        apps,
+        kinds,
+        &manifests,
+        &symbols,
+        Some(&chosen.target),
+        dotnet,
+        &runs,
+        &opts,
+    );
+    if args.timings {
+        let p = &rt.phases;
+        eprintln!(
+            "timings: BC {}: load apps and dependencies {:.2} s, compile {:.2} s, install baseline {:.2} s, run tests {:.2} s, total {:.2} s",
+            version.bc_version,
+            load_time.as_secs_f64(),
+            p.compile.as_secs_f64(),
+            p.baseline.as_secs_f64(),
+            p.tests.as_secs_f64(),
+            started.elapsed().as_secs_f64()
+        );
+    }
     if rt.panics > 0 {
         eprintln!(
             "warning: {} test codeunit(s) hit a runtime panic (reported as not run)",
@@ -374,26 +400,9 @@ fn run_version(
         ));
     }
 
-    // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
+    // The other test apps, each against its own oracle (loaded above).
     let mut suite_cases = Vec::new();
-    for suite in &version.suites {
-        pin::check(
-            &root.join(&cfg.corpus_repo),
-            suite
-                .corpus_commit
-                .as_deref()
-                .unwrap_or_else(|| version.oracle_commit(&cfg.corpus_commit)),
-            &cfg.corpus_commit,
-        )
-        .map_err(|e| format!("BC {} {}: {e}", version.bc_version, suite.name))?;
-        let path = oracle_path.parent().unwrap_or(Path::new(".")).join(&suite.oracle);
-        let text = read(&path)?;
-        let cases = match suite.format {
-            config::OracleFormat::Junit => oracle::parse_junit(&text),
-            config::OracleFormat::Xunit => oracle::parse_xunit(&text).map(|v| v.into_iter().map(|c| c.case).collect()),
-        }
-        .map_err(|e| format!("{}: {e:?}", path.display()))?;
-        let suite_index = corpus::discover(&root.join(&suite.app)).map_err(|e| format!("{}: {e}", suite.app))?;
+    for ((suite, (_, suite_index)), cases) in version.suites.iter().zip(&suite_data).zip(suite_cases_all) {
         let (sr, unmapped) = report::SuiteReport::new(
             &suite.name,
             suite.bc_version.as_deref().unwrap_or(&version.bc_version),
@@ -460,7 +469,7 @@ fn run_version(
         rep.overall.fail,
         rep.overall.not_run
     );
-    for x in &rep.suites {
+    for x in rep.suites.iter().filter(|x| !selecting || x.counts.total > 0) {
         println!(
             "BC {} {}: {}/{} pass ({:.1}%), {} fail, {} not run; BC fails {} on purpose, the runtime fails {} of them",
             x.oracle_leg,
@@ -475,6 +484,123 @@ fn run_version(
         );
     }
 
+    if let Some((suite, case)) = &explained {
+        let name = suite.map_or("", |i| version.suites[i].name.as_str());
+        let cu = index
+            .codeunits
+            .get(&case.id.codeunit)
+            .or_else(|| suite.and_then(|i| suite_data[i].1.codeunits.get(&case.id.codeunit)));
+        let head = format!(
+            "BC {}{}: test {} in codeunit {}{}",
+            version.bc_version,
+            if name.is_empty() {
+                String::new()
+            } else {
+                format!(" {name}")
+            },
+            case.id.name,
+            case.id.codeunit,
+            cu.map_or(String::new(), |c| format!(" ({}, area {})", c.file.display(), c.area))
+        );
+        let oracle_says = if case.bc_failed {
+            "fails (excluded from the pass rate)"
+        } else {
+            "passes"
+        };
+        let outcome = rt.outcome_in(name, &case.id);
+        println!(
+            "\n{}",
+            explain::render(&head, &outcome, oracle_says, rt.detail_in(name, &case.id))
+        );
+        return Ok(VersionRun {
+            code: 0,
+            oracle: oracle_ok,
+            passing,
+        });
+    }
+
+    // One ratchet per oracle file: the main app's, then each other test app's.
+    struct Target<'a> {
+        label: String,
+        /// `None`: this app is not ratcheted (`--baseline` names the main app's file alone).
+        baseline_path: Option<PathBuf>,
+        passing: std::collections::BTreeSet<oracle::CaseId>,
+        cases: &'a [oracle::OracleCase],
+        outcome: Box<dyn Fn(&oracle::CaseId) -> report::Outcome + 'a>,
+        area_of: Box<dyn Fn(u32) -> Option<String> + 'a>,
+        /// Whether the selection picks a case (every case when nothing is selected).
+        selected: Box<dyn Fn(&oracle::CaseId) -> bool + 'a>,
+    }
+    let mut targets = vec![Target {
+        label: version.bc_version.clone(),
+        baseline_path: Some(args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline))),
+        passing: passing.clone(),
+        cases: &cases,
+        outcome: Box::new(outcome),
+        area_of: Box::new(|cu| index.area_of(cu).map(str::to_string)),
+        selected: Box::new(|c| match &explained {
+            Some((_, e)) => *c == e.id,
+            None => !args.select.is_active() || args.select.matches(c, &index),
+        }),
+    }];
+    for ((suite, suite_cases), (_, suite_index)) in version.suites.iter().zip(&suite_cases).zip(&suite_data) {
+        let outcome = |c: &oracle::CaseId| rt.outcome_in(&suite.name, c);
+        // `--baseline FILE` is the main app's alone (a run without the dependency apps has its own
+        // file); an extra app is ratcheted then only against a file named with `--suite-baseline`.
+        let named = args.suite_baselines.iter().find(|(n, _)| *n == suite.name);
+        let ratcheted = args.baseline.is_none() || named.is_some();
+        targets.push(Target {
+            label: format!("{} {}", version.bc_version, suite.name),
+            baseline_path: ratcheted.then(|| named.map_or_else(|| root.join(&suite.baseline), |(_, f)| f.clone())),
+            passing: suite_cases
+                .iter()
+                .filter(|c| !c.bc_failed && outcome(&c.id) == report::Outcome::Pass)
+                .map(|c| c.id.clone())
+                .collect(),
+            cases: suite_cases,
+            outcome: Box::new(outcome),
+            area_of: Box::new(|cu| suite_index.area_of(cu).map(str::to_string)),
+            selected: Box::new(|c| match &explained {
+                Some((_, e)) => *c == e.id,
+                None => !args.select.is_active() || args.select.matches(c, suite_index),
+            }),
+        });
+    }
+    // The baseline of a target, narrowed to the selected cases: the others did not run.
+    let load_baseline = |t: &Target| -> Result<std::collections::BTreeSet<oracle::CaseId>, String> {
+        let path = t
+            .baseline_path
+            .as_ref()
+            .expect("a ratcheted target has a baseline file");
+        let mut baseline = report::parse_baseline(&read(path)?).map_err(|e| format!("{}: {e}", path.display()))?;
+        // Only the selected cases ran; the others cannot have regressed.
+        baseline.retain(|c| (t.selected)(c));
+        Ok(baseline)
+    };
+    if let Some(n) = args.top_refusals {
+        for t in targets.iter().filter(|t| !t.cases.is_empty()) {
+            let in_scope = |id: &oracle::CaseId| {
+                args.top_refusals_area
+                    .as_ref()
+                    .is_none_or(|a| (t.area_of)(id.codeunit).is_some_and(|x| x.eq_ignore_ascii_case(a)))
+            };
+            let list = insight::top_refusals(t.cases, &in_scope, &*t.outcome);
+            let title = match &args.top_refusals_area {
+                Some(a) => format!("BC {} area {a}", t.label),
+                None => format!("BC {}", t.label),
+            };
+            println!("\n{}", insight::render_top(&title, &list, n));
+        }
+    }
+    if args.baseline_diff {
+        for t in targets.iter().filter(|t| t.baseline_path.is_some()) {
+            let d = insight::baseline_diff(&load_baseline(t)?, t.cases, &*t.outcome);
+            println!(
+                "\n{}",
+                insight::render_diff(&format!("BC {}", t.label), &d, &*t.area_of)
+            );
+        }
+    }
     if args.no_ratchet {
         if args.update_baseline {
             return Err("--no-ratchet cannot be combined with --update-baseline".into());
@@ -485,42 +611,11 @@ fn run_version(
             passing,
         });
     }
-    // One ratchet per oracle file: the main app's, then each other test app's.
-    struct Target<'a> {
-        label: String,
-        baseline_path: PathBuf,
-        passing: std::collections::BTreeSet<oracle::CaseId>,
-        outcome: Box<dyn Fn(&oracle::CaseId) -> report::Outcome + 'a>,
-    }
-    let mut targets = vec![Target {
-        label: version.bc_version.clone(),
-        baseline_path: args.baseline.clone().unwrap_or_else(|| root.join(&version.baseline)),
-        passing: passing.clone(),
-        outcome: Box::new(outcome),
-    }];
-    for (suite, cases) in version.suites.iter().zip(&suite_cases) {
-        let outcome = |c: &oracle::CaseId| rt.outcome_in(&suite.name, c);
-        // `--baseline FILE` is the main app's alone (a run without the dependency apps has its own
-        // file); an extra app is ratcheted then only against a file named with `--suite-baseline`.
-        let named = args.suite_baselines.iter().find(|(n, _)| *n == suite.name);
-        if args.baseline.is_some() && named.is_none() {
-            continue;
-        }
-        targets.push(Target {
-            label: format!("{} {}", version.bc_version, suite.name),
-            baseline_path: named.map_or_else(|| root.join(&suite.baseline), |(_, f)| f.clone()),
-            passing: cases
-                .iter()
-                .filter(|c| !c.bc_failed && outcome(&c.id) == report::Outcome::Pass)
-                .map(|c| c.id.clone())
-                .collect(),
-            outcome: Box::new(outcome),
-        });
-    }
+    targets.retain(|t| t.baseline_path.is_some());
     let mut regressed = false;
     for t in &targets {
-        let baseline = report::parse_baseline(&read(&t.baseline_path)?)
-            .map_err(|e| format!("{}: {e}", t.baseline_path.display()))?;
+        let baseline = load_baseline(t)?;
+        let baseline_path = t.baseline_path.as_ref().expect("retained for its baseline file");
         let ratchet = report::ratchet(&baseline, &*t.outcome);
         if !ratchet.skipped.is_empty() {
             // ADR-014 section 11: not a regression, but never silent.
@@ -540,7 +635,7 @@ fn run_version(
                     "BC {}: {} regression(s): cases in {} no longer pass:",
                     t.label,
                     ratchet.regressions.len(),
-                    t.baseline_path.display()
+                    baseline_path.display()
                 );
                 for c in &ratchet.regressions {
                     eprintln!("  {} {}", c.codeunit, c.name);
@@ -558,7 +653,8 @@ fn run_version(
     }
     if args.update_baseline {
         for t in &targets {
-            write(&t.baseline_path, &report::format_baseline(&t.passing))?;
+            let path = t.baseline_path.as_ref().expect("retained for its baseline file");
+            write(path, &report::format_baseline(&t.passing))?;
         }
     }
     Ok(VersionRun {
@@ -566,6 +662,65 @@ fn run_version(
         oracle: oracle_ok,
         passing,
     })
+}
+
+/// The one case `--explain PATTERN` means, as (suite index or `None` for the main app, case): a
+/// test whose name equals the pattern, else the only one that contains it. The selection flags,
+/// when given, narrow the candidates. `None` when no test matches.
+fn find_explained(
+    pattern: &str,
+    selection: &select::Selection,
+    main: &[oracle::OracleCase],
+    main_index: &corpus::CorpusIndex,
+    suites: &[(Vec<oracle::OracleCase>, corpus::CorpusIndex)],
+    version: &config::VersionEntry,
+) -> Result<Option<(Option<usize>, oracle::OracleCase)>, String> {
+    let mut all: Vec<(Option<usize>, &oracle::OracleCase)> = main
+        .iter()
+        .filter(|c| !selection.is_active() || selection.matches(&c.id, main_index))
+        .map(|c| (None, c))
+        .collect();
+    for (i, (cases, ix)) in suites.iter().enumerate() {
+        all.extend(
+            cases
+                .iter()
+                .filter(|c| !selection.is_active() || selection.matches(&c.id, ix))
+                .map(|c| (Some(i), c)),
+        );
+    }
+    let lower = pattern.to_lowercase();
+    let exact: Vec<_> = all
+        .iter()
+        .filter(|(_, c)| c.id.name.to_lowercase() == lower)
+        .cloned()
+        .collect();
+    let found = if exact.is_empty() {
+        all.iter()
+            .filter(|(_, c)| c.id.name.to_lowercase().contains(&lower))
+            .cloned()
+            .collect()
+    } else {
+        exact
+    };
+    match found.as_slice() {
+        [] => Ok(None),
+        [(suite, case)] => Ok(Some((*suite, (*case).clone()))),
+        many => {
+            let list: Vec<String> = many
+                .iter()
+                .take(10)
+                .map(|(s, c)| {
+                    let suite = s.map_or(String::new(), |i| format!(" ({})", version.suites[i].name));
+                    format!("  {} {}{suite}", c.id.codeunit, c.id.name)
+                })
+                .collect();
+            Err(format!(
+                "--explain `{pattern}` matches {} tests; give a longer name or add --codeunit ID:\n{}",
+                many.len(),
+                list.join("\n")
+            ))
+        }
+    }
 }
 
 fn origin_word(o: al_deps::build::Origin) -> &'static str {

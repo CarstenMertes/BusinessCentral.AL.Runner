@@ -745,8 +745,10 @@ pub fn lower_with_positions(
                     .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
             }
             // A dependency routine nothing reached was never checked: a stub that refuses.
-            let reached = demand
-                .is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, usize::from(r.syntax().text_range().start())));
+            let reached = !checked.is_skipped(oi)
+                && demand.is_none_or(|d| {
+                    !ws.is_dependency(oi) || d.reached(oi, usize::from(r.syntax().text_range().start()))
+                });
             let routine = if reached { lw.routine(r) } else { lw.stub(r) };
             // A TestPage drives page routines the call graph cannot see (ADR-012).
             for s in routine.locals.iter().chain(&globals) {
@@ -3603,6 +3605,94 @@ mod tests {
         let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
         let lowered = lower_with_positions(&ws, &members, &checked, positions);
         (ws, lowered)
+    }
+
+    const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"
+{
+    Subtype = Test;
+    [Test]
+    procedure T1()
+    var
+        x: Integer;
+    begin
+        x := 1;
+    end;
+}
+codeunit 50101 \"Left Out\"
+{
+    Subtype = Test;
+    [Test]
+    procedure T2()
+    var
+        x: Integer;
+    begin
+        x := 1;
+    end;
+}
+codeunit 50102 \"Helper\"
+{
+    procedure H()
+    var
+        x: Integer;
+    begin
+        x := 1;
+    end;
+}
+codeunit 50103 \"Listening Test\"
+{
+    Subtype = Test;
+    [Test]
+    procedure T3()
+    var
+        x: Integer;
+    begin
+        x := 1;
+    end;
+
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Helper, 'OnX', '', false, false)]
+    local procedure OnX()
+    begin
+    end;
+}";
+
+    /// A test selection (`Roots::only_tests`) roots the check at the selected test codeunits:
+    /// the others are stubs that refuse, and helpers and event listeners stay compiled.
+    #[test]
+    fn a_selection_compiles_only_the_selected_test_codeunits() {
+        let app = || AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".to_string(), TWO_TESTS.to_string())],
+        };
+        let reasons = |only: Option<Vec<(usize, u32)>>| {
+            let (ws, l) = compile_apps_with(
+                vec![app()],
+                vec![crate::workspace::AppKind::Workspace],
+                &Default::default(),
+                None,
+                crate::check::Roots {
+                    baseline: false,
+                    only_tests: only,
+                    ..Default::default()
+                },
+            );
+            let of = |id: u32| {
+                let oi = ws.objects.iter().position(|o| o.id == Some(id)).expect("object");
+                l.unsupported[oi].iter().flatten().count()
+            };
+            (of(50100), of(50101), of(50102), of(50103))
+        };
+        assert_eq!(
+            reasons(None),
+            (0, 0, 0, 0),
+            "without a selection every codeunit compiles"
+        );
+        assert_eq!(
+            reasons(Some(vec![(0, 50100)])),
+            (0, 1, 0, 0),
+            "only the codeunit that is not selected, not a helper and not a listener, is left out"
+        );
     }
 
     /// (line, column) of the position a `Stmt::Pos` marker names.

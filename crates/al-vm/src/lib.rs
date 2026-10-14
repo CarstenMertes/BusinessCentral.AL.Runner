@@ -11,6 +11,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod autoinc;
+mod baseline;
+pub use baseline::Baseline;
 mod callstack;
 mod dispatch;
 pub mod dotnet;
@@ -18,6 +20,7 @@ mod errorcollect;
 pub mod events;
 mod filterpage;
 mod flowfields;
+mod globaltriggers;
 mod hostvalues;
 mod interfaces;
 mod pages;
@@ -49,6 +52,9 @@ pub struct Engine {
     pub target: Option<al_version::Target>,
     /// The .NET host, the registry of runtime-provided classes and the policy (ADR-014).
     pub dotnet: dotnet::DotNetConfig,
+    /// Table objects whose rows the install baseline should have created and did not (ADR-013
+    /// decision 5): a `Get` that finds nothing in dependency code is not BC's answer for them.
+    pub unseeded: std::collections::HashSet<usize>,
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
@@ -123,6 +129,7 @@ impl Engine {
             events,
             target,
             dotnet,
+            unseeded: Default::default(),
             unevaluable_init,
         })
     }
@@ -154,6 +161,8 @@ pub struct Session {
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
+    /// What the subscribers of `Global Triggers` answered, per table object (globaltriggers.rs).
+    pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
     /// Private tables of temporary records, by temp id.
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
@@ -260,6 +269,7 @@ impl Session {
             depth: 0,
             singletons: Default::default(),
             store: Default::default(),
+            global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
@@ -660,19 +670,12 @@ impl Session {
                 Ok(())
             }
             S::AssertError(body) => {
-                // Inside a UI handler, with writes pending from before the page opened, the extent
-                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
-                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
-                // Initialize() without a Commit, runs a modal page whose handler does
-                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
-                // real BC. Rolling back to the last commit would undo it.
-                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                // A caught error rolls the transaction back to the last commit, also inside a modal
+                // page handler: the write pending before the page opened and the handler's own
+                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
+                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
                 match self.exec_block(body, f) {
-                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
-                        "asserterror in a UI handler with writes pending from before it ran: the extent \
-                         of the rollback is not pinned"
-                            .into(),
-                    )),
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
@@ -821,6 +824,10 @@ impl Session {
             } => {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
                 self.finish_call(object, routine, inst, args, false, f)
+            }
+            E::InterfaceTest { value, objects, cast } => {
+                let v = self.eval(value, f)?;
+                self.interface_test(v, objects, *cast)
             }
             E::EnumImpl {
                 value,

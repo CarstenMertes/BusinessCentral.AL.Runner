@@ -132,6 +132,7 @@ page 62013 "PM Rowset"
         TempBuf.Copy(Rec); Moved := TempBuf.Next(Steps); if Moved <> 0 then Rec := TempBuf; exit(Moved);
     end;
 }
+page 62090 "PM Dialog" { PageType = StandardDialog; }
 "#;
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
@@ -457,4 +458,25 @@ fn a_commit_in_a_worker_is_refused() {
         matches!(&o[0].1, Outcome::NotRun(why) if why.contains("Commit in a page background task")),
         "{o:?}"
     );
+}
+
+// corpus branch al-runtime-rs (pending push): record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
+// Asserterror_InAModalHandler_RollsBackToTheLastCommit (probe on BC 27.5). An asserterror inside a
+// modal handler rolls back everything since the last Commit: the write pending before the page
+// opened, the handler's own earlier write and the write inside the asserterror.
+#[test]
+fn an_asserterror_in_a_modal_handler_rolls_back_to_the_last_commit() {
+    passes(&format!(
+        "{HELPERS}
+        local procedure Has(No: Code[20]): Text var R: Record \"PM Row\"; begin exit(Format(R.Get(No))); end;
+        local procedure Put(No: Code[20]) var R: Record \"PM Row\"; begin R.Init(); R.\"No.\" := No; R.Insert(); end;
+        [Test] [HandlerFunctions('Dialog')]
+        procedure InHandler() var R: Record \"PM Row\"; Result: Action; begin
+            R.DeleteAll(); Put('1'); Commit(); Put('2');
+            Result := Page.RunModal(Page::\"PM Dialog\");
+            Check('Yes', Has('1')); Check('No', Has('2')); Check('No', Has('3')); Check('No', Has('4'));
+            Check('No', Format(Database.IsInWriteTransaction())); end;
+        [ModalPageHandler] procedure Dialog(var D: TestPage \"PM Dialog\") begin
+            Put('3'); asserterror begin Put('4'); Error('in handler'); end; end;"
+    ));
 }

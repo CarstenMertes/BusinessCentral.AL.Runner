@@ -62,6 +62,20 @@ impl MemStore {
         !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
     }
 
+    /// Whether table object `object` holds a row now (committed or not) in any company.
+    pub fn has_rows(&self, object: u32) -> bool {
+        self.tables.iter().any(|((_, o), t)| *o == object && !t.is_empty())
+    }
+
+    /// The table objects that hold a committed row in any company.
+    pub fn nonempty_tables(&self) -> std::collections::BTreeSet<u32> {
+        self.committed
+            .iter()
+            .filter(|(_, t)| !t.is_empty())
+            .map(|((_, object), _)| *object)
+            .collect()
+    }
+
     /// A number that changes whenever the rows of table `t` change (a rollback included). Queries
     /// compare it to tell whether their result set is stale (corpus query/TestQueryReadAfterWrite.al).
     pub fn table_stamp(&self, cx: &AccessContext, t: &TableDef) -> u64 {

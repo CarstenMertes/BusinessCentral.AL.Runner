@@ -1,6 +1,6 @@
 # ADR-025: Several reportextensions that change one report run
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-14; build now)
 - Date: 2026-10-14
 - Changes: `ir::Report::extension` (one object) and `vm::Run::ext` (one instance) become lists; the cache facts `report_extension` (`al-sema/src/provided.rs`) becomes a list and `al_cache::FORMAT` rises. Additive in the IR (a new field, the old one kept); a change to a cache format. It needs the owner's decision because of CLAUDE.md rule 5 (seams) and ADR-022 (cache format).
 

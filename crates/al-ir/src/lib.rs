@@ -143,6 +143,13 @@ pub struct Object {
     /// For reportextensions that change what a run does: the triggers and data items they add.
     #[serde(default)]
     pub report_ext: Option<ReportExt>,
+    /// The namespace the object is declared in.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// For an extension object: the id of the object it extends, when that object is in the
+    /// workspace (the metadata tables report it).
+    #[serde(default)]
+    pub extends_id: Option<u32>,
 }
 
 /// A report as the runtime sees it: processing only, with no layout.
@@ -251,10 +258,31 @@ pub enum XmlNodeKind {
     FieldAttr,
 }
 
-/// An xmlport as the runtime sees it (`Format = Xml`).
+/// The `Format` of an xmlport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum XmlFormat {
+    #[default]
+    Xml,
+    VariableText,
+    FixedText,
+}
+
+/// An xmlport as the runtime sees it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct XmlPort {
     pub direction: XmlDirection,
+    #[serde(default)]
+    pub format: XmlFormat,
+    /// `FieldSeparator`, `FieldDelimiter` and `RecordSeparator` as written, for the text formats
+    /// (`None`: the default). `TextEncoding = UTF8` sets `utf8`.
+    #[serde(default)]
+    pub field_separator: Option<String>,
+    #[serde(default)]
+    pub field_delimiter: Option<String>,
+    #[serde(default)]
+    pub record_separator: Option<String>,
+    #[serde(default)]
+    pub utf8: bool,
     /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
     pub nodes: Vec<XmlNode>,
     /// Global slots of the source `InStream` and destination `OutStream` set by
@@ -288,6 +316,12 @@ pub struct XmlNode {
     pub auto_update: bool,
     pub auto_replace: bool,
     pub use_temporary: bool,
+    /// `MinOccurs = Zero`: the element may be missing from an imported document.
+    #[serde(default)]
+    pub min_zero: bool,
+    /// `Width` of a field element in a FixedText port.
+    #[serde(default)]
+    pub width: Option<usize>,
     /// Triggers by lower-case name (`onbeforepassvariable`, ...) to routine index.
     pub triggers: Vec<(String, usize)>,
 }
@@ -531,6 +565,10 @@ pub struct Table {
     pub keys: Vec<Vec<usize>>,
     /// `Unique = true` per key (parallel to `keys`).
     pub unique_keys: Vec<bool>,
+    /// The properties of each key as written (`Clustered`, `Enabled`, `SumIndexFields`, ...),
+    /// parallel to `keys`; empty for a key the compiler adds.
+    #[serde(default)]
+    pub key_props: Vec<Vec<(String, String)>>,
     pub per_company: bool,
     /// Object index of each table extension (their triggers are not run yet).
     pub extensions: Vec<usize>,
@@ -789,6 +827,13 @@ pub enum Expr {
         targets: Vec<(usize, usize)>,
         args: Vec<Arg>,
     },
+    /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
+    /// value) on an interface value. `objects` are the codeunits that implement `I`.
+    InterfaceTest {
+        value: Box<Expr>,
+        objects: Vec<u32>,
+        cast: bool,
+    },
     /// An enum value cast to an interface: a fresh instance of the codeunit that
     /// implements the interface for the value's ordinal. `by_ordinal` has every declared
     /// ordinal of the enum (extensions included), already resolved through the value's own
@@ -912,6 +957,8 @@ mod tests {
                 xmlport: None,
                 report: None,
                 report_ext: None,
+                namespace: None,
+                extends_id: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

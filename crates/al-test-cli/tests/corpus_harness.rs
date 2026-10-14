@@ -54,10 +54,10 @@ fn every_oracle_case_is_reported_and_attributed_to_an_area() {
     require_corpus();
     let (code, r) = json(&[]);
     assert_eq!(code, 0);
-    assert_eq!(r["overall"]["total"], 4836);
+    assert_eq!(r["overall"]["total"], 5112);
     assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "{}", r["unmapped"]);
-    assert_eq!(r["areas"]["json"]["total"], 117);
-    assert_eq!(r["areas"]["record"]["total"], 1018);
+    assert_eq!(r["areas"]["json"]["total"], 129);
+    assert_eq!(r["areas"]["record"]["total"], 1076);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "cdf315abd1e7115fcbfbcc88c720371e75989b8e",
+            "348a7441c3b4be2dfad3e570e83d5bdc4bfad2cb",
             "0000000000000000000000000000000000000000",
         ),
     )
@@ -81,16 +81,22 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     assert!(err.contains("corpus pin"), "{err}");
 }
 
-/// The real oracle with BC 29's recorded corpus commit replaced.
+/// The real oracle with an older corpus commit recorded for BC 29 (every table is on the pin).
 fn oracle_with_29_recorded_for(commit: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let t = std::fs::read_to_string(root().join("oracle/oracle.toml")).unwrap();
+    let marker = "bc_version = \"29.0\"\n";
+    assert!(t.contains(marker), "BC 29 has a table");
     assert!(
-        t.contains("corpus_commit = \"cf6e546"),
-        "BC 29's oracle is recorded for the older commit"
+        !t.contains("workflow_run = 38306086475"),
+        "BC 29 is recorded for the pin"
     );
     let bad = dir.path().join("oracle.toml");
-    std::fs::write(&bad, t.replace("cf6e546793a92c482499ce86eadf0a0b13d2a742", commit)).unwrap();
+    std::fs::write(
+        &bad,
+        t.replace(marker, &format!("{marker}corpus_commit = \"{commit}\"\n")),
+    )
+    .unwrap();
     for v in ["27", "28", "29"] {
         std::fs::create_dir(dir.path().join(v)).unwrap();
         std::fs::copy(
@@ -155,7 +161,7 @@ fn markdown_summary_is_written() {
     let md = dir.path().join("s.md");
     let (code, _, _) = cli(&["--markdown", md.to_str().unwrap()]);
     assert_eq!(code, 0);
-    assert!(std::fs::read_to_string(md).unwrap().contains("| **overall** | 4836 |"));
+    assert!(std::fs::read_to_string(md).unwrap().contains("| **overall** | 5112 |"));
 }
 
 #[test]
@@ -190,10 +196,8 @@ fn every_bc_major_has_an_oracle_with_the_same_cases() {
     require_corpus();
     // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
     // run stops with exit 2 (ADR-015 1.6).
-    // BC 27 and 28 are recorded for the pinned corpus commit (223 probe tests more). BC 29 is
-    // recorded for the older commit, which the pin only adds files to (ADR-007), so its cases are
-    // the 4836 it had.
-    for (v, total) in [("27", 5059), ("28", 5059), ("29", 4836)] {
+    // All three are recorded for the pinned corpus commit.
+    for (v, total) in [("27", 5112), ("28", 5112), ("29", 5112)] {
         let (code, r) = json(&["--bc-version", v]);
         assert_eq!(code, 0, "BC {v}");
         assert_eq!(r["overall"]["total"], total, "BC {v}");
@@ -222,9 +226,8 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     }
     assert!(!json.exists(), "all-versions writes only per-version files");
     assert!(out.contains("Version comparison"), "{out}");
-    // BC 29's oracle lacks the 223 cases that the pinned corpus added. Re-recording it for the
-    // pin makes this line say "same cases in every version" again.
-    assert!(out.contains("oracle: 223 case(s) differ"), "{out}");
+    // Every oracle is recorded for the pin and has the same cases.
+    assert!(out.contains("oracle: same cases in every version"), "{out}");
     // The three known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same
     // cases on every version, among the cases every oracle has. A new difference would be
     // listed here.
@@ -252,4 +255,94 @@ fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
     // Without the flag the same machine still runs the corpus.
     let (code, _, err) = cli(&["--dotnet-sidecar", "/nonexistent/AlDotNetSidecar.dll"]);
     assert_eq!(code, 0, "{err}");
+}
+
+// BC 28 holds the main app and three more oracles (oracle/oracle.toml `[[version.suite]]`): the
+// OnPrem app and the isolation probe under its two runners. Their cases stay out of `overall`.
+#[test]
+fn the_other_test_apps_are_reported_apart_from_the_main_one() {
+    require_corpus();
+    let (code, r) = json(&["--bc-version", "28"]);
+    assert_eq!(code, 0);
+    assert_eq!(r["overall"]["total"], 5112);
+    let suites = r["suites"].as_array().unwrap();
+    let get = |n: &str| {
+        suites
+            .iter()
+            .find(|s| s["name"] == n)
+            .unwrap_or_else(|| panic!("no suite {n}"))
+    };
+    assert_eq!(get("onprem")["counts"]["total"], 61);
+    assert_eq!(get("isolation-function")["counts"]["total"], 7);
+    assert_eq!(get("isolation-function")["counts"]["pass"], 7);
+    // The control: real BC fails T5 under Codeunit isolation, and the runtime fails it too.
+    let control = get("isolation-codeunit");
+    assert_eq!(control["counts"]["pass"], 6);
+    assert_eq!(control["bc_failed"], 1);
+    assert_eq!(control["bc_failed_reproduced"], 1);
+}
+
+// BC 27 and 29 have no isolation oracle (the probe only ran in the BC 28.4 nightly).
+#[test]
+fn a_version_without_an_isolation_oracle_lists_only_the_onprem_app() {
+    require_corpus();
+    let (_, r) = json(&["--bc-version", "27"]);
+    let names: Vec<_> = r["suites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["onprem"]);
+}
+
+// `--baseline FILE` is the main app's ratchet alone. The extra apps keep their own files in
+// `oracle.toml`, which may need the dependency apps this `--no-deps` run does not load.
+#[test]
+fn an_explicit_baseline_does_not_ratchet_the_extra_apps() {
+    require_corpus();
+    // Not a regression: onprem's own baseline lists cases that need the dependency apps.
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("passing.txt");
+    std::fs::write(&base, "").unwrap();
+    let (code, _, err) = cli(&["--bc-version", "27", "--baseline", base.to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn a_suite_baseline_ratchets_that_extra_app_and_no_ratchet_ignores_it() {
+    require_corpus();
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("passing.txt");
+    std::fs::write(&base, "").unwrap();
+    // A case the OnPrem app cannot pass without its platform tables and dependency apps.
+    let suite = dir.path().join("onprem.txt");
+    std::fs::write(
+        &suite,
+        "61200 ObjectMetadata_Find_ApplicationDatabaseTableId_ReturnsARow\n",
+    )
+    .unwrap();
+    let args = |extra: &[&str]| {
+        let mut a = vec!["--bc-version", "27", "--baseline", base.to_str().unwrap()];
+        a.extend_from_slice(&["--suite-baseline"]);
+        let named = format!("onprem={}", suite.display());
+        let mut v: Vec<String> = a.iter().map(|s| s.to_string()).collect();
+        v.push(named);
+        v.extend(extra.iter().map(|s| s.to_string()));
+        v
+    };
+    let run = |a: Vec<String>| cli(&a.iter().map(String::as_str).collect::<Vec<_>>());
+    let (code, _, err) = run(args(&[]));
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("27.5 onprem") && err.contains("ObjectMetadata_Find_ApplicationDatabaseTableId"),
+        "{err}"
+    );
+    // --no-ratchet reports only, for every app.
+    let mut a = args(&["--no-ratchet"]);
+    a.retain(|x| x != base.to_str().unwrap() && x != "--baseline");
+    let (code, _, err) = run(a);
+    assert_eq!(code, 0, "{err}");
+    let (_, _, err) = cli(&["--bc-version", "27", "--suite-baseline", "nope=x"]);
+    assert!(err.contains("no suite named `nope`"), "{err}");
 }

@@ -282,6 +282,193 @@ xmlport 60033 "ALT Request Page XmlPort"
     var Flag: Boolean;
 }
 
+table 60040 "ALT Keyed"
+{
+    fields { field(1; "Entry No."; Integer) { } field(2; Rank; Integer) { } }
+    keys { key(PK; "Entry No.") { } key(ByRank; Rank) { } }
+}
+
+// Mutation-testing fixtures: shapes the corpus fixtures above do not have.
+xmlport 60034 "ALT Keyed XmlPort"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema { textelement(Root) { tableelement(Row; "ALT Keyed") { fieldelement(EntryNo; Row."Entry No.") { } } } }
+}
+
+xmlport 60035 "ALT Raising XmlPort"
+{
+    Direction = Import; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Universals)
+        {
+            tableelement(Universal; "ALT Universal")
+            {
+                XmlName = 'Universal';
+                fieldelement(EntryNo; Universal."Entry No.")
+                {
+                    trigger OnAfterAssignField() begin Error('RAISED-IN-TRIGGER'); end;
+                }
+            }
+        }
+    }
+}
+
+xmlport 60036 "ALT Table Root XmlPort"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema { tableelement(Universal; "ALT Universal") { fieldelement(EntryNo; Universal."Entry No.") { } } }
+}
+
+xmlport 60037 "ALT Empty Root XmlPort"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema { textelement(Root) { } }
+}
+
+xmlport 60041 "ALT Upd Init XmlPort"
+{
+    Direction = Import; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Universals)
+        {
+            tableelement(Universal; "ALT Universal")
+            {
+                AutoUpdate = true;
+                XmlName = 'Universal';
+                fieldelement(EntryNo; Universal."Entry No.") { }
+                fieldelement(IntegerValue; Universal."Integer Field") { }
+                trigger OnAfterInitRecord() begin end;
+            }
+        }
+    }
+}
+xmlport 60042 "ALT Upd AssignField XmlPort"
+{
+    Direction = Import; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Universals)
+        {
+            tableelement(Universal; "ALT Universal")
+            {
+                AutoUpdate = true;
+                XmlName = 'Universal';
+                fieldelement(EntryNo; Universal."Entry No.") { }
+                fieldelement(IntegerValue; Universal."Integer Field") { trigger OnAfterAssignField() begin end; }
+                
+            }
+        }
+    }
+}
+xmlport 60043 "ALT Upd AssignVar XmlPort"
+{
+    Direction = Import; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Universals)
+        {
+            tableelement(Universal; "ALT Universal")
+            {
+                AutoUpdate = true;
+                XmlName = 'Universal';
+                fieldelement(EntryNo; Universal."Entry No.") { }
+                fieldelement(IntegerValue; Universal."Integer Field") { }
+                textelement(Note) { trigger OnAfterAssignVariable() begin end; }
+            }
+        }
+    }
+}
+
+xmlport 60044 "ALT Nested XmlPort"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            textelement(Header)
+            {
+                textelement(Title)
+                {
+                    trigger OnBeforePassVariable() begin Title := 'Hello'; end;
+                    trigger OnAfterAssignVariable()
+                    var Persisted: Record "ALT Universal";
+                    begin
+                        Persisted.Init(); Persisted."Entry No." := 77; Persisted."Description Field" := Title; Persisted.Insert();
+                    end;
+                }
+            }
+        }
+    }
+}
+
+xmlport 60045 "ALT Text In Table XmlPort"
+{
+    Direction = Both; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Universals)
+        {
+            tableelement(Universal; "ALT Universal")
+            {
+                XmlName = 'Universal';
+                fieldelement(EntryNo; Universal."Entry No.") { }
+                textelement(Group) { textelement(Inner) { } }
+            }
+        }
+    }
+}
+
+codeunit 50102 "XP Trace"
+{
+    SingleInstance = true;
+    var Log: Text;
+    procedure Add(S: Text) begin Log += S + ';'; end;
+    procedure Get(): Text begin exit(Log); end;
+}
+
+xmlport 60046 "ALT Ordered XmlPort"
+{
+    Direction = Import; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Parents)
+        {
+            tableelement(Parent; "ALT Parent")
+            {
+                XmlName = 'Parent';
+                fieldelement(ParentEntryNo; Parent."Entry No.") { }
+                tableelement(Child; "ALT Child")
+                {
+                    LinkTable = Parent;
+                    LinkFields = "Parent Entry No." = FIELD("Entry No.");
+                    XmlName = 'Child';
+                    fieldelement(ChildEntryNo; Child."Entry No.") { }
+                    trigger OnAfterInsertRecord() var T: Codeunit "XP Trace"; begin T.Add('C' + Format(Child."Entry No.")); end;
+                }
+                trigger OnAfterInsertRecord() var T: Codeunit "XP Trace"; begin T.Add('P' + Format(Parent."Entry No.")); end;
+            }
+        }
+    }
+}
+
+xmlport 60047 "ALT Raising Export XmlPort"
+{
+    Direction = Export; Format = Xml; UseRequestPage = false;
+    schema
+    {
+        textelement(Root)
+        {
+            textelement(Boom)
+            {
+                trigger OnBeforePassVariable() begin Error('EXPORT-RAISED'); end;
+            }
+        }
+    }
+}
+
 codeunit 50100 Helpers
 {
     procedure Row(EntryNo: Integer; IntegerValue: Integer; TextValue: Text; Description: Text)
@@ -315,7 +502,18 @@ codeunit 50100 Helpers
 "#;
 
 fn run(vars: &str, body: &str) -> Result<Value, Signal> {
-    let src = format!("{FIXTURES}\ncodeunit 50101 C {{ procedure F(): Text var {vars} begin {body} end; }}");
+    run_in(vars, body, "", None)
+}
+
+/// With `seed`, the codeunit's `Seed` runs first under the default model and commits, then F runs
+/// under `TransactionModel::None`.
+fn run_in(vars: &str, body: &str, extra: &str, seed: Option<&str>) -> Result<Value, Signal> {
+    let seed_proc = seed
+        .map(|b| format!("procedure Seed() var {vars} begin {b} Commit(); end;"))
+        .unwrap_or_default();
+    let src = format!(
+        "{FIXTURES}\ncodeunit 50101 C {{ {seed_proc} {extra} procedure F(): Text var {vars} begin {body} end; }}"
+    );
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),
@@ -343,6 +541,15 @@ fn run(vars: &str, body: &str) -> Result<Value, Signal> {
     let engine = Engine::new(l.program, blocked);
     let mut s = Session::new(engine);
     let inst = s.instance(oi);
+    if seed.is_some() {
+        let si = s.engine.program.objects[oi]
+            .routines
+            .iter()
+            .position(|r| r.name == "Seed")
+            .unwrap();
+        s.call(oi, si, inst.clone(), vec![]).unwrap();
+        s.tx_model = al_vm::TxModel::None;
+    }
     s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
 }
 
@@ -687,50 +894,48 @@ fn a_failing_guarded_import_returns_false_and_rolls_back_its_rows() {
 
 // The statement form leaves the failure to the caller (xmlport/TestXmlPortImportWriteTx.al does not
 // pin its text, so the failing statement import is refused).
+// xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_BadInteger_ThrowsEvaluate
 #[test]
-fn a_failing_statement_import_is_refused_because_its_error_text_is_not_pinned() {
-    let r = refusal(
+fn a_failing_statement_import_raises_the_evaluate_error() {
+    match run(
         IMPORT_VARS,
         "H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>x</IntegerValue></Universal></Universals>'); XmlPort.Import(60023, InStr); exit('');",
-    );
-    assert!(r.contains("not pinned"), "{r}");
+    ) {
+        Err(Signal::Error(e)) => {
+            assert_eq!(e.message, "The value \"x\" can't be evaluated into type Integer.");
+            assert_eq!(e.code, "Evaluate");
+        }
+        other => panic!("expected an error, got {other:?}"),
+    }
 }
 
 // xmlport/TestXmlPortPrecompiledObject.al:PrecompiledXmlPort_DeclaredExportDirection_RefusesImport
 // (the message is a platform resource string the corpus does not pin).
-#[test]
-fn a_direction_mismatch_is_refused_until_its_message_is_pinned() {
-    let r = refusal(
-        "B: Record \"ALT Blob\" temporary; H: Codeunit Helpers; InStr: InStream; P: XmlPort \"ALT Export Only XmlPort\";",
-        "H.Stage(B, InStr, '<Root/>'); P.SetSource(InStr); P.Import(); exit('');",
-    );
-    assert!(r.contains("Direction"), "{r}");
-    let r = refusal(
-        "B: Record \"ALT Blob\"; OutStr: OutStream; P: XmlPort \"ALT Import Only XmlPort\";",
-        "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('');",
-    );
-    assert!(r.contains("Direction"), "{r}");
-}
 
 #[test]
 fn xmlports_the_runtime_cannot_run_are_refused_before_they_start() {
-    let r = refusal("P: XmlPort \"ALT Variable Text XmlPort\";", "exit('');");
-    assert!(r.contains("VariableText"), "{r}");
     let r = refusal("P: XmlPort \"ALT Request Page XmlPort\";", "exit('');");
     assert!(r.contains("request page"), "{r}");
 }
 
 // The text of a failed import is not pinned by the corpus, so reading it is refused rather than
 // answered with an invented sentence (hard rule 3); the pinned parts (false, rollback) still hold.
+// The error of a failed guarded import stays readable.
 #[test]
-fn the_last_error_of_a_failed_guarded_import_cannot_be_read() {
+fn the_last_error_of_a_failed_guarded_import_can_be_read() {
     let bad = "'<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>x</IntegerValue></Universal></Universals>'";
-    for read in ["GetLastErrorText()", "GetLastErrorCode()"] {
-        let r = refusal(
+    for (read, expected) in [
+        (
+            "GetLastErrorText()",
+            "The value \"x\" can't be evaluated into type Integer.",
+        ),
+        ("GetLastErrorCode()", "Evaluate"),
+    ] {
+        let out = text(
             &format!("{IMPORT_VARS} Ok: Boolean;"),
             &format!("H.Stage(B, InStr, {bad}); Ok := XmlPort.Import(60023, InStr); exit({read});"),
         );
-        assert!(r.contains("not pinned"), "{r}");
+        assert_eq!(out, expected);
     }
     // Without a read the import still reports false.
     let out = text(
@@ -738,4 +943,328 @@ fn the_last_error_of_a_failed_guarded_import_cannot_be_read() {
         &format!("H.Stage(B, InStr, {bad}); Ok := XmlPort.Import(60023, InStr); exit(Format(Ok));"),
     );
     assert_eq!(out, "No");
+}
+
+// ---- mutation-testing additions (docs/status.md debt) ----
+
+// SetSource takes an InStream and SetDestination an OutStream; the stream of the other direction
+// is refused (the corpus only ever passes the right one).
+#[test]
+fn set_source_and_set_destination_refuse_the_stream_of_the_other_direction() {
+    let vars =
+        "B: Record \"ALT Blob\" temporary; InStr: InStream; OutStr: OutStream; P: XmlPort \"ALT Universal XmlPort\";";
+    let r = refusal(vars, "P.SetSource(OutStr); exit('');");
+    assert!(r.contains("Xmlport.SetSource"), "{r}");
+    let r = refusal(vars, "P.SetDestination(InStr); exit('');");
+    assert!(r.contains("Xmlport.SetDestination"), "{r}");
+    let r = refusal(vars, "XmlPort.Import(60023, OutStr); exit('');");
+    assert!(r.contains("stream"), "{r}");
+    let r = refusal(vars, "XmlPort.Export(60023, InStr); exit('');");
+    assert!(r.contains("stream"), "{r}");
+}
+
+// SetTableView copies only the filters of a plain view: one that is temporary, marked-only,
+// sorted by another key or descending changes more than filters, and what BC does is not pinned.
+#[test]
+fn set_table_view_refuses_a_view_that_is_more_than_filters() {
+    for (setup, why) in [
+        ("", "ok"),
+        ("V.MarkedOnly(true);", "marked"),
+        // A key and a direction order the export (corpus xmlport/TestXmlPortTriggersReplaceViewContracts.al).
+        ("V.SetCurrentKey(Rank);", "ok"),
+        ("V.Ascending(false);", "ok"),
+    ] {
+        let r = run(
+            "V: Record \"ALT Keyed\"; P: XmlPort \"ALT Keyed XmlPort\";",
+            &format!("V.SetRange(\"Entry No.\", 1); {setup} P.SetTableView(V); exit('set');"),
+        );
+        if why == "ok" {
+            assert!(matches!(r, Ok(Value::Text(ref t)) if t == "set"), "{r:?}");
+        } else {
+            match r {
+                Err(Signal::Unsupported(m)) => assert!(m.contains("temporary or marked"), "{setup}: {m}"),
+                other => panic!("{setup}: {other:?}"),
+            }
+        }
+    }
+    let r = refusal(
+        "V: Record \"ALT Keyed\" temporary; P: XmlPort \"ALT Keyed XmlPort\";",
+        "P.SetTableView(V); exit('');",
+    );
+    assert!(r.contains("temporary or marked"), "{r}");
+}
+
+// A view of another table is refused too, and an xmlport with no table element has nothing to
+// give the view to; both refusals name the xmlport.
+#[test]
+fn set_table_view_refusals_name_what_is_wrong() {
+    let r = refusal(
+        "V: Record \"ALT Universal\"; P: XmlPort \"ALT Keyed XmlPort\";",
+        "P.SetTableView(V); exit('');",
+    );
+    assert!(r.contains("another table"), "{r}");
+    let r = refusal(
+        "V: Record \"ALT Universal\"; P: XmlPort \"ALT Empty Root XmlPort\";",
+        "P.SetTableView(V); exit('');",
+    );
+    assert!(
+        r.contains("\"ALT Empty Root XmlPort\"") && r.contains("no table element"),
+        "{r}"
+    );
+}
+
+// A refused direction names the xmlport and the direction it declares.
+// xmlport/TestXmlPortExportImportContracts.al:XmlPort_WrongDirection_Throws
+#[test]
+fn a_direction_mismatch_raises_the_pinned_text_and_code() {
+    let err = |vars: &str, body: &str| match run(vars, body) {
+        Err(Signal::Error(e)) => (e.message, e.code),
+        other => panic!("expected an error, got {other:?}"),
+    };
+    let (m, c) = err(
+        "B: Record \"ALT Blob\" temporary; H: Codeunit Helpers; InStr: InStream; P: XmlPort \"ALT Export Only XmlPort\";",
+        "H.Stage(B, InStr, '<Root/>'); P.SetSource(InStr); P.Import(); exit('');",
+    );
+    assert_eq!(m, "The XMLPort 'ALT Export Only XmlPort' is designed for export only.");
+    assert_eq!(c, "XmlPortExportDirection");
+    let (m, c) = err(
+        "B: Record \"ALT Blob\"; OutStr: OutStream; P: XmlPort \"ALT Import Only XmlPort\";",
+        "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('');",
+    );
+    assert_eq!(m, "The XMLPort 'ALT Import Only XmlPort' is designed for import only.");
+    assert_eq!(c, "XmlPortImportDirection");
+}
+
+// The root of an importable document must be a text element with content.
+#[test]
+fn an_import_whose_root_is_not_a_text_element_with_content_is_refused() {
+    let vars = "H: Codeunit Helpers; B: Record \"ALT Blob\" temporary; InStr: InStream; P: XmlPort \"ALT Table Root XmlPort\"; E: XmlPort \"ALT Empty Root XmlPort\";";
+    let r = refusal(
+        vars,
+        "H.Stage(B, InStr, '<Universal><EntryNo>1</EntryNo></Universal>'); P.SetSource(InStr); P.Import(); exit('');",
+    );
+    assert!(r.contains("root is not a text element with content"), "{r}");
+    let r = refusal(
+        vars,
+        "H.Stage(B, InStr, '<Root><X>1</X></Root>'); E.SetSource(InStr); E.Import(); exit('');",
+    );
+    assert!(r.contains("root is not a text element with content"), "{r}");
+}
+
+// An error that AL code raises inside an import trigger is the last error of a guarded import,
+// with its own text (xmlport/TestXmlPortImportWriteTx.al:StaticGuardedImport_FailingSecondElement_ReturnsFalse...
+// pins the false and the rollback; the text of the platform's own failures is what is not pinned).
+#[test]
+fn an_error_raised_by_a_trigger_keeps_its_text_as_the_last_error() {
+    let out = text(
+        &format!("{IMPORT_VARS} Ok: Boolean;"),
+        "H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo></Universal></Universals>');
+         Ok := XmlPort.Import(60035, InStr);
+         exit(Format(Ok) + '|' + GetLastErrorText());",
+    );
+    assert_eq!(out, "No|RAISED-IN-TRIGGER");
+}
+
+// A guarded import inside a TryFunction needs a transaction world the try scope cannot give;
+// the corpus does not pin what BC does.
+#[test]
+fn a_guarded_import_inside_a_try_function_is_refused() {
+    let r = run_in(
+        &format!("{IMPORT_VARS} Ok: Boolean;"),
+        "H.Stage(B, InStr, '<Universals/>'); exit(Format(Attempt(InStr)));",
+        "[TryFunction] procedure Attempt(var S: InStream) var Ok: Boolean; begin Ok := XmlPort.Import(60023, S); end;",
+        None,
+    );
+    match r {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("inside a TryFunction"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+// codeunit/TestWriteTxTestBoundary.al:WriteTx_Test12_AnXmlPortImportMayWriteUnderNone: the import
+// opens a transaction of its own under TransactionModel::None, which ends with it -- and a direct
+// write from the test is refused again afterwards.
+#[test]
+fn under_transaction_model_none_an_import_may_write_and_the_refusal_returns_after_it() {
+    let r = run_in(
+        &format!("{IMPORT_VARS} Seen: Text;"),
+        &format!(
+            "H.Stage(B, InStr, {TWO_ROWS});
+             P.SetSource(InStr); P.Import();
+             Seen := Format(U.Count()) + '|' + Format(Database.IsInWriteTransaction());
+             asserterror H.Row(9, 0, '', '');
+             exit(Seen + '|' + GetLastErrorText());"
+        ),
+        "",
+        Some(""),
+    );
+    assert_eq!(
+        text_of(r),
+        "2|No|A transaction must be started before changes can be made to the database."
+    );
+}
+
+// The statement form joins the caller's transaction: it neither commits the caller's pending
+// write nor returns a value (xmlport/TestXmlPortImportWriteTx.al:StaticStatementImport_WithUncommittedWrite_IsAllowed_AndImportsRows).
+#[test]
+fn a_statement_import_leaves_the_callers_write_uncommitted() {
+    let out = text(
+        IMPORT_VARS,
+        &format!(
+            "H.Stage(B, InStr, {TWO_ROWS}); H.Row(9, 0, '', '');
+             P.SetSource(InStr); P.Import();
+             exit(Format(Database.IsInWriteTransaction()));"
+        ),
+    );
+    assert_eq!(out, "Yes");
+}
+
+fn text_of(r: Result<Value, Signal>) -> String {
+    match r {
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        other => panic!("{other:?}"),
+    }
+}
+
+// AutoUpdate on an existing row with a trigger that assigns fields is refused, whichever trigger
+// it is: which value wins (the document's or the trigger's) is not pinned.
+#[test]
+fn auto_update_with_any_assigning_trigger_is_refused() {
+    for id in [60041, 60042, 60043] {
+        // The text element of the last port is not optional, so the document carries it.
+        let note = if id == 60043 { "<Note>n</Note>" } else { "" };
+        let r = refusal(
+            IMPORT_VARS,
+            &format!(
+                "H.Row(1, 5, 'Keep', ''); H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>9</IntegerValue>{note}</Universal></Universals>');
+                 XmlPort.Import({id}, InStr); exit('');"
+            ),
+        );
+        assert!(r.contains("AutoUpdate with triggers that assign fields"), "{id}: {r}");
+    }
+    // The control: the same document through the trigger-free fixture updates the row.
+    let out = text(
+        IMPORT_VARS,
+        "H.Row(1, 5, 'Keep', ''); H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo><IntegerValue>9</IntegerValue></Universal></Universals>');
+         XmlPort.Import(60026, InStr); U.Get(1); exit(Format(U.\"Integer Field\") + U.\"Text Field\");",
+    );
+    assert_eq!(out, "9Keep");
+}
+
+// A text element with content inside the root is a group: its children are exported and
+// imported at that depth (corpus fixtures only nest table elements).
+#[test]
+fn a_nested_text_group_exports_and_imports_its_variables() {
+    let out = text(
+        "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream;",
+        "B.Code := 'N1'; B.Insert(); B.Data.CreateOutStream(OutStr);
+         XmlPort.Export(60044, OutStr); B.Modify();
+         exit(H.ReadAll(B));",
+    );
+    assert!(
+        out.contains("<Root>  <Header>    <Title>Hello</Title>  </Header></Root>"),
+        "{out}"
+    );
+    let out = text(
+        IMPORT_VARS,
+        "H.Stage(B, InStr, '<Root><Header><Title>World</Title></Header></Root>');
+         XmlPort.Import(60044, InStr); U.Get(77); exit(U.\"Description Field\");",
+    );
+    assert_eq!(out, "World");
+}
+
+// A text element with content inside a table element is refused in both directions.
+#[test]
+fn a_text_group_inside_a_table_element_is_refused() {
+    let r = refusal(
+        "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream;",
+        "H.Row(1, 0, '', ''); B.Code := 'N2'; B.Insert(); B.Data.CreateOutStream(OutStr);
+         XmlPort.Export(60045, OutStr); exit('');",
+    );
+    assert!(r.contains("text element with content inside a table element"), "{r}");
+    let r = refusal(
+        IMPORT_VARS,
+        "H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo><Group><Inner>x</Inner></Group></Universal></Universals>');
+         XmlPort.Import(60045, InStr); exit('');",
+    );
+    assert!(r.contains("text element with content inside a table element"), "{r}");
+}
+
+// The parent row is stored before the elements below it are read (assumption in
+// docs/probes-needed.md; the corpus reads the same order from the stored rows).
+#[test]
+fn a_parent_is_stored_before_its_children_are_read() {
+    let out = text(
+        "H: Codeunit Helpers; B: Record \"ALT Blob\" temporary; InStr: InStream; T: Codeunit \"XP Trace\";",
+        "H.Stage(B, InStr, '<Parents><Parent><ParentEntryNo>1</ParentEntryNo><Child><ChildEntryNo>10</ChildEntryNo></Child><Child><ChildEntryNo>11</ChildEntryNo></Child></Parent></Parents>');
+         XmlPort.Import(60046, InStr); exit(T.Get());",
+    );
+    assert_eq!(out, "P1;C10;C11;");
+}
+
+// The export root must be a text element with content, as for an import.
+#[test]
+fn an_export_whose_root_is_not_a_text_element_with_content_is_refused() {
+    for id in [60036, 60037] {
+        let r = refusal(
+            "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream;",
+            &format!(
+                "H.Row(1, 0, '', ''); B.Code := 'R'; B.Insert(); B.Data.CreateOutStream(OutStr);
+                 XmlPort.Export({id}, OutStr); exit('');"
+            ),
+        );
+        assert!(r.contains("root is not a text element with content"), "{id}: {r}");
+    }
+}
+
+// An export to a UTF-16 or MS-DOS stream is refused: only UTF-8 and Windows are implemented, and the
+// output encoding of the others is not pinned.
+// The document is written in its own encoding whatever the encoding of the stream.
+#[test]
+fn an_export_to_a_utf16_or_msdos_stream_writes_the_same_bytes() {
+    for enc in ["UTF16", "MSDos", "UTF8"] {
+        let out = text(
+            "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream;",
+            &format!(
+                "H.Row(1, 0, '', ''); B.Code := 'U'; B.Insert(); B.Data.CreateOutStream(OutStr, TextEncoding::{enc});
+                 XmlPort.Export(60023, OutStr); B.Modify(); B.CalcFields(Data); exit(Format(B.Data.Length));"
+            ),
+        );
+        assert!(out.parse::<i32>().is_ok_and(|n| n > 2 && n % 2 == 0), "{enc}: {out}");
+    }
+}
+
+// An error raised while exporting: as a statement it reaches the caller with its text; with the
+// result used (guarded) the outcome is not pinned and is refused.
+#[test]
+fn an_error_raised_during_export_reaches_a_statement_and_refuses_a_guarded_call() {
+    let vars = "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream; Ok: Boolean;";
+    let setup = "H.Row(1, 0, 'x', ''); B.Code := 'E'; B.Insert(); B.Data.CreateOutStream(OutStr);";
+    let out = text(
+        vars,
+        &format!("{setup} asserterror XmlPort.Export(60047, OutStr); exit(GetLastErrorText());"),
+    );
+    assert_eq!(out, "EXPORT-RAISED");
+    let r = refusal(vars, &format!("{setup} Ok := XmlPort.Export(60047, OutStr); exit('');"));
+    assert!(r.contains("an error inside an Export whose result is used"), "{r}");
+    // A good export with the result used is true; as a statement it has no value.
+    let out = text(
+        vars,
+        &format!("{setup} Ok := XmlPort.Export(60023, OutStr); exit(Format(Ok));"),
+    );
+    assert_eq!(out, "Yes");
+}
+
+// The statement form of an import that fails with an error AL code raised in a trigger lets that
+// error through with its own text (only the platform's own failures are refused as unpinned, see
+// a_failing_statement_import_is_refused_because_its_error_text_is_not_pinned).
+#[test]
+fn a_statement_import_lets_a_trigger_error_through() {
+    let out = text(
+        IMPORT_VARS,
+        "H.Stage(B, InStr, '<Universals><Universal><EntryNo>1</EntryNo></Universal></Universals>');
+         asserterror XmlPort.Import(60035, InStr);
+         exit(GetLastErrorText());",
+    );
+    assert_eq!(out, "RAISED-IN-TRIGGER");
 }

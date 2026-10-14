@@ -156,7 +156,10 @@ impl Builder<'_> {
             {
                 Resolution::Found(i) => i,
                 _ => {
-                    self.reason(format!("dataitem {name}: table `{t}` is outside the workspace"));
+                    self.reason(format!(
+                        "dataitem {name}: {}",
+                        self.ws.outside_workspace(ObjKind::Table, t)
+                    ));
                     usize::MAX
                 }
             },
@@ -364,12 +367,16 @@ impl Builder<'_> {
                 ty = Ty::Integer;
             }
             Some(ir::QueryMethod::Sum | ir::QueryMethod::Average) => {
-                // Only Decimal sources are pinned (corpus query/TestQueryAggregation.al); the type
-                // BC gives the sum of an Integer is not.
-                if ty != Ty::Decimal {
-                    self.reason(format!("column {name}: Sum and Average over a non-Decimal field"));
+                // Decimal sources (corpus query/TestQueryAggregation.al) and Integer sources keep
+                // their type: Sum of an Integer column is an Integer and its Average is truncated
+                // (query/TestQueryRuntimeContracts.al:Query_Average_IntegerColumnTruncates_...,
+                // :Query_ScalarAggregates_OverNoRows_...). BigInteger and Duration sources are legal
+                // AL (AL0347) but their column type is not pinned.
+                if ty != Ty::Decimal && ty != Ty::Integer {
+                    self.reason(format!(
+                        "column {name}: Sum and Average over a field that is not Decimal or Integer"
+                    ));
                 }
-                ty = Ty::Decimal;
             }
             Some(ir::QueryMethod::Min | ir::QueryMethod::Max) | None => {
                 if source.is_none() {
@@ -482,11 +489,9 @@ impl Builder<'_> {
     fn validate(&mut self, order_by: &[(usize, bool)]) {
         let aggregated = self.columns.iter().any(|c| c.method.is_some());
         let grouped = self.columns.iter().any(|c| c.method.is_none() && !c.filter_element);
-        if aggregated && self.items.iter().any(|i| i.left_outer && i.parent.is_some()) {
-            self.reason(
-                "an aggregated query over an outer join (how BC counts and sums the missing side is not pinned)",
-            );
-        }
+        // Aggregates over a left outer join skip the missing side: sum 0 and count 0 for a parent
+        // without children (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch
+        // now in the corpus).
         if aggregated && grouped && order_by.is_empty() {
             // Corpus query/TestQueryAggregation.al always orders its groups.
             self.reason("an aggregated query with grouping columns and no OrderBy (the group order is not pinned)");
@@ -603,7 +608,7 @@ mod tests {
     use crate::workspace::AppSource;
 
     const TABLES: &str = r#"
-table 50000 "T" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } field(3; Qty; Integer) { }
+table 50000 "T" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } field(3; Qty; Integer) { } field(5; Big; BigInteger) { }
     field(4; Total; Decimal) { FieldClass = FlowField; CalcFormula = sum(U.Amount where("No." = field("No."))); } }
     keys { key(PK; "No.") { Clustered = true; } } }
 table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } }
@@ -706,16 +711,10 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
             "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } column(S; Amount) { Method = Sum; } } } }",
             "no OrderBy",
         );
-        // Sum over an Integer field.
+        // Sum over a BigInteger field (an Integer field is pinned: query/TestQueryRuntimeContracts.al).
         has(
-            "query 50100 Q { elements { dataitem(A; T) { column(S; Qty) { Method = Sum; } } } }",
-            "non-Decimal",
-        );
-        // Aggregate over an outer join.
-        has(
-            "query 50100 Q { elements { dataitem(A; T) { column(S; Amount) { Method = Sum; }
-                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; column(X; Amount) { } } } } }",
-            "outer join",
+            "query 50100 Q { elements { dataitem(A; T) { column(S; Big) { Method = Sum; } } } }",
+            "not Decimal or Integer",
         );
         // A static filter on the optional side of an outer join.
         has(

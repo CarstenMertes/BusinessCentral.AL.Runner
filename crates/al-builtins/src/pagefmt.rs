@@ -132,26 +132,7 @@ fn time_text(t: i64) -> String {
 }
 
 fn duration_text(ms: i64) -> String {
-    if ms == 0 {
-        return String::new();
-    }
-    let mut left = ms.abs();
-    let mut parts = Vec::new();
-    for (unit, size) in [
-        ("day", 86_400_000),
-        ("hour", 3_600_000),
-        ("minute", 60_000),
-        ("second", 1000),
-        ("millisecond", 1),
-    ] {
-        let n = left / size;
-        left %= size;
-        if n > 0 {
-            parts.push(format!("{n} {unit}{}", if n == 1 { "" } else { "s" }));
-        }
-    }
-    let text = parts.join(" ");
-    if ms < 0 { format!("-{text}") } else { text }
+    crate::format::duration_words(ms)
 }
 
 /// The inverse of [`duration_text`]: exactly its own spelling, in milliseconds. Blank is zero
@@ -161,10 +142,9 @@ fn parse_duration(t: &str) -> Option<i64> {
     if t.is_empty() {
         return Some(0);
     }
-    let (neg, body) = match t.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, t),
-    };
+    // Every unit of a negative Duration carries the sign (handlers/TestPageRuntimeContracts.al:157).
+    let neg = t.starts_with('-');
+    let body = t;
     let units: [(&str, i64); 5] = [
         ("day", 86_400_000),
         ("hour", 3_600_000),
@@ -179,7 +159,8 @@ fn parse_duration(t: &str) -> Option<i64> {
     let mut total = 0i64;
     let mut at = 0;
     for pair in words.chunks(2) {
-        let n: i64 = pair[0].parse().ok().filter(|n| *n > 0)?;
+        let n: i64 = pair[0].parse().ok().filter(|n| *n != 0 && (*n < 0) == neg)?;
+        let n = n.abs();
         let (i, size) = units.iter().enumerate().find_map(|(i, (name, size))| {
             let spelled = format!("{name}{}", if n == 1 { "" } else { "s" });
             (pair[1] == spelled).then_some((i, *size))
@@ -257,7 +238,7 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
         }
         Value::Duration(ms) => duration_text(*ms),
         Value::Guid(g) => guid_text(g),
-        Value::DateFormula(s) => s.clone(),
+        Value::DateFormula(s) => crate::datefns::formula_text(s),
         other => {
             let _ = Ordering::Equal;
             format!("{other:?}")
@@ -596,6 +577,9 @@ mod tests {
             (90_000_000, "1 day 1 hour"),
             (86_400_000, "1 day"),
             (1, "1 millisecond"),
+            // handlers/TestPageRuntimeContracts.al:157: every unit of a negative Duration is negative.
+            (-90_061_001, "-1 day -1 hour -1 minute -1 second -1 millisecond"),
+            (-5000, "-5 seconds"),
         ] {
             assert_eq!(t(&Value::Duration(ms), &f), want, "{ms}");
         }
@@ -624,9 +608,14 @@ mod tests {
             Ok(Value::Duration(3_723_000))
         ));
         assert!(matches!(
-            p("-1 day 1 millisecond", &T::Duration),
+            p("-1 day -1 millisecond", &T::Duration),
             Ok(Value::Duration(-86_400_001))
         ));
+        // A sign on the first unit only is not BC's spelling (handlers/TestPageRuntimeContracts.al:157).
+        assert_eq!(
+            p("-1 day 1 millisecond", &T::Duration).unwrap_err(),
+            ParseError::Unsupported
+        );
         assert_eq!(p("5s", &T::Duration).unwrap_err(), ParseError::Unsupported);
         assert_eq!(
             p("1 second 2 hours", &T::Duration).unwrap_err(),

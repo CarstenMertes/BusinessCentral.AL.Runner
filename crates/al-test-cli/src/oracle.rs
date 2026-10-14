@@ -59,6 +59,87 @@ pub fn parse_junit(xml: &str) -> Result<Vec<OracleCase>, OracleError> {
     }
 }
 
+/// One `<test>` of an XUnit report, with the failure message real BC gave.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XunitCase {
+    pub case: OracleCase,
+    /// The text of the `<failure><message>`, when the test did not pass.
+    pub message: Option<String>,
+}
+
+/// The XUnit report of BcContainerHelper's `Run-TestsInBcContainer`, which is what the Windows
+/// nightly writes (the isolation probe runs under a custom test runner there, never in the Linux
+/// legs). One `<assembly name="<codeunit id> <name>">` per test codeunit, a `<test method=..
+/// result=..>` per method; anything but `Pass` is a BC failure.
+pub fn parse_xunit(xml: &str) -> Result<Vec<XunitCase>, OracleError> {
+    use quick_xml::events::Event;
+
+    let xml = xml.trim_start_matches('\u{feff}');
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut cases: Vec<XunitCase> = Vec::new();
+    let mut codeunit: Option<u32> = None;
+    // Inside a `<test>` that has a body: collect the message of its `<failure>`.
+    let mut open = false;
+    let mut in_message = false;
+    loop {
+        match reader.read_event().map_err(|e| OracleError::Xml(e.to_string()))? {
+            Event::Start(e) if e.name().as_ref() == b"assembly" => {
+                let name = attr(&e, b"name")?.unwrap_or_default();
+                codeunit = Some(
+                    name.split_whitespace()
+                        .next()
+                        .and_then(|n| n.parse().ok())
+                        .ok_or_else(|| OracleError::BadCodeunit(name.clone()))?,
+                );
+            }
+            Event::End(e) if e.name().as_ref() == b"assembly" => codeunit = None,
+            Event::Start(e) if e.name().as_ref() == b"test" => {
+                cases.push(xunit_test(codeunit, &e)?);
+                open = true;
+            }
+            Event::Empty(e) if e.name().as_ref() == b"test" => cases.push(xunit_test(codeunit, &e)?),
+            Event::End(e) if e.name().as_ref() == b"test" => open = false,
+            Event::Start(e) if open && e.name().as_ref() == b"message" => in_message = true,
+            Event::End(e) if e.name().as_ref() == b"message" => in_message = false,
+            Event::Text(t) if in_message => {
+                if let Some(c) = cases.last_mut() {
+                    let text = t.unescape().map_err(|e| OracleError::Xml(e.to_string()))?;
+                    c.message.get_or_insert_with(String::new).push_str(&text);
+                }
+            }
+            Event::Eof => return Ok(cases),
+            _ => {}
+        }
+    }
+}
+
+fn xunit_test(codeunit: Option<u32>, e: &quick_xml::events::BytesStart) -> Result<XunitCase, OracleError> {
+    let codeunit = codeunit.ok_or_else(|| OracleError::BadCodeunit("test outside an assembly".into()))?;
+    let name = attr(e, b"method")?.ok_or_else(|| OracleError::Xml("test without method".into()))?;
+    let result = attr(e, b"result")?.unwrap_or_default();
+    Ok(XunitCase {
+        case: OracleCase {
+            id: CaseId { codeunit, name },
+            bc_failed: !result.eq_ignore_ascii_case("pass"),
+        },
+        message: None,
+    })
+}
+
+fn attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Result<Option<String>, OracleError> {
+    for a in e.attributes() {
+        let a = a.map_err(|e| OracleError::Xml(e.to_string()))?;
+        if a.key.as_ref() == key {
+            return Ok(Some(
+                a.unescape_value()
+                    .map_err(|e| OracleError::Xml(e.to_string()))?
+                    .into_owned(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
 fn testcase(e: &quick_xml::events::BytesStart) -> Result<OracleCase, OracleError> {
     let mut classname = None;
     let mut name = None;
@@ -146,6 +227,51 @@ mod tests {
         </testsuite></testsuites>"#;
         let ids: Vec<_> = parse_junit(xml).unwrap().into_iter().map(|c| c.id).collect();
         assert_eq!(ids, vec![id(1, "OnRunSomething")]);
+    }
+
+    // oracle/28/xunit-isolation-*.xml: the Windows nightly's XUnit shape (BcContainerHelper's
+    // Run-TestsInBcContainer), with a byte-order mark, one `assembly` per test codeunit named
+    // `<id> <name>`, and a `test` per method.
+    const XUNIT: &str = "\u{feff}<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<assemblies>
+  <assembly name=\"61302 Isol Probe Fixture\" total=\"2\">
+    <collection name=\"Isol Probe Fixture\" total=\"2\">
+      <test name=\"Isol Probe Fixture:T1_A\" method=\"T1_A\" time=\"0.02\" result=\"Pass\" />
+      <test name=\"Isol Probe Fixture:T5_B\" method=\"T5_B\" time=\"0.007\" result=\"Fail\">
+        <failure><message>the row is still there</message></failure>
+      </test>
+    </collection>
+  </assembly>
+</assemblies>";
+
+    #[test]
+    fn parses_the_nightlys_xunit_with_its_failure_messages() {
+        let cases = parse_xunit(XUNIT).unwrap();
+        let got: Vec<_> = cases.iter().map(|c| (c.case.id.clone(), c.case.bc_failed)).collect();
+        assert_eq!(got, vec![(id(61302, "T1_A"), false), (id(61302, "T5_B"), true)]);
+        assert_eq!(cases[0].message, None);
+        assert_eq!(cases[1].message.as_deref(), Some("the row is still there"));
+    }
+
+    #[test]
+    fn an_xunit_result_other_than_pass_is_a_bc_failure() {
+        let xml = r#"<assemblies><assembly name="1 X"><collection name="X">
+            <test name="X:A" method="A" result="Skip"/>
+            <test name="X:B" method="B" result="Pass"/></collection></assembly></assemblies>"#;
+        let failed: Vec<_> = parse_xunit(xml)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.case.bc_failed)
+            .collect();
+        assert_eq!(failed, vec![true, false]);
+    }
+
+    #[test]
+    fn an_xunit_assembly_without_a_codeunit_id_is_rejected() {
+        let xml = r#"<assemblies><assembly name="Isol Probe Fixture"><collection name="X">
+            <test name="X:A" method="A" result="Pass"/></collection></assembly></assemblies>"#;
+        assert!(matches!(parse_xunit(xml), Err(OracleError::BadCodeunit(_))));
+        assert!(matches!(parse_xunit("<assemblies><test"), Err(OracleError::Xml(_))));
     }
 
     #[test]

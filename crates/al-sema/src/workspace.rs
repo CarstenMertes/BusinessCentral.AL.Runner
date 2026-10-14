@@ -168,6 +168,9 @@ pub struct ObjectSym {
     pub implements: Vec<Vec<String>>,
     /// Event subscriptions it declares, for objects of scanned files.
     pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
+    /// The properties written directly in the body of an object of a scanned file, as
+    /// (name, value text). Empty for an object of a parsed file.
+    pub scanned_properties: Vec<(String, String)>,
     /// A codeunit with `Subtype = Install` (known for objects of scanned files only).
     pub install: bool,
 }
@@ -208,6 +211,10 @@ pub struct Workspace {
     subscribers_of: HashMap<(ObjKind, String), Vec<(usize, usize)>>,
     /// Scanned objects that implement an interface, by lower-case interface name.
     implementers_of: HashMap<String, Vec<usize>>,
+    /// For an interface that `extends` another, the interface it extends.
+    iface_base: HashMap<usize, usize>,
+    /// For an interface, the interfaces that extend it directly, in object order.
+    iface_derived: HashMap<usize, Vec<usize>>,
     /// Per object: whether it can be used (see `usable`); filled on first ask.
     usable_cache: Vec<OnceLock<bool>>,
     /// Once set, the dependency objects that take part in the compile (see `restrict_to`).
@@ -240,6 +247,8 @@ impl Workspace {
             ext_of: HashMap::new(),
             subscribers_of: HashMap::new(),
             implementers_of: HashMap::new(),
+            iface_base: HashMap::new(),
+            iface_derived: HashMap::new(),
             usable_cache: Vec::new(),
             compiled: OnceLock::new(),
         };
@@ -319,6 +328,7 @@ impl Workspace {
                     extends: o.extends,
                     implements: o.implements,
                     subscribers: o.subscribers,
+                    scanned_properties: o.properties,
                     install: o.install,
                 });
             }
@@ -349,6 +359,16 @@ impl Workspace {
                 }
             }
         }
+        for i in 0..self.objects.len() {
+            let o = &self.objects[i];
+            if let (ObjKind::Interface, Some(parts)) = (o.kind, &o.extends) {
+                // Like the extension targets above: no parse of the base interface's file.
+                if let Resolution::Found(b) = self.resolve_in_scope(o.file, ObjKind::Interface, parts, false, false) {
+                    self.iface_base.insert(i, b);
+                    self.iface_derived.entry(b).or_default().push(i);
+                }
+            }
+        }
         for (i, o) in self.objects.iter().enumerate() {
             for (si, sub) in o.subscribers.iter().enumerate() {
                 let kind = ObjKind::from_keyword(&sub.publisher_kind);
@@ -361,6 +381,37 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    /// The interfaces interface `i` extends, nearest first (`interface I extends J`, and J's own
+    /// base after it). A cycle ends the list. Pinned by codeunit/TestInterfaceRuntimeContracts.al:
+    /// `Probe IBar extends Probe IFoo` (corpus branch al-runtime-rs, probe on BC 27.5).
+    pub fn interface_bases(&self, i: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut at = i;
+        while let Some(&b) = self.iface_base.get(&at) {
+            if b == i || out.contains(&b) {
+                break;
+            }
+            out.push(b);
+            at = b;
+        }
+        out
+    }
+
+    /// Interface `i` and every interface that extends it, directly or through others.
+    pub fn interface_family(&self, i: usize) -> Vec<usize> {
+        let mut out = vec![i];
+        let mut next = 0;
+        while next < out.len() {
+            for &d in self.iface_derived.get(&out[next]).map_or(&[][..], Vec::as_slice) {
+                if !out.contains(&d) {
+                    out.push(d);
+                }
+            }
+            next += 1;
+        }
+        out
     }
 
     /// The object `i` extends, if it is an extension and the target is in the workspace.
@@ -483,14 +534,59 @@ impl Workspace {
     /// Whether object `i` can be used: its file is a workspace file, or parses cleanly.
     pub fn usable(&self, i: usize) -> bool {
         let o = &self.objects[i];
+        if self.platform_table_without_provider(i) {
+            return false;
+        }
         if !self.files[o.file].lazy {
             return true;
         }
         *self.usable_cache[i].get_or_init(|| self.file_problem(o.file).is_none() && self.object_node(o).is_some())
     }
 
+    /// Whether object `i` is a table of the platform app `System`.
+    pub fn platform_table(&self, i: usize) -> bool {
+        let o = &self.objects[i];
+        o.kind == ObjKind::Table && self.apps[o.app].id.eq_ignore_ascii_case(PLATFORM_APP_ID)
+    }
+
+    /// Whether object `i` is a table of the platform app `System` that nothing provides rows for
+    /// (ADR-013 decision 7). Declared and empty would be silently wrong, so it is refused.
+    pub fn platform_table_without_provider(&self, i: usize) -> bool {
+        self.platform_table(i)
+            && self.objects[i]
+                .id
+                .is_none_or(|id| al_builtins::platform::provider(id).is_none())
+    }
+
+    /// Why name `name` of `kind` does not resolve: a platform table with no provider says so
+    /// (`platform table 'Date' (2000000007) has no provider`), anything else is outside the
+    /// workspace. `name` is as written in the source.
+    pub fn outside_workspace(&self, kind: ObjKind, name: &str) -> String {
+        let bare = name.trim().trim_matches('"');
+        if kind == ObjKind::Table {
+            let no_provider = self
+                .by_name
+                .get(&(kind, bare.rsplit('.').next().unwrap_or(bare).to_lowercase()))
+                .into_iter()
+                .flatten()
+                .find(|&&i| self.platform_table_without_provider(i));
+            if let Some(&i) = no_provider {
+                return self.unusable_reason(i).unwrap_or_default();
+            }
+        }
+        format!("{} `{}` is outside the workspace", kind.label(), bare)
+    }
+
     /// Why object `i` is unusable, for messages.
     pub fn unusable_reason(&self, i: usize) -> Option<String> {
+        if self.platform_table_without_provider(i) {
+            let o = &self.objects[i];
+            return Some(format!(
+                "platform table '{}' ({}) has no provider",
+                o.name,
+                o.id.map_or_else(String::new, |id| id.to_string())
+            ));
+        }
         let fi = self.objects[i].file;
         match self.file_problem(fi) {
             Some(p) => Some(format!("dependency source does not parse: {p}")),
@@ -787,6 +883,7 @@ struct FileObject {
     extends: Option<Vec<String>>,
     implements: Vec<Vec<String>>,
     subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
+    properties: Vec<(String, String)>,
     install: bool,
 }
 
@@ -806,6 +903,7 @@ fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::Tree
                 extends: o.extends_parts(),
                 implements: o.implements_parts(),
                 subscribers: Vec::new(),
+                properties: Vec::new(),
                 install: false,
             })
             .collect(),
@@ -845,6 +943,7 @@ fn scanned_file(src: &str, symbols: &BTreeSet<String>) -> ParsedFile {
                 extends: o.extends,
                 implements: o.implements,
                 subscribers: o.subscribers,
+                properties: o.properties,
                 install: o.install,
             })
             .collect(),
@@ -867,9 +966,16 @@ fn pick(c: Vec<usize>) -> Resolution {
     }
 }
 
+/// Id of the platform app `System`, which declares the system tables. BC always provides it, so it
+/// is an implicit dependency of every app (ADR-013 decision 4).
+pub const PLATFORM_APP_ID: &str = "8874ed3a-0643-4247-9ced-7a7002f7135d";
+
 fn visible_from(apps: &[AppSource], start: usize) -> BTreeSet<usize> {
     let mut seen = BTreeSet::new();
     let mut stack = vec![start];
+    if let Some(sys) = apps.iter().position(|a| a.id.eq_ignore_ascii_case(PLATFORM_APP_ID)) {
+        stack.push(sys);
+    }
     while let Some(i) = stack.pop() {
         if seen.insert(i) {
             for d in &apps[i].dependencies {

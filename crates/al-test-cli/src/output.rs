@@ -16,6 +16,28 @@ pub fn markdown(r: &Report) -> String {
     for (a, c) in &r.areas {
         row(&mut s, a, c);
     }
+    if !r.suites.is_empty() {
+        s.push_str("\n### Other test apps\n\n| app | oracle | total | pass | fail | not run | rate |\n|---|---|---:|---:|---:|---:|---:|\n");
+        for x in &r.suites {
+            let c = &x.counts;
+            s.push_str(&format!(
+                "| {} | BC {} | {} | {} | {} | {} | {:.1}% |\n",
+                x.name,
+                x.oracle_leg,
+                c.total,
+                c.pass,
+                c.fail,
+                c.not_run,
+                c.rate() * 100.0
+            ));
+        }
+        for x in r.suites.iter().filter(|x| x.bc_failed > 0) {
+            s.push_str(&format!(
+                "\n{}: real BC fails {} case(s) on purpose (a control); the runtime fails {} of them too.\n",
+                x.name, x.bc_failed, x.bc_failed_reproduced
+            ));
+        }
+    }
     if !r.dependencies.is_empty() {
         s.push_str(&format!("\nDependency apps: {}.\n", r.dependencies.join(", ")));
     }

@@ -25,6 +25,7 @@ mod hostvalues;
 mod interfaces;
 mod pages;
 mod partial;
+mod platform;
 mod queries;
 mod recmeta;
 mod records;
@@ -203,6 +204,14 @@ pub struct Session {
     /// page saving a row passes its own xRec (corpus
     /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
     pub(crate) page_xrec: Option<Vec<Value>>,
+    /// A duplicate-key Insert into a table without a Blob field does not fail where it is
+    /// called: the table (object index) and the error come out at the next access to the table
+    /// or at Commit (corpus record/TestRecordRuntimeTextsAndViews.al:
+    /// Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_AndSurfacesAtTheNextAccess).
+    pub(crate) deferred_insert: Option<(usize, AlError)>,
+    /// Set while the page client or an XmlPort import writes a record: their duplicate-key
+    /// errors are raised at once (their own tests pin it), not deferred like an AL `Insert`.
+    pub(crate) immediate_errors: bool,
     /// The transaction model of the running test method (set by the test runner).
     pub tx_model: TxModel,
     /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
@@ -212,6 +221,10 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// How many times the session made its changes durable (`commit_transaction`). A runner reads
+    /// it around a test method to see whether the method committed (test isolation, `isolation.rs`
+    /// in al-test-cli).
+    pub commits: u64,
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
@@ -242,6 +255,15 @@ pub struct Session {
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,
     pub(crate) report_quit: bool,
+    /// The call depth of the report trigger being run and what it may ask of the report
+    /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
+    pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
+    pub(crate) report_flow: Option<crate::reports::Flow>,
+    /// The report instances that `Execute` has run: a second `Execute` on one is refused.
+    /// A page opened for a `RunObject` action looks its handler up without failing when there is
+    /// none (al-vm pages/runobject.rs).
+    pub(crate) lenient_bind: bool,
+    pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
@@ -258,7 +280,10 @@ impl Session {
     /// A session whose clock and identity come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
-        Session {
+        let ident = platform::Ident::of(&host);
+        let store =
+            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+        let mut session = Session {
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
@@ -268,7 +293,7 @@ impl Session {
             last_error: AlError::default(),
             depth: 0,
             singletons: Default::default(),
-            store: Default::default(),
+            store,
             global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
@@ -297,10 +322,13 @@ impl Session {
             trap: None,
             bg_worker: None,
             page_xrec: None,
+            deferred_insert: None,
+            immediate_errors: false,
             tx_model: TxModel::default(),
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            commits: 0,
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
@@ -309,12 +337,20 @@ impl Session {
             application_areas: String::new(),
             report_init_depth: None,
             report_quit: false,
-        }
+            report_trigger: None,
+            report_flow: None,
+            report_executed: Vec::new(),
+            lenient_bind: false,
+        };
+        session.seed_platform_rows(&ident);
+        session
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
     pub fn commit_transaction(&mut self) {
+        self.deferred_insert = None;
         al_data::Store::commit(&mut self.store);
+        self.commits += 1;
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.committed_row_version = self.next_row_version;
@@ -324,6 +360,7 @@ impl Session {
     /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
     /// those a Truncate of this transaction changed.
     pub fn rollback_transaction(&mut self) {
+        self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
@@ -458,11 +495,15 @@ impl Session {
             )));
         }
         self.depth += 1;
+        // The builtin being run (a record write that runs triggers and events) keeps its own
+        // `ret_used`: the callee's builtins must not change it.
+        let ret_used = self.ret_used;
         let r = if self.engine.events.publishers.contains_key(&(object, routine)) {
             self.publish(object, routine, instance, args)
         } else {
             self.call_inner(object, routine, instance, args)
         };
+        self.ret_used = ret_used;
         self.depth -= 1;
         r
     }
@@ -670,19 +711,12 @@ impl Session {
                 Ok(())
             }
             S::AssertError(body) => {
-                // Inside a UI handler, with writes pending from before the page opened, the extent
-                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
-                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
-                // Initialize() without a Commit, runs a modal page whose handler does
-                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
-                // real BC. Rolling back to the last commit would undo it.
-                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                // A caught error rolls the transaction back to the last commit, also inside a modal
+                // page handler: the write pending before the page opened and the handler's own
+                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
+                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
                 match self.exec_block(body, f) {
-                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
-                        "asserterror in a UI handler with writes pending from before it ran: the extent \
-                         of the rollback is not pinned"
-                            .into(),
-                    )),
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
@@ -692,10 +726,10 @@ impl Session {
                         self.last_error = e;
                         Ok(())
                     }
-                    // The message is not pinned by the corpus yet (docs/probes-needed.md).
+                    // Text and code: types/TestFormatEvaluateTextContracts.al:Asserterror_NothingRaised_ReportsAssertError.
                     Ok(()) => Err(Signal::Error(AlError {
                         message: "An error was expected inside an ASSERTERROR statement.".into(),
-                        code: "Dialog".into(),
+                        code: "AssertError".into(),
                         call_stack: String::new(),
                     })),
                     Err(other) => Err(other),
@@ -771,10 +805,10 @@ impl Session {
                     B::Xor => Value::Boolean(ops::truthy(&l)? ^ ops::truthy(&r)?),
                     B::Eq => Value::Boolean(ops::compare(&l, &r)? == Ordering::Equal),
                     B::Ne => Value::Boolean(ops::compare(&l, &r)? != Ordering::Equal),
-                    B::Lt => Value::Boolean(ops::compare(&l, &r)? == Ordering::Less),
-                    B::Le => Value::Boolean(ops::compare(&l, &r)? != Ordering::Greater),
-                    B::Gt => Value::Boolean(ops::compare(&l, &r)? == Ordering::Greater),
-                    B::Ge => Value::Boolean(ops::compare(&l, &r)? != Ordering::Less),
+                    B::Lt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Less),
+                    B::Le => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Greater),
+                    B::Gt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Greater),
+                    B::Ge => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Less),
                 })
             }
             E::In(v, set) => {
@@ -831,6 +865,10 @@ impl Session {
             } => {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
                 self.finish_call(object, routine, inst, args, false, f)
+            }
+            E::InterfaceTest { value, objects, cast } => {
+                let v = self.eval(value, f)?;
+                self.interface_test(v, objects, *cast)
             }
             E::EnumImpl {
                 value,

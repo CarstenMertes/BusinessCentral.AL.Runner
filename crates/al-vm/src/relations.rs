@@ -171,7 +171,7 @@ impl Session {
                 self.message_value(&value)?,
                 self.caption(&related)
             ),
-            code: "Dialog".into(),
+            code: "DB:PrimRecordNotFound".into(),
             call_stack: String::new(),
         }))
     }

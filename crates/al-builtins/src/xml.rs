@@ -62,6 +62,14 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+fn error(message: impl Into<String>, code: &str) -> Signal {
+    Signal::Error(crate::native::AlError {
+        message: message.into(),
+        code: code.into(),
+        call_stack: String::new(),
+    })
+}
+
 fn new_node(data: XData) -> Handle {
     let h = Rc::new(RefCell::new(LibraryValue::Xml(XmlCell { data, parent: None })));
     adopt_children(&h);
@@ -83,7 +91,20 @@ fn node_of(v: &Value) -> Result<Handle, Signal> {
             if is_xml(h) {
                 Ok(h.clone())
             } else if matches!(&*h.borrow(), LibraryValue::Empty) {
-                unsupported(format!("use of an unassigned {name}"))
+                // An XmlDocument variable that was never assigned is an empty document
+                // (xml/TestXmlRuntimeContracts.al:XmlDocument_Add_SecondRoot_Throws adds to one).
+                if name == "XmlDocument" {
+                    *h.borrow_mut() = LibraryValue::Xml(XmlCell {
+                        data: XData::Document {
+                            decl: None,
+                            children: Vec::new(),
+                        },
+                        parent: None,
+                    });
+                    Ok(h.clone())
+                } else {
+                    unsupported(format!("use of an unassigned {name}"))
+                }
             } else {
                 unsupported(format!("{name} used as an XML node"))
             }
@@ -291,12 +312,24 @@ fn lookup_namespace(h: &Handle, prefix: &str) -> Option<String> {
 #[derive(Debug)]
 enum ParseError {
     Invalid,
+    /// Not well-formed, with the text and position of the .NET exception BC reports
+    /// (xml/TestXmlRuntimeContracts.al:XmlDocument_ReadFrom_Invalid_ReturnsFalse_AndStatementFormThrows).
+    Failed {
+        message: String,
+        line: usize,
+        pos: usize,
+        /// Whether `XmlDocument.ReadFrom` is known to word its error with this message; an XmlPort
+        /// import words its errors with the .NET messages in every case.
+        dom: bool,
+    },
     Unsupported(&'static str),
 }
 
 struct Parser<'a> {
     s: &'a str,
     i: usize,
+    /// The names of the open elements, outermost first.
+    open: Vec<String>,
     /// In-scope namespace declarations, innermost last.
     scope: Vec<(String, String)>,
     depth: usize,
@@ -307,6 +340,14 @@ type PResult<T> = Result<T, ParseError>;
 impl Parser<'_> {
     fn rest(&self) -> &str {
         &self.s[self.i..]
+    }
+    /// Line and position (both 1-based, in UTF-16 units) of byte offset `at`.
+    fn line_pos(&self, at: usize) -> (usize, usize) {
+        let before = &self.s[..at];
+        let line = before.matches('\n').count() + 1;
+        let start = before.rfind('\n').map_or(0, |n| n + 1);
+        let pos = before[start..].encode_utf16().count() + 1;
+        (line, pos)
     }
     fn starts(&self, p: &str) -> bool {
         self.rest().starts_with(p)
@@ -497,7 +538,9 @@ impl Parser<'_> {
             return Err(ParseError::Unsupported("XML nested deeper than 200 levels"));
         }
         self.expect("<")?;
+        let name_at = self.i;
         let qn = self.name()?;
+        self.open.push(qn.clone());
         let mut raw_attrs: Vec<(String, String)> = Vec::new();
         let self_closed = loop {
             let had_ws = self.skip_ws();
@@ -571,11 +614,21 @@ impl Parser<'_> {
             loop {
                 if self.starts("</") {
                     self.bump(2);
+                    let close_at = self.i;
                     let close = self.name()?;
                     self.skip_ws();
                     self.expect(">")?;
                     if close != qn {
-                        return Err(ParseError::Invalid);
+                        let (sl, sp) = self.line_pos(name_at);
+                        let (line, pos) = self.line_pos(close_at);
+                        return Err(ParseError::Failed {
+                            message: format!(
+                                "The '{qn}' start tag on line {sl} position {sp} does not match the end tag of '{close}'. Line {line}, position {pos}."
+                            ),
+                            line,
+                            pos,
+                            dom: true,
+                        });
                     }
                     break;
                 } else if self.starts("<!--") {
@@ -593,7 +646,19 @@ impl Parser<'_> {
                 } else if self.starts("<") {
                     children.push(self.element()?);
                 } else if self.peek().is_none() {
-                    return Err(ParseError::Invalid);
+                    // Pinned for an XmlPort import (xmlport/TestXmlPortExportImportContracts.al:
+                    // XmlPortImport_MalformedXml_Throws).
+                    let (line, pos) = self.line_pos(self.s.len());
+                    let names: Vec<&str> = self.open.iter().rev().map(String::as_str).collect();
+                    return Err(ParseError::Failed {
+                        message: format!(
+                            "Unexpected end of file has occurred. The following elements are not closed: {}. Line {line}, position {pos}.",
+                            names.join(", ")
+                        ),
+                        line,
+                        pos,
+                        dom: false,
+                    });
                 } else {
                     let end = self.rest().find('<').unwrap_or(self.rest().len());
                     let raw = self.s[self.i..self.i + end].to_string();
@@ -601,16 +666,15 @@ impl Parser<'_> {
                     if raw.contains("]]>") {
                         return Err(ParseError::Invalid);
                     }
+                    // White space is kept, inside and outside the root
+                    // (xml/TestXmlRuntimeContracts.al:XmlDocument_ReadFrom_KeepsWhiteSpaceInsideAndOutsideTheRoot).
                     let text = self.decode(&raw, false)?;
-                    if text.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r')) {
-                        // Whether insignificant white space is kept is not pinned by the corpus.
-                        return Err(ParseError::Unsupported("white-space-only text inside an XML element"));
-                    }
                     children.push(new_node(XData::Text(text)));
                 }
             }
         }
         self.scope.truncate(scope_mark);
+        self.open.pop();
         self.depth -= 1;
         Ok(new_node(XData::Element {
             prefix,
@@ -632,7 +696,12 @@ impl Parser<'_> {
         let mut children = Vec::new();
         let mut root_seen = false;
         loop {
+            let ws_start = self.i;
             self.skip_ws();
+            if self.i > ws_start {
+                let ws = self.s[ws_start..self.i].replace("\r\n", "\n").replace('\r', "\n");
+                children.push(new_node(XData::Text(ws)));
+            }
             if self.peek().is_none() {
                 break;
             }
@@ -645,6 +714,14 @@ impl Parser<'_> {
             } else if self.starts("<") && !root_seen {
                 children.push(self.element()?);
                 root_seen = true;
+            } else if !self.starts("<") {
+                let (line, pos) = self.line_pos(self.i);
+                return Err(ParseError::Failed {
+                    message: format!("Data at the root level is invalid. Line {line}, position {pos}."),
+                    line,
+                    pos,
+                    dom: false,
+                });
             } else {
                 return Err(ParseError::Invalid);
             }
@@ -656,17 +733,38 @@ impl Parser<'_> {
     }
 }
 
-/// `Ok(None)`: not well-formed XML.
-fn parse_document(text: &str) -> Result<Option<Handle>, Signal> {
+/// A .NET XML exception: its message and the position it names.
+struct Failure {
+    message: String,
+    line: usize,
+    pos: usize,
+    dom: bool,
+}
+
+/// `Ok(Err(detail))`: not well-formed XML; `detail` is BC's exception text with its position
+/// where the runtime knows it.
+fn parse_document_detail(text: &str) -> Result<Result<Handle, Option<Failure>>, Signal> {
     let mut p = Parser {
         s: text,
         i: 0,
+        open: Vec::new(),
         scope: Vec::new(),
         depth: 0,
     };
     match p.document() {
-        Ok(d) => Ok(Some(d)),
-        Err(ParseError::Invalid) => Ok(None),
+        Ok(d) => Ok(Ok(d)),
+        Err(ParseError::Invalid) => Ok(Err(None)),
+        Err(ParseError::Failed {
+            message,
+            line,
+            pos,
+            dom,
+        }) => Ok(Err(Some(Failure {
+            message,
+            line,
+            pos,
+            dom,
+        }))),
         Err(ParseError::Unsupported(w)) => unsupported(w),
     }
 }
@@ -690,6 +788,7 @@ pub(crate) fn escape_attr(s: &str, out: &mut String) {
         match c {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\n' => out.push_str("&#xA;"),
             '\r' => out.push_str("&#xD;"),
@@ -706,151 +805,260 @@ fn mapped(scope: &Scope, prefix: &str) -> Option<String> {
     scope.iter().rev().find(|(p, _)| p == prefix).map(|(_, u)| u.clone())
 }
 
-fn write_node(h: &Handle, out: &mut String, scope: &mut Scope) -> Result<(), Signal> {
-    enum Plan {
-        Element {
-            prefix: String,
-            local: String,
-            ns: String,
-            attrs: Vec<Handle>,
-            children: Vec<Handle>,
-        },
-        Leaf(String),
-        Skip,
-    }
-    let plan = with(h, |d| match d {
-        XData::Element {
-            prefix,
-            local,
-            ns,
-            attrs,
-            children,
-        } => Plan::Element {
-            prefix: prefix.clone(),
-            local: local.clone(),
-            ns: ns.clone(),
-            attrs: attrs.clone(),
-            children: children.clone(),
-        },
-        XData::Text(t) => {
-            let mut s = String::new();
-            escape_text(t, &mut s);
-            Plan::Leaf(s)
-        }
-        XData::CData(t) => Plan::Leaf(format!("<![CDATA[{t}]]>")),
-        XData::Comment(t) => Plan::Leaf(format!("<!--{t}-->")),
-        XData::Pi { target, data } => Plan::Leaf(if data.is_empty() {
-            format!("<?{target}?>")
-        } else {
-            format!("<?{target} {data}?>")
-        }),
-        XData::Attribute { .. } | XData::Declaration { .. } | XData::Document { .. } => Plan::Skip,
-    });
-    match plan {
-        Plan::Leaf(s) => out.push_str(&s),
-        Plan::Skip => return unsupported(format!("serialising {} as markup", kind(h))),
-        Plan::Element {
-            prefix,
-            local,
-            ns,
-            attrs,
-            children,
-        } => {
-            let mark = scope.len();
-            // Declarations written on this element: explicit ones first, in their order.
-            let mut written: Vec<String> = Vec::new();
-            let mut plain: Vec<(String, String, String, String)> = Vec::new(); // prefix, local, ns, value
-            for a in &attrs {
-                let (ap, al, ans, av) = with(a, |d| match d {
-                    XData::Attribute {
-                        prefix,
-                        local,
-                        ns,
-                        value,
-                    } => (prefix.clone(), local.clone(), ns.clone(), value.clone()),
-                    _ => unreachable!("attributes hold attributes"),
-                });
-                if ans == XMLNS_URI {
-                    let declared = if ap == "xmlns" { al.clone() } else { String::new() };
-                    scope.push((declared.clone(), av.clone()));
-                    let mut s = String::new();
-                    escape_attr(&av, &mut s);
-                    written.push(if declared.is_empty() {
-                        format!(" xmlns=\"{s}\"")
-                    } else {
-                        format!(" xmlns:{declared}=\"{s}\"")
-                    });
-                } else {
-                    plain.push((ap, al, ans, av));
-                }
-            }
-            // The element's own name may need a declaration the tree does not carry.
-            let mut extra = String::new();
-            let visible = mapped(scope, &prefix);
-            if visible.as_deref().unwrap_or("") != ns {
-                let mut s = String::new();
-                escape_attr(&ns, &mut s);
-                extra = if prefix.is_empty() {
-                    format!(" xmlns=\"{s}\"")
-                } else {
-                    format!(" xmlns:{prefix}=\"{s}\"")
-                };
-                scope.push((prefix.clone(), ns.clone()));
-            }
-            out.push('<');
-            out.push_str(&qname(&prefix, &local));
-            out.push_str(&extra);
-            for w in &written {
-                out.push_str(w);
-            }
-            for (ap, al, ans, av) in &plain {
-                let use_prefix = if ans.is_empty() {
-                    String::new()
-                } else if !ap.is_empty() && mapped(scope, ap).as_deref() == Some(ans.as_str()) {
-                    ap.clone()
-                } else if let Some((p, _)) = scope.iter().rev().find(|(p, u)| !p.is_empty() && u == ans) {
-                    p.clone()
-                } else {
-                    return unsupported("serialising a namespaced attribute without a declared prefix");
-                };
-                let mut s = String::new();
-                escape_attr(av, &mut s);
-                out.push_str(&format!(" {}=\"{s}\"", qname(&use_prefix, al)));
-            }
-            if children.is_empty() {
-                out.push_str(" />");
-            } else {
-                out.push('>');
-                for c in &children {
-                    write_node(c, out, scope)?;
-                }
-                out.push_str("</");
-                out.push_str(&qname(&prefix, &local));
-                out.push('>');
-            }
-            scope.truncate(mark);
-        }
-    }
-    Ok(())
+/// The state of .NET's indenting text writer, which BC writes through: two spaces per level, LF,
+/// and no indentation inside an element that has text (mixed content). The rules, each pinned by
+/// xml/TestXmlRuntimeContracts.al:XmlDocument_WriteTo_HasDeclarationAndTwoSpaceIndentation,
+/// :XmlElement_WriteTo_MixedContentIsNotIndented and
+/// :XmlDocument_ReadFrom_KeepsWhiteSpaceInsideAndOutsideTheRoot.
+struct Writer {
+    out: String,
+    indent: bool,
+    level: usize,
+    /// The current element has had text, CDATA or white space written into it.
+    mixed: bool,
+    /// `mixed` of the enclosing elements.
+    saved: Vec<bool>,
+    /// Where the last text ended; a markup node starts on a new line when more was written since.
+    text_end: usize,
+    scope: Scope,
 }
 
-/// The namespace declarations of `h`'s ancestors do not matter when a node is written
-/// on its own: it declares what it needs.
+impl Writer {
+    fn new(indent: bool) -> Writer {
+        Writer {
+            out: String::new(),
+            indent,
+            level: 0,
+            mixed: false,
+            saved: Vec::new(),
+            text_end: 0,
+            scope: Vec::new(),
+        }
+    }
+
+    fn break_line(&mut self) {
+        if self.indent && !self.mixed && self.out.len() != self.text_end {
+            self.out.push('\n');
+            for _ in 0..self.level {
+                self.out.push_str("  ");
+            }
+        }
+    }
+
+    fn text(&mut self, s: &str) {
+        self.mixed = true;
+        self.out.push_str(s);
+        self.text_end = self.out.len();
+    }
+
+    fn markup(&mut self, s: &str) {
+        self.break_line();
+        self.out.push_str(s);
+    }
+
+    fn node(&mut self, h: &Handle) -> Result<(), Signal> {
+        enum Plan {
+            Element {
+                prefix: String,
+                local: String,
+                ns: String,
+                attrs: Vec<Handle>,
+                children: Vec<Handle>,
+            },
+            Text(String),
+            CData(String),
+            Markup(String),
+            Skip,
+        }
+        let plan = with(h, |d| match d {
+            XData::Element {
+                prefix,
+                local,
+                ns,
+                attrs,
+                children,
+            } => Plan::Element {
+                prefix: prefix.clone(),
+                local: local.clone(),
+                ns: ns.clone(),
+                attrs: attrs.clone(),
+                children: children.clone(),
+            },
+            XData::Text(t) => {
+                let mut s = String::new();
+                escape_text(t, &mut s);
+                Plan::Text(s)
+            }
+            XData::CData(t) => Plan::CData(format!("<![CDATA[{t}]]>")),
+            XData::Comment(t) => Plan::Markup(format!("<!--{t}-->")),
+            XData::Pi { target, data } => Plan::Markup(if data.is_empty() {
+                format!("<?{target}?>")
+            } else {
+                format!("<?{target} {data}?>")
+            }),
+            XData::Attribute { .. } | XData::Declaration { .. } | XData::Document { .. } => Plan::Skip,
+        });
+        match plan {
+            Plan::Text(s) | Plan::CData(s) => self.text(&s),
+            Plan::Markup(s) => self.markup(&s),
+            Plan::Skip => return unsupported(format!("serialising {} as markup", kind(h))),
+            Plan::Element {
+                prefix,
+                local,
+                ns,
+                attrs,
+                children,
+            } => self.element(&prefix, &local, &ns, &attrs, &children)?,
+        }
+        Ok(())
+    }
+
+    fn element(
+        &mut self,
+        prefix: &str,
+        local: &str,
+        ns: &str,
+        attrs: &[Handle],
+        children: &[Handle],
+    ) -> Result<(), Signal> {
+        let mark = self.scope.len();
+        // Declarations written on this element: explicit ones first, in their order.
+        let mut written: Vec<String> = Vec::new();
+        let mut plain: Vec<(String, String, String, String)> = Vec::new(); // prefix, local, ns, value
+        for a in attrs {
+            let (ap, al, ans, av) = with(a, |d| match d {
+                XData::Attribute {
+                    prefix,
+                    local,
+                    ns,
+                    value,
+                } => (prefix.clone(), local.clone(), ns.clone(), value.clone()),
+                _ => unreachable!("attributes hold attributes"),
+            });
+            if ans == XMLNS_URI {
+                let declared = if ap == "xmlns" { al.clone() } else { String::new() };
+                self.scope.push((declared.clone(), av.clone()));
+                let mut s = String::new();
+                escape_attr(&av, &mut s);
+                written.push(if declared.is_empty() {
+                    format!(" xmlns=\"{s}\"")
+                } else {
+                    format!(" xmlns:{declared}=\"{s}\"")
+                });
+            } else {
+                plain.push((ap, al, ans, av));
+            }
+        }
+        // The element's own name may need a declaration the tree does not carry.
+        let mut extra = String::new();
+        let visible = mapped(&self.scope, prefix);
+        if visible.as_deref().unwrap_or("") != ns {
+            let mut s = String::new();
+            escape_attr(ns, &mut s);
+            extra = if prefix.is_empty() {
+                format!(" xmlns=\"{s}\"")
+            } else {
+                format!(" xmlns:{prefix}=\"{s}\"")
+            };
+            self.scope.push((prefix.to_string(), ns.to_string()));
+        }
+        self.break_line();
+        self.level += 1;
+        self.saved.push(self.mixed);
+        self.mixed = false;
+        self.out.push('<');
+        self.out.push_str(&qname(prefix, local));
+        self.out.push_str(&extra);
+        for w in &written {
+            self.out.push_str(w);
+        }
+        for (ap, al, ans, av) in &plain {
+            let use_prefix = if ans.is_empty() {
+                String::new()
+            } else if !ap.is_empty() && mapped(&self.scope, ap).as_deref() == Some(ans.as_str()) {
+                ap.clone()
+            } else if let Some((p, _)) = self.scope.iter().rev().find(|(p, u)| !p.is_empty() && u == ans) {
+                p.clone()
+            } else {
+                return unsupported("serialising a namespaced attribute without a declared prefix");
+            };
+            let mut s = String::new();
+            escape_attr(av, &mut s);
+            self.out.push_str(&format!(" {}=\"{s}\"", qname(&use_prefix, al)));
+        }
+        if children.is_empty() {
+            self.out.push_str(" />");
+            self.level -= 1;
+        } else {
+            self.out.push('>');
+            let content_start = self.out.len();
+            for c in children {
+                self.node(c)?;
+            }
+            self.level -= 1;
+            if self.out.len() != content_start {
+                // The end tag goes on its own line, unless the element has text.
+                self.break_line();
+            }
+            self.out.push_str("</");
+            self.out.push_str(&qname(prefix, local));
+            self.out.push('>');
+        }
+        self.mixed = self.saved.pop().unwrap_or(false);
+        self.scope.truncate(mark);
+        Ok(())
+    }
+}
+
+/// The text of `h` as BC writes it. A document gets its XML declaration first (its own, else
+/// `version="1.0" encoding="utf-16"`). The namespace declarations of `h`'s ancestors do not
+/// matter when a node is written on its own: it declares what it needs.
 fn serialize(h: &Handle) -> Result<String, Signal> {
-    let mut out = String::new();
+    let mut w = Writer::new(true);
     let is_doc = with(h, |d| matches!(d, XData::Document { .. }));
     if is_doc {
-        let has_decl = with(h, |d| matches!(d, XData::Document { decl: Some(_), .. }));
-        if has_decl {
-            return unsupported("writing a document that has an XML declaration (output form not pinned yet)");
-        }
+        let decl = with(h, |d| match d {
+            XData::Document { decl, .. } => decl.clone(),
+            _ => None,
+        });
+        let text = match decl {
+            Some(d) => with(&d, |x| match x {
+                XData::Declaration {
+                    version,
+                    encoding,
+                    standalone,
+                } => {
+                    let mut t = format!("<?xml version=\"{version}\"");
+                    if !encoding.is_empty() {
+                        t.push_str(&format!(" encoding=\"{encoding}\""));
+                    }
+                    if !standalone.is_empty() {
+                        t.push_str(&format!(" standalone=\"{standalone}\""));
+                    }
+                    t.push_str("?>");
+                    t
+                }
+                _ => unreachable!("a declaration slot holds a declaration"),
+            }),
+            None => "<?xml version=\"1.0\" encoding=\"utf-16\"?>".to_string(),
+        };
+        w.markup(&text);
         for c in children_of(h) {
-            write_node(&c, &mut out, &mut Vec::new())?;
+            w.node(&c)?;
         }
     } else {
-        write_node(h, &mut out, &mut Vec::new())?;
+        w.node(h)?;
     }
-    Ok(out)
+    Ok(w.out)
+}
+
+/// The content of `h` without indentation (`InnerXml`).
+fn serialize_inner(h: &Handle) -> Result<String, Signal> {
+    let mut w = Writer::new(false);
+    for c in children_of(h) {
+        w.node(&c)?;
+    }
+    Ok(w.out)
 }
 
 fn inner_text(h: &Handle, out: &mut String) {
@@ -876,7 +1084,13 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
     for a in args {
         let h = match a {
             Value::Library(_, h) if is_xml(h) => h.clone(),
-            other => return unsupported(format!("{other:?} as XML content (only XML nodes are pinned)")),
+            // Text is accepted as content and becomes a text node
+            // (xml/TestXmlRuntimeContracts.al:XmlElement_Add_Text_IsAccepted_AndAdjacentTextsMerge).
+            Value::Text(t) | Value::Code(t) => {
+                out.push(new_node(XData::Text(t.clone())));
+                continue;
+            }
+            other => return unsupported(format!("{other:?} as XML content (only XML nodes and text are pinned)")),
         };
         if with(&h, |d| matches!(d, XData::Document { .. })) {
             return unsupported("adding an XmlDocument as content");
@@ -886,7 +1100,8 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
     Ok(out)
 }
 
-fn check_fits(container: &Handle, node: &Handle) -> Result<(), Signal> {
+/// Whether `node` may be added to `container`. `removed` are children that go first (a replace).
+fn check_fits(container: &Handle, node: &Handle, removed: &[Handle]) -> Result<(), Signal> {
     if is_ancestor_or_self(node, container) {
         return unsupported("adding an XML node to itself or its own descendant");
     }
@@ -897,9 +1112,14 @@ fn check_fits(container: &Handle, node: &Handle) -> Result<(), Signal> {
         ("XmlDocument", "XmlElement") => {
             let has_root = children_of(container)
                 .iter()
+                .filter(|c| !removed.iter().any(|r| Rc::ptr_eq(r, c)))
                 .any(|c| with(c, |d| matches!(d, XData::Element { .. })));
             if has_root {
-                return unsupported("a second root element in an XmlDocument (error text not pinned yet)");
+                // xml/TestXmlRuntimeContracts.al:XmlDocument_Add_SecondRoot_Throws
+                return Err(error(
+                    "The requested operation cannot be performed in this context.",
+                    "InvalidOperation",
+                ));
             }
             true
         }
@@ -917,7 +1137,7 @@ fn check_fits(container: &Handle, node: &Handle) -> Result<(), Signal> {
 /// Inserts `nodes` into `container` at child position `at` (`None` appends).
 fn insert(container: &Handle, at: Option<usize>, nodes: Vec<Handle>) -> Result<(), Signal> {
     for n in &nodes {
-        check_fits(container, n)?;
+        check_fits(container, n, &[])?;
     }
     let mut at = at;
     for n in nodes {
@@ -996,7 +1216,9 @@ fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
 
 #[derive(Debug, Clone)]
 enum Test {
-    Name(String),
+    /// `prefix:local` or `local`. An unprefixed name matches only nodes in no namespace
+    /// (XPath 1.0; xml/TestXmlRuntimeContracts.al:XmlDocument_SelectNodes_DefaultNamespace_NeedsAPrefixedName).
+    Name(Option<String>, String),
     Any,
     Text,
     Node,
@@ -1006,8 +1228,11 @@ enum Test {
 #[derive(Debug, Clone)]
 enum Pred {
     Index(usize),
+    Last,
     AttrEq(String, String),
     AttrExists(String),
+    /// `local-name()='x'`
+    LocalName(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1026,12 +1251,30 @@ struct Step {
     preds: Vec<Pred>,
 }
 
+/// Prefix to namespace declarations of an `XmlNamespaceManager`.
+type Prefixes<'a> = Option<&'a [(String, String)]>;
+
 fn xpath_unsupported<T>(p: &str, why: &str) -> Result<T, Signal> {
     unsupported(format!("XPath `{p}`: {why} (only simple location paths are pinned)"))
 }
 
+fn qname_parts(n: &str) -> (Option<String>, String) {
+    match n.split_once(':') {
+        Some((p, l)) => (Some(p.to_string()), l.to_string()),
+        None => (None, n.to_string()),
+    }
+}
+
+/// A literal in single or double quotes.
+fn quoted_literal(v: &str) -> Option<&str> {
+    let v = v.trim();
+    v.strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .or_else(|| v.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+}
+
 /// Returns (absolute, steps).
-fn parse_xpath(p: &str) -> Result<(bool, Vec<Step>), Signal> {
+fn parse_xpath(p: &str, prefixes: Prefixes) -> Result<(bool, Vec<Step>), Signal> {
     let b: Vec<char> = p.chars().collect();
     let mut i = 0;
     let mut steps = Vec::new();
@@ -1071,15 +1314,27 @@ fn parse_xpath(p: &str) -> Result<(bool, Vec<Step>), Signal> {
         } else if b[i] == '@' {
             i += 1;
             let s = i;
-            while i < b.len() && (is_name_char(b[i]) || b[i] == '*') {
+            while i < b.len() && (is_name_char(b[i]) || b[i] == '*' || b[i] == ':') {
                 i += 1;
             }
             let n: String = b[s..i].iter().collect();
             if n.is_empty() {
+                if b.get(i) == Some(&'@') {
+                    // xml/TestXmlRuntimeContracts.al:XmlDocument_SelectNodes_NotANodeSet_Throws
+                    return Err(error("Expression must evaluate to a node-set.", "Xml:XPath"));
+                }
                 return xpath_unsupported(p, "empty attribute name");
             }
             axis = Axis::Attribute;
-            test = if n == "*" { Test::Any } else { Test::Name(n) };
+            test = if n == "*" {
+                Test::Any
+            } else {
+                let (pre, local) = qname_parts(&n);
+                if pre.is_some() && prefixes.is_none() {
+                    return xpath_unsupported(p, "prefixed names need a namespace manager");
+                }
+                Test::Name(pre, local)
+            };
         } else if b[i] == '*' {
             i += 1;
             axis = Axis::Child;
@@ -1095,9 +1350,14 @@ fn parse_xpath(p: &str) -> Result<(bool, Vec<Step>), Signal> {
                 "text()" => Test::Text,
                 "node()" => Test::Node,
                 "comment()" => Test::Comment,
-                n if n.contains(':') => return xpath_unsupported(p, "prefixed names need a namespace manager"),
                 n if n.contains(['(', ')']) => return xpath_unsupported(p, "functions"),
-                n => Test::Name(n.to_string()),
+                n => {
+                    let (pre, local) = qname_parts(n);
+                    if pre.is_some() && prefixes.is_none() {
+                        return xpath_unsupported(p, "prefixed names need a namespace manager");
+                    }
+                    Test::Name(pre, local)
+                }
             };
         } else {
             return xpath_unsupported(p, "unsupported syntax");
@@ -1114,19 +1374,19 @@ fn parse_xpath(p: &str) -> Result<(bool, Vec<Step>), Signal> {
             let inner = inner.trim();
             if let Ok(n) = inner.parse::<usize>() {
                 preds.push(Pred::Index(n));
+            } else if inner == "last()" {
+                preds.push(Pred::Last);
+            } else if let Some(rest) = inner.strip_prefix("local-name()") {
+                match rest.trim_start().strip_prefix('=').and_then(quoted_literal) {
+                    Some(l) => preds.push(Pred::LocalName(l.to_string())),
+                    None => return xpath_unsupported(p, "predicate form"),
+                }
             } else if let Some(rest) = inner.strip_prefix('@') {
                 match rest.split_once('=') {
-                    Some((n, v)) => {
-                        let v = v.trim();
-                        let lit = v
-                            .strip_prefix('\'')
-                            .and_then(|s| s.strip_suffix('\''))
-                            .or_else(|| v.strip_prefix('"').and_then(|s| s.strip_suffix('"')));
-                        match lit {
-                            Some(l) if is_ncname(n.trim()) => preds.push(Pred::AttrEq(n.trim().into(), l.into())),
-                            _ => return xpath_unsupported(p, "predicate form"),
-                        }
-                    }
+                    Some((n, v)) => match quoted_literal(v) {
+                        Some(l) if is_ncname(n.trim()) => preds.push(Pred::AttrEq(n.trim().into(), l.into())),
+                        _ => return xpath_unsupported(p, "predicate form"),
+                    },
                     None if is_ncname(rest) => preds.push(Pred::AttrExists(rest.into())),
                     None => return xpath_unsupported(p, "predicate form"),
                 }
@@ -1142,16 +1402,44 @@ fn parse_xpath(p: &str) -> Result<(bool, Vec<Step>), Signal> {
     Ok((absolute, steps))
 }
 
-fn node_matches(h: &Handle, test: &Test, principal_attr: bool) -> bool {
-    with(h, |d| match (d, test) {
-        (_, Test::Node) => true,
-        (XData::Element { local, ns, .. }, Test::Name(n)) if !principal_attr => ns.is_empty() && local == n,
-        (XData::Attribute { local, ns, .. }, Test::Name(n)) if principal_attr => ns.is_empty() && local == n,
-        (XData::Element { .. }, Test::Any) => !principal_attr,
-        (XData::Attribute { ns, .. }, Test::Any) => principal_attr && ns != XMLNS_URI,
-        (XData::Text(_) | XData::CData(_), Test::Text) => true,
-        (XData::Comment(_), Test::Comment) => true,
-        _ => false,
+fn node_matches(h: &Handle, test: &Test, principal_attr: bool, prefixes: Prefixes) -> Result<bool, Signal> {
+    // The namespace a prefixed name test stands for.
+    let wanted = |pre: &Option<String>| -> Result<String, Signal> {
+        match pre {
+            None => Ok(String::new()),
+            Some(pre) => prefixes
+                .and_then(|m| m.iter().rev().find(|(p, _)| p == pre))
+                .map(|(_, u)| u.clone())
+                .ok_or_else(|| {
+                    Signal::Unsupported(format!(
+                        "XPath prefix `{pre}` that the namespace manager does not know (error text not pinned)"
+                    ))
+                }),
+        }
+    };
+    Ok(match (test, principal_attr) {
+        (Test::Name(pre, n), false) if with(h, |d| matches!(d, XData::Element { .. })) => {
+            let want = wanted(pre)?;
+            with(
+                h,
+                |d| matches!(d, XData::Element { local, ns, .. } if *ns == want && local == n),
+            )
+        }
+        (Test::Name(pre, n), true) if with(h, |d| matches!(d, XData::Attribute { .. })) => {
+            let want = wanted(pre)?;
+            with(
+                h,
+                |d| matches!(d, XData::Attribute { local, ns, .. } if *ns == want && local == n),
+            )
+        }
+        _ => with(h, |d| match (d, test) {
+            (_, Test::Node) => true,
+            (XData::Element { .. }, Test::Any) => !principal_attr,
+            (XData::Attribute { ns, .. }, Test::Any) => principal_attr && ns != XMLNS_URI,
+            (XData::Text(_) | XData::CData(_), Test::Text) => true,
+            (XData::Comment(_), Test::Comment) => true,
+            _ => false,
+        }),
     })
 }
 
@@ -1171,44 +1459,57 @@ fn descendants_or_self(h: &Handle, out: &mut Vec<Handle>) {
     }
 }
 
-fn eval_step(ctx: &Handle, step: &Step) -> Vec<Handle> {
-    let mut found: Vec<Handle> = match step.axis {
-        Axis::Child => children_of(ctx)
-            .into_iter()
-            .filter(|c| node_matches(c, &step.test, false))
-            .collect(),
-        Axis::Attribute => attrs_of(ctx)
-            .into_iter()
-            .filter(|a| node_matches(a, &step.test, true))
-            .collect(),
-        Axis::ThisNode => vec![ctx.clone()],
-        Axis::Parent => parent_of(ctx).into_iter().collect(),
-        Axis::DescendantOrSelf => {
-            let mut v = Vec::new();
-            descendants_or_self(ctx, &mut v);
-            v
+fn eval_step(ctx: &Handle, step: &Step, prefixes: Prefixes) -> Result<Vec<Handle>, Signal> {
+    let mut found: Vec<Handle> = Vec::new();
+    match step.axis {
+        Axis::Child => {
+            for c in children_of(ctx) {
+                if node_matches(&c, &step.test, false, prefixes)? {
+                    found.push(c);
+                }
+            }
         }
-    };
+        Axis::Attribute => {
+            for a in attrs_of(ctx) {
+                if node_matches(&a, &step.test, true, prefixes)? {
+                    found.push(a);
+                }
+            }
+        }
+        Axis::ThisNode => found.push(ctx.clone()),
+        Axis::Parent => found.extend(parent_of(ctx)),
+        Axis::DescendantOrSelf => descendants_or_self(ctx, &mut found),
+    }
     for p in &step.preds {
         found = match p {
             Pred::Index(n) => found.get(n.wrapping_sub(1)).cloned().into_iter().collect(),
+            Pred::Last => found.last().cloned().into_iter().collect(),
             Pred::AttrEq(n, v) => found
                 .into_iter()
                 .filter(|h| attr_value(h, n).as_deref() == Some(v.as_str()))
                 .collect(),
             Pred::AttrExists(n) => found.into_iter().filter(|h| attr_value(h, n).is_some()).collect(),
+            Pred::LocalName(l) => found
+                .into_iter()
+                .filter(|h| {
+                    with(
+                        h,
+                        |d| matches!(d, XData::Element { local, .. } | XData::Attribute { local, .. } if local == l),
+                    )
+                })
+                .collect(),
         };
     }
-    found
+    Ok(found)
 }
 
-fn xpath(ctx: &Handle, path: &str) -> Result<Vec<Handle>, Signal> {
-    let (absolute, steps) = parse_xpath(path)?;
+fn xpath(ctx: &Handle, path: &str, prefixes: Prefixes) -> Result<Vec<Handle>, Signal> {
+    let (absolute, steps) = parse_xpath(path, prefixes)?;
     let mut current = vec![if absolute { root_of(ctx) } else { ctx.clone() }];
     for step in &steps {
         let mut next: Vec<Handle> = Vec::new();
         for c in &current {
-            for n in eval_step(c, step) {
+            for n in eval_step(c, step, prefixes)? {
                 if !next.iter().any(|e| Rc::ptr_eq(e, &n)) {
                     next.push(n);
                 }
@@ -1238,13 +1539,26 @@ fn arg_text(a: &[Value], i: usize) -> Result<String, Signal> {
 
 fn read_from_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let text = arg_text(a, 0)?;
-    match parse_document(&text)? {
-        Some(doc) => {
+    match parse_document_detail(&text)? {
+        Ok(doc) => {
             a[1] = tagged("XmlDocument", doc);
             Ok(Value::Boolean(true))
         }
-        None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("XmlDocument.ReadFrom of invalid XML, result unused (error text not pinned yet)"),
+        Err(_) if c.ret_used() => Ok(Value::Boolean(false)),
+        Err(Some(Failure {
+            message,
+            line,
+            pos,
+            dom: true,
+        })) => Err(error(
+            format!(
+                "The following exception was encountered when processing XML data: '{message}' at line {line} and position {pos}."
+            ),
+            "Xml:Xml",
+        )),
+        Err(_) => unsupported(
+            "XmlDocument.ReadFrom of invalid XML, result unused (the error text is pinned only for a mismatched end tag)",
+        ),
     }
 }
 
@@ -1501,8 +1815,11 @@ fn get_prefix_of_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
                     a[1] = Value::Text(p);
                     return Ok(Value::Boolean(true));
                 }
+                // xml/TestXmlRuntimeContracts.al:XmlElement_NamespaceLookups: the default namespace
+                // has an empty prefix.
                 Some(None) => {
-                    return unsupported("GetPrefixOfNamespace for a default namespace (result not pinned yet)");
+                    a[1] = Value::Text(String::new());
+                    return Ok(Value::Boolean(true));
                 }
                 None => {}
             }
@@ -1519,8 +1836,13 @@ fn get_prefix_of_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
 fn get_namespace_of_prefix(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let prefix = arg_text(a, 0)?;
+    // The empty prefix has no namespace and leaves the variable alone
+    // (xml/TestXmlRuntimeContracts.al:XmlElement_NamespaceLookups).
+    if prefix.is_empty() && c.ret_used() {
+        return Ok(Value::Boolean(false));
+    }
     if prefix.is_empty() {
-        return unsupported("GetNamespaceOfPrefix for the empty prefix (result not pinned yet)");
+        return unsupported("GetNamespaceOfPrefix for the empty prefix, result unused (error text not pinned yet)");
     }
     match lookup_namespace(&h, &prefix) {
         Some(u) => {
@@ -1578,7 +1900,7 @@ fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     let (p, i) = position_in_parent(&h)?;
     let nodes = content_nodes(a)?;
     for n in &nodes {
-        check_fits(&p, n)?;
+        check_fits(&p, n, std::slice::from_ref(&h))?;
     }
     detach(&h);
     insert(&p, Some(i), nodes)?;
@@ -1596,8 +1918,9 @@ fn remove_nodes(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NRes
 fn replace_nodes(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let nodes = content_nodes(a)?;
+    let old = children_of(&h);
     for n in &nodes {
-        check_fits(&h, n)?;
+        check_fits(&h, n, &old)?;
     }
     remove_nodes(c, Some(&mut tagged("XmlElement", h.clone())), &mut [])?;
     insert(&h, None, nodes)?;
@@ -1657,9 +1980,16 @@ fn set_declaration(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
     Ok(Value::Boolean(true))
 }
 
-fn get_document_type(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    // xml/TestXmlComplete.al XmlDocument_GetDocumentType_IsCallable pins only that it throws.
-    unsupported("XmlDocument.GetDocumentType (document types are not modelled; the error text is not pinned)")
+/// Document types are not modelled (the parser refuses a DOCTYPE), so a document never has one:
+/// the Boolean form is false and the statement form raises
+/// (xml/TestXmlRuntimeContracts.al:XmlDocument_GetDocumentType_WithoutDoctype).
+fn get_document_type(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    recv(r)?;
+    if c.ret_used() {
+        Ok(Value::Boolean(false))
+    } else {
+        Err(error("The XML node is not set.", "XmlNodeNotFound"))
+    }
 }
 
 fn get_document(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -1722,14 +2052,11 @@ node_kind!(is_document, as_document, "XmlDocument");
 node_kind!(is_element, as_element, "XmlElement");
 node_kind!(is_pi, as_pi, "XmlProcessingInstruction");
 
-/// `IsXmlText` is true for a text node; whether a CDATA section also counts is not pinned.
+/// `IsXmlText` is true for a text node only; a CDATA section is not text
+/// (xml/TestXmlRuntimeContracts.al:XmlNode_CDataIsNotText).
 fn is_text(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    match kind(&h) {
-        "XmlText" => Ok(Value::Boolean(true)),
-        "XmlCData" => unsupported("XmlNode.IsXmlText on a CDATA section (not pinned yet)"),
-        _ => Ok(Value::Boolean(false)),
-    }
+    Ok(Value::Boolean(kind(&h) == "XmlText"))
 }
 fn as_text(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
@@ -1768,11 +2095,7 @@ fn inner_text_fn(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NRe
 
 fn inner_xml(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    let mut out = String::new();
-    for c in children_of(&h) {
-        write_node(&c, &mut out, &mut Vec::new())?;
-    }
-    Ok(Value::Text(out))
+    Ok(Value::Text(serialize_inner(&h)?))
 }
 
 fn child_elements(h: &Handle, name: Option<(&str, Option<&str>)>) -> Vec<Handle> {
@@ -1846,7 +2169,7 @@ fn get_descendant_elements(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
 
 fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    let found = xpath(&h, &arg_text(a, 0)?)?;
+    let found = xpath(&h, &arg_text(a, 0)?, None)?;
     match found.into_iter().next() {
         Some(n) => {
             a[1] = tagged("XmlNode", n);
@@ -1859,8 +2182,77 @@ fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
 
 fn select_nodes(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[1] = list_of(xpath(&h, &arg_text(a, 0)?)?);
+    a[1] = list_of(xpath(&h, &arg_text(a, 0)?, None)?);
     Ok(Value::Boolean(true))
+}
+
+/// The prefixes of the `XmlNamespaceManager` in argument `i`.
+fn manager_prefixes(a: &[Value], i: usize) -> Result<Vec<(String, String)>, Signal> {
+    match a.get(i) {
+        Some(Value::Library(_, h)) => match &*h.borrow() {
+            LibraryValue::XmlNamespaces(v) => Ok(v.clone()),
+            LibraryValue::Empty => Ok(Vec::new()),
+            _ => unsupported("an XmlNamespaceManager that is not one"),
+        },
+        other => unsupported(format!("{other:?} as an XmlNamespaceManager")),
+    }
+}
+
+fn select_nodes_ns(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv(r)?;
+    let prefixes = manager_prefixes(a, 1)?;
+    a[2] = list_of(xpath(&h, &arg_text(a, 0)?, Some(&prefixes))?);
+    Ok(Value::Boolean(true))
+}
+
+fn select_single_node_ns(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv(r)?;
+    let prefixes = manager_prefixes(a, 1)?;
+    match xpath(&h, &arg_text(a, 0)?, Some(&prefixes))?.into_iter().next() {
+        Some(n) => {
+            a[2] = tagged("XmlNode", n);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => unsupported("SelectSingleNode without a match, result unused (error text not pinned yet)"),
+    }
+}
+
+/// The receiver of an `XmlNamespaceManager` method, made on first use.
+fn manager_cell(r: Option<&mut Value>) -> Result<Handle, Signal> {
+    match r {
+        Some(Value::Library(_, h)) => {
+            if matches!(&*h.borrow(), LibraryValue::Empty) {
+                *h.borrow_mut() = LibraryValue::XmlNamespaces(Vec::new());
+            }
+            if matches!(&*h.borrow(), LibraryValue::XmlNamespaces(_)) {
+                Ok(h.clone())
+            } else {
+                unsupported("an XmlNamespaceManager method on something else")
+            }
+        }
+        _ => unsupported("an XmlNamespaceManager method without a receiver"),
+    }
+}
+
+/// `NameTable(NewValue)` is accepted and has no effect (names are compared as text);
+/// reading it back is not pinned.
+/// (xml/TestXmlRuntimeContracts.al:XmlDocument_SelectNodes_DefaultNamespace_NeedsAPrefixedName)
+fn manager_name_table(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    manager_cell(r)?;
+    if a.is_empty() {
+        return unsupported("XmlNamespaceManager.NameTable read back (not pinned)");
+    }
+    Ok(Value::Null)
+}
+
+fn manager_add_namespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = manager_cell(r)?;
+    let (prefix, uri) = (arg_text(a, 0)?, arg_text(a, 1)?);
+    if let LibraryValue::XmlNamespaces(v) = &mut *h.borrow_mut() {
+        v.push((prefix, uri));
+    }
+    Ok(Value::Null)
 }
 
 fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -2075,7 +2467,7 @@ variant_is! {
 /// The element tree of a document, for XmlPort import (`xmlport.rs`). `Ok(None)`: not
 /// well-formed; `Err`: well-formed but uses namespaces or other features the reader does not
 /// carry over.
-pub(crate) fn read_tree(text: &str) -> Result<Option<crate::xmlport::Elem>, String> {
+pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Option<String>>, String> {
     use crate::xmlport::{Elem, Node};
     fn convert(h: &Handle) -> Result<Elem, String> {
         let (prefix, local, ns, attrs) = with(h, |d| match d {
@@ -2125,9 +2517,9 @@ pub(crate) fn read_tree(text: &str) -> Result<Option<crate::xmlport::Elem>, Stri
         }
         Ok(out)
     }
-    let doc = match parse_document(text) {
-        Ok(Some(d)) => d,
-        Ok(None) => return Ok(None),
+    let doc = match parse_document_detail(text) {
+        Ok(Ok(d)) => d,
+        Ok(Err(f)) => return Ok(Err(f.map(|f| f.message))),
         Err(Signal::Unsupported(why)) => return Err(why),
         Err(other) => return Err(format!("{other:?}")),
     };
@@ -2135,7 +2527,7 @@ pub(crate) fn read_tree(text: &str) -> Result<Option<crate::xmlport::Elem>, Stri
         .into_iter()
         .find(|c| with(c, |d| matches!(d, XData::Element { .. })))
         .ok_or("a document without a root element")?;
-    convert(&root).map(Some)
+    convert(&root).map(Ok)
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
@@ -2229,6 +2621,10 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlElement" | "XmlDocument", "GetDescendantNodes", []) => get_descendant_nodes,
         (_, "SelectSingleNode", ["Text", "XmlNode"]) if is_node => select_single_node,
         (_, "SelectNodes", ["Text", "XmlNodeList"]) if is_node => select_nodes,
+        (_, "SelectNodes", ["Text", "XmlNamespaceManager", "XmlNodeList"]) if is_node => select_nodes_ns,
+        (_, "SelectSingleNode", ["Text", "XmlNamespaceManager", "XmlNode"]) if is_node => select_single_node_ns,
+        ("XmlNamespaceManager", "NameTable", [] | ["XmlNameTable"]) => manager_name_table,
+        ("XmlNamespaceManager", "AddNamespace", ["Text", "Text"]) => manager_add_namespace,
         (_, "WriteTo", ["Text"]) if is_node && first_by_var => write_to_text,
         ("XmlElement", "SetAttribute", ["Text", "Text"]) => set_attribute,
         ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"]) => remove_attribute,

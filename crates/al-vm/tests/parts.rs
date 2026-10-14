@@ -719,8 +719,7 @@ fn writing_through_a_read_only_part_control_is_refused() {
 }
 
 // testpart/TestTestPart.al TestPart_GoToKey_*: a missing key answers false when the result is used;
-// the wrong number of key values and a discarded miss raise errors whose text the corpus does not
-// pin, so they are refused.
+// the wrong number of key values and a discarded miss raise errors with the texts and codes above.
 #[test]
 fn part_go_to_key_answers_false_and_refuses_what_the_corpus_leaves_open() {
     let ok = run(
@@ -736,16 +735,20 @@ fn part_go_to_key_answers_false_and_refuses_what_the_corpus_leaves_open() {
         "F",
     );
     assert_eq!(text(ok), "YesNo20");
+    // handlers/TestPageRuntimeContracts.al:300-312: texts and codes.
     let arity = run(
         "procedure F() var H: TestPage \"PT Host\"; begin H.OpenEdit(); H.Lines.GoToKey('A'); end;",
         "F",
     );
-    assert!(matches!(arity, Err(Signal::Unsupported(_))));
+    assert!(matches!(arity, Err(Signal::Error(e))
+        if e.message == "The number of arguments does not match the number of primary key fields."
+            && e.code == "TestInvalidNumberOfKeyFieldValues"));
     let discarded = run(
         "procedure F() var H: TestPage \"PT Host\"; begin H.OpenEdit(); H.Lines.GoToKey('A', 999); end;",
         "F",
     );
-    assert!(matches!(discarded, Err(Signal::Unsupported(_))));
+    assert!(matches!(discarded, Err(Signal::Error(e))
+        if e.message == "The row does not exist on the TestPage." && e.code == "TestRowNotFound"));
 }
 
 // testfilter/TestTestFilter.al: Ascending, CurrentKey and SetCurrentKey change the walk of the page.

@@ -80,10 +80,7 @@ fn every_corpus_table_field_has_a_known_type() {
 
 /// Corpus files with model gaps that wait for a parser or resolver fix. Each is a red corpus test,
 /// not a pass. A file with no gap left fails the test below, so the list only shrinks (ADR-007).
-const KNOWN_GAP_FILES: &[(&str, &str)] = &[(
-    "codeunit/TestInterfaceRuntimeContracts.al",
-    "`is` and `as` operators on interface values do not parse",
-)];
+const KNOWN_GAP_FILES: &[(&str, &str)] = &[];
 
 /// Milestone 1: every name, member and call in every corpus body resolves,
 /// except references into apps outside the workspace (golden list above).

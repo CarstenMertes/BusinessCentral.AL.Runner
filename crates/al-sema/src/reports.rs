@@ -494,8 +494,9 @@ fn item_ir(
     let table = table_object(o.ws, o.file, &raw.table);
     if slot.is_none() || table.is_none() {
         reasons.push(format!(
-            "dataitem {}: table {} is outside the workspace",
-            raw.name, raw.table
+            "dataitem {}: {}",
+            raw.name,
+            o.ws.outside_workspace(ObjKind::Table, &raw.table)
         ));
     }
     let prop = |n: &str| {

@@ -19,6 +19,19 @@ One oracle and one ratchet per BC major. `al-test-cli --root .` runs the newest;
 The numbers in the rest of this file are from before the version work and are
 refreshed after merging.
 
+### Other test apps (2026-10-14)
+
+Each has its own oracle, ratchet and report line, and is not part of the overall count
+(`oracle/README.md`).
+
+| App | Oracle | Pass | Total | Why the rest does not run |
+|---|---|---:|---:|---|
+| OnPrem (27, 28, 29) | CI run, small artifact | 0 | 61 | Every test needs an OnPrem-only platform table (User, User Property, Object, Object Metadata, Published Application, All Profile): no row provider yet (`platform-tables`). No `DotNet` in the app |
+| Isolation probe under a Function runner (28) | Windows nightly, BC 28.4 | 7 | 7 | |
+| Isolation probe under a Codeunit runner (28) | same artifact | 6 | 6 | BC fails `T5` here on purpose; so does the runtime |
+
+There is no isolation oracle for BC 27 and 29 (`docs/probes-needed.md`).
+
 ## Overall
 
 **2412 / 4836 pass (49.9%), 0 fail, 2424 not run.** Compiling the corpus
@@ -51,6 +64,15 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 | pageapplicationarea | 76 | 0 | 76 | 0% |
 | xmlport | 40 | 25 | 15 | 62.5% |
 | other areas (17) | 257 | 17 | 240 | |
+
+## Platform tables (ADR-019, branch `platform-tables`)
+
+The platform `System` app loads with every app. Providers answer Integer, Date, Session, Active Session, AllObj,
+AllObjWithCaption, CodeUnit Metadata, Table Metadata, Page Metadata, Page Control Field, Field, Key, Time Zone,
+Windows Language, NAV App Installed App and Published Application; Company, User, Access Control, Record Link and
+a few tenant tables are stored (the session seeds the first three). Everything else in the System app is refused
+with `platform table 'X' (id) has no provider`. Still open: the permission tables, All Profile, the report, query
+and xmlport metadata tables, Event Subscription, Table Relations Metadata, Code Coverage, Feature Key, Page Action.
 
 ## What is implemented
 
@@ -133,10 +155,18 @@ Answered on 2026-10-13 and recorded in ADR-013:
   measured on BC. The frame text beyond what the corpus pins is an assumption
   (`docs/probes-needed.md`). Frames of pages, reports, queries, xmlports, extensions and field
   triggers are still refused. `ErrorInfo.Callstack()` is not implemented.
-- Red/green discipline slipped in places during the parallel build-out (the
-  first cut of event dispatch, later FlowField formula tests, some TestPage
-  fixes). Those tests were checked by mutation, but were never seen red.
-  Review them when the code is next touched.
+- Red/green discipline slipped in places during the parallel build-out. A
+  mutation-testing pass (cargo-mutants, 2026-10-14) covered event dispatch,
+  FlowFields and CalcFormula, transactions, XmlPorts (runtime and sema), queries,
+  reports, host values, the TestPage parts, and the Format, date, math and
+  ErrorInfo builtins. Every surviving mutant was either killed by a new test or
+  recorded as equivalent or unpinned. What is left: `al-vm/src/pages.rs` (the
+  TestPage core, 520 mutants) and the rest of `datefns.rs` were not swept; of the 47
+  `pages/*` survivors only 14 were rechecked against the corpus ratchet (9 caught, 5
+  survive both: `pages/areas.rs` check_areas_pinned, `pages/parts.rs`
+  resync_parts_linked_by, `pages/runobject.rs` run_object_codeunit); and
+  `Power` with an exponent that carries a scale (`Power(2, 3.0)` answers 1) is a
+  known bug with an `#[ignore]`d test (`al-builtins/src/mathfns.rs`).
 - About 135 assumptions in `docs/probes-needed.md` wait for probes on real BC.
   They include the exact "Unhandled UI" text, JSON and XML `WriteTo`
   formatting, and the `Format` of Time and DateTime.

@@ -42,6 +42,17 @@ impl Session {
         Ok(())
     }
 
+    /// Runs the OnInit of every part page that has not run it yet.
+    pub(super) fn init_parts(&mut self, st: &St) -> Result<(), Signal> {
+        let parts = st.borrow().parts.clone();
+        for (_, child) in parts {
+            if !std::mem::replace(&mut child.borrow_mut().inited, true) {
+                self.page_trigger(&child, "oninit", vec![])?;
+            }
+        }
+        Ok(())
+    }
+
     /// Opens the parts right after the host's OnOpenPage: the ones whose `Visible` came out false
     /// are dropped, the others run their OnInit and OnOpenPage.
     pub(super) fn open_parts(&mut self, st: &St) -> Result<(), Signal> {
@@ -76,9 +87,8 @@ impl Session {
     }
 
     /// Whether the part control that shows `st` says `Editable = false`. What that does to the
-    /// part's rows is not pinned (TestPart.Editable() ignores it, corpus testpart/TestTestPart.al:
-    /// TestPart_Editable_IsNotDrivenByTheHostControlsEditableProperty), so writing through such a
-    /// part is refused.
+    /// part's rows is pinned only for SetValue, which writes; New() and Next() onto the new-row line
+    /// of such a part are refused.
     pub(super) fn part_control_read_only(&self, st: &St) -> bool {
         let Some((host, idx)) = st.borrow().host.clone() else {
             return false;
@@ -120,9 +130,18 @@ impl Session {
         match found {
             Some(c) => Ok(c),
             None => {
-                // The id is generated per compilation; the corpus asserts only the tail
-                // (testpart/TestTestPart.al:TestPart_InvisiblePart_IsNotInTheControlTreeAtAll).
-                Err(error("The part with ID = 0 was not found on the page."))
+                // Text and code: testpart/TestPartTriggerOrderAndRefresh.al:316-340. The id is
+                // `control_id` of the declaring object and the part's name (testpart/TestTestPart.al:233).
+                let engine = self.engine();
+                let ctl = &page_of(&engine, st).controls[control];
+                let declaring = self.object_id_of(ctl.owner.unwrap_or(st.borrow().object as usize) as u32);
+                Err(error_code(
+                    format!(
+                        "The part with ID = {} was not found on the page.",
+                        control_id(declaring, &ctl.name)
+                    ),
+                    "TestPartNotFound",
+                ))
             }
         }
     }

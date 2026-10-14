@@ -11,6 +11,7 @@ pub mod xml;
 pub mod xmlport;
 
 pub mod catalog;
+pub mod collation;
 pub mod collections;
 pub mod datatransfer;
 pub mod datefns;
@@ -28,6 +29,7 @@ pub mod native;
 pub mod ops;
 pub mod pagebuiltins;
 pub mod pagefmt;
+pub mod platform;
 pub mod querybuiltins;
 pub mod refs;
 pub mod sessionfns;

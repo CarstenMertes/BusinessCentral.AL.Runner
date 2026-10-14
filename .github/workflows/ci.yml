@@ -93,6 +93,7 @@ jobs:
             -p al-syntax --test perf_parse_throughput \
             -p al-test-cli --test perf_budget \
             -p al-test-cli --test corpus_resolve_deps \
+            -p al-test-cli --test platform_tables \
             -- --ignored --nocapture
 
       # The only tests that use the network: Microsoft's artifact feed, read by range. Run after

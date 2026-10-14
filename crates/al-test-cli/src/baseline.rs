@@ -226,7 +226,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
                     self.expr(receiver);
                     args.iter().for_each(|a| self.arg(a));
                 }
-                Expr::EnumImpl { value, .. } => self.expr(value),
+                Expr::InterfaceTest { value, .. } | Expr::EnumImpl { value, .. } => self.expr(value),
                 Expr::Control { page, .. } => self.expr(page),
                 Expr::QueryColumn { query, .. } => self.expr(query),
                 Expr::DotNet { receiver, args, .. } => {

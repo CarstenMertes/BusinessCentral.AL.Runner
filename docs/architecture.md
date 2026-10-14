@@ -53,7 +53,15 @@ needs more.
 - **Store (ADR-003, 004).** AL-shaped operations with typed outcomes.
   Snapshots are root pointers, so commit, rollback and per-test reset are O(1).
 - **Test runner semantics** (pinned by the corpus):
-  - One session and one fresh store per test codeunit; install codeunits run first.
+  - One session and one fresh store per test codeunit; install codeunits run first. A test
+    codeunit is the **isolation unit** (`al-test-cli/src/isolation.rs`): its methods share the
+    instance (AL globals, single-instance codeunits, one `OnRun`) under every `TestIsolation`, so
+    methods are never scheduled apart. Each unit forks the install baseline (O(1)) and shares
+    nothing mutable with another.
+  - `TestIsolation = Codeunit` (the default, and what every corpus oracle ran under) keeps the
+    database between methods; `Function` restores the state after `OnRun` when each method ends
+    (O(1) snapshot restore); `Disabled` is refused. A runner codeunit's property selects it
+    (`oracle.toml` `runner`).
   - A passing test commits at the test boundary.
   - `asserterror` rolls back to the last commit.
   - `[HandlerFunctions]` are bound per test method; "Unhandled UI" and unexecuted handlers fail the test.

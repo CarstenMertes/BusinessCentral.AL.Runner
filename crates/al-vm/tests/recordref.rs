@@ -234,7 +234,9 @@ fn keyref_counts_and_names_key_fields() {
         end;",
         "F",
     );
-    assert_eq!(text(r), "22Grp1Yes");
+    // The implicit SystemId key follows the declared keys (corpus recordref/TestRecordRefRuntimeContracts.al:
+    // KeyRefAndFieldRef_Active_AreTrue_KeyCount).
+    assert_eq!(text(r), "32Grp1Yes");
 }
 
 #[test]
@@ -405,7 +407,7 @@ fn fieldref_testfield_and_fielderror() {
         "procedure F() var RR: RecordRef; begin RR.Open(50900); RR.Field(3).Value := 1; RR.Field(3).TestField(2); end;",
         "F",
     ));
-    assert!(m.starts_with("Grp must be 2 in The Table"), "{m}");
+    assert!(m.starts_with("Grp must be equal to '2'  in The Table"), "{m}");
     let m = err(run(
         "procedure F() var RR: RecordRef; begin RR.Open(50900); RR.Field(3).FieldError('Custom msg'); end;",
         "F",

@@ -775,6 +775,21 @@ impl<'a> Checker<'a> {
                 let op = first_token(node).to_ascii_lowercase();
                 E::Val(if op == "not" { Ty::Boolean } else { t })
             }
+            BinExpr if matches!(op_token(node).as_str(), "is" | "as") => {
+                // The right operand is an interface name, not a value: it is not resolved as a
+                // name here. `x is I` is a Boolean, `x as I` has the type of interface I.
+                if let Some(k) = kids.first() {
+                    self.ty(sc, k);
+                }
+                if op_token(node) == "is" {
+                    E::Val(Ty::Boolean)
+                } else {
+                    E::Val(
+                        kids.get(1)
+                            .map_or(Ty::Unknown, |n| Ty::Object(ObjKind::Interface, type_name_text(n))),
+                    )
+                }
+            }
             BinExpr => {
                 let l = kids.first().map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
                 let r = kids.get(1).map(|k| self.ty(sc, k)).unwrap_or(Ty::Unknown);
@@ -1039,6 +1054,13 @@ impl<'a> Checker<'a> {
                         }
                         E::Val(t)
                     }
+                    // `Rec.ReadIsolation::ReadUncommitted`: the property name is also the way to name the
+                    // members of the option it takes (Base Application writes it).
+                    E::Callable(_) if system_option_of_property(&kids[0], &rhs).is_some() => {
+                        let (enum_name, i) = system_option_of_property(&kids[0], &rhs).expect("checked");
+                        self.record(sc, node, Res::OptionValue(i as i32));
+                        E::Val(Ty::Builtin(enum_name.to_string()))
+                    }
                     E::Callable(c) => E::Val(self.pick(sc, &kids[0], &c, &[], &rhs)),
                 }
             }
@@ -1091,6 +1113,13 @@ impl<'a> Checker<'a> {
                 self.record(sc, node, if depth == 0 { Res::Global(key) } else { Res::Local(key) });
                 return Some(E::Val(t));
             }
+        }
+        // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
+        if key == "this" && self.ws.objects[sc.oi].kind == ObjKind::Codeunit && sc.self_obj == sc.oi {
+            return Some(E::Val(Ty::Object(
+                ObjKind::Codeunit,
+                self.ws.objects[sc.oi].name.clone(),
+            )));
         }
         if sc.rec_unqualified {
             if let Some(rec) = sc.rec.clone() {
@@ -1286,11 +1315,25 @@ impl<'a> Checker<'a> {
                 if *kind == ObjKind::Codeunit && name.eq_ignore_ascii_case("Run") {
                     self.reach_run(oi);
                 }
-                let procs: Vec<Cand> = self.members[oi]
+                let mut procs: Vec<Cand> = self.members[oi]
                     .procedures_named(name)
                     .iter()
                     .map(|p| proc_cand(p))
                     .collect();
+                // An interface also has the procedures of the interfaces it extends
+                // (codeunit/TestInterfaceRuntimeContracts.al:Interface_ExtendedInterface_IsAndAs).
+                if procs.is_empty() && *kind == ObjKind::Interface {
+                    for b in self.ws.interface_bases(oi) {
+                        procs = self.members[b]
+                            .procedures_named(name)
+                            .iter()
+                            .map(|p| proc_cand(p))
+                            .collect();
+                        if !procs.is_empty() {
+                            break;
+                        }
+                    }
+                }
                 if !procs.is_empty() {
                     return Some(E::Callable(procs));
                 }
@@ -1471,6 +1514,18 @@ fn op_token(node: &SyntaxNode) -> String {
         .unwrap_or_default()
 }
 
+/// The name written as the right operand of `is` and `as`: `I`, `"A B"` or `Ns.I`.
+pub(crate) fn type_name_text(node: &SyntaxNode) -> String {
+    match node.kind() {
+        SyntaxKind::MemberExpr => node
+            .children()
+            .map(|k| type_name_text(&k))
+            .collect::<Vec<_>>()
+            .join("."),
+        _ => name_of(node),
+    }
+}
+
 fn member_name(node: &SyntaxNode) -> String {
     match node.kind() {
         SyntaxKind::MemberExpr | SyntaxKind::ScopeExpr => {
@@ -1573,6 +1628,22 @@ fn receiver_of(t: &Ty) -> Option<String> {
         }
         .to_string(),
     )
+}
+
+/// For `Rec.ReadIsolation` and `Rec.SecurityFiltering` written before `::`: the system option the
+/// property takes and the position of member `member` in it.
+fn system_option_of_property(base: &SyntaxNode, member: &str) -> Option<(&'static str, usize)> {
+    let text = base.text().to_string();
+    let last = text.rsplit('.').next()?.trim().trim_matches('"').to_ascii_lowercase();
+    let enum_name = match last.as_str() {
+        "readisolation" => "IsolationLevel",
+        "securityfiltering" => "SecurityFilter",
+        _ => return None,
+    };
+    let i = al_builtins::sysenum::members(enum_name)?
+        .iter()
+        .position(|m| m.eq_ignore_ascii_case(member))?;
+    Some((enum_name, i))
 }
 
 fn proc_cand(p: &ProcSig) -> Cand {

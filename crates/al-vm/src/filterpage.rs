@@ -224,7 +224,7 @@ impl Session {
                     Some(c) => {
                         let t = self.table(&c.record)?;
                         // :GetView_CaptionsFlag_RendersAnOptionFilterDifferently
-                        self.get_view_with(&c.record, &t, use_names, !use_names)
+                        self.get_view_with(&c.record, &t, use_names, !use_names, false)
                             .map(Value::Text)
                     }
                 }

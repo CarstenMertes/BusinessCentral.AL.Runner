@@ -629,15 +629,17 @@ fn table_events_fire_even_when_the_trigger_does_not_run() {
 }
 
 // TriggerOrder_Modify_RecordPipeline_IsStable and TableEvent_OnAfterModify_Subscriber_Fires:
-// xRec holds the stored row in both events.
+// xRec equals Rec when code drives the Modify, in both events and the trigger (corpus
+// record/TestTableEventSequenceContracts.al:ModifyRenameDelete_EventsAndTrigger,
+// 'S.BeforeModify(run=Yes,rec=a2,x=a2)').
 #[test]
-fn modify_raises_before_trigger_after_with_the_stored_row_as_xrec() {
+fn modify_raises_before_trigger_after_with_xrec_equal_to_rec() {
     assert_eq!(
         text(trace(
             "R.\"No.\" := 1; R.Name := 'old'; R.Insert(false); T.Clear();
              R.Name := 'new'; R.Modify(true);"
         )),
-        "BMold>new,OnModify,AMold>new"
+        "BMnew>new,OnModify,AMnew>new"
     );
 }
 
@@ -796,14 +798,17 @@ codeunit 50100 C
     assert_eq!(int(run(&src, "F")), 0);
 }
 
-// Whether table events fire for temporary records is not pinned (the one corpus case,
-// record/TestTableEventAsyncSubscriberError.al, is Base App): refused, not guessed.
+// Temporary records raise the table events and run the triggers (corpus
+// record/TestTableEventSequenceContracts.al:TemporaryRecord_RaisesTheEventsAndRunsTheTriggers).
 #[test]
-fn table_events_on_temporary_records_are_refused() {
-    assert!(matches!(
-        trace_with("T2: Record ET temporary;", "T2.\"No.\" := 1; T2.Insert(true);"),
-        Err(Signal::Unsupported(r)) if r.contains("temporary")
-    ));
+fn table_events_on_temporary_records_fire() {
+    assert_eq!(
+        text(trace_with(
+            "T2: Record ET temporary;",
+            "T2.\"No.\" := 1; T2.Insert(true);"
+        )),
+        "BIYes,OnInsert,AI1"
+    );
 }
 
 fn trace_with(vars: &str, body: &str) -> Result<Value, Signal> {
@@ -1098,7 +1103,7 @@ codeunit 50100 C
         T."No." := 1; T.Insert(true);
         R."No." := 1; R.Insert(true);
         Commit();
-        asserterror R.Insert(true);
+        asserterror begin R.Insert(true); R.Count(); end;
         exit(Format(T.Count()) + Format(R.Count()) + GetLastErrorText());
     end;
 }"#;
@@ -1208,7 +1213,7 @@ fn table_extension_modify_delete_rename_triggers_run_with_xrec() {
             "R.\"No.\" := 1; R.Name := 'a'; R.Insert(false); T.Clear(); R.Name := 'b'; R.Modify(true);
              R.Modify(false);"
         )),
-        "ExtBeforeModifya>b,ExtAfterModify"
+        "ExtBeforeModifyb>b,ExtAfterModify"
     );
     assert_eq!(
         text(ext_trace(
@@ -1346,4 +1351,131 @@ codeunit 50100 C
     // Nested: xRec.Kind is the value before the outer call (1), not its new value (2);
     // the later plain Validate(Ref) sees the record as it was then (Kind 2, Ref 0).
     assert_eq!(text(run(src, "F")), "xKind=1,xRef=5,Ref=0;xKind=2,xRef=0,Ref=9;");
+}
+
+// Mutation-testing additions (docs/status.md debt): these pin behaviour the corpus tests above
+// reach only by accident. Each names the code it guards.
+
+// A subscriber parameter that matches no event parameter is refused, with or without
+// IncludeSender. Without a sender there is nothing to bind to the unmatched parameter.
+#[test]
+fn a_subscriber_parameter_matching_no_event_parameter_is_refused() {
+    let src = format!(
+        "{PUB}
+codeunit 50201 Sub
+{{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure H(Input: Integer; Stranger: Integer) begin end;
+}}
+codeunit 50100 C
+{{
+    procedure F(): Integer var P: Codeunit Pub; Log: Text; begin exit(P.Raise(1, Log)); end;
+}}"
+    );
+    match run(&src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("`Stranger` matches no parameter"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+// Only one unmatched parameter can take the sender; a second one is refused.
+#[test]
+fn a_second_unmatched_subscriber_parameter_is_refused_even_with_a_sender() {
+    let src = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(true, false)] procedure OnWork(Input: Integer) begin end;
+    procedure Raise() begin OnWork(1); end;
+}
+codeunit 50201 Sub
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure H(Input: Integer; S: Codeunit Pub; Extra: Integer) begin end;
+}
+codeunit 50100 C
+{
+    procedure F() var P: Codeunit Pub; begin P.Raise(); end;
+}"#;
+    match run(src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("`Extra` matches no parameter"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+const STATEFUL_SUB: &str = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(false, false)] procedure OnTick() begin end;
+    procedure Tick() begin OnTick(); end;
+}
+codeunit 50201 Sub
+{
+    SingleInstance = true;
+    var Count: Integer;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnTick', '', false, false)]
+    local procedure H() begin Count += 1; end;
+    procedure Seen(): Integer begin exit(Count); end;
+}
+codeunit 50100 C
+{
+    procedure F(): Integer var P: Codeunit Pub; S: Codeunit Sub; begin P.Tick(); P.Tick(); exit(S.Seen()); end;
+}"#;
+
+// A static subscriber on a SingleInstance codeunit runs on that one instance: its global
+// state survives from one event to the next and is what the codeunit's callers see.
+// (Corpus: codeunit/TestEventContracts.al uses SingleInstance trace codeunits the same way.)
+#[test]
+fn a_single_instance_static_subscriber_keeps_its_globals_between_events() {
+    assert_eq!(int(run(STATEFUL_SUB, "F")), 2);
+}
+
+// A static subscriber that is not SingleInstance gets a fresh instance for every event, so its
+// globals never reach another instance (corpus record/TestTableEventSequenceContracts.al:
+// Insert_EventsAndTrigger_WithAndWithoutRunTrigger, hits=1 then hits=0). `SingleInstance = false`
+// is not SingleInstance: the caller's own instance of the codeunit sees nothing.
+#[test]
+fn a_static_subscriber_with_globals_and_single_instance_false_gets_a_fresh_instance() {
+    let src = STATEFUL_SUB.replace("SingleInstance = true;", "SingleInstance = false;");
+    assert_eq!(int(run(&src, "F")), 0);
+}
+
+// Only a *Manual* EventSubscriberInstance is manual. Naming the default, StaticAutomatic,
+// still fires the subscriber without a binding, and BindSubscription on it is false.
+// (codeunit/TestEventManualBinding.al Contract 5 covers the property being absent.)
+#[test]
+fn an_explicit_static_automatic_subscriber_fires_unbound_and_cannot_be_bound() {
+    let src = r#"
+codeunit 50200 Pub
+{
+    [IntegrationEvent(false, false)] procedure OnBefore(var Handled: Boolean) begin end;
+    procedure Fire(): Boolean var Handled: Boolean; begin OnBefore(Handled); exit(Handled); end;
+}
+codeunit 50201 Auto
+{
+    EventSubscriberInstance = StaticAutomatic;
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnBefore', '', false, false)]
+    local procedure H(var Handled: Boolean) begin Handled := true; end;
+}
+codeunit 50100 C
+{
+    procedure Fires(): Boolean var P: Codeunit Pub; begin exit(P.Fire()); end;
+    procedure Bind(): Boolean var A: Codeunit Auto; begin exit(BindSubscription(A)); end;
+}"#;
+    assert!(boolean(run(src, "Fires")));
+    assert!(!boolean(run(src, "Bind")));
+}
+
+// Unbinding a static subscriber raises nothing; as a value it is false (only "no error" is
+// pinned by codeunit/TestEventContracts.al Contract 6, the value is in docs/probes-needed.md).
+#[test]
+fn unbinding_a_static_subscriber_does_not_raise_and_is_false_as_a_value() {
+    let src = r#"
+codeunit 50201 Auto { }
+codeunit 50100 C
+{
+    procedure Stmt(): Boolean var A: Codeunit Auto; begin UnbindSubscription(A); exit(true); end;
+    procedure Value(): Boolean var A: Codeunit Auto; begin exit(UnbindSubscription(A)); end;
+}"#;
+    assert!(boolean(run(src, "Stmt")));
+    assert!(!boolean(run(src, "Value")));
 }

@@ -111,7 +111,7 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 | SEL-2 | Exit 6 when the pattern selects no test | `Program.cs` | No | CLI | Same | - |
 | SEL-3 | `--exclude-test` (whole codeunit or whole qualified name) | `Program.cs:520` | No | CLI | `--exclude-test` | - |
 | SEL-4 | `--isolation codeunit` (default; `TestIsolation = Codeunit`) | `TestExecutor.cs`, `docs/limitations.md` | Partial | CLI | Semantics exist and are pinned by the corpus. Not selectable by the user | - |
-| SEL-5 | `--isolation test` (= `Function`) and `disabled`; aliases `--test-isolation`, `method` | `Program.cs:658` | No | PROBE | Needs a corpus pin. v2 cites `tests/al-language-isolation-probe` (corpus PR 517) | - |
+| SEL-5 | `--isolation test` (= `Function`) and `disabled`; aliases `--test-isolation`, `method` | `Program.cs:658` | Partial | CLI | `Function` is implemented and pinned by the isolation probe (`al-test-cli/src/isolation.rs`; oracle `oracle/28/xunit-isolation-*.xml`). `Disabled` is refused (not pinned). The flag itself is not built: a runner codeunit's `TestIsolation` property selects it for the corpus suites | - |
 | SEL-6 | Per-test timeout (`--test-timeout`, `AL_RUNNER_TEST_TIMEOUT_SEC`, default 60 s, message `Test exceeded {N}s timeout.`) | `Program.cs:603` | No | HOST | The VM checks a deadline from the host monotonic clock at statement boundaries. Same message | - |
 | SEL-7 | Watchdog for hung tests; `--resume-aborts`; `--merge-counts`; `--merge-results` | `Infrastructure/AbortResume.cs` | N/A | - | The v3 interpreter is cooperative. A timeout ends the one test cleanly. No re-exec needed. Native builtins need a step budget | - |
 | SEL-8 | `--jobs N`: worker processes, balanced by file count, memory bound, shared-bundle claiming | `docs/jobs-unit-claiming.md`, `Infrastructure/JobsMemory.cs` | No | CLI | `--jobs N` with threads (one Session per thread, ADR-002). Test codeunits are independent. Not available in WASM | - |
@@ -261,7 +261,7 @@ The 99 features that are Partial or No, by first blocker:
 | HOST (`al-host` capability) | 4 | Clock, randomness, identity |
 | ADR-015 (many BC versions) | 2 | In progress |
 | ADR-014 (.NET helper) | 1 | Proposed |
-| PROBE (needs a corpus pin first) | 1 | `--isolation test` and `disabled` |
+| PROBE (needs a corpus pin first) | 1 | `--isolation disabled` |
 | CANNOT (v3 design cannot match) | 1 | Compiled-only dependency apps (DP-10) |
 
 17 of the 118 are marked hard. 3 of the 118 are done today. Honest reading:

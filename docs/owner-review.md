@@ -41,14 +41,40 @@ reviewed it.
 
   Nothing is built on ADR-016 until it is accepted.
 
-- Corpus workflow fix to push in the morning (branch `al-runtime-rs`, repo
-  BusinessCentral.AL.Language.Tests; never master). The workflow's dispatch path builds the
-  preprocessor symbols with `for v in 27 28` and never adds `BC29PLUS`. Four existing
-  `BC29PLUS`-guarded tests failed on the 29.0 dispatch run on cdf315a (run 38478399478), so that run
-  cannot be the BC 29 oracle. After the fix: run 29.0 on the pin, re-record `oracle/29/junit.xml`, drop
-  `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
+- Corpus workflow fix: done (2026-10-14). The corpus branch `al-runtime-rs` now defines `BC29PLUS` on dispatch.
+  The 29.0 run on 348a744 is the BC 29 oracle, and the 29 table has no `corpus_commit` any more.
+- Probe batch 2 push: done (2026-10-14). Batches 2 and 2b are in the corpus at 348a744 (53 new cases). All three
+  oracles come from that commit. The failing and not-run ones are the next fix round.
+
+## Decided without owner review (2026-10-14), isolation branch
+
+- Extra oracles for the OnPrem app (all three majors) and the isolation probe (BC 28.4 only, from
+  the Windows nightly, XUnit): ADR-007 decision 4. There is no isolation oracle for 27 and 29.
+- `TestIsolation = Function` is implemented (restore to the state after `OnRun` after each
+  method). `Disabled`, a runner without the property, and a `Commit()` inside a Function-isolated
+  test are refused: `docs/probes-needed.md`.
+- A test codeunit is the unit of future parallel scheduling under every isolation mode, because
+  its methods share instance state (`al-test-cli/src/isolation.rs`).
 
 ## Decided by the owner (recorded)
+
+- 2026-10-14, ADR-014: BC server classes that Microsoft's AL reaches through
+  DotNet (ALConfigSettings, NavTenantSettingsHelper, NavUserAccountHelper and
+  others) are provided in Rust through the registry.
+  - Their values mirror AL Runner v2 until a probe on real BC pins them.
+  - This is not a fake of an AL object, so hard rule 7 does not apply.
+  - The work is on branch `dotnet-registry`. Probe batch 3 reads the real
+    values.
+
+- 2026-10-14, performance phase: run tests in parallel at the test runner's
+  isolation unit.
+  - BC's test isolation can be per codeunit or per test procedure.
+  - Units share one common data store. A copy per unit or per thread would
+    cost too much memory.
+  - Design direction: every unit forks from one shared baseline snapshot, using
+    the persistent maps of ADR-003 and ADR-004, so a fork costs O(1) and
+    memory grows only with each unit's own changes.
+  - Within a session, execution stays single-threaded, as in BC.
 
 - 2026-10-14, performance goal: first close the remaining gaps, then work on
   performance.
@@ -179,6 +205,17 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
+- 2026-10-14, ADR-019: a column of a platform table that no corpus test pins is refused where code names it
+  (at lowering), not filled with a default.
+- 2026-10-14, ADR-019: package ids are a function of the app id (not empty, one per app, different between apps);
+  objects of the platform app have none.
+- 2026-10-14, ADR-019: the default host lists five Windows time zones; Windows Language holds three rows (1031,
+  1033, 2057) and refuses a read that needs any other id up to 65535.
+- 2026-10-14, ADR-019: a `Get` whose result is used, in dependency code, on a table the install baseline could not seed, is refused like the raising form (the order in `records.rs` `fail`).
+- 2026-10-14, ADR-019: the session seeds the Company (`My Company`), the User (`TESTUSER`) and the SUPER Access
+  Control row when it starts, as ordinary stored rows. The install baseline branch must not seed them again.
+- 2026-10-14, ADR-019: Page Metadata and Page Control Field spellings the corpus does not pin (declared
+  `Visible`/`Enabled`/`Editable` in lower case, `SourceTableView` only for one `where(f = const(v))`).
 - 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
   `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
 - 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that
@@ -191,8 +228,11 @@ reviewed it.
 - 2026-10-14, ADR-013 (baseline): every read of a table the baseline could not fill is refused, not only a missing `Get`.
 - 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).
 - 2026-10-14, ADR-007: an oracle may be recorded for an older corpus commit when the corpus diff since then
-  only adds files under `tests/` (checked by the CLI). BC 29 stays on `cf6e546` for that reason; 27 and 28 are
-  on `cdf315a`.
+  only adds files under `tests/` (checked by the CLI). Since 348a744 all three oracles are on the pin; the rule stays
+  for later bumps.
+- 2026-10-14, ADR-007: the corpus bump to 348a744 appends one test to an existing file
+  (`handlers/TestPageRuntimeContracts.al`, `TestPage_List_Window_IsRepopulatedAroundAGoToKeyOutsideIt`). All three
+  oracles are on the pin, so the older-commit check is not involved. A bump that used it would have been refused.
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
   passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
@@ -200,4 +240,12 @@ reviewed it.
 - 2026-10-14, ADR-018, SessionSettings: `RequestSessionUpdate(false)` hands a copy to the handler and needs true back; `(true)` and a missing handler are refused.
 - 2026-10-14, ADR-018, InitValue: `0DT` and closing-date literals raise in `Init()` of a written record and on the first read of an untouched one.
 - 2026-10-14, ADR-018, held branch: the narrower static-subscriber global check is not merged (net zero) until the `DeleteAll(false)` probe is in.
+- 2026-10-14, ADR-009, fix-records: a duplicate-key Insert from AL code is deferred to the next table access or Commit only for persistent tables without Blob and AutoIncrement fields; the page client, XmlPort import, temporary records and AutoIncrement tables raise at once.
+- 2026-10-14, ADR-009, fix-records: a test refused midway rolls back what it wrote, so a later test of the codeunit cannot see the leftovers.
+- 2026-10-14, ADR-009, fix-records: the emit version in "object does not exist" errors is major*1000+25 for BC majors other than 27 (27025 is measured).
+- 2026-10-14, ADR-009, fix-records: baseline case 60013 `CalcFields_TableExtensionFlowFieldOnStockkeepingUnit_WithNoMatchingRows_IsZero` removed from all three baselines as a pass by accident (see the commit message).
+- 2026-10-14, ADR-009, fix-data: `Query.ColumnNo` is `4001 + 97 * position` (only "not the position" is pinned); the real numbers are a probe to run.
+- 2026-10-14, ADR-009, fix-data: `Query.GetFilters` puts the filter of a Text column last (the probe cannot tell "Text column" from "OrderBy column"; the Text reading keeps a baseline test running).
+- 2026-10-14, ADR-009, fix-data: an XmlPort import stores with `Insert(true)` / `Modify(true)` through the ordinary record path, so the record rule for duplicate keys applies to it (the earlier `immediate_errors` override for XmlPort import is dropped, as xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_DuplicateKey_... pins a deferral).
+- 2026-10-14, ADR-009, fix-data: `SaveAsXml` / `SaveAsJson` of a query write UTF-8 without a byte order mark and the XML in one line (the probe trims and joins the lines).
 - 2026-10-14, ADR-020, `al-bcdb`: two crates (core without OS access, command line with it), `pread` instead of a memory map, an approximated culture order for `tables`, bcdb's synthetic `typeprobe` fixtures (8.2 MB) committed, new dependencies `sha2`, `flate2` (zlib-rs) in the core and `rayon` in the command line. Parity with the published bcdb is tested, not assumed (`docs/bcdb.md`).

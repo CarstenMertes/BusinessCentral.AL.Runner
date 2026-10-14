@@ -15,6 +15,9 @@ use std::rc::Rc;
 
 pub(crate) type Rec = Rc<RefCell<RecordState>>;
 
+/// BC's line break inside error texts: a carriage return and a backslash.
+pub(crate) const BR: &str = "\r\\";
+
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
@@ -73,7 +76,7 @@ impl Session {
 
     /// `No.='A'` style identification of a row's primary key. A key value whose format is not
     /// pinned refuses.
-    fn identification(&self, t: &TableDef, fields: &[Value]) -> Result<String, Signal> {
+    pub(crate) fn identification(&self, t: &TableDef, fields: &[Value]) -> Result<String, Signal> {
         let mut parts = Vec::new();
         for &i in &t.keys[0] {
             let v = al_builtins::format::try_format(&fields[i], 0, 0, self).map_err(Signal::Unsupported)?;
@@ -109,9 +112,6 @@ impl Session {
     /// Message texts: docs/probes-needed.md (the corpus pins 'already exists'
     /// and 'does not exist' fragments only).
     fn fail(&mut self, t: &TableDef, fields: &[Value], exists: bool) -> Result<Value, Signal> {
-        if self.ret_used {
-            return Ok(Value::Boolean(false));
-        }
         // A dependency app's code reads rows (setup records, mostly) that installing the app and
         // initialising a company create. Where the install baseline could not create them
         // (ADR-013 decision 5), a missing row there is not BC's answer: refuse rather than
@@ -121,6 +121,9 @@ impl Session {
                 "{} not found in code of a dependency app: the rows its install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
             ));
+        }
+        if self.ret_used {
+            return Ok(Value::Boolean(false));
         }
         let identification = self.identification(t, fields)?;
         let (message, code) = if exists {
@@ -211,12 +214,8 @@ impl Session {
         if !self.listened(t, event, element)? {
             return Ok(());
         }
-        if rec.borrow().temporary {
-            return unsupported(format!(
-                "{event} of temporary records on {}: whether table events fire for them is not pinned",
-                t.name
-            ));
-        }
+        // A temporary record raises the table events and runs the triggers like any other
+        // (corpus record/TestTableEventSequenceContracts.al:TemporaryRecord_RaisesTheEventsAndRunsTheTriggers).
         let (names, tail): (&[&str], Value) = match event {
             "onbeforeinsertevent" | "onafterinsertevent" | "onbeforedeleteevent" | "onafterdeleteevent" => {
                 (&["Rec", "RunTrigger"], Value::Boolean(run_trigger))
@@ -256,8 +255,7 @@ impl Session {
         rec: &Rec,
         xrec: &Rec,
         field: &al_ir::Field,
-        pos: usize,
-        old_value: Value,
+        snapshot: Vec<Value>,
     ) -> Result<(), Signal> {
         // Before event (Rec holds the new value, xRec the old row), the field's OnValidate,
         // After event: record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable.
@@ -277,11 +275,13 @@ impl Session {
         }
         if let Some((object, routine)) = field.on_validate {
             if let Err(e) = self.run_trigger(object, routine, rec, Some(xrec)) {
-                // The field is back at its old value when its OnValidate raises
-                // (record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
-                // Only the validated field is pinned; other changes stay.
+                // The whole record is back at its values from before the Validate when the
+                // field's OnValidate raises, not only the validated field (corpus branch
+                // al-runtime-rs, pending push: record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
+                // Validate_ThatRaises_RestoresTheWholeRecord; the validated field alone:
+                // record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
                 if matches!(e, Signal::Error(_)) {
-                    rec.borrow_mut().fields[pos] = old_value;
+                    rec.borrow_mut().fields = snapshot;
                 }
                 return Err(e);
             }
@@ -296,20 +296,6 @@ impl Session {
     /// delete, After event.
     fn delete_row(&mut self, t: &TableDef, rec: &Rec, run: bool) -> Result<Value, Signal> {
         let cx = self.cx.clone();
-        if self.listened(t, "onbeforedeleteevent", None)? || self.listened(t, "onafterdeleteevent", None)? {
-            let pk = t.primary_key(&rec.borrow().fields);
-            if self
-                .store_for(rec)
-                .get(&cx, t, &pk)
-                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
-                .is_none()
-            {
-                return unsupported(format!(
-                    "Delete of a missing row of {}, which has delete event subscribers (the order of the error and the Before event is not pinned)",
-                    t.name
-                ));
-            }
-        }
         self.table_event(t, "onbeforedeleteevent", rec, None, run, None)?;
         if run {
             let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
@@ -354,9 +340,16 @@ impl Session {
             .collect()
     }
 
-    /// Whether inserting `row` would repeat the values of a unique secondary key (a row with
-    /// the same primary key is the duplicate-key failure instead).
-    fn violates_unique_key(&mut self, rec: &Rec, t: &TableDef, row: &[Value]) -> Result<bool, Signal> {
+    /// The first unique secondary key whose values `row` repeats in another row. `own` is the
+    /// primary key of the row being rewritten (Modify, Rename), which does not count. For an
+    /// Insert, a row with the same primary key is the duplicate-key failure instead.
+    fn unique_violation(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        row: &[Value],
+        own: Option<&[Value]>,
+    ) -> Result<Option<usize>, Signal> {
         let unique: Vec<usize> = {
             let schema = self.engine.program.objects[t.object as usize]
                 .table
@@ -367,18 +360,27 @@ impl Session {
                 .collect()
         };
         if unique.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let cx = self.cx.clone();
-        let pk = t.primary_key(row);
-        if self
-            .store_for(rec)
-            .get(&cx, t, &pk)
-            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
-            .is_some()
-        {
-            return Ok(false);
+        if own.is_none() {
+            let pk = t.primary_key(row);
+            if self
+                .store_for(rec)
+                .get(&cx, t, &pk)
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                .is_some()
+            {
+                return Ok(None);
+            }
         }
+        let current = match own {
+            Some(pk) => self
+                .store_for(rec)
+                .get(&cx, t, pk)
+                .map_err(|e| Signal::Unsupported(format!("{e:?}")))?,
+            None => None,
+        };
         for k in unique {
             let filters: Vec<FieldFilter> = t.keys[k]
                 .iter()
@@ -388,50 +390,53 @@ impl Session {
                     group: 0,
                 })
                 .collect();
-            let n = self
+            let mut n = self
                 .store_for(rec)
                 .count(&cx, t, &filters)
                 .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+            // The row being rewritten matches itself when its key values do not change.
+            if let Some(old) = &current {
+                if t.keys[k]
+                    .iter()
+                    .all(|&f| ops::compare_keys(&[old[f].clone()], &[row[f].clone()]))
+                {
+                    n = n.saturating_sub(1);
+                }
+            }
             if n > 0 {
-                return Ok(true);
+                return Ok(Some(k));
             }
         }
-        Ok(false)
+        Ok(None)
     }
 
     /// The refusal of a unique index; only the start of BC's message is pinned.
-    fn fail_unique(&mut self, t: &TableDef) -> Result<Value, Signal> {
+    fn fail_unique(&mut self, t: &TableDef, key: usize, row: &[Value]) -> Result<Value, Signal> {
         if self.ret_used {
             return Ok(Value::Boolean(false));
         }
+        // The fields of the violated key with their values (corpus
+        // record/TestCalcFieldsTruncateUniqueContracts.al:UniqueIndex_Violation_FullTextAndCode_...).
+        let mut parts = Vec::new();
+        for &i in &t.keys[key] {
+            let v = al_builtins::format::try_format(&row[i], 0, 0, self).map_err(Signal::Unsupported)?;
+            parts.push(format!("{}='{}'", t.fields[i].name, v));
+        }
         Err(Signal::Error(AlError {
             message: format!(
-                "There is already a record in table {} that has the same values in a unique index.",
-                self.caption(t)
+                "There is already a record in table {} that has the same values in a unique index for the following fields: {}",
+                self.caption(t),
+                parts.join(",")
             ),
-            code: String::new(),
+            code: "DB:RecordExists".into(),
             call_stack: String::new(),
         }))
-    }
-
-    /// Unique secondary keys are only enforced on Insert, so other writes to such tables are refused.
-    pub(crate) fn check_unique_keys(&self, t: &TableDef) -> Result<(), Signal> {
-        let schema = self.engine.program.objects[t.object as usize]
-            .table
-            .as_ref()
-            .expect("table");
-        if schema.unique_keys.iter().skip(1).any(|u| *u) {
-            return unsupported(format!(
-                "write to {}: unique secondary keys are not enforced yet",
-                t.name
-            ));
-        }
-        Ok(())
     }
 
     /// Whether an insert or modify of `t` would run table code (a trigger, an extension trigger
     /// or an event subscriber). XmlPort import refuses such tables: whether it runs them is not
     /// pinned (docs/probes-needed.md).
+    #[allow(dead_code)] // the XmlPort import ran no hooks before; it runs them now
     pub(crate) fn has_write_hooks(&mut self, t: &TableDef) -> Result<bool, Signal> {
         let mut any = ["OnInsert", "OnModify"]
             .iter()
@@ -518,6 +523,11 @@ impl Session {
     /// Gives the row its SystemId: the one in the buffer when `keep` (`Insert(_, true)`) and it is
     /// set, otherwise a fresh one (corpus record/TestRecordInsert.al:84-110).
     fn assign_system_id(&mut self, t: &TableDef, rec: &Rec, keep: bool) {
+        // A temporary record has no SystemId: it stays the null Guid (corpus branch al-runtime-rs,
+        // pending push: record/TestSystemFieldStampsContracts.al:TemporaryRecord_HasNoStampsAndNoSystemId).
+        if rec.borrow().temporary {
+            return;
+        }
         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) {
             let mut r = rec.borrow_mut();
             let unset = matches!(r.fields[i], Value::Guid(g) if g == [0; 16]);
@@ -575,6 +585,30 @@ impl Session {
         }
     }
 
+    /// Whether `row` passes the record's filters (every group), its FlowField filters and
+    /// MarkedOnly.
+    fn row_passes(&mut self, rec: &Rec, t: &TableDef, row: &[Value]) -> Result<bool, Signal> {
+        let (filters, flow_field_filters) = self.split_filters(rec);
+        if filters.iter().any(|f| !f.expr.matches(&row[f.field])) {
+            return Ok(false);
+        }
+        if rec.borrow().marked_only && !Self::is_marked(rec, t, row) {
+            return Ok(false);
+        }
+        if flow_field_filters.is_empty() {
+            return Ok(true);
+        }
+        self.passes_flow_field_filters(rec, row, &flow_field_filters)
+    }
+
+    /// Whether the record last read the row with primary key `pk` (see `RecordState::position`).
+    fn on_own_row(rec: &Rec, pk: &[Value]) -> bool {
+        rec.borrow()
+            .position
+            .as_deref()
+            .is_some_and(|p| ops::compare_keys(p, pk))
+    }
+
     fn is_marked(rec: &Rec, t: &TableDef, row: &[Value]) -> bool {
         let pk = t.primary_key(row);
         rec.borrow()
@@ -605,11 +639,11 @@ impl Session {
         }
         let shown = al_builtins::format::try_format(&id, 0, 0, self).map_err(Signal::Unsupported)?;
         Err(Signal::Error(AlError {
+            // corpus branch al-runtime-rs (pending push): record/TestSystemFieldStampsContracts.al:
+            // SystemId_Duplicate_And_ModifyAll_Texts (the caption of the field is "System ID").
             message: format!(
-                "There is already a record in table {} that has the same values in a unique index. \
-                 The conflict is in the following fields: {}='{}'.",
+                "There is already a record in table {} that has the same values in a unique index for the following fields: System ID='{}'",
                 self.caption(t),
-                self.field_caption(t, i),
                 shown
             ),
             code: "DB:RecordExists".into(),
@@ -643,7 +677,12 @@ impl Session {
             });
             r.load.partial = false;
         }
-        rec.borrow_mut().fields = row;
+        let pk = self.table(rec).map(|t| t.primary_key(&row))?;
+        {
+            let mut r = rec.borrow_mut();
+            r.position = Some(pk);
+            r.fields = row;
+        }
         self.auto_calculate(rec)
     }
 
@@ -701,6 +740,35 @@ impl Session {
             self.unseeded_read(&t, temporary, method)?;
         }
         let cx = self.cx.clone();
+        // The next access of the table raises a deferred duplicate-key Insert.
+        if matches!(
+            method,
+            "Insert"
+                | "Modify"
+                | "Delete"
+                | "DeleteAll"
+                | "ModifyAll"
+                | "Rename"
+                | "Truncate"
+                | "Get"
+                | "Find"
+                | "FindFirst"
+                | "FindLast"
+                | "FindSet"
+                | "Next"
+                | "Count"
+                | "IsEmpty"
+                | "CalcFields"
+                | "CalcSums"
+        ) && !rec.borrow().temporary
+            && self
+                .deferred_insert
+                .as_ref()
+                .is_some_and(|(o, _)| *o == t.object as usize)
+        {
+            let (_, e) = self.deferred_insert.take().expect("checked");
+            return Err(Signal::Error(e));
+        }
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             if let Some(f) = schema.fields.iter().find(|f| f.init_text.is_some() && f.init.is_none()) {
                 // An InitValue BC accepts at compile time and cannot evaluate when it builds the
@@ -786,9 +854,6 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
-                if !rec.borrow().auto_calc.is_empty() {
-                    return unsupported("Clear after SetAutoCalcFields (what resets it is not pinned yet)");
-                }
                 if rec.borrow().temporary {
                     return unsupported("Clear of a temporary record (table reset not pinned yet)");
                 }
@@ -815,20 +880,9 @@ impl Session {
                     self.auto_increment_field(&t)?
                 };
                 let run = arg_bool(args, 0)?;
-                if self.listened(&t, "onbeforeinsertevent", None)? || self.listened(&t, "onafterinsertevent", None)? {
-                    let pk = t.primary_key(&rec.borrow().fields);
-                    if self
-                        .store_for(rec)
-                        .get(&cx, &t, &pk)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
-                        .is_some()
-                    {
-                        return unsupported(format!(
-                            "Insert of an existing key into {}, which has insert event subscribers (the order of the error and the Before event is not pinned)",
-                            t.name
-                        ));
-                    }
-                }
+                // A duplicate key does not skip the Before event and the trigger: they run, then
+                // the write fails and the After event does not (corpus record/TestTableEventSequenceContracts.al:
+                // FailingWrites_RaiseTheBeforeEventAndTheTrigger_ThenTheError).
                 // Before event, then the trigger, then the write, then the After event
                 // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
                 self.table_event(&t, "onbeforeinsertevent", rec, None, run, None)?;
@@ -882,7 +936,7 @@ impl Session {
                 let row = rec.borrow().fields.clone();
                 // A unique secondary key refuses the row after its AutoIncrement value was taken
                 // (corpus record/TestAutoIncrementExplicitKey.al:131,163).
-                if self.violates_unique_key(rec, &t, &row)? {
+                if let Some(unique_key) = self.unique_violation(rec, &t, &row, None)? {
                     Self::restore_row_version(rec, old_version);
                     Self::unstamp(rec, stamped);
                     if let Some(a) = auto {
@@ -892,7 +946,7 @@ impl Session {
                             self.note_explicit_key(&t, a, &row);
                         }
                     }
-                    return self.fail_unique(&t);
+                    return self.fail_unique(&t, unique_key, &row);
                 }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
@@ -917,27 +971,56 @@ impl Session {
                         if let (Some(a), true) = (auto, taken) {
                             rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
                         }
+                        // Without a Blob field the platform defers the failure of an unguarded
+                        // Insert to the next access of the table or Commit; a guarded Insert
+                        // answers false at once, and a Blob field makes it fail at once (corpus
+                        // record/TestRecordRuntimeTextsAndViews.al:Record_Insert_DuplicateKey_*).
+                        // A temporary table's behaviour is not pinned: it fails at once.
+                        let has_blob = self.engine.program.objects[t.object as usize]
+                            .table
+                            .as_ref()
+                            .is_some_and(|s| {
+                                s.fields
+                                    .iter()
+                                    .any(|f| matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Blob")))
+                            });
+                        // A table with an AutoIncrement field needs the platform's answer at once
+                        // (record/TestAutoIncrementContracts.al:AutoIncrement_SecondInsert_...).
+                        if !self.ret_used
+                            && !has_blob
+                            && auto.is_none()
+                            && !self.immediate_errors
+                            && !rec.borrow().temporary
+                        {
+                            if (run && self.ext_trigger(&t, "OnAfterInsert")?.is_some())
+                                || self.listened(&t, "onafterinsertevent", None)?
+                            {
+                                return unsupported(format!(
+                                    "deferred duplicate-key Insert into {}, which has an After insert event or trigger (whether it runs is not pinned)",
+                                    t.name
+                                ));
+                            }
+                            match self.fail(&t, &row, true) {
+                                Err(Signal::Error(e)) => {
+                                    self.deferred_insert.get_or_insert((t.object as usize, e));
+                                }
+                                // A key whose format is not pinned stays a refusal.
+                                Err(other) => return Err(other),
+                                Ok(_) => {}
+                            }
+                            return Ok(Value::Boolean(true));
+                        }
                         self.fail(&t, &row, true)
                     }
                 }
             }
             "Modify" => {
-                self.check_unique_keys(&t)?;
                 let run = arg_bool(args, 0)?;
                 let pk = t.primary_key(&rec.borrow().fields);
                 let stored = self
                     .store_for(rec)
                     .get(&cx, &t, &pk)
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                if stored.is_none()
-                    && (self.listened(&t, "onbeforemodifyevent", None)?
-                        || self.listened(&t, "onaftermodifyevent", None)?)
-                {
-                    return unsupported(format!(
-                        "Modify of a missing row of {}, which has modify event subscribers (the order of the error and the Before event is not pinned)",
-                        t.name
-                    ));
-                }
                 // A buffer older than a committed change to its row cannot be saved
                 // (record/TestRecordStaleBufferWrite.al); before a commit the last writer wins.
                 if let (Some(row), Some(i)) = (&stored, t.fields.iter().position(|f| f.id == 2_000_000_005)) {
@@ -951,7 +1034,7 @@ impl Session {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(AlError {
                             message: format!(
-                                "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again. Identification fields and values: {}",
+                                "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again.{BR}{BR}Identification fields and values:{BR}{BR}{}",
                                 self.caption(&t),
                                 identification
                             ),
@@ -970,21 +1053,20 @@ impl Session {
                         .collect(),
                     None => Vec::new(),
                 };
-                // xRec is the stored row (the page's own xRec for a row a page saves), one handle
-                // for the events and the trigger.
+                // One xRec handle for the events, the triggers and the global trigger, so a change a
+                // subscriber makes to it reaches the rest. When code drives the Modify, xRec equals
+                // Rec (record/TestXRecContracts.al:69-87 OnModify_xRec_MirrorsRecValues_WhenCalledFromCode;
+                // record/TestTableEventSequenceContracts.al:ModifyRenameDelete_EventsAndTrigger pins the
+                // same for the events). A row a page saves carries the page's own previous row
+                // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
-                let from_page = self.page_xrec.is_some();
-                let xrec = self.page_xrec.take().or(stored).map(|f| Self::xrec_handle(rec, f));
+                let before_image = self.page_xrec.take().unwrap_or_else(|| rec.borrow().fields.clone());
+                let xrec = Some(Self::xrec_handle(rec, before_image));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {
                     self.run_ext_trigger(&t, "OnBeforeModify", rec, xrec.as_ref())?;
                     if let Some(tr) = self.table_trigger(&t, "OnModify") {
-                        // The table's own OnModify sees xRec equal to Rec when code drove the
-                        // Modify, and the previous row when a page did
-                        // (record/TestXRecContracts.al:69-87 OnModify_xRec_MirrorsRecValues_WhenCalledFromCode,
-                        // record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
-                        let code_xrec = (!from_page).then(|| Self::xrec_handle(rec, rec.borrow().fields.clone()));
-                        self.run_trigger(t.object as usize, tr, rec, code_xrec.as_ref().or(xrec.as_ref()))?;
+                        self.run_trigger(t.object as usize, tr, rec, xrec.as_ref())?;
                     }
                     self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
@@ -994,6 +1076,13 @@ impl Session {
                 let mut row = rec.borrow().fields.clone();
                 for (i, v) in kept {
                     row[i] = v;
+                }
+                // A unique secondary key refuses the write after the trigger (corpus
+                // record/TestCalcFieldsTruncateUniqueContracts.al:UniqueIndex_Violation_..., Modify).
+                if let Some(unique_key) = self.unique_violation(rec, &t, &row, Some(&pk))? {
+                    Self::restore_row_version(rec, old_version);
+                    Self::unstamp(rec, stamped);
+                    return self.fail_unique(&t, unique_key, &row);
                 }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 match self
@@ -1109,46 +1198,66 @@ impl Session {
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
                     "+" => self.scan(rec, &t, !asc, None)?,
-                    // How '=' combines the key with active filters is only partly pinned
-                    // (OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow vs
-                    // OwnFilter_SecondVarWithTheSameFilter_FindDoesNotFindTheRow): docs/probes-needed.md.
-                    "=" if !rec.borrow().filters.is_empty() => return unsupported("Find('=') with active filters"),
+                    // Every form honours the active filters (corpus branch al-runtime-rs, pending push:
+                    // record/TestFilterTextBooleanFindContracts.al:Find_AllForms_HonourTheActiveFilters).
+                    // The one exception: a record that moved its own row out of its filter still
+                    // finds the row by its key, while a second variable with the old filter does
+                    // not (record/TestFindSetSortKeyModify.al:OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow
+                    // against OwnFilter_SecondVarWithTheSameFilter_FindDoesNotFindTheRow). A record
+                    // remembers the key of the row it last read as its position.
                     "=" => {
                         let pk = t.primary_key(&rec.borrow().fields);
-                        self.store_for(rec)
+                        let row = self
+                            .store_for(rec)
                             .get(&cx, &t, &pk)
-                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                        match row {
+                            Some(row) if self.row_passes(rec, &t, &row)? || Self::on_own_row(rec, &pk) => Some(row),
+                            _ => None,
+                        }
                     }
-                    // `=>`, `=<` and `=><`: the row itself, else its neighbour. Pinned for a row that is gone
-                    // from a table nothing filters, by the page client asking an OnFindRecord trigger
-                    // (corpus pageupdate/TestPageUpdateGoneRow.al:423 List_DeletedByAction_PassThroughFind_*);
-                    // with filters, or another current key, how they combine is not pinned.
-                    w @ ("=>" | "=<" | "=><") => {
-                        if !rec.borrow().filters.is_empty() || rec.borrow().key != 0 {
-                            return unsupported(format!("Find('{w}') with active filters or another current key"));
+                    // `>` and `<`: the first row past the buffer's position in the current key.
+                    ">" | "<" => {
+                        let key = rec.borrow().key;
+                        let pos = position(&t, key, &rec.borrow().fields);
+                        self.scan(rec, &t, (which == ">") == asc, Some(pos))?
+                    }
+                    // `>=`, `<=` and `=><` (also written `=>`, `=<`): the row itself, else its
+                    // neighbour. Pinned for a row that is gone from a table nothing filters, by the page
+                    // client asking an OnFindRecord trigger (corpus pageupdate/TestPageUpdateGoneRow.al:423
+                    // List_DeletedByAction_PassThroughFind_*) and, with filters, by the probe above for
+                    // `>=`; another current key is not pinned.
+                    w @ (">=" | "<=" | "=>" | "=<" | "=><") => {
+                        if rec.borrow().key != 0 {
+                            return unsupported(format!("Find('{w}') with another current key"));
                         }
                         let pk = t.primary_key(&rec.borrow().fields);
                         let exact = self
                             .store_for(rec)
                             .get(&cx, &t, &pk)
                             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                        let exact = match exact {
+                            Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
+                            _ => None,
+                        };
                         match exact {
                             Some(row) => Some(row),
                             None => {
                                 let pos = position(&t, 0, &rec.borrow().fields);
-                                let next = if w == "=<" {
-                                    None
-                                } else {
+                                let up = matches!(w, ">=" | "=>" | "=><");
+                                let down = matches!(w, "<=" | "=<" | "=><");
+                                let next = if up {
                                     self.scan(rec, &t, asc, Some(pos.clone()))?
-                                };
-                                let prev = if w == "=>" {
-                                    None
                                 } else {
+                                    None
+                                };
+                                let prev = if down {
                                     self.scan(rec, &t, !asc, Some(pos))?
+                                } else {
+                                    None
                                 };
                                 match (next, prev) {
-                                    (Some(n), Some(_)) if w == "=><" => {
-                                        let _ = n;
+                                    (Some(_), Some(_)) if w == "=><" => {
                                         return unsupported(
                                             "Find('=><') with a row on either side (which one BC picks is not pinned)",
                                         );
@@ -1245,8 +1354,25 @@ impl Session {
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                 let engine = self.engine.clone();
                 let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
-                let expr = al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
-                    .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?;
+                let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
+                    Ok(e) => e,
+                    // corpus branch al-runtime-rs (pending push): record/TestFilterTextBooleanFindContracts.al:
+                    // SetFilter_BooleanField_UnknownWord_Throws.
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
+                        let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
+                        return Err(Signal::Error(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{word}\" can't be evaluated into type Boolean.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                        }));
+                    }
+                    Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),
+                };
                 let mut r = rec.borrow_mut();
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
@@ -1258,9 +1384,8 @@ impl Session {
                 Ok(Value::Null)
             }
             "Reset" => {
-                if !rec.borrow().auto_calc.is_empty() {
-                    return unsupported("Reset after SetAutoCalcFields (whether it keeps them is not pinned yet)");
-                }
+                // SetAutoCalcFields survives Reset and Clear (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+                // SetAutoCalcFields_SurvivesResetAndClear).
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
                 r.key = 0;
@@ -1299,6 +1424,7 @@ impl Session {
                     .map(|(_, b)| b.clone());
                 let before = outer.clone().unwrap_or_else(|| rec.borrow().fields.clone());
                 let old_value = rec.borrow().fields[pos].clone();
+                let snapshot = rec.borrow().fields.clone();
                 let new_value = match args.get(1) {
                     Some(v) => Some(ops::convert(v.clone(), &field.ty)?),
                     None => None,
@@ -1313,7 +1439,7 @@ impl Session {
                 if outer.is_none() {
                     self.validating.push((handle, before));
                 }
-                let r = self.validate_hooks(&t, rec, &xrec, &field, pos, old_value);
+                let r = self.validate_hooks(&t, rec, &xrec, &field, snapshot);
                 if outer.is_none() {
                     self.validating.pop();
                 }
@@ -1326,7 +1452,6 @@ impl Session {
                     // temporary Rename but loses one persisted with Modify; no model here does both.
                     return unsupported("Rename of a temporary record with a Blob field");
                 }
-                self.check_unique_keys(&t)?;
                 // Fields that relate to this table follow the rename; a temporary record has none.
                 let refs = if rec.borrow().temporary {
                     Vec::new()
@@ -1343,23 +1468,6 @@ impl Session {
                 }
                 self.check_rename_auto_increment(&t, &old, &new)?;
                 let old_pk = t.primary_key(&old);
-                if self.listened(&t, "onbeforerenameevent", None)? || self.listened(&t, "onafterrenameevent", None)? {
-                    let new_pk = t.primary_key(&new);
-                    let from = self
-                        .store_for(rec)
-                        .get(&cx, &t, &old_pk)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                    let to = self
-                        .store_for(rec)
-                        .get(&cx, &t, &new_pk)
-                        .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                    if from.is_none() || (to.is_some() && key_cmp(&new_pk, &old_pk) != std::cmp::Ordering::Equal) {
-                        return unsupported(format!(
-                            "Rename of {} to a missing or taken key, which has rename event subscribers (the order of the error and the Before event is not pinned)",
-                            t.name
-                        ));
-                    }
-                }
                 // Rec carries the new key and xRec the old row in the events and the trigger
                 // (record/TestTableEventDispatch.al:TableEvent_OnAfterRename_Subscriber_FiresWithOldAndNewKeys).
                 let old_fields = old.clone();
@@ -1376,6 +1484,10 @@ impl Session {
                 let _ = self.bump_row_version(&t, rec);
                 let _ = self.stamp_rename(&t, rec);
                 let row = rec.borrow().fields.clone();
+                if let Some(unique_key) = self.unique_violation(rec, &t, &row, Some(&old_pk))? {
+                    rec.borrow_mut().fields = old.clone();
+                    return self.fail_unique(&t, unique_key, &row);
+                }
                 let stored = Self::to_store(rec, self.stored_view(&t, &row));
                 // A rename to the key the row has succeeds and writes the row again, which is what
                 // stamps it (record/TestRecordSystemId.al:752-775).
@@ -1398,6 +1510,7 @@ impl Session {
                     RenameOutcome::Renamed => {
                         if !same_key {
                             self.propagate_rename(&t, &refs, &old_fields, &row)?;
+                            self.move_record_links(&t, rec, &old_fields)?;
                         }
                         self.run_ext_trigger(&t, "OnAfterRename", rec, Some(&xrec))?;
                         self.table_event(&t, "onafterrenameevent", rec, Some(&xrec), true, None)?;

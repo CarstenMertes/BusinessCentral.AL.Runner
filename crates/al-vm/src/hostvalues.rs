@@ -61,6 +61,23 @@ impl Session {
                 }
                 other => unsupported(format!("Sleep with {other:?} (only a non-negative number is pinned)")),
             },
+            "System.Random#1" => self.random_op(args),
+            "System.Randomize#1" => match args.first() {
+                // `new Random(seed)` (ALSystemNumeric.ALRandomize(int)); the sequence is .NET's.
+                Some(Value::Integer(seed)) => {
+                    self.rng = al_host::random::NetRandom::new(*seed);
+                    Ok(Value::Null)
+                }
+                // BC seeds from the clock, so two calls give different sequences. Here the seed is
+                // the host's plus a count, which differs per call and repeats per run (ADR-009).
+                None => {
+                    self.unseeded_randomizes = self.unseeded_randomizes.wrapping_add(1);
+                    let seed = self.host.random_seed.wrapping_add(self.unseeded_randomizes);
+                    self.rng = al_host::random::NetRandom::new(seed);
+                    Ok(Value::Null)
+                }
+                Some(other) => unsupported(format!("Randomize with {other:?}")),
+            },
             "Database.UserId#1" => Ok(Value::Text(self.host.identity.user_id())),
             "Database.UserSecurityId#1" => Ok(Value::Guid(self.host.identity.user_security_id())),
             "Database.SessionId#1" => Ok(Value::Integer(self.host.identity.session_id())),
@@ -90,6 +107,23 @@ impl Session {
             "Session.DefaultClientType#1" => Ok(client_type(self.host.identity.default_client_type())),
             _ => return None,
         })
+    }
+
+    /// `Random(MaxNumber)`: 1 to `MaxNumber`. The documented range is the only part the corpus
+    /// states (corpus/scripts/al-surface.json, system-random-method); the rest follows the
+    /// service tier's `ALSystemNumeric.ALRandom` and is recorded as an assumption in
+    /// docs/probes-needed.md: a negative bound counts as its absolute value, 0 as 1, and the
+    /// number is `Next(bound) + 1` on the session's generator.
+    fn random_op(&mut self, args: &mut [Value]) -> Result<Value, Signal> {
+        let bound = match args.first() {
+            Some(Value::Integer(n)) if *n == i32::MIN => {
+                // BC raises an overflow here; the text is not pinned.
+                return unsupported("Random(-2147483648) (BC raises an overflow error, not pinned)");
+            }
+            Some(Value::Integer(n)) => n.abs().max(1),
+            other => return unsupported(format!("Random with {other:?}")),
+        };
+        Ok(Value::Integer(self.rng.next_below(bound) + 1))
     }
 
     /// `WorkDate()` answers the date set, or today until AL sets one; `WorkDate(Date)` sets it

@@ -30,14 +30,18 @@ impl Parse {
 
 /// Lex, preprocess with `symbols`, and parse a whole `.al` file.
 pub fn parse(src: &str, symbols: &BTreeSet<String>) -> Parse {
+    with_thread_cache(|cache| parse_with_cache(src, symbols, cache))
+}
+
+/// Runs `f` with this thread's token cache, so repeated calls share tokens and pay for the
+/// table (128 KB) once. Falls back to a private one if this is somehow re-entered.
+fn with_thread_cache<T>(f: impl FnOnce(&mut TreeCache) -> T) -> T {
     thread_local! {
         static CACHE: std::cell::RefCell<TreeCache> = Default::default();
     }
-    // One cache per thread, so repeated calls share tokens and pay for the
-    // table once. Fall back to a private one if this is somehow re-entered.
     CACHE.with(|c| match c.try_borrow_mut() {
-        Ok(mut cache) => parse_with_cache(src, symbols, &mut cache),
-        Err(_) => parse_with_cache(src, symbols, &mut TreeCache::default()),
+        Ok(mut cache) => f(&mut cache),
+        Err(_) => f(&mut TreeCache::default()),
     })
 }
 
@@ -49,12 +53,8 @@ pub fn parse_with_cache(src: &str, symbols: &BTreeSet<String>, cache: &mut TreeC
 /// Parses a standalone type such as a table field's `Code[20]`; `None` if it is
 /// not exactly one well-formed type.
 pub fn parse_type(src: &str) -> Option<crate::ast::TypeRef> {
-    let p = parse_entry(
-        src,
-        &BTreeSet::new(),
-        &mut TreeCache::default(),
-        crate::grammar::type_ref,
-    );
+    // Every field of every table asks, so the cache is the thread's, not a new one each time.
+    let p = with_thread_cache(|cache| parse_entry(src, &BTreeSet::new(), cache, crate::grammar::type_ref));
     if !p.errors.is_empty() {
         return None;
     }

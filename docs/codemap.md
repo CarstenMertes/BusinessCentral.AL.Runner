@@ -114,7 +114,8 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-host
 
 - `dotnet.rs` (238): The `DotNet` provider seam (ADR-014 section 2). Entry: `DotNetType` 10, `DotNetHandle` 26, `DotNetValue` 30, `DotNetArg` 65.
-- `lib.rs` (341): The host seam: clock, identity, client type, file system (ADR-006). Entry: `Clock` 21, `Identity` 70, `ClientType` 54, `Host` 258.
+- `lib.rs` (350): The host seam: clock, identity, client type, file system (ADR-006). Entry: `Clock` 21, `Identity` 70, `ClientType` 54, `Host` 258.
+- `random.rs` (112): .NET's seeded `System.Random` for `Random` and `Randomize`. Entry: `NetRandom` 15.
 
 ### al-ir
 
@@ -313,8 +314,8 @@ functions or methods; the file is in the module list above.
    `Lowerer::routine` -> `stmt` / `expr` / `call` for reached routines and `stub` for the rest. Anything inexpressible
    becomes a refusal reason in `Lowered::unsupported`. Output: `al_ir::Program` (an `Arc`, shared with the engine) +
    call graph. `lower_object` is a function of the plain `Shared` data plus per-thread `Local`/`Seq` (syntax nodes
-   and layouts belong to the thread that built them): worker threads (`AL_LOWER_THREADS`) lower the dependency
-   objects while the calling thread lowers the workspace's in order (source positions are numbered as they come).
+   and layouts belong to the thread that built them): worker threads (`AL_LOWER_THREADS`) and the calling thread take all active objects in turn,
+   each lowered with positions numbered from 0 that `Routine::shift_positions` moves into place in object order.
 
 ### Record.Insert(true): trigger, events, Global Triggers, store
 

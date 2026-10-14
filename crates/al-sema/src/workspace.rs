@@ -275,13 +275,13 @@ impl Workspace {
             .collect();
         let parsed: Vec<(ParsedFile, Vec<ByteRange>)> = inputs
             .par_iter()
-            .map_init(al_syntax::TreeCache::default, |cache, &(_, _, lazy, _, src)| {
+            .map(|&(_, _, lazy, _, src)| {
                 if lazy {
                     (scanned_file(src, symbols), Vec::new())
                 } else {
                     match crate::pages::expand_ranges(src, symbols) {
-                        Some((text, added)) => (parse_file(&text, symbols, cache), added),
-                        None => (parse_file(src, symbols, cache), Vec::new()),
+                        Some((text, added)) => (with_tree_cache(|cache| parse_file(&text, symbols, cache)), added),
+                        None => (with_tree_cache(|cache| parse_file(src, symbols, cache)), Vec::new()),
                     }
                 }
             })
@@ -485,9 +485,6 @@ impl Workspace {
         let f = &self.files[fi];
         f.green
             .get_or_init(|| {
-                thread_local! {
-                    static CACHE: std::cell::RefCell<al_syntax::TreeCache> = Default::default();
-                }
                 let src = &self.apps[f.app].files[f.file_in_app].1;
                 // Only a page can have properties to turn into routines; skip the extra parse otherwise.
                 let expanded = f
@@ -498,10 +495,7 @@ impl Workspace {
                 let _ = f
                     .synthetic
                     .set(expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default());
-                let parsed = CACHE.with(|c| match c.try_borrow_mut() {
-                    Ok(mut cache) => parse_file(src, &self.symbols, &mut cache),
-                    Err(_) => parse_file(src, &self.symbols, &mut al_syntax::TreeCache::default()),
-                });
+                let parsed = with_tree_cache(|cache| parse_file(src, &self.symbols, cache));
                 let problem = parsed.errors.first().map(|e| {
                     let line = src[..e.offset.min(src.len())].matches('\n').count() + 1;
                     let text = src.lines().nth(line - 1).unwrap_or("").trim();
@@ -946,6 +940,18 @@ struct FileObject {
     layouts: Vec<al_syntax::scan::ScannedLayout>,
     install: bool,
     manual_subscribers: bool,
+}
+
+/// Runs `f` with this thread's token cache (one per thread: a cache is 128 KB to set up, and
+/// there are tens of thousands of files). A parse that starts inside another gets a cache of its own.
+fn with_tree_cache<T>(f: impl FnOnce(&mut al_syntax::TreeCache) -> T) -> T {
+    thread_local! {
+        static CACHE: std::cell::RefCell<al_syntax::TreeCache> = Default::default();
+    }
+    CACHE.with(|c| match c.try_borrow_mut() {
+        Ok(mut cache) => f(&mut cache),
+        Err(_) => f(&mut al_syntax::TreeCache::default()),
+    })
 }
 
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {

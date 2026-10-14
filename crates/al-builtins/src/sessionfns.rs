@@ -44,6 +44,8 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "System.CurrentDateTime#1",
     "System.WorkDate#1",
     "System.Sleep#1",
+    "System.Random#1",
+    "System.Randomize#1",
     "Database.UserId#1",
     "Database.UserSecurityId#1",
     "Database.SessionId#1",

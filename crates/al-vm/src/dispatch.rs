@@ -50,6 +50,15 @@ pub(crate) struct Binding {
     pub instance: Weak<RefCell<Instance>>,
 }
 
+/// The error of a failed `BindSubscription` statement, code `EventBinding`.
+fn binding_error(id: u32, why: &str) -> Signal {
+    Signal::Error(AlError {
+        message: format!("The binding of codeunit {id} was unsuccessful. {why}"),
+        code: "EventBinding".into(),
+        call_stack: String::new(),
+    })
+}
+
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
@@ -143,17 +152,22 @@ impl Session {
             // An Isolated event runs each subscriber in its own transaction: with nothing pending
             // in the caller's, a subscriber's error is swallowed and only its writes are rolled
             // back; with a write pending the event is not isolated and the error propagates
-            // (codeunit/TestIsolatedEventSubscriberError.al). Whether the error text is kept as
-            // the last error is not pinned.
+            // (codeunit/TestIsolatedEventSubscriberError.al). The swallowed error becomes the last
+            // error, and a subscriber that succeeds has its writes committed (corpus
+            // record/TestTableEventSequenceContracts.al:IsolatedEvent_SubscriberError_BecomesTheLastError_...).
             let isolate = isolated && !self.store.has_uncommitted();
             let before = isolate.then(|| self.store.clone());
             let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {
-                Err(Signal::Error(_)) if isolate => {
+                Err(Signal::Error(e)) if isolate => {
                     self.store = before.expect("snapshot taken when isolating");
+                    self.last_error = e;
                     continue;
                 }
                 r => r?,
             };
+            if isolate {
+                self.commit_transaction();
+            }
             for (i, m) in map.iter().enumerate() {
                 if let (Some(j), true) = (m, r.by_var[i]) {
                     args[*j] = finals[i].clone();
@@ -215,6 +229,11 @@ impl Session {
                 targets.push((s.clone(), self.static_instance(s.object)?));
             }
         }
+        // Subscribers run in ascending codeunit id, a bound manual one among them (corpus
+        // record/TestTableEventSequenceContracts.al:Subscribers_RunInAscendingCodeunitIdOrder_...);
+        // the sort is stable, so one codeunit's subscribers keep their declaration order.
+        let program = &engine.program;
+        targets.sort_by_key(|(s, _)| program.objects[s.object].id.unwrap_or(0));
         Ok(targets)
     }
 
@@ -226,22 +245,11 @@ impl Session {
         Ok(!self.event_targets(object, event, element)?.is_empty())
     }
 
-    /// The instance a static (automatic) subscriber runs on: the session's one
-    /// instance for `SingleInstance` codeunits. Other codeunits would get a
-    /// fresh instance per event, which only matters if they keep global state;
-    /// that is not pinned by the corpus, so such subscribers are refused.
+    /// The instance a static (automatic) subscriber runs on: the session's one instance for a
+    /// `SingleInstance` codeunit, else a fresh one per event, so its globals start at their defaults
+    /// every time (corpus record/TestTableEventSequenceContracts.al:Insert_EventsAndTrigger_WithAndWithoutRunTrigger,
+    /// where the After event sees `hits=0` after the Before event counted 1).
     fn static_instance(&mut self, object: usize) -> Result<Inst, Signal> {
-        let o = &self.engine.program.objects[object];
-        let single = o
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("SingleInstance") && v.trim().eq_ignore_ascii_case("true"));
-        if !single && !o.globals.is_empty() {
-            return unsupported(format!(
-                "subscriber codeunit {} keeps global variables: the lifetime of a static subscriber instance is not pinned",
-                o.name
-            ));
-        }
         let fresh = Rc::new(RefCell::new(Instance {
             object: object as u32,
             ..Default::default()
@@ -282,9 +290,11 @@ impl Session {
                 return if ret_used {
                     Ok(Value::Boolean(false))
                 } else {
-                    unsupported(
-                        "BindSubscription as a statement on a codeunit that is not EventSubscriberInstance = Manual",
-                    )
+                    // corpus record/TestTableEventSequenceContracts.al:BindSubscription_Manual_Twice_And_Static_Errors
+                    Err(binding_error(
+                        self.engine.program.objects[object].id.unwrap_or(0),
+                        "The codeunit does not use manual binding",
+                    ))
                 };
             }
             if at.is_some() {
@@ -292,14 +302,10 @@ impl Session {
                 return if ret_used {
                     Ok(Value::Boolean(false))
                 } else {
-                    Err(Signal::Error(AlError {
-                        message: format!(
-                            "The instance of codeunit {} has already been bound.",
-                            self.engine.program.objects[object].name
-                        ),
-                        code: String::new(),
-                        call_stack: String::new(),
-                    }))
+                    Err(binding_error(
+                        self.engine.program.objects[object].id.unwrap_or(0),
+                        "The codeunit has already been bound.",
+                    ))
                 };
             }
             self.ensure_initialized(&inst);

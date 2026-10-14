@@ -34,6 +34,53 @@ table 60862 "QJ Order"
     }
     keys { key(PK; "Entry No.") { Clustered = true; } }
 }
+table 60870 "QX Num"
+{
+    fields { field(1; "No."; Integer) { } field(2; Big; BigInteger) { } field(3; Dec; Decimal) { } field(4; Grp; Code[10]) { } }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+query 60871 "QX Reverse Sign Types"
+{
+    QueryType = Normal;
+    OrderBy = ascending(No);
+    elements
+    {
+        dataitem(Num; "QX Num")
+        {
+            column(No; "No.") { }
+            column(NoReversed; "No.") { ReverseSign = true; }
+            column(BigReversed; Big) { ReverseSign = true; }
+            column(DecReversed; Dec) { ReverseSign = true; }
+        }
+    }
+}
+query 60872 "QX Reverse Sign Total"
+{
+    QueryType = Normal;
+    OrderBy = ascending(Grp);
+    elements
+    {
+        dataitem(Num; "QX Num")
+        {
+            column(Grp; Grp) { }
+            column(DecTotal; Dec) { Method = Sum; ReverseSign = true; }
+        }
+    }
+}
+query 60873 "QX Min Max"
+{
+    QueryType = Normal;
+    OrderBy = ascending(Grp);
+    elements
+    {
+        dataitem(Num; "QX Num")
+        {
+            column(Grp; Grp) { }
+            column(Lowest; Dec) { Method = Min; }
+            column(Highest; Dec) { Method = Max; }
+        }
+    }
+}
 query 60022 "ALT Universal Query"
 {
     QueryType = Normal;
@@ -1134,4 +1181,123 @@ fn ties_under_a_descending_order_by_are_refused() {
         end;",
     ));
     assert!(unsupported(r).contains("tie"));
+}
+
+// ---- mutation-testing additions (docs/status.md debt) ----
+
+const SEED_NUM: &str = "
+    procedure SeedN()
+    var N: Record \"QX Num\"; Big: BigInteger;
+    begin
+        Big := 2147483647; Big := Big * 2;
+        N.\"No.\" := 1; N.Big := Big; N.Dec := 7.5; N.Grp := 'A'; N.Insert();
+        N.\"No.\" := 2; N.Big := -3; N.Dec := 2.5; N.Grp := 'A'; N.Insert();
+        N.\"No.\" := 3; N.Big := 4; N.Dec := 9; N.Grp := 'A'; N.Insert();
+    end;
+";
+
+// query/TestQueryReverseSign.al:36-77 pins the sign flip for Decimal; Integer and BigInteger
+// columns flip the same way (they share the code path, and a BigInteger past Int32 keeps its size).
+#[test]
+fn reverse_sign_negates_integer_and_big_integer_columns_too() {
+    let r = run(&with(
+        SEED_NUM,
+        "procedure F(): Text
+        var Q: Query \"QX Reverse Sign Types\"; Seen: Text;
+        begin
+            SeedN();
+            Q.Open();
+            while Q.Read() do Seen += StrSubstNo('%1/%2/%3/%4;', Q.No, Q.NoReversed, Q.BigReversed, Q.DecReversed);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "1/-1/-4294967294/-7.5;2/-2/3/-2.5;3/-3/-4/-9;");
+}
+
+// query/TestQueryReverseSign.al:79-125: the group total is negated.
+#[test]
+fn reverse_sign_negates_a_group_total() {
+    let r = run(&with(
+        SEED_NUM,
+        "procedure F(): Text
+        var Q: Query \"QX Reverse Sign Total\"; Seen: Text;
+        begin
+            SeedN();
+            Q.Open();
+            while Q.Read() do Seen += Q.Grp + Format(Q.DecTotal);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "A-19");
+}
+
+// query/TestQueryAggregation.al:36-80: Min and Max pick the smallest and the largest value
+// wherever it sits in the group (the corpus rows come in ascending order, so the first row is
+// already the Min).
+#[test]
+fn min_and_max_find_the_extremes_wherever_they_sit() {
+    let r = run(&with(
+        SEED_NUM,
+        "procedure F(): Text
+        var Q: Query \"QX Min Max\"; Seen: Text;
+        begin
+            SeedN();
+            Q.Open();
+            while Q.Read() do Seen += Q.Grp + ':' + Format(Q.Lowest) + '/' + Format(Q.Highest);
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "A:2.5/9");
+}
+
+// GetFilter of a column that has a static ColumnFilter and no runtime filter is not pinned
+// (docs/probes-needed.md), while a column without any filter reads empty.
+#[test]
+fn get_filter_of_a_statically_filtered_column_is_refused_and_of_a_plain_one_is_empty() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QJ Order Filtered\";
+        begin
+            exit('[' + Q.GetFilter(Amount) + ']');
+        end;",
+    ));
+    assert_eq!(text(r), "[]");
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QJ Order Filtered\";
+        begin
+            exit(Q.GetFilter(CustNo));
+        end;",
+    ));
+    assert!(unsupported(r).contains("static ColumnFilter"));
+}
+
+// query/TestQueryReadAfterWrite.al:102-179 for a join: a write to the *second* table the query
+// reads also invalidates the result set, so a child row inserted after the position is read.
+#[test]
+fn a_write_to_the_child_table_of_a_join_is_noticed_between_reads() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QJ Cust Orders Inner\"; O: Record \"QJ Order\"; Seen: Text;
+        begin
+            SeedJ();
+            Q.SetRange(CustNo, 'C1');
+            Q.Open();
+            while Q.Read() do begin
+                Seen += Format(Q.EntryNo) + ',';
+                if Q.EntryNo = 1 then begin
+                    O.\"Entry No.\" := 9; O.\"Customer No.\" := 'C1'; O.Amount := 1; O.Insert();
+                end;
+            end;
+            Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "1,2,9,");
 }

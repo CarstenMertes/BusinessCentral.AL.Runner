@@ -35,12 +35,10 @@ reviewed it.
 
   Nothing is built on ADR-016 until it is accepted.
 
-- Corpus workflow fix to push in the morning (branch `al-runtime-rs`, repo
-  BusinessCentral.AL.Language.Tests; never master). The workflow's dispatch path builds the
-  preprocessor symbols with `for v in 27 28` and never adds `BC29PLUS`. Four existing
-  `BC29PLUS`-guarded tests failed on the 29.0 dispatch run on cdf315a (run 38478399478), so that run
-  cannot be the BC 29 oracle. After the fix: run 29.0 on the pin, re-record `oracle/29/junit.xml`, drop
-  `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
+- Corpus workflow fix: done (2026-10-14). The corpus branch `al-runtime-rs` now defines `BC29PLUS` on dispatch.
+  The 29.0 run on 348a744 is the BC 29 oracle, and the 29 table has no `corpus_commit` any more.
+- Probe batch 2 push: done (2026-10-14). Batches 2 and 2b are in the corpus at 348a744 (53 new cases). All three
+  oracles come from that commit. The failing and not-run ones are the next fix round.
 
 ## Decided without owner review (2026-10-14), isolation branch
 
@@ -205,8 +203,11 @@ reviewed it.
 - 2026-10-14, ADR-013 (baseline): every read of a table the baseline could not fill is refused, not only a missing `Get`.
 - 2026-10-14, ADR-013 (Global Triggers): `Session.LogMessage` is a no-op (telemetry is not observable from AL).
 - 2026-10-14, ADR-007: an oracle may be recorded for an older corpus commit when the corpus diff since then
-  only adds files under `tests/` (checked by the CLI). BC 29 stays on `cf6e546` for that reason; 27 and 28 are
-  on `cdf315a`.
+  only adds files under `tests/` (checked by the CLI). Since 348a744 all three oracles are on the pin; the rule stays
+  for later bumps.
+- 2026-10-14, ADR-007: the corpus bump to 348a744 appends one test to an existing file
+  (`handlers/TestPageRuntimeContracts.al`, `TestPage_List_Window_IsRepopulatedAroundAGoToKeyOutsideIt`). All three
+  oracles are on the pin, so the older-commit check is not involved. A bump that used it would have been refused.
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
   passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
@@ -214,3 +215,7 @@ reviewed it.
 - 2026-10-14, ADR-018, SessionSettings: `RequestSessionUpdate(false)` hands a copy to the handler and needs true back; `(true)` and a missing handler are refused.
 - 2026-10-14, ADR-018, InitValue: `0DT` and closing-date literals raise in `Init()` of a written record and on the first read of an untouched one.
 - 2026-10-14, ADR-018, held branch: the narrower static-subscriber global check is not merged (net zero) until the `DeleteAll(false)` probe is in.
+- 2026-10-14, ADR-009, fix-records: a duplicate-key Insert from AL code is deferred to the next table access or Commit only for persistent tables without Blob and AutoIncrement fields; the page client, XmlPort import, temporary records and AutoIncrement tables raise at once.
+- 2026-10-14, ADR-009, fix-records: a test refused midway rolls back what it wrote, so a later test of the codeunit cannot see the leftovers.
+- 2026-10-14, ADR-009, fix-records: the emit version in "object does not exist" errors is major*1000+25 for BC majors other than 27 (27025 is measured).
+- 2026-10-14, ADR-009, fix-records: baseline case 60013 `CalcFields_TableExtensionFlowFieldOnStockkeepingUnit_WithNoMatchingRows_IsZero` removed from all three baselines as a pass by accident (see the commit message).

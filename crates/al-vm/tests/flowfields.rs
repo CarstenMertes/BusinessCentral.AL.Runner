@@ -131,11 +131,10 @@ fn lookup_returns_the_code_of_the_one_matching_row() {
     assert_eq!(text(r), "ONLY1");
 }
 
-// Which of several matching rows lookup() reads depends on the key BC picks;
-// the corpus only ever looks up through one matching row (or rows that agree),
-// so disagreeing rows are refused rather than guessed.
+// lookup() over several matching rows reads the first in primary key order (corpus
+// record/TestCalcFieldsTruncateUniqueContracts.al:CalcFields_Lookup_OverSeveralRows_ReadsTheFirstInPrimaryKeyOrder).
 #[test]
-fn lookup_over_rows_that_disagree_is_refused() {
+fn lookup_over_rows_that_disagree_reads_the_first_in_primary_key_order() {
     let r = run(&format!(
         "{SEED}
         procedure F(): Text
@@ -147,7 +146,7 @@ fn lookup_over_rows_that_disagree_is_refused() {
             exit(P.\"First Child Code\");
         end;"
     ));
-    assert!(unsupported(r).contains("lookup"));
+    assert_eq!(text(r), "FIRST");
 }
 
 // corpus record/TestFlowFieldContracts.al:79 (CalcFields returns true) and :98 (no children give 0).
@@ -258,10 +257,10 @@ fn set_auto_calc_fields_on_a_temporary_record_over_an_empty_source_stays_zero() 
     assert_eq!(text(r), "0");
 }
 
-// The corpus does not say whether a FlowField on a temporary record reads the persistent
-// source table, so a source with rows is refused.
+// A FlowField on a temporary record reads the persistent source table (corpus
+// record/TestCalcFieldsTruncateUniqueContracts.al:CalcFields_OnATemporaryRecord_ReadsThePersistentSourceTable).
 #[test]
-fn a_flow_field_on_a_temporary_record_over_a_source_with_rows_is_refused() {
+fn a_flow_field_on_a_temporary_record_reads_the_persistent_source() {
     let r = run(&format!(
         "{SEED}
         procedure F(): Text
@@ -273,7 +272,7 @@ fn a_flow_field_on_a_temporary_record_over_a_source_with_rows_is_refused() {
             exit(Format(P.\"Child Count\"));
         end;"
     ));
-    assert!(unsupported(r).contains("temporary"));
+    assert_eq!(text(r), "2");
 }
 
 // corpus record/TestRecordFlowFieldFilterVisitor.al:30,49 (a filter on a FlowField selects by the
@@ -515,7 +514,7 @@ fn calcfields_refuses_what_is_not_a_calculable_flow_field() {
         ),
         (
             "BadAvg",
-            "The following fields must have the same type:\n\nField: BadAvg <-- Qty\nTable: FF Head <-- FF Line\nType: Decimal <-- Integer",
+            "The following fields must have the same type:\r\\\r\\Field: BadAvg <-- Qty\r\\Table: FF Head <-- FF Line\r\\Type: Decimal <-- Integer",
         ),
     ] {
         let r = run_lines(&format!(
@@ -837,7 +836,7 @@ fn renaming_the_auto_increment_value_is_refused_but_the_rest_of_the_key_is_not()
     );
     assert_eq!(
         text(r),
-        "BYesNo|You cannot change the value of an AutoIncrement field.\n\nField: Entry No.\nTable: AI Composite"
+        "BYesNo|You cannot change the value of an AutoIncrement field.\r\\\r\\Field: Entry No.\r\\Table: AI Composite\r\\\r\\Identification fields and values:\r\\Entry No.='51',Code='B'"
     );
 }
 
@@ -879,29 +878,33 @@ fn an_insert_refused_by_a_unique_secondary_key_consumes_its_value() {
     // the next row gets 51; the asserterror form leaves the key 0 too.
     assert_eq!(
         text(r),
-        "YesNo0|2|No50|51|0|There is already a record in table AI Unique that has the same values in a unique index."
+        "YesNo0|2|No50|51|0|There is already a record in table AI Unique that has the same values in a unique index for the following fields: Code='X'"
     );
 }
 
-// Modify and Rename could also break a unique secondary key, which is only checked on Insert.
+// Modify breaks a unique secondary key like Insert does (corpus
+// record/TestCalcFieldsTruncateUniqueContracts.al:UniqueIndex_Violation_FullTextAndCode_...), but
+// rewriting a row with its own values is no violation.
 #[test]
-fn modify_and_rename_on_tables_with_unique_secondary_keys_are_refused() {
-    for write in ["U.Modify();", "U.Rename(7);"] {
-        let r = run_with(
-            AUTO,
-            &format!(
-                "procedure F()
-                var U: Record \"AI Unique\";
-                begin
-                    U.Code := 'X';
-                    U.Insert(true);
-                    {write}
-                end;"
-            ),
-            "F",
-        );
-        assert!(unsupported(r).contains("unique"), "{write}");
-    }
+fn modify_on_a_unique_secondary_key_raises_only_for_another_row() {
+    let r = run_with(
+        AUTO,
+        "procedure F(): Text
+        var U: Record \"AI Unique\"; V: Record \"AI Unique\"; Seen: Text;
+        begin
+            U.Code := 'X'; U.Insert(true);
+            V.Code := 'Y'; V.Insert(true);
+            U.Modify();
+            V.Code := 'X';
+            asserterror V.Modify();
+            exit(GetLastErrorText() + '|' + GetLastErrorCode());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "There is already a record in table AI Unique that has the same values in a unique index for the following fields: Code='X'|DB:RecordExists"
+    );
 }
 
 const TRUNC: &str = r#"
@@ -1034,11 +1037,11 @@ fn truncate_refusals_carry_the_pinned_messages() {
     assert_eq!(text(kept), "Yes");
 }
 
-// Whether a filter limits what Truncate deletes is not pinned (the corpus filter keeps the
-// only row), so a filter that excludes rows is refused; so is a temporary record, whose guard
-// message is not pinned either.
+// A filter on a normal field limits what Truncate deletes; a temporary record is refused with the
+// pinned text (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+// Truncate_WithFilterOnANormalField_RemovesOnlyTheFilteredRows, Truncate_Refusals_Texts).
 #[test]
-fn truncate_with_a_filter_that_excludes_rows_or_on_a_temporary_record_is_refused() {
+fn truncate_with_a_filter_removes_only_the_filtered_rows_and_a_temporary_record_is_refused() {
     let r = run_trunc(
         "procedure F(): Text
         var R: Record \"TR Row\";
@@ -1047,17 +1050,20 @@ fn truncate_with_a_filter_that_excludes_rows_or_on_a_temporary_record_is_refused
             R.\"Entry No.\" := 2; R.Link := 'L2'; R.Insert();
             R.SetRange(Link, 'L1');
             R.Truncate();
+            R.Reset();
+            exit(Format(R.Count()));
         end;",
     );
-    assert!(unsupported(r).contains("filter"));
+    assert_eq!(text(r), "1");
     let t = run_trunc(
         "procedure F(): Text
         var R: Record \"TR Row\" temporary;
         begin
-            R.Truncate();
+            asserterror R.Truncate();
+            exit(GetLastErrorText() + '|' + GetLastErrorCode());
         end;",
     );
-    assert!(unsupported(t).contains("temporary"));
+    assert_eq!(text(t), "Temporary tables does not support truncation.|DB:Ok");
 }
 
 // A FlowField holds no data: what the buffer shows after CalcFields is not written by Insert or
@@ -1217,4 +1223,185 @@ fn duration_sources_sum_into_duration_flow_fields() {
         end;",
     );
     assert_eq!(text(r), "YesYes");
+}
+
+// Mutation-testing additions (docs/status.md debt): checks that were only ever seen green.
+
+const FFX: &str = r#"
+enum 60460 "FFX E1" { value(0; A) { } value(1; B) { } }
+enum 60461 "FFX E2" { value(0; A) { } value(1; B) { } }
+table 60462 "FFX Src"
+{
+    fields
+    {
+        field(1; "No."; Integer) { }
+        field(2; Grp; Code[10]) { }
+        field(3; Txt; Text[30]) { }
+        field(4; Cd; Code[30]) { }
+        field(5; Big; BigInteger) { }
+        field(6; E1; Enum "FFX E1") { }
+        field(7; Amount; Decimal) { }
+        field(8; Dur; Duration) { }
+    }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+table 60463 "FFX Head"
+{
+    fields
+    {
+        field(1; "No."; Code[10]) { }
+        field(2; FilterInt; Integer) { FieldClass = FlowFilter; }
+        field(3; FilterDec; Decimal) { FieldClass = FlowFilter; }
+        field(10; TxtFromCode; Text[30]) { FieldClass = FlowField; CalcFormula = lookup("FFX Src".Cd where(Grp = field("No."))); }
+        field(11; CodeFromTxt; Code[30]) { FieldClass = FlowField; CalcFormula = lookup("FFX Src".Txt where(Grp = field("No."))); }
+        field(12; EnumSame; Enum "FFX E1") { FieldClass = FlowField; CalcFormula = lookup("FFX Src".E1 where(Grp = field("No."))); }
+        field(13; EnumOther; Enum "FFX E2") { FieldClass = FlowField; CalcFormula = lookup("FFX Src".E1 where(Grp = field("No."))); }
+        field(14; MinWrong; Integer) { FieldClass = FlowField; CalcFormula = min("FFX Src".Amount where(Grp = field("No."))); }
+        field(15; SumBig; BigInteger) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Big where(Grp = field("No."))); }
+        field(16; NegCount; Integer) { FieldClass = FlowField; CalcFormula = -count("FFX Src" where(Grp = field("No."))); }
+        field(17; ByIntFilter; Decimal) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Amount where(Grp = field("No."), "No." = field(FilterInt))); }
+        field(18; ByDecFilter; Decimal) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Amount where(Grp = field("No."), "No." = field(FilterDec))); }
+        field(19; LookupAmt; Decimal) { FieldClass = FlowField; CalcFormula = lookup("FFX Src".Amount where(Grp = field("No."))); }
+        field(20; SumDur; Duration) { FieldClass = FlowField; CalcFormula = sum("FFX Src".Dur where(Grp = field("No."))); }
+    }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+"#;
+
+const FFX_SEED: &str = "
+    procedure Add(N: Integer; G: Code[10]; T: Text[30]; C: Code[30]; B: BigInteger; A: Decimal)
+    var S: Record \"FFX Src\";
+    begin
+        S.\"No.\" := N; S.Grp := G; S.Txt := T; S.Cd := C; S.Big := B; S.Amount := A; S.E1 := S.E1::B;
+        S.Insert();
+    end;
+    procedure Seed()
+    var H: Record \"FFX Head\"; Big: BigInteger;
+    begin
+        H.\"No.\" := 'H'; H.Insert();
+        Big := 2147483647; Big := Big * 2;
+        Add(1, 'H', 'tx', 'CD', Big, 2.5);
+        Add(2, 'H', 'tx', 'CD', 7, 4);
+    end;
+";
+
+fn run_ffx(body: &str) -> Result<Value, Signal> {
+    run_with(FFX, &format!("{FFX_SEED}\n{body}"), "F")
+}
+
+fn calc_one(field: &str) -> Result<Value, Signal> {
+    run_ffx(&format!(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.Get('H');
+            H.CalcFields({field});
+            exit(Format(H.{field}));
+        end;"
+    ))
+}
+
+// corpus record/TestCalcFormulaMinMaxAvgTests.Codeunit.al:97 pins min/max/lookup into the very
+// same type; Text and Code count as one kind, so does the same enum, other types are refused.
+#[test]
+fn min_max_and_lookup_accept_text_for_code_and_the_same_enum() {
+    assert_eq!(text(calc_one("TxtFromCode")), "CD");
+    assert_eq!(text(calc_one("CodeFromTxt")), "TX");
+    assert_eq!(text(calc_one("EnumSame")), "B");
+}
+
+#[test]
+fn min_max_and_lookup_into_another_type_or_another_enum_are_refused() {
+    assert!(unsupported(calc_one("MinWrong")).contains("another type"));
+    assert!(unsupported(calc_one("EnumOther")).contains("another type"));
+}
+
+// A sum over a BigInteger source works past the Int32 range.
+#[test]
+fn sum_over_a_big_integer_source_goes_past_int32() {
+    assert_eq!(text(calc_one("SumBig")), "4294967301");
+}
+
+// A leading minus on count negates the number of rows (corpus record/TestCalcFormulaSignFiltersTests.Codeunit.al
+// pins the sign for sum and exist; count takes the same code path).
+#[test]
+fn a_negated_count_is_minus_the_row_count() {
+    assert_eq!(text(calc_one("NegCount")), "-2");
+}
+
+// corpus record/TestCalcFormulaFlowFiltersTests.Codeunit.al:107: a flow filter of the same kind as
+// the source field narrows the formula; one of another type is refused (the match is not pinned).
+#[test]
+fn a_flow_filter_of_the_source_fields_type_applies_and_another_type_is_refused() {
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.Get('H');
+            H.SetRange(FilterInt, 2);
+            H.CalcFields(ByIntFilter);
+            exit(Format(H.ByIntFilter));
+        end;",
+    );
+    assert_eq!(text(r), "4");
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.Get('H');
+            H.SetRange(FilterDec, 2);
+            H.CalcFields(ByDecFilter);
+            exit(Format(H.ByDecFilter));
+        end;",
+    );
+    assert!(unsupported(r).contains("flow filter of another type"));
+}
+
+// A lookup over several rows that agree is the value they agree on (disagreeing rows read the
+// first in primary key order: lookup_over_rows_that_disagree_reads_the_first_in_primary_key_order).
+#[test]
+fn lookup_over_rows_that_agree_returns_their_value() {
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\"; S: Record \"FFX Src\";
+        begin
+            Seed();
+            S.ModifyAll(Amount, 9);
+            H.Get('H');
+            H.CalcFields(LookupAmt);
+            exit(Format(H.LookupAmt));
+        end;",
+    );
+    assert_eq!(text(r), "9");
+}
+
+// CalcSums only takes stored number fields; both a stored non-number and a FlowField are refused.
+#[test]
+fn calcsums_refuses_stored_non_numbers_and_flow_fields() {
+    for field in ["Txt", "Dur"] {
+        let r = run_ffx(&format!(
+            "procedure F(): Text
+            var S: Record \"FFX Src\";
+            begin
+                Seed();
+                S.CalcSums({field});
+            end;"
+        ));
+        assert!(
+            unsupported(r).contains("only stored number fields are implemented"),
+            "{field}"
+        );
+    }
+    let r = run_ffx(
+        "procedure F(): Text
+        var H: Record \"FFX Head\";
+        begin
+            Seed();
+            H.CalcSums(ByIntFilter);
+        end;",
+    );
+    assert!(unsupported(r).contains("only stored number fields are implemented"));
 }

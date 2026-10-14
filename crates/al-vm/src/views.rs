@@ -37,7 +37,14 @@ impl Session {
                 return unsupported("a filter value that needs quoting");
             }
         }
-        self.message_value(v)
+        let text = self.message_value(v)?;
+        // A value that is only blank space is shown in single quotes (corpus
+        // record/TestRecordRuntimeTextsAndViews.al:Record_GetView_And_GetFilters_Texts, the blank
+        // option member: `Status: <>' '`).
+        if !text.is_empty() && text.trim().is_empty() {
+            return Ok(format!("'{text}'"));
+        }
+        Ok(text)
     }
 
     pub(crate) fn filter_text(&self, e: &FilterExpr) -> Result<String, Signal> {
@@ -120,8 +127,13 @@ impl Session {
     }
 
     /// `GetView(UseNames)`: `SORTING(keyfields) [ORDER(Descending)] [WHERE(f=FILTER(x),...)]`.
+    /// Record and RecordRef views start with `VERSION(1) ` (corpus
+    /// record/TestRecordRuntimeTextsAndViews.al:Record_GetView_And_GetFilters_Texts).
     pub(crate) fn get_view(&self, rec: &Rec, t: &TableDef, use_names: bool) -> Result<String, Signal> {
-        self.get_view_with(rec, t, use_names, false)
+        Ok(format!(
+            "VERSION(1) {}",
+            self.get_view_with(rec, t, use_names, false, true)?
+        ))
     }
 
     /// `get_view`; with `option_ordinals` an Option or Enum filter value is written as its
@@ -133,6 +145,7 @@ impl Session {
         t: &TableDef,
         use_names: bool,
         option_ordinals: bool,
+        record_form: bool,
     ) -> Result<String, Signal> {
         let name = |pos: usize| {
             if use_names {
@@ -155,7 +168,11 @@ impl Session {
             t.keys[key].iter().map(|&p| name(p)).collect::<Vec<_>>().join(",")
         );
         if !ascending {
-            out.push_str(" ORDER(Descending)");
+            out.push_str(if use_names || !record_form {
+                " ORDER(Descending)"
+            } else {
+                " ORDER(1)"
+            });
         }
         let filters = Self::filters_in_field_order(rec);
         if !filters.is_empty() {
@@ -166,7 +183,12 @@ impl Session {
                 } else {
                     self.filter_text(&f.expr)?
                 };
-                items.push(format!("{}=FILTER({text})", name(f.field)));
+                // The numeric form writes the kind as a number: FILTER is 1, CONST is 0.
+                items.push(if use_names || !record_form {
+                    format!("{}=FILTER({text})", name(f.field))
+                } else {
+                    format!("{}=1({text})", name(f.field))
+                });
             }
             out.push_str(&format!(" WHERE({})", items.join(",")));
         }
@@ -199,12 +221,9 @@ impl Session {
         let group = group.unwrap_or(rec.borrow().filter_group);
         let mut rest = view.trim();
         while !rest.is_empty() {
-            let open = rest
-                .find('(')
-                .ok_or_else(|| Signal::Unsupported(format!("view `{view}`")))?;
+            let open = rest.find('(').ok_or_else(|| invalid_view(view))?;
             let word = rest[..open].trim().to_ascii_uppercase();
-            let (inner, after) =
-                balanced(&rest[open..]).ok_or_else(|| Signal::Unsupported(format!("view `{view}`")))?;
+            let (inner, after) = balanced(&rest[open..]).ok_or_else(|| invalid_view(view))?;
             match word.as_str() {
                 "VERSION" => {}
                 "SORTING" => {
@@ -222,6 +241,8 @@ impl Session {
                 "ORDER" => match inner.trim().to_ascii_lowercase().as_str() {
                     "ascending" => ascending = Some(true),
                     "descending" => ascending = Some(false),
+                    "1" => ascending = Some(false),
+                    "0" => ascending = Some(true),
                     other => return unsupported(format!("view ORDER({other})")),
                 },
                 "WHERE" => {
@@ -237,7 +258,7 @@ impl Session {
                         let kind = cond[..open].trim().to_ascii_uppercase();
                         let (value, tail) = balanced(&cond[open..])
                             .ok_or_else(|| Signal::Unsupported(format!("view condition `{item}`")))?;
-                        if !tail.trim().is_empty() || !matches!(kind.as_str(), "FILTER" | "CONST") {
+                        if !tail.trim().is_empty() || !matches!(kind.as_str(), "FILTER" | "CONST" | "0" | "1") {
                             return unsupported(format!("view condition `{item}`"));
                         }
                         let ty = t.fields[pos].ty.clone();
@@ -266,11 +287,24 @@ impl Session {
         if key.is_some() || !keep_unnamed {
             r.key = key.unwrap_or(0);
         }
-        if ascending.is_some() || !keep_unnamed {
-            r.ascending = ascending.unwrap_or(true);
+        // A view that names no ORDER keeps the direction (corpus branch al-runtime-rs, pending
+        // push: record/TestRecordViewCopyMarkContracts.al:SetView_ReplacesTheFilters_KeepsTheDirection_...).
+        if let Some(a) = ascending {
+            r.ascending = a;
         }
         Ok(())
     }
+}
+
+/// BC's error for a view that does not parse: a carriage return and a backslash join the
+/// sentence to the view text (corpus branch al-runtime-rs, pending push:
+/// record/TestRecordViewCopyMarkContracts.al:SetView_..._RejectsGarbage).
+fn invalid_view(view: &str) -> Signal {
+    Signal::Error(al_builtins::native::AlError {
+        message: format!("Invalid expression of type: table view.{}{view}", crate::records::BR),
+        code: "DB:Ok".into(),
+        call_stack: String::new(),
+    })
 }
 
 /// `e` with every Option and Enum value replaced by its ordinal.

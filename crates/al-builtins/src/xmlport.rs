@@ -216,4 +216,33 @@ mod tests {
             Err(FieldFailure::Invalid(_))
         ));
     }
+    #[test]
+    fn attr_finds_an_attribute_by_exact_name() {
+        let mut e = Elem::new("X");
+        e.attrs.push(("a".into(), "1".into()));
+        e.attrs.push(("b".into(), "2".into()));
+        assert_eq!(e.attr("a"), Some("1"));
+        assert_eq!(e.attr("b"), Some("2"));
+        assert_eq!(e.attr("c"), None);
+        assert_eq!(e.attr("A"), None);
+    }
+
+    #[test]
+    fn an_unpinned_field_type_is_refused_by_naming_the_type() {
+        for (v, name) in [
+            (Value::Boolean(true), "Boolean"),
+            (Value::BigInteger(1), "BigInteger"),
+            (Value::Date(0, false), "Date"),
+            (Value::Time(0), "Time"),
+            (Value::DateTime(0), "DateTime"),
+            (Value::Duration(0), "Duration"),
+            (Value::Guid([0; 16]), "Guid"),
+            (Value::Option(0, Vec::<String>::new().into()), "Option"),
+            (Value::Enum(1, 0), "Enum"),
+            (Value::Blob(crate::stream::new_blob()), "Blob"),
+            (Value::Null, "this type"),
+        ] {
+            assert_eq!(field_text(&v), Err(format!("a value of type {name}")), "{name}");
+        }
+    }
 }

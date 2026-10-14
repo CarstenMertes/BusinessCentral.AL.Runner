@@ -539,7 +539,12 @@ pub fn run_codeunit_isolated(
                             session.rollback_transaction();
                             Outcome::Fail(e.message)
                         }
-                        Err(Signal::Unsupported(r)) => Outcome::NotRun(r),
+                        // A refused test did not run: what it wrote before the refusal must not
+                        // reach the next test of the codeunit.
+                        Err(Signal::Unsupported(r)) => {
+                            session.rollback_transaction();
+                            Outcome::NotRun(r)
+                        }
                         Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
                     }
                 }

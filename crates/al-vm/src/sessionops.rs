@@ -173,6 +173,12 @@ impl Session {
             // not counted: they never reach the database (not pinned).
             return Ok(Value::Boolean(self.store.has_uncommitted()));
         }
+        if id == "CompanyProperty.DisplayName#1" {
+            // Non-empty (session/TestBCPlatformContracts.al:CompanyProperty_DisplayName_NonEmpty). That it is
+            // the company's name when no display name is set is an assumption (docs/probes-needed.md); a
+            // company that states a display name is not modelled.
+            return Ok(Value::Text(self.cx.company.clone()));
+        }
         if id == "Database.CompanyName#1" {
             // The company of the session, the same name `Record.CurrentCompany` answers
             // (session/TestDatabase.al:69-75, session/TestSessionFunctions.al:25).

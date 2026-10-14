@@ -132,7 +132,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `pages.rs` (932): Pages for the test client (ADR-012). Entry: `expand` 153, `expand_ranges` 159, `control_sections` 143, `classify_source` 81.
 - `queries.rs` (760): Query objects (corpus query/). Entry: `QueryLayout` 16, `layout` 56.
 - `relation.rs` (359): `TableRelation` property text → arms (before names are resolved). Entry: `ParsedArm` 13, `ParsedWhere` 23, `parse` 262.
-- `reports.rs` (792): Report objects: dataset walk and the IR it lowers to. Entry: `layout` 78, `request_layout` 196, `build` 567, `build_ext` 622.
+- `reports.rs` (1035): Report objects: dataset walk, columns, and the IR it lowers to. Entry: `layout` 159, `request_layout` 318, `build` 794, `build_ext` 848.
 - `types.rs` (240): Semantic types (Ty) and their display names. Entry: `Ty` 7, `display_name` 66, `from_type_ref` 71.
 - `workspace.rs` (1561): A set of apps: parse every file, build the object table, resolve names across apps. Entry: `Workspace` 192, `load_apps` 236, `ObjKind` 10, `ObjectSym` 155, `AppSource` 30, `AppKind` 40, `restrict_to` 535, `subscribers_of` 433, `resolve_ref` 682.
 - `xmlports.rs` (712): XmlPort objects (Format = Xml). Entry: `RawNode` 24, `Layout` 33, `layout` 97, `Context` 248.
@@ -203,6 +203,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `baseline.rs` (66): The install baseline (ADR-013 decision 5, ADR-004). Entry: `Baseline` 12.
 - `callstack.rs` (78): The AL call stack of an error (`GetLastErrorCallStack`). Entry: `add_frame` 36, `add_top_frame` 29, `frame_line` 48.
 - `companies.rs` (147): The company a record works in, ChangeCompany, the Company table's rows per company. Entry: `find_company`, `cx_for`, `change_company`.
+- `dataset.rs` (332): The dataset XML `Report.SaveAs(.., Xml, ..)` writes: header, `DataItem` rows, name and text escaping. Entry: `dataset_name` 23, `Header` 91, `Dataset` 217.
 - `dispatch.rs` (338): Event dispatch: publishers run their subscribers; EventCall; isolated events. Entry: `publish` 69, `raise` 117, `event_targets` 183, `has_listeners` 249, `subscription` 279.
 - `dotnet/mod.rs` (488): `DotNet` calls (ADR-014). Entry: `DotNetConfig` 33, `DotNetState` 58, `fit` 455.
 - `dotnet/policy.rs` (269): What is refused before a `DotNet` request is sent (ADR-014 section 8). Entry: `Access` 6, `Policy` 14.
@@ -245,7 +246,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `refs.rs` (637): `RecordRef`, `FieldRef` and `KeyRef` on the VM. Entry: `record_ref_value` 42.
 - `relations.rs` (179): TableRelation: lookups and Validate checks. Entry: `field_relation` 70, `validate_relation` 94.
 - `rename.rs` (214): Rename propagation to related tables. Entry: `rename_references` 33, `propagate_rename` 86.
-- `reports.rs` (888): Report objects at run time: dataset walk, triggers, request page. Entry: `report_builtin` 79, `first_use` 312.
+- `reports.rs` (1209): Report objects at run time: dataset walk, triggers, request page, `Report.SaveAs` and the dataset rows. Entry: `report_builtin` 80, `first_use` 314, `report_save_as` 936, `dataset_begin` 1109.
 - `sessionops.rs` (422): Builtins that act on session state. Entry: `Sequence` 11.
 - `transactions.rs` (446): Transactions as AL code sees them. Entry: `TxModel` 15, `CommitBehavior` 27, `codeunit_run` 193.
 - `ui.rs` (347): Dialogs raised by the code under test (`Message`, `Confirm`, `StrMenu`) and the test handler functions that answer them. Entry: `UiKind` 18, `UiHandler` 66, `dispatch_ui` 158, `dispatch_ui_returning` 163.

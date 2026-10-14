@@ -23,6 +23,8 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     // Feeds the client's Tell Me search only (docs/owner-review.md, 2026-10-14).
     "additionalsearchterms",
     "additionalsearchtermsml",
+    // Where the platform reads from (a replica); nothing a run or its dataset shows.
+    "dataaccessintent",
 ];
 
 /// Data item properties that change nothing a processing run can observe: they steer the request
@@ -38,6 +40,19 @@ const INERT_ITEM_PROPERTIES: &[&str] = &[
 
 /// Sections that only matter to a layout or a request page.
 const LAYOUT_SECTIONS: &[&str] = &["rendering", "labels", "wordlayout", "rdlclayout", "excellayout"];
+
+/// Column properties that steer how a layout shows a number. The Base Application states
+/// `AutoFormatType` on most decimal columns, so a dataset that refused them would refuse nearly every
+/// report; the dataset is taken to carry the same `decimalformatter` for them
+/// (docs/probes-needed.md, "Report.SaveAs dataset").
+const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &["autoformattype", "autoformatexpression", "decimalplaces"];
+
+/// Whether the data item `sec` states `UseTemporary = true`: its record is a temporary one, which
+/// holds only what the report's code inserts.
+pub fn uses_temporary(sec: &ast::Section) -> bool {
+    sec.properties()
+        .any(|p| p.name().eq_ignore_ascii_case("UseTemporary") && p.value_text().trim().eq_ignore_ascii_case("true"))
+}
 
 /// A data item before its names are resolved.
 pub struct RawItem {
@@ -59,6 +74,74 @@ pub struct Layout {
     /// Why running the report renders output: the layouts it declares, and `ProcessingOnly` not
     /// being true. A run refuses these after its request page, not before.
     pub output: Vec<String>,
+    /// The `Caption` property when it is a text literal.
+    pub caption: Option<String>,
+    /// The request page's `AboutTitle` and `AboutText` when they are text literals.
+    pub about_title: Option<String>,
+    pub about_text: Option<String>,
+    /// The kind of the default layout.
+    pub default_layout: ir::ReportLayout,
+    /// Why `Report.SaveAs(.., Xml, ..)` cannot write this report's dataset.
+    pub dataset_reasons: Vec<String>,
+}
+
+/// The value of a property written as one text literal (`'it''s'`), unquoted.
+fn text_literal(value: &str) -> Option<String> {
+    let v = value.trim();
+    let inner = v.strip_prefix('\'')?.strip_suffix('\'')?;
+    let unescaped = inner.replace("''", "\u{0}");
+    (!unescaped.contains('\'')).then(|| unescaped.replace('\u{0}', "'"))
+}
+
+/// The kind of the layout a report renders with by default. Only the two forms the corpus
+/// uses are told apart (`DefaultLayout = RDLC`, and `DefaultRenderingLayout` naming a layout of
+/// `Type = RDLC`); any other layout is `Other`.
+fn default_layout(obj: &ast::Object) -> ir::ReportLayout {
+    let prop = |n: &str| {
+        obj.properties()
+            .find(|p| p.name().eq_ignore_ascii_case(n))
+            .map(|p| p.value_text().trim().to_string())
+    };
+    if let Some(name) = prop("DefaultRenderingLayout") {
+        let name = unquote(&name);
+        let layout = obj
+            .sections()
+            .filter(|s| s.name().eq_ignore_ascii_case("rendering"))
+            .flat_map(|r| r.sections().collect::<Vec<_>>())
+            .find(|l| {
+                l.name().eq_ignore_ascii_case("layout")
+                    && l.args().first().is_some_and(|a| a.eq_ignore_ascii_case(&name))
+            });
+        let rdlc = layout.is_some_and(|l| {
+            l.properties()
+                .any(|p| p.name().eq_ignore_ascii_case("Type") && p.value_text().trim().eq_ignore_ascii_case("RDLC"))
+        });
+        return if rdlc {
+            ir::ReportLayout::Rdlc
+        } else {
+            ir::ReportLayout::Other
+        };
+    }
+    if let Some(kind) = prop("DefaultLayout") {
+        return if kind.eq_ignore_ascii_case("RDLC") {
+            ir::ReportLayout::Rdlc
+        } else {
+            ir::ReportLayout::Other
+        };
+    }
+    let declares_any = ["RDLCLayout", "WordLayout", "ExcelLayout"]
+        .iter()
+        .any(|n| prop(n).is_some())
+        || obj.sections().any(|s| {
+            ["rendering", "rdlclayout", "wordlayout", "excellayout"]
+                .iter()
+                .any(|n| s.name().eq_ignore_ascii_case(n))
+        });
+    if declares_any {
+        ir::ReportLayout::Other
+    } else {
+        ir::ReportLayout::None
+    }
 }
 
 fn bool_prop(value: &str) -> Option<bool> {
@@ -87,10 +170,22 @@ pub fn layout(obj: &ast::Object) -> Layout {
         transaction_type: None,
         reasons: Vec::new(),
         output: Vec::new(),
+        caption: None,
+        about_title: None,
+        about_text: None,
+        default_layout: default_layout(obj),
+        dataset_reasons: Vec::new(),
     };
     for p in obj.properties() {
         let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
         match name.as_str() {
+            "caption" => {
+                out.caption = text_literal(&value);
+                if out.caption.is_none() {
+                    out.dataset_reasons
+                        .push(format!("Caption = {} is not a text literal", value.trim()));
+                }
+            }
             "processingonly" => match bool_prop(&value) {
                 Some(b) => out.processing_only = b,
                 None => out
@@ -105,7 +200,14 @@ pub fn layout(obj: &ast::Object) -> Layout {
             },
             "transactiontype" => out.transaction_type = Some(value.trim().to_ascii_lowercase()),
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
-            "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" => out
+            // Rendering-only: how the report prints. `PreviewMode` belongs to the Base Application's
+            // G/L Register (handlers/TestReportDatasetHelpLink.al runs its SaveAs).
+            "defaultlayout"
+            | "defaultrenderinglayout"
+            | "rdlclayout"
+            | "wordlayout"
+            | "excellayout"
+            | "previewmode" => out
                 .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
             // The Schedule button of the request page. Nothing pins what a run does with it, but a
@@ -127,7 +229,29 @@ pub fn layout(obj: &ast::Object) -> Layout {
     for top in obj.sections() {
         match top.name().to_ascii_lowercase().as_str() {
             "dataset" => visit(&top, None, None, &mut out.items, &mut out.reasons),
-            "requestpage" => out.has_request_page = true,
+            "requestpage" => {
+                out.has_request_page = true;
+                for p in top.properties() {
+                    let pn = p.name().to_ascii_lowercase();
+                    let value = p.value_text();
+                    let slot = match pn.as_str() {
+                        "abouttitle" => &mut out.about_title,
+                        "abouttext" => &mut out.about_text,
+                        _ => continue,
+                    };
+                    *slot = text_literal(&value);
+                    if slot.is_none() {
+                        out.dataset_reasons
+                            .push(format!("{pn} = {} is not a text literal", value.trim()));
+                    }
+                }
+            }
+            "labels" if top.sections().next().is_some() => {
+                out.dataset_reasons
+                    .push("the report declares labels (whether the dataset carries them is not pinned)".into());
+                out.output
+                    .push("report section labels (a layout) is not supported yet".into());
+            }
             n if LAYOUT_SECTIONS.contains(&n) => out
                 .output
                 .push(format!("report section {n} (a layout) is not supported yet")),
@@ -311,14 +435,20 @@ fn visit(
         let table = args.get(1).cloned().unwrap_or_default();
         for p in s.properties() {
             let pn = p.name().to_ascii_lowercase();
+            let temporary_ok =
+                pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
             if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
                 && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
+                && !temporary_ok
             {
                 reasons.push(format!("property {pn} of dataitem {name} is not supported yet"));
             }
         }
         for t in s.triggers() {
             let tn = t.name().to_ascii_lowercase();
+            if crate::pages::is_synthetic(&tn) {
+                continue;
+            }
             if !["onpredataitem", "onaftergetrecord", "onpostdataitem"].contains(&tn.as_str()) {
                 reasons.push(format!("trigger {tn} of dataitem {name} is not supported yet"));
             }
@@ -348,6 +478,8 @@ pub struct ExtLayout {
     pub modifies: Vec<(String, ast::Section)>,
     /// The data items added with `addlast`, with `target` naming the item above them.
     pub items: Vec<RawItem>,
+    /// `add(Item)` blocks (columns for a base item): the item's name and the block.
+    pub adds: Vec<(String, ast::Section)>,
     pub reasons: Vec<String>,
 }
 
@@ -358,6 +490,7 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
     let mut out = ExtLayout {
         modifies: Vec::new(),
         items: Vec::new(),
+        adds: Vec::new(),
         reasons: Vec::new(),
     };
     for p in obj.properties() {
@@ -407,7 +540,9 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                             out.modifies.push((target, s.clone()));
                         }
                         // Columns only feed the layout and the dataset a SaveAs writes.
-                        "add" | "addafter" if s.sections().all(|c| c.name().eq_ignore_ascii_case("column")) => {}
+                        "add" if s.sections().all(|c| c.name().eq_ignore_ascii_case("column")) => {
+                            out.adds.push((target, s.clone()));
+                        }
                         "addlast" => {
                             if s.properties().next().is_some() || s.triggers().next().is_some() {
                                 out.reasons.push(format!(
@@ -486,6 +621,94 @@ struct Owner<'a> {
     file: usize,
     oi: usize,
     routine_at: &'a HashMap<(usize, usize), usize>,
+    /// Source offsets of the object's `column` sections, in source order: the index of an offset
+    /// is the ordinal `pages::column_name` names the column's routine by.
+    column_starts: Vec<usize>,
+    /// (ordinal, routine index) of the synthetic routine of each column that has one.
+    column_routines: HashMap<usize, usize>,
+}
+
+impl<'a> Owner<'a> {
+    fn new(
+        ws: &'a Workspace,
+        members: &'a crate::members::MemberTable<'a>,
+        file: usize,
+        oi: usize,
+        routine_at: &'a HashMap<(usize, usize), usize>,
+        obj: &ast::Object,
+    ) -> Owner<'a> {
+        let column_starts: Vec<usize> = crate::pages::column_sections(obj)
+            .iter()
+            .map(|s| usize::from(s.syntax().text_range().start()))
+            .collect();
+        let names: HashMap<String, usize> = column_starts
+            .iter()
+            .enumerate()
+            .map(|(i, _)| (crate::pages::column_name(i), i))
+            .collect();
+        let mut column_routines = HashMap::new();
+        for r in ast::routines_in(obj.syntax()) {
+            if let Some(&ordinal) = names.get(&r.name()) {
+                if let Some(&idx) = routine_at.get(&(oi, usize::from(r.syntax().text_range().start()))) {
+                    column_routines.insert(ordinal, idx);
+                }
+            }
+        }
+        Owner {
+            ws,
+            members,
+            file,
+            oi,
+            routine_at,
+            column_starts,
+            column_routines,
+        }
+    }
+
+    /// The columns declared directly in `sec` (a `dataitem` or an extension's `add`).
+    fn columns(&self, sec: &ast::Section, table: Option<usize>) -> Vec<ir::ReportColumn> {
+        sec.sections()
+            .filter(|c| c.name().eq_ignore_ascii_case("column"))
+            .map(|c| {
+                let args = c.args();
+                let name = args.first().cloned().unwrap_or_default();
+                let start = usize::from(c.syntax().text_range().start());
+                let ordinal = self.column_starts.iter().position(|&s| s == start);
+                let routine = ordinal.and_then(|o| self.column_routines.get(&o).copied());
+                let mut unsupported = None;
+                if args.len() != 2 {
+                    unsupported = Some(format!("column {name} does not state exactly a name and a source"));
+                } else if routine.is_none() {
+                    unsupported = Some(format!("column {name} has no routine"));
+                } else if let Some(p) = c
+                    .properties()
+                    .find(|p| !FORMAT_ONLY_COLUMN_PROPERTIES.contains(&p.name().to_ascii_lowercase().as_str()))
+                {
+                    // Every other column property (IncludeCaption, BlankZero, ...) changes what the
+                    // dataset carries for the column; no test pins any of them.
+                    unsupported = Some(format!(
+                        "column {name} states the property {} (its effect on the dataset is not pinned)",
+                        p.name()
+                    ));
+                }
+                // A source that is one field of the item's table: its properties decide how a
+                // Decimal is formatted.
+                let field = table.and_then(|t| {
+                    let source = unquote(args.get(1)?);
+                    self.members[t]
+                        .fields
+                        .iter()
+                        .position(|f| f.name.eq_ignore_ascii_case(&source))
+                });
+                ir::ReportColumn {
+                    name,
+                    routine,
+                    unsupported,
+                    field,
+                }
+            })
+            .collect()
+    }
 }
 
 /// The IR of one data item. `parent_table` is the table of the item it is nested under.
@@ -567,6 +790,7 @@ fn item_ir(
         on_pre: trigger("OnPreDataItem"),
         on_after_get: trigger("OnAfterGetRecord"),
         on_post: trigger("OnPostDataItem"),
+        columns: o.columns(sec, table),
     }
 }
 
@@ -580,13 +804,7 @@ fn object_trigger(o: &Owner, obj: &ast::Object, name: &str) -> Option<usize> {
 /// The IR of report `cx.oi`. `reasons` are what the lowering of the item variables found.
 pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::Report {
     let layout = cx.layout;
-    let o = Owner {
-        ws: cx.ws,
-        members: cx.members,
-        file: cx.file,
-        oi: cx.oi,
-        routine_at: cx.routine_at,
-    };
+    let o = Owner::new(cx.ws, cx.members, cx.file, cx.oi, cx.routine_at, obj);
     let mut items: Vec<ir::ReportItem> = Vec::new();
     for raw in &layout.items {
         let slot = cx.slots.get(&raw.name.to_lowercase()).copied();
@@ -609,6 +827,11 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         request_flag_slot: cx.request_flag_slot,
         output: layout.output.clone(),
         unsupported: reasons,
+        caption: layout.caption.clone(),
+        about_title: layout.about_title.clone(),
+        about_text: layout.about_text.clone(),
+        layout: layout.default_layout,
+        dataset_unsupported: layout.dataset_reasons.clone(),
     }
 }
 
@@ -634,13 +857,7 @@ pub fn alias_slot(i: usize) -> usize {
 
 /// The IR of the reportextension `cx.oi`, and why it cannot run if it cannot.
 pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<String>) {
-    let o = Owner {
-        ws: cx.ws,
-        members: cx.members,
-        file: cx.file,
-        oi: cx.oi,
-        routine_at: cx.routine_at,
-    };
+    let o = Owner::new(cx.ws, cx.members, cx.file, cx.oi, cx.routine_at, obj);
     let mut reasons = cx.layout.reasons.clone();
     let base_index = |name: &str| {
         cx.base_layout
@@ -706,6 +923,16 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
         .filter(|&i| cx.base_items[i].slot.is_some())
         .map(|i| (i, alias_slot(i)))
         .collect();
+    let mut adds = Vec::new();
+    for (name, sec) in &cx.layout.adds {
+        match base_index(name) {
+            Some(item) => adds.push(ir::ReportExtAdd {
+                item,
+                columns: o.columns(sec, cx.base_items[item].table),
+            }),
+            None => reasons.push(format!("add({name}): the report has no such data item")),
+        }
+    }
     (
         ir::ReportExt {
             base: cx.base,
@@ -714,6 +941,7 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
             aliases,
             modifies,
             added,
+            adds,
         },
         reasons,
     )
@@ -781,13 +1009,11 @@ mod tests {
     }
 
     #[test]
-    fn columns_added_after_an_element_only_feed_the_layout() {
-        // Like `add` with columns only (the dataset a SaveAs writes is the only reader).
+    fn addafter_stays_refused_because_the_dataset_order_is_not_pinned() {
+        // `add` columns land in the dataset a SaveAs writes (report-saveas); where `addafter`
+        // puts them, and where it puts a data item, is pinned by no corpus test.
         let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { column(X; No) { } } } }");
-        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
-        assert!(l.items.is_empty());
-        // A data item added after an element would change the order the items run in: no corpus
-        // test pins where it lands, so it stays refused.
+        assert!(l.reasons.join(";").contains("addafter(A)"), "{:?}", l.reasons);
         let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { dataitem(B; Ledger) { } } } }");
         assert!(l.reasons.join(";").contains("addafter(A)"), "{:?}", l.reasons);
     }

@@ -1562,6 +1562,31 @@ fn read_from_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NR
     }
 }
 
+/// `XmlDocument.ReadFrom(InStream, var XmlDocument)`: reads the stream to its end and parses it as
+/// the text form does (handlers/TestReportDatasetHelpLink.al:RenderDataset reads what `Report.SaveAs`
+/// wrote, a UTF-8 document with a byte order mark). The encoding is the byte order mark's, else UTF-8;
+/// a UTF-16 document and bytes that are not UTF-8 are refused (not pinned).
+fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let bytes = match a.first() {
+        Some(Value::Library(_, h)) => match &mut *h.borrow_mut() {
+            LibraryValue::InStream(s) => s.drain(),
+            _ => return unsupported("XmlDocument.ReadFrom of something that is not an InStream"),
+        },
+        other => return unsupported(format!("XmlDocument.ReadFrom of {other:?}")),
+    };
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
+        return unsupported("XmlDocument.ReadFrom of a UTF-16 stream (not pinned)");
+    }
+    let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    let Ok(text) = std::str::from_utf8(body) else {
+        return unsupported("XmlDocument.ReadFrom of a stream that is not UTF-8 (not pinned)");
+    };
+    let mut args = [Value::Text(text.to_string()), a[1].clone()];
+    let result = read_from_text(c, None, &mut args)?;
+    a[1] = args[1].clone();
+    Ok(result)
+}
+
 fn doc_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let doc = new_node(XData::Document {
         decl: None,
@@ -2391,6 +2416,15 @@ fn attrs_get_name(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
 
 // ----- node lists
 
+/// The nodes of an `XmlNodeList` as `XmlNode` values, for `foreach`. `None` for any other value.
+pub fn node_list_items(v: &Value) -> Option<Vec<Value>> {
+    let Value::Library(_, h) = v else { return None };
+    match &*h.borrow() {
+        LibraryValue::XmlList(items) => Some(items.iter().map(|n| tagged("XmlNode", n.clone())).collect()),
+        _ => None,
+    }
+}
+
 fn list_items(r: Option<&mut Value>) -> Result<Vec<Handle>, Signal> {
     match r {
         Some(Value::Library(_, h)) => match &*h.borrow() {
@@ -2552,6 +2586,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     let is_node = node_types.contains(&r);
     let f: NativeFn = match (r, sig.name.as_str(), params.as_slice()) {
         ("XmlDocument", "ReadFrom", ["Text", "XmlDocument"]) => read_from_text,
+        ("XmlDocument", "ReadFrom", ["InStream", "XmlDocument"]) => read_from_stream,
         ("XmlDocument", "Create", _) if !sig.instance => doc_create,
         ("XmlElement", "Create", ["Text"] | ["Text", "Any"]) => element_create_name,
         ("XmlElement", "Create", ["Text", "Text"] | ["Text", "Text", "Any"]) => element_create_ns,

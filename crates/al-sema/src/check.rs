@@ -834,7 +834,7 @@ impl<'a> Checker<'a> {
                 let a = s.args();
                 match s.name().to_ascii_lowercase().as_str() {
                     "dataitem" => a.get(1).cloned(),
-                    "modify" => a.first().and_then(|n| base_items.get(&n.to_lowercase()).cloned()),
+                    "modify" | "add" => a.first().and_then(|n| base_items.get(&n.to_lowercase()).cloned()),
                     _ => None,
                 }
             });
@@ -1150,11 +1150,7 @@ impl<'a> Checker<'a> {
                     parts.push(mname);
                     return match self.ws.resolve_ref(sc.file, k, &parts) {
                         Resolution::Found(i) => {
-                            if k == ObjKind::Codeunit {
-                                self.reach_run(i);
-                            } else {
-                                self.touch_schema(i);
-                            }
+                            self.reach_named_object(sc, node, k, i);
                             let id = self.ws.objects[i].id.unwrap_or(0) as i32;
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
@@ -1247,11 +1243,7 @@ impl<'a> Checker<'a> {
                     E::ObjKeyword(k) => match self.resolve_quiet(sc.file, k, &rhs) {
                         Some(i) => {
                             // `Database::"X"`, `Page::"X"`: the object's id. A codeunit named so can run.
-                            if k == ObjKind::Codeunit {
-                                self.reach_run(i);
-                            } else {
-                                self.touch_schema(i);
-                            }
+                            self.reach_named_object(sc, node, k, i);
                             let id = self.ws.objects[i].id.unwrap_or(0) as i32;
                             self.record(sc, node, Res::ObjectId(id));
                             E::Val(Ty::Integer)
@@ -1336,6 +1328,24 @@ impl<'a> Checker<'a> {
                 self.diag(sc, node, "AR1000", format!("unresolved name `{}`", name_of(node)));
                 E::Val(Ty::Unknown)
             }
+        }
+    }
+
+    /// `Codeunit::"X"`, `Page::"X"`, ...: the object's id is used. A codeunit named so can run. A test
+    /// hands `Report::"X"` to a helper that runs it
+    /// (handlers/TestReportDatasetHelpLink.al:RenderDataset(Report::"G/L Register")), so the call that
+    /// runs it names no constant: code of the workspace that passes a report's id to a call may run it. A
+    /// dependency's mention (a report id in a setup table) does not.
+    fn reach_named_object(&self, sc: &Scope, node: &SyntaxNode, k: ObjKind, i: usize) {
+        if k == ObjKind::Codeunit {
+            self.reach_run(i);
+        } else {
+            self.touch_schema(i);
+        }
+        // Only as an argument of a call; `I := Report::"X"` just names the id (check/demand.rs pins that).
+        let is_argument = node.parent().is_some_and(|p| p.kind() == SyntaxKind::ArgList);
+        if k == ObjKind::Report && is_argument && !self.ws.is_dependency(sc.oi) {
+            self.touch_full(i);
         }
     }
 

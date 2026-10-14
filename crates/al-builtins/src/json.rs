@@ -74,6 +74,8 @@ fn handle_of(v: &Value) -> Result<Handle, Signal> {
             "jsonobject" => JsonNode::Object(Vec::new()),
             "jsonarray" => JsonNode::Array(Vec::new()),
             "jsonvalue" => JsonNode::Scalar(Scalar::Undefined),
+            // An unassigned JsonToken acts as a JSON null (json/TestJsonTokenUnassignedEvaluateGuidContracts.al).
+            "jsontoken" => JsonNode::Scalar(Scalar::Null),
             other => return unsupported(format!("use of an unassigned {other}")),
         };
         *h.borrow_mut() = LibraryValue::Json(JsonCell { node, parent: None });
@@ -1259,11 +1261,27 @@ fn as_token(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<V
     Ok(tagged("JsonToken", recv(r)?))
 }
 
+/// AsObject / AsArray of a token that holds a value raise a conversion error between the .NET token
+/// types (json/TestJsonTokenUnassignedEvaluateGuidContracts.al:UnassignedJsonToken_ActsAsANull, a null).
 fn token_as_object(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    child_as(recv(r)?, "object", "JsonObject")
+    let h = recv(r)?;
+    if with_node(&h, |n| matches!(n, JsonNode::Scalar(Scalar::Null))) {
+        return Err(conversion(
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonToken",
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonObject",
+        ));
+    }
+    child_as(h, "object", "JsonObject")
 }
 fn token_as_array(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    child_as(recv(r)?, "array", "JsonArray")
+    let h = recv(r)?;
+    if with_node(&h, |n| matches!(n, JsonNode::Scalar(Scalar::Null))) {
+        return Err(conversion(
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonToken",
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonArray",
+        ));
+    }
+    child_as(h, "array", "JsonArray")
 }
 fn token_as_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let h = recv(r)?;

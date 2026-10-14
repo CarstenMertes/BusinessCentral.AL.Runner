@@ -247,8 +247,14 @@ pub fn read_package_with(app: &[u8], vars: &Vars) -> Result<(Manifest, Sources),
             .par_iter()
             .map(|e| {
                 let bytes = zip.read(e)?;
-                let text = String::from_utf8_lossy(&bytes);
-                let text = text.strip_prefix('\u{feff}').unwrap_or(&text).to_string();
+                // The decoded bytes become the text without a copy when they are valid UTF-8.
+                let mut text = match String::from_utf8(bytes) {
+                    Ok(text) => text,
+                    Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+                };
+                if text.starts_with('\u{feff}') {
+                    text.drain(..'\u{feff}'.len_utf8());
+                }
                 let name = if source_zip {
                     e.name.clone()
                 } else {

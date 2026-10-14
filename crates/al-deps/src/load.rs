@@ -101,6 +101,7 @@ pub fn read_package_at(path: &Path) -> Result<(Manifest, Sources), String> {
 /// Reads the manifest of every `*.app` and `*.zip` file directly inside `dir`. A file that
 /// cannot be read is returned as an error line, not dropped: the caller prints it.
 pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
+    use rayon::prelude::*;
     let mut found = Vec::new();
     let mut problems = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -111,10 +112,17 @@ pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
         .filter(|p| is_package_file(p))
         .collect();
     paths.sort();
-    for path in paths {
-        let read = std::fs::read(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| read_info_with(&bytes, &vars_for(&path)).map_err(|e: PackageError| e.to_string()));
+    // The files are read side by side (a big package is tens of megabytes); the results are
+    // handled in path order.
+    let reads: Vec<Result<(Manifest, bool), String>> = paths
+        .par_iter()
+        .map(|path| {
+            std::fs::read(path)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| read_info_with(&bytes, &vars_for(path)).map_err(|e: PackageError| e.to_string()))
+        })
+        .collect();
+    for (path, read) in paths.into_iter().zip(reads) {
         match read {
             Ok((manifest, has_source)) => found.push(Found {
                 path,
@@ -128,6 +136,10 @@ pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
     }
     (found, problems)
 }
+
+/// What `scan_dir` found, by directory: a search that goes round again with one more directory
+/// does not read the first ones again.
+pub type ScanCache = std::collections::HashMap<PathBuf, (Vec<Found>, Vec<String>)>;
 
 /// An app the caller already has as source (built in this run).
 #[derive(Debug, Clone)]
@@ -174,6 +186,22 @@ pub struct Request<'a> {
 
 /// Chooses the packages that satisfy the project's dependencies and reads their source.
 pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
+    read_planned(plan_dependencies(req, &mut ScanCache::new())?)
+}
+
+/// The packages chosen for the dependencies of a project, not read yet.
+pub struct Planned {
+    pool: Vec<Candidate>,
+    paths: Vec<Option<PathBuf>>,
+    notes: Vec<String>,
+    order: Vec<usize>,
+    /// Dependencies no package satisfied.
+    pub skipped: Vec<SelectError>,
+}
+
+/// Looks at the packages in the search directories and chooses one for every dependency; reads
+/// only their manifests. `scans` remembers directories already looked at.
+pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Planned, String> {
     let mut pool: Vec<Candidate> = Vec::new();
     let mut paths: Vec<Option<PathBuf>> = Vec::new();
     let mut notes = Vec::new();
@@ -194,7 +222,7 @@ pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
         paths.push(None);
     }
     for (tier, dir) in req.search_dirs.iter().enumerate() {
-        let (found, problems) = scan_dir(dir);
+        let (found, problems) = scans.entry(dir.clone()).or_insert_with(|| scan_dir(dir)).clone();
         notes.extend(problems);
         for f in found {
             let m = f.manifest;
@@ -225,8 +253,33 @@ pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
     };
     let plan = resolve(&project, &pool, &opts).map_err(|e| e.to_string())?;
     notes.extend(plan.notes);
+    Ok(Planned {
+        pool,
+        paths,
+        notes,
+        order: plan.order,
+        skipped: plan.skipped,
+    })
+}
+
+/// Reads the sources of the packages a plan chose, side by side.
+pub fn read_planned(planned: Planned) -> Result<Loaded, String> {
+    use rayon::prelude::*;
+    let Planned {
+        pool,
+        paths,
+        mut notes,
+        order,
+        skipped,
+    } = planned;
+    let to_read: Vec<&PathBuf> = order
+        .iter()
+        .filter_map(|&i| paths[i].as_ref().filter(|_| pool[i].has_source))
+        .collect();
+    let mut reads: std::collections::VecDeque<Result<(Manifest, Sources), String>> =
+        to_read.par_iter().map(|path| read_package_at(path)).collect();
     let mut apps = Vec::new();
-    for i in plan.order {
+    for i in order {
         let Some(path) = paths[i].clone() else { continue };
         let c = &pool[i];
         if !c.has_source {
@@ -240,7 +293,7 @@ pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
             ));
             continue;
         }
-        let (manifest, sources): (Manifest, Sources) = read_package_at(&path)?;
+        let (manifest, sources): (Manifest, Sources) = reads.pop_front().expect("one read per package")?;
         let role = if manifest.id.eq_ignore_ascii_case(SYSTEM_APP_ID) {
             Role::Platform
         } else {
@@ -262,11 +315,7 @@ pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
             role,
         });
     }
-    Ok(Loaded {
-        apps,
-        notes,
-        skipped: plan.skipped,
-    })
+    Ok(Loaded { apps, notes, skipped })
 }
 
 #[cfg(test)]
@@ -419,6 +468,46 @@ mod tests {
         .unwrap();
         let names: Vec<_> = loaded.apps.iter().map(|a| a.app.name.as_str()).collect();
         assert_eq!(names, ["Base"]);
+    }
+
+    #[test]
+    fn a_planned_search_reads_no_sources_and_a_scan_cache_does_not_look_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        write_app(
+            dir.path(),
+            "base.app",
+            "base",
+            "Base",
+            "1.0.0.0",
+            &[],
+            &[("src/B.al", "codeunit 1 B { }")],
+        );
+        let req = Request {
+            project: &project(&[("base", "Base", "1.0.0.0")]),
+            workspace_apps: &[],
+            search_dirs: &[dir.path().to_path_buf()],
+            missing: MissingPolicy::Skip,
+        };
+        let mut scans = ScanCache::new();
+        let first = plan_dependencies(&req, &mut scans).unwrap();
+        assert!(first.skipped.is_empty());
+        // A package added after the first look is not seen by a second plan that shares the scans...
+        write_app(
+            dir.path(),
+            "later.app",
+            "later",
+            "Later",
+            "1.0.0.0",
+            &[],
+            &[("src/L.al", "codeunit 9 L { }")],
+        );
+        let again = plan_dependencies(&req, &mut scans).unwrap();
+        assert_eq!(again.pool.len(), 1);
+        // ...and is seen by one that scans afresh.
+        assert_eq!(plan_dependencies(&req, &mut ScanCache::new()).unwrap().pool.len(), 2);
+        let loaded = read_planned(again).unwrap();
+        assert_eq!(loaded.apps.len(), 1);
+        assert_eq!(loaded.apps[0].app.files.len(), 1);
     }
 
     #[test]

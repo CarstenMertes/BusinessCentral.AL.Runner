@@ -13,7 +13,7 @@
 
 use crate::build::{BuildId, BuildQuery, Origin, Selection, parse_index, select_build};
 use crate::cache::{BuildDir, Store};
-use crate::load::{Loaded, Request, load_dependencies};
+use crate::load::{Loaded, Planned, Request, ScanCache, plan_dependencies, read_planned};
 use crate::package::{Vars, read_info_with};
 use crate::remote::{HttpSource, RangeSource, RemoteError, RemoteZip, fetch_all, http_agent};
 use crate::select::{DepDecl, MissingPolicy, SelectError};
@@ -150,7 +150,8 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
     let mut remote: Option<(String, RemoteZip<C::Src>)> = None;
     let mut fetched: Vec<String> = Vec::new();
     let mut tried: HashSet<String> = HashSet::new();
-    let mut loaded = Loaded::default();
+    let mut scans = ScanCache::new();
+    let mut planned: Option<Planned> = None;
     for _ in 0..ROUNDS {
         let mut dirs = req.search_dirs.to_vec();
         if let Some((bd, _)) = &chosen {
@@ -158,13 +159,17 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             log.extend(notes);
             dirs.push(bd.apps_dir());
         }
-        loaded = load_dependencies(&Request {
-            project: req.project,
-            workspace_apps: req.workspace_apps,
-            search_dirs: &dirs,
-            missing: MissingPolicy::Skip,
-        })?;
-        let todo: Vec<DepDecl> = loaded
+        // Only the choice is made here; the sources are read once, after the last round.
+        let round = plan_dependencies(
+            &Request {
+                project: req.project,
+                workspace_apps: req.workspace_apps,
+                search_dirs: &dirs,
+                missing: MissingPolicy::Skip,
+            },
+            &mut scans,
+        )?;
+        let todo: Vec<DepDecl> = round
             .skipped
             .iter()
             .filter_map(|e| match e {
@@ -175,6 +180,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             // The feed holds only Microsoft's apps: do not select a build for anything else.
             .filter(|d| d.publisher.is_empty() || d.publisher.eq_ignore_ascii_case("Microsoft"))
             .collect();
+        planned = Some(round);
         if todo.is_empty() {
             break;
         }
@@ -240,6 +246,8 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                     }
                 }
                 bd.put_entry(&entry.name, url, &bytes)?;
+                // The directory has a file more than the last look found.
+                scans.remove(&bd.apps_dir());
                 log.push(format!(
                     "artifact: fetched {} ({} bytes) from {url}",
                     entry.name,
@@ -262,6 +270,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             break;
         }
     }
+    let loaded = read_planned(planned.expect("at least one round ran"))?;
     let used = chosen.map(|(_, sel)| {
         let how = match sel.origin {
             Origin::Cache => "cache",

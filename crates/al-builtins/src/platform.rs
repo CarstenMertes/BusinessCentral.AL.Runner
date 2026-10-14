@@ -56,6 +56,7 @@ pub enum Virtual {
     QueryMetadata,
     EventSubscription,
     PageAction,
+    TableRelations,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -162,6 +163,7 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_142, "Query Metadata", Provider::Virtual(Virtual::QueryMetadata)),
     (2_000_000_140, "Event Subscription", Provider::Virtual(Virtual::EventSubscription)),
     (2_000_000_143, "Page Action", Provider::Virtual(Virtual::PageAction)),
+    (2_000_000_141, "Table Relations Metadata", Provider::Virtual(Virtual::TableRelations)),
     (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
     (2_000_000_121, "User Property", Provider::Stored),
     (2_000_000_175, "Scheduled Task", Provider::Stored),
@@ -240,6 +242,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_140, &[1, 2, 3, 4, 5, 6, 7]),
     // Page Action: record/TestPageActionVirtualTable.al. Captions, tool tips, Promoted and the Run* columns but RunObjectID are not read.
     (2_000_000_143, &[1, 2, 3, 4, 5, 6, 8, 16]),
+    // Table Relations Metadata: record/TestTableRelationsMetadataVirtualTable.al. The condition type and value and the names are not read.
+    (2_000_000_141, &[1, 2, 3, 4, 5, 6, 8]),
     // Windows Language: record/TestWindowsLanguageTable.al.
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.

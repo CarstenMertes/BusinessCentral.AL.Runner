@@ -111,8 +111,9 @@ pub(super) fn event_subscription_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
         if o.kind == "uncompiled codeunit" {
             let mut k = blank(t);
             k[pos(t, 1)] = Value::Integer(id as i32);
-            out.push(Entry::poisoned(
+            out.push(Entry::poisoned_prefix(
                 k,
+                1,
                 format!(
                     "codeunit '{}' was not compiled, so the event subscribers it declares are not known",
                     o.name
@@ -230,15 +231,16 @@ pub(super) fn page_action_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         let mut key = blank(t);
         key[pos(t, 1)] = Value::Integer(id as i32);
         let Some(page) = &o.page else {
-            out.push(Entry::poisoned(
+            out.push(Entry::poisoned_prefix(
                 key,
+                1,
                 format!("page '{}' was not compiled, so its actions are not known", o.name),
             ));
             continue;
         };
         match page_actions(&c, o, page, t, &key) {
             Ok(rows) => out.extend(rows.into_iter().map(Entry::ok)),
-            Err(why) => out.push(Entry::poisoned(key, why)),
+            Err(why) => out.push(Entry::poisoned_prefix(key, 1, why)),
         }
     }
     out
@@ -318,6 +320,173 @@ fn page_actions(
             for k in kids.into_iter().rev() {
                 stack.push((k, depth + 1, me));
             }
+        }
+    }
+    Ok(rows)
+}
+
+// ---- Table Relations Metadata -----------------------------------------------------------------------
+
+/// Table Relations Metadata: "Table ID" (1), "Field No." (2), "Relation No." (3), "Condition No." (4),
+/// "Related Table ID" (5), "Related Field No." (6), "Condition Field No." (8). One row per arm of a
+/// field's `TableRelation`, or per condition of an arm that has some; `where(...)` filters are not
+/// conditions (record/TestTableRelationsMetadataVirtualTable.al). The arms number from 1 in
+/// declaration order; "Condition No." counts a row's condition from 1 and is 0 for an arm with none,
+/// and a row with no condition reports "Condition Field No." 0 (not pinned: docs/probes-needed.md).
+pub(super) fn table_relations_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    let engine = p.engine();
+    let c = Catalog::new(&engine);
+    let mut out = Vec::new();
+    for o in c.objects {
+        let (Some(id), "table") = (o.id, base_kind(o)) else {
+            continue;
+        };
+        let mut key = blank(t);
+        key[pos(t, 1)] = Value::Integer(id as i32);
+        let Some(table) = &o.table else {
+            out.push(Entry::poisoned_prefix(
+                key,
+                1,
+                format!("table '{}' was not compiled, so the relations of its fields are not known", o.name),
+            ));
+            continue;
+        };
+        for f in &table.fields {
+            if !f.relation {
+                continue;
+            }
+            let mut fkey = key.clone();
+            fkey[pos(t, 2)] = Value::Integer(f.id as i32);
+            match field_relations(&c, o, table, f, t, &fkey) {
+                Ok(rows) => out.extend(rows.into_iter().map(Entry::ok)),
+                Err(why) => out.push(Entry::poisoned_prefix(fkey, 2, why)),
+            }
+        }
+    }
+    out
+}
+
+/// One arm of a relation as the table lists it: the related table and field, and the ids of the
+/// fields of the own table its conditions name.
+struct Arm {
+    related_table: u32,
+    related_field: u32,
+    conditions: Vec<u32>,
+}
+
+/// The first primary key field of a compiled table.
+fn first_key_field(related: &Object, what: &str) -> Result<u32, String> {
+    let rt = related
+        .table
+        .as_ref()
+        .ok_or_else(|| format!("{what}: related table '{}' was not compiled", related.name))?;
+    rt.keys
+        .first()
+        .and_then(|k| k.first())
+        .and_then(|p| rt.fields.get(*p))
+        .map(|f| f.id)
+        .ok_or_else(|| format!("{what}: related table '{}' has no key", related.name))
+}
+
+fn arms_of(c: &Catalog, table: &al_ir::Table, f: &al_ir::Field, what: &str) -> Result<Vec<Arm>, String> {
+    let mut out = Vec::new();
+    if !f.relation_arms.is_empty() {
+        for arm in &f.relation_arms {
+            let related = arm
+                .table
+                .and_then(|i| c.objects.get(i))
+                .ok_or_else(|| format!("{what}: related table '{}' is not in the program", arm.table_name))?;
+            let related_table = related.id.ok_or_else(|| format!("{what}: related table has no id"))?;
+            let related_field = match arm.field {
+                Some(p) => related
+                    .table
+                    .as_ref()
+                    .and_then(|rt| rt.fields.get(p))
+                    .map(|rf| rf.id)
+                    .ok_or_else(|| format!("{what}: field of '{}' not compiled", related.name))?,
+                None => first_key_field(related, what)?,
+            };
+            let conditions = arm
+                .conditions
+                .iter()
+                .map(|cond| {
+                    table
+                        .fields
+                        .get(cond.field)
+                        .map(|x| x.id)
+                        .ok_or_else(|| format!("{what}: condition field not found"))
+                })
+                .collect::<Result<_, _>>()?;
+            out.push(Arm {
+                related_table,
+                related_field,
+                conditions,
+            });
+        }
+        return Ok(out);
+    }
+    // The runtime does not understand this relation (a `filter(...)` condition, for one); the
+    // compile kept the tables and fields it names.
+    if f.relation_meta.is_empty() {
+        return Err(format!("{what}: the shape of its TableRelation is not understood"));
+    }
+    for arm in &f.relation_meta {
+        let related = &c.objects[arm.table];
+        let related_table = related.id.ok_or_else(|| format!("{what}: related table has no id"))?;
+        let related_field = match arm.field {
+            Some(p) => related
+                .table
+                .as_ref()
+                .and_then(|rt| rt.fields.get(p))
+                .map(|rf| rf.id)
+                .ok_or_else(|| format!("{what}: field of '{}' not compiled", related.name))?,
+            None => first_key_field(related, what)?,
+        };
+        let conditions = arm
+            .conditions
+            .iter()
+            .map(|&p| {
+                table
+                    .fields
+                    .get(p)
+                    .map(|x| x.id)
+                    .ok_or_else(|| format!("{what}: condition field not found"))
+            })
+            .collect::<Result<_, _>>()?;
+        out.push(Arm {
+            related_table,
+            related_field,
+            conditions,
+        });
+    }
+    Ok(out)
+}
+
+fn field_relations(
+    c: &Catalog,
+    o: &Object,
+    table: &al_ir::Table,
+    f: &al_ir::Field,
+    t: &TableDef,
+    fkey: &al_data::Row,
+) -> Result<Vec<al_data::Row>, String> {
+    let what = format!("field '{}' of table '{}'", f.name, o.name);
+    let mut rows = Vec::new();
+    for (n, arm) in arms_of(c, table, f, &what)?.iter().enumerate() {
+        let mut row = fkey.clone();
+        row[pos(t, 3)] = Value::Integer(n as i32 + 1);
+        row[pos(t, 5)] = Value::Integer(arm.related_table as i32);
+        row[pos(t, 6)] = Value::Integer(arm.related_field as i32);
+        if arm.conditions.is_empty() {
+            row[pos(t, 4)] = Value::Integer(0);
+            row[pos(t, 8)] = Value::Integer(0);
+            rows.push(row.clone());
+        }
+        for (k, own) in arm.conditions.iter().enumerate() {
+            let mut r = row.clone();
+            r[pos(t, 4)] = Value::Integer(k as i32 + 1);
+            r[pos(t, 8)] = Value::Integer(*own as i32);
+            rows.push(r);
         }
     }
     Ok(rows)

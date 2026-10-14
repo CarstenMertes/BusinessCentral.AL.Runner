@@ -676,6 +676,11 @@ pub struct Field {
     /// The `TableRelation` arms in written order; empty when the field has none or its shape is
     /// not understood (`relation` tells the two apart).
     pub relation_arms: Vec<RelationArm>,
+    /// For a relation the runtime does not understand (`relation` set, `relation_arms` empty):
+    /// the tables, fields and condition fields it names, for the Table Relations Metadata table
+    /// only. Empty when the relation is understood or not even that is clear.
+    #[serde(default)]
+    pub relation_meta: Vec<MetaRelationArm>,
     /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
     pub flow_filter: bool,
     /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither
@@ -698,6 +703,17 @@ pub struct RelationArm {
     pub field: Option<usize>,
     /// Which related rows are valid; `None` when a where() clause is there but not understood.
     pub wheres: Option<Vec<RelationWhere>>,
+}
+
+/// An arm of a relation as the Table Relations Metadata table lists it (see [`Field::relation_meta`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetaRelationArm {
+    /// Positions of the own fields the arm's conditions name.
+    pub conditions: Vec<usize>,
+    /// Object index of the related table.
+    pub table: usize,
+    /// Position of the related field; `None`: the first primary key field.
+    pub field: Option<usize>,
 }
 
 /// `Field = const(x)` on the referencing table: `field` is a position in its own field list.

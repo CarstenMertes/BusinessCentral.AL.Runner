@@ -297,8 +297,9 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
         let Some(page) = &o.page else {
             let mut k = blank(t);
             k[pos(t, 1)] = Value::Integer(id as i32);
-            out.push(Entry::poisoned(
+            out.push(Entry::poisoned_prefix(
                 k,
+                1,
                 format!("page '{}' was not compiled, so its controls are not known", o.name),
             ));
             continue;

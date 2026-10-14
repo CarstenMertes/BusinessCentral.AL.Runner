@@ -6,10 +6,11 @@
 //! field at once. Whether a table keeps the record's own buffer (temporary
 //! tables) or a copy (database tables) is decided by the VM at the store
 //! boundary (streams/TestBlobUncommittedWriteIsolation.al). An `InStream`
-//! reads a snapshot taken when it is created.
+//! is a live view of that buffer (streams/TestStreamsRuntimeContracts.al:InStream_CreatedBeforeAWrite_SeesTheWrite).
 //!
-//! Text is written as UTF-8 and `Write(Integer)` as 4 little-endian bytes; the
-//! corpus only observes round trips and `Length() > 0`.
+//! `CreateOutStream` does not empty the buffer: a stream writes from the start and overwrites what
+//! was there (:BlobField_CreateOutStream_DoesNotEmptyExistingData). Text is written in
+//! Windows-1252 unless an encoding says otherwise (:WriteText_DefaultEncodingIsWindows1252_NotUtf8).
 
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
@@ -21,6 +22,8 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub struct BlobBuf {
     pub bytes: Vec<u8>,
+    /// Where the most recent `OutStream` on this buffer writes next. `CreateOutStream` sets it to 0.
+    pub write_pos: usize,
     /// False after the record was read from a table: the content then has to be
     /// fetched with `CalcFields` before a stream reads it
     /// (streams/TestBlob.al Blob_Get_WithoutCalcFields_InStreamReadsEmpty).
@@ -32,6 +35,7 @@ pub type BlobRef = Rc<RefCell<BlobBuf>>;
 pub fn new_blob() -> BlobRef {
     Rc::new(RefCell::new(BlobBuf {
         bytes: Vec::new(),
+        write_pos: 0,
         loaded: true,
     }))
 }
@@ -40,17 +44,33 @@ pub fn new_blob() -> BlobRef {
 pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
     Rc::new(RefCell::new(BlobBuf {
         bytes: b.borrow().bytes.clone(),
+        write_pos: 0,
         loaded,
     }))
 }
 
-/// How text becomes bytes in a stream. The corpus pins UTF-8 and Windows (cp1252: one byte per
-/// representable character, text/TestTextEncodingWindows.al); the others are refused.
+/// Writes `bytes` at the buffer's write position (over what is there, then past the end) and
+/// moves the position on.
+pub fn write_bytes(b: &BlobRef, bytes: &[u8]) {
+    let mut buf = b.borrow_mut();
+    let at = buf.write_pos.min(buf.bytes.len());
+    let overlap = bytes.len().min(buf.bytes.len() - at);
+    buf.bytes[at..at + overlap].copy_from_slice(&bytes[..overlap]);
+    buf.bytes.extend_from_slice(&bytes[overlap..]);
+    buf.write_pos = at + bytes.len();
+    buf.loaded = true;
+}
+
+/// How text becomes bytes in a stream. Windows is cp1252 and the default; MSDos gives the same
+/// bytes as Windows; UTF16 is little endian without a byte order mark
+/// (streams/TestStreamsRuntimeContracts.al:WriteText_ExplicitEncodings_Bytes).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Encoding {
-    #[default]
     Utf8,
+    #[default]
     Windows,
+    MsDos,
+    Utf16,
 }
 
 /// Unicode of cp1252 bytes 0x80..=0x9F (the undefined ones map to themselves, as .NET does).
@@ -64,7 +84,8 @@ impl Encoding {
     pub fn encode(self, s: &str) -> Vec<u8> {
         match self {
             Encoding::Utf8 => s.as_bytes().to_vec(),
-            Encoding::Windows => s
+            Encoding::Utf16 => s.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+            Encoding::Windows | Encoding::MsDos => s
                 .chars()
                 .map(|c| {
                     let cp = c as u32;
@@ -84,7 +105,11 @@ impl Encoding {
     pub fn decode(self, b: &[u8]) -> String {
         match self {
             Encoding::Utf8 => String::from_utf8_lossy(b).into_owned(),
-            Encoding::Windows => b
+            Encoding::Utf16 => {
+                let units: Vec<u16> = b.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+                String::from_utf16_lossy(&units)
+            }
+            Encoding::Windows | Encoding::MsDos => b
                 .iter()
                 .map(|&x| match x {
                     0x80..=0x9F => char::from_u32(u32::from(CP1252_HIGH[usize::from(x - 0x80)])).unwrap_or('?'),
@@ -94,24 +119,90 @@ impl Encoding {
         }
     }
 
+    /// Bytes per code unit of the line terminator search.
+    fn unit(self) -> usize {
+        if self == Encoding::Utf16 { 2 } else { 1 }
+    }
+
     /// From the `Encoding` argument of `CreateOutStream` / `CreateInStream` (an option value).
     fn from_arg(a: &[Value]) -> Result<Encoding, Signal> {
         match a.get(1) {
-            None => Ok(Encoding::Utf8),
-            // Ordinals as documented: MSDos 0, UTF8 1, UTF16 2, Windows 3.
+            None => Ok(Encoding::default()),
+            // Ordinals: MSDos 0, UTF8 1, UTF16 2, Windows 3 (:TextEncoding_Ordinals).
+            Some(Value::Option(0, _)) => Ok(Encoding::MsDos),
             Some(Value::Option(1, _)) => Ok(Encoding::Utf8),
+            Some(Value::Option(2, _)) => Ok(Encoding::Utf16),
             Some(Value::Option(3, _)) => Ok(Encoding::Windows),
-            Some(other) => unsupported(format!("text encoding {other:?} (only UTF8 and Windows are pinned)")),
+            Some(other) => unsupported(format!("text encoding {other:?}")),
         }
     }
 }
 
-/// Read position over a snapshot.
-#[derive(Debug, Default)]
+/// Where an `InStream` reads from.
+#[derive(Debug)]
+enum Source {
+    /// Bytes taken once (a resource, a download).
+    Snapshot(Vec<u8>),
+    /// A Blob buffer: later writes show (the content of a buffer that was not loaded is empty).
+    Live(BlobRef),
+}
+
+/// Read position over a source.
+#[derive(Debug)]
 pub struct InState {
-    pub data: Vec<u8>,
+    source: Source,
     pub pos: usize,
     pub enc: Encoding,
+}
+
+impl InState {
+    pub fn snapshot(data: Vec<u8>, enc: Encoding) -> InState {
+        InState {
+            source: Source::Snapshot(data),
+            pos: 0,
+            enc,
+        }
+    }
+
+    pub fn live(blob: BlobRef, enc: Encoding) -> InState {
+        InState {
+            source: Source::Live(blob),
+            pos: 0,
+            enc,
+        }
+    }
+
+    /// Runs `f` on the bytes the stream sees now.
+    pub fn with_data<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
+        match &self.source {
+            Source::Snapshot(d) => f(d),
+            Source::Live(b) => {
+                let buf = b.borrow();
+                f(if buf.loaded { &buf.bytes } else { &[] })
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.with_data(<[u8]>::len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The bytes from the read position on.
+    pub fn rest(&self) -> Vec<u8> {
+        let pos = self.pos;
+        self.with_data(|d| d[pos.min(d.len())..].to_vec())
+    }
+
+    /// Takes the bytes from the read position on and moves to the end.
+    pub fn drain(&mut self) -> Vec<u8> {
+        let rest = self.rest();
+        self.pos = self.len();
+        rest
+    }
 }
 
 type NResult = Result<Value, Signal>;
@@ -141,8 +232,9 @@ fn blob_create_out(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
     let enc = Encoding::from_arg(a)?;
     let b = blob_of(r)?;
     {
+        // The content stays (:BlobField_CreateOutStream_DoesNotEmptyExistingData).
         let mut buf = b.borrow_mut();
-        buf.bytes.clear();
+        buf.write_pos = 0;
         buf.loaded = true;
     }
     set_stream(&a[0], LibraryValue::OutStream(b, enc))?;
@@ -152,11 +244,7 @@ fn blob_create_out(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
 fn blob_create_in(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let enc = Encoding::from_arg(a)?;
     let b = blob_of(r)?;
-    let data = {
-        let buf = b.borrow();
-        if buf.loaded { buf.bytes.clone() } else { Vec::new() }
-    };
-    set_stream(&a[0], LibraryValue::InStream(InState { data, pos: 0, enc }))?;
+    set_stream(&a[0], LibraryValue::InStream(InState::live(b, enc)))?;
     Ok(Value::Null)
 }
 
@@ -169,7 +257,13 @@ fn blob_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResu
     let b = blob_of(r)?;
     let buf = b.borrow();
     if !buf.loaded {
-        return unsupported("Blob.Length of a field that has not been loaded with CalcFields (not pinned)");
+        // Before CalcFields the length is the stored size, which is 6 more than the content
+        // (:Blob_Length_WithoutCalcFields_ReportsTheStoredSize, one measurement: 5 bytes read as 11).
+        // Whether the 6 is constant is docs/probes-needed.md; an empty blob is refused.
+        if buf.bytes.is_empty() {
+            return unsupported("Blob.Length of an empty field that has not been loaded (not pinned)");
+        }
+        return Ok(Value::Integer(buf.bytes.len() as i32 + 6));
     }
     Ok(Value::Integer(buf.bytes.len() as i32))
 }
@@ -190,7 +284,7 @@ fn with_in<T>(r: Option<&mut Value>, f: impl FnOnce(&mut InState) -> Result<T, S
 }
 
 fn in_eos(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    with_in(r, |s| Ok(Value::Boolean(s.pos >= s.data.len())))
+    with_in(r, |s| Ok(Value::Boolean(s.pos >= s.len())))
 }
 
 fn in_reset(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
@@ -201,7 +295,7 @@ fn in_reset(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult 
 }
 
 fn in_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    with_in(r, |s| Ok(Value::BigInteger(s.data.len() as i64)))
+    with_in(r, |s| Ok(Value::BigInteger(s.len() as i64)))
 }
 
 fn in_position(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -211,29 +305,32 @@ fn in_position(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResu
     with_in(r, |s| Ok(Value::BigInteger(s.pos as i64)))
 }
 
-/// Reads up to the next line break (CR, LF or CRLF, which is consumed) or the end of the
-/// stream. The corpus only reads text written without a terminator (streams/TestInOutStream.al,
-/// TestArrayStreamContracts.al: "ReadText reads until CR/LF or EOS").
+/// Reads up to the next line feed or the end of the stream. The line feed is consumed and every
+/// carriage return in the line is dropped, so CR LF is one terminator, a lone CR is not one, and a
+/// final CR adds no line (streams/TestStreamsRuntimeContracts.al:InStream_ReadText_SplitsAtLineFeed_AndDropsALoneCarriageReturn).
 fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     if a.len() > 1 {
         return unsupported("InStream.ReadText with a length (not pinned)");
     }
     let text = with_in(r, |s| {
-        let rest = &s.data[s.pos..];
-        let end = rest
-            .iter()
-            .position(|&b| b == b'\r' || b == b'\n')
-            .unwrap_or(rest.len());
-        let text = s.enc.decode(&rest[..end]);
-        let mut consumed = end;
-        if consumed < rest.len() {
-            consumed += if rest[consumed] == b'\r' && rest.get(consumed + 1) == Some(&b'\n') {
-                2
-            } else {
-                1
-            };
-        }
-        s.pos += consumed;
+        let (enc, pos) = (s.enc, s.pos);
+        let unit = enc.unit();
+        let (text, consumed) = s.with_data(|data| {
+            let rest = &data[pos.min(data.len())..];
+            let mut end = 0;
+            while end + unit <= rest.len() && !is_unit(&rest[end..end + unit], b'\n') {
+                end += unit;
+            }
+            let line: Vec<u8> = rest[..end]
+                .chunks(unit)
+                .filter(|u| !is_unit(u, b'\r'))
+                .flatten()
+                .copied()
+                .collect();
+            let consumed = (end + unit).min(rest.len());
+            (enc.decode(&line), consumed)
+        });
+        s.pos = pos + consumed;
         Ok(text)
     })?;
     let n = Value::text_len(&text) as i32;
@@ -241,26 +338,45 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     Ok(Value::Integer(n))
 }
 
-/// Only `Integer` (4 bytes, little endian) is pinned (streams/TestInOutStream.al
-/// InOutStream_Write_Integer_ReadInteger).
+/// Whether a code unit of the stream (one byte, or two for UTF-16) is the ASCII character `c`.
+fn is_unit(u: &[u8], c: u8) -> bool {
+    match u {
+        [b] => *b == c,
+        [b, 0] => *b == c,
+        _ => false,
+    }
+}
+
+/// `Read` into an Integer (4 bytes, little endian: streams/TestInOutStream.al
+/// InOutStream_Write_Integer_ReadInteger) or a Byte (one byte: the HexOf helper of
+/// streams/TestStreamsRuntimeContracts.al reads a stream byte by byte). Other types are not pinned.
 fn in_read(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     if a.len() > 1 {
         return unsupported("InStream.Read with a length (not pinned)");
     }
-    if !matches!(a[0], Value::Integer(_)) {
-        return unsupported(format!("InStream.Read into {:?} (only Integer is pinned)", a[0]));
-    }
-    let n = with_in(r, |s| {
-        let bytes: [u8; 4] = s
-            .data
-            .get(s.pos..s.pos + 4)
-            .and_then(|b| b.try_into().ok())
+    let width = match a[0] {
+        Value::Integer(_) => 4,
+        Value::Byte(_) => 1,
+        _ => {
+            return unsupported(format!(
+                "InStream.Read into {:?} (only Integer and Byte are pinned)",
+                a[0]
+            ));
+        }
+    };
+    let bytes = with_in(r, |s| {
+        let pos = s.pos;
+        let got = s
+            .with_data(|d| d.get(pos..pos + width).map(<[u8]>::to_vec))
             .ok_or_else(|| Signal::Unsupported("InStream.Read past the end (error text not pinned)".into()))?;
-        s.pos += 4;
-        Ok(i32::from_le_bytes(bytes))
+        s.pos += width;
+        Ok(got)
     })?;
-    a[0] = Value::Integer(n);
-    Ok(Value::Integer(4))
+    a[0] = match a[0] {
+        Value::Byte(_) => Value::Byte(bytes[0]),
+        _ => Value::Integer(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+    };
+    Ok(Value::Integer(width as i32))
 }
 
 fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
@@ -273,28 +389,51 @@ fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
     }
 }
 
+/// `WriteText(Text)` writes the text in the stream's encoding and no terminator; `WriteText()` writes
+/// CR LF (:OutStream_WriteText_WithoutArgument_WritesCarriageReturnLineFeed).
 fn out_write_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() != 1 {
-        return unsupported("OutStream.WriteText without a text or with a length (not pinned)");
+    if a.len() > 1 {
+        return unsupported("OutStream.WriteText with a length (not pinned)");
     }
-    let Some(text) = crate::native::text_of(&a[0]) else {
-        return unsupported("OutStream.WriteText of a value that is not text");
+    let text = match a.first() {
+        None => "\r\n".to_string(),
+        Some(v) => match crate::native::text_of(v) {
+            Some(t) => t,
+            None => return unsupported("OutStream.WriteText of a value that is not text"),
+        },
     };
     let (b, enc) = out_buf(r)?;
     let bytes = enc.encode(&text);
-    b.borrow_mut().bytes.extend_from_slice(&bytes);
+    write_bytes(&b, &bytes);
     Ok(Value::Integer(bytes.len() as i32))
 }
 
+/// `Write(Value)`: Integer and Boolean take 4 bytes, BigInteger 8, a Time 4 (its value, which is the
+/// millisecond of the day plus one), a Text its characters and a zero byte
+/// (:OutStream_Write_BinaryFormsOfEachType, all little endian). A Date and a Decimal have forms the
+/// probe measured once and no rule is known for (docs/probes-needed.md): refused.
 fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     if a.len() != 1 {
         return unsupported("OutStream.Write with a length (not pinned)");
     }
-    let Value::Integer(n) = a[0] else {
-        return unsupported(format!("OutStream.Write of {:?} (only Integer is pinned)", a[0]));
+    let (b, enc) = out_buf(r)?;
+    let bytes: Vec<u8> = match &a[0] {
+        Value::Integer(n) => n.to_le_bytes().to_vec(),
+        Value::Boolean(v) => i32::from(*v).to_le_bytes().to_vec(),
+        Value::BigInteger(n) => n.to_le_bytes().to_vec(),
+        Value::Time(t) => i32::try_from(*t)
+            .map_err(|_| Signal::Unsupported("OutStream.Write of a Time outside 32 bits".into()))?
+            .to_le_bytes()
+            .to_vec(),
+        Value::Text(t) | Value::Code(t) if t.is_ascii() => {
+            let mut v = enc.encode(t);
+            v.extend(std::iter::repeat_n(0, enc.unit()));
+            v
+        }
+        other => return unsupported(format!("OutStream.Write of {other:?} (its binary form is not pinned)")),
     };
-    out_buf(r)?.0.borrow_mut().bytes.extend_from_slice(&n.to_le_bytes());
-    Ok(Value::Integer(4))
+    write_bytes(&b, &bytes);
+    Ok(Value::Integer(bytes.len() as i32))
 }
 
 /// `CopyStream(OutStream, InStream [, BytesToRead])`: copies what remains of the source.
@@ -303,12 +442,8 @@ fn copy_stream(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
         return unsupported("CopyStream with a byte count (not pinned)");
     }
     let (out, _) = out_buf(Some(&mut a[0]))?;
-    let bytes = with_in(Some(&mut a[1]), |s| {
-        let rest = s.data[s.pos..].to_vec();
-        s.pos = s.data.len();
-        Ok(rest)
-    })?;
-    out.borrow_mut().bytes.extend_from_slice(&bytes);
+    let bytes = with_in(Some(&mut a[1]), |s| Ok(s.drain()))?;
+    write_bytes(&out, &bytes);
     Ok(Value::Boolean(true))
 }
 

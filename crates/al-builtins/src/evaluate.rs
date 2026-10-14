@@ -62,6 +62,21 @@ fn decimal(text: &str) -> Result<Parsed, Signal> {
     }
     let body = text.strip_prefix('-').unwrap_or(text);
     let (int, frac) = body.split_once('.').map_or((body, Some("")), |(i, f)| (i, Some(f)));
+    // Thousands separators in properly grouped digits are accepted
+    // (types/TestFormatEvaluateTextContracts.al:Evaluate_Failed_LeavesTheVariableUnchanged: `1,234.5`).
+    let grouped = int.contains(',') && {
+        let groups: Vec<&str> = int.split(',').collect();
+        (1..=3).contains(&groups[0].len())
+            && groups.iter().all(|g| g.bytes().all(|b| b.is_ascii_digit()))
+            && groups[1..].iter().all(|g| g.len() == 3)
+    };
+    let ungrouped = int.replace(',', "");
+    let (text, int) = if grouped {
+        (text.replacen(int, &ungrouped, 1), ungrouped.as_str())
+    } else {
+        (text.to_string(), int)
+    };
+    let text = text.as_str();
     let well_formed = !int.is_empty()
         && int.bytes().all(|b| b.is_ascii_digit())
         && frac.is_some_and(|f| f.bytes().all(|b| b.is_ascii_digit()))
@@ -79,13 +94,17 @@ fn decimal(text: &str) -> Result<Parsed, Signal> {
 
 fn boolean(text: &str) -> Result<Parsed, Signal> {
     // text/TestEvaluate.al: 'true' / 'false'; types/TestFormatBooleanContracts.al:112
-    // evaluates Format(true), which is 'Yes' (Format(false) is 'No').
-    match text {
-        "true" | "Yes" => Ok(Parsed::Value(Value::Boolean(true))),
-        "false" | "No" => Ok(Parsed::Value(Value::Boolean(false))),
-        _ => unsupported(format!(
+    // evaluates Format(true), which is 'Yes' (Format(false) is 'No'). In any case, `1` and `T` are
+    // true and anything else, `Ja` for one, is refused
+    // (types/TestFormatEvaluateTextContracts.al:Evaluate_Boolean_AcceptsTrueFalseYesNoOneAndT_IgnoringCase).
+    // `0` and `F` are not measured.
+    match text.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "1" | "t" => Ok(Parsed::Value(Value::Boolean(true))),
+        "false" | "no" => Ok(Parsed::Value(Value::Boolean(false))),
+        "0" | "f" => unsupported(format!(
             "Evaluate of `{text}` into Boolean (form not pinned by the corpus)"
         )),
+        _ => Ok(Parsed::Rejected),
     }
 }
 
@@ -119,7 +138,7 @@ fn guid(text: &str) -> Result<Parsed, Signal> {
 }
 
 /// Number 0: the inverse of `Format(Date)` as the runtime formats it (`MM/DD/YY`,
-/// docs/probes-needed.md); a two-digit year is read as 1930-2029. Number 9: ISO `yyyy-MM-dd`.
+/// docs/probes-needed.md); a two-digit year below 50 is 20yy and from 50 on 19yy. Number 9: ISO `yyyy-MM-dd`.
 fn date(text: &str, number: i64) -> Result<Parsed, Signal> {
     if number == 9 {
         return match crate::iso::parse_date(text).filter(|_| text.len() == 10) {
@@ -127,6 +146,13 @@ fn date(text: &str, number: i64) -> Result<Parsed, Signal> {
             None => unsupported(format!(
                 "Evaluate of `{text}` into Date with format 9 (form not pinned)"
             )),
+        };
+    }
+    // The ISO form is read in format 0 too (types/TestFormatEvaluateTextContracts.al:Evaluate_Date_TwoDigitYear_PivotsAt50).
+    if text.len() == 10 && text.as_bytes()[4] == b'-' {
+        return match crate::iso::parse_date(text) {
+            Some(d) => Ok(Parsed::Value(Value::Date(d, false))),
+            None => Ok(Parsed::Rejected),
         };
     }
     let parts: Vec<&str> = text.split('/').collect();
@@ -137,7 +163,8 @@ fn date(text: &str, number: i64) -> Result<Parsed, Signal> {
             parts[1].parse().unwrap(),
             parts[2].parse().unwrap(),
         );
-        let y = if yy < 30 { 2000 + yy } else { 1900 + yy };
+        // types/TestFormatEvaluateTextContracts.al:Evaluate_Date_TwoDigitYear_PivotsAt50.
+        let y = if yy < 50 { 2000 + yy } else { 1900 + yy };
         let valid = (1..=12).contains(&m) && d >= 1 && {
             let first = day_from_civil(y, m, 1);
             let next = if m == 12 {
@@ -150,6 +177,11 @@ fn date(text: &str, number: i64) -> Result<Parsed, Signal> {
         if valid {
             return Ok(Parsed::Value(Value::Date(day_from_civil(y, m, d), false)));
         }
+        return Ok(Parsed::Rejected);
+    }
+    // Text with no digit at all is no date (types/TestFormatEvaluateTextContracts.al:
+    // Evaluate_Failed_LeavesTheVariableUnchanged: `garbage`).
+    if !text.bytes().any(|b| b.is_ascii_digit()) {
         return Ok(Parsed::Rejected);
     }
     unsupported(format!(

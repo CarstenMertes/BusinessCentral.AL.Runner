@@ -226,7 +226,7 @@ fn get_resource(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out 
     let data = resource(c, &name)?;
     match a.get(1) {
         Some(Value::Library(_, cell)) => {
-            *cell.borrow_mut() = LibraryValue::InStream(crate::stream::InState { data, pos: 0, enc });
+            *cell.borrow_mut() = LibraryValue::InStream(crate::stream::InState::snapshot(data, enc));
             Ok(Value::Null)
         }
         other => unsupported(format!("GetResource into {other:?}")),

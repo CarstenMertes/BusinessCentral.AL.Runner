@@ -9,7 +9,7 @@
 //! `Signal::Unsupported`, never a guess.
 
 use crate::format::{civil_from_day, day_from_civil};
-use crate::native::{Ctx, NativeFn, Signal};
+use crate::native::{Ctx, NativeFn, Signal, raise};
 use crate::value::Value;
 
 pub const REGISTRY: &[(&str, NativeFn)] = &[
@@ -19,6 +19,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.DT2Time#1", dt2time),
     ("System.DaTi2Variant#1", create_datetime),
     ("System.Date2DMY#1", date2dmy),
+    ("System.Date2DWY#1", date2dwy),
     ("System.NormalDate#1", normal_date),
     ("System.ClosingDate#1", closing_date),
     ("System.CalcDate#1", calcdate_formula),
@@ -82,12 +83,19 @@ fn dmy2date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 }
 
 /// `CreateDateTime(Date, Time)`. A defined date with `0T` is midnight
-/// (handlers/TestPageTemporalSetValue_Tests.al:85). An undefined date is not pinned.
+/// (handlers/TestPageTemporalSetValue_Tests.al:85). Two blanks give the blank DateTime; a blank
+/// date with a time is an error (types/TestDateRoundFormatStringContracts.al:CreateDateTime_MidnightBlankAndInvalid).
 fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let day = plain_date(&a[0], "CreateDateTime")?;
     let Value::Time(t) = a[1] else {
         return unsupported(format!("CreateDateTime with {:?}", a[1]));
     };
+    if matches!(a[0], Value::Date(0, false)) {
+        if t == 0 {
+            return Ok(Value::DateTime(0));
+        }
+        return raise("The date is not valid.", "DateInvalid");
+    }
+    let day = plain_date(&a[0], "CreateDateTime")?;
     let time_of_day = (t - 1).max(0);
     Ok(Value::DateTime((i64::from(day) - 1) * MS_PER_DAY + time_of_day + 1))
 }
@@ -112,6 +120,7 @@ fn dt2time(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 }
 
 /// `Date2DMY(Date, 1|2|3)`: day, month, year (session/TestCalcDateNotificationContracts.al:21,22,32).
+/// Any other part raises (types/TestDateRoundFormatStringContracts.al:Date2DMY_Part4_Throws, measured for 4).
 fn date2dmy(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let day = plain_date(&a[0], "Date2DMY")?;
     let (y, m, d) = civil_from_day(day);
@@ -119,7 +128,34 @@ fn date2dmy(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         Some(1) => Ok(Value::Integer(d as i32)),
         Some(2) => Ok(Value::Integer(m as i32)),
         Some(3) => Ok(Value::Integer(y)),
-        other => unsupported(format!("Date2DMY with Value {other:?}: only 1, 2 and 3 are pinned")),
+        Some(n) => raise(
+            format!(
+                "The value of DATE2DMY parameter 2 is outside of the permitted range. The current value is: {n}. The permitted range is: from 1 to 3."
+            ),
+            "OutsidePermittedRange",
+        ),
+        None => unsupported("Date2DMY with a part that is not an Integer"),
+    }
+}
+
+/// `Date2DWY(Date, 1|2|3)`: the weekday (Monday is 1), the ISO 8601 week number
+/// (types/TestDateRoundFormatStringContracts.al:Date2DWY_WeekNumbers_AreIso8601) and the year. The year is
+/// the calendar year; for a date whose ISO week belongs to another year it is not pinned: refused.
+fn date2dwy(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let day = plain_date(&a[0], "Date2DWY")?;
+    let thursday = day + (4 - weekday(day));
+    let (iso_year, _, _) = civil_from_day(thursday);
+    match int_of(a.get(1)) {
+        Some(1) => Ok(Value::Integer(weekday(day))),
+        Some(2) => Ok(Value::Integer((thursday - day_from_civil(iso_year, 1, 1)) / 7 + 1)),
+        Some(3) => {
+            let (y, _, _) = civil_from_day(day);
+            if y != iso_year {
+                return unsupported("Date2DWY year of a date whose ISO week belongs to another year (not pinned)");
+            }
+            Ok(Value::Integer(y))
+        }
+        other => unsupported(format!("Date2DWY with Value {other:?}: only 1, 2 and 3 are pinned")),
     }
 }
 
@@ -178,35 +214,56 @@ fn time_part(r: Option<&mut Value>, unit_ms: i64, modulo: i64) -> Out {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Unit {
     Day,
+    Week,
     Month,
-    Year,
     Quarter,
+    Year,
 }
 
 /// One term of a date formula.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Term {
-    /// `+nD`, `-nM`, `nY`: move by `n` units.
+    /// `+nD`, `-nW`, `nM`, `nQ`, `nY`: move by `n` units.
     Step(Unit, i32),
-    /// `CM`, `CQ`, `CY`: the end of the current period; `-CM`, `-CY`: its start.
+    /// `CD`, `CW`, `CM`, `CQ`, `CY`: the end of the current period; `-C..`: its start. A week runs
+    /// from Monday to Sunday.
     Edge { unit: Unit, end: bool },
+    /// `WDn`: the next day (`-WDn`: the previous one) that is weekday `n`, Monday being 1.
+    WeekDay { n: i32, forward: bool },
 }
 
-/// Parses `<term...>` where a term is `[+|-][digits](D|M|Y)` or `[+|-]C(M|Y)` / `CQ`.
-/// These are the forms the corpus pins (types/TestDate.al:28,38; session/TestDateTimeContracts.al:19-47;
-/// session/TestCalcDateNotificationContracts.al:20-80; types/TestDateFormulaContracts.al:44-125).
-/// Everything else in the formula language (weeks, quarters as steps, weekdays, `CD`, `CW`,
-/// `-CQ`, no brackets) is refused.
+/// A formula as stored or typed, without the angle brackets: how `Format` prints it
+/// (types/TestDateRoundFormatStringContracts.al:DateFormula_Evaluate_ThenFormat_PrintsTheNormalizedFormula).
+pub fn formula_text(text: &str) -> String {
+    let t = text.strip_prefix('<').unwrap_or(text);
+    t.strip_suffix('>').unwrap_or(t).to_string()
+}
+
+/// Parses `<term...>` or the same without brackets (types/TestDateRoundFormatStringContracts.al:
+/// CalcDate_WeeksQuartersWeekDaysAndCurrentPeriods), where a term is `[+|-][digits](D|W|M|Q|Y)`,
+/// `[+|-]C(D|W|M|Q|Y)` or `[+|-]WD(1-7)`. After the first term every term carries its sign. A formula
+/// with no term, lower case letters and the like are not pinned.
 fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
     let refuse = || unsupported(format!("date formula `{text}`: this form is not pinned by the corpus"));
-    let Some(body) = text.strip_prefix('<').and_then(|t| t.strip_suffix('>')) else {
-        return refuse();
+    let body = match text.strip_prefix('<') {
+        Some(rest) => match rest.strip_suffix('>') {
+            Some(b) => b,
+            None => return refuse(),
+        },
+        None => text,
     };
     let b = body.as_bytes();
+    let unit_of = |c: Option<&u8>| match c {
+        Some(b'D') => Some(Unit::Day),
+        Some(b'W') => Some(Unit::Week),
+        Some(b'M') => Some(Unit::Month),
+        Some(b'Q') => Some(Unit::Quarter),
+        Some(b'Y') => Some(Unit::Year),
+        _ => None,
+    };
     let mut terms = Vec::new();
     let mut i = 0;
     while i < b.len() {
-        // After the first term, every term carries its sign (`<1M-1D>`); `<1M1D>` is not pinned.
         if i > 0 && !matches!(b[i], b'+' | b'-') {
             return refuse();
         }
@@ -222,14 +279,22 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
             _ => false,
         };
         if b.get(i) == Some(&b'C') {
-            let unit = match b.get(i + 1) {
-                Some(b'M') => Unit::Month,
-                Some(b'Y') => Unit::Year,
-                Some(b'Q') if !negative => Unit::Quarter,
-                _ => return refuse(),
+            let Some(unit) = unit_of(b.get(i + 1)) else {
+                return refuse();
             };
             terms.push(Term::Edge { unit, end: !negative });
             i += 2;
+            continue;
+        }
+        if b.get(i) == Some(&b'W') && b.get(i + 1) == Some(&b'D') {
+            let Some(n) = b.get(i + 2).filter(|c| (b'1'..=b'7').contains(c)) else {
+                return refuse();
+            };
+            terms.push(Term::WeekDay {
+                n: i32::from(n - b'0'),
+                forward: !negative,
+            });
+            i += 3;
             continue;
         }
         let start = i;
@@ -242,11 +307,8 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         let Ok(n) = body[start..i].parse::<i32>() else {
             return refuse();
         };
-        let unit = match b.get(i) {
-            Some(b'D') => Unit::Day,
-            Some(b'M') => Unit::Month,
-            Some(b'Y') => Unit::Year,
-            _ => return refuse(),
+        let Some(unit) = unit_of(b.get(i)) else {
+            return refuse();
         };
         i += 1;
         terms.push(Term::Step(unit, if negative { -n } else { n }));
@@ -262,32 +324,35 @@ pub fn check_formula(text: &str) -> Result<(), Signal> {
     parse_formula(text).map(|_| ())
 }
 
+/// The day `months` months from `(y, m, d)`; the day of the month is cut back to the month's length
+/// (types/TestDateRoundFormatStringContracts.al:CalcDate_MonthYearClamping).
+fn add_months(y: i32, m: u32, d: u32, months: i64) -> Result<i32, Signal> {
+    let total = i64::from(y) * 12 + i64::from(m) - 1 + months;
+    let (ny, nm) = (total.div_euclid(12), total.rem_euclid(12) as u32 + 1);
+    if !(1..=9999).contains(&ny) {
+        return unsupported("CalcDate result outside 0001-9999 (error text not pinned)");
+    }
+    Ok(day_from_civil(ny as i32, nm, d.min(days_in_month(ny as i32, nm))))
+}
+
 fn apply(terms: &[Term], from: i32) -> Result<i32, Signal> {
     let mut day = from;
     for term in terms {
         let (y, m, d) = civil_from_day(day);
         day = match *term {
             Term::Step(Unit::Day, n) => day.checked_add(n).unwrap_or(0),
-            Term::Step(Unit::Month, n) => {
-                let total = i64::from(y) * 12 + i64::from(m) - 1 + i64::from(n);
-                let (ny, nm) = (total.div_euclid(12), total.rem_euclid(12) as u32 + 1);
-                if !(1..=9999).contains(&ny) {
-                    return unsupported("CalcDate result outside 0001-9999 (error text not pinned)");
+            Term::Step(Unit::Week, n) => n.checked_mul(7).and_then(|n| day.checked_add(n)).unwrap_or(0),
+            Term::Step(Unit::Month, n) => add_months(y, m, d, i64::from(n))?,
+            Term::Step(Unit::Quarter, n) => add_months(y, m, d, i64::from(n) * 3)?,
+            Term::Step(Unit::Year, n) => add_months(y, m, d, i64::from(n) * 12)?,
+            Term::Edge { unit: Unit::Day, .. } => day,
+            Term::Edge { unit: Unit::Week, end } => {
+                if end {
+                    day + (7 - weekday(day))
+                } else {
+                    day - (weekday(day) - 1)
                 }
-                if d > days_in_month(ny as i32, nm) {
-                    // Only the Feb 29 clamp of `<1Y>` is pinned (session/TestDateTimeContracts.al:38).
-                    return unsupported("CalcDate month step that clamps the day (not pinned by the corpus)");
-                }
-                day_from_civil(ny as i32, nm, d)
             }
-            Term::Step(Unit::Year, n) => {
-                let ny = i64::from(y) + i64::from(n);
-                if !(1..=9999).contains(&ny) {
-                    return unsupported("CalcDate result outside 0001-9999 (error text not pinned)");
-                }
-                day_from_civil(ny as i32, m, d.min(days_in_month(ny as i32, m)))
-            }
-            Term::Step(Unit::Quarter, _) => return unsupported("CalcDate quarter step"),
             Term::Edge { unit: Unit::Month, end } => day_from_civil(y, m, if end { days_in_month(y, m) } else { 1 }),
             Term::Edge { unit: Unit::Year, end } => {
                 if end {
@@ -297,12 +362,27 @@ fn apply(terms: &[Term], from: i32) -> Result<i32, Signal> {
                 }
             }
             Term::Edge {
-                unit: Unit::Quarter, ..
+                unit: Unit::Quarter,
+                end,
             } => {
-                let last = (m - 1) / 3 * 3 + 3;
-                day_from_civil(y, last, days_in_month(y, last))
+                let first = (m - 1) / 3 * 3 + 1;
+                if end {
+                    day_from_civil(y, first + 2, days_in_month(y, first + 2))
+                } else {
+                    day_from_civil(y, first, 1)
+                }
             }
-            Term::Edge { unit: Unit::Day, .. } => return unsupported("CalcDate CD"),
+            Term::WeekDay { n, forward } => {
+                let wd = weekday(day);
+                if wd == n {
+                    return unsupported("CalcDate WD formula on a day that already is that weekday (not pinned)");
+                }
+                if forward {
+                    day + (n - wd).rem_euclid(7)
+                } else {
+                    day - (wd - n).rem_euclid(7)
+                }
+            }
         };
         if !(1..=LAST_DAY).contains(&day) {
             return unsupported("CalcDate result outside 0001-9999 (error text not pinned)");
@@ -316,6 +396,16 @@ fn calcdate(formula: &str, base: Option<&Value>) -> Out {
     let Some(base) = base else {
         return unsupported("CalcDate without a date uses the work date, which is not available");
     };
+    if matches!(base, Value::Date(0, false)) {
+        // types/TestDateRoundFormatStringContracts.al:CalcDate_UndefinedDate_Throws (CR and backslash line breaks).
+        return raise(
+            format!(
+                "You cannot base a date calculation on an undefined date.\r\\\r\\Date: 0D\r\\Formula: {}.",
+                formula_text(formula)
+            ),
+            "Argument",
+        );
+    }
     let from = plain_date(base, "CalcDate")?;
     Ok(Value::Date(apply(&terms, from)?, false))
 }
@@ -409,14 +499,18 @@ mod tests {
             call("System.CreateDateTime#1", vec![date(2024, 1, 15), Value::Time(0)]),
             Ok(Value::DateTime(n)) if n == day * 86_400_000 + 1
         ));
-        refused(call(
-            "System.CreateDateTime#1",
-            vec![Value::Date(0, false), Value::Time(1)],
+        // types/TestDateRoundFormatStringContracts.al:CreateDateTime_MidnightBlankAndInvalid.
+        assert!(matches!(
+            call("System.CreateDateTime#1", vec![Value::Date(0, false), Value::Time(0)]),
+            Ok(Value::DateTime(0))
         ));
-        refused(call(
-            "System.CreateDateTime#1",
-            vec![Value::Date(0, false), Value::Time(0)],
-        ));
+        let Err(Signal::Error(e)) = call("System.CreateDateTime#1", vec![Value::Date(0, false), Value::Time(1)]) else {
+            panic!("a blank date with a time must raise");
+        };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            ("The date is not valid.", "DateInvalid")
+        );
         refused(call(
             "System.CreateDateTime#1",
             vec![Value::Date(5, true), Value::Time(1)],
@@ -455,11 +549,34 @@ mod tests {
         // month; :32 `..., 3)` the year.
         let part = |n: i32| int(call("System.Date2DMY#1", vec![date(2024, 3, 15), Value::Integer(n)]));
         assert_eq!((part(1), part(2), part(3)), (15, 3, 2024));
-        refused(call("System.Date2DMY#1", vec![date(2024, 3, 15), Value::Integer(4)]));
+        // types/TestDateRoundFormatStringContracts.al:Date2DMY_Part4_Throws.
+        let Err(Signal::Error(e)) = call("System.Date2DMY#1", vec![date(2024, 3, 15), Value::Integer(4)]) else {
+            panic!("part 4 must raise");
+        };
+        assert_eq!(e.code, "OutsidePermittedRange");
+        assert!(
+            e.message
+                .ends_with("The current value is: 4. The permitted range is: from 1 to 3.")
+        );
         refused(call(
             "System.Date2DMY#1",
             vec![Value::Date(0, false), Value::Integer(1)],
         ));
+    }
+
+    #[test]
+    fn date2dwy_is_iso_8601() {
+        // types/TestDateRoundFormatStringContracts.al:Date2DWY_WeekNumbers_AreIso8601.
+        let part = |y, m, d, n| int(call("System.Date2DWY#1", vec![date(y, m, d), Value::Integer(n)]));
+        assert_eq!(part(2024, 1, 1, 3), 2024);
+        assert_eq!(part(2024, 1, 1, 2), 1);
+        assert_eq!(part(2024, 12, 29, 2), 52);
+        assert_eq!(part(2024, 12, 30, 2), 1);
+        assert_eq!(part(2021, 1, 1, 2), 53);
+        assert_eq!(part(2021, 1, 3, 2), 53);
+        assert_eq!(part(2020, 12, 31, 2), 53);
+        assert_eq!(part(2024, 3, 5, 1), 2);
+        refused(call("System.Date2DWY#1", vec![date(2021, 1, 1), Value::Integer(3)]));
     }
 
     #[test]
@@ -541,18 +658,54 @@ mod tests {
     fn calcdate_refuses_forms_the_corpus_does_not_pin() {
         let from = date(2024, 3, 15);
         for f in [
-            "<1W>", "<CW>", "<CD>", "<-CQ>", "<1Q>", "<MON>", "<1W+MON>", "<WD1>", "<2CM>", "<>", "", "1D", "<1X>",
-            "<D>", "<+>", "<1D", "<1M1D>",
+            "<MON>", "<1W+MON>", "<2CM>", "<>", "", "<1X>", "<D>", "<+>", "<1D", "<1M1D>", "<WD0>", "<WD8>", "<1d>",
         ] {
             refused(calc(f, from.clone()));
         }
-        // Month arithmetic that would clamp the day, a missing or closing base date, a result off the calendar.
-        refused(calc("<1M>", date(2024, 1, 31)));
-        refused(calc("<1D>", Value::Date(0, false)));
+        // A weekday formula on a day that already is that weekday, a closing base date, a result off the calendar.
+        refused(calc("<WD5>", date(2024, 3, 15)));
         refused(calc("<1D>", Value::Date(5, true)));
         refused(calc("<1Y>", date(9999, 6, 1)));
         refused(calc("<-1Y>", date(1, 6, 1)));
         refused(call("System.CalcDate#2", vec![t("<1D>")]));
+    }
+
+    #[test]
+    fn calcdate_forms_the_probe_pins() {
+        // types/TestDateRoundFormatStringContracts.al:CalcDate_MonthYearClamping and
+        // CalcDate_WeeksQuartersWeekDaysAndCurrentPeriods.
+        let tue = date(2024, 3, 5);
+        is_date(calc("<1M>", date(2024, 1, 31)), 2024, 2, 29);
+        is_date(calc("<1M>", date(2024, 11, 30)), 2024, 12, 30);
+        is_date(calc("<-1M>", date(2024, 3, 31)), 2024, 2, 29);
+        is_date(calc("<1Y>", date(2024, 2, 29)), 2025, 2, 28);
+        is_date(calc("<1W>", tue.clone()), 2024, 3, 12);
+        is_date(calc("<CW>", tue.clone()), 2024, 3, 10);
+        is_date(calc("<-CW>", tue.clone()), 2024, 3, 4);
+        is_date(calc("<CD>", tue.clone()), 2024, 3, 5);
+        is_date(calc("<1Q>", tue.clone()), 2024, 6, 5);
+        is_date(calc("<-CQ>", tue.clone()), 2024, 1, 1);
+        is_date(calc("<CQ>", tue.clone()), 2024, 3, 31);
+        is_date(calc("<WD1>", tue.clone()), 2024, 3, 11);
+        is_date(calc("<-WD1>", tue.clone()), 2024, 3, 4);
+        is_date(calc("<WD7>", tue.clone()), 2024, 3, 10);
+        is_date(calc("1M", tue.clone()), 2024, 4, 5);
+        is_date(calc("<1M+CM>", tue.clone()), 2024, 4, 30);
+        is_date(calc("<CM+1D>", tue.clone()), 2024, 4, 1);
+        is_date(calc("<-1D-1M>", tue), 2024, 2, 4);
+    }
+
+    #[test]
+    fn calcdate_of_an_undefined_date_raises() {
+        // types/TestDateRoundFormatStringContracts.al:CalcDate_UndefinedDate_Throws.
+        let Err(Signal::Error(e)) = calc("<1D>", Value::Date(0, false)) else {
+            panic!("must raise");
+        };
+        assert_eq!(
+            e.message,
+            "You cannot base a date calculation on an undefined date.\r\\\r\\Date: 0D\r\\Formula: 1D."
+        );
+        assert_eq!(e.code, "Argument");
     }
 
     #[test]

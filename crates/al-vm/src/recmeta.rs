@@ -70,7 +70,12 @@ pub(crate) fn is_blank(v: &Value) -> Result<bool, Signal> {
         Value::Option(o, _) => *o == 0,
         Value::Enum(_, o) => *o == 0,
         Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Char(_) => false,
-        other => return unsupported(format!("TestField of a {} field", other.describe())),
+        other => {
+            return unsupported(format!(
+                "TestField of a {} field: when it counts as blank, and the error text, are not pinned (docs/probes-needed.md)",
+                other.describe()
+            ));
+        }
     })
 }
 

@@ -1,0 +1,74 @@
+//! Tests-ERM refusals of issue 27: `FindFirst` on an empty set without using the result, a text filter
+//! on a DateFormula field, a Boolean as a `for` bound and `TestField` of a Blob field. No corpus test
+//! pins any of them (the corpus has no `asserterror` on `FindFirst`, no filter on a DateFormula field,
+//! no `for ... := false to true` and no `TestField` of a Blob), so each is refused with a reason that
+//! names the open question and `docs/probes-needed.md`.
+
+use al_sema::workspace::AppSource;
+use al_test_cli::report::Outcome;
+use al_test_cli::runtime::run_codeunit;
+use al_vm::Engine;
+
+fn compile(tests: &str) -> (al_sema::lower::Lowered, usize) {
+    let src = format!(
+        "table 63000 \"B7 Row\" {{ fields {{ field(1; \"No.\"; Code[20]) {{ }} field(2; Pic; Blob) {{ }} field(3; Calc; DateFormula) {{ }} }} keys {{ key(PK; \"No.\") {{ }} }} }}
+         codeunit 63001 T {{ Subtype = Test; {tests} }}"
+    );
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
+    (l, oi)
+}
+
+fn why_not_run(test: &str) -> String {
+    let (l, oi) = compile(test);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let o = run_codeunit(&engine, &l, oi);
+    match &o[0].1 {
+        Outcome::NotRun(why) => why.clone(),
+        other => panic!("{}: {other:?}", o[0].0),
+    }
+}
+
+fn names_the_open_question(why: &str, words: &[&str]) {
+    for w in words.iter().chain(&["not pinned", "probes-needed"]) {
+        assert!(why.contains(w), "`{w}` missing from: {why}");
+    }
+}
+
+#[test]
+fn find_first_on_an_empty_set_without_the_result_names_the_table() {
+    let why = why_not_run("[Test] procedure T1() var R: Record \"B7 Row\"; begin R.FindFirst(); end;");
+    names_the_open_question(&why, &["FindFirst", "B7 Row", "error text"]);
+}
+
+#[test]
+fn a_text_filter_on_a_date_formula_field_is_refused_with_its_reason() {
+    let why = why_not_run("[Test] procedure T2() var R: Record \"B7 Row\"; begin R.SetFilter(Calc, '<>'''''); end;");
+    names_the_open_question(&why, &["SetFilter", "DateFormula"]);
+}
+
+#[test]
+fn a_for_loop_over_a_boolean_is_refused_with_its_reason() {
+    let why = why_not_run("[Test] procedure T3() var B: Boolean; begin for B := false to true do; end;");
+    names_the_open_question(&why, &["for", "Boolean"]);
+}
+
+#[test]
+fn test_field_of_a_blob_field_is_refused_with_its_reason() {
+    let why = why_not_run("[Test] procedure T4() var R: Record \"B7 Row\"; begin R.TestField(Pic); end;");
+    names_the_open_question(&why, &["TestField", "Blob"]);
+}

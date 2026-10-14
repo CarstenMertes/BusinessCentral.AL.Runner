@@ -310,7 +310,7 @@ impl Parser<'_> {
             }
             other => {
                 return Err(format!(
-                    "text filter value for {other} (region-dependent or not pinned yet)",
+                    "text filter value for {other}: how BC reads the text (an empty `''`, a formula such as `1M`, a region's date format) is not pinned (docs/probes-needed.md)",
                     other = other.describe()
                 ));
             }

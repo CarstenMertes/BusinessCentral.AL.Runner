@@ -906,8 +906,15 @@ impl Session {
                 down,
                 body,
             } => {
-                let start = int(&self.eval(from, f)?)?;
-                let end = int(&self.eval(to, f)?)?;
+                let (from, to) = (self.eval(from, f)?, self.eval(to, f)?);
+                // No corpus test loops over a Boolean (`for B := false to true`), which Microsoft's tests do:
+                // whether it runs for false then true is not pinned (docs/probes-needed.md).
+                if matches!(from, Value::Boolean(_)) || matches!(to, Value::Boolean(_)) {
+                    return Err(Signal::Unsupported(
+                        "for loop over a Boolean: whether it runs for false and then true, and the value left in the variable, are not pinned (docs/probes-needed.md)".into(),
+                    ));
+                }
+                let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;

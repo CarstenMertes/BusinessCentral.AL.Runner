@@ -208,3 +208,7 @@ reviewed it.
 - 2026-10-14, ADR-009, fix-records: a test refused midway rolls back what it wrote, so a later test of the codeunit cannot see the leftovers.
 - 2026-10-14, ADR-009, fix-records: the emit version in "object does not exist" errors is major*1000+25 for BC majors other than 27 (27025 is measured).
 - 2026-10-14, ADR-009, fix-records: baseline case 60013 `CalcFields_TableExtensionFlowFieldOnStockkeepingUnit_WithNoMatchingRows_IsZero` removed from all three baselines as a pass by accident (see the commit message).
+- 2026-10-14, ADR-009, fix-data: `Query.ColumnNo` is `4001 + 97 * position` (only "not the position" is pinned); the real numbers are a probe to run.
+- 2026-10-14, ADR-009, fix-data: `Query.GetFilters` puts the filter of a Text column last (the probe cannot tell "Text column" from "OrderBy column"; the Text reading keeps a baseline test running).
+- 2026-10-14, ADR-009, fix-data: an XmlPort import stores with `Insert(true)` / `Modify(true)` through the ordinary record path, so the record rule for duplicate keys applies to it (the earlier `immediate_errors` override for XmlPort import is dropped, as xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_DuplicateKey_... pins a deferral).
+- 2026-10-14, ADR-009, fix-data: `SaveAsXml` / `SaveAsJson` of a query write UTF-8 without a byte order mark and the XML in one line (the probe trims and joins the lines).

@@ -605,7 +605,7 @@ mod tests {
     use crate::workspace::AppSource;
 
     const TABLES: &str = r#"
-table 50000 "T" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } field(3; Qty; Integer) { }
+table 50000 "T" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } field(3; Qty; Integer) { } field(4; Big; BigInteger) { }
     field(4; Total; Decimal) { FieldClass = FlowField; CalcFormula = sum(U.Amount where("No." = field("No."))); } }
     keys { key(PK; "No.") { Clustered = true; } } }
 table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decimal) { } }
@@ -708,16 +708,10 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
             "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { } column(S; Amount) { Method = Sum; } } } }",
             "no OrderBy",
         );
-        // Sum over an Integer field.
+        // Sum over a BigInteger field (an Integer field is pinned: query/TestQueryRuntimeContracts.al).
         has(
-            "query 50100 Q { elements { dataitem(A; T) { column(S; Qty) { Method = Sum; } } } }",
-            "non-Decimal",
-        );
-        // Aggregate over an outer join.
-        has(
-            "query 50100 Q { elements { dataitem(A; T) { column(S; Amount) { Method = Sum; }
-                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; column(X; Amount) { } } } } }",
-            "outer join",
+            "query 50100 Q { elements { dataitem(A; T) { column(S; Big) { Method = Sum; } } } }",
+            "not Decimal or Integer",
         );
         // A static filter on the optional side of an outer join.
         has(

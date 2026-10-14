@@ -547,6 +547,22 @@ impl Session {
     /// `TestField(Field [, Value])`. The "must have a value" text is pinned by the corpus
     /// (record/TestRecordTestFieldLookupPageId_Tests.al:54-72); the mismatch text is Assert.al's
     /// documented "new format" (docs/probes-needed.md).
+    /// A value as TestField shows it: an Option or Enum member by its caption (a member without one by
+    /// its name), anything else as in any error message.
+    fn member_caption(&self, t: &TableDef, pos: usize, v: &Value) -> Result<String, Signal> {
+        let ordinal = match v {
+            Value::Option(o, _) | Value::Enum(_, o) => *o,
+            other => return self.message_value(other),
+        };
+        match self.members_of_field(t, pos)? {
+            Some((_, members)) => Ok(members
+                .iter()
+                .find(|(o, _, _)| *o == ordinal)
+                .map_or_else(|| ordinal.to_string(), |(_, _, caption)| caption.clone())),
+            None => self.message_value(v),
+        }
+    }
+
     pub(crate) fn test_field(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
         if args.len() > 2 {
             return unsupported("TestField with an ErrorInfo");
@@ -561,14 +577,14 @@ impl Session {
         match args.get(1) {
             None => {
                 if is_blank(&current)? {
-                    // Microsoft's tests (Tests-ERM Payment Registration UT, Price List Line UT) expect
-                    // "<field> must not be <member> in <table>" for the zero member of an Option or
-                    // Enum. No corpus test pins that text or what follows it (docs/probes-needed.md,
-                    // "Probe batch 6"), and "must have a value" is wrong there: refuse.
+                    // "<field> must not be <caption of the zero member> in <table>: <key>", code TestField
+                    // (record/TestTestFieldOptionEnumContracts.al:TestField_ZeroMember_RaisesMustNotBeTheCaption).
                     if matches!(current, Value::Option(..) | Value::Enum(..)) {
-                        return unsupported(format!(
-                            "TestField of {}.{}, an Option or Enum field holding its zero member (the error text is not pinned)",
-                            t.name, t.fields[pos].name
+                        let key = self.key_text(t, &row)?;
+                        let member = self.member_caption(t, pos, &current)?;
+                        return Err(error(
+                            format!("{caption} must not be {member} in {table}: {key}"),
+                            "TestField",
                         ));
                     }
                     let key = self.key_text(t, &row)?;
@@ -587,8 +603,8 @@ impl Session {
                     return Err(error(
                         format!(
                             "{caption} must be equal to '{}'  in {table}: {key}. Current value is '{}'.",
-                            self.message_value(&want)?,
-                            self.message_value(&current)?
+                            self.member_caption(t, pos, &want)?,
+                            self.member_caption(t, pos, &current)?
                         ),
                         "TestField",
                     ));

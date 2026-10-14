@@ -23,6 +23,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Date2DWY#1", date2dwy),
     ("System.NormalDate#1", normal_date),
     ("System.ClosingDate#1", closing_date),
+    ("System.RoundDateTime#1", round_datetime),
     ("System.CalcDate#1", calcdate_formula),
     ("System.CalcDate#2", calcdate_text),
     ("Date.DayOfWeek#1", day_of_week),
@@ -100,6 +101,63 @@ fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> O
     let day = plain_date(&a[0], "CreateDateTime")?;
     let time_of_day = (t - 1).max(0);
     Ok(Value::DateTime((i64::from(day) - 1) * MS_PER_DAY + time_of_day + 1))
+}
+
+/// `RoundDateTime(DateTime [, Precision [, Direction]])` (types/TestRoundDateTimeContracts.al): the
+/// precision is in milliseconds (default 1000; a BigInteger, Integer or Duration), the direction `=`
+/// (nearest, a tie rounds up; the default), `<` (down) or `>` (up). A precision of 0 or less and an
+/// unknown direction raise Argument errors; the undefined DateTime stays undefined. The origin of the
+/// count is not derivable from the probe, so a precision that does not divide a day is refused.
+fn round_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let invalid = |what: String, n: u32| {
+        raise(
+            format!("The contents '{what}' of ROUNDDATETIME parameter number {n} are invalid."),
+            "Argument",
+        )
+    };
+    let precision = match a.get(1) {
+        None => 1000,
+        Some(Value::Integer(n)) => i64::from(*n),
+        Some(Value::BigInteger(n)) | Some(Value::Duration(n)) => *n,
+        Some(other) => return unsupported(format!("RoundDateTime with a precision of {}", other.describe())),
+    };
+    if precision <= 0 {
+        return invalid(precision.to_string(), 2);
+    }
+    let direction = match a.get(2) {
+        None => "=".to_string(),
+        Some(v) => match crate::native::text_of(v) {
+            Some(t) => t,
+            None => return unsupported("RoundDateTime with a direction that is not text"),
+        },
+    };
+    if !matches!(direction.as_str(), "=" | "<" | ">") {
+        return invalid(direction, 3);
+    }
+    let Value::DateTime(t) = a[0] else {
+        return unsupported(format!("RoundDateTime of {}", a[0].describe()));
+    };
+    if t == 0 {
+        return Ok(Value::DateTime(0));
+    }
+    if MS_PER_DAY % precision != 0 {
+        return unsupported(
+            "RoundDateTime with a precision that does not divide a day: the origin of the count is not pinned",
+        );
+    }
+    let ms = t - 1;
+    let below = ms - ms.rem_euclid(precision);
+    let rounded = if below == ms {
+        ms
+    } else {
+        match direction.as_str() {
+            "<" => below,
+            ">" => below + precision,
+            _ if ms - below >= precision - (ms - below) => below + precision,
+            _ => below,
+        }
+    };
+    Ok(Value::DateTime(rounded + 1))
 }
 
 fn defined_datetime(v: &Value, what: &str) -> Result<i64, Signal> {
@@ -488,10 +546,13 @@ fn apply(terms: &[Term], from: i32) -> Result<i32, Signal> {
     Ok(day)
 }
 
-fn calcdate(formula: &str, base: Option<&Value>) -> Out {
+fn calcdate(ctx: &dyn Ctx, formula: &str, base: Option<&Value>) -> Out {
     let terms = parse_formula(formula)?;
-    let Some(base) = base else {
-        return unsupported("CalcDate without a date uses the work date, which is not available");
+    // Without a date the calculation counts from TODAY, not from WorkDate (types/
+    // TestDateTimeIntegerCalcDateContracts.al:CalcDateWithoutADate_UsesToday_NotWorkDate).
+    let today = base.is_none().then(|| ctx.today_day()).flatten().map(|d| Value::Date(d, false));
+    let Some(base) = base.or(today.as_ref()) else {
+        return unsupported("CalcDate without a date needs the host's clock");
     };
     if matches!(base, Value::Date(0, false)) {
         // types/TestDateRoundFormatStringContracts.al:CalcDate_UndefinedDate_Throws (CR and backslash line breaks).
@@ -507,16 +568,16 @@ fn calcdate(formula: &str, base: Option<&Value>) -> Out {
     Ok(Value::Date(apply(&terms, from)?, false))
 }
 
-fn calcdate_text(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn calcdate_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     match crate::native::text_of(&a[0]) {
-        Some(f) => calcdate(&f, a.get(1)),
+        Some(f) => calcdate(ctx, &f, a.get(1)),
         None => unsupported("CalcDate with a formula that is not text"),
     }
 }
 
-fn calcdate_formula(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn calcdate_formula(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     match &a[0] {
-        Value::DateFormula(f) => calcdate(f, a.get(1)),
+        Value::DateFormula(f) => calcdate(ctx, f, a.get(1)),
         other => unsupported(format!("CalcDate with {}", other.describe())),
     }
 }

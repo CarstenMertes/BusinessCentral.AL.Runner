@@ -5,6 +5,7 @@ use crate::describe::Describe;
 use crate::native::Signal;
 use crate::value::{LibraryValue, RtType, Value};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::rc::Rc;
@@ -230,6 +231,33 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             } else {
                 a.checked_sub(*d)
             };
+            return moved
+                .filter(|m| *m > 0)
+                .map(V::DateTime)
+                .ok_or_else(|| Signal::Unsupported("DateTime out of range (error text not pinned yet)".into()));
+        }
+        // DateTime +/- an Integer, BigInteger or integer constant moves by that many milliseconds; a
+        // Decimal with a fraction raises a conversion error (types/TestDateTimeIntegerCalcDateContracts.al).
+        // The undefined DateTime is not pinned.
+        (V::DateTime(a), n) | (n, V::DateTime(a))
+            if *a > 0
+                && (int_of(n).is_some() || matches!(n, V::Decimal(_)))
+                && (op == Arith::Add || (op == Arith::Sub && matches!(l, V::DateTime(_)))) =>
+        {
+            let ms = match n {
+                V::Decimal(d) if d.fract().is_zero() => d.to_i64(),
+                V::Decimal(d) => {
+                    return crate::native::raise(
+                        format!(
+                            "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int64.",
+                            d.normalize()
+                        ),
+                        "",
+                    );
+                }
+                other => int_of(other),
+            };
+            let moved = ms.and_then(|ms| if op == Arith::Add { a.checked_add(ms) } else { a.checked_sub(ms) });
             return moved
                 .filter(|m| *m > 0)
                 .map(V::DateTime)

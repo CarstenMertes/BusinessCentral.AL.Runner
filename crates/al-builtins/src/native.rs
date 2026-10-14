@@ -70,6 +70,10 @@ pub trait Ctx: FormatCtx {
     fn ref_op(&mut self, id: &str, _receiver: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id}")))
     }
+    /// Today's day number (1 = 0001-01-01) on the host's clock; `None` where there is no host.
+    fn today_day(&self) -> Option<i32> {
+        None
+    }
     /// `Format` of a record variable, a `RecordRef` or a `FieldRef` (standard format 0): needs the
     /// table's fields. `None` where the context has no program.
     fn format_composite(&mut self, _v: &Value) -> Option<Result<String, Signal>> {

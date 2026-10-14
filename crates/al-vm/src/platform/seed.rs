@@ -99,7 +99,7 @@ impl Session {
             let mut row = row;
             // Every table has a SystemId; a seeded row gets one like any inserted row.
             if let Some(p) = t.fields.iter().position(|f| f.id == 2_000_000_000) {
-                row[p] = Value::Guid(self.new_guid());
+                row[p] = Value::Guid(self.fresh_system_id());
             }
             let _ = self.store.insert(&self.cx, t, row);
             wrote = true;

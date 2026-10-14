@@ -1671,6 +1671,9 @@ impl al_builtins::format::FormatCtx for Session {
 }
 
 impl al_builtins::native::Ctx for Session {
+    fn today_day(&self) -> Option<i32> {
+        Some(self.today_day_number())
+    }
     fn format_composite(&mut self, v: &Value) -> Option<Result<String, Signal>> {
         self.format_composite_value(v)
     }
@@ -1842,6 +1845,16 @@ impl al_builtins::native::Ctx for Session {
 /// ADR-009: determinism is allowed where AL cannot tell the difference). The bytes are two
 /// SplitMix64 outputs; the version nibble is 4 and the variant bits are `10`.
 pub(crate) fn guid_for(seed: i32, n: u64) -> [u8; 16] {
+    let mut g = raw_guid_for(seed, n);
+    g[6] = 0x40 | (g[6] & 0x0F);
+    g[8] = 0x80 | (g[8] & 0x3F);
+    g
+}
+
+/// The bytes of [`guid_for`] before the version and variant bits are set: the form of the SystemId the
+/// platform gives a new row, which is not RFC 4122 version 4 (types/TestGuidFormContracts.al:
+/// SystemId_OfNewRows_IsNotVersion4, corpus branch al-runtime-rs d0f5d52).
+pub(crate) fn raw_guid_for(seed: i32, n: u64) -> [u8; 16] {
     let mut state = ((seed as u32 as u64) << 32) ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let mut next = || {
         state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -1853,18 +1866,21 @@ pub(crate) fn guid_for(seed: i32, n: u64) -> [u8; 16] {
     let mut g = [0u8; 16];
     g[..8].copy_from_slice(&next().to_be_bytes());
     g[8..].copy_from_slice(&next().to_be_bytes());
-    g[6] = 0x40 | (g[6] & 0x0F);
-    g[8] = 0x80 | (g[8] & 0x3F);
     g
 }
 
 impl Session {
     /// The next Guid of the session: `CreateGuid`, a row's SystemId, the ids of media and tasks.
-    /// The corpus pins only that it is not null and never repeats (types/TestGuid.al:12-45);
-    /// that the form is version 4 is an assumption (docs/probes-needed.md, "Probe batch 6").
+    /// `CreateGuid` is a version 4 Guid (types/TestGuidFormContracts.al:CreateGuid_IsVersion4).
     pub(crate) fn fresh_guid(&mut self) -> [u8; 16] {
         self.next_guid += 1;
         guid_for(self.guid_seed, self.next_guid)
+    }
+
+    /// The SystemId of a new row: not a version 4 Guid.
+    pub(crate) fn fresh_system_id(&mut self) -> [u8; 16] {
+        self.next_guid += 1;
+        raw_guid_for(self.guid_seed, self.next_guid)
     }
 }
 

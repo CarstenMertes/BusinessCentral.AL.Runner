@@ -35,11 +35,6 @@ const KEPT: &[(&str, &str, &str)] = &[
         "`other` is a syntax kind: the debug text is its name",
     ),
     (
-        "al-sema/src/lower.rs",
-        r#"other => Err(format!("call `{}` ({other:?}) is not lowered yet", node.text())),"#,
-        "`other` is a syntax kind: the debug text is its name",
-    ),
-    (
         "al-syntax/src/parser.rs",
         r#"self.error(&format!("expected {kind:?}"));"#,
         "a syntax kind: the debug text is its name",

@@ -111,7 +111,12 @@ codeunit 50000 "T" { Subtype = Test;
 #[test]
 fn record_properties_and_work_date_assign() {
     let o = outcomes(MARKS);
-    for t in ["MarkAndMarkedOnly", "AscendingProperty", "ImplicitRecInTableCode", "WorkDateAssignment"] {
+    for t in [
+        "MarkAndMarkedOnly",
+        "AscendingProperty",
+        "ImplicitRecInTableCode",
+        "WorkDateAssignment",
+    ] {
         passes(&o, t);
     }
 }

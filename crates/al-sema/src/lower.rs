@@ -3282,9 +3282,9 @@ impl Lowerer<'_> {
             // Without a receiver the member is a global function (`WorkDate := d`) or a Record
             // member of the implicit Rec of table, page and dataitem code (`FilterGroup := 2`).
             let implicit = !member
-                && sig.as_ref().is_some_and(|s| {
-                    !s.instance || (s.receiver == "Record" && self.rec_slot.is_some())
-                });
+                && sig
+                    .as_ref()
+                    .is_some_and(|s| !s.instance || (s.receiver == "Record" && self.rec_slot.is_some()));
             if let Some(sig) = sig.filter(|_| member || implicit) {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));
@@ -3476,7 +3476,9 @@ impl Lowerer<'_> {
             .find(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))?;
         let name = ast::ident_text(&root);
         let obj = self.ws.object_ast(base);
-        let declared = obj.var_decls().any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)))
+        let declared = obj
+            .var_decls()
+            .any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)))
             || obj.routines().any(|r| r.name().eq_ignore_ascii_case(&name));
         declared.then(|| {
             format!("`{name}` is a variable or procedure of the page it extends: page extension code on base page members is not lowered yet")
@@ -4264,7 +4266,9 @@ pageextension 50101 Ext extends Base { layout { addlast(Content) { field(\"X\"; 
         );
         let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
         assert!(
-            reasons.iter().any(|r| r.contains("of the page it extends") && !r.contains("not assignable")),
+            reasons
+                .iter()
+                .any(|r| r.contains("of the page it extends") && !r.contains("not assignable")),
             "{reasons:?}"
         );
     }

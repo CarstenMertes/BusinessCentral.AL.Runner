@@ -240,7 +240,9 @@ mod tests {
     #[test]
     fn refusal_detail_takes_a_text() {
         assert_eq!(
-            test_args("test A --refusal-detail is_not_lowered").refusal_detail.as_deref(),
+            test_args("test A --refusal-detail is_not_lowered")
+                .refusal_detail
+                .as_deref(),
             Some("is_not_lowered")
         );
     }

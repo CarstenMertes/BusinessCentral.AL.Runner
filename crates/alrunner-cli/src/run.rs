@@ -408,7 +408,10 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             }),
             needle,
         );
-        println!("\n{}", refusals::render_top(&format!("not-run tests containing `{needle}`"), &list, 30));
+        println!(
+            "\n{}",
+            refusals::render_top(&format!("not-run tests containing `{needle}`"), &list, 30)
+        );
     }
 
     let total_time = started.elapsed();

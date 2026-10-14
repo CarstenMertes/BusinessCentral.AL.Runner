@@ -1601,7 +1601,10 @@ mod tests {
         let bf = app(
             "bf",
             &[],
-            &[("t.al", "namespace M.NoSeries; table 308 \"No. Series\" { fields { field(1; Code; Code[20]) { } } }")],
+            &[(
+                "t.al",
+                "namespace M.NoSeries; table 308 \"No. Series\" { fields { field(1; Code; Code[20]) { } } }",
+            )],
         );
         let base = app(
             "base",

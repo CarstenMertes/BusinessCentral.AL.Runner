@@ -275,9 +275,19 @@ mod tests {
             name: n.into(),
         };
         let rows = vec![
-            (id("a"), "Lib.Gen: call `NoSeries.ReadIsolation(IsolationLevel::UpdLock)` (None) is not lowered yet".to_string()),
-            (id("b"), "Other.Proc: call `NoSeries.ReadIsolation(IsolationLevel::ReadCommitted)` (None) is not lowered yet".to_string()),
-            (id("c"), "Lib.Gen: call `X.Y(1, (2))` (None) is not lowered yet".to_string()),
+            (
+                id("a"),
+                "Lib.Gen: call `NoSeries.ReadIsolation(IsolationLevel::UpdLock)` (None) is not lowered yet".to_string(),
+            ),
+            (
+                id("b"),
+                "Other.Proc: call `NoSeries.ReadIsolation(IsolationLevel::ReadCommitted)` (None) is not lowered yet"
+                    .to_string(),
+            ),
+            (
+                id("c"),
+                "Lib.Gen: call `X.Y(1, (2))` (None) is not lowered yet".to_string(),
+            ),
             (id("d"), "builtin Z is not implemented".to_string()),
         ];
         let d = detail(rows, "is not lowered");

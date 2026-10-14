@@ -5,31 +5,28 @@
 # (ADR-007).
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
-corpus_commit = "cdf315abd1e7115fcbfbcc88c720371e75989b8e"
+corpus_commit = "348a7441c3b4be2dfad3e570e83d5bdc4bfad2cb"
 
 [[version]]
 major = 27
 bc_version = "27.5"
-workflow_run = 38476427517
-artifact_id = 11856955675
+workflow_run = 38511560267
+artifact_id = 11870821886
 junit = "27/junit.xml"
 baseline = "metrics/27/passing.txt"
 
 [[version]]
 major = 28
 bc_version = "28.5"
-workflow_run = 38480686379
-artifact_id = 11858881269
+workflow_run = 38512914332
+artifact_id = 11870949831
 junit = "28/junit.xml"
 baseline = "metrics/28/passing.txt"
 
 [[version]]
 major = 29
 bc_version = "29.0"
-# Recorded for the older commit: the 29.0 dispatch run on the pin is unusable (the corpus workflow
-# does not define BC29PLUS on dispatch; docs/owner-review.md). Re-record once that is fixed.
-corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
-workflow_run = 38306086475
-artifact_id = 11773034371
+workflow_run = 38514656113
+artifact_id = 11872093217
 junit = "29/junit.xml"
 baseline = "metrics/29/passing.txt"

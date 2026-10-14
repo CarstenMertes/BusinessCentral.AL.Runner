@@ -416,7 +416,8 @@ pub struct RecordState {
     /// `SetAscending(Field, false)` on the single field of the current key. Unlike `ascending` it
     /// does not survive a page's view round trip (handlers/TestPageViewRoundTripRoutes.al).
     pub field_descending: bool,
-    /// Position of the last row found (key fields then primary key), for `Next`.
+    /// The primary key of the row the record last read: `Find` still finds that row after the
+    /// record moved it out of its own filter.
     pub position: Option<Vec<Value>>,
     /// Field positions of `SetAutoCalcFields`: calculated whenever a row is read.
     pub auto_calc: Vec<usize>,

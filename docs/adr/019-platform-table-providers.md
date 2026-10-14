@@ -74,16 +74,12 @@ Each is also a line in `docs/owner-review.md`.
    host's. A host can supply its own list.
 4. **Windows Language holds three rows** (1031, 1033, 2057), the ones the corpus fixes. A read that would have to
    answer for any other id between 1 and 65535 is refused; an id above that is no language (999999 is pinned).
-5. **A static subscriber that cannot reach a global of its codeunit runs.** The instance a non-`SingleInstance`
-   subscriber runs on (fresh per event, or one per session) is not pinned (`dispatch.rs`), and until now every such
-   subscriber of a codeunit with globals was refused. The choice cannot matter to a routine that touches no
-   global and calls no procedure of its own codeunit that does (`subscribers.rs`), so those run. 44 corpus tests
-   moved (Record Link and Company writes reach such subscribers in Base Application).
-6. **A `Get` that finds nothing in an empty table, in a dependency app's code, is refused** when its result is
-   used (`records.rs`), the way a missing row was already refused when it raised the error. With the platform
-   tables loaded, `install/TestRetenPolAllowedTables_Tests.al` ran one step further and failed (the retention
-   policy list is filled by Base Application's install code, which does not run yet). The guard goes when the
-   install baseline lands.
+5. **A `Get` whose result is used, in a dependency app's code, on a table the install baseline could not seed is
+   refused** like the raising form (`records.rs` `fail` checks `Engine::unseeded` before the quiet `false`).
+   With the platform tables loaded, `install/TestRetenPolAllowedTables_Tests.al` ran one step further and failed,
+   because the retention policy list is filled by Base Application's install code.
+6. **Provider reads and snapshots.** A provider holds the engine weakly and a captured baseline holds no provider
+   (`MemStore::detached`), so the engine stays unshared after the baseline and `Engine::unseeded` can be set.
 7. **Page Metadata:** a page type outside the thirteen the column names and PromptDialog (20) is poisoned; a page
    with no source table reports every source-object flag false (AL Runner measured this on BC); a
    `SourceTableView` is formatted only for the single `where(field = const(value))` form, with an option or enum

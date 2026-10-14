@@ -629,15 +629,17 @@ fn table_events_fire_even_when_the_trigger_does_not_run() {
 }
 
 // TriggerOrder_Modify_RecordPipeline_IsStable and TableEvent_OnAfterModify_Subscriber_Fires:
-// xRec holds the stored row in both events.
+// xRec equals Rec when code drives the Modify, in both events and the trigger (corpus
+// record/TestTableEventSequenceContracts.al:ModifyRenameDelete_EventsAndTrigger,
+// 'S.BeforeModify(run=Yes,rec=a2,x=a2)').
 #[test]
-fn modify_raises_before_trigger_after_with_the_stored_row_as_xrec() {
+fn modify_raises_before_trigger_after_with_xrec_equal_to_rec() {
     assert_eq!(
         text(trace(
             "R.\"No.\" := 1; R.Name := 'old'; R.Insert(false); T.Clear();
              R.Name := 'new'; R.Modify(true);"
         )),
-        "BMold>new,OnModify,AMold>new"
+        "BMnew>new,OnModify,AMnew>new"
     );
 }
 
@@ -796,14 +798,17 @@ codeunit 50100 C
     assert_eq!(int(run(&src, "F")), 0);
 }
 
-// Whether table events fire for temporary records is not pinned (the one corpus case,
-// record/TestTableEventAsyncSubscriberError.al, is Base App): refused, not guessed.
+// Temporary records raise the table events and run the triggers (corpus
+// record/TestTableEventSequenceContracts.al:TemporaryRecord_RaisesTheEventsAndRunsTheTriggers).
 #[test]
-fn table_events_on_temporary_records_are_refused() {
-    assert!(matches!(
-        trace_with("T2: Record ET temporary;", "T2.\"No.\" := 1; T2.Insert(true);"),
-        Err(Signal::Unsupported(r)) if r.contains("temporary")
-    ));
+fn table_events_on_temporary_records_fire() {
+    assert_eq!(
+        text(trace_with(
+            "T2: Record ET temporary;",
+            "T2.\"No.\" := 1; T2.Insert(true);"
+        )),
+        "BIYes,OnInsert,AI1"
+    );
 }
 
 fn trace_with(vars: &str, body: &str) -> Result<Value, Signal> {
@@ -1098,7 +1103,7 @@ codeunit 50100 C
         T."No." := 1; T.Insert(true);
         R."No." := 1; R.Insert(true);
         Commit();
-        asserterror R.Insert(true);
+        asserterror begin R.Insert(true); R.Count(); end;
         exit(Format(T.Count()) + Format(R.Count()) + GetLastErrorText());
     end;
 }"#;
@@ -1208,7 +1213,7 @@ fn table_extension_modify_delete_rename_triggers_run_with_xrec() {
             "R.\"No.\" := 1; R.Name := 'a'; R.Insert(false); T.Clear(); R.Name := 'b'; R.Modify(true);
              R.Modify(false);"
         )),
-        "ExtBeforeModifya>b,ExtAfterModify"
+        "ExtBeforeModifyb>b,ExtAfterModify"
     );
     assert_eq!(
         text(ext_trace(
@@ -1424,15 +1429,14 @@ fn a_single_instance_static_subscriber_keeps_its_globals_between_events() {
     assert_eq!(int(run(STATEFUL_SUB, "F")), 2);
 }
 
-// A non-single-instance static subscriber that keeps globals is refused, because its instance
-// lifetime is not pinned. `SingleInstance = false` is not SingleInstance.
+// A static subscriber that is not SingleInstance gets a fresh instance for every event, so its
+// globals never reach another instance (corpus record/TestTableEventSequenceContracts.al:
+// Insert_EventsAndTrigger_WithAndWithoutRunTrigger, hits=1 then hits=0). `SingleInstance = false`
+// is not SingleInstance: the caller's own instance of the codeunit sees nothing.
 #[test]
-fn a_static_subscriber_with_globals_and_single_instance_false_is_refused() {
+fn a_static_subscriber_with_globals_and_single_instance_false_gets_a_fresh_instance() {
     let src = STATEFUL_SUB.replace("SingleInstance = true;", "SingleInstance = false;");
-    match run(&src, "F") {
-        Err(Signal::Unsupported(m)) => assert!(m.contains("keeps global variables"), "{m}"),
-        other => panic!("expected a refusal, got {other:?}"),
-    }
+    assert_eq!(int(run(&src, "F")), 0);
 }
 
 // Only a *Manual* EventSubscriberInstance is manual. Naming the default, StaticAutomatic,

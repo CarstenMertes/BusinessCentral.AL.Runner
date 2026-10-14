@@ -131,11 +131,10 @@ fn lookup_returns_the_code_of_the_one_matching_row() {
     assert_eq!(text(r), "ONLY1");
 }
 
-// Which of several matching rows lookup() reads depends on the key BC picks;
-// the corpus only ever looks up through one matching row (or rows that agree),
-// so disagreeing rows are refused rather than guessed.
+// lookup() over several matching rows reads the first in primary key order (corpus
+// record/TestCalcFieldsTruncateUniqueContracts.al:CalcFields_Lookup_OverSeveralRows_ReadsTheFirstInPrimaryKeyOrder).
 #[test]
-fn lookup_over_rows_that_disagree_is_refused() {
+fn lookup_over_rows_that_disagree_reads_the_first_in_primary_key_order() {
     let r = run(&format!(
         "{SEED}
         procedure F(): Text
@@ -147,7 +146,7 @@ fn lookup_over_rows_that_disagree_is_refused() {
             exit(P.\"First Child Code\");
         end;"
     ));
-    assert!(unsupported(r).contains("lookup"));
+    assert_eq!(text(r), "FIRST");
 }
 
 // corpus record/TestFlowFieldContracts.al:79 (CalcFields returns true) and :98 (no children give 0).
@@ -258,10 +257,10 @@ fn set_auto_calc_fields_on_a_temporary_record_over_an_empty_source_stays_zero() 
     assert_eq!(text(r), "0");
 }
 
-// The corpus does not say whether a FlowField on a temporary record reads the persistent
-// source table, so a source with rows is refused.
+// A FlowField on a temporary record reads the persistent source table (corpus
+// record/TestCalcFieldsTruncateUniqueContracts.al:CalcFields_OnATemporaryRecord_ReadsThePersistentSourceTable).
 #[test]
-fn a_flow_field_on_a_temporary_record_over_a_source_with_rows_is_refused() {
+fn a_flow_field_on_a_temporary_record_reads_the_persistent_source() {
     let r = run(&format!(
         "{SEED}
         procedure F(): Text
@@ -273,7 +272,7 @@ fn a_flow_field_on_a_temporary_record_over_a_source_with_rows_is_refused() {
             exit(Format(P.\"Child Count\"));
         end;"
     ));
-    assert!(unsupported(r).contains("temporary"));
+    assert_eq!(text(r), "2");
 }
 
 // corpus record/TestRecordFlowFieldFilterVisitor.al:30,49 (a filter on a FlowField selects by the
@@ -515,7 +514,7 @@ fn calcfields_refuses_what_is_not_a_calculable_flow_field() {
         ),
         (
             "BadAvg",
-            "The following fields must have the same type:\n\nField: BadAvg <-- Qty\nTable: FF Head <-- FF Line\nType: Decimal <-- Integer",
+            "The following fields must have the same type:\r\\\r\\Field: BadAvg <-- Qty\r\\Table: FF Head <-- FF Line\r\\Type: Decimal <-- Integer",
         ),
     ] {
         let r = run_lines(&format!(
@@ -837,7 +836,7 @@ fn renaming_the_auto_increment_value_is_refused_but_the_rest_of_the_key_is_not()
     );
     assert_eq!(
         text(r),
-        "BYesNo|You cannot change the value of an AutoIncrement field.\n\nField: Entry No.\nTable: AI Composite"
+        "BYesNo|You cannot change the value of an AutoIncrement field.\r\\\r\\Field: Entry No.\r\\Table: AI Composite\r\\\r\\Identification fields and values:\r\\Entry No.='51',Code='B'"
     );
 }
 
@@ -879,29 +878,33 @@ fn an_insert_refused_by_a_unique_secondary_key_consumes_its_value() {
     // the next row gets 51; the asserterror form leaves the key 0 too.
     assert_eq!(
         text(r),
-        "YesNo0|2|No50|51|0|There is already a record in table AI Unique that has the same values in a unique index."
+        "YesNo0|2|No50|51|0|There is already a record in table AI Unique that has the same values in a unique index for the following fields: Code='X'"
     );
 }
 
-// Modify and Rename could also break a unique secondary key, which is only checked on Insert.
+// Modify breaks a unique secondary key like Insert does (corpus
+// record/TestCalcFieldsTruncateUniqueContracts.al:UniqueIndex_Violation_FullTextAndCode_...), but
+// rewriting a row with its own values is no violation.
 #[test]
-fn modify_and_rename_on_tables_with_unique_secondary_keys_are_refused() {
-    for write in ["U.Modify();", "U.Rename(7);"] {
-        let r = run_with(
-            AUTO,
-            &format!(
-                "procedure F()
-                var U: Record \"AI Unique\";
-                begin
-                    U.Code := 'X';
-                    U.Insert(true);
-                    {write}
-                end;"
-            ),
-            "F",
-        );
-        assert!(unsupported(r).contains("unique"), "{write}");
-    }
+fn modify_on_a_unique_secondary_key_raises_only_for_another_row() {
+    let r = run_with(
+        AUTO,
+        "procedure F(): Text
+        var U: Record \"AI Unique\"; V: Record \"AI Unique\"; Seen: Text;
+        begin
+            U.Code := 'X'; U.Insert(true);
+            V.Code := 'Y'; V.Insert(true);
+            U.Modify();
+            V.Code := 'X';
+            asserterror V.Modify();
+            exit(GetLastErrorText() + '|' + GetLastErrorCode());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "There is already a record in table AI Unique that has the same values in a unique index for the following fields: Code='X'|DB:RecordExists"
+    );
 }
 
 const TRUNC: &str = r#"
@@ -1034,11 +1037,11 @@ fn truncate_refusals_carry_the_pinned_messages() {
     assert_eq!(text(kept), "Yes");
 }
 
-// Whether a filter limits what Truncate deletes is not pinned (the corpus filter keeps the
-// only row), so a filter that excludes rows is refused; so is a temporary record, whose guard
-// message is not pinned either.
+// A filter on a normal field limits what Truncate deletes; a temporary record is refused with the
+// pinned text (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+// Truncate_WithFilterOnANormalField_RemovesOnlyTheFilteredRows, Truncate_Refusals_Texts).
 #[test]
-fn truncate_with_a_filter_that_excludes_rows_or_on_a_temporary_record_is_refused() {
+fn truncate_with_a_filter_removes_only_the_filtered_rows_and_a_temporary_record_is_refused() {
     let r = run_trunc(
         "procedure F(): Text
         var R: Record \"TR Row\";
@@ -1047,17 +1050,20 @@ fn truncate_with_a_filter_that_excludes_rows_or_on_a_temporary_record_is_refused
             R.\"Entry No.\" := 2; R.Link := 'L2'; R.Insert();
             R.SetRange(Link, 'L1');
             R.Truncate();
+            R.Reset();
+            exit(Format(R.Count()));
         end;",
     );
-    assert!(unsupported(r).contains("filter"));
+    assert_eq!(text(r), "1");
     let t = run_trunc(
         "procedure F(): Text
         var R: Record \"TR Row\" temporary;
         begin
-            R.Truncate();
+            asserterror R.Truncate();
+            exit(GetLastErrorText() + '|' + GetLastErrorCode());
         end;",
     );
-    assert!(unsupported(t).contains("temporary"));
+    assert_eq!(text(t), "Temporary tables does not support truncation.|DB:Ok");
 }
 
 // A FlowField holds no data: what the buffer shows after CalcFields is not written by Insert or
@@ -1354,8 +1360,8 @@ fn a_flow_filter_of_the_source_fields_type_applies_and_another_type_is_refused()
     assert!(unsupported(r).contains("flow filter of another type"));
 }
 
-// A lookup over several rows that agree is the value they agree on; only disagreeing rows are
-// refused (see lookup_over_rows_that_disagree_is_refused).
+// A lookup over several rows that agree is the value they agree on (disagreeing rows read the
+// first in primary key order: lookup_over_rows_that_disagree_reads_the_first_in_primary_key_order).
 #[test]
 fn lookup_over_rows_that_agree_returns_their_value() {
     let r = run_ffx(

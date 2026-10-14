@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::OnceLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum ObjKind {
     Table,
     TableExtension,

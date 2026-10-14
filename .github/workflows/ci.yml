@@ -199,6 +199,16 @@ jobs:
             grep "^compile cache: BC" cache-build.txt | sed 's/^/- /' || true
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
+      # ADR-013, "The baseline runs only when a selected test can observe it": the rule that skips the
+      # install baseline must never change an outcome. This run starts every test codeunit the rule
+      # calls free of the baseline on an empty store; no test may come out differently.
+      - name: Install baseline rule, against the normal run
+        run: |
+          status=0
+          AL_CHECK_BASELINE_RULE=1 ./target/release/al-test-cli --all-versions --require-dotnet --no-ratchet \
+            --junit ruled-junit.xml > ruled.log 2>&1 || status=1
+          tools/baseline_rule_check.sh compare . || status=1
+          exit $status
       # Keeps the entries this run used and drops the rest, so the cache that is saved at the end of
       # the job holds only what the next run can use.
       - name: Compile cache, prune
@@ -226,6 +236,7 @@ jobs:
             cached-pass-rate-*.json
             cached-pass-rate-*.md
             cached-junit-*.xml
+            ruled-junit-*.xml
           retention-days: 90
 
   release-tests:

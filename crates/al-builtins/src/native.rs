@@ -126,6 +126,26 @@ pub trait Ctx: FormatCtx {
     fn media_store(&mut self) -> Option<&mut crate::media::MediaStore> {
         None
     }
+    /// Whether the host file system has a file with this path (`File` data type).
+    fn fs_exists(&mut self, _path: &str) -> Result<bool, Signal> {
+        Err(Signal::Unsupported("File: this context has no file system".into()))
+    }
+    /// The bytes of the file at `path`, `None` if there is none.
+    fn fs_read(&mut self, _path: &str) -> Result<Option<Vec<u8>>, Signal> {
+        Err(Signal::Unsupported("File: this context has no file system".into()))
+    }
+    /// Creates the file at `path` or replaces its content; the host's reason if it cannot.
+    fn fs_write(&mut self, _path: &str, _bytes: &[u8]) -> Result<(), String> {
+        Err("this context has no file system".into())
+    }
+    /// Deletes the file at `path`; `false` if there was none.
+    fn fs_remove(&mut self, _path: &str) -> Result<bool, Signal> {
+        Err(Signal::Unsupported("File: this context has no file system".into()))
+    }
+    /// A new name for a temporary file, under [`crate::file::TEMP_DIR`].
+    fn fs_temp_name(&mut self) -> String {
+        format!("{}0.tmp", crate::file::TEMP_DIR)
+    }
     /// `Commit()`.
     fn commit(&mut self) -> Result<(), Signal>;
     /// A new, unique Guid (from the host or a deterministic sequence, ADR-006).
@@ -361,6 +381,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                 crate::json::native_for(sig)
                     .or_else(|| crate::xml::native_for(sig))
                     .or_else(|| crate::stream::native_for(sig))
+                    .or_else(|| crate::file::native_for(sig))
                     .or_else(|| crate::textfns::native_for(sig))
                     .or_else(|| crate::wsac::native_for(sig))
                     .or_else(|| crate::errorinfo::native_for(sig))

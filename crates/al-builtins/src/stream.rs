@@ -125,7 +125,7 @@ impl Encoding {
     }
 
     /// From the `Encoding` argument of `CreateOutStream` / `CreateInStream` (an option value).
-    fn from_arg(a: &[Value]) -> Result<Encoding, Signal> {
+    pub(crate) fn from_arg(a: &[Value]) -> Result<Encoding, Signal> {
         match a.get(1) {
             None => Ok(Encoding::default()),
             // Ordinals: MSDos 0, UTF8 1, UTF16 2, Windows 3 (:TextEncoding_Ordinals).

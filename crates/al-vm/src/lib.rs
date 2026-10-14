@@ -244,6 +244,8 @@ pub struct Session {
     pub(crate) host: al_host::Host,
     /// The time `Sleep` has waited, added to every clock reading.
     pub(crate) waited_ms: i64,
+    /// Temporary files created so far (`File.CreateTempFile` names them in order).
+    pub(crate) temp_files: u32,
     /// The instant of the last system stamp (milliseconds since the Unix epoch).
     pub(crate) last_stamp: i64,
     /// The date `WorkDate(Date)` set; today until then.
@@ -276,13 +278,19 @@ impl Session {
         Session::with_host(engine, al_host::Host::default())
     }
 
-    /// A session whose clock and identity come from `host`.
+    /// The files AL code wrote through the `File` type, for a test or a front end to inspect.
+    pub fn files(&self) -> &dyn al_host::FileSystem {
+        &*self.host.files
+    }
+
+    /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
         Session {
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
+            temp_files: 0,
             last_stamp: i64::MIN / 2,
             work_date: None,
             engine,
@@ -1352,6 +1360,22 @@ impl al_builtins::native::Ctx for Session {
     }
     fn collect_error(&mut self, info: &Value) -> bool {
         Session::collect_error(self, info)
+    }
+    fn fs_exists(&mut self, path: &str) -> Result<bool, Signal> {
+        Ok(self.host.files.exists(path))
+    }
+    fn fs_read(&mut self, path: &str) -> Result<Option<Vec<u8>>, Signal> {
+        Ok(self.host.files.read(path))
+    }
+    fn fs_write(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        self.host.files.write(path, bytes)
+    }
+    fn fs_remove(&mut self, path: &str) -> Result<bool, Signal> {
+        Ok(self.host.files.remove(path))
+    }
+    fn fs_temp_name(&mut self) -> String {
+        self.temp_files += 1;
+        format!("{}{}.tmp", al_builtins::file::TEMP_DIR, self.temp_files)
     }
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         Some((

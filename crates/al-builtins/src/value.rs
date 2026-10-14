@@ -648,6 +648,8 @@ pub enum LibraryValue {
     XmlAttrs(crate::json::Handle),
     /// An XmlNameTable (opaque).
     XmlNameTable,
+    /// A `File` that was created or opened, or had a mode set (an untouched one is `Empty`).
+    File(crate::file::FileState),
     /// An InStream: a snapshot being read.
     InStream(crate::stream::InState),
     /// An OutStream: appends to a Blob buffer.

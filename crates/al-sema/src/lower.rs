@@ -2691,6 +2691,9 @@ impl Lowerer<'_> {
                         // `CurrPage.Editable := true` is the setter form of `CurrPage.Editable(true)`
                         // (corpus handlers/TestPageModalNewRowLine_Objects.al:69).
                         || (s.receiver == "Page" && matches!(s.name.as_str(), "Editable" | "PromptMode"))
+                        // The documented property forms of the File data type (Export Consolidation:
+                        // `GLEntryFile.TextMode := true; GLEntryFile.WriteMode := true;`).
+                        || (s.receiver == "File" && matches!(s.name.as_str(), "TextMode" | "WriteMode"))
             });
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {

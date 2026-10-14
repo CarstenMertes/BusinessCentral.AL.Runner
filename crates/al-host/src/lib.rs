@@ -162,10 +162,57 @@ impl Identity for AlRunnerIdentity {
     }
 }
 
+/// The file system AL code sees through the `File` type (ADR-006). Paths are the text AL passes;
+/// the capability does not interpret them. A file is a byte string.
+///
+/// The default is [`MemFileSystem`]: nothing leaves the process, and every session starts empty.
+/// The command line can supply a directory-backed one (`al-test-cli/src/host.rs`).
+pub trait FileSystem {
+    /// The bytes of the file, `None` if there is none.
+    fn read(&self, path: &str) -> Option<Vec<u8>>;
+    /// Creates the file or replaces its content.
+    fn write(&mut self, path: &str, bytes: &[u8]) -> Result<(), String>;
+    /// Whether a file with this path exists.
+    fn exists(&self, path: &str) -> bool;
+    /// Deletes the file; `false` if there was none.
+    fn remove(&mut self, path: &str) -> bool;
+}
+
+/// Files kept in memory, by path. Matching is exact and case sensitive (the directory-backed
+/// system follows the host OS).
+#[derive(Debug, Clone, Default)]
+pub struct MemFileSystem {
+    files: std::collections::BTreeMap<String, Vec<u8>>,
+}
+
+impl MemFileSystem {
+    /// The paths of all files, in order.
+    pub fn paths(&self) -> Vec<String> {
+        self.files.keys().cloned().collect()
+    }
+}
+
+impl FileSystem for MemFileSystem {
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        self.files.get(path).cloned()
+    }
+    fn write(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        self.files.insert(path.to_string(), bytes.to_vec());
+        Ok(())
+    }
+    fn exists(&self, path: &str) -> bool {
+        self.files.contains_key(path)
+    }
+    fn remove(&mut self, path: &str) -> bool {
+        self.files.remove(path).is_some()
+    }
+}
+
 /// Everything environmental a session needs.
 pub struct Host {
     pub clock: Box<dyn Clock>,
     pub identity: Box<dyn Identity>,
+    pub files: Box<dyn FileSystem>,
 }
 
 impl Host {
@@ -173,7 +220,14 @@ impl Host {
         Host {
             clock: Box::new(clock),
             identity: Box::new(identity),
+            files: Box::new(MemFileSystem::default()),
         }
+    }
+
+    /// The same host on another file system.
+    pub fn with_files(mut self, files: impl FileSystem + 'static) -> Host {
+        self.files = Box::new(files);
+        self
     }
 
     /// The deterministic test host: a frozen clock and AL Runner's identity.
@@ -217,6 +271,18 @@ mod tests {
         assert!(i.gui_allowed() && i.is_service_tier());
         assert_eq!(i.windows_language(), 1033);
         assert_eq!((i.locale_id(), i.time_zone().as_str()), (1033, "UTC"));
+    }
+
+    #[test]
+    fn the_memory_file_system_keeps_bytes_by_exact_path() {
+        let mut fs = MemFileSystem::default();
+        assert!(!fs.exists("a"));
+        fs.write("a", b"x").unwrap();
+        fs.write("a", b"yz").unwrap();
+        assert_eq!(fs.read("a").unwrap(), b"yz");
+        assert!(!fs.exists("A"));
+        assert!(fs.remove("a") && !fs.remove("a"));
+        assert!(fs.read("a").is_none());
     }
 
     #[test]

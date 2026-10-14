@@ -43,6 +43,21 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+fn error(message: impl Into<String>, code: &str) -> Signal {
+    Signal::Error(crate::native::AlError {
+        message: message.into(),
+        code: code.into(),
+        call_stack: String::new(),
+    })
+}
+
+/// A failed conversion, as .NET words it (json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode).
+fn conversion(from: &str, to: &str) -> Signal {
+    error(format!("Unable to convert from {from} to {to}."), "Conversion")
+}
+
+const NAV_JSON_VALUE: &str = "Microsoft.Dynamics.Nav.Runtime.NavJsonValue";
+
 fn new_handle(node: JsonNode) -> Handle {
     Rc::new(RefCell::new(LibraryValue::Json(JsonCell { node, parent: None })))
 }
@@ -155,6 +170,18 @@ fn attachable(container: &Handle, child: Handle) -> Handle {
     }
 }
 
+fn guid_text(g: &[u8; 16]) -> String {
+    let h: Vec<String> = g.iter().map(|b| format!("{b:02X}")).collect();
+    format!(
+        "{{{}-{}-{}-{}-{}}}",
+        h[0..4].concat(),
+        h[4..6].concat(),
+        h[6..8].concat(),
+        h[8..10].concat(),
+        h[10..16].concat()
+    )
+}
+
 /// A node for an `Add`/`SetValue` argument.
 fn node_for(v: &Value) -> Result<Handle, Signal> {
     match v {
@@ -172,6 +199,9 @@ fn node_for(v: &Value) -> Result<Handle, Signal> {
         | Value::DateTime(_)
         | Value::Duration(_)
         | Value::Option(..) => Ok(new_handle(JsonNode::Scalar(Scalar::Val(v.clone())))),
+        // A Guid is stored as its text, braced and in upper case
+        // (json/TestJsonRuntimeContracts.al:JsonObject_WriteTo_GuidIsBracedUpperCase).
+        Value::Guid(g) => Ok(new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(guid_text(g)))))),
         other => unsupported(format!("{other:?} as a JSON value")),
     }
 }
@@ -431,12 +461,25 @@ impl Parser<'_> {
                 ),
             }
         } else {
-            let d = if text.contains(['e', 'E']) {
-                Decimal::from_scientific(text)
-            } else {
-                text.parse::<Decimal>()
-            };
-            Value::Decimal(d.map_err(|_| ParseError::Unsupported("number outside the Decimal range"))?)
+            // A number with a fraction or an exponent is read as a double and written back the
+            // way .NET writes a double: `1.0`, `100.0` for `1e2`, `0.1`
+            // (json/TestJsonRuntimeContracts.al:JsonObject_ReadFrom_NumbersKeepTheirWrittenForm).
+            let f: f64 = text.parse().map_err(|_| ParseError::Invalid)?;
+            // .NET switches to an exponent form outside this range; that form is not pinned.
+            if !f.is_finite() || (f != 0.0 && (f.abs() >= 1e15 || f.abs() < 1e-4)) {
+                return Err(ParseError::Unsupported(
+                    "a JSON number that .NET writes with an exponent",
+                ));
+            }
+            let mut written = format!("{f}");
+            if !written.contains('.') {
+                written.push_str(".0");
+            }
+            Value::Decimal(
+                written
+                    .parse::<Decimal>()
+                    .map_err(|_| ParseError::Unsupported("number outside the Decimal range"))?,
+            )
         };
         Ok(new_handle(JsonNode::Scalar(Scalar::Val(v))))
     }
@@ -533,7 +576,31 @@ fn write(h: &Handle, out: &mut String) -> Result<(), Signal> {
             Value::BigInteger(n) => out.push_str(&n.to_string()),
             Value::Byte(n) => out.push_str(&n.to_string()),
             Value::Option(n, _) => out.push_str(&n.to_string()),
-            Value::Decimal(d) => out.push_str(&d.normalize().to_string()),
+            // A decimal keeps its scale: 1.50 is written as 1.50
+            // (json/TestJsonRuntimeContracts.al:JsonObject_WriteTo_IsCompactAndKeepsInsertionOrder).
+            Value::Decimal(d) => out.push_str(&d.to_string()),
+            Value::Date(d, _) if d > 0 => {
+                let (y, m, day) = crate::format::civil_from_day(d);
+                write_string(out, &format!("{y:04}-{m:02}-{day:02}"));
+            }
+            Value::Time(t) if t > 0 && (t - 1) % 1000 == 0 => {
+                let s = (t - 1) / 1000;
+                write_string(out, &format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60));
+            }
+            Value::DateTime(ms) if ms > 0 && (ms - 1) % 1000 == 0 => {
+                let ms = ms - 1;
+                let (y, m, d) = crate::format::civil_from_day(ms.div_euclid(86_400_000) as i32 + 1);
+                let s = ms.rem_euclid(86_400_000) / 1000;
+                write_string(
+                    out,
+                    &format!(
+                        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.0000000Z",
+                        s / 3600,
+                        s / 60 % 60,
+                        s % 60
+                    ),
+                );
+            }
             Value::Text(s) | Value::Code(s) => write_string(out, &s),
             Value::Char(c) => write_string(out, &char::from_u32(u32::from(c)).map(String::from).unwrap_or_default()),
             other => return unsupported(format!("serialising {other:?} to JSON text (not pinned yet)")),
@@ -577,6 +644,11 @@ fn as_boolean(s: &Scalar) -> Result<Value, Signal> {
 }
 
 fn as_integer(s: &Scalar) -> Result<Value, Signal> {
+    if let Scalar::Val(Value::Text(t) | Value::Code(t)) = s {
+        if t.trim().parse::<i64>().is_err() {
+            return Err(conversion(NAV_JSON_VALUE, "System.Int32"));
+        }
+    }
     i32::try_from(as_i64(s)?)
         .map(Value::Integer)
         .or_else(|_| unsupported("number out of Integer range"))
@@ -617,6 +689,7 @@ fn as_text(s: &Scalar) -> Result<Value, Signal> {
         Scalar::Val(Value::Char(c)) => Ok(Value::Text(
             char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         )),
+        Scalar::Null => Err(conversion(NAV_JSON_VALUE, "Microsoft.Dynamics.Nav.Runtime.NavText")),
         other => unsupported(format!("reading {other:?} as Text (conversion not pinned yet)")),
     }
 }
@@ -706,7 +779,11 @@ fn object_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result
     let h = recv(r)?;
     let key = key_text(&a[0])?;
     if object_get_child(&h, &a[0])?.is_some() {
-        return unsupported("JsonObject.Add of an existing key (behaviour not pinned yet)");
+        // json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode
+        return Err(error(
+            format!("The JSON object already contains the key '{key}'."),
+            "DuplicateJsonProperty",
+        ));
     }
     let child = attach(&h, node_for(&a[1])?);
     with_node(&h, |n| {
@@ -758,8 +835,39 @@ fn object_typed(r: Option<&mut Value>, a: &mut [Value], coerce: Coerce) -> Resul
     let h = recv(r)?;
     match object_get_child(&h, &a[0])? {
         Some(child) => coerce(&scalar_of(&child)?),
-        None => unsupported("JsonObject.GetX of a missing key (error text not pinned yet)"),
+        None if matches!(a.get(1), Some(Value::Boolean(true))) => {
+            unsupported("JsonObject.GetX of a missing key with DefaultIfNotFound = true (not pinned)")
+        }
+        None => Err(missing_key(&a[0])),
     }
+}
+
+/// json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode
+fn missing_key(key: &Value) -> Signal {
+    match crate::native::text_of(key) {
+        Some(k) => error(
+            format!("There is no property with the '{k}' key on the JSON object."),
+            "JsonPropertyNotFound",
+        ),
+        None => Signal::Unsupported("JSON key that is not text".into()),
+    }
+}
+
+/// The name .NET (Newtonsoft) gives the type of a node: `Object`, `Integer`, `String`, ...
+fn token_type_name(h: &Handle) -> Result<&'static str, Signal> {
+    with_node(h, |n| match n {
+        JsonNode::Object(_) => Ok("Object"),
+        JsonNode::Array(_) => Ok("Array"),
+        JsonNode::Scalar(Scalar::Null) => Ok("Null"),
+        JsonNode::Scalar(Scalar::Val(v)) => match v {
+            Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Option(..) => Ok("Integer"),
+            Value::Decimal(_) => Ok("Float"),
+            Value::Text(_) | Value::Code(_) | Value::Char(_) => Ok("String"),
+            Value::Boolean(_) => Ok("Boolean"),
+            other => unsupported(format!("the JSON type name of {other:?}")),
+        },
+        JsonNode::Scalar(Scalar::Undefined) => unsupported("the JSON type name of an undefined value"),
+    })
 }
 
 fn array_typed(r: Option<&mut Value>, a: &mut [Value], coerce: Coerce) -> Result<Value, Signal> {
@@ -822,20 +930,37 @@ fn child_as(child: Handle, want: &str, tag: &str) -> Result<Value, Signal> {
     }
 }
 
-fn obj_get_object(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+/// `GetObject` / `GetArray` of a key: a child of another kind is a conversion error between
+/// .NET token types (json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode).
+fn obj_get_kind(r: Option<&mut Value>, a: &mut [Value], want: &str, tag: &str, to: &str) -> Result<Value, Signal> {
     let h = recv(r)?;
     match object_get_child(&h, &a[0])? {
-        Some(c) => child_as(c, "object", "JsonObject"),
-        None => unsupported("JsonObject.GetObject of a missing key (error text not pinned yet)"),
+        Some(c) => {
+            let ok = with_node(&c, |n| {
+                matches!(
+                    (n, want),
+                    (JsonNode::Object(_), "object") | (JsonNode::Array(_), "array")
+                )
+            });
+            if ok {
+                Ok(tagged(tag, c))
+            } else {
+                Err(conversion(token_type_name(&c)?, to))
+            }
+        }
+        None if matches!(a.get(1), Some(Value::Boolean(true))) => {
+            unsupported("JsonObject.GetObject or GetArray of a missing key with DefaultIfNotFound = true (not pinned)")
+        }
+        None => Err(missing_key(&a[0])),
     }
 }
 
+fn obj_get_object(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    obj_get_kind(r, a, "object", "JsonObject", "Object")
+}
+
 fn obj_get_array(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
-    let h = recv(r)?;
-    match object_get_child(&h, &a[0])? {
-        Some(c) => child_as(c, "array", "JsonArray"),
-        None => unsupported("JsonObject.GetArray of a missing key (error text not pinned yet)"),
-    }
+    obj_get_kind(r, a, "array", "JsonArray", "Array")
 }
 
 fn arr_get_object(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
@@ -882,7 +1007,8 @@ fn array_get(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("JsonArray.Get with an index out of range, result unused (error text not pinned yet)"),
+        // json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode
+        None => Err(error("Index out of bounds.", "IndexOutOfBounds")),
     }
 }
 
@@ -894,7 +1020,8 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
     let Some(text) = crate::native::text_of(&a[0]) else {
         return unsupported("ReadFrom with an argument that is not text");
     };
-    let parsed = parse(&text)?.filter(|p| {
+    let syntax = parse(&text)?;
+    let parsed = syntax.clone().filter(|p| {
         with_node(p, |n| {
             matches!(
                 (n, want),
@@ -905,8 +1032,14 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
     let Some(parsed) = parsed else {
         return if c.ret_used() {
             Ok(Value::Boolean(false))
+        } else if syntax.is_none() {
+            // json/TestJsonRuntimeContracts.al:JsonObject_ReadFrom_InvalidJson_ReturnsFalse_AndStatementFormThrows
+            Err(error(
+                "The data does not represent a valid JSON token.",
+                "InvalidJsonData",
+            ))
         } else {
-            unsupported("ReadFrom of invalid JSON, result unused (error text not pinned yet)")
+            unsupported("ReadFrom of JSON of another kind, result unused (error text not pinned yet)")
         };
     };
     let LibraryValue::Json(JsonCell { node, .. }) = std::mem::take(&mut *parsed.borrow_mut()) else {
@@ -944,6 +1077,100 @@ fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Res
     Ok(Value::Boolean(true))
 }
 
+// ------------------------------------------------------------------- YAML
+
+/// Only the flat form is read and written: a mapping of plain keys to numbers, booleans and
+/// plain strings. `WriteToYaml` of `{"a":1}` is `a: 1` and a line feed
+/// (json/TestJsonRuntimeContracts.al:JsonObject_Yaml_RoundTripsOnThisTier); nested values, quoting
+/// and the other YAML forms are not pinned and are refused.
+fn plain_yaml_key(k: &str) -> bool {
+    !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A string YAML writes and reads without quotes, and that cannot be mistaken for another type.
+fn plain_yaml_string(t: &str) -> bool {
+    let lower = t.to_ascii_lowercase();
+    !t.is_empty()
+        && t.trim() == t
+        && t.chars().all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '_')
+        && t.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+        && !matches!(
+            lower.as_str(),
+            "true" | "false" | "null" | "yes" | "no" | "on" | "off" | "y" | "n"
+        )
+}
+
+fn write_to_yaml(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let kids = with_node(&h, |n| match n {
+        JsonNode::Object(k) => Ok(k.clone()),
+        _ => unsupported("WriteToYaml of something that is not a JsonObject"),
+    })?;
+    let mut out = String::new();
+    for (k, c) in kids {
+        if !plain_yaml_key(&k) {
+            return unsupported(format!("WriteToYaml with the key `{k}` (quoting is not pinned)"));
+        }
+        let scalar = with_node(&c, |n| match n {
+            JsonNode::Scalar(Scalar::Val(v)) => Some(v.clone()),
+            _ => None,
+        });
+        let text = match scalar {
+            Some(Value::Text(t) | Value::Code(t)) if plain_yaml_string(&t) => t,
+            Some(Value::Integer(_) | Value::BigInteger(_) | Value::Boolean(_) | Value::Decimal(_)) => {
+                let mut t = String::new();
+                write(&c, &mut t)?;
+                t
+            }
+            _ => {
+                return unsupported(format!(
+                    "WriteToYaml of the value under `{k}` (the YAML form is not pinned)"
+                ));
+            }
+        };
+        out.push_str(&format!("{k}: {text}\n"));
+    }
+    a[0] = Value::Text(out);
+    Ok(Value::Boolean(true))
+}
+
+fn read_from_yaml(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let Some(text) = crate::native::text_of(&a[0]) else {
+        return unsupported("ReadFromYaml with an argument that is not text");
+    };
+    let mut members: Vec<String> = Vec::new();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let Some((k, v)) = line.split_once(": ") else {
+            return unsupported("ReadFromYaml of a line that is not `key: value` (the YAML form is not pinned)");
+        };
+        let number = {
+            let digits = v.strip_prefix('-').unwrap_or(v);
+            let (int, frac) = digits.split_once('.').map_or((digits, None), |(i, f)| (i, Some(f)));
+            !int.is_empty()
+                && int.bytes().all(|b| b.is_ascii_digit())
+                && (int == "0" || !int.starts_with('0'))
+                && frac.is_none_or(|f| !f.is_empty() && f.bytes().all(|b| b.is_ascii_digit()))
+        };
+        if !plain_yaml_key(k) {
+            return unsupported("ReadFromYaml with a key that is not plain (the YAML form is not pinned)");
+        }
+        let value = if number || v == "true" || v == "false" {
+            v.to_string()
+        } else if plain_yaml_string(v) {
+            let mut q = String::new();
+            write_string(&mut q, v);
+            q
+        } else {
+            return unsupported("ReadFromYaml of a value that is not a number, a Boolean or a plain string");
+        };
+        let mut key = String::new();
+        write_string(&mut key, k);
+        members.push(format!("{key}:{value}"));
+    }
+    let json = format!("{{{}}}", members.join(","));
+    read_from(c, r, &mut [Value::Text(json)], Some("object"))
+}
+
 fn as_token(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     Ok(tagged("JsonToken", recv(r)?))
 }
@@ -959,7 +1186,11 @@ fn token_as_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Re
     if with_node(&h, |n| matches!(n, JsonNode::Scalar(_))) {
         Ok(tagged("JsonValue", h))
     } else {
-        unsupported(format!("AsValue on {} (error text not pinned yet)", kind_name(&h)))
+        // json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode
+        Err(conversion(
+            "Microsoft.Dynamics.Nav.Runtime.NavJsonToken",
+            NAV_JSON_VALUE,
+        ))
     }
 }
 
@@ -1122,6 +1353,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonObject.GetObject", _) => obj_get_object,
         ("JsonObject.GetArray", _) => obj_get_array,
         ("JsonObject.ReadFrom", ["Text"]) => object_read_from,
+        ("JsonObject.ReadFromYaml", ["Text"]) => read_from_yaml,
+        ("JsonObject.WriteToYaml", ["Text"]) if first_by_var => write_to_yaml,
         ("JsonObject.WriteTo", ["Text"]) if first_by_var => write_to_text,
         ("JsonObject.AsToken" | "JsonArray.AsToken" | "JsonValue.AsToken", []) => as_token,
         ("JsonObject.Clone" | "JsonArray.Clone" | "JsonValue.Clone" | "JsonToken.Clone", []) => clone_token,

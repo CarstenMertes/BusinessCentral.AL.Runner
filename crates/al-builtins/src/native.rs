@@ -287,9 +287,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // Telemetry goes to the server's log, which AL cannot read (ADR-009).
     ("Session.LogMessage#1", |_, _, _| Ok(Value::Null)),
     ("Session.LogMessage#2", |_, _, _| Ok(Value::Null)),
-    // The security audit log is the server's too (ADR-009): the Base Application writes it from the
-    // change log setup tables, which handlers/TestReportNestedLinkImplicitParent.al fills.
-    ("Session.LogSecurityAudit#1", |_, _, _| Ok(Value::Null)),
     ("Database.SelectLatestVersion#1", |_, _, _| Ok(Value::Null)),
     ("Database.SelectLatestVersion#2", |_, _, _| Ok(Value::Null)),
     // Unique and not null is all the corpus asks (session/TestSystemExtended.al:306-328).

@@ -22,7 +22,7 @@ reviewed it.
 - The tableId/systemId pair of BC 28.5 and later is not written: the gate rules need a `BC28PLUS` guard in the corpus.
 - Side changes the dataset needed, all additive: `UseTemporary` on a data item; `Report::"X"` named in workspace code reaches
   the report's whole code (a test passes the id to a helper); the request page of `RunRequestPage` has OK; `CompanyProperty.DisplayName`
-  is the company name; `Session.LogSecurityAudit` is a no-op; `XmlDocument.ReadFrom(InStream)`; `foreach` over `XmlNodeList`.
+  is the company name; `XmlDocument.ReadFrom(InStream)`; `foreach` over `XmlNodeList`.
 
 ## Open questions (not decided)
 

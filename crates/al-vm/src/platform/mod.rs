@@ -20,6 +20,7 @@ mod links;
 mod mat;
 mod objects;
 mod pages;
+mod permissions;
 pub(crate) mod ranges;
 mod seed;
 
@@ -79,6 +80,9 @@ pub(crate) struct Providers {
     served: Vec<Option<Virtual>>,
     /// Tables listed in full, once (they depend on the program and the host only).
     listed: RefCell<HashMap<Virtual, Rc<mat::Mat>>>,
+    /// The Aggregate Permission Set rows with the tenant's own sets in them, and the stamp of the
+    /// stored Tenant Permission Set table they were composed at.
+    aggregate: permissions::Cache,
 }
 
 impl Providers {
@@ -100,11 +104,27 @@ impl Providers {
             ident,
             served,
             listed: RefCell::default(),
+            aggregate: RefCell::default(),
         }
     }
 
     pub(super) fn engine(&self) -> Arc<Engine> {
         self.engine.upgrade().expect("a session outlives its provider's reads")
+    }
+
+    /// The Aggregate Permission Set rows as of now: composed again when the stored tenant sets changed.
+    fn aggregate(&self, store: &MemStore, cx: &AccessContext, t: &TableDef) -> Result<Rc<mat::Mat>, StoreError> {
+        let stamp = self
+            .tenant_permission_set_def()
+            .map_or(0, |tenant| store.table_stamp(cx, &tenant));
+        if let Some((at, m)) = &*self.aggregate.borrow() {
+            if *at == stamp {
+                return Ok(m.clone());
+            }
+        }
+        let m = Rc::new(mat::Mat::new(t, permissions::aggregate_rows(self, store, cx, t)?));
+        *self.aggregate.borrow_mut() = Some((stamp, m.clone()));
+        Ok(m)
     }
 
     fn kind(&self, t: &TableDef) -> Virtual {
@@ -127,6 +147,10 @@ impl Providers {
                     "Tenant Media: media live in the session's media store, which this table does not read yet (ADR-017)",
                 ));
             }
+            Virtual::MetadataPermissionSet => permissions::metadata_permission_set_rows(self, t),
+            Virtual::PermissionSet => permissions::permission_set_rows(self, t, false),
+            Virtual::PermissionSetAssignable => permissions::permission_set_rows(self, t, true),
+            Virtual::AggregatePermissionSet => unreachable!("composed per read"),
             Virtual::NavAppInstalledApp => apps::nav_app_installed_app_rows(self, t),
             Virtual::PublishedApplication => apps::published_application_rows(self, t),
             Virtual::TimeZone => host_tables::time_zone_rows(t, &self.ident),
@@ -178,14 +202,19 @@ impl VirtualTables for Providers {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
     }
 
-    fn get(
-        &self,
-        _store: &MemStore,
-        _cx: &AccessContext,
-        t: &TableDef,
-        pk: &[Value],
-    ) -> Result<Option<Row>, StoreError> {
+    fn get(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
+            Virtual::AggregatePermissionSet => self.aggregate(store, cx, t)?.get(t, pk),
+            // From BC 29 a read by key under any App ID finds the null-App-ID row of SUPER and
+            // SECURITY (permissions/TestMetadataPermissionSet.al:85-128).
+            Virtual::MetadataPermissionSet
+                if al_version::gate_on(self.engine().target.as_ref(), al_version::Gate::SuperPermissionSetIgnoresAppId)
+                    && matches!(pk.get(1), Some(Value::Code(r) | Value::Text(r)) if r.eq_ignore_ascii_case("SUPER") || r.eq_ignore_ascii_case("SECURITY")) =>
+            {
+                let mut key = pk.to_vec();
+                key[0] = Value::Guid([0; 16]);
+                self.listed(t, Virtual::MetadataPermissionSet)?.get(t, &key)
+            }
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
             Virtual::WindowsLanguage => host_tables::windows_language_get(t, pk),
@@ -195,12 +224,17 @@ impl VirtualTables for Providers {
 
     fn next(
         &self,
-        _store: &MemStore,
-        _cx: &AccessContext,
+        store: &MemStore,
+        cx: &AccessContext,
         t: &TableDef,
         scan: &Scan,
     ) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
+            Virtual::AggregatePermissionSet => self.aggregate(store, cx, t)?.next(t, scan),
+            // The legacy table lists only assignable sets when walked, all of them when the key is named.
+            Virtual::PermissionSet if !permissions::pins_the_primary_key(t, scan.filters) => {
+                self.listed(t, Virtual::PermissionSetAssignable)?.next(t, scan)
+            }
             Virtual::Integer => integer::next(t, scan),
             Virtual::Date => date::next(t, scan),
             Virtual::WindowsLanguage => host_tables::windows_language_next(t, scan),
@@ -210,12 +244,16 @@ impl VirtualTables for Providers {
 
     fn count(
         &self,
-        _store: &MemStore,
-        _cx: &AccessContext,
+        store: &MemStore,
+        cx: &AccessContext,
         t: &TableDef,
         filters: &[FieldFilter],
     ) -> Result<usize, StoreError> {
         match self.kind(t) {
+            Virtual::AggregatePermissionSet => self.aggregate(store, cx, t)?.count(t, filters),
+            Virtual::PermissionSet if !permissions::pins_the_primary_key(t, filters) => {
+                self.listed(t, Virtual::PermissionSetAssignable)?.count(t, filters)
+            }
             Virtual::Integer => integer::count(t, filters),
             Virtual::Date => date::count(t, filters),
             Virtual::WindowsLanguage => host_tables::windows_language_count(t, filters),

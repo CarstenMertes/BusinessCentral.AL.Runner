@@ -41,6 +41,11 @@ pub enum Virtual {
     ApiWebhookEntity,
     /// Media live in the session's media store (ADR-017); the table is not a view of it yet.
     TenantMedia,
+    MetadataPermissionSet,
+    PermissionSet,
+    /// The assignable rows of Permission Set (the table is walked through this one); not a table.
+    PermissionSetAssignable,
+    AggregatePermissionSet,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -108,6 +113,12 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     // Read by Base Application's API Webhook Notification Mgt. when a database write reaches the Global
     // Triggers codeunit; a plain tenant table with no native behaviour.
     (2_000_000_095, "API Webhook Subscription", Provider::Stored),
+    (2000000159, "Data Sensitivity", Provider::Stored),
+    (2000000073, "User Personalization", Provider::Stored),
+    (2_000_000_250, "Metadata Permission Set", Provider::Virtual(Virtual::MetadataPermissionSet)),
+    (2_000_000_004, "Permission Set", Provider::Virtual(Virtual::PermissionSet)),
+    (2_000_000_167, "Aggregate Permission Set", Provider::Virtual(Virtual::AggregatePermissionSet)),
+    (2_000_000_165, "Tenant Permission Set", Provider::Stored),
     (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
     (2_000_000_121, "User Property", Provider::Stored),
     (2_000_000_175, "Scheduled Task", Provider::Stored),
@@ -159,6 +170,12 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Published Application: install/TestRetenPolAllowedTables_Tests.al reads the package ids through System Application code;
     // the identity and version columns mirror NAV App Installed App.
     (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9]),
+    // Metadata Permission Set: permissions/TestMetadataPermissionSet.al, TestPermissionSetUndeclaredAssignable.al.
+    (2_000_000_250, &[1, 2, 3, 4]),
+    // Permission Set: permissions/TestPermissionSetTable.al.
+    (2_000_000_004, &[1, 2, 3]),
+    // Aggregate Permission Set: access-control/TestAggregatePermissionSetTable.al, permissions/TestPermissionSetTable.al.
+    (2_000_000_167, &[1, 2, 3, 4, 5]),
     // Windows Language: record/TestWindowsLanguageTable.al.
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.

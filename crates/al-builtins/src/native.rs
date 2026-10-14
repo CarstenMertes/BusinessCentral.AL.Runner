@@ -187,6 +187,13 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Variant2Time#1", variant_2_time),
     // Whether the host can create tasks is not pinned (corpus session/TestTaskSchedulerCloudBehavior.al
     // pins only that CreateTask returns a task id): a run that reaches the question is refused.
+    // The URL of the web client depends on the server's address, which a host has not been asked
+    // for: a run that builds one is refused (session/TestFinalCoverage.al:105-125 asks only that
+    // GetUrl does not throw).
+    ("System.GetUrl#1", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
+    ("System.GetUrl#2", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
+    ("System.GetUrl#3", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
+    ("System.GetUrl#4", |_, _, _| unsupported("GetUrl (the server address is not a host value)")),
     ("TaskScheduler.CanCreateTask#1", |_, _, _| {
         unsupported("TaskScheduler.CanCreateTask (not pinned)")
     }),

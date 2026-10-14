@@ -39,6 +39,8 @@ pub struct Layout {
     pub record_separator: Option<String>,
     pub utf8: bool,
     pub reasons: Vec<String>,
+    /// Reasons only running the port refuses (see `ir::XmlPort::run_unsupported`).
+    pub run_reasons: Vec<String>,
 }
 
 fn unquote(s: &str) -> String {
@@ -104,6 +106,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         record_separator: None,
         utf8: false,
         reasons: Vec::new(),
+        run_reasons: Vec::new(),
     };
     for p in obj.properties() {
         let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
@@ -129,16 +132,22 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "fieldseparator" => out.field_separator = Some(unquote(&value)),
             "fielddelimiter" => out.field_delimiter = Some(unquote(&value)),
             "recordseparator" => out.record_separator = Some(unquote(&value)),
+            // No corpus test sets FormatEvaluate: whether `Xml` changes the text a field exports or
+            // imports (dates, decimals, booleans) is not pinned, so running the port is refused.
+            "formatevaluate" => out.run_reasons.push(format!(
+                "xmlport property formatevaluate = {} is not pinned",
+                value.trim()
+            )),
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             other => out
-                .reasons
+                .run_reasons
                 .push(format!("xmlport property {other} is not supported yet")),
         }
     }
     for top in obj.sections() {
         match top.name().to_ascii_lowercase().as_str() {
             "schema" => visit(&top, None, &mut out),
-            "requestpage" => out.reasons.push("request pages are not supported yet".into()),
+            "requestpage" => out.run_reasons.push("request pages are not supported yet".into()),
             other => out
                 .reasons
                 .push(format!("xmlport section {other} is not supported yet")),
@@ -169,7 +178,10 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
         for p in s.properties() {
             let pn = p.name().to_ascii_lowercase();
             if !allowed_properties(kind).contains(&pn.as_str()) {
-                out.reasons
+                // Refused when the port runs, not when it is declared: Base App's xmlport 1 sets
+                // MinOccurs, MaxOccurs, Occurrence and SourceTableView, and tests reach it only
+                // through a request page they cancel (handlers/TestReqPageBoundVisibility.al:172).
+                out.run_reasons
                     .push(format!("property {pn} of {section_name} {name} is not supported yet"));
             } else if pn == "xmlname" {
                 xml_name = unquote(&p.value_text());
@@ -178,7 +190,7 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
         for t in s.triggers() {
             let tn = t.name().to_ascii_lowercase();
             if !allowed_triggers(kind).contains(&tn.as_str()) {
-                out.reasons
+                out.run_reasons
                     .push(format!("trigger {tn} of {section_name} {name} is not supported yet"));
             }
         }
@@ -273,6 +285,7 @@ fn table_object(cx: &Context, name: &str) -> Option<usize> {
 /// element variables already found.
 pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
     let layout = cx.layout;
+    let mut run_reasons = layout.run_reasons.clone();
     let mut nodes: Vec<ir::XmlNode> = Vec::new();
     for (i, raw) in layout.nodes.iter().enumerate() {
         let sec = &raw.section;
@@ -317,9 +330,12 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                 if node.slot.is_none() {
                     reasons.push(format!("variable of {} has no slot", raw.name));
                 }
+                // No corpus test pins a trigger on a container text element (one with child
+                // elements; Base App's xmlport 1 has OnAfterAssignVariable on one), so running
+                // the port is refused, not declaring it.
                 if kind == ir::XmlNodeKind::Text && layout.has_children(i) && !node.triggers.is_empty() {
-                    reasons.push(format!(
-                        "triggers of the container text element {} are not supported",
+                    run_reasons.push(format!(
+                        "triggers of the container text element {} are not supported (not pinned)",
                         raw.name
                     ));
                 }
@@ -433,6 +449,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         source_slot: cx.source_slot,
         destination_slot: cx.destination_slot,
         unsupported: reasons,
+        run_unsupported: run_reasons,
     }
 }
 
@@ -465,11 +482,15 @@ mod tests {
         let l = layout_of(
             "xmlport 1 X { Format = Binary; schema { textelement(Root) { MinOccurs = Zero; trigger OnPreXmlItem() begin end; } } requestpage { } }",
         );
-        let all = l.reasons.join("; ");
+        let all = [l.reasons.clone(), l.run_reasons.clone()].concat().join("; ");
         assert!(all.contains("Format = binary"), "{all}");
         assert!(all.contains("property minoccurs"), "{all}");
         assert!(all.contains("trigger onprexmlitem"), "{all}");
         assert!(all.contains("request pages"), "{all}");
+        assert!(
+            !l.reasons.join(";").contains("request pages"),
+            "a request page is a run reason"
+        );
     }
 
     // Mutation-testing additions (docs/status.md debt).
@@ -483,7 +504,11 @@ mod tests {
             assert!(l.reasons.is_empty(), "{ok}: {:?}", l.reasons);
         }
         let l = layout_of("xmlport 1 X { TextEncoding = UTF16; schema { textelement(Root) { } } }");
-        assert!(l.reasons.join(";").contains("property textencoding"), "{:?}", l.reasons);
+        assert!(
+            l.run_reasons.join(";").contains("property textencoding"),
+            "{:?}",
+            l.run_reasons
+        );
     }
 
     #[test]
@@ -495,7 +520,11 @@ mod tests {
             assert!(l.reasons.is_empty(), "{name}: {:?}", l.reasons);
         }
         let l = layout_of("xmlport 1 X { Encoding = Windows; schema { textelement(Root) { } } }");
-        assert!(l.reasons.join(";").contains("property encoding"), "{:?}", l.reasons);
+        assert!(
+            l.run_reasons.join(";").contains("property encoding"),
+            "{:?}",
+            l.run_reasons
+        );
     }
 
     #[test]
@@ -640,6 +669,20 @@ xmlport 50010 X
         o.xmlport.as_ref().unwrap().unsupported.join(";")
     }
 
+    fn run_reasons_of(src: String) -> String {
+        let (_, l) = compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src)],
+            }],
+            &Default::default(),
+        );
+        let o = l.program.objects.iter().find(|o| o.kind == "xmlport").unwrap();
+        o.xmlport.as_ref().unwrap().run_unsupported.join(";")
+    }
+
     #[test]
     fn a_field_must_sit_inside_a_table_element_of_the_name_it_binds() {
         // Root is a text element, Q is no element at all, and P is a table element of another name.
@@ -670,12 +713,26 @@ xmlport 50010 X
     }
 
     #[test]
-    fn a_container_text_element_with_a_trigger_is_a_reason() {
+    fn a_container_text_element_with_a_trigger_is_not_a_reason_the_run_refuses_it() {
+        // The runtime refuses it when the port runs (al-vm/tests/xmlports.rs), so code that only
+        // holds the port stays runnable.
         let why = reasons_of(SRC.replace(
             "XmlName = 'Docs';",
             "XmlName = 'Docs'; trigger OnBeforePassVariable() begin end;",
         ));
-        assert!(why.contains("triggers of the container text element Root"), "{why}");
+        assert!(!why.contains("container text element"), "{why}");
+        let run = run_reasons_of(SRC.replace(
+            "XmlName = 'Docs';",
+            "XmlName = 'Docs'; trigger OnBeforePassVariable() begin end;",
+        ));
+        assert!(run.contains("triggers of the container text element Root"), "{run}");
+    }
+
+    #[test]
+    fn format_evaluate_is_a_run_reason_not_a_declaration_reason() {
+        let src = SRC.replace("Direction = Export;", "FormatEvaluate = Xml; Direction = Export;");
+        assert!(!reasons_of(src.clone()).contains("formatevaluate"));
+        assert!(run_reasons_of(src).contains("formatevaluate = Xml"));
     }
 
     #[test]

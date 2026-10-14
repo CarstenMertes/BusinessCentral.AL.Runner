@@ -25,26 +25,30 @@ fn not_initialized() -> Signal {
 
 impl Session {
     /// `value is I` / `value as I`: the instance the interface variable holds is a codeunit
-    /// from `objects`. The corpus pins only the instance that does implement `I` (codeunit/
-    /// TestInterfaceRuntimeContracts.al:Interface_ExtendedInterface_IsAndAs); `is` of an
-    /// instance that does not is a plain `false`, and the failure of `as` and either operator on
-    /// an unassigned variable are refused (docs/probes-needed.md).
+    /// from `objects`. `is` is false, not an error, for an instance that does not implement `I` and
+    /// for an unassigned variable; `as` to such an interface or on an unassigned variable raises
+    /// `The expression cannot be the target interface.` / `UnableToCast`
+    /// (codeunit/TestInterfaceIsAsContracts.al:61-102; the implemented case:
+    /// codeunit/TestInterfaceRuntimeContracts.al:Interface_ExtendedInterface_IsAndAs).
     pub(crate) fn interface_test(&mut self, value: Value, objects: &[u32], cast: bool) -> Result<Value, Signal> {
+        let unable = || {
+            Signal::Error(AlError {
+                message: "The expression cannot be the target interface.".into(),
+                code: "UnableToCast".into(),
+                call_stack: String::new(),
+            })
+        };
         match value {
             Value::Codeunit(i) => {
                 let implements = objects.contains(&i.borrow().object);
                 match (cast, implements) {
                     (false, hit) => Ok(Value::Boolean(hit)),
                     (true, true) => Ok(Value::Codeunit(i)),
-                    (true, false) => Err(Signal::Unsupported(
-                        "`as` of an interface value to an interface its instance does not implement (error text not pinned)"
-                            .into(),
-                    )),
+                    (true, false) => Err(unable()),
                 }
             }
-            Value::Null => Err(Signal::Unsupported(
-                "`is` or `as` on an interface variable that holds no implementation (not pinned)".into(),
-            )),
+            Value::Null if cast => Err(unable()),
+            Value::Null => Ok(Value::Boolean(false)),
             other => Err(Signal::Unsupported(format!("`is` or `as` on {other:?}"))),
         }
     }

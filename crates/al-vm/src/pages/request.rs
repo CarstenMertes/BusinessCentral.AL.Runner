@@ -126,6 +126,19 @@ impl Session {
         }
     }
 
+    /// A request page with `ShowFilter = false` hides the filters of its data items. What a TestRequestPage or
+    /// `RunRequestPage` then does with them is not pinned by the corpus (docs/probes-needed.md).
+    fn require_filters_shown(&self, object: usize) -> Result<(), Signal> {
+        let hidden = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("ShowFilter") && v.trim().eq_ignore_ascii_case("false"));
+        if hidden {
+            return unsupported("a data item of a request page with ShowFilter = false (not pinned)");
+        }
+        Ok(())
+    }
+
     /// The record of data item control `idx` of the open request page.
     fn request_item_record(&self, st: &St, idx: usize) -> Result<Rec, Signal> {
         let engine = self.engine();
@@ -151,6 +164,7 @@ impl Session {
         idx: usize,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        self.require_filters_shown(st.borrow().object as usize)?;
         let rec = self.request_item_record(st, idx)?;
         let table = self.table(&rec)?;
         let field_arg = |i: usize| match args.get(i) {
@@ -224,9 +238,10 @@ impl Session {
         let mut items = String::new();
         for c in &page.controls {
             match (&c.kind, &c.binding) {
-                (ir::ControlKind::Field, ir::Binding::Var(slot)) => {
-                    let owner = owner_inst(inst, exts, c.owner);
-                    let v = owner.borrow().globals[*slot].clone();
+                (ir::ControlKind::Field, b) if b.var_slot(c.owner).is_some() => {
+                    let (slot, who) = b.var_slot(c.owner).expect("a variable binding");
+                    let owner = owner_inst(inst, exts, who);
+                    let v = owner.borrow().globals[slot].clone();
                     let text = match &v {
                         Value::Boolean(b) => b.to_string(),
                         // An option travels as its ordinal.
@@ -240,6 +255,7 @@ impl Session {
                     ));
                 }
                 (ir::ControlKind::DataItem, ir::Binding::Var(slot)) => {
+                    self.require_filters_shown(object)?;
                     let rec = match inst.borrow().globals[*slot].clone() {
                         Value::Record(r) => r,
                         other => return unsupported(format!("data item {} holds {other:?}", c.name)),
@@ -302,10 +318,10 @@ impl Session {
                     "a parameter for the control {name}, which the request page does not have"
                 ));
             };
-            let ir::Binding::Var(slot) = c.binding else {
+            let Some((slot, who)) = c.binding.var_slot(c.owner) else {
                 return unsupported(format!("a parameter for the control {name}, which shows no variable"));
             };
-            let owner = owner_inst(inst, exts, c.owner);
+            let owner = owner_inst(inst, exts, who);
             let current = owner.borrow().globals[slot].clone();
             let value = match &current {
                 Value::Text(_) => Value::Text(text),
@@ -352,6 +368,7 @@ impl Session {
                     "a parameter for the data item {name}, which the request page does not have"
                 ));
             };
+            self.require_filters_shown(object)?;
             let ir::Binding::Var(slot) = c.binding else { continue };
             let Value::Record(rec) = inst.borrow().globals[slot].clone() else {
                 continue;

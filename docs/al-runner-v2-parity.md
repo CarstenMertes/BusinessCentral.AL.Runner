@@ -61,7 +61,7 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 
 | ID | Feature | v2 reference | v3 today | Blocker | Proposed v3 | Hard |
 |---|---|---|---|---|---|---|
-| IN-1 | One or more bundle folders as arguments; run in order; one combined summary | `Program.cs` arg loop (lines 480-660); `ProgramSupport/CliText.cs` | No | CLI | `alrunner test PATH...` | - |
+| IN-1 | One or more bundle folders as arguments; run in order; one combined summary | `Program.cs` arg loop (lines 480-660); `ProgramSupport/CliText.cs` | Partial | CLI | `alrunner test PATH...` Built (2026-10-14): `alrunner test APP...`, APP a folder, `*.Source.zip` or `.app`. | - |
 | IN-2 | Bundle root found by climbing from any folder below an `app.json` | `Infrastructure/BundleRootValidation.cs` | No | CLI | Same rule | - |
 | IN-3 | A folder holding several apps is run as one bundle per app; loose `.al` files beside them are ignored | `ProgramSupport/Suites.cs`, `docs/server-mode.md` (#5107) | No | CLI | Same rule | - |
 | IN-4 | The same folder named twice runs once (real path, symlinks) | `Infrastructure/BundleRootDeduplication.cs` | No | CLI | Same rule, print which argument was dropped | - |
@@ -84,7 +84,7 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 | DP-4 | Floor from `app.json`; never select below it; explicit lower value runs with a warning | `Infrastructure/BcVersionFloor.cs` | Partial | ADR-013 | Same (ADR-013 decision 2) | - |
 | DP-5 | `--artifact-path DIR` pins one engine directory | `Program.cs:105` | N/A | - | No engine directory in v3. `--bc-version` plus `--deps` cover it | - |
 | DP-6 | `--country CODE`; per-country `platform-apps-<cc>` cache | `Program.cs:492`, `AlRunner.Provisioning/ArtifactDownloader.cs` | No | ADR-013 | `--country`. ADR-013 surveyed only the `platform` artifact. Country artifact source layout is not measured | Hard: country artifact layout unmeasured (needs a survey) |
-| DP-7 | `--package-cache PATH` (repeatable); default scan of `~/.bcartifacts.cache`, artifacts dir, `.alpackages` | `Program.cs:539`, `Provisioning.cs:197` | No | ADR-013 | `--deps DIR` (ADR-013), `--package-cache` kept as alias. Read v2's artifact folders and the VS Code cache read-only | - |
+| DP-7 | `--package-cache PATH` (repeatable); default scan of `~/.bcartifacts.cache`, artifacts dir, `.alpackages` | `Program.cs:539`, `Provisioning.cs:197` | Partial | ADR-013 | `--deps DIR` (ADR-013), `--package-cache` kept as alias. Read v2's artifact folders and the VS Code cache read-only Built: `--package-cache` (repeatable) and `--dep` (package file, app folder or folder). No default scan of `~/.bcartifacts.cache`. | - |
 | DP-8 | Resolver rules: app id authoritative, version is a minimum, highest wins, post-order, cycle error, optional deps skipped | `DependencyResolver.cs` | Partial | ADR-013 | `al-deps` `select.rs` on branch `deps` | - |
 | DP-9 | Symbols-only versus code-bearing packages; `NO IMPLEMENTATION` report in an "Action needed" block | `DependencyResolver.cs`, `--guide` | No | ADR-013 | v3 ranks packages with AL source above symbols-only. Same report shape | - |
 | DP-10 | A dependency that ships only compiled code (ReadyToRun DLL, no AL source) still runs | `DependencyLoader.cs`, `AppLoader.cs` | No | CANNOT | v3 has no CLR and cannot run compiled C#. Refuse the tests that reach it, naming the app. Advice: keep using v2 for those projects | Hard: not matchable. Affects AppSource and ISV apps shipped without source (`ShowMyCode=false`) |
@@ -107,8 +107,8 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 
 | ID | Feature | v2 reference | v3 today | Blocker | Proposed v3 | Hard |
 |---|---|---|---|---|---|---|
-| SEL-1 | `--test`/`--filter PATTERN`: case-insensitive substring of `CodeunitNNNN.Method` | `Program.cs:602` | No | CLI | `--filter`, `--test` alias. Also match by AL names | - |
-| SEL-2 | Exit 6 when the pattern selects no test | `Program.cs` | No | CLI | Same | - |
+| SEL-1 | `--test`/`--filter PATTERN`: case-insensitive substring of `CodeunitNNNN.Method` | `Program.cs:602` | Partial | CLI | `--filter`, `--test` alias. Also match by AL names Built: `--filter`, `--test` alias; matches test names (not `CodeunitNNNN.Method`). | - |
+| SEL-2 | Exit 6 when the pattern selects no test | `Program.cs` | Partial | CLI | Same. Built: exit 6. | - |
 | SEL-3 | `--exclude-test` (whole codeunit or whole qualified name) | `Program.cs:520` | No | CLI | `--exclude-test` | - |
 | SEL-4 | `--isolation codeunit` (default; `TestIsolation = Codeunit`) | `TestExecutor.cs`, `docs/limitations.md` | Partial | CLI | Semantics exist and are pinned by the corpus. Not selectable by the user | - |
 | SEL-5 | `--isolation test` (= `Function`) and `disabled`; aliases `--test-isolation`, `method` | `Program.cs:658` | Partial | CLI | `Function` is implemented and pinned by the isolation probe (`al-test-cli/src/isolation.rs`; oracle `oracle/28/xunit-isolation-*.xml`). `Disabled` is refused (not pinned). The flag itself is not built: a runner codeunit's `TestIsolation` property selects it for the corpus suites | - |
@@ -127,14 +127,14 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 | ID | Feature | v2 reference | v3 today | Blocker | Proposed v3 | Hard |
 |---|---|---|---|---|---|---|
 | OUT-1 | Run header: tool version, BC build, country, app count | `CliText.cs` `RunHeader` | No | CLI | Same line | - |
-| OUT-2 | One `FAIL`/`ERROR` line per failing test with BC's message; PASS lines only with `--show-pass` | `Reporter.cs` | No | CLI | Same | - |
+| OUT-2 | One `FAIL`/`ERROR` line per failing test with BC's message; PASS lines only with `--show-pass` | `Reporter.cs` | Partial | CLI | Same. Built: FAIL lines (first 30, `--verbose` all), NOT RUN reasons ranked; no call stack yet. | - |
 | OUT-3 | AL call stack under a failure: object, procedure, line, app, publisher, version | `StackFrameMapper.cs`, `AlCallStackCapture.cs` | Partial | CLI | `GetLastErrorCallStack` returns v2's frame format for codeunits and tables (`al-vm/src/callstack.rs`). The runner does not yet print the stack under a failing test | - |
-| OUT-4 | Summary: `Tests:` line, `Seed:` line with replay command, `Result:` line, "Action needed" block | `Reporter.cs` | No | CLI | Same shape | - |
+| OUT-4 | Summary: `Tests:` line, `Seed:` line with replay command, `Result:` line, "Action needed" block | `Reporter.cs` | Partial | CLI | Same shape. Built: `Tests:` and `Result:` lines and a timing line; no `Seed:` line. | - |
 | OUT-5 | `--show-pass`, `--failures-only`/`--quiet`, `--verbose` | `Program.cs` | No | CLI | Same flags | - |
-| OUT-6 | `--output-junit PATH`, grouped by codeunit, seed property, skipped | `JUnitReport.cs` | Partial | CLI | Writer exists in `al-test-cli/src/output.rs` in the oracle shape (suite name `Codeunit N`; v2 uses `Codeunit50000`). Needs the user-run shape. Not-run tests become `<skipped>` with the reason | - |
+| OUT-6 | `--output-junit PATH`, grouped by codeunit, seed property, skipped | `JUnitReport.cs` | Partial | CLI | Writer exists in `al-test-cli/src/output.rs` in the oracle shape (suite name `Codeunit N`; v2 uses `Codeunit50000`). Needs the user-run shape. Not-run tests become `<skipped>` with the reason Built: `--junit`, one suite per codeunit (name), not-run tests `<skipped>` with the reason; no seed property. | - |
 | OUT-7 | `--output-json`: per-test status, message, stack, duration, summary, seed, exit code | `Reporter.cs` | No | CLI | Same field names. `al-test-cli --json` is a pass-rate report, a different shape | - |
 | OUT-8 | `--coverage`: statement coverage, Cobertura XML, console table, `--coverage-out` | `AlCoverage*.cs`, `scripts/coverage-gen.js` | No | IR-POS | Same flags. v3 can add branch coverage later | Hard: needs statement spans in the IR |
-| OUT-9 | Exit codes 0 to 6 and the rank order `3 > 2 > 4 > 6 > 1 > 5` | `README.md` "Exit Codes" | Partial | CLI | Keep 0, 1, 2, 3, 6. Add one new code for "tests not run" (open question). `al-test-cli` has 0, 1, 2 | - |
+| OUT-9 | Exit codes 0 to 6 and the rank order `3 > 2 > 4 > 6 > 1 > 5` | `README.md` "Exit Codes" | Partial | CLI | Keep 0, 1, 2, 3, 6. Add one new code for "tests not run" (open question). `al-test-cli` has 0, 1, 2 Built: 0, 1, 2, 6, 7 (7 = tests not run, `--allow-not-run`), rank 2, 6, 1, 7. No 3, 4, 5. | - |
 | OUT-10 | `--no-strict-exit`: always exit 0 | `Program.cs:601` | No | CLI | Same | - |
 | OUT-11 | Output file paths checked before the run; parent folders created; exit 2 if a write fails | `Infrastructure/OutputPaths.cs`, `docs/cli-output-paths.md` | No | CLI | Same | - |
 | OUT-12 | Out-of-scope surfaces fail loudly: `RunnerOutOfScopeException` with API, reason, `scope.md` anchor | `docs/scope.md` | Partial | CLI | v3 reports "not run" with a reason (hard rule 4). Keep a `docs/scope.md` equivalent with anchors | - |

@@ -37,6 +37,19 @@ table 50902 "ALT Counter"
     }
     keys { key(PK; Id) { } }
 }
+table 50903 "ALT Library Types"
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; Pic; Blob) { }
+        field(3; Rid; RecordId) { }
+        field(4; Flt; TableFilter) { }
+        field(5; Img; Media) { }
+        field(6; Imgs; MediaSet) { }
+    }
+    keys { key(PK; Id) { } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -533,4 +546,52 @@ fn field_ref_calc_field_of_a_stored_field_is_refused() {
         matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not a FlowField")),
         "{r:?}"
     );
+}
+
+#[test]
+fn field_type_of_library_typed_fields_formats_as_the_type_name() {
+    // corpus recordref/TestPlatformOptionsLockingContracts.al:46-63 (13=BLOB), :66-76 (RecordID,
+    // TableFilter, MediaSet name themselves; Format(.., 0, 2) prints the name, never an ordinal).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; s: Text; begin
+            RR.Open(50903);
+            s := Format(RR.Field(2).Type()) + '|' + Format(RR.Field(3).Type()) + '|' + Format(RR.Field(4).Type())
+                + '|' + Format(RR.Field(5).Type()) + '|' + Format(RR.Field(6).Type());
+            s += '|' + Format(FieldType::BLOB, 0, 2) + '|' + Format(RR.Field(2).Type(), 0, 2);
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "BLOB|RecordID|TableFilter|Media|MediaSet|BLOB|BLOB");
+}
+
+#[test]
+fn security_filter_ordinals() {
+    // corpus recordref/TestPlatformOptionsLockingContracts.al:36-43 (read with Format(x, 0, 2), BC 27.5).
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; f: SecurityFilter; s: Text; begin
+            s := Format(SecurityFilter::Validated, 0, 2) + Format(SecurityFilter::Filtered, 0, 2)
+                + Format(SecurityFilter::Ignored, 0, 2) + Format(SecurityFilter::Disallowed, 0, 2);
+            Evaluate(f, '3');
+            s += '|' + Format(f) + '|' + Format(R.SecurityFiltering());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "0123|Disallowed|Validated");
+}
+
+#[test]
+fn format_of_a_table_filter_field_nobody_set_is_empty() {
+    // Base App's Change Log Management.HasValue ends in `Format(FldRef.Value) <> ''` for a TableFilter
+    // field; 16 tests (permissions/TestMetadataExpandedPermission.al:219-235) insert such a row and
+    // pass on real BC. An unset filter is empty text (assumption: docs/probes-needed.md).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; begin
+            RR.Open(50903);
+            exit('[' + Format(RR.Field(4).Value) + ']');
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "[]");
 }

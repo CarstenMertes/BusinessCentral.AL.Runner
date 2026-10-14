@@ -40,7 +40,7 @@ pub fn discover(app_root: &Path) -> std::io::Result<CorpusIndex> {
             Some(c) if rel.components().count() > 1 => c.as_os_str().to_string_lossy().into_owned(),
             _ => String::new(),
         };
-        for cu in scan(&strip_comments(&src)) {
+        for cu in al_testrun::discover::test_codeunits(&src) {
             ix.codeunits.insert(
                 cu.0,
                 TestCodeunit {
@@ -65,86 +65,6 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
         }
     }
     Ok(())
-}
-
-/// Blanks `//` line comments and `/* */` block comments, keeping string
-/// literals intact so a `//` inside quotes is not mistaken for a comment.
-fn strip_comments(src: &str) -> String {
-    let b = src.as_bytes();
-    let mut out = String::with_capacity(src.len());
-    let mut i = 0;
-    while i < b.len() {
-        match b[i] {
-            b'\'' => {
-                let start = i;
-                i += 1;
-                while i < b.len() && b[i] != b'\'' && b[i] != b'\n' {
-                    i += 1;
-                }
-                i = (i + 1).min(b.len());
-                out.push_str(&src[start..i]);
-            }
-            b'/' if b.get(i + 1) == Some(&b'/') => {
-                while i < b.len() && b[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'/' if b.get(i + 1) == Some(&b'*') => {
-                i += 2;
-                while i < b.len() && !(b[i] == b'*' && b.get(i + 1) == Some(&b'/')) {
-                    i += 1;
-                }
-                i = (i + 2).min(b.len());
-            }
-            _ => {
-                let start = i;
-                while i < b.len() && b[i] != b'\'' && b[i] != b'/' {
-                    i += 1;
-                }
-                if i == start {
-                    i += 1;
-                }
-                out.push_str(&src[start..i]);
-            }
-        }
-    }
-    out
-}
-
-/// Returns `(codeunit id, [Test] procedure names)` for every test codeunit in `src`.
-fn scan(src: &str) -> Vec<(u32, Vec<String>)> {
-    let words: Vec<&str> = src
-        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '[' || c == ']'))
-        .filter(|w| !w.is_empty())
-        .collect();
-    let mut out: Vec<(u32, Vec<String>, bool)> = Vec::new();
-    let mut i = 0;
-    while i < words.len() {
-        let w = words[i];
-        if w.eq_ignore_ascii_case("codeunit") {
-            if let Some(id) = words.get(i + 1).and_then(|n| n.parse::<u32>().ok()) {
-                // Only an object header is followed by an id; `Record Codeunit` etc. is not.
-                out.push((id, Vec::new(), false));
-                i += 2;
-                continue;
-            }
-        }
-        if let Some(cur) = out.last_mut() {
-            if w.eq_ignore_ascii_case("subtype") {
-                if words.get(i + 1).is_some_and(|v| v.eq_ignore_ascii_case("test")) {
-                    cur.2 = true;
-                }
-            } else if w.eq_ignore_ascii_case("[test]") {
-                if let Some(pos) = words[i + 1..].iter().position(|w| w.eq_ignore_ascii_case("procedure")) {
-                    if let Some(name) = words.get(i + 1 + pos + 1) {
-                        cur.1.push(name.to_string());
-                    }
-                }
-            }
-        }
-        i += 1;
-    }
-    out.into_iter().filter(|c| c.2).map(|c| (c.0, c.1)).collect()
 }
 
 #[cfg(test)]

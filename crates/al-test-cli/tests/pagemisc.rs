@@ -133,6 +133,34 @@ page 62013 "PM Rowset"
     end;
 }
 page 62090 "PM Dialog" { PageType = StandardDialog; }
+report 62092 "PM Scheduled"
+{
+    ProcessingOnly = true; AllowScheduling = true;
+    dataset { dataitem(Row; "PM Row") { } }
+}
+page 62093 "PM Runs Scheduled"
+{
+    PageType = Card;
+    layout { area(Content) { field(Dummy; Dummy) { } } }
+    actions { area(Processing) { action(Print) { trigger OnAction() var R: Report "PM Scheduled"; begin R.Run(); end; } } }
+    var Dummy: Text[10];
+}
+page 62094 "PM Selection"
+{
+    PageType = List; SourceTable = "PM Row";
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
+    procedure Selected(var Out: Record "PM Row") begin CurrPage.SetSelectionFilter(Out); end;
+    procedure Picked(var Out: Record "PM Row") var Other: Page "PM Selection"; begin Other.GetRecord(Out); end;
+}
+page 62091 "PM Kinds"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout {
+        area(Content) { label(Hint) { Caption = 'x'; } field(NoCtl; Rec."No.") { } }
+        area(FactBoxes) { systempart(NotesBox; Notes) { } systempart(LinksBox; Links) { } usercontrol(Addin; "Some Add-in") { } }
+    }
+    actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } action(Act) { } fileuploadaction(Upload) { trigger OnAction(Files: List of [FileUpload]) begin end; } } }
+}
 "#;
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
@@ -479,4 +507,98 @@ fn an_asserterror_in_a_modal_handler_rolls_back_to_the_last_commit() {
         [ModalPageHandler] procedure Dialog(var D: TestPage \"PM Dialog\") begin
             Put('3'); asserterror begin Put('4'); Error('in handler'); end; end;"
     ));
+}
+
+// handlers/TestPagePlatformPageSourceTable_Tests.al:77, handlers/TestReportRunFromPrecompiledCaller.al:31,
+// handlers/TestPrecompiledOptionCaption.al:81, pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69:
+// a page with a systempart, a label and a customaction opens, and its other controls work.
+#[test]
+fn a_page_with_a_systempart_a_label_and_a_customaction_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var R: Record \"PM Row\"; K: TestPage \"PM Kinds\"; begin
+            R.DeleteAll(); R.\"No.\" := 'K1'; R.Insert(); K.OpenView(); K.GoToRecord(R);
+            Check('K1', K.NoCtl.Value); Check('Yes', Format(K.Act.Enabled())); K.Close(); end;"
+    ));
+}
+
+// A usercontrol (control add-in) is not a control of the TestPage either.
+#[test]
+fn naming_a_usercontrol_on_a_test_page_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Names() var K: TestPage \"PM Kinds\"; begin
+            K.OpenView(); Check('Yes', Format(K.Addin.Visible())); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(_)), "{o:?}");
+}
+
+// The TestPage has no member for these controls, so a reference is refused, not answered.
+#[test]
+fn naming_a_systempart_on_a_test_page_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Names() var K: TestPage \"PM Kinds\"; begin
+            K.OpenView(); Check('Yes', Format(K.NotesBox.Visible())); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(_)), "{o:?}");
+}
+
+// handlers/TestPrecompiledOptionCaption.al:81: a page whose action names a report with AllowScheduling opens.
+#[test]
+fn a_page_naming_a_report_with_allow_scheduling_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var P: TestPage \"PM Runs Scheduled\"; begin
+            P.OpenView(); Check('Yes', Format(P.Print.Enabled())); P.Close(); end;"
+    ));
+}
+
+// Nothing pins what running such a report does with the property: running it is refused.
+#[test]
+fn running_a_report_with_allow_scheduling_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Runs() begin Report.Run(Report::\"PM Scheduled\", false); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("allowscheduling")),
+        "{o:?}"
+    );
+}
+
+// SetSelectionFilter and GetRecord are in no corpus test: a page that declares a routine calling them
+// opens (handlers/TestPrecompiledOptionCaption.al:81 over Base App's Item Tracing, pageapplicationarea/
+// TestPageApplicationAreaPrecompiledActionRemoval.al:39 over Package No. Information List), reaching them is refused.
+#[test]
+fn a_page_declaring_selection_routines_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var P: TestPage \"PM Selection\"; begin P.OpenView(); P.Close(); end;"
+    ));
+}
+
+#[test]
+fn reaching_set_selection_filter_or_get_record_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Selects() var P: Page \"PM Selection\"; R: Record \"PM Row\"; begin P.Selected(R); end;
+        [Test]
+        procedure Gets() var P: Page \"PM Selection\"; R: Record \"PM Row\"; begin P.Picked(R); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("SetSelectionFilter")),
+        "{o:?}"
+    );
+    assert!(
+        matches!(&o[1].1, Outcome::NotRun(why) if why.contains("GetRecord")),
+        "{o:?}"
+    );
 }

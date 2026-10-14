@@ -4,7 +4,7 @@
 
 use crate::explain::{self, TestDetail};
 use crate::isolation::{Checkpoint, TestIsolation, runner_isolation};
-use crate::report::Outcome;
+use crate::{CaseId, Outcome};
 use al_builtins::native::{AlError, Signal};
 use al_sema::lower::Lowered;
 use al_vm::{Engine, Session, UiKind};
@@ -103,6 +103,21 @@ pub struct CorpusRuntime {
     pub phases: Phases,
     /// With `RunOptions::trace`: where each test of the run codeunits was refused or failed.
     details: std::collections::HashMap<(usize, u32, String), TestDetail>,
+    /// Every test the run decided, codeunit by codeunit.
+    results: Vec<TestResult>,
+}
+
+/// One test as the run left it, in the order the test codeunits were scheduled.
+#[derive(Debug, Clone)]
+pub struct TestResult {
+    /// Index into the `SuiteRun`s of the run.
+    pub suite: usize,
+    /// Index of the app (as given to the compiler) that holds the test codeunit.
+    pub app: usize,
+    pub codeunit: u32,
+    pub codeunit_name: String,
+    pub test: String,
+    pub outcome: Outcome,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -410,6 +425,7 @@ impl CorpusRuntime {
         let mut codeunit_times: Vec<(u32, String, std::time::Duration)> = Vec::new();
         // The test codeunits to run, in the order the report lists them.
         let mut units: Vec<Unit> = Vec::new();
+        let mut list: Vec<TestResult> = Vec::new();
         for (si, suite) in suites.iter().enumerate() {
             let isolation = match suite.runner {
                 None => Ok(TestIsolation::default()),
@@ -437,6 +453,14 @@ impl CorpusRuntime {
                     Err(why) => {
                         for r in test_routines(o) {
                             outcomes.insert((si, id, r.name.to_lowercase()), Outcome::NotRun(why.clone()));
+                            list.push(TestResult {
+                                suite: si,
+                                app: o.app as usize,
+                                codeunit: id,
+                                codeunit_name: o.name.clone(),
+                                test: r.name.clone(),
+                                outcome: Outcome::NotRun(why.clone()),
+                            });
                         }
                     }
                 }
@@ -507,19 +531,30 @@ impl CorpusRuntime {
         for r in results {
             suite_work.push((r.si, r.took));
             codeunit_times.push((r.id, lowered.program.objects[r.oi].name.clone(), r.took));
+            let o = &lowered.program.objects[r.oi];
+            let push = |list: &mut Vec<TestResult>, test: &str, outcome: &Outcome| {
+                list.push(TestResult {
+                    suite: r.si,
+                    app: o.app as usize,
+                    codeunit: r.id,
+                    codeunit_name: o.name.clone(),
+                    test: test.to_string(),
+                    outcome: outcome.clone(),
+                })
+            };
             match r.result {
-                Ok(list) => {
-                    for (name, outcome) in list {
+                Ok(done) => {
+                    for (name, outcome) in done {
+                        push(&mut list, &name, &outcome);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
                     }
                 }
                 Err(msg) => {
                     panics += 1;
                     for t in test_routines(&lowered.program.objects[r.oi]) {
-                        outcomes.insert(
-                            (r.si, r.id, t.name.to_lowercase()),
-                            Outcome::NotRun(format!("runtime panic (bug): {msg}")),
-                        );
+                        let outcome = Outcome::NotRun(format!("runtime panic (bug): {msg}"));
+                        push(&mut list, &t.name, &outcome);
+                        outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
                     }
                 }
             }
@@ -557,19 +592,25 @@ impl CorpusRuntime {
                 slowest: codeunit_times,
             },
             details,
+            results: list,
         }
     }
 }
 
 impl CorpusRuntime {
+    /// Every test the run decided, with its codeunit's name and app, codeunit by codeunit.
+    pub fn results(&self) -> &[TestResult] {
+        &self.results
+    }
+
     /// Where `case` of the run named `suite` was refused or failed; only with `RunOptions::trace`.
-    pub fn detail_in(&self, suite: &str, case: &crate::oracle::CaseId) -> Option<&TestDetail> {
+    pub fn detail_in(&self, suite: &str, case: &CaseId) -> Option<&TestDetail> {
         let si = self.suites.iter().position(|s| s == suite)?;
         self.details.get(&(si, case.codeunit, case.name.to_lowercase()))
     }
 
     /// The outcome of `case` in the run named `suite` (the first run has the empty name).
-    pub fn outcome_in(&self, suite: &str, case: &crate::oracle::CaseId) -> Outcome {
+    pub fn outcome_in(&self, suite: &str, case: &CaseId) -> Outcome {
         self.suites
             .iter()
             .position(|s| s == suite)
@@ -579,9 +620,9 @@ impl CorpusRuntime {
     }
 }
 
-/// The outcomes of the first run (the main corpus app, or the only run).
-impl crate::runner::Runner for CorpusRuntime {
-    fn outcome(&self, case: &crate::oracle::CaseId) -> Outcome {
+impl CorpusRuntime {
+    /// The outcome of `case` in the first run (the main corpus app, or the only run).
+    pub fn first_outcome(&self, case: &CaseId) -> Outcome {
         self.outcomes
             .get(&(0, case.codeunit, case.name.to_lowercase()))
             .cloned()
@@ -2196,8 +2237,7 @@ page 50000 "P" { PageType = List; SourceTable = "K";
             Default::default(),
         );
         move |name: &str| {
-            use crate::runner::Runner;
-            rt.outcome(&crate::oracle::CaseId {
+            rt.first_outcome(&CaseId {
                 codeunit: 50001,
                 name: name.into(),
             })
@@ -2345,9 +2385,8 @@ table 50003 "Watched Later" { fields { field(1; K; Integer) { } } keys { key(PK;
                 Default::default(),
             )
         };
-        use crate::runner::Runner;
         let o = |cu: u32, name: &str| {
-            rt.outcome(&crate::oracle::CaseId {
+            rt.first_outcome(&CaseId {
                 codeunit: cu,
                 name: name.into(),
             })

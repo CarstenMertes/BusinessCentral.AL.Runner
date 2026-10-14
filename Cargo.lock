@@ -111,6 +111,7 @@ dependencies = [
  "al-ir",
  "al-sema",
  "al-syntax",
+ "al-testrun",
  "al-version",
  "al-vm",
  "quick-xml",
@@ -118,6 +119,23 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml",
+]
+
+[[package]]
+name = "al-testrun"
+version = "0.1.0"
+dependencies = [
+ "al-builtins",
+ "al-data",
+ "al-deps",
+ "al-host",
+ "al-ir",
+ "al-sema",
+ "al-syntax",
+ "al-version",
+ "al-vm",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -135,6 +153,20 @@ dependencies = [
  "al-sema",
  "al-version",
  "rust_decimal",
+]
+
+[[package]]
+name = "alrunner-cli"
+version = "0.1.0"
+dependencies = [
+ "al-deps",
+ "al-host",
+ "al-sema",
+ "al-testrun",
+ "al-version",
+ "al-vm",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

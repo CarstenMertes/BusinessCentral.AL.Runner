@@ -39,10 +39,19 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 
 impl Session {
     pub(crate) fn table(&self, rec: &Rec) -> Result<Arc<TableDef>, Signal> {
-        let t = rec.borrow().table as usize;
-        self.engine.tables[t]
+        let r = rec.borrow();
+        let t = self.engine.tables[r.table as usize]
             .clone()
-            .map_or_else(|| unsupported("record of a table without a schema"), Ok)
+            .map_or_else(|| unsupported("record of a table without a schema"), Ok)?;
+        // A key set on fields no key starts with is one more key, as far as ordering goes.
+        if let Some((index, fields)) = &r.adhoc {
+            if r.key == *index && *index == t.keys.len() {
+                let mut with_key = (*t).clone();
+                with_key.keys.push(fields.clone());
+                return Ok(Arc::new(with_key));
+            }
+        }
+        Ok(t)
     }
 
     /// Field values of a fresh record: `InitValue` where declared, else the type default.
@@ -297,7 +306,7 @@ impl Session {
     /// `Record.Delete(run)` of the row `rec` holds: Before event, OnDelete, the
     /// delete, After event.
     fn delete_row(&mut self, t: &TableDef, rec: &Rec, run: bool) -> Result<Value, Signal> {
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, t)?;
         self.table_event(t, "onbeforedeleteevent", rec, None, run, None)?;
         if run {
             let x = Self::xrec_handle(rec, rec.borrow().fields.clone());
@@ -317,12 +326,22 @@ impl Session {
         }
         let row = rec.borrow().fields.clone();
         let pk = t.primary_key(&row);
+        let company = if self.is_company_table(t) && !rec.borrow().temporary {
+            let name = al_builtins::native::text_of(&row[0]).unwrap_or_default();
+            self.before_company_row_delete(&name)?;
+            Some(name)
+        } else {
+            None
+        };
         match self
             .store_for(rec)
             .delete(&cx, t, &pk)
             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
         {
             WriteOutcome::Done => {
+                if let Some(name) = company {
+                    self.after_company_row_delete(&name);
+                }
                 // The platform deletes the user's User Property row with the User, after the
                 // OnBeforeDelete subscribers and before the OnAfterDelete ones
                 // (access-control/TestUserDeleteCascadeOrder.al:26-84 in the OnPrem app).
@@ -377,7 +396,7 @@ impl Session {
         if unique.is_empty() {
             return Ok(None);
         }
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, t)?;
         if own.is_none() {
             let pk = t.primary_key(row);
             if self
@@ -571,7 +590,7 @@ impl Session {
         // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
         let (filters, flow_field_filters) = self.split_filters(rec);
         let marked_only = rec.borrow().marked_only;
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, t)?;
         let mut after = after;
         loop {
             let store = self.store_for(rec);
@@ -645,7 +664,7 @@ impl Session {
             expr: FilterExpr::Eq(id.clone()),
             group: 0,
         }];
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, t)?;
         let taken = self
             .store_for(rec)
             .count(&cx, t, &filters)
@@ -719,7 +738,7 @@ impl Session {
     /// streams/TestBlobCalcFieldsUncommittedWrite.al); a temporary record's Blob is always loaded.
     pub(crate) fn load_blobs(&mut self, rec: &Rec, positions: &[usize]) -> Result<(), Signal> {
         let t = self.table(rec)?;
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, &t)?;
         let mut stored: Option<Vec<Value>> = None;
         for &pos in positions {
             let Value::Blob(buf) = rec.borrow().fields[pos].clone() else {
@@ -760,7 +779,7 @@ impl Session {
             let temporary = rec.borrow().temporary;
             self.coverage_read(&t, temporary)?;
         }
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, &t)?;
         // The next access of the table raises a deferred duplicate-key Insert.
         if matches!(
             method,
@@ -887,6 +906,7 @@ impl Session {
                 r.marks.clear();
                 r.marked_only = false;
                 r.key = 0;
+                r.adhoc = None;
                 r.ascending = true;
                 r.field_descending = false;
                 r.position = None;
@@ -957,7 +977,7 @@ impl Session {
                 let mut taken = false;
                 if let Some(a) = auto {
                     let mut row = rec.borrow().fields.clone();
-                    taken = self.take_auto_increment(&t, a, &mut row)?;
+                    taken = self.take_auto_increment(&t, a, &mut row, &cx.company)?;
                     rec.borrow_mut().fields = row;
                 }
                 let row = rec.borrow().fields.clone();
@@ -970,7 +990,7 @@ impl Session {
                         if taken {
                             rec.borrow_mut().fields[a] = self.default_value(&t.fields[a].ty);
                         } else {
-                            self.note_explicit_key(&t, a, &row);
+                            self.note_explicit_key(&t, a, &row, &cx.company);
                         }
                     }
                     return self.fail_unique(&t, unique_key, &row);
@@ -983,7 +1003,7 @@ impl Session {
                 {
                     InsertOutcome::Inserted => {
                         if let (Some(a), false) = (auto, taken) {
-                            self.note_explicit_key(&t, a, &row);
+                            self.note_explicit_key(&t, a, &row, &cx.company);
                         }
                         if user_row {
                             self.user_after_insert(&t, rec)?;
@@ -1153,8 +1173,13 @@ impl Session {
                     .store_for(rec)
                     .count(&cx, &t, &filters)
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                // No row, no trigger and no event.
+                // No row, no trigger and no event. The platform still asks for the table's Global
+                // Triggers setup, as the first write to the table (session/TestEnvironmentUserTenantContracts.al:289-290,
+                // `GtTable.DeleteAll()` on an empty table). A temporary record is not pinned and stays as it was.
                 if n == 0 {
+                    if !temporary {
+                        self.global_setup_asked(&t)?;
+                    }
                     return Ok(Value::Null);
                 }
                 let events =
@@ -1187,6 +1212,11 @@ impl Session {
                         self.delete_row(&t, &Rc::new(RefCell::new(st)), run)?;
                     }
                     return Ok(Value::Null);
+                }
+                if self.is_company_table(&t) && !temporary {
+                    return unsupported(
+                        "DeleteAll on the Company table without delete events (a deleted company's rows go with it; not pinned)",
+                    );
                 }
                 self.store_for(rec)
                     .delete_all(&cx, &t, &filters)
@@ -1426,6 +1456,7 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
                 r.key = 0;
+                r.adhoc = None;
                 r.ascending = true;
                 r.field_descending = false;
                 Ok(Value::Null)
@@ -1438,10 +1469,39 @@ impl Session {
                     .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
                 {
                     Some(k) => {
-                        rec.borrow_mut().key = k;
+                        let mut r = rec.borrow_mut();
+                        r.key = k;
+                        r.adhoc = None;
                         Ok(Value::Boolean(true))
                     }
-                    None => unsupported("SetCurrentKey without a matching key"),
+                    // Fields no key starts with are allowed and order the rows by themselves, then
+                    // by the primary key (record/TestRecordNavContracts.al:180-195,
+                    // xmlport/TestXmlPortTriggersReplaceViewContracts.al:339-375).
+                    None => {
+                        let schema = self.engine.program.objects[t.object as usize]
+                            .table
+                            .as_ref()
+                            .expect("table");
+                        if let Some(&bad) = wanted.iter().find(|&&p| {
+                            !t.fields[p].stored || {
+                                matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
+                                    || schema.fields[p].flow_filter
+                            }
+                        }) {
+                            return unsupported(format!(
+                                "SetCurrentKey on {}, which is not a stored field that can order rows (not pinned)",
+                                t.fields[bad].name
+                            ));
+                        }
+                        // `t` already holds this record's earlier ad hoc key, if any.
+                        let index = self.engine.tables[t.object as usize]
+                            .as_ref()
+                            .map_or(0, |e| e.keys.len());
+                        let mut r = rec.borrow_mut();
+                        r.key = index;
+                        r.adhoc = Some((index, wanted));
+                        Ok(Value::Boolean(true))
+                    }
                 }
             }
             "Validate" => {
@@ -1496,6 +1556,14 @@ impl Session {
                     self.rename_references(&t)?
                 };
                 let old = rec.borrow().fields.clone();
+                if self.is_company_table(&t) && !rec.borrow().temporary {
+                    let name = al_builtins::native::text_of(&old[0]).unwrap_or_default();
+                    if self.store.has_company_rows(&name) {
+                        return unsupported(
+                            "Rename of a company that holds rows (they would have to move; not pinned)",
+                        );
+                    }
+                }
                 let mut new = old.clone();
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
@@ -1549,7 +1617,7 @@ impl Session {
                 match outcome {
                     RenameOutcome::Renamed => {
                         if !same_key {
-                            self.propagate_rename(&t, &refs, &old_fields, &row)?;
+                            self.propagate_rename(rec, &t, &refs, &old_fields, &row)?;
                             self.move_record_links(&t, rec, &old_fields)?;
                         }
                         self.run_ext_trigger(&t, "OnAfterRename", rec, Some(&xrec))?;

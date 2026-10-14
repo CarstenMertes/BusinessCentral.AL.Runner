@@ -4,6 +4,15 @@ These were decided while the owner was away, or are still open. Each line names
 the ADR or document that has the detail. Remove a line once the owner has
 reviewed it.
 
+## Decided without the owner (data-2, 2026-10-14)
+
+- Companies (ChangeCompany, per-company rows): no seam changed, so no ADR. The store already keys per-company tables by
+  (company, table) (ADR-005); a record carries an optional company and its access context names it. Added only additive
+  things: `RecordState.company` and `adhoc`, `MemStore::drop_company` / `has_company_rows` / `companies_with_rows`,
+  `ir::XmlPort::run_unsupported`. Assumption to review: deleting a Company row drops its rows (docs/probes-needed.md, Companies).
+- XmlPort constructs the corpus does not pin now refuse when the port runs, not when it is declared (so Base App's xmlport 1
+  can sit behind a cancelled request page).
+
 ## Open questions (not decided)
 
 - ADR-020 (Proposed), `al-bcdb`: the Rust port of bcdb, and the proposed way to load CRONUS
@@ -274,3 +283,6 @@ reviewed it.
 - 2026-10-14, ADR-009, fix-data: `SaveAsXml` / `SaveAsJson` of a query write UTF-8 without a byte order mark and the XML in one line (the probe trims and joins the lines).
 - 2026-10-14, ADR-020, `al-bcdb`: two crates (core without OS access, command line with it), `pread` instead of a memory map, an approximated culture order for `tables`, bcdb's synthetic `typeprobe` fixtures (8.2 MB) committed, new dependencies `sha2`, `flate2` (zlib-rs) in the core and `rayon` in the command line. Parity with the published bcdb is tested, not assumed (`docs/bcdb.md`).
 - 2026-10-14, perf-1: `Engine::program` and `Lowered::program` became `Arc<Program>` (additive; callers that hand over a `Program` compile unchanged), and the check, lowering and test codeunits run on worker threads (`AL_CHECK_THREADS`, `AL_LOWER_THREADS`, `AL_TEST_THREADS`, default one per core). Outcomes are identical with 1 thread and with all; the orchestrator accepted it without an ADR because no seam is removed or changed in meaning.
+- 2026-10-14, ADR-016, alrunner-cli: the user binary is `alrunner` (crate `alrunner-cli`); shared code moved from `al-test-cli` into the crate `al-testrun` (`al-test-cli` re-exports it and is unchanged for users); exit codes 0, 1, 2, 6 and 7 for "tests not run" with `--allow-not-run`, ranked 2, 6, 1, 7; `--dep` / `--package-cache` / `--filter` spellings; no `--isolation` flag yet (Codeunit, Microsoft's default); `--test-data` refused until ADR-020 is accepted. Easy to rename.
+- 2026-10-14, ADR-013, alrunner-cli: an app with an `application` or `platform` floor depends on `Application` / `System` and on what `Application` propagates (Base Application, System Application, Business Foundation); the loader adds them to its visibility when `Request::application_implies_dependencies` is set (only `alrunner`). Source archives with Microsoft's `$(app_...)` variables are read with the build in their path or an exact `--bc-version`.
+- 2026-10-14, ADR-011, alrunner-cli: lowering refuses a binary expression with a missing operand instead of panicking (found by Tests-ERM, see the ADR-016 section).

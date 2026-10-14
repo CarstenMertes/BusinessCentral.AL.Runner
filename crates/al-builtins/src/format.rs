@@ -51,7 +51,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Decimal(d) => format_decimal(d, standard)?,
         Value::Text(t) | Value::Code(t) => t.clone(),
         Value::Option(o, members) => match standard {
-            2 | 9 => o.to_string(),
+            2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
         },
         Value::Enum(id, o) => match standard {
@@ -90,6 +90,15 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // The text form of a FilterPageBuilder is only known to be non-empty
         // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Format_ReturnsANonEmptyRendering).
         Value::Library(name, _) if name == "FilterPageBuilder" => "FilterPageBuilder".to_string(),
+        // A TableFilter field nobody set holds no filter: empty text. Base App's Change Log
+        // Management.HasValue formats such a value on every insert and the tests pass on BC
+        // (permissions/TestMetadataExpandedPermission.al:219-235); the text of a set filter is not
+        // pinned (docs/probes-needed.md).
+        Value::Library(name, l)
+            if name == "TableFilter" && matches!(&*l.borrow(), crate::value::LibraryValue::Empty) =>
+        {
+            String::new()
+        }
         // A WebServiceActionContext has no text form (session/TestWebServiceActionContext.al:615-650).
         Value::Library(name, _) if name == "WebServiceActionContext" => String::new(),
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs
@@ -286,22 +295,69 @@ pub(crate) fn duration_words(ms: i64) -> String {
     parts.join(" ")
 }
 
+/// The units of a Duration with their size in milliseconds, largest first.
+const DURATION_UNITS: [(&str, i64); 5] = [
+    ("day", 86_400_000),
+    ("hour", 3_600_000),
+    ("minute", 60_000),
+    ("second", 1000),
+    ("millisecond", 1),
+];
+
+/// `(count, unit index)` of each non-zero unit of `ms`, largest first, by absolute value.
+fn duration_parts(ms: i64) -> Vec<(i64, usize)> {
+    let mut left = ms.unsigned_abs() as i64;
+    let mut parts = Vec::new();
+    for (i, (_, size)) in DURATION_UNITS.iter().enumerate() {
+        let n = left / size;
+        left %= size;
+        if n > 0 {
+            parts.push((n, i));
+        }
+    }
+    parts
+}
+
+/// Formats 0 and 1 of a Duration, and 2: the words of the units, a zero unit left out, blank for
+/// zero, and the sign on the first unit only (types/TestDateFormulaDurationFormatContracts.al:75-120).
+/// Format 2 is a list of pairs `<count> <unit code>`, the code being 0 day, 1 days, 2 hour, 3 hours,
+/// 4 minute, 5 minutes, 6 second, 7 seconds, 8 millisecond, 9 milliseconds (:11-15, :83-100).
+fn duration_format(ms: i64, codes: bool) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for (k, (n, i)) in duration_parts(ms).into_iter().enumerate() {
+        let sign = if k == 0 && ms < 0 { "-" } else { "" };
+        let plural = n != 1;
+        if codes {
+            out.push(format!("{sign}{n} {}", i * 2 + usize::from(plural)));
+        } else {
+            let unit = DURATION_UNITS[i].0;
+            out.push(format!("{sign}{n} {unit}{}", if plural { "s" } else { "" }));
+        }
+    }
+    out.join(" ")
+}
+
 fn format_duration(ms: i64, standard: i32) -> Result<String, FormatFail> {
     match standard {
-        0 | 1 => Ok(duration_words(ms)),
+        0 | 1 => Ok(duration_format(ms, false)),
+        2 => Ok(duration_format(ms, true)),
         9 => {
-            if ms < 0 {
-                return Err("Format 9 of a negative Duration (not pinned)".to_string().into());
-            }
+            // The sign goes in front of the P (types/TestDateFormulaDurationFormatContracts.al:114-120).
+            let sign = if ms < 0 { "-" } else { "" };
+            let a = ms.unsigned_abs() as i64;
             let (d, h, m, s, f) = (
-                ms / 86_400_000,
-                ms / 3_600_000 % 24,
-                ms / 60_000 % 60,
-                ms / 1000 % 60,
-                ms % 1000,
+                a / 86_400_000,
+                a / 3_600_000 % 24,
+                a / 60_000 % 60,
+                a / 1000 % 60,
+                a % 1000,
             );
-            let frac = if f == 0 { ".0".to_string() } else { format!(".{f:03}") };
-            Ok(format!("P{d}DT{h}H{m}M{s}{frac}S"))
+            // The fraction has three digits with the trailing zeros trimmed, one digit at least:
+            // `.0`, `.5` (:88), `.001`, `.012` (:97-103).
+            let frac = format!("{f:03}");
+            let frac = frac.trim_end_matches('0');
+            let frac = if frac.is_empty() { "0" } else { frac };
+            Ok(format!("{sign}P{d}DT{h}H{m}M{s}.{frac}S"))
         }
         n => Err(format!("Format of a Duration with standard format {n} (not pinned)").into()),
     }
@@ -535,10 +591,52 @@ mod tests {
         assert_eq!(fmt(dur, 9), "P1DT1H1M1.001S");
         // json/TestJsonRuntimeContracts.al:214.
         assert_eq!(fmt(Value::Duration(5000), 9), "P0DT0H0M5.0S");
-        // handlers/TestPageRuntimeContracts.al:162.
+        // types/TestDateFormulaDurationFormatContracts.al:114-120: Format carries the sign on the
+        // first unit only (a TestPage control shows every unit negative, handlers/TestPageRuntimeContracts.al:162).
         assert_eq!(
             fmt(Value::Duration(-90_061_001), 0),
-            "-1 day -1 hour -1 minute -1 second -1 millisecond"
+            "-1 day 1 hour 1 minute 1 second 1 millisecond"
+        );
+    }
+
+    // types/TestDateFormulaDurationFormatContracts.al:75-120: formats 0, 1, 2 and 9 of a Duration.
+    #[test]
+    fn duration_standard_formats_0_1_2_and_9() {
+        let fmt = |v: Value, n: i32| format(&v, 0, n, &Ctx);
+        let all = |ms: i64| {
+            format!(
+                "{} | {} | {} | {}",
+                fmt(Value::Duration(ms), 0),
+                fmt(Value::Duration(ms), 1),
+                fmt(Value::Duration(ms), 2),
+                fmt(Value::Duration(ms), 9)
+            )
+        };
+        assert_eq!(all(0), " |  |  | P0DT0H0M0.0S");
+        assert_eq!(all(1), "1 millisecond | 1 millisecond | 1 8 | P0DT0H0M0.001S");
+        assert_eq!(all(999), "999 milliseconds | 999 milliseconds | 999 9 | P0DT0H0M0.999S");
+        assert_eq!(
+            all(1500),
+            "1 second 500 milliseconds | 1 second 500 milliseconds | 1 6 500 9 | P0DT0H0M1.5S"
+        );
+        assert_eq!(all(120_000), "2 minutes | 2 minutes | 2 5 | P0DT0H2M0.0S");
+        assert_eq!(
+            all(86_399_999),
+            "23 hours 59 minutes 59 seconds 999 milliseconds | 23 hours 59 minutes 59 seconds 999 milliseconds | 23 3 59 5 59 7 999 9 | P0DT23H59M59.999S"
+        );
+        assert_eq!(
+            all(172_800_005),
+            "2 days 5 milliseconds | 2 days 5 milliseconds | 2 1 5 9 | P2DT0H0M0.005S"
+        );
+        assert_eq!(
+            all(123_456_789_012),
+            "1428 days 21 hours 33 minutes 9 seconds 12 milliseconds | 1428 days 21 hours 33 minutes 9 seconds 12 milliseconds | 1428 1 21 3 33 5 9 7 12 9 | P1428DT21H33M9.012S"
+        );
+        assert_eq!(all(-1), "-1 millisecond | -1 millisecond | -1 8 | -P0DT0H0M0.001S");
+        assert_eq!(all(-1000), "-1 second | -1 second | -1 6 | -P0DT0H0M1.0S");
+        assert_eq!(
+            all(-90_061_001),
+            "-1 day 1 hour 1 minute 1 second 1 millisecond | -1 day 1 hour 1 minute 1 second 1 millisecond | -1 0 1 2 1 4 1 6 1 8 | -P1DT1H1M1.001S"
         );
     }
 

@@ -15,6 +15,7 @@ mod baseline;
 pub use baseline::Baseline;
 pub use faultsite::FaultFrame;
 mod callstack;
+mod companies;
 mod dispatch;
 pub mod dotnet;
 mod errorcollect;
@@ -207,6 +208,8 @@ pub struct Session {
     /// Try functions on the call stack (Truncate is refused inside them).
     pub(crate) try_depth: usize,
     pub(crate) cx: al_data::AccessContext,
+    /// The tables that held a row when the install baseline was captured (none without one).
+    pub(crate) baseline_rows: std::collections::BTreeSet<u32>,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
     /// Manual event subscriptions made by `BindSubscription`.
@@ -338,6 +341,7 @@ impl Session {
             validating: Vec::new(),
             try_depth: 0,
             cx: al_data::AccessContext { company, user },
+            baseline_rows: Default::default(),
             ret_used: true,
             bindings: Vec::new(),
             error_finals: None,
@@ -431,6 +435,7 @@ impl Session {
                     table: *table,
                     temporary: *temporary,
                     temp_id,
+                    company: None,
                     fields: self.initial_fields(*table as usize),
                     filters: Vec::new(),
                     filter_group: 0,
@@ -438,8 +443,9 @@ impl Session {
                     marked_only: false,
                     read_isolation: 0,
                     // A record in a test run is Validated (corpus record/TestSecurityFilteringContracts.al:161-175).
-                    security_filtering: 2,
+                    security_filtering: 0,
                     key: 0,
+                    adhoc: None,
                     ascending: true,
                     field_descending: false,
                     position: None,
@@ -469,6 +475,7 @@ impl Session {
             publisher: app.publisher.clone(),
             version,
             dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
+            synthesized: false,
         })
     }
 
@@ -876,6 +883,8 @@ impl Session {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
                         Value::Record(rc) => self.record_instance(*object, rc, None)?,
+                        // A query procedure runs with the query it was called on as its own state.
+                        Value::Query(q) => self.query_instance(*object, q),
                         // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
                         // is constructed at first use.
                         Value::TestPage(st) => {
@@ -1478,6 +1487,18 @@ impl al_builtins::native::Ctx for Session {
             }
         }
         out
+    }
+    fn application_module(&self) -> al_builtins::value::ModuleInfoState {
+        let bc = self.engine.target.as_ref().map(|t| &t.bc);
+        let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
+        al_builtins::value::ModuleInfoState {
+            id: [0; 16],
+            name: String::new(),
+            publisher: String::new(),
+            version: Some([major, minor, 0, 0]),
+            dependencies: Vec::new(),
+            synthesized: true,
+        }
     }
     fn module_by_id(&self, id: &[u8; 16]) -> al_builtins::native::ModuleLookup {
         use al_builtins::native::ModuleLookup;

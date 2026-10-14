@@ -41,10 +41,10 @@ impl Session {
         Ok(Some(pos))
     }
 
-    fn counter_slot(&self, t: &TableDef) -> (String, u32) {
+    fn counter_slot(t: &TableDef, company: &str) -> (String, u32) {
         (
             if t.per_company {
-                self.cx.company.clone()
+                company.to_string()
             } else {
                 String::new()
             },
@@ -60,11 +60,12 @@ impl Session {
         t: &TableDef,
         field: usize,
         row: &mut [Value],
+        company: &str,
     ) -> Result<bool, Signal> {
         if number(&row[field]).unwrap_or(0) != 0 {
             return Ok(false);
         }
-        let slot = self.counter_slot(t);
+        let slot = Self::counter_slot(t, company);
         let next = self.autoinc.get(&slot).copied().unwrap_or(0) + 1;
         row[field] = ops::convert(Value::BigInteger(next), &t.fields[field].ty)?;
         self.autoinc.insert(slot, next);
@@ -73,9 +74,9 @@ impl Session {
 
     /// After a successful Insert with a key the caller (or OnInsert) chose: a key above
     /// the counter raises it, one at or below leaves it (record/TestAutoIncrementExplicitKey.al:43,98).
-    pub(crate) fn note_explicit_key(&mut self, t: &TableDef, field: usize, row: &[Value]) {
+    pub(crate) fn note_explicit_key(&mut self, t: &TableDef, field: usize, row: &[Value], company: &str) {
         let Some(k) = number(&row[field]) else { return };
-        let slot = self.counter_slot(t);
+        let slot = Self::counter_slot(t, company);
         let cur = self.autoinc.get(&slot).copied().unwrap_or(0);
         if k > cur {
             self.autoinc.insert(slot, k);
@@ -132,11 +133,11 @@ impl Session {
         if !flow_field_filters.is_empty() {
             return error("Truncate does not support filters on FlowFields.");
         }
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, t)?;
         let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e:?}"));
         // A filter on a normal field limits what Truncate deletes (corpus
         // record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_WithFilterOnANormalField_RemovesOnlyTheFilteredRows).
-        let slot = self.counter_slot(t);
+        let slot = Self::counter_slot(t, &cx.company);
         if let Some(counter) = self.autoinc.get(&slot).copied() {
             self.truncate_undo.entry(slot.clone()).or_insert(counter);
         } else {

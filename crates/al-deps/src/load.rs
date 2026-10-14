@@ -4,8 +4,12 @@
 //! directories (`--deps`). Downloading from the artifact feed is a later
 //! fallback and is not here yet.
 
-use crate::package::{Manifest, PackageError, Sources, Vars, read_info_with, read_package_with};
-use crate::select::{Candidate, DepDecl, MissingPolicy, Options, Project, SYSTEM_APP_ID, SelectError, resolve};
+use crate::package::{
+    Manifest, PackageError, Sources, Vars, manifest_of_source_zip, read_info_with, read_package_with,
+};
+use crate::select::{
+    APPLICATION_APP_ID, Candidate, DepDecl, MissingPolicy, Options, Project, SYSTEM_APP_ID, SelectError, resolve,
+};
 use crate::version::Version;
 use al_sema::workspace::AppSource;
 use std::path::{Path, PathBuf};
@@ -80,46 +84,120 @@ fn is_named_package(p: &Path) -> bool {
             .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".source.zip"))
 }
 
-/// The build variables for a package file: the build named by the cache's record beside it
-/// (`<file>.json`), else none.
-fn vars_for(path: &Path) -> Vars {
+/// The first four-number build (`27.5.46862.48827`) among the folder names of `path`, as the
+/// platform artifact cache lays them out (`.../sandbox/27.5.46862.48827/platform/...`).
+fn build_in_path(path: &Path) -> Option<Vars> {
+    path.components()
+        .rev()
+        .filter_map(|c| c.as_os_str().to_str())
+        .find_map(Vars::for_build)
+}
+
+/// The build variables for a package: the build named by the cache's record beside it
+/// (`<file>.json`), else a build among the folders it lies in, else `hint` when that is an exact
+/// build (a `--bc-version` prefix such as `27.5` is not one), else none.
+fn vars_for(path: &Path, hint: Option<&str>) -> Vars {
     let mut record = path.as_os_str().to_owned();
     record.push(".json");
     std::fs::read(PathBuf::from(record))
         .ok()
         .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
         .and_then(|v| v["build"].as_str().and_then(Vars::for_build))
+        .or_else(|| build_in_path(path))
+        .or_else(|| hint.and_then(Vars::for_build))
         .unwrap_or_default()
 }
 
-/// Reads a package file, filling build variables from the cache's record when it has one.
+/// The `.al` files under `dir`, as (path relative to `dir` with `/`, text).
+fn read_folder_sources(dir: &Path) -> Result<Sources, String> {
+    let mut out: Sources = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).map_err(|e| format!("{}: {e}", d.display()))? {
+            let p = e.map_err(|e| e.to_string())?.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if ext_is(&p, "al") {
+                let rel = p.strip_prefix(dir).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                let bytes = std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+                let text = String::from_utf8_lossy(&bytes);
+                out.push((rel, text.strip_prefix('\u{feff}').unwrap_or(&text).to_string()));
+            }
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+fn folder_manifest(dir: &Path, vars: &Vars) -> Result<Manifest, String> {
+    let p = dir.join("app.json");
+    let text = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    manifest_of_source_zip(&text, vars).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// Reads a package file or an app folder (`app.json` and `.al` files), filling build variables
+/// from the cache's record when it has one.
 pub fn read_package_at(path: &Path) -> Result<(Manifest, Sources), String> {
+    read_package_at_with(path, None)
+}
+
+/// [`read_package_at`] with a build to fill Microsoft's build variables when nothing else names one.
+pub fn read_package_at_with(path: &Path, hint: Option<&str>) -> Result<(Manifest, Sources), String> {
+    if path.is_dir() {
+        let manifest = folder_manifest(path, &vars_for(path, hint))?;
+        return Ok((manifest, read_folder_sources(path)?));
+    }
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    read_package_with(&bytes, &vars_for(path)).map_err(|e| format!("{}: {e}", path.display()))
+    read_package_with(&bytes, &vars_for(path, hint)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Reads the manifest of every `*.app` and `*.zip` file directly inside `dir`. A file that
 /// cannot be read is returned as an error line, not dropped: the caller prints it.
 pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
-    use rayon::prelude::*;
+    scan_path(dir, None)
+}
+
+/// One entry of a package search list (ADR-013): a directory of packages (as [`scan_dir`]), one
+/// package file (`.app`, `*.Source.zip`), or one app folder (it holds an `app.json`). A file
+/// named on purpose that is no package is a problem, not skipped. `hint` is the exact build that
+/// fills Microsoft's build variables when no record or path names one.
+pub fn scan_path(path: &Path, hint: Option<&str>) -> (Vec<Found>, Vec<String>) {
     let mut found = Vec::new();
     let mut problems = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else {
+    if path.is_dir() && path.join("app.json").is_file() {
+        match folder_manifest(path, &vars_for(path, hint)) {
+            Ok(manifest) => found.push(Found {
+                path: path.to_path_buf(),
+                manifest,
+                has_source: true,
+            }),
+            Err(e) => problems.push(e),
+        }
         return (found, problems);
+    }
+    let explicit = path.is_file();
+    let paths: Vec<PathBuf> = if explicit {
+        vec![path.to_path_buf()]
+    } else {
+        let Ok(rd) = std::fs::read_dir(path) else {
+            return (found, problems);
+        };
+        let mut v: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| is_package_file(p))
+            .collect();
+        v.sort();
+        v
     };
-    let mut paths: Vec<PathBuf> = rd
-        .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| is_package_file(p))
-        .collect();
-    paths.sort();
     // The files are read side by side (a big package is tens of megabytes); the results are
     // handled in path order.
+    use rayon::prelude::*;
     let reads: Vec<Result<(Manifest, bool), String>> = paths
         .par_iter()
         .map(|path| {
             std::fs::read(path)
                 .map_err(|e| e.to_string())
-                .and_then(|bytes| read_info_with(&bytes, &vars_for(path)).map_err(|e: PackageError| e.to_string()))
+                .and_then(|bytes| read_info_with(&bytes, &vars_for(path, hint)).map_err(|e: PackageError| e.to_string()))
         })
         .collect();
     for (path, read) in paths.into_iter().zip(reads) {
@@ -129,17 +207,14 @@ pub fn scan_dir(dir: &Path) -> (Vec<Found>, Vec<String>) {
                 manifest,
                 has_source,
             }),
-            // A stray `.zip` that is no package is not a problem; a broken `.app` or `.Source.zip` is.
-            Err(_) if !is_named_package(&path) => {}
+            // A stray `.zip` in a directory is no problem; a broken `.app` or `.Source.zip`, or any
+            // file the caller named, is.
+            Err(_) if !explicit && !is_named_package(&path) => {}
             Err(e) => problems.push(format!("{}: {e}", path.display())),
         }
     }
     (found, problems)
 }
-
-/// What `scan_dir` found, by directory: a search that goes round again with one more directory
-/// does not read the first ones again.
-pub type ScanCache = std::collections::HashMap<PathBuf, (Vec<Found>, Vec<String>)>;
 
 /// An app the caller already has as source (built in this run).
 #[derive(Debug, Clone)]
@@ -173,6 +248,25 @@ pub struct Loaded {
     pub notes: Vec<String>,
     /// Dependencies no package satisfied.
     pub skipped: Vec<SelectError>,
+    /// The ids the chosen `Application` aggregate depends on (it holds no source, so it is not in
+    /// `apps`); empty when none was chosen.
+    pub application_aggregate: Vec<String>,
+}
+
+impl Loaded {
+    /// The dependencies an app with a `platform` and/or an `application` floor has without
+    /// declaring them: `System`, `Application` and what `Application` propagates.
+    pub fn implied_dependencies(&self, platform: bool, application: bool) -> Vec<String> {
+        let mut v = Vec::new();
+        if application {
+            v.push(APPLICATION_APP_ID.to_string());
+            v.extend(self.application_aggregate.iter().cloned());
+        }
+        if platform {
+            v.push(SYSTEM_APP_ID.to_string());
+        }
+        v
+    }
 }
 
 pub struct Request<'a> {
@@ -182,11 +276,19 @@ pub struct Request<'a> {
     /// `<project>/.alpackages` first, then any `--deps` directories.
     pub search_dirs: &'a [PathBuf],
     pub missing: MissingPolicy,
+    /// An exact build that fills Microsoft's build variables (`$(app_currentVersion)`) in source
+    /// archives and folders that no record or path names a build for.
+    pub source_build: Option<&'a str>,
+    /// An app with an `application` (or `platform`) floor depends on the Microsoft `Application`
+    /// aggregate (`System`), and the aggregate propagates its own dependencies (Base Application,
+    /// System Application, Business Foundation), as AL's `app.json` rules say. With this on, the
+    /// loaded apps see them without declaring them. Off for the corpus, which declares its own.
+    pub application_implies_dependencies: bool,
 }
 
 /// Chooses the packages that satisfy the project's dependencies and reads their source.
 pub fn load_dependencies(req: &Request<'_>) -> Result<Loaded, String> {
-    read_planned(plan_dependencies(req, &mut ScanCache::new())?)
+    read_planned(plan_dependencies(req, &mut ScanCache::new())?, req)
 }
 
 /// The packages chosen for the dependencies of a project, not read yet.
@@ -197,10 +299,15 @@ pub struct Planned {
     order: Vec<usize>,
     /// Dependencies no package satisfied.
     pub skipped: Vec<SelectError>,
+    application_aggregate: Vec<String>,
 }
 
+/// What `scan_path` found, by search entry: a search that goes round again with one more
+/// directory does not read the first ones again.
+pub type ScanCache = std::collections::HashMap<PathBuf, (Vec<Found>, Vec<String>)>;
+
 /// Looks at the packages in the search directories and chooses one for every dependency; reads
-/// only their manifests. `scans` remembers directories already looked at.
+/// only their manifests. `scans` remembers entries already looked at.
 pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Planned, String> {
     let mut pool: Vec<Candidate> = Vec::new();
     let mut paths: Vec<Option<PathBuf>> = Vec::new();
@@ -222,7 +329,10 @@ pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Pla
         paths.push(None);
     }
     for (tier, dir) in req.search_dirs.iter().enumerate() {
-        let (found, problems) = scans.entry(dir.clone()).or_insert_with(|| scan_dir(dir)).clone();
+        let (found, problems) = scans
+            .entry(dir.clone())
+            .or_insert_with(|| scan_path(dir, req.source_build))
+            .clone();
         notes.extend(problems);
         for f in found {
             let m = f.manifest;
@@ -253,17 +363,24 @@ pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Pla
     };
     let plan = resolve(&project, &pool, &opts).map_err(|e| e.to_string())?;
     notes.extend(plan.notes);
+    let application_aggregate: Vec<String> = plan
+        .order
+        .iter()
+        .find(|&&i| pool[i].id.eq_ignore_ascii_case(APPLICATION_APP_ID))
+        .map(|&i| pool[i].deps.iter().map(|d| d.id.clone()).collect())
+        .unwrap_or_default();
     Ok(Planned {
         pool,
         paths,
         notes,
         order: plan.order,
         skipped: plan.skipped,
+        application_aggregate,
     })
 }
 
 /// Reads the sources of the packages a plan chose, side by side.
-pub fn read_planned(planned: Planned) -> Result<Loaded, String> {
+pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, String> {
     use rayon::prelude::*;
     let Planned {
         pool,
@@ -271,20 +388,31 @@ pub fn read_planned(planned: Planned) -> Result<Loaded, String> {
         mut notes,
         order,
         skipped,
+        application_aggregate,
     } = planned;
     let to_read: Vec<&PathBuf> = order
         .iter()
         .filter_map(|&i| paths[i].as_ref().filter(|_| pool[i].has_source))
         .collect();
-    let mut reads: std::collections::VecDeque<Result<(Manifest, Sources), String>> =
-        to_read.par_iter().map(|path| read_package_at(path)).collect();
-    let mut apps = Vec::new();
+    let mut reads: std::collections::VecDeque<Result<(Manifest, Sources), String>> = to_read
+        .par_iter()
+        .map(|path| read_package_at_with(path, req.source_build))
+        .collect();
+    let mut loaded = Loaded {
+        application_aggregate,
+        ..Default::default()
+    };
     for i in order {
         let Some(path) = paths[i].clone() else { continue };
         let c = &pool[i];
         if !c.has_source {
             // Symbols only (or an aggregate such as `Application`): nothing to compile. Its
             // objects stay unresolved, so what needs them is refused. Say so.
+            // The `Application` aggregate never has any; with its dependencies propagated, that is
+            // expected and not worth a line.
+            if req.application_implies_dependencies && c.id.eq_ignore_ascii_case(APPLICATION_APP_ID) {
+                continue;
+            }
             notes.push(format!(
                 "{}: `{}` {} carries no AL source; the runtime compiles source (ADR-013), so its objects are unavailable",
                 path.display(),
@@ -299,11 +427,19 @@ pub fn read_planned(planned: Planned) -> Result<Loaded, String> {
         } else {
             Role::Standard
         };
-        apps.push(DependencyApp {
+        let mut dependencies: Vec<String> = manifest.dependencies.iter().map(|d| d.id.clone()).collect();
+        if req.application_implies_dependencies {
+            for id in loaded.implied_dependencies(manifest.platform.is_some(), manifest.application.is_some()) {
+                if !id.eq_ignore_ascii_case(&manifest.id) && !dependencies.contains(&id) {
+                    dependencies.push(id);
+                }
+            }
+        }
+        loaded.apps.push(DependencyApp {
             app: AppSource {
                 id: manifest.id.clone(),
                 name: manifest.name.clone(),
-                dependencies: manifest.dependencies.iter().map(|d| d.id.clone()).collect(),
+                dependencies,
                 files: sources
                     .into_iter()
                     .map(|(p, text)| (format!("{}/{p}", manifest.name), text))
@@ -315,7 +451,9 @@ pub fn read_planned(planned: Planned) -> Result<Loaded, String> {
             role,
         });
     }
-    Ok(Loaded { apps, notes, skipped })
+    loaded.notes = notes;
+    loaded.skipped = skipped;
+    Ok(loaded)
 }
 
 #[cfg(test)]
@@ -423,6 +561,8 @@ mod tests {
             workspace_apps: &[],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Error,
+            source_build: None,
+            application_implies_dependencies: false,
         })
         .unwrap();
         let names: Vec<_> = loaded.apps.iter().map(|a| a.app.name.as_str()).collect();
@@ -464,6 +604,8 @@ mod tests {
             workspace_apps: &[fixture],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Error,
+            source_build: None,
+            application_implies_dependencies: false,
         })
         .unwrap();
         let names: Vec<_> = loaded.apps.iter().map(|a| a.app.name.as_str()).collect();
@@ -487,6 +629,8 @@ mod tests {
             workspace_apps: &[],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Skip,
+            source_build: None,
+            application_implies_dependencies: false,
         };
         let mut scans = ScanCache::new();
         let first = plan_dependencies(&req, &mut scans).unwrap();
@@ -505,7 +649,7 @@ mod tests {
         assert_eq!(again.pool.len(), 1);
         // ...and is seen by one that scans afresh.
         assert_eq!(plan_dependencies(&req, &mut ScanCache::new()).unwrap().pool.len(), 2);
-        let loaded = read_planned(again).unwrap();
+        let loaded = read_planned(again, &req).unwrap();
         assert_eq!(loaded.apps.len(), 1);
         assert_eq!(loaded.apps[0].app.files.len(), 1);
     }
@@ -518,6 +662,8 @@ mod tests {
             workspace_apps: &[],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Error,
+            source_build: None,
+            application_implies_dependencies: false,
         })
         .unwrap_err();
         assert!(
@@ -543,6 +689,8 @@ mod tests {
             workspace_apps: &[],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Skip,
+            source_build: None,
+            application_implies_dependencies: false,
         })
         .unwrap();
         assert_eq!(loaded.apps.len(), 1);
@@ -567,6 +715,8 @@ mod tests {
             workspace_apps: &[],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Error,
+            source_build: None,
+            application_implies_dependencies: false,
         })
         .unwrap();
         assert_eq!(loaded.apps.len(), 1);
@@ -586,6 +736,8 @@ mod tests {
             workspace_apps: &[],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Error,
+            source_build: None,
+            application_implies_dependencies: false,
         })
         .unwrap();
         assert!(loaded.apps.is_empty());
@@ -614,6 +766,8 @@ mod tests {
             workspace_apps: &[],
             search_dirs: &[dir.path().to_path_buf()],
             missing: MissingPolicy::Error,
+            source_build: None,
+            application_implies_dependencies: false,
         })
         .unwrap();
         assert_eq!(loaded.apps.len(), 1);
@@ -661,5 +815,137 @@ mod tests {
         assert_eq!(found[0].manifest.dependencies[0].min, "27.5.0.0".parse().unwrap());
         let (m, _) = read_package_at(&found[0].path).unwrap();
         assert_eq!(m.version, found[0].manifest.version);
+    }
+
+    #[test]
+    fn a_package_file_as_a_search_path_is_the_only_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_json = r#"{"id":"zz","name":"Zed","publisher":"P","version":"2.0.0.0","dependencies":[]}"#;
+        let zip = Builder::new()
+            .add("app.json", app_json.as_bytes(), true)
+            .add("Z.al", b"codeunit 9 Z { }", true)
+            .finish();
+        std::fs::write(dir.path().join("Zed.Source.zip"), &zip).unwrap();
+        std::fs::write(dir.path().join("Other.Source.zip"), &zip).unwrap();
+        let (found, problems) = scan_path(&dir.path().join("Zed.Source.zip"), None);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(found.len(), 1);
+        assert!(found[0].path.ends_with("Zed.Source.zip"));
+        // A file that is no package is a problem when it was named on purpose.
+        std::fs::write(dir.path().join("notes.zip"), b"not an archive").unwrap();
+        let (found, problems) = scan_path(&dir.path().join("notes.zip"), None);
+        assert!(found.is_empty());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+    }
+
+    #[test]
+    fn an_app_folder_as_a_search_path_is_a_source_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("zed");
+        std::fs::create_dir_all(app.join("Sub")).unwrap();
+        std::fs::write(
+            app.join("app.json"),
+            r#"{"id":"ZZ","name":"Zed","publisher":"P","version":"2.0.0.0","dependencies":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(app.join("Sub/Z.al"), "codeunit 9 Z { }").unwrap();
+        std::fs::write(app.join("notes.txt"), "not al").unwrap();
+        let (found, problems) = scan_path(&app, None);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(found.len(), 1);
+        assert!(found[0].has_source);
+        assert_eq!(found[0].manifest.name, "Zed");
+        let (m, sources) = read_package_at(&app).unwrap();
+        assert_eq!(m.id, "zz");
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].0, "Sub/Z.al");
+        // The folder is not a directory of packages: nothing else under it is scanned.
+        let (found, _) = scan_path(dir.path(), None);
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn build_variables_are_filled_from_a_build_in_the_path_or_from_the_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        let app_json =
+            r#"{"id":"zz","name":"Zed","publisher":"P","version":"$(app_currentVersion)","dependencies":[]}"#;
+        let zip = Builder::new()
+            .add("app.json", app_json.as_bytes(), true)
+            .add("Z.al", b"codeunit 9 Z { }", true)
+            .finish();
+        let built = dir.path().join("27.5.46862.48827").join("Applications");
+        std::fs::create_dir_all(&built).unwrap();
+        std::fs::write(built.join("Zed.Source.zip"), &zip).unwrap();
+        let (found, problems) = scan_path(&built.join("Zed.Source.zip"), None);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(found[0].manifest.version, "27.5.46862.48827".parse().unwrap());
+        // Elsewhere the caller's hint (an exact `--bc-version`) names the build; a prefix does not.
+        std::fs::write(dir.path().join("Zed.Source.zip"), &zip).unwrap();
+        let p = dir.path().join("Zed.Source.zip");
+        assert!(scan_path(&p, None).0.is_empty());
+        assert!(scan_path(&p, Some("27.5")).0.is_empty());
+        let (found, _) = scan_path(&p, Some("27.5.46862.56249"));
+        assert_eq!(found[0].manifest.version, "27.5.46862.56249".parse().unwrap());
+    }
+
+    #[test]
+    fn an_application_floor_implies_the_application_and_what_it_propagates() {
+        use crate::select::{APPLICATION_APP_ID, SYSTEM_APP_ID};
+        let dir = tempfile::tempdir().unwrap();
+        // The `Application` aggregate holds no source; its dependency is Base Application.
+        write_app(
+            dir.path(),
+            "application.app",
+            APPLICATION_APP_ID,
+            "Application",
+            "27.5.0.0",
+            &[("ba", "Base", "27.0.0.0")],
+            &[],
+        );
+        write_app(
+            dir.path(),
+            "ba.app",
+            "ba",
+            "Base",
+            "27.5.0.0",
+            &[],
+            &[("B.al", "codeunit 1 B { }")],
+        );
+        // An app that names an `application` floor and a `platform`, and declares no dependency.
+        let manifest = r#"<Package><App Id="top" Name="Top" Publisher="P" Version="1.0.0.0" Platform="27.0.0.0" Application="27.5.0.0" /><Dependencies /></Package>"#;
+        let b =
+            Builder::new()
+                .add("NavxManifest.xml", manifest.as_bytes(), true)
+                .add("T.al", b"codeunit 2 T { }", true);
+        std::fs::write(dir.path().join("top.app"), crate::zip::testutil::navx(&b.finish())).unwrap();
+        let load = |implies: bool| {
+            load_dependencies(&Request {
+                project: &project(&[("top", "Top", "1.0.0.0")]),
+                workspace_apps: &[],
+                search_dirs: &[dir.path().to_path_buf()],
+                missing: MissingPolicy::Skip,
+                source_build: None,
+                application_implies_dependencies: implies,
+            })
+            .unwrap()
+        };
+        let top_deps = |l: &Loaded| {
+            l.apps
+                .iter()
+                .find(|a| a.app.name == "Top")
+                .unwrap()
+                .app
+                .dependencies
+                .clone()
+        };
+        assert!(top_deps(&load(false)).is_empty());
+        let l = load(true);
+        assert_eq!(top_deps(&l), [APPLICATION_APP_ID, "ba", SYSTEM_APP_ID]);
+        // A caller's own app (not in `apps`) asks for the same set.
+        assert_eq!(
+            l.implied_dependencies(true, true),
+            [APPLICATION_APP_ID, "ba", SYSTEM_APP_ID]
+        );
+        assert_eq!(l.implied_dependencies(false, false), Vec::<String>::new());
     }
 }

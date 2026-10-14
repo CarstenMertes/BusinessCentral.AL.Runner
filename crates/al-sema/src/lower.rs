@@ -396,7 +396,9 @@ pub fn lower_with_workers(
             continue;
         }
         let ext = ws.object_ast(oi);
-        let changes_a_run = ext.routines().next().is_some()
+        // The routines `pages::expand` adds for expression-valued control properties and sources of the
+        // request page are not the author's: they do not change a run.
+        let changes_a_run = ext.routines().any(|r| !crate::pages::is_synthetic(&r.name()))
             || ext.triggers().next().is_some()
             || ext.sections().any(|s| !s.name().eq_ignore_ascii_case("requestpage"));
         if let (true, Some(base)) = (changes_a_run, ext.extends_parts()) {
@@ -1077,6 +1079,15 @@ fn lower_object<'a>(
                 ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
             });
         }
+    }
+    // A query's own code runs on the query it was called on: its state sits in a hidden slot
+    // the VM fills when it makes the instance (`Session::query_instance`).
+    if o.kind == ObjKind::Query {
+        rec_slot = Some(globals.len());
+        globals.push(ir::Slot {
+            name: "__query".into(),
+            ty: RtType::Query(oi as u32),
+        });
     }
     lw.rec_slot = rec_slot;
     if o.kind == ObjKind::Report {
@@ -2164,7 +2175,21 @@ impl Lowerer<'_> {
                         let off = usize::from(sec.syntax().text_range().start()) - ow.base;
                         match routine_named(&ow, &crate::pages::synthetic_name("source", off)) {
                             Some(r) => binding = ir::Binding::Expr(r),
-                            None => unsupported.push(format!("control {} has no source routine", raw.name)),
+                            // A control of an extension that names a variable of the base object
+                            // (`pages::needed` made no routine for it).
+                            None => {
+                                let base_slot = raw
+                                    .owner
+                                    .and_then(|_| crate::pages::plain_name(args.get(1)?))
+                                    .and_then(|n| globals.iter().position(|g| g.name.eq_ignore_ascii_case(&n)));
+                                match base_slot {
+                                    Some(slot) => binding = ir::Binding::BaseVar(slot),
+                                    None => unsupported.push(format!(
+                                        "control {} is bound to a name that is no variable of its base object",
+                                        raw.name
+                                    )),
+                                }
+                            }
                         }
                     }
                     None => {}
@@ -3439,6 +3464,10 @@ impl Lowerer<'_> {
             BinExpr if matches!(sig_tokens(n)[0].text().to_ascii_lowercase().as_str(), "is" | "as") => {
                 self.interface_test(n, &kids)
             }
+            // The parser recovered from text it did not accept and left one operand.
+            BinExpr if kids.len() < 2 => {
+                Err("binary expression with a missing operand (the parser did not accept it)".into())
+            }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
                 self.no_dotnet_operand(&kids[0])?;
@@ -3758,7 +3787,7 @@ impl Lowerer<'_> {
                         if matches!(
                             self.ty_of(r),
                             Ty::Object(
-                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report,
+                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report | ObjKind::Query,
                                 _
                             ) | Ty::Record { .. }
                         ) =>
@@ -3870,23 +3899,42 @@ impl Lowerer<'_> {
                         Err(_) => ir::Arg::Value(self.expr(r)?),
                     })),
                     // An unqualified record method in table code runs on the implicit Rec.
-                    None if sig.instance && sig.receiver == "Record" => Some(Box::new(ir::Arg::Ref(
-                        ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
-                    ))),
+                    None if sig.instance && matches!(sig.receiver.as_str(), "Record" | "Query") => {
+                        Some(Box::new(ir::Arg::Ref(ir::Place::Global(
+                            self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
+                        ))))
+                    }
                     _ => None,
                 };
                 let mut out = Vec::new();
                 for (i, a) in args.iter().enumerate() {
-                    if matches!(self.ty_of(a), Ty::DotNet(_)) {
-                        return Err(format!(
-                            "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
-                        ));
-                    }
                     let p = sig
                         .params
                         .get(i)
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
+                    if let Ty::DotNet(alias) = self.ty_of(a) {
+                        // `IsNull(DotNet)` takes the value as it is. A DotNet result (no static
+                        // type) passed to a plain Text, Integer or Boolean parameter must fit it
+                        // exactly at run time, as in an assignment (ADR-014 section 4). Anything
+                        // else is refused.
+                        let slot = match p.ty.as_str() {
+                            "DotNet" => None,
+                            "Text" if !p.by_var && alias.is_empty() => Some(RtType::Text(None)),
+                            "Integer" if !p.by_var && alias.is_empty() => Some(RtType::Integer),
+                            "Boolean" if !p.by_var && alias.is_empty() => Some(RtType::Boolean),
+                            _ => {
+                                return Err(format!(
+                                    "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
+                                ));
+                            }
+                        };
+                        out.push(ir::Arg::Value(match slot {
+                            Some(rt) => ir::Expr::DotNetCoerce(rt, Box::new(self.expr(a)?)),
+                            None => self.expr(a)?,
+                        }));
+                        continue;
+                    }
                     let field_param = p.name.to_ascii_lowercase().starts_with("field")
                         || p.name.eq_ignore_ascii_case("FromField")
                         || p.name.to_ascii_lowercase().starts_with("column");
@@ -4063,6 +4111,24 @@ mod tests {
         let checked = crate::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
         let lowered = lower_with_positions(&ws, &members, &checked, positions);
         (ws, lowered)
+    }
+
+    /// Tests-ERM (Microsoft's BaseApp bucket): a page field whose source is a lone quoted name with
+    /// a hyphen reaches the synthetic source routine unquoted (`exit(Assign-to No.)`), which parses
+    /// as `Assign-` with no right operand. Lowering indexed `kids[1]` and panicked, which ended the
+    /// whole run. The routine is refused instead.
+    #[test]
+    fn a_binary_expression_with_a_missing_operand_is_refused_not_a_panic() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; \"Assign-to No.\"; Code[20]) { } } }
+page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"; \"Assign-to No.\") { } } } }",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert!(reasons.iter().any(|r| r.contains("missing operand")), "{reasons:?}");
     }
 
     const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"
@@ -4361,6 +4427,21 @@ codeunit 50101 C2
             "{:?}",
             l.unsupported[oi][0]
         );
+    }
+
+    // session/TestEnvironmentUserTenantContracts.al:204-216 reaches `CopyStr(TenantInfo.PreferredLanguage(), 1, 2)`
+    // and `IsNull(TenantInfo)` in Microsoft's Azure AD Tenant Impl.: a DotNet result passed to a Text
+    // parameter must fit it exactly (ADR-014 section 4), and IsNull takes a DotNet value.
+    #[test]
+    fn a_dotnet_result_passed_to_a_text_parameter_is_coerced_and_isnull_takes_a_dotnet_value() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Text var Convert: DotNet Convert; begin if IsNull(Convert) then exit(''); exit(CopyStr(Convert.ToBase64String('x'), 1, 2)); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        let dump = format!("{:?}", r.body);
+        assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
     }
 
     #[test]

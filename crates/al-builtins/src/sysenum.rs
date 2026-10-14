@@ -9,9 +9,10 @@
 pub fn members(name: &str) -> Option<&'static [&'static str]> {
     match name.to_ascii_lowercase().as_str() {
         "fieldclass" => Some(&["Normal", "FlowField", "FlowFilter"]),
-        // Ordinals of these two are not pinned; the corpus only sets a member and reads it back
-        // (record/TestSecurityFilteringContracts.al, TestRecordLock.al).
-        "securityfilter" => Some(&["Filtered", "Ignored", "Validated", "Disallowed"]),
+        // SecurityFilter ordinals are measured on BC 27.5: Validated 0, Filtered 1, Ignored 2,
+        // Disallowed 3, read with Format(x, 0, 2) and Evaluate from a number
+        // (recordref/TestPlatformOptionsLockingContracts.al:36-43).
+        "securityfilter" => Some(&["Validated", "Filtered", "Ignored", "Disallowed"]),
         "isolationlevel" => Some(&[
             "Default",
             "ReadUncommitted",
@@ -44,6 +45,19 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // Microsoft docs, TelemetryScope: ExtensionPublisher, then All. Only passed to
         // Session.LogMessage, which changes nothing AL can see, so the ordinals are not pinned.
         "telemetryscope" => Some(&["ExtensionPublisher", "All"]),
+        // Only passed to Session.LogSecurityAudit, which changes nothing AL can see. The members are
+        // the ones Microsoft's source uses; their ordinals are not pinned and nothing may print them.
+        "securityoperationresult" => Some(&["Success", "Failure"]),
+        "auditcategory" => Some(&[
+            "ApplicationManagement",
+            "CustomerFacing",
+            "EntitlementManagement",
+            "KeyManagement",
+            "Other",
+            "PolicyManagement",
+            "RoleManagement",
+            "UserManagement",
+        ]),
         "dataclassification" => Some(&[
             "CustomerContent",
             "ToBeClassified",
@@ -113,6 +127,25 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         ]),
         _ => None,
     }
+}
+
+/// Whether `members` is the `FieldType` option. AL cannot read its ordinals, so `Format(x, 0, 2)`
+/// prints the member name like any other format (recordref/TestPlatformOptionsLockingContracts.al:
+/// 76, "format 2 prints the name too, not an ordinal").
+pub fn ordinals_hidden(members: &[String]) -> bool {
+    let known = members_static("fieldtype");
+    members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
+}
+
+/// Whether `members` is the `SecurityFilter` option, the one platform option an ordinal can be
+/// evaluated into (recordref/TestPlatformOptionsLockingContracts.al:42).
+pub fn is_security_filter(members: &[String]) -> bool {
+    let known = members_static("securityfilter");
+    members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
+}
+
+fn members_static(name: &str) -> &'static [&'static str] {
+    members(name).expect("known")
 }
 
 /// The member names as an owned option type.

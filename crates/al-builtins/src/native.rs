@@ -100,6 +100,17 @@ pub trait Ctx: FormatCtx {
     fn app_resources(&self) -> Option<AppResources> {
         None
     }
+    /// The module BC answers `GetModuleInfo` with for the null app id: the installed application.
+    fn application_module(&self) -> crate::value::ModuleInfoState {
+        crate::value::ModuleInfoState {
+            id: [0; 16],
+            name: String::new(),
+            publisher: String::new(),
+            version: None,
+            dependencies: Vec::new(),
+            synthesized: true,
+        }
+    }
     /// The installed app with this id.
     fn module_by_id(&self, _id: &[u8; 16]) -> ModuleLookup {
         ModuleLookup::NotInstalled
@@ -203,6 +214,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.StrCheckSum#1", strchecksum),
     ("Session.LogMessage#1", log_message),
     ("Session.LogMessage#2", log_message),
+    ("Session.LogSecurityAudit#1", log_message),
     ("System.Variant2Date#1", variant_2_date),
     ("System.Variant2Time#1", variant_2_time),
     // Whether the host can create tasks is not pinned (corpus session/TestTaskSchedulerCloudBehavior.al
@@ -357,6 +369,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.Skip#1", vm_only),
     ("Report.Break#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    // `IsNull(DotNet)`: an unassigned DotNet variable, or a .NET call that returned null, holds
+    // `Null` (ADR-014). Microsoft's Azure AD Tenant Impl. and Json Impl. ask it
+    // (session/TestEnvironmentUserTenantContracts.al:204-232 reaches them).
+    ("System.IsNull#1", |_, _, a| {
+        Ok(Value::Boolean(matches!(a.first(), Some(Value::Null))))
+    }),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
     }),
@@ -677,8 +695,10 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     Ok(Value::Integer(pos as i32))
 }
 
-/// `Session.LogMessage`: telemetry has no effect AL code can see in a test, so the call returns
-/// (session/TestSessionExtended.al:76-89 only needs it callable).
+/// `Session.LogMessage` and `Session.LogSecurityAudit`: telemetry and the security audit log have
+/// no effect AL code can see in a test, so the call returns (session/TestSessionExtended.al:76-89
+/// only needs LogMessage callable; session/TestEnvironmentUserTenantContracts.al:315-374 runs
+/// Change Log Management, which logs a security audit entry, and reads only the change log).
 fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     Ok(Value::Null)
 }
@@ -839,6 +859,8 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::DateTime(_) => Value::DateTime(0),
         Value::Duration(_) => Value::Duration(0),
         Value::Guid(_) => Value::Guid([0; 16]),
+        // The empty formula (types/TestDateFormulaDurationFormatContracts.al:38-42).
+        Value::DateFormula(_) => Value::DateFormula(String::new()),
         Value::Option(_, m) => Value::Option(0, m.clone()),
         // A cleared List or Dictionary is a new, empty one (types/TestClearContracts.al:130-150,
         // collections/TestListByRefContracts.al:155 through a `var` parameter).

@@ -15,7 +15,7 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 fn option(type_name: &str, ordinal: i32) -> Value {
-    let members: Rc<[String]> = crate::sysenum::option_members(type_name)
+    let members: std::sync::Arc<[String]> = crate::sysenum::option_members(type_name)
         .expect("a system option")
         .into();
     Value::Option(ordinal, members)

@@ -168,12 +168,21 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
             }
             if rt.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")) {
                 tests.push(id);
-            } else if rt.is_trigger || rt.attributes.iter().any(|a| a.name.to_ascii_lowercase().ends_with("handler")) {
+            } else if rt.is_trigger
+                || rt
+                    .attributes
+                    .iter()
+                    .any(|a| a.name.to_ascii_lowercase().ends_with("handler"))
+            {
                 handlers_etc.push(id);
             }
         }
     }
-    let blocked = |root: usize| -> bool { closure(&g, &[root], &vec![false; n], true).iter().any(|&i| g.refused[i]) };
+    let blocked = |root: usize| -> bool {
+        closure(&g, &[root], &vec![false; n], true)
+            .iter()
+            .any(|&i| g.refused[i])
+    };
     let (mut runnable, mut stopped) = (Vec::new(), 0usize);
     for &t in &tests {
         if blocked(t) {
@@ -190,7 +199,12 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         runnable.len()
     );
     let no_skip = vec![false; n];
-    let can_run = closure(&g, &runnable.iter().chain(&handlers_etc).copied().collect::<Vec<_>>(), &no_skip, false);
+    let can_run = closure(
+        &g,
+        &runnable.iter().chain(&handlers_etc).copied().collect::<Vec<_>>(),
+        &no_skip,
+        false,
+    );
     let can_run_dep: Vec<usize> = can_run.iter().copied().filter(|&i| g.dep[i]).collect();
     let _ = writeln!(
         out,
@@ -219,7 +233,12 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         dep.len()
     };
     let ws_roots: Vec<usize> = (0..n).filter(|&i| g.reached[i] && !g.dep[i]).collect();
-    layer("workspace code (every workspace routine is checked)", ws_roots.clone(), &mut claimed, &mut out);
+    layer(
+        "workspace code (every workspace routine is checked)",
+        ws_roots.clone(),
+        &mut claimed,
+        &mut out,
+    );
     let mut install = Vec::new();
     for (o, obj) in objects.iter().enumerate() {
         if !lowered.dependency[o] || obj.kind != "codeunit" {
@@ -323,7 +342,10 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         e.1 += c;
         e.2 += wt;
     }
-    let _ = writeln!(out, "reached dependency routines by object kind (objects, routines, weight):");
+    let _ = writeln!(
+        out,
+        "reached dependency routines by object kind (objects, routines, weight):"
+    );
     for (k, (ob, c, wt)) in &per_kind {
         let _ = writeln!(out, "  {k:<16} {ob:>6} {c:>7} {wt:>9}");
     }
@@ -331,7 +353,11 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
     top.sort_by(|a, b| b.1.0.cmp(&a.1.0));
     let _ = writeln!(out, "objects with the most reached routines:");
     for &(&o, &(c, wt)) in top.iter().take(12) {
-        let _ = writeln!(out, "  {c:>5} routines weight {wt:>6}  {} \"{}\"", objects[o].kind, objects[o].name);
+        let _ = writeln!(
+            out,
+            "  {c:>5} routines weight {wt:>6}  {} \"{}\"",
+            objects[o].kind, objects[o].name
+        );
     }
 
     // Refusals among the reached.
@@ -340,9 +366,12 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         let (o, r) = g.at[i];
         let raw = &lowered.unsupported[o][r][0];
         let key = crate::refusals::normalise_reason(raw);
-        let e = reasons
-            .entry(key)
-            .or_insert((0, 0, 0, format!("{} . {}", objects[o].name, objects[o].routines[r].name)));
+        let e = reasons.entry(key).or_insert((
+            0,
+            0,
+            0,
+            format!("{} . {}", objects[o].name, objects[o].routines[r].name),
+        ));
         e.0 += 1;
         if g.dep[i] {
             e.1 += 1;
@@ -357,7 +386,11 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         rs.len()
     );
     for (k, (c, d, wt, ex)) in rs.iter().take(20) {
-        let _ = writeln!(out, "  {c:>5} {d:>5} {wt:>6}  {}   [{ex}]", crate::refusals::clip(k, 100));
+        let _ = writeln!(
+            out,
+            "  {c:>5} {d:>5} {wt:>6}  {}   [{ex}]",
+            crate::refusals::clip(k, 100)
+        );
     }
 
     // Which objects hold the object-level refusals (global variables, data items): every routine of
@@ -366,7 +399,11 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
     for &i in &refused_dep {
         let (o, r) = g.at[i];
         let first = &lowered.unsupported[o][r][0];
-        if first.starts_with("global `") || first.starts_with("dataitem `") || first.starts_with("table element `") || first.starts_with("variable `") {
+        if first.starts_with("global `")
+            || first.starts_with("dataitem `")
+            || first.starts_with("table element `")
+            || first.starts_with("variable `")
+        {
             let e = by_object.entry(o).or_insert((0, first.clone()));
             e.0 += 1;
         }
@@ -389,7 +426,11 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
     let mut raw: Vec<_> = raw.into_iter().collect();
     raw.sort_by(|a, b| b.1.1.cmp(&a.1.1));
     for (k, (ob, c)) in raw.iter().take(25) {
-        let _ = writeln!(out, "  {ob:>4} objects {c:>5} routines  {}", crate::refusals::clip(k, 110));
+        let _ = writeln!(
+            out,
+            "  {ob:>4} objects {c:>5} routines  {}",
+            crate::refusals::clip(k, 110)
+        );
     }
 
     // Pruning: stop at refused routines.

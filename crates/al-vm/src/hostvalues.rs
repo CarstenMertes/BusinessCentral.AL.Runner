@@ -153,7 +153,7 @@ impl Session {
 }
 
 fn client_type(t: al_host::ClientType) -> Value {
-    let members: Rc<[String]> = al_builtins::sysenum::option_members("ClientType")
+    let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("ClientType")
         .expect("a system option")
         .into();
     let ordinal = members

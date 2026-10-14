@@ -204,7 +204,7 @@ impl Session {
             // started, which is at the first database call (:Database_CurrentTransactionType_
             // SetAfterWriteOp_Throws, the text is not pinned), and this runtime does not track that.
             "Database.CurrentTransactionType#1" => {
-                let members: std::rc::Rc<[String]> = al_builtins::sysenum::option_members("TransactionType")
+                let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("TransactionType")
                     .expect("a system option")
                     .into();
                 match args.first() {

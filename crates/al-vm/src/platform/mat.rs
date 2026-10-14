@@ -49,6 +49,35 @@ pub(crate) struct Mat {
     known: Vec<usize>,
 }
 
+/// A listing that several threads read. `Value` is not `Send` because some variants hold `Rc`
+/// handles; the rows of a listing are made of plain values only (checked when it is made), whose
+/// only shared parts are `Arc`s, and a `Mat` is never changed after it is built.
+pub(crate) struct SharedMat(Mat);
+
+impl SharedMat {
+    /// Panics when a row holds a handle: a provider listed something that cannot be shared.
+    pub(crate) fn new(m: Mat) -> SharedMat {
+        for row in &m.rows {
+            if let Some(v) = row.iter().find(|v| !v.is_plain()) {
+                panic!("a listed row holds a value that is not plain, so it cannot be shared between threads: {v:?}");
+            }
+        }
+        SharedMat(m)
+    }
+}
+
+impl std::ops::Deref for SharedMat {
+    type Target = Mat;
+    fn deref(&self) -> &Mat {
+        &self.0
+    }
+}
+
+// SAFETY: `SharedMat::new` checked that every value is plain (no `Rc`, no `RefCell`); the
+// remaining reference-counted parts are `Arc`s. The contents are read-only from then on.
+unsafe impl Send for SharedMat {}
+unsafe impl Sync for SharedMat {}
+
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
     filters.iter().all(|f| f.expr.matches(&row[f.field]))
 }
@@ -308,5 +337,43 @@ mod tests {
         // An ID filter that excludes 2 is decided by the known column.
         assert!(matches!(m.count(&t, &[id_filter(1, 1)]), Ok(1)));
         assert!(m.get(&t, &[Value::Integer(2), Value::Text("".into())]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod shared_tests {
+    use super::*;
+    use al_builtins::value::RtType;
+    use al_data::FieldDef;
+
+    fn def(ty: RtType) -> TableDef {
+        TableDef {
+            object: 0,
+            name: "T".into(),
+            fields: vec![FieldDef {
+                id: 1,
+                name: "F".into(),
+                ty,
+                stored: true,
+            }],
+            keys: vec![vec![0]],
+            per_company: false,
+        }
+    }
+
+    #[test]
+    fn a_listing_of_plain_values_can_be_shared() {
+        let t = def(RtType::Integer);
+        let m = Mat::new(&t, vec![Entry::ok(vec![Value::Integer(1)])]);
+        fn is_send_sync<T: Send + Sync>(_: &T) {}
+        is_send_sync(&SharedMat::new(m));
+    }
+
+    #[test]
+    #[should_panic(expected = "not plain")]
+    fn a_listing_holding_a_handle_cannot_be_shared() {
+        let t = def(RtType::Integer);
+        let handle = Value::List(Default::default());
+        SharedMat::new(Mat::new(&t, vec![Entry::ok(vec![handle])]));
     }
 }

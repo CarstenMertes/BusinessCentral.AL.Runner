@@ -37,7 +37,7 @@ use al_data::{AccessContext, Row, Scan, StoreError, TableDef, VirtualTables};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 /// What the host says about the session, read once when the session starts.
 #[derive(Clone)]
@@ -80,32 +80,51 @@ impl Ident {
 /// listing. The Field table alone is 37,000 rows, listed in 0.2 s; a corpus run's test codeunits
 /// each have a session of their own and several of them read it.
 ///
-/// Per thread, because the rows hold `Rc`s; a session never leaves its thread. Only the engine
-/// used last keeps its listings, which bounds the memory. The engine is named by its `uid`, not
-/// held: a held `Arc` or `Weak` would stop `Arc::get_mut` on the engine, which the runner uses.
+/// Shared by all threads: the first thread that needs a table builds it, the others wait for it
+/// instead of building it again (a builder reads the program and the host, never another listing,
+/// so two builders cannot wait for each other). The two engines used last keep their listings,
+/// which bounds the memory: a run has the engine the tests run on and the one the install
+/// baseline ran on. The engine is named by its `uid`, not held: a held `Arc` or `Weak` would stop
+/// `Arc::get_mut` on the engine, which the runner uses.
 #[derive(Default)]
 struct SharedListings {
-    engine: u64,
-    tables: HashMap<Virtual, Rc<mat::Mat>>,
+    engines: Mutex<Vec<EngineListings>>,
 }
 
-thread_local! {
-    static SHARED: RefCell<SharedListings> = RefCell::default();
+struct EngineListings {
+    engine: u64,
+    tables: HashMap<Virtual, Arc<OnceLock<Arc<mat::SharedMat>>>>,
 }
+
+/// The most engines whose listings are kept.
+const ENGINES_KEPT: usize = 2;
+
+static SHARED: LazyLock<SharedListings> = LazyLock::new(SharedListings::default);
 
 impl SharedListings {
-    fn get(&self, engine: u64, kind: Virtual) -> Option<Rc<mat::Mat>> {
-        (self.engine == engine)
-            .then(|| self.tables.get(&kind).cloned())
-            .flatten()
-    }
-
-    fn put(&mut self, engine: u64, kind: Virtual, m: Rc<mat::Mat>) {
-        if self.engine != engine {
-            self.engine = engine;
-            self.tables.clear();
-        }
-        self.tables.insert(kind, m);
+    /// The listing of `kind` for `engine`, built by `build` if no thread has built it yet.
+    fn listing(&self, engine: u64, kind: Virtual, build: impl FnOnce() -> mat::Mat) -> Arc<mat::SharedMat> {
+        let slot = {
+            let mut engines = self.engines.lock().unwrap_or_else(|e| e.into_inner());
+            let at = match engines.iter().position(|e| e.engine == engine) {
+                Some(at) => at,
+                None => {
+                    if engines.len() == ENGINES_KEPT {
+                        engines.remove(0);
+                    }
+                    engines.push(EngineListings {
+                        engine,
+                        tables: HashMap::new(),
+                    });
+                    engines.len() - 1
+                }
+            };
+            // The engine asked for last is the last to go.
+            let last = engines.len() - 1;
+            engines.swap(at, last);
+            engines[last].tables.entry(kind).or_default().clone()
+        };
+        slot.get_or_init(|| Arc::new(mat::SharedMat::new(build()))).clone()
     }
 }
 
@@ -120,7 +139,7 @@ pub(crate) struct Providers {
     /// Per object index: the provider of that table, if it is a virtual platform table.
     served: Vec<Option<Virtual>>,
     /// Tables listed in full, once (they depend on the program and the host only).
-    listed: RefCell<HashMap<Virtual, Rc<mat::Mat>>>,
+    listed: RefCell<HashMap<Virtual, Arc<mat::SharedMat>>>,
     /// The Aggregate Permission Set rows with the tenant's own sets in them, and the stamp of the
     /// stored Tenant Permission Set table they were composed at.
     aggregate: permissions::Cache,
@@ -182,17 +201,12 @@ impl Providers {
     }
 
     /// The rows of a table that is listed in full.
-    fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Rc<mat::Mat>, StoreError> {
+    fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Arc<mat::SharedMat>, StoreError> {
         if let Some(m) = self.listed.borrow().get(&kind) {
             return Ok(m.clone());
         }
-        if Self::shares(kind) {
-            if let Some(m) = SHARED.with(|s| s.borrow().get(self.engine_uid, kind)) {
-                self.listed.borrow_mut().insert(kind, m.clone());
-                return Ok(m);
-            }
-        }
-        let rows = match kind {
+        // Refused before anything is built.
+        match kind {
             Virtual::ApiWebhookEntity => {
                 return Err(refused(
                     "API Webhook Entity: the entities of the API pages are listed by the platform and no corpus test pins them",
@@ -203,6 +217,22 @@ impl Providers {
                     "Tenant Media: media live in the session's media store, which this table does not read yet (ADR-017)",
                 ));
             }
+            _ => {}
+        }
+        let build = || mat::Mat::new(t, self.list_rows(t, kind));
+        let m = if Self::shares(kind) {
+            SHARED.listing(self.engine_uid, kind, build)
+        } else {
+            Arc::new(mat::SharedMat::new(build()))
+        };
+        self.listed.borrow_mut().insert(kind, m.clone());
+        Ok(m)
+    }
+
+    /// The rows of the table of `kind`, worked out from the program and the host.
+    fn list_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
+        match kind {
+            Virtual::ApiWebhookEntity | Virtual::TenantMedia => unreachable!("refused before listing"),
             Virtual::XmlPortMetadata => metadata::xmlport_metadata_rows(self, t),
             Virtual::EventSubscription => metadata::event_subscription_rows(self, t),
             Virtual::PageAction => metadata::page_action_rows(self, t),
@@ -232,13 +262,7 @@ impl Providers {
             Virtual::Field => fields::field_rows(self, t),
             Virtual::Key => fields::key_rows(self, t),
             Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage => unreachable!("generated, never listed"),
-        };
-        let m = Rc::new(mat::Mat::new(t, rows));
-        if Self::shares(kind) {
-            SHARED.with(|s| s.borrow_mut().put(self.engine_uid, kind, m.clone()));
         }
-        self.listed.borrow_mut().insert(kind, m.clone());
-        Ok(m)
     }
 }
 
@@ -374,15 +398,18 @@ mod tests {
         Engine::new(al_ir::Program::default(), Vec::new())
     }
 
-    fn some_mat() -> Rc<mat::Mat> {
-        let t = TableDef {
+    fn some_def() -> TableDef {
+        TableDef {
             object: 0,
             name: "T".into(),
             fields: Vec::new(),
             keys: vec![Vec::new()],
             per_company: false,
-        };
-        Rc::new(mat::Mat::new(&t, Vec::new()))
+        }
+    }
+
+    fn some_mat() -> mat::Mat {
+        mat::Mat::new(&some_def(), Vec::new())
     }
 
     #[test]
@@ -392,39 +419,67 @@ mod tests {
 
     #[test]
     fn sessions_of_one_engine_share_a_listing_and_other_engines_do_not() {
-        let mut shared = SharedListings::default();
-        assert!(shared.get(1, Virtual::Field).is_none());
-        let m = some_mat();
-        shared.put(1, Virtual::Field, m.clone());
-        assert!(Rc::ptr_eq(&shared.get(1, Virtual::Field).unwrap(), &m));
-        assert!(shared.get(1, Virtual::AllObj).is_none());
-        assert!(shared.get(2, Virtual::Field).is_none());
+        let shared = SharedListings::default();
+        let a = shared.listing(1, Virtual::Field, some_mat);
+        assert!(Arc::ptr_eq(
+            &a,
+            &shared.listing(1, Virtual::Field, || panic!("built twice"))
+        ));
+        let other_kind = shared.listing(1, Virtual::AllObj, some_mat);
+        assert!(!Arc::ptr_eq(&a, &other_kind));
+        let other_engine = shared.listing(2, Virtual::Field, some_mat);
+        assert!(!Arc::ptr_eq(&a, &other_engine));
     }
 
     #[test]
-    fn only_the_engine_used_last_keeps_its_listings() {
-        let mut shared = SharedListings::default();
-        shared.put(1, Virtual::Field, some_mat());
-        shared.put(2, Virtual::AllObj, some_mat());
-        assert!(shared.get(1, Virtual::Field).is_none(), "engine 1 was replaced");
-        assert!(shared.get(2, Virtual::AllObj).is_some());
+    fn only_the_two_engines_used_last_keep_their_listings() {
+        let shared = SharedListings::default();
+        let first = shared.listing(1, Virtual::Field, some_mat);
+        shared.listing(2, Virtual::Field, some_mat);
+        // Engine 1 is still held: the baseline engine and the test engine of one run both list.
+        assert!(Arc::ptr_eq(
+            &first,
+            &shared.listing(1, Virtual::Field, || panic!("dropped too early"))
+        ));
+        shared.listing(3, Virtual::Field, some_mat);
+        // Engine 2 was used before engine 1 was asked again, so engine 2 is the one that went.
+        let rebuilt = std::cell::Cell::new(false);
+        shared.listing(2, Virtual::Field, || {
+            rebuilt.set(true);
+            some_mat()
+        });
+        assert!(rebuilt.get(), "engine 2 was replaced");
+    }
+
+    #[test]
+    fn threads_asking_for_one_listing_build_it_once() {
+        let shared = SharedListings::default();
+        let builds = std::sync::atomic::AtomicUsize::new(0);
+        let barrier = std::sync::Barrier::new(8);
+        let got: Vec<Arc<mat::SharedMat>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        shared.listing(7, Virtual::Field, || {
+                            builds.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            std::thread::sleep(std::time::Duration::from_millis(20));
+                            some_mat()
+                        })
+                    })
+                })
+                .collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect()
+        });
+        assert_eq!(builds.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(got.iter().all(|m| Arc::ptr_eq(m, &got[0])));
     }
 
     #[test]
     fn a_listing_does_not_stop_arc_get_mut_on_its_engine() {
         // The runner sets `unseeded` on the engine after the install baseline listed tables.
         let mut a = engine();
-        let t = TableDef {
-            object: 0,
-            name: "T".into(),
-            fields: Vec::new(),
-            keys: vec![Vec::new()],
-            per_company: false,
-        };
-        SHARED.with(|s| {
-            s.borrow_mut()
-                .put(a.uid, Virtual::Field, Rc::new(mat::Mat::new(&t, Vec::new())))
-        });
+        SHARED.listing(a.uid, Virtual::Field, some_mat);
         assert!(Arc::get_mut(&mut a).is_some());
     }
 

@@ -16,6 +16,7 @@ pub use baseline::Baseline;
 pub use faultsite::FaultFrame;
 mod callstack;
 mod companies;
+mod dataset;
 mod dispatch;
 pub mod dotnet;
 mod errorcollect;
@@ -292,6 +293,8 @@ pub struct Session {
     /// none (al-vm pages/runobject.rs).
     pub(crate) lenient_bind: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
+    pub(crate) dataset: Option<crate::dataset::Dataset>,
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
@@ -379,6 +382,7 @@ impl Session {
             report_trigger: None,
             report_flow: None,
             report_executed: Vec::new(),
+            dataset: None,
             lenient_bind: false,
         };
         session.seed_platform_rows(&ident);
@@ -717,7 +721,11 @@ impl Session {
             S::Foreach { var, collection, body } => {
                 let items: Vec<Value> = match self.eval(collection, f)? {
                     Value::List(l) => l.borrow().clone(),
-                    other => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                    // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
+                    other => match al_builtins::xml::node_list_items(&other) {
+                        Some(items) => items,
+                        None => return Err(Signal::Unsupported(format!("foreach over {other:?}"))),
+                    },
                 };
                 for item in items {
                     self.write(var, item, f)?;

@@ -310,6 +310,9 @@ impl Session {
         if user_row {
             self.user_before_delete(t, rec)?;
         }
+        if self.is_profile_row(t, rec.borrow().temporary) {
+            self.profile_before_delete(t, &rec.borrow().fields)?;
+        }
         let row = rec.borrow().fields.clone();
         let pk = t.primary_key(&row);
         match self
@@ -1491,6 +1494,9 @@ impl Session {
                     }
                 }
                 self.check_rename_auto_increment(&t, &old, &new)?;
+                if self.is_profile_row(&t, rec.borrow().temporary) {
+                    self.profile_before_rename(&t, &old, &new)?;
+                }
                 let old_pk = t.primary_key(&old);
                 // Rec carries the new key and xRec the old row in the events and the trigger
                 // (record/TestTableEventDispatch.al:TableEvent_OnAfterRename_Subscriber_FiresWithOldAndNewKeys).

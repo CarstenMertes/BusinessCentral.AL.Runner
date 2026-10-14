@@ -51,6 +51,9 @@ const HARMLESS_QUERY_PROPERTIES: &[&str] = &[
     "description",
     "tooltip",
     "querycategory",
+    "inherentpermissions",
+    "inherententitlements",
+    "permissions",
 ];
 
 pub fn layout(ws: &Workspace, members: &MemberTable<'_>, oi: usize) -> QueryLayout {

@@ -21,6 +21,7 @@ mod mat;
 mod objects;
 mod pages;
 mod permissions;
+pub(crate) mod profiles;
 pub(crate) mod ranges;
 mod seed;
 

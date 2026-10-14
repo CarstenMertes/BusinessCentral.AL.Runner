@@ -147,6 +147,7 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
         Provider::Virtual(Virtual::ExpandedPermission),
     ),
     (2_000_000_005, "Permission", Provider::Virtual(Virtual::Permission)),
+    (2_000_000_178, "All Profile", Provider::Stored),
     (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
     (2_000_000_121, "User Property", Provider::Stored),
     (2_000_000_175, "Scheduled Task", Provider::Stored),
@@ -210,6 +211,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_254, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 14]),
     // Permission: permissions/TestPermissionSetGrants.al.
     (2_000_000_005, &[1, 3, 4, 6, 7, 8, 9, 10]),
+    // All Profile: profile/TestAllProfileTable.al, TestCopyProfile.al. The obsolete columns and "Disable Personalization" are not read.
+    (2_000_000_178, &[1, 2, 3, 4, 5, 6, 14, 15, 16, 17]),
     // Windows Language: record/TestWindowsLanguageTable.al.
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.

@@ -67,7 +67,7 @@ public sealed class Server
                         : $"member '{name}' not found on '{type.FullName}'");
                 var (best, coerced, _) = Pick(cands, args, $"{type.FullName}.{name}");
                 object? result = ((MethodInfo)best).Invoke(((MethodInfo)best).IsStatic ? null : target, coerced);
-                return Done(result, best, coerced, args);
+                return Done(result, best, coerced, args, ((MethodInfo)best).ReturnType);
             }
             case "get":
             {
@@ -76,14 +76,14 @@ public sealed class Server
                 var flags = BindingFlags.Public | BindingFlags.Static | (target != null ? BindingFlags.Instance : 0);
                 var prop = type.GetProperty(name, flags, null, null, Type.EmptyTypes, null);
                 if (prop != null && prop.GetMethod != null)
-                    return Done(prop.GetValue(prop.GetMethod.IsStatic ? null : target), null, null, null);
+                    return Done(prop.GetValue(prop.GetMethod.IsStatic ? null : target), null, null, null, prop.PropertyType);
                 var field = type.GetField(name, flags);
                 if (field != null)
-                    return Done(field.GetValue(field.IsStatic ? null : target), null, null, null);
+                    return Done(field.GetValue(field.IsStatic ? null : target), null, null, null, field.FieldType);
                 // AL lets a method be called without parentheses.
                 var m = type.GetMethods(flags).Where(x => x.Name == name && x.GetParameters().Length == 0 && !x.IsGenericMethodDefinition).FirstOrDefault();
                 if (m != null)
-                    return Done(m.Invoke(m.IsStatic ? null : target, Array.Empty<object>()), null, null, null);
+                    return Done(m.Invoke(m.IsStatic ? null : target, Array.Empty<object>()), null, null, null, m.ReturnType);
                 throw new Refusal($"property, field or method '{name}' not found on '{type.FullName}'");
             }
             case "set":
@@ -117,9 +117,10 @@ public sealed class Server
 
     static JsonObject Ok(JsonNode? value) => new() { ["ok"] = true, ["value"] = value };
 
-    JsonObject Done(object? result, MethodBase? method, object?[]? coerced, object?[]? args)
+    JsonObject Done(object? result, MethodBase? method, object?[]? coerced, object?[]? args, Type? declared = null)
     {
-        var reply = Ok(marshal.Encode(result));
+        // A null whose declared type is string is tagged "ns" (ADR-024): AL reads it as an empty text.
+        var reply = Ok(result == null && declared == typeof(string) ? new JsonObject { ["t"] = "ns" } : marshal.Encode(result));
         // New values of by-reference parameters, by argument position.
         if (method != null && coerced != null)
         {

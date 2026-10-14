@@ -381,6 +381,54 @@ fn a_registry_member_without_a_pin_does_not_build() {
     );
 }
 
+// ---- ADR-024: the clock and settled operands ---------------------------------------------
+
+#[test]
+fn datetime_now_is_the_host_clock_and_needs_no_dotnet_host() {
+    let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
+    let r = run(
+        &host,
+        "D: DotNet ClrDateTime; V: DateTime;",
+        "V := D.Now; exit(V = CurrentDateTime());",
+        ": Boolean",
+    );
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
+}
+
+#[test]
+fn a_settled_integer_takes_part_in_arithmetic_and_a_settled_object_is_refused_with_its_type() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, _) if m == "Size" => reply(DotNetValue::Int32(7)),
+        Req::Invoke(_, m, _) if m == "Thing" => reply(handle(5, "Some.Clr.Type")),
+        other => panic!("{other:?}"),
+    });
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Size() - 1);", ": Integer");
+    assert!(matches!(r.result, Ok(Value::Integer(6))), "{:?}", r.result);
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Thing() + 1);", ": Integer");
+    let why = unsupported(&r);
+    assert!(why.contains("Some.Clr.Type") && why.contains("operand"), "{why}");
+}
+
+#[test]
+fn a_null_string_is_empty_a_null_object_is_refused_and_ordering_a_string_is_refused() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, _) if m == "NullText" => reply(DotNetValue::NullString),
+        Req::Invoke(_, m, _) if m == "NullThing" => reply(DotNetValue::Null),
+        Req::Invoke(_, m, _) if m == "Name" => reply(DotNetValue::Str("Abc".into())),
+        other => panic!("{other:?}"),
+    });
+    let r = run(&host, "C: DotNet Convert;", "exit(C.NullText() + 'x');", ": Text");
+    assert!(matches!(&r.result, Ok(Value::Text(t)) if t == "x"), "{:?}", r.result);
+    let r = run(&host, "C: DotNet Convert;", "exit(C.NullText() = '');", ": Boolean");
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
+    let r = run(&host, "C: DotNet Convert;", "exit(C.NullThing() + 'x');", ": Text");
+    assert!(unsupported(&r).contains("null .NET object"));
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Name() = 'abc');", ": Boolean");
+    assert!(matches!(r.result, Ok(Value::Boolean(false))), "case sensitive: {:?}", r.result);
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Name() < 'b');", ": Boolean");
+    assert!(unsupported(&r).contains("not pinned"));
+}
+
 // ---- policy ------------------------------------------------------------------------------
 
 #[test]
@@ -392,8 +440,6 @@ fn policy_refusals_name_the_rule_and_never_reach_the_host() {
         why.contains("System.IO.File") && why.contains("refused by policy"),
         "{why}"
     );
-    let r = run(&host, "D: DotNet ClrDateTime; V: DateTime;", "V := D.Now;", "");
-    assert!(unsupported(&r).contains("System.DateTime.Now"));
     let r = run(&host, "E: DotNet ExchangeService;", "E.Foo();", "");
     let why = unsupported(&r);
     assert!(

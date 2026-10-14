@@ -354,3 +354,22 @@ nine tests). The runtime still refuses all nine; this section is what the build 
 - **Probe 4 (enum operators)** and **probe 7 (`=` between objects)** are done as listed; probe 8 (DateTimeOffset) too.
 
 Nothing here is built: every item needs `Expr::DotNetOperand`, which is the build this ADR defers.
+
+## Build notes, slice 1 (2026-10-14, branch adr-024)
+
+The probe app `tests/al-language-onprem-dotnet/` (corpus branch `al-runtime-rs`, codeunit 61400) is a
+local-container result: CI cannot compile it (it needs AL 18), so it has no oracle and is not in the corpus
+submodule. Code comments cite it by corpus path.
+
+- IR: `Expr::DotNetOperand(Box<Expr>, OperandUse)` (the ADR's node plus a use, because `+ = <>` accept a .NET enum,
+  `< <= > >=` refuse a string, a `Variant` parameter takes an object as the handle and a scalar builtin parameter
+  refuses a null) and `BinOp::DotNetEq` / `DotNetNe` (a CLR string compares by case). Additive.
+- Wire: tag `ns` (`DotNetValue::NullString`), a null whose declared CLR type is `string`; protocol version 2.
+  The VM keeps "the last result was a null string" on the session (`DotNetState::null_string`), cleared at the start
+  of every settle step and DotNet member, because `Value::Null` cannot carry it (`Value` is unchanged).
+- `DateTime.Now`, `UtcNow`, `Today`, `DateTimeOffset.Now`, `UtcNow` read the host clock (see `owner-review.md`).
+- `Format` of an object is its `ToString()` through the sidecar (`Ctx::format_dotnet`, a defaulted method); of an
+  enum its member name. Format numbers 0 and 2 only.
+- Not done in slice 1: `CopyStream`, `foreach`, `StrLen`/`Format` of a null object (refused, uncatchable error needs a
+  seam), a `DotNet DateTime` variable holding a by-value `DateTime` (`LocalTime := Stamp.LocalDateTime`).
+- The compile cache stores IR only (no sidecar data); the new nodes change the executable hash, so old entries rebuild.

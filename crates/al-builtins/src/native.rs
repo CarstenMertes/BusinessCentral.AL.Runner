@@ -75,6 +75,11 @@ pub trait Ctx: FormatCtx {
     fn format_composite(&mut self, _v: &Value) -> Option<Result<String, Signal>> {
         None
     }
+    /// `Format` of a `DotNet` object or enum: its `ToString()` (ADR-024). `None` where the context
+    /// has no .NET host.
+    fn format_dotnet(&mut self, _v: &Value) -> Option<Result<String, Signal>> {
+        None
+    }
     /// The declared values of enum object `id` as (ordinal, name), in declaration order with
     /// extension values after them. `None` when the context has no program.
     fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
@@ -605,6 +610,14 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
+    // The text of a DotNet object is its ToString(); the length and the format number change
+    // nothing for the numbers 0 and 2 (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al,
+    // codeunit 61400, FormatOfDotNetObjects_IsToString). Other format numbers are not pinned.
+    if matches!(&args[0], Value::DotNet(_)) && matches!(std, 0 | 2) {
+        if let Some(r) = ctx.format_dotnet(&args[0]) {
+            return r.map(Value::Text);
+        }
+    }
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
     let composite = matches!(&args[0], Value::Record(_))
         || matches!(&args[0], Value::Library(n, _) if n == "RecordRef" || n == "FieldRef");

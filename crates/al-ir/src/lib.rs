@@ -1037,6 +1037,29 @@ pub enum BinOp {
     Le,
     Gt,
     Ge,
+    /// `=` and `<>` with a `DotNet` operand (ADR-024): a CLR string compares case sensitively
+    /// (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
+    /// `IntegerProperties_TakePartInIntegerExpressions_AndStringCompareIsCaseSensitive`);
+    /// any other pair of kinds compares as `Eq` and `Ne` do.
+    DotNetEq,
+    DotNetNe,
+}
+
+/// How a settled `DotNet` operand may be used (ADR-024).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OperandUse {
+    /// Arithmetic and logic: a primitive, and a null `string` as the empty text.
+    Value,
+    /// `+`, `=`, `<>`: as `Value`, and a .NET enum is its number.
+    Enum,
+    /// `<`, `<=`, `>`, `>=`: as `Value`, but a text is refused (its ordering is not pinned).
+    NoText,
+    /// A `Variant` parameter: a primitive, a .NET object or enum as the handle, a null `string`
+    /// as the empty Variant.
+    Variant,
+    /// An argument for a scalar parameter of a builtin: a primitive only. A null is refused
+    /// because `StrLen(null string)` raises an error `asserterror` cannot catch.
+    Strict,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1132,6 +1155,9 @@ pub enum Expr {
     /// Code, Integer and BigInteger and Decimal widen); anything else is Unsupported, because
     /// BC's conversion of a .NET result to a differently typed AL variable is not pinned.
     DotNetCoerce(RtType, Box<Expr>),
+    /// A `DotNet` value used as an operand (ADR-024): the run-time kind of the value decides what
+    /// it is. The kinds the host returns by value pass; the rest depends on the use.
+    DotNetOperand(Box<Expr>, OperandUse),
     /// A catalog builtin by overload id (`Record.Insert#2`), with its receiver.
     /// `ret_used`: the result is used, so methods with an optional Boolean
     /// result report failure as `false` instead of raising an error.

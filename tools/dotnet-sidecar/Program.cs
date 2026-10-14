@@ -16,7 +16,7 @@ namespace AlDotNetSidecar;
 
 public static class Program
 {
-    public const int ProtocolVersion = 1;
+    public const int ProtocolVersion = 2;
 
     public static int Main(string[] args)
     {

@@ -29,6 +29,10 @@ pub type DotNetHandle = u64;
 #[derive(Debug, Clone, PartialEq)]
 pub enum DotNetValue {
     Null,
+    /// A null whose declared CLR type is `string` (ADR-024). BC reads it as an empty text in an
+    /// expression and as an empty Variant when assigned; a null of any other type is `Null`.
+    /// Only the host sends it, never the VM.
+    NullString,
     Bool(bool),
     Byte(u8),
     Char(u16),

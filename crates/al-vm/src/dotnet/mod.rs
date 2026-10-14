@@ -63,9 +63,17 @@ pub struct DotNetState {
     /// `availability()` of the host, asked once per session.
     available: Option<Result<(), String>>,
     bridges: HashMap<u64, BlobRef>,
+    /// The last .NET result was a null `string` (ADR-024). Set by the reply of a host call and
+    /// cleared at the start of every `DotNet` member, so a settle step that runs right after
+    /// the member reads the declared type of the null it got.
+    null_string: bool,
 }
 
 impl DotNetState {
+    pub(crate) fn clear_null_string(&mut self) {
+        self.null_string = false;
+    }
+
     /// Hands dropped handles to the host. Called before every call and when the session closes.
     fn flush(&mut self) {
         let dropped: Vec<DotNetHandle> = std::mem::take(&mut *self.release.borrow_mut());
@@ -138,6 +146,7 @@ impl Session {
                 }
             }
         }
+        self.dotnet.null_string = false;
         let decl = ty.map(|i| {
             let d = &self.engine.program.dotnet_types[i];
             DotNetType {
@@ -216,6 +225,17 @@ impl Session {
             return (m.call)(self, this, &values);
         }
 
+        // 1b. The clock members of DateTime and DateTimeOffset read the host clock, the one
+        // `CurrentDateTime` reads, so a run is deterministic under a fixed clock (owner decision
+        // 2026-10-14, docs/owner-review.md). Not a registry type: no .NET needed for DateTime.
+        if let (Target::Static(d), true) = (&target, matches!(kind, MemberKind::Get | MemberKind::Call)) {
+            if values.is_empty() {
+                if let Some(r) = self.host_clock_member(d, &member, &shown, f) {
+                    return r;
+                }
+            }
+        }
+
         // 2. The host provider, after the policy (ADR-014 section 8).
         let assembly = match &target {
             Target::Static(d) => Some(d.assembly.as_str()),
@@ -269,6 +289,90 @@ impl Session {
         }
     }
 
+    /// `Format` of a `DotNet` object: its `ToString()`; of an enum, its member name.
+    pub(crate) fn format_dotnet_value(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        let Value::DotNet(o) = v else { return None };
+        Some(match &o.kind {
+            DotNetKind::Enum { name, .. } => Ok(name.clone()),
+            DotNetKind::Internal { type_name, .. } => unsupported(format!("Format of a runtime-provided {type_name}")),
+            DotNetKind::Host { handle, clr_type } => {
+                let shown = format!("{clr_type}.ToString");
+                let engine = self.engine.clone();
+                if let Err(why) = engine.dotnet.policy.check(None, clr_type, Access::Member("ToString")) {
+                    return Some(unsupported(format!("DotNet {shown}: {why}")));
+                }
+                if let Err(e) = self.dotnet_ready(clr_type) {
+                    return Some(Err(e));
+                }
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                match session.invoke(DotNetTarget::Instance(*handle), "ToString", Vec::new()) {
+                    Ok(DotNetReply {
+                        value: DotNetValue::Str(s),
+                        ..
+                    }) => Ok(s),
+                    Ok(_) => unsupported(format!("DotNet {shown} did not return a string")),
+                    Err(DotNetFailure::Refused(why)) => unsupported(format!("DotNet {shown}: {why}")),
+                    Err(DotNetFailure::Exception(e)) => unsupported(format!(
+                        "DotNet {shown} raised the .NET exception {}: {}",
+                        e.clr_type, e.message
+                    )),
+                }
+            }
+        })
+    }
+
+    /// `System.DateTime.Now|UtcNow|Today` and `System.DateTimeOffset.Now|UtcNow` from the host
+    /// clock. The session time zone is UTC (al-host), so `Now` and `UtcNow` agree and the offset is
+    /// zero. A `DateTime` comes back by value, as the marshalling table has it; a `DateTimeOffset`
+    /// is an object, so the host builds it from the clock's ticks. `None`: not a clock member.
+    fn host_clock_member(
+        &mut self,
+        d: &DotNetType,
+        member: &str,
+        shown: &str,
+        f: &mut Frame,
+    ) -> Option<Result<Value, Signal>> {
+        let is = |m: &str| member.eq_ignore_ascii_case(m);
+        let ticks = || -> i64 {
+            let Value::DateTime(v) = crate::hostvalues::datetime_of_unix_millis(self.now_millis()) else {
+                unreachable!("datetime_of_unix_millis builds a DateTime")
+            };
+            (v - 1) * TICKS_PER_MS
+        };
+        match d.name.as_str() {
+            "System.DateTime" if is("Now") || is("UtcNow") => Some(Ok(Value::DateTime(ticks() / TICKS_PER_MS + 1))),
+            "System.DateTime" if is("Today") => {
+                let midnight = ticks().div_euclid(TICKS_PER_DAY) * TICKS_PER_DAY;
+                Some(Ok(Value::DateTime(midnight / TICKS_PER_MS + 1)))
+            }
+            "System.DateTimeOffset" if is("Now") || is("UtcNow") => {
+                let wire = vec![
+                    DotNetArg {
+                        value: DotNetValue::Int64(ticks()),
+                        by_ref: false,
+                    },
+                    DotNetArg {
+                        value: DotNetValue::TimeSpan(0),
+                        by_ref: false,
+                    },
+                ];
+                if let Err(e) = self.dotnet_ready(&d.name) {
+                    return Some(Err(e));
+                }
+                let session = self.dotnet.session.as_mut().expect("opened by dotnet_ready");
+                Some(match session.construct(d, wire) {
+                    Ok(r) => self.apply_reply(r, &StreamBook::default(), &[], shown, f),
+                    Err(DotNetFailure::Refused(why)) => unsupported(format!("DotNet {shown}: {why}")),
+                    Err(DotNetFailure::Exception(e)) => unsupported(format!(
+                        "DotNet {shown} raised the .NET exception {}: {}",
+                        e.clr_type, e.message
+                    )),
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Makes the host ready for a call: asks `availability()` once, opens the session at the
     /// first call, and flushes the release queue (ADR-014 sections 2 and 6).
     fn dotnet_ready(&mut self, clr_type: &str) -> Result<(), Signal> {
@@ -314,6 +418,7 @@ impl Session {
                 None => return unsupported(format!("DotNet {shown}: bytes for an unknown stream bridge {id}")),
             }
         }
+        self.dotnet.null_string = matches!(reply.value, DotNetValue::NullString);
         let value = self.wire_to_value(reply.value).map_err(|e| prefix(e, shown))?;
         for (idx, v) in reply.by_ref {
             let Some(Some(place)) = places.get(idx) else { continue };
@@ -391,7 +496,7 @@ impl Session {
     /// A wire value as an AL value.
     fn wire_to_value(&self, v: DotNetValue) -> Result<Value, Signal> {
         Ok(match v {
-            DotNetValue::Null => Value::Null,
+            DotNetValue::Null | DotNetValue::NullString => Value::Null,
             DotNetValue::Bool(b) => Value::Boolean(b),
             DotNetValue::Byte(b) => Value::Byte(b),
             DotNetValue::Char(c) => Value::Char(c),
@@ -421,7 +526,82 @@ impl Session {
 
     /// `Expr::DotNetCoerce`: a .NET result stored into a slot of type `t`.
     pub(crate) fn dotnet_coerce(&mut self, v: Value, t: &RtType) -> Result<Value, Signal> {
+        // A null `string` assigned to a Text reads as the empty text, to a Variant as the empty
+        // Variant (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit
+        // 61400, `NullStringResult_IsEmptyInExpressions`: `Text := <null string>` has length 0 and
+        // `Value := <null string>` is neither Text nor DotNet).
+        if matches!(v, Value::Null) && self.dotnet.null_string {
+            return match t {
+                RtType::Text(_) | RtType::Code(_) => Ok(Value::Text(String::new())),
+                _ => fit(v, t),
+            };
+        }
         fit(v, t)
+    }
+
+    /// `Expr::DotNetOperand`: the run-time kind of a `DotNet` value says what it is (ADR-024).
+    /// The kinds the host returns by value are the AL values of the marshalling table
+    /// (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
+    /// `ClrResults_ReadAsTheirAlKind`). An object is refused naming its CLR type; a null object is
+    /// refused too, because `StrLen` and `Format` of one raise an error `asserterror` cannot catch
+    /// and the other uses are not pinned.
+    pub(crate) fn settle_operand(&self, v: Value, how: ir::OperandUse) -> Result<Value, Signal> {
+        use ir::OperandUse as U;
+        match v {
+            Value::Boolean(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Decimal(_)
+            | Value::Byte(_)
+            | Value::Char(_)
+            | Value::Date(..)
+            | Value::Time(_)
+            | Value::DateTime(_)
+            | Value::Duration(_)
+            | Value::Guid(_) => Ok(v),
+            Value::Text(_) | Value::Code(_) if how == U::NoText => unsupported(
+                "ordering a .NET string with <, <=, > or >= (what BC compares is not pinned)",
+            ),
+            Value::Text(_) | Value::Code(_) => Ok(v),
+            Value::Null if self.dotnet.null_string => match how {
+                U::Variant => Ok(Value::Null),
+                U::Strict => unsupported(
+                    "a null .NET string passed to a builtin: BC raises an error that asserterror cannot catch (not modeled)",
+                ),
+                _ => Ok(Value::Text(String::new())),
+            },
+            Value::Null => unsupported(
+                "a null .NET object used as an operand: BC raises an error that asserterror cannot catch for Format and StrLen, and the other uses are not pinned",
+            ),
+            Value::DotNet(o) => match (&o.kind, how) {
+                (_, U::Variant) => Ok(Value::DotNet(o)),
+                (DotNetKind::Enum { ordinal, .. }, U::Enum) => Ok(match i32::try_from(*ordinal) {
+                    Ok(i) => Value::Integer(i),
+                    Err(_) => Value::BigInteger(*ordinal),
+                }),
+                (DotNetKind::Enum { clr_type, .. }, _) => unsupported(format!(
+                    "a .NET enum of CLR type {clr_type} used with an operator other than +, = and <> (not pinned)"
+                )),
+                (DotNetKind::Host { clr_type, .. }, _) => unsupported(format!(
+                    "a DotNet object of CLR type {clr_type} used as an operand: only primitives and enums are operands (ADR-024)"
+                )),
+                (DotNetKind::Internal { type_name, .. }, _) => unsupported(format!(
+                    "a DotNet object of CLR type {type_name} used as an operand: only primitives and enums are operands (ADR-024)"
+                )),
+            },
+            other => unsupported(format!("{} used as a DotNet operand", other.describe())),
+        }
+    }
+}
+
+/// `=` with a settled `DotNet` operand: two texts compare as CLR strings, so by case
+/// (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
+/// `IntegerProperties_TakePartInIntegerExpressions_AndStringCompareIsCaseSensitive`); any other
+/// pair compares as AL does.
+pub(crate) fn dotnet_equal(l: &Value, r: &Value) -> Result<bool, Signal> {
+    match (l, r) {
+        (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) => Ok(a == b),
+        _ => Ok(ops::compare(l, r)? == std::cmp::Ordering::Equal),
     }
 }
 

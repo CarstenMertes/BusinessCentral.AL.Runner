@@ -1,6 +1,7 @@
 // Tagged values on the wire (ADR-014 section 4) and their conversion to and from .NET objects.
 //
 //   {"t":"n"}                              null
+//   {"t":"ns"}                             null whose declared type is string (ADR-024)
 //   {"t":"b","v":true}                     bool
 //   {"t":"u8","v":200}                     byte
 //   {"t":"c","v":65}                       char (UTF-16 code unit)

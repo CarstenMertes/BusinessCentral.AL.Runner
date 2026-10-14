@@ -1030,6 +1030,8 @@ impl Session {
                     B::Le => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Greater),
                     B::Gt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Greater),
                     B::Ge => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Less),
+                    B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(&l, &r)?),
+                    B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(&l, &r)?),
                 })
             }
             E::In(v, set) => {
@@ -1132,8 +1134,14 @@ impl Session {
                     })
             }
             E::DotNetCoerce(t, e) => {
+                self.dotnet.clear_null_string();
                 let v = self.eval(e, f)?;
                 self.dotnet_coerce(v, t)
+            }
+            E::DotNetOperand(e, how) => {
+                self.dotnet.clear_null_string();
+                let v = self.eval(e, f)?;
+                self.settle_operand(v, *how)
             }
             E::Builtin {
                 id,
@@ -1666,6 +1674,9 @@ impl al_builtins::format::FormatCtx for Session {
 impl al_builtins::native::Ctx for Session {
     fn format_composite(&mut self, v: &Value) -> Option<Result<String, Signal>> {
         self.format_composite_value(v)
+    }
+    fn format_dotnet(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        self.format_dotnet_value(v)
     }
     fn last_error(&self) -> AlError {
         self.last_error.clone()

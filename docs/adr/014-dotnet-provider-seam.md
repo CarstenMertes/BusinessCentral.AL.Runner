@@ -330,6 +330,7 @@ before a request is sent. Every refusal names the type or member and the rule.
    `UtcNow`, `Guid.NewGuid`, `new Random()` without a seed, `Environment.TickCount`,
    `Stopwatch` timestamps, `TimeZoneInfo.Local`. Later these may route to the
    host clock with a protocol call that sets it.
+   Amended by ADR-024: the static `DateTime.Now`/`UtcNow`/`Today` and `DateTimeOffset.Now`/`UtcNow` now read the host clock.
 6. **Transitive calls cannot be refused.** If an allowed method opens a file
    internally (`XmlDocument.Load(path)`), the policy cannot see it. The sidecar
    runs with a restricted environment to limit damage (section 9). Determinism

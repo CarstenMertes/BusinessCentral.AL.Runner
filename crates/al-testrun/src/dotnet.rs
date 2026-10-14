@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 /// The protocol version the sidecar must speak.
-pub const PROTOCOL: u64 = 1;
+pub const PROTOCOL: u64 = 2;
 
 /// Where the sidecar and .NET are found and how a call is bounded.
 #[derive(Debug, Clone)]
@@ -947,6 +947,7 @@ fn parse_guid(s: &str) -> Option<[u8; 16]> {
 pub fn encode(v: &DotNetValue) -> Value {
     match v {
         DotNetValue::Null => json!({"t":"n"}),
+        DotNetValue::NullString => json!({"t":"ns"}),
         DotNetValue::Bool(b) => json!({"t":"b","v":b}),
         DotNetValue::Byte(b) => json!({"t":"u8","v":b}),
         DotNetValue::Char(c) => json!({"t":"c","v":c}),
@@ -971,6 +972,7 @@ pub fn decode(v: &Value) -> Result<DotNetValue, String> {
     let ticks = || text()?.parse::<i64>().map_err(|e| e.to_string());
     Ok(match tag {
         "n" => DotNetValue::Null,
+        "ns" => DotNetValue::NullString,
         "b" => DotNetValue::Bool(v["v"].as_bool().ok_or("bool without a value")?),
         "u8" => DotNetValue::Byte(int("v")? as u8),
         "c" => DotNetValue::Char(int("v")? as u16),

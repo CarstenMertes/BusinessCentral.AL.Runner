@@ -776,7 +776,8 @@ fn compile_with_cache(
                 .count();
             Ok((ws, lowered, Some(report)))
         }
-        Err((ws, why)) => {
+        Err(failed) => {
+            let (ws, why) = *failed;
             let note = format!("the entry is not used: {why}");
             eprintln!("compile cache: {note}");
             report.notes.push(note);

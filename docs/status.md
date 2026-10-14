@@ -40,7 +40,7 @@ There is no isolation oracle for BC 27 and 29 (`docs/probes-needed.md`).
 **4913 / 5147 pass (95.5%), 0 fail, 234 not run**, the same on BC 27.5, 28.5 and 29.0.
 Measured on 2026-10-14 on a shared 12-thread machine under load: the corpus run takes 2.9 to
 6.2 s with Microsoft's apps (six runs) and 0.4 to 0.9 s with `--no-deps` (five runs). Base
-Application and the other Microsoft apps are compiled from source on every run; nothing is cached.
+Application and the other Microsoft apps are compiled from source on every run of `al-test-cli`, on demand. `alrunner test` keeps their complete compile in a compile cache (ADR-022, `<cache dir>/compile/`); `al-test-cli --compile-cache` does the same for the corpus job. Numbers with the cache are in ADR-022.
 
 | Area | Total | Pass | Not run | Rate |
 |---|---:|---:|---:|---:|
@@ -117,7 +117,7 @@ uncompiled codeunits.
   extensions: 44 of 55 tests in the three `pageextension*` areas pass. All 32 filter page tests
   pass. 6 of 10 report extension trigger tests pass. `Report.SaveAs` writes the XML dataset only.
 - **Dependency apps (ADR-013).** Microsoft's System Application, Business Foundation and Base
-  Application are compiled from source, on demand, with no cache. Platform tables are served by
+  Application are compiled from source. `al-test-cli` compiles on demand; `alrunner test` loads the complete compile of the dependency apps from a compile cache (ADR-022), built on the first run. Platform tables are served by
   row providers (ADR-019). `DotNet` calls go to an optional .NET 8 helper process (ADR-014); the
   server classes that need a service tier are provided by the runtime.
 - **Other command lines.** `alrunner` runs the tests of any app and of Microsoft's test buckets
@@ -166,7 +166,8 @@ Answered on 2026-10-13 and recorded in ADR-013 (and, for `DotNet`, on 2026-10-13
   mechanism as AL Runner. Not corpus-specific. The corpus harness passes the
   oracle's BC minor.
 - Budget: demand-driven compilation. A persistent cache comes last, after the remaining gaps and
-  the performance work (`docs/owner-review.md`, 2026-10-14).
+  the performance work (`docs/owner-review.md`, 2026-10-14). It is built (ADR-022): one entry per set of
+  dependency apps, on by default in `alrunner`.
 - Install triggers and Company-Initialize: mirror AL Runner.
 
 ## Known issues and debt

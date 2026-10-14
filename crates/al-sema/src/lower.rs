@@ -196,11 +196,13 @@ pub(crate) fn lower_core(
     export: bool,
 ) -> Result<Lowered, String> {
     let catalog = al_builtins::catalog::Catalog::load();
-    let (src, mut blocks): (Option<&dyn crate::provided::DepSource>, Vec<Option<crate::provided::DepBlock>>) =
-        match provided {
-            Some(p) => (Some(p.src), p.blocks),
-            None => (None, Vec::new()),
-        };
+    let (src, mut blocks): (
+        Option<&dyn crate::provided::DepSource>,
+        Vec<Option<crate::provided::DepBlock>>,
+    ) = match provided {
+        Some(p) => (Some(p.src), p.blocks),
+        None => (None, Vec::new()),
+    };
     let flags: Vec<bool> = (0..ws.objects.len())
         .map(|oi| blocks.get(oi).is_some_and(Option::is_some))
         .collect();
@@ -4582,7 +4584,7 @@ pub fn compile_apps_cached(
     target: Option<&al_version::Target>,
     roots: crate::check::Roots,
     src: &dyn crate::provided::DepSource,
-) -> Result<(Workspace, Lowered), (Workspace, String)> {
+) -> Result<(Workspace, Lowered), Box<(Workspace, String)>> {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
@@ -4601,7 +4603,7 @@ pub fn compile_loaded_cached(
     catalog: &al_builtins::catalog::Catalog,
     mut roots: crate::check::Roots,
     src: &dyn crate::provided::DepSource,
-) -> Result<(Workspace, Lowered), (Workspace, String)> {
+) -> Result<(Workspace, Lowered), Box<(Workspace, String)>> {
     use rayon::prelude::*;
     let blocks_started = std::time::Instant::now();
     let prepared = (|| {
@@ -4622,7 +4624,7 @@ pub fn compile_loaded_cached(
     })();
     let blocks = match prepared {
         Ok(b) => b,
-        Err(why) => return Err((ws, why)),
+        Err(why) => return Err(Box::new((ws, why))),
     };
     let provided = Provided { src, blocks };
     let cache_blocks = blocks_started.elapsed();

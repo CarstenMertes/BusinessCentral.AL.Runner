@@ -278,7 +278,40 @@ mod tests {
                 },
             ],
             dotnet: None,
+            compile_cache: None,
         }
+    }
+
+    #[test]
+    fn markdown_says_what_the_compile_cache_did_and_what_building_it_cost() {
+        let mut t = timings();
+        t.compile_cache = Some(crate::report::CacheTimes {
+            hit: false,
+            built: true,
+            open_s: 0.1,
+            build_s: 9.5,
+            mb: 13.0,
+            objects: 9683,
+            relowered: 29,
+        });
+        let mut r = build(&oracle(), &areas, &outcome);
+        r.timings = Some(t.clone());
+        let md = markdown(&r);
+        assert!(md.contains("Compile cache: miss, built in 9.50 s"), "{md}");
+        assert!(md.contains("Building the entry took 9.50 s"), "{md}");
+        t.compile_cache = Some(crate::report::CacheTimes {
+            hit: true,
+            built: false,
+            open_s: 0.05,
+            build_s: 0.0,
+            mb: 13.0,
+            objects: 9683,
+            relowered: 29,
+        });
+        r.timings = Some(t);
+        let md = markdown(&r);
+        assert!(md.contains("Compile cache: hit, opened in 0.05 s"), "{md}");
+        assert!(!md.contains("Building the entry took"), "{md}");
     }
 
     #[test]

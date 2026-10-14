@@ -393,6 +393,53 @@ The owner accepted every recommendation above and answered question 5:
 Decided without owner review (2026-10-14): see `docs/owner-review.md` (the file layout of an entry, the way a block is
 lowered again from source, the corruption handling, and the CLI spelling).
 
+## What was built (2026-10-14, branch `compile-cache`)
+
+- **Crates.** `al-cache` (core, no OS access): `Key`, the entry file, `build` and `Entry`. `al-sema/provided.rs`:
+  `DepFacts`, `DepBlock`, `DepSource`, `relower_set`. `al-testrun/compile_cache.rs`: the key of a run, reading, writing
+  and building the file. `lower::lower_for_cache` builds an entry (the complete compile of the dependency apps alone);
+  `lower::compile_loaded_cached` is a compile that takes those objects from it.
+- **The file.** Header (magic, format, key digest, where the index is, hashes), the zstd dictionary, one block per
+  dependency object (postcard, zstd level 3 with the dictionary and a content checksum), the index last (the facts of
+  every object and where each block sits). Opening reads the header, the index and the dictionary and checks their
+  hashes and the length; a block is checked when it is read.
+- **What a block is.** The lowered `ir::Object`, why each routine cannot run, and the direct calls of each routine.
+  What a variable of a page, report or xmlport type drives is added when the call graph is asked for
+  (`Lowered::calls_of`), from the page extensions and parts of the run. The facts beside the blocks are what the
+  lowering of other objects reads: the table behind a page, why a page cannot be driven, its parts, the numbering of
+  routines, the layout of a query.
+- **What makes a block unusable.** A block records the objects whose extensions or implementers it embeds: itself,
+  the interface of an interface call or test, the enum of an enum cast, a page or report a variable names (with the
+  parts of a page), a page whose control index it uses. The workspace "touches" the objects its own objects extend
+  or implement (and the interfaces they extend). Every block that lists a touched object is lowered again from source,
+  with the objects that extend each other. A test per case compares the whole `Program`, the refusals and the call
+  graph of the cached compile with the complete compile (`provided.rs`), and `demand_audit.rs` runs its 78 probes
+  in the cached mode against the complete compile.
+- **Order.** `CorpusRuntime::try_run_suites_with` puts the dependency apps first in the program and maps the app
+  indices of the caller (`SuiteRun::app`, `RunOptions::only`, `TestResult::app`) both ways.
+- **The key** holds the format integer, the sha256 of the executable, the target, the preprocessor symbols, and per
+  dependency app its id, name, dependency ids, publisher, version and a hash of every path and byte of its source. For
+  an app from a package the source hash is made from the files already read (about 30 ms for Business Central); the
+  hash of the zip directory that the first version of this ADR planned needs a change in `al-deps` and is left for
+  when the load of the sources is skipped.
+- **Outcomes.** The cached compile is the complete compile for the dependency apps. It gives the same outcome as the
+  eager run for every corpus test and the same as the demand-driven run except in `tools/demand-eager-known-differences.txt`
+  (a test the complete compile refuses before it starts because a page variable's call graph holds every routine of
+  the page). Those five tests pass in the uncached run and are refused with the cache. `al-test-cli` therefore uses the
+  cache only with `--compile-cache`; the ratchet runs without it. `alrunner test` uses it unless
+  `--no-compile-cache` or `ALRUNNER_NO_COMPILE_CACHE=1`.
+
+Decided without owner review (2026-10-14):
+
+- A damaged, cut or foreign file is ignored with a note, removed, and the run builds a new one (or, if the entry was
+  read but a block fails, compiles without it). The first version of this ADR said the run stops. Ignoring cannot
+  change an outcome and needs no manual step. `--require-compile-cache` makes any of that an error.
+- The corpus tool is opt-in (`--compile-cache`), because its baseline is recorded under the demand-driven compile.
+- `al-test-cli --build-compile-cache` builds or checks the entries and prints the build time; CI uses it. There is no
+  `alrunner cache` command yet.
+- The facts and blocks of an entry hold the dependency objects only; the sources of the dependency apps are still read
+  and scanned on every run, and the blocks are all decoded at the start (in parallel).
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

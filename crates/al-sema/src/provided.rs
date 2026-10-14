@@ -300,7 +300,7 @@ codeunit 60004 WUse { procedure W() var R: Record T; begin R.WX := 1; R.DX := 2;
         };
         let (_, eager) = compile_apps_with(apps.clone(), kinds.clone(), &symbols, None, roots.clone());
         let (ws, cached) = compile_apps_cached(apps, kinds, &symbols, None, roots, &set)
-            .map_err(|(_, why)| why)
+            .map_err(|e| e.1)
             .expect("the cache fits");
         let n_dep = dependency_prefix(&ws).unwrap();
         let relowered = (0..n_dep).filter(|&i| !cached.provided[i]).count();
@@ -316,7 +316,11 @@ codeunit 60004 WUse { procedure W() var R: Record T; begin R.WX := 1; R.DX := 2;
     }
 
     fn deps() -> Vec<AppSource> {
-        vec![app("d1", &[], BASE), app("d2", &["d1"], OTHER), app("d3", &["d1"], MORE)]
+        vec![
+            app("d1", &[], BASE),
+            app("d2", &["d1"], OTHER),
+            app("d3", &["d1"], MORE),
+        ]
     }
 
     const USES_DEPENDENCY_OBJECTS: &str = r#"
@@ -372,7 +376,10 @@ codeunit 60031 WBar implements IWork { procedure Bump(): Integer begin exit(3); 
     #[test]
     fn extending_a_page_that_other_pages_show_as_parts_relowers_those_pages() {
         let relowered = assert_cached_equals_eager(deps(), workspace("w", EXTENDS_A_PART_PAGE));
-        assert!(relowered >= 3, "the page, and the pages that show it as a part ({relowered})");
+        assert!(
+            relowered >= 3,
+            "the page, and the pages that show it as a part ({relowered})"
+        );
     }
 
     #[test]

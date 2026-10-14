@@ -105,7 +105,7 @@ fn run() -> Result<ExitCode, String> {
         code = code.max(r.code);
         runs.push((v.major, r));
     }
-    if runs.len() > 1 && !args.fetch_deps {
+    if runs.len() > 1 && !args.fetch_deps && !args.build_compile_cache {
         print!("{}", drift_summary(&runs));
     }
     Ok(ExitCode::from(code))
@@ -478,7 +478,10 @@ fn run_version(
             p.engine.as_secs_f64()
         );
         if p.cache.is_some() {
-            eprintln!("compile cache: reading the blocks {:.2} s", c.cache_blocks.as_secs_f64());
+            eprintln!(
+                "compile cache: reading the blocks {:.2} s",
+                c.cache_blocks.as_secs_f64()
+            );
         }
         let slowest: Vec<String> = p
             .slowest

@@ -103,12 +103,19 @@ fn the_first_run_builds_the_entry_and_the_next_run_uses_it() {
     let plain = run(BASE, None).unwrap();
     let first = run(BASE, cache(dir.path(), false)).unwrap();
     let second = run(BASE, cache(dir.path(), true)).unwrap();
-    let (a, b) = (first.phases.cache.as_ref().unwrap(), second.phases.cache.as_ref().unwrap());
+    let (a, b) = (
+        first.phases.cache.as_ref().unwrap(),
+        second.phases.cache.as_ref().unwrap(),
+    );
     assert!(a.built && !a.hit, "{a:?}");
     assert!(b.hit && !b.built, "{b:?}");
     assert_eq!(files(dir.path()).len(), 1);
     // The tests of the workspace are test 0 of the caller's apps, whatever the program's order.
-    assert!(outcomes(&plain).iter().all(|l| l.starts_with("0 ")), "{:?}", outcomes(&plain));
+    assert!(
+        outcomes(&plain).iter().all(|l| l.starts_with("0 ")),
+        "{:?}",
+        outcomes(&plain)
+    );
     assert_eq!(outcomes(&first), outcomes(&plain));
     assert_eq!(outcomes(&second), outcomes(&plain));
     // The workspace extends a dependency table and implements a dependency interface.
@@ -126,13 +133,23 @@ fn a_changed_source_misses_and_builds_another_entry() {
     run(BASE, cache(dir.path(), false)).unwrap();
     let changed = BASE.replace("exit('dep')", "exit('dop')");
     // Required: the entry for the changed source does not exist.
-    let err = run(&changed, cache(dir.path(), true)).err().expect("a miss is an error when required");
+    let err = run(&changed, cache(dir.path(), true))
+        .err()
+        .expect("a miss is an error when required");
     assert!(err.contains("--require-compile-cache"), "{err}");
     let rt = run(&changed, cache(dir.path(), false)).unwrap();
     assert!(rt.phases.cache.as_ref().unwrap().built);
-    assert_eq!(files(dir.path()).len(), 2, "the old entry stays, the new one is beside it");
+    assert_eq!(
+        files(dir.path()).len(),
+        2,
+        "the old entry stays, the new one is beside it"
+    );
     // That change is visible in the outcome (the dependency greets 'dop'), and the cached run saw it.
-    assert!(outcomes(&rt).iter().any(|l| l.contains("Interface_FromTheDependency") && l.contains("Fail")));
+    assert!(
+        outcomes(&rt)
+            .iter()
+            .any(|l| l.contains("Interface_FromTheDependency") && l.contains("Fail"))
+    );
 }
 
 #[test]
@@ -155,7 +172,10 @@ fn a_version_or_a_target_change_misses() {
         },
     )
     .unwrap();
-    assert!(rt.phases.cache.as_ref().unwrap().built, "another version is another entry");
+    assert!(
+        rt.phases.cache.as_ref().unwrap().built,
+        "another version is another entry"
+    );
     assert_eq!(files(dir.path()).len(), 2);
 }
 
@@ -211,7 +231,9 @@ fn a_damaged_truncated_or_foreign_file_never_changes_an_outcome() {
             // changes is compiled from source). Reading every block finds it.
             let (apps, _, manifests) = apps(BASE);
             let key = compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None);
-            let (entry, _) = compile_cache::read_entry(dir.path(), &key).unwrap().expect("the file is there");
+            let (entry, _) = compile_cache::read_entry(dir.path(), &key)
+                .unwrap()
+                .expect("the file is there");
             assert!(entry.verify().is_err(), "a flipped byte that nothing noticed");
         }
     }
@@ -254,7 +276,11 @@ fn two_writers_and_a_reader_never_see_half_a_file() {
         assert!(reader.join().unwrap() > 0, "the reader never saw the file");
     });
     assert_eq!(files(dir.path()).len(), 1, "no temporary file is left");
-    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file is left");
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        1,
+        "no temporary file is left"
+    );
 }
 
 #[test]
@@ -273,16 +299,31 @@ fn the_key_changes_with_a_byte_of_source_a_symbol_or_the_target() {
     let base = compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest();
     let mut changed = apps[1].clone();
     changed.files[0].1.push(' ');
-    assert_ne!(base, compile_cache::key_for(&[&changed], &manifests[1..], &Default::default(), None).digest());
+    assert_ne!(
+        base,
+        compile_cache::key_for(&[&changed], &manifests[1..], &Default::default(), None).digest()
+    );
     let mut other_path = apps[1].clone();
     other_path.files[0].0 = "renamed.al".into();
-    assert_ne!(base, compile_cache::key_for(&[&other_path], &manifests[1..], &Default::default(), None).digest());
+    assert_ne!(
+        base,
+        compile_cache::key_for(&[&other_path], &manifests[1..], &Default::default(), None).digest()
+    );
     let symbols: std::collections::BTreeSet<String> = ["CLEAN27".to_string()].into();
-    assert_ne!(base, compile_cache::key_for(&[&apps[1]], &manifests[1..], &symbols, None).digest());
+    assert_ne!(
+        base,
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], &symbols, None).digest()
+    );
     let target = al_version::Target {
         bc: al_version::BcVersion::new(27, 5),
         runtime: al_version::Runtime::for_bc(27),
     };
-    assert_ne!(base, compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), Some(&target)).digest());
-    assert_eq!(base, compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest());
+    assert_ne!(
+        base,
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), Some(&target)).digest()
+    );
+    assert_eq!(
+        base,
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest()
+    );
 }

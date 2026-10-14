@@ -54,3 +54,30 @@ fn no_tracked_file_carries_the_microsoft_copyright_header() {
         "Microsoft source must not be committed (hard rule 7); found its header in: {hits:?}"
     );
 }
+
+/// ADR-022: the compile cache holds the lowered form of Microsoft's apps, made on the user's
+/// machine. It is never tracked, and `.gitignore` keeps it out of a commit by accident.
+#[test]
+fn no_compile_cache_file_is_tracked_and_git_ignores_them() {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root())
+        .args(["ls-files", "-z"])
+        .output()
+        .expect("git runs");
+    assert!(out.status.success(), "git ls-files failed");
+    let names = String::from_utf8_lossy(&out.stdout).into_owned();
+    let cache_files: Vec<&str> = names
+        .split('\0')
+        .filter(|n| n.ends_with(".alcc") || n.contains("/compile/deps-"))
+        .collect();
+    assert!(
+        cache_files.is_empty(),
+        "compile cache files are tracked: {cache_files:?}"
+    );
+    let ignore = std::fs::read_to_string(root().join(".gitignore")).expect(".gitignore");
+    assert!(
+        ignore.lines().any(|l| l.trim() == "*.alcc"),
+        ".gitignore must list *.alcc"
+    );
+}

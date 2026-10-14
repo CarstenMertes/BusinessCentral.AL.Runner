@@ -148,7 +148,10 @@ fn check(p: Probe) {
         short(&cached)
     );
     // ADR-022: a compile cache gives the outcome of the complete compile, to the letter.
-    assert_eq!(cached, eager, "{name}: the cached compile differs from the complete compile");
+    assert_eq!(
+        cached, eager,
+        "{name}: the cached compile differs from the complete compile"
+    );
     assert!(
         !matches!(demand, Outcome::Fail(_)),
         "{name}: the implicit code was skipped without a refusal: {}",

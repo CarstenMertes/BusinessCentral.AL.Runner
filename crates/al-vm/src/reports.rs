@@ -95,6 +95,35 @@ impl Session {
                 self.report_set_view(&inst, &schema, args.first())?;
                 Ok(Value::Null)
             }
+            // `CurrReport.Language := n` and `CurrReport.Language` read it back at once
+            // (handlers/TestReportCurrReportLanguage.al:58-84). Language 0 is rejected by BC with an error
+            // that names the language (:87-103); its text is in no corpus line, so it is refused. A
+            // language nobody set is not pinned. The runtime's culture is fixed (en-US): the language is
+            // kept and changes no formatting.
+            "Report.Language#1" => match args.first() {
+                Some(Value::Integer(n)) if *n > 0 => {
+                    self.curr_report_language = Some(*n);
+                    Ok(Value::Null)
+                }
+                Some(Value::Integer(n)) => unsupported(format!(
+                    "CurrReport.Language set to {n}: BC rejects it with an error naming the language, whose text is not pinned (docs/probes-needed.md)"
+                )),
+                None => match self.curr_report_language {
+                    Some(n) => Ok(Value::Integer(n)),
+                    None => unsupported(
+                        "CurrReport.Language of a report that has not set one: the default is not pinned (docs/probes-needed.md)",
+                    ),
+                },
+                Some(other) => unsupported(format!("CurrReport.Language with {}", other.describe())),
+            },
+            // `FormatRegion` only takes effect when a Word or Excel layout renders; a run that writes the
+            // dataset (an Xml export) never does, and the property reads back empty
+            // (handlers/TestReportCurrReportLanguage.al:12-18, :76-83).
+            "Report.FormatRegion#1" => match args.first() {
+                Some(Value::Text(_) | Value::Code(_)) => Ok(Value::Null),
+                None => Ok(Value::Text(String::new())),
+                Some(other) => unsupported(format!("CurrReport.FormatRegion with {}", other.describe())),
+            },
             "Report.UseRequestPage#1" => {
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
@@ -650,7 +679,7 @@ impl Session {
         let ext = match report.extension {
             None => None,
             Some(e) => {
-                let ext_inst = self.instance(e);
+                let ext_inst = self.extension_instance(e, inst);
                 let eir = self.engine.program.objects[e]
                     .report_ext
                     .as_ref()
@@ -1182,7 +1211,7 @@ impl Session {
         for &e in &page.extensions {
             let ext = match &run.ext {
                 Some((i, re)) if *re == e => i.clone(),
-                _ => self.instance(e),
+                _ => self.extension_instance(e, inst),
             };
             exts.push((e, ext));
         }

@@ -339,6 +339,13 @@ impl Object {
             .filter_map(VarSection::cast)
             .flat_map(|s| s.decls().collect::<Vec<_>>())
     }
+    /// The variables of the `protected var` sections: the ones a page or report extension may name.
+    pub fn protected_var_decls(&self) -> impl Iterator<Item = VarDecl> {
+        self.members()
+            .filter_map(VarSection::cast)
+            .filter(|s| s.is_protected())
+            .flat_map(|s| s.decls().collect::<Vec<_>>())
+    }
     pub fn routines(&self) -> impl Iterator<Item = Routine> {
         self.members()
             .filter(|n| n.kind() == SyntaxKind::Procedure)

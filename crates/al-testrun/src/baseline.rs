@@ -179,7 +179,9 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
             match p {
                 Place::Local(_) | Place::Global(_) => Some(p),
                 Place::Index(inner, _) => Self::root(inner),
-                Place::Field(..) => None,
+                // The base object's variable (ADR-023): page and report extension code, which no
+                // install routine runs.
+                Place::Field(..) | Place::BaseGlobal(_) => None,
             }
         }
         fn record_of(&self, p: &Place) -> Option<u32> {
@@ -211,7 +213,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
         }
         fn expr(&mut self, e: &Expr) {
             match e {
-                Expr::Const(_) => {}
+                Expr::Const(_) | Expr::BaseInstance => {}
                 Expr::Load(p) => self.place(p),
                 Expr::Unary(_, a) | Expr::Convert(_, a) | Expr::DotNetCoerce(_, a) => self.expr(a),
                 Expr::Binary(_, a, b) | Expr::CharAt(a, b) => {

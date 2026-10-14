@@ -70,6 +70,11 @@ pub trait Ctx: FormatCtx {
     fn ref_op(&mut self, id: &str, _receiver: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id}")))
     }
+    /// `Format` of a record variable, a `RecordRef` or a `FieldRef` (standard format 0): needs the
+    /// table's fields. `None` where the context has no program.
+    fn format_composite(&mut self, _v: &Value) -> Option<Result<String, Signal>> {
+        None
+    }
     /// The declared values of enum object `id` as (ordinal, name), in declaration order with
     /// extension values after them. `None` when the context has no program.
     fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
@@ -381,6 +386,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunRequestPage#2", vm_only),
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
+    ("Report.Language#1", vm_only),
+    ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
     // name (SaveAsXml, SaveAsPdf, ...) writes a file no corpus test pins and stays refused.
     ("Report.SaveAs#1", vm_only),
@@ -584,6 +591,14 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
+    // A record as a whole, a RecordRef and a FieldRef need the table's schema.
+    let composite = matches!(&args[0], Value::Record(_))
+        || matches!(&args[0], Value::Library(n, _) if n == "RecordRef" || n == "FieldRef");
+    if composite && std == 0 {
+        if let Some(r) = ctx.format_composite(&args[0]) {
+            return r.map(|t| Value::Text(crate::format::pad(t, len)));
+        }
+    }
     format_value(&args[0], len, std, ctx)
         .map(Value::Text)
         .map_err(|f| match f {

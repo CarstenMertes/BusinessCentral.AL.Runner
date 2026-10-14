@@ -59,6 +59,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             _ => ctx.enum_name(*id, *o),
         },
         Value::Guid(g) => format_guid(g),
+        // A Blob shows `*` when it holds data and one space when it does not (record/
+        // TestFormatRecordContracts.al:132-136, the cleared record shows the blank form).
+        Value::Blob(b) => (if b.borrow().bytes.is_empty() { " " } else { "*" }).to_string(),
         Value::Date(0, _) | Value::Time(0) | Value::DateTime(0) => String::new(),
         Value::Date(day, closing) => format_date(*day, *closing, standard)?,
         Value::Time(t) => format_time(t - 1, standard)?,

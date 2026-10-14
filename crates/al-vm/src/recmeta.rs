@@ -82,6 +82,64 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
 }
 
 impl Session {
+    /// `Format(Record)`, `Format(RecordRef)` and `Format(FieldRef)`. A record formats as the
+    /// `Format` of its fields joined by a TAB: the normal fields in field-number order, then the
+    /// FlowFields in field-number order with the value they hold, system fields left out
+    /// (record/TestFormatRecordContracts.al:111-145). A FlowFilter field is left out: nothing
+    /// pins it (docs/probes-needed.md).
+    pub(crate) fn format_composite_value(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        let (rec, only) = match v {
+            Value::Record(r) => (r.clone(), None),
+            Value::Library(_, l) => match &*l.borrow() {
+                al_builtins::value::LibraryValue::RecordRef(r) => (r.clone(), None),
+                al_builtins::value::LibraryValue::FieldRef(r, p)
+                | al_builtins::value::LibraryValue::KeyFieldRef(r, p) => (r.clone(), Some(*p)),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some(self.format_record_fields(&rec, only))
+    }
+
+    fn format_record_fields(&self, rec: &Rc<RefCell<RecordState>>, only: Option<usize>) -> Result<String, Signal> {
+        const SYSTEM_FIELD_BASE: u32 = 2_000_000_000;
+        let t = self.table(rec)?;
+        let ir_table = self.engine.program.objects[t.object as usize].table.as_ref();
+        let fields = rec.borrow().fields.clone();
+        let one = |pos: usize| -> Result<String, Signal> {
+            let value = &fields[pos];
+            match (&t.fields[pos].ty, value) {
+                (al_builtins::value::RtType::Option(_), Value::Option(o, _)) => {
+                    let Some((_, members)) = self.members_of_field(&t, pos)? else {
+                        return unsupported("Format of an Option field");
+                    };
+                    Ok(members
+                        .iter()
+                        .find(|(ord, _, _)| ord == o)
+                        .map_or_else(|| o.to_string(), |(_, _, caption)| caption.clone()))
+                }
+                _ => al_builtins::format::try_format(value, 0, 0, self).map_err(Signal::Unsupported),
+            }
+        };
+        if let Some(pos) = only {
+            return one(pos);
+        }
+        let mut order: Vec<usize> = (0..t.fields.len())
+            .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE)
+            .collect();
+        order.sort_by_key(|&i| t.fields[i].id);
+        let flow_filter = |i: usize| ir_table.and_then(|s| s.fields.get(i)).is_some_and(|f| f.flow_filter);
+        let (normal, calculated): (Vec<usize>, Vec<usize>) = order
+            .into_iter()
+            .filter(|&i| !flow_filter(i))
+            .partition(|&i| t.fields[i].stored);
+        let mut parts = Vec::new();
+        for i in normal.into_iter().chain(calculated) {
+            parts.push(one(i)?);
+        }
+        Ok(parts.join("\t"))
+    }
+
     /// `FieldCaption` / `FieldRef.Caption`: refused for a system field whose caption the corpus does not pin.
     pub(crate) fn field_caption_checked(&self, t: &TableDef, pos: usize) -> Result<String, Signal> {
         let has_caption = self.field_property(t, pos, "Caption").is_some();

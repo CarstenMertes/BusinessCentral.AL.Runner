@@ -1,5 +1,6 @@
 //! Semantic model: a workspace of apps, their objects, and resolution.
 
+pub mod base_access;
 pub mod calcformula;
 pub mod check;
 pub mod lower;

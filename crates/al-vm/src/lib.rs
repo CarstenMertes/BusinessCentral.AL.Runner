@@ -303,6 +303,8 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
+    /// `CurrReport.Language` of the running report (`reports.rs`); `None` until a trigger sets it.
+    pub(crate) curr_report_language: Option<i32>,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,
@@ -353,6 +355,7 @@ impl Session {
         }
         let mut session = Session {
             global_language: host.identity.global_language(),
+            curr_report_language: None,
             host,
             waited_ms: 0,
             temp_files: 0,
@@ -506,6 +509,13 @@ impl Session {
                     globals: Default::default(),
                 })))
             }
+            // Each element of an array is a variable of its own: an array of records holds records, not
+            // nulls (Tests-ERM "Discount Setup Notifications": `A: array[2] of Record "General Posting Setup"`).
+            RtType::Array(dims, el) => {
+                let n = dims.iter().map(|d| *d as usize).product();
+                let cells: Vec<Value> = (0..n).map(|_| self.default_value(el)).collect();
+                Value::Array(Rc::new(RefCell::new(cells)))
+            }
             other => Value::default_for(other),
         }
     }
@@ -556,7 +566,16 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            base: None,
         }))
+    }
+
+    /// A fresh instance of page or report extension `object` that is linked to `base`, the
+    /// instance of the page or report it extends (ADR-023).
+    pub(crate) fn extension_instance(&mut self, object: usize, base: &Rc<RefCell<Instance>>) -> Rc<RefCell<Instance>> {
+        let ext = self.instance(object);
+        ext.borrow_mut().base = Some(Rc::downgrade(base));
+        ext
     }
 
     /// A fresh instance of a table or table extension for one record variable (ADR-021). Its `Rec`
@@ -587,6 +606,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            base: None,
         }))
     }
 
@@ -1039,6 +1059,7 @@ impl Session {
                 };
                 self.finish_call(*object, *routine, inst, args, *try_call, f)
             }
+            E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::InterfaceCall {
                 receiver,
                 targets,
@@ -1291,6 +1312,23 @@ impl Session {
         self.singletons[&object].clone()
     }
 
+    /// The instance of the page or report that the running extension extends (ADR-023). A missing
+    /// or dropped link is reported, never a panic.
+    fn base_instance(&self, f: &Frame) -> Result<Rc<RefCell<Instance>>, Signal> {
+        f.instance
+            .borrow()
+            .base
+            .as_ref()
+            .and_then(std::rc::Weak::upgrade)
+            .ok_or_else(|| {
+                Signal::Unsupported(
+                    "internal error: extension code named a member of its base object, but the extension's instance \
+                     has no live link to the base object's instance"
+                        .into(),
+                )
+            })
+    }
+
     fn place_type(&self, p: &ir::Place, f: &Frame) -> RtType {
         let r = &self.engine.program.objects[f.object].routines[f.routine];
         match p {
@@ -1299,6 +1337,13 @@ impl Session {
                 let o = f.instance.borrow().object as usize;
                 self.engine.program.objects[o].globals[*i].ty.clone()
             }
+            ir::Place::BaseGlobal(i) => match self.base_instance(f) {
+                Ok(b) => {
+                    let o = b.borrow().object as usize;
+                    self.engine.program.objects[o].globals[*i].ty.clone()
+                }
+                Err(_) => RtType::Variant,
+            },
             ir::Place::Index(base, _) => match self.place_type(base, f) {
                 RtType::Array(_, el) => *el,
                 other => other,
@@ -1316,6 +1361,11 @@ impl Session {
         match p {
             ir::Place::Local(i) => Ok(f.locals[*i].clone()),
             ir::Place::Global(i) => Ok(f.instance.borrow().globals[*i].clone()),
+            ir::Place::BaseGlobal(i) => {
+                let base = self.base_instance(f)?;
+                let v = base.borrow().globals.get(*i).cloned();
+                v.ok_or_else(|| base_slot_missing(*i))
+            }
             ir::Place::Index(base, idx) => {
                 let (arr, flat) = self.element(base, idx, f)?;
                 let v = arr.borrow()[flat].clone();
@@ -1374,11 +1424,27 @@ impl Session {
             if !matches!(p, ir::Place::Field(..)) {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
                     if !Rc::ptr_eq(src, &dst) {
-                        let fields = src.borrow().fields.clone();
-                        if fields.iter().any(|f| matches!(f, Value::Blob(_))) {
-                            // Whether a copied record shares or copies its Blob is not pinned.
-                            return Err(Signal::Unsupported("record assignment with a Blob field".into()));
-                        }
+                        // A copied record holds copies of its Blobs (value semantics). The corpus
+                        // does not tell a copy from a shared Blob (record/TestFormatRecordContracts.al
+                        // only formats the copy): docs/probes-needed.md.
+                        let fields: Vec<Value> = src
+                            .borrow()
+                            .fields
+                            .iter()
+                            .map(|f| match f {
+                                Value::Blob(b) => {
+                                    let b = b.borrow();
+                                    Value::Blob(std::sync::Arc::new(al_builtins::stream::BlobCell::new(
+                                        al_builtins::stream::BlobBuf {
+                                            bytes: b.bytes.clone(),
+                                            write_pos: 0,
+                                            loaded: b.loaded,
+                                        },
+                                    )))
+                                }
+                                other => other.clone(),
+                            })
+                            .collect();
                         let load = src.borrow().load.clone();
                         let mut d = dst.borrow_mut();
                         d.fields = fields;
@@ -1410,7 +1476,15 @@ impl Session {
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
-            ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_)) => {
+            ir::Place::BaseGlobal(i) => {
+                let base = self.base_instance(f)?;
+                let mut b = base.borrow_mut();
+                match b.globals.get_mut(*i) {
+                    Some(slot) => *slot = v,
+                    None => return Err(base_slot_missing(*i)),
+                }
+            }
+            ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_) | RtType::Code(_)) => {
                 return self.write_char(base, idx, v, f);
             }
             ir::Place::Index(base, idx) => {
@@ -1429,6 +1503,12 @@ impl Session {
     fn write_char(&mut self, base: &ir::Place, idx: &[ir::Expr], v: Value, f: &mut Frame) -> Result<(), Signal> {
         let max = match self.place_type(base, f) {
             RtType::Text(m) => m,
+            // Base Application's `Company Information.IsDigit` does `Letter: Code[1]; Letter[1] := c`.
+            RtType::Code(_) => {
+                return Err(Signal::Unsupported(
+                    "assigning a character into a Code: whether BC upper-cases it is not pinned (docs/probes-needed.md)".into(),
+                ));
+            }
             _ => None,
         };
         let [e] = idx else {
@@ -1553,6 +1633,9 @@ impl al_builtins::format::FormatCtx for Session {
 }
 
 impl al_builtins::native::Ctx for Session {
+    fn format_composite(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        self.format_composite_value(v)
+    }
     fn last_error(&self) -> AlError {
         self.last_error.clone()
     }
@@ -1742,6 +1825,12 @@ impl Session {
         self.next_guid += 1;
         guid_for(self.guid_seed, self.next_guid)
     }
+}
+
+fn base_slot_missing(slot: usize) -> Signal {
+    Signal::Unsupported(format!(
+        "internal error: the base object's instance has no global slot {slot}"
+    ))
 }
 
 #[cfg(test)]

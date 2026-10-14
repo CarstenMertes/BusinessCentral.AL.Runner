@@ -497,9 +497,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Record.FieldError#3" | "FieldRef.FieldError#3" => {
             "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
         }
-        "BigText.Read#1" => {
-            "BigText.Read is in no corpus test, so the encoding it reads with and whether it replaces or appends to the text are not pinned"
-        }
         "RecordRef.GetBySystemId#1" => {
             "RecordRef.GetBySystemId is in no corpus test (only Record.GetBySystemId is), so whether it behaves as the Record form, loads the row into the RecordRef and how it answers a RecordRef that is not open are not pinned"
         }

@@ -58,20 +58,15 @@ fn record_ref_filter_group_returns_the_group_just_set_and_reads_only_the_current
     );
 }
 
+// An Option converts to an Enum by its ordinal (corpus types/PEOptionEnumBigText.al:68-97, probed on BC 27.5);
+// it was refused before the probe (issue 29).
 #[test]
-fn an_option_assigned_to_an_enum_is_refused_with_its_reason() {
+fn an_option_assigned_to_an_enum_takes_its_ordinal() {
     let o = outcomes(
-        "[Test] procedure Convert() var O: Option A,B; begin O := O::B; E := O; end;
+        "[Test] procedure Convert() var O: Option A,B; begin O := O::B; E := O; if E.AsInteger() <> 1 then Error('got %1', E.AsInteger()); end;
          var E: Enum \"B4 Kind\";",
     );
-    let why = match &o[0].1 {
-        Outcome::NotRun(w) => w.clone(),
-        other => panic!("{other:?}"),
-    };
-    assert!(
-        why.contains("Option") && why.contains("Enum") && why.contains("not pinned"),
-        "{why}"
-    );
+    assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
 }
 
 /// The `relation_arms` of the first table field named `field` of table `table` in `src`.

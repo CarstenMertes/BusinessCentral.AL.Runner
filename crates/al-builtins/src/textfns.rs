@@ -651,6 +651,15 @@ fn bt_add_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResu
     Ok(Value::Null)
 }
 
+/// `Read(InStream)`: answers true and REPLACES the text the BigText holds
+/// (corpus types/PEOptionEnumBigText.al:463-512).
+fn bt_read(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let text = crate::stream::read_all_text(&mut a[0])?;
+    with_string(&h, |s| *s = text);
+    Ok(Value::Boolean(true))
+}
+
 fn bt_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     Ok(Value::Integer(with_string(&h, |s| Value::text_len(s)) as i32))
@@ -725,6 +734,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("TextBuilder", "EnsureCapacity", [_]) => tb_ensure_capacity,
         ("TextBuilder", "Replace", [_, _]) => tb_replace,
         ("BigText", "AddText", ["Text", ..]) => bt_add_text,
+        ("BigText", "Read", [_]) => bt_read,
         ("BigText", "Length", []) => bt_length,
         ("BigText", "TextPos", [_]) => bt_text_pos,
         ("BigText", "GetSubText", ["Text", ..]) => bt_get_sub_text,

@@ -38,9 +38,6 @@ fn arg_pos(args: &[Value], i: usize) -> Result<usize, Signal> {
     }
 }
 
-/// The platform table "User Personalization".
-const USER_PERSONALIZATION: u32 = 2_000_000_073;
-
 /// What the `Rec` and `xRec` slots of a table instance held before a call filled them.
 #[derive(Default)]
 pub(crate) struct RecSlots {
@@ -142,21 +139,6 @@ impl Session {
                 "{} row not found: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
             ));
-        }
-        // The platform creates the session user's User Personalization row when the user signs in
-        // to a client; no corpus test pins that or what the row holds (session/TestSessionSettings.al:402-407
-        // says it "depends on tenant data"). "Not found" there is not BC's answer: refuse.
-        if !exists && self.engine.program.objects[t.object as usize].id == Some(USER_PERSONALIZATION) {
-            let sid = self.host.identity.user_security_id();
-            if t.fields
-                .iter()
-                .position(|f| f.name.eq_ignore_ascii_case("User SID"))
-                .is_some_and(|p| matches!(fields[p], Value::Guid(g) if g == sid))
-            {
-                return unsupported(
-                    "the User Personalization row of the session user: BC creates it when the user signs in to a client, and no corpus test pins what it holds (docs/probes-needed.md)",
-                );
-            }
         }
         if self.ret_used {
             return Ok(Value::Boolean(false));
@@ -1320,6 +1302,15 @@ impl Session {
             }
             "DeleteAll" => {
                 let run = arg_bool(args, 0)?;
+                // The platform takes no delete on Tenant License State (record/
+                // TestPlatformTablesWritableContracts.al:96-101; the single-record Delete is not pinned).
+                if self.engine.program.objects[t.object as usize].id == Some(2_000_000_189) {
+                    return Err(Signal::Error(AlError {
+                        message: "It is not possible to delete any record in the Tenant License State table.".into(),
+                        code: "DB:Ok".into(),
+                        call_stack: String::new(),
+                    }));
+                }
                 let (filters, flow_field_filters) = self.split_filters(rec);
                 if !flow_field_filters.is_empty() {
                     return unsupported("DeleteAll with a filter on a FlowField");

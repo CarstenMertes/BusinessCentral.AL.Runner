@@ -708,7 +708,7 @@ fn a_tableextension_key_on_systemrowversion_is_visible_through_keyref() {
         end;",
         "F",
     );
-    assert_eq!(text(r), "1:Id;1:SystemRowVersion;1:$systemId;");
+    assert_eq!(text(r), "1:Id;1:timestamp;1:$systemId;");
 }
 
 #[test]
@@ -716,7 +716,7 @@ fn systemrowversion_is_field_0_through_fieldno_number_and_field() {
     // Corpus recordref/TestKeyMetadataRowVersionRemoved.al:51,:85 pins that KeyRef.FieldIndex(1).Number()
     // equals FieldNo(SystemRowVersion); the rowversion sits at field id 0 (record/TestCalcFormulaSystemFieldsTests
     // .Codeunit.al:213-215), which is also what a real project reads (`KeyRef.FieldIndex(1).Number = 0`).
-    // The literal is an assumption (docs/probes-needed.md, batch 7). The other system fields keep their numbers.
+    // Pinned by record/TestRowVersionFieldNumberFieldActiveContracts.al (name `timestamp`, FieldExist(0) false). The other system fields keep their numbers.
     let r = run(
         "procedure F(): Text var RR: RecordRef; KR: KeyRef; R: Record \"ALT RV\"; begin
             RR.Open(50960);
@@ -727,5 +727,5 @@ fn systemrowversion_is_field_0_through_fieldno_number_and_field() {
         end;",
         "F",
     );
-    assert_eq!(text(r), "0|0|2000000000|SystemRowVersion|Yes|0");
+    assert_eq!(text(r), "0|0|2000000000|timestamp|No|0");
 }

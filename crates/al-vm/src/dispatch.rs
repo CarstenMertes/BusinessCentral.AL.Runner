@@ -185,6 +185,12 @@ impl Session {
             // (codeunit/TestIsolatedEventSubscriberError.al). The swallowed error becomes the last
             // error, and a subscriber that succeeds has its writes committed (corpus
             // record/TestTableEventSequenceContracts.al:IsolatedEvent_SubscriberError_BecomesTheLastError_...).
+            *self
+                .event_stats
+                .calls
+                .borrow_mut()
+                .entry((s.object, s.routine))
+                .or_insert(0) += 1;
             let isolate = isolated && !self.store.has_uncommitted();
             let before = isolate.then(|| self.store.clone());
             let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {
@@ -305,6 +311,18 @@ impl Session {
             .collect()
     }
 
+    /// The bound instances per manual subscriber codeunit, for the Event Subscription table.
+    fn sync_active_instances(&mut self) {
+        self.bindings.retain(|b| b.instance.strong_count() > 0);
+        let mut active = std::collections::HashMap::new();
+        for b in &self.bindings {
+            if let Some(i) = b.instance.upgrade() {
+                *active.entry(i.borrow().object as usize).or_insert(0) += 1;
+            }
+        }
+        *self.event_stats.active.borrow_mut() = active;
+    }
+
     /// `BindSubscription(Codeunit)` (`bind`) and `UnbindSubscription(Codeunit)`.
     pub(crate) fn subscription(&mut self, bind: bool, cu: Value, ret_used: bool) -> Result<Value, Signal> {
         let Value::Codeunit(rc) = cu else {
@@ -350,12 +368,14 @@ impl Session {
             self.bindings.push(Binding {
                 instance: Rc::downgrade(&inst),
             });
+            self.sync_active_instances();
             Ok(Value::Boolean(true))
         } else if manual {
             // True even when it was never bound (Contract 6, "container-verified").
             if let Some(i) = at {
                 self.bindings.remove(i);
             }
+            self.sync_active_instances();
             Ok(Value::Boolean(true))
         } else if ret_used {
             // The corpus pins only that it does not raise (TestEventContracts.al Contract 6).

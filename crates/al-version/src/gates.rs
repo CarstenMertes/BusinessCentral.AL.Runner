@@ -106,6 +106,13 @@ pub fn has(target: Option<&Target>, gate: Gate) -> bool {
     target.is_none_or(|t| t.has(gate))
 }
 
+/// Whether the rows of the Feature Key table are known for this target: they were measured on BC 27.5
+/// (record/TestFieldLenAndFeatureKeyContracts.al, `#if not BC28PLUS`) and not on any other major. It is
+/// not a gate: no oracle pins the newer side, so there is no behaviour to switch to.
+pub fn feature_key_rows_known(target: Option<&Target>) -> bool {
+    target.is_some_and(|t| t.bc.major == 27)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

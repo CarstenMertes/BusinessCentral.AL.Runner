@@ -102,29 +102,60 @@ jobs:
       # dependency cache is only read after the step above) and each stays well under 3 GB.
       - name: Corpus pass rate, and the demand-driven compile against the eager compile
         run: |
+          step_start=$(date +%s)
           # --no-ratchet: the allow-listed differences fail the ratchet; compare_junit is the check.
+          # --json keeps each eager run's phase times (every report has them).
           eager_pids=()
           for v in 27 28 29; do
             AL_EAGER_DEPENDENCIES=1 ./target/release/al-test-cli --bc-version $v --require-dotnet --no-ratchet \
-              --junit eager-junit-$v.xml > eager-$v.log 2>&1 &
+              --junit eager-junit-$v.xml --json eager-report-$v.json > eager-$v.log 2>&1 &
             eager_pids+=($!)
           done
 
           status=0
           ./target/release/al-test-cli --all-versions --require-dotnet \
             --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml || status=1
+          normal_end=$(date +%s)
+          # Each version's file has its own "How long it took" table: the runtime's own cost.
           cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
 
           i=0
+          eager_reports=()
           for v in 27 28 29; do
             wait "${eager_pids[$i]}" || { echo "::error::the eager run for BC $v failed"; status=1; }
             i=$((i + 1))
             echo "::group::Eager run output, BC $v"
             cat eager-$v.log
             echo "::endgroup::"
+            if [ -f eager-report-$v.json ]; then
+              eager_reports+=(--timings-table eager-report-$v.json)
+            fi
           done
+          eager_end=$(date +%s)
           # The main app of each version and every extra suite (OnPrem, the isolation probes).
           tools/demand_vs_eager.sh compare . || status=1
+          step_end=$(date +%s)
+
+          {
+            echo
+            echo "## Why this step takes longer than the runtime"
+            echo
+            echo "- This step took $((step_end - step_start)) s in total."
+            echo "- The normal run of all versions finished after $((normal_end - step_start)) s."
+            echo "- The three runs that compile every dependency finished after $((eager_end - step_start)) s."
+            echo "- The comparison of the two took $((step_end - eager_end)) s."
+            echo
+            echo "On this 4-vCPU runner the normal run and three runs that compile every dependency"
+            echo "(for the comparison) run side by side. They share the CPUs, and the step waits for the"
+            echo "slowest one. So the step time is not the runtime's time. The runtime's own time per"
+            echo "version is in the \"How long it took\" tables above."
+            if [ ${#eager_reports[@]} -gt 0 ]; then
+              echo
+              echo "Runs that compile every dependency, for comparison:"
+              echo
+              ./target/release/al-test-cli "${eager_reports[@]}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
       - name: Date stamp
@@ -140,6 +171,7 @@ jobs:
             pass-rate-*.md
             runtime-junit-*.xml
             eager-junit-*.xml
+            eager-report-*.json
           retention-days: 90
 
   release-tests:

@@ -2,7 +2,7 @@
 //! and enforces the ratchet: a case that passed before must still pass.
 
 use crate::oracle::{CaseId, OracleCase};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +61,48 @@ pub struct Report {
     /// The other test apps (`[[version.suite]]` in `oracle.toml`), each against its own oracle.
     /// Their cases are not part of `overall`.
     pub suites: Vec<SuiteReport>,
+    /// How long the run took, by phase. `None` only where no run happened (unit tests).
+    pub timings: Option<Timings>,
+}
+
+/// Wall time of one version's run, by phase, in seconds. The report always carries it, so a reader
+/// of a CI summary sees what the runtime itself costs, apart from the CI step around it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Timings {
+    pub bc_version: String,
+    /// The run compiled every dependency routine (`AL_EAGER_DEPENDENCIES`), not only what the
+    /// tests reach. That is the slower comparison run, not the normal one.
+    pub eager: bool,
+    /// Reading the apps, and finding or downloading the dependency apps.
+    pub load_s: f64,
+    /// Parsing, checking and lowering to the IR.
+    pub compile_s: f64,
+    /// Running the install code of the Microsoft apps once, to fill the starting database.
+    pub baseline_s: f64,
+    /// Running the tests of all test apps.
+    pub tests_s: f64,
+    /// From the start of the version's run to the report; includes the oracle and file reading.
+    pub total_s: f64,
+    /// The tests phase split by test app. The main corpus app is named `corpus`.
+    pub suites: Vec<SuiteTime>,
+}
+
+/// The time the tests of one test app took.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SuiteTime {
+    pub name: String,
+    pub tests_s: f64,
+}
+
+impl Timings {
+    /// The `timings` of a report written with `--json`.
+    pub fn from_report_json(json: &str) -> Result<Timings, String> {
+        let v: serde_json::Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        match v.get("timings") {
+            Some(t) if !t.is_null() => serde_json::from_value(t.clone()).map_err(|e| format!("timings: {e}")),
+            _ => Err("the report has no `timings`".into()),
+        }
+    }
 }
 
 /// One extra test app's pass rate.
@@ -122,6 +164,7 @@ pub fn build(
         dependencies: Vec::new(),
         bc_build: None,
         suites: Vec::new(),
+        timings: None,
     };
     for case in oracle {
         if case.bc_failed {

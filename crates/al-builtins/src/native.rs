@@ -842,6 +842,8 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::DateTime(_) => Value::DateTime(0),
         Value::Duration(_) => Value::Duration(0),
         Value::Guid(_) => Value::Guid([0; 16]),
+        // The empty formula (types/TestDateFormulaDurationFormatContracts.al:38-42).
+        Value::DateFormula(_) => Value::DateFormula(String::new()),
         Value::Option(_, m) => Value::Option(0, m.clone()),
         // A cleared List or Dictionary is a new, empty one (types/TestClearContracts.al:130-150,
         // collections/TestListByRefContracts.al:155 through a `var` parameter).

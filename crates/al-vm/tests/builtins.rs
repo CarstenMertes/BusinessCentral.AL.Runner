@@ -1213,6 +1213,18 @@ fn log_security_audit_is_an_audit_write_that_changes_nothing() {
     assert!(matches!(r, Ok(Value::Integer(7))), "{r:?}");
 }
 
+// types/TestDateFormulaDurationFormatContracts.al:30-43: a cleared DateFormula prints empty and
+// CalcDate with it returns the date; Evaluate of an empty text succeeds and does the same.
+#[test]
+fn a_cleared_date_formula_is_the_empty_formula() {
+    let r = text_of(
+        "F: DateFormula; D: Date;",
+        "Evaluate(F, '<1D>'); Clear(F); D := DMY2Date(5, 3, 2024); \
+         exit(Format(F) + '|' + Format(CalcDate(F, D), 0, 9) + '|' + Format(Evaluate(F, '')) + '|' + Format(CalcDate('', D), 0, 9));",
+    );
+    assert_eq!(r.unwrap(), "|2024-03-05|Yes|2024-03-05");
+}
+
 // A table with a DateFormula field inserts with the field blank. Base Application's setup tables
 // (General Ledger Setup, Sales & Receivables Setup) have such fields and Company-Initialize
 // inserts them as `Init(); Insert();`.

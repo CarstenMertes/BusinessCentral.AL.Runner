@@ -23,6 +23,7 @@ use al_builtins::value::Value;
 use al_data::memory::MemStore;
 use al_data::{AccessContext, Scan, Store, StoreError, TableDef};
 use std::rc::Rc;
+use std::sync::Arc;
 
 const TENANT_PERMISSION_SET: u32 = 2_000_000_165;
 
@@ -153,7 +154,7 @@ pub(super) fn aggregate_rows(
 
 impl Providers {
     /// The schema of the stored Tenant Permission Set table, if the program compiled it.
-    pub(super) fn tenant_permission_set_def(&self) -> Option<TableDef> {
+    pub(super) fn tenant_permission_set_def(&self) -> Option<Arc<TableDef>> {
         let engine = self.engine();
         let oi = engine
             .program

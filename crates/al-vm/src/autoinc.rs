@@ -151,24 +151,10 @@ impl Session {
 
     /// Whether a non-manual subscriber listens to the table's OnBeforeDelete or OnAfterDelete event.
     fn delete_event_subscribed(&self, table: &str) -> bool {
-        self.engine.program.objects.iter().any(|o| {
-            let manual = o.properties.iter().any(|(k, v)| {
-                k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual")
-            });
-            !manual
-                && o.routines.iter().flat_map(|r| &r.attributes).any(|a| {
-                    let text = a.text.to_ascii_lowercase();
-                    let parts: Vec<&str> = text.split(',').map(|p| p.trim().trim_matches('\'')).collect();
-                    a.name.eq_ignore_ascii_case("EventSubscriber")
-                        && text.contains("objecttype::table")
-                        && parts.get(1).is_some_and(|p| {
-                            p.trim_start_matches("database::").trim_matches('"') == table.to_ascii_lowercase()
-                        })
-                        && parts
-                            .get(2)
-                            .is_some_and(|e| matches!(*e, "onbeforedeleteevent" | "onafterdeleteevent"))
-                })
-        })
+        self.engine
+            .delete_subscribed
+            .get_or_init(|| tables_with_delete_subscribers(&self.engine.program))
+            .contains(&table.to_ascii_lowercase())
     }
 
     /// Rename may not change an AutoIncrement value (record/TestAutoIncrementExplicitKey.al:147,
@@ -194,4 +180,36 @@ impl Session {
         }
         Ok(())
     }
+}
+
+/// The lower-case names of the tables a non-manual subscriber listens to the OnBeforeDelete or
+/// OnAfterDelete event of. Reads every routine's attributes, so it is asked once per engine.
+pub(crate) fn tables_with_delete_subscribers(program: &al_ir::Program) -> std::collections::HashSet<String> {
+    let mut tables = std::collections::HashSet::new();
+    for o in &program.objects {
+        let manual = o
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"));
+        if manual {
+            continue;
+        }
+        for a in o.routines.iter().flat_map(|r| &r.attributes) {
+            if !a.name.eq_ignore_ascii_case("EventSubscriber") {
+                continue;
+            }
+            let text = a.text.to_ascii_lowercase();
+            let parts: Vec<&str> = text.split(',').map(|p| p.trim().trim_matches('\'')).collect();
+            if text.contains("objecttype::table")
+                && parts
+                    .get(2)
+                    .is_some_and(|e| matches!(*e, "onbeforedeleteevent" | "onafterdeleteevent"))
+            {
+                if let Some(table) = parts.get(1) {
+                    tables.insert(table.trim_start_matches("database::").trim_matches('"').to_string());
+                }
+            }
+        }
+    }
+    tables
 }

@@ -51,7 +51,7 @@ pub struct Engine {
     /// Per object, per routine: why it cannot run, if it cannot.
     pub blocked: Vec<Vec<Option<String>>>,
     /// Store schema per table object.
-    pub tables: Vec<Option<al_data::TableDef>>,
+    pub tables: Vec<Option<Arc<al_data::TableDef>>>,
     /// Event publishers and their subscribers, resolved by name.
     pub events: events::Registry,
     /// The BC version this program runs as; `None` gets the newest behaviour (ADR-015 3.4).
@@ -67,6 +67,9 @@ pub struct Engine {
     /// Names this engine among all those the process built: state shared between sessions of one
     /// engine is keyed by it.
     pub uid: u64,
+    /// The tables a non-manual subscriber listens to the delete events of (see
+    /// `autoinc::tables_with_delete_subscribers`), found when `Truncate` first asks.
+    pub(crate) delete_subscribed: std::sync::OnceLock<std::collections::HashSet<String>>,
 }
 
 impl Engine {
@@ -105,21 +108,23 @@ impl Engine {
             .iter()
             .enumerate()
             .map(|(i, o)| {
-                o.table.as_ref().map(|t| al_data::TableDef {
-                    object: i as u32,
-                    name: o.name.clone(),
-                    fields: t
-                        .fields
-                        .iter()
-                        .map(|f| al_data::FieldDef {
-                            id: f.id,
-                            name: f.name.clone(),
-                            ty: f.ty.clone(),
-                            stored: f.stored,
-                        })
-                        .collect(),
-                    keys: t.keys.clone(),
-                    per_company: t.per_company,
+                o.table.as_ref().map(|t| {
+                    Arc::new(al_data::TableDef {
+                        object: i as u32,
+                        name: o.name.clone(),
+                        fields: t
+                            .fields
+                            .iter()
+                            .map(|f| al_data::FieldDef {
+                                id: f.id,
+                                name: f.name.clone(),
+                                ty: f.ty.clone(),
+                                stored: f.stored,
+                            })
+                            .collect(),
+                        keys: t.keys.clone(),
+                        per_company: t.per_company,
+                    })
                 })
             })
             .collect();
@@ -142,6 +147,7 @@ impl Engine {
             unseeded: Default::default(),
             unevaluable_init,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            delete_subscribed: Default::default(),
         })
     }
 }

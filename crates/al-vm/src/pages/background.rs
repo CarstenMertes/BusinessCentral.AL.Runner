@@ -46,7 +46,23 @@ impl Session {
             id
         };
         args[0] = Value::Integer(id);
+        // Under a TestPage the task runs at once: its completion trigger has run when this call returns, so a
+        // cancel right after it cannot stop it (corpus handlers/TestPageCancelBackgroundTaskContracts.al:
+        // Cancel_RightAfterEnqueue_ReturnsTrue_ButTheTaskHasCompleted: `completed` is logged before the
+        // cancel's answer).
+        self.bg_drain(st)?;
         Ok(Value::Null)
+    }
+
+    /// `CurrPage.CancelBackgroundTask(TaskId)`: true for the id of a task this page enqueued, also after it
+    /// completed and again on a second call; false for an id nobody enqueued (9999, or 0 before any
+    /// enqueue); it raises nothing (corpus handlers/TestPageCancelBackgroundTaskContracts.al).
+    pub(super) fn bg_cancel(&mut self, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
+        let Some(Value::Integer(id)) = args.first().cloned() else {
+            return unsupported("CancelBackgroundTask without a task id");
+        };
+        let enqueued = id >= 1 && id < st.borrow().bg_next_id;
+        Ok(Value::Boolean(enqueued))
     }
 
     /// Runs the worker codeunit `codeunit` with `params`: the dictionary it set as its result (empty when it

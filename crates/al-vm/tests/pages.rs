@@ -652,7 +652,7 @@ fn set_value_validates_and_the_row_is_saved_when_the_page_closes() {
         "F",
     );
     // table OnValidate before the page control's; OnModifyRecord sees xRec; OnClosePage after the save.
-    assert_eq!(text(r), "5|1|5|t-qty;p-qty;mod:>;qcp:Cancel;close;");
+    assert_eq!(text(r), "5|1|5|t-qty;p-qty;mod:>;qcp:OK;close;");
 }
 
 // handlers/TestPageSameValueSetValue_Tests.al:1-30: writing back the value the field already holds
@@ -672,7 +672,7 @@ fn writing_the_same_value_back_does_not_modify() {
         ),
         "F",
     );
-    assert_eq!(text(r), "qcp:Cancel;close;");
+    assert_eq!(text(r), "qcp:OK;close;");
 }
 
 // handlers/TestPageFieldMinMaxValue_Tests.al:20-110: MinValue and MaxValue are enforced on a control write
@@ -770,7 +770,7 @@ fn open_new_runs_on_new_record_and_a_non_key_write_inserts_the_row() {
     );
     assert_eq!(
         text(r),
-        "12|typed|new:Yes,x=A;ins:N/seeded;mod:seeded>typed;qcp:Cancel;close;"
+        "12|typed|new:Yes,x=A;ins:N/seeded;mod:seeded>typed;qcp:OK;close;"
     );
 }
 
@@ -863,7 +863,7 @@ fn ok_closes_with_the_query_close_page_then_the_close_trigger() {
     );
     assert_eq!(
         text(r),
-        "saved|mod:>saved;qcp:OK;close;The TestPage is not open.|The TestPage is not open.|The built-in action = Cancel is not found on the page.|qcp:Cancel;close;"
+        "saved|mod:>saved;qcp:OK;close;The TestPage is not open.|The TestPage is not open.|The built-in action = Cancel is not found on the page.|qcp:OK;close;"
     );
 }
 
@@ -908,7 +908,7 @@ fn page_events_follow_the_triggers_and_can_veto_a_modify() {
         ),
         "F",
     );
-    assert_eq!(text(r), "|evt-open;mod:>x;evt-mod:>x;qcp:Cancel;close;");
+    assert_eq!(text(r), "|evt-open;mod:>x;evt-mod:>x;qcp:OK;close;");
 }
 
 // handlers/TestPageEnumVariableControl_Tests.al:50-56,86-90: an Enum control resolves a SetValue text

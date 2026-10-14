@@ -727,7 +727,7 @@ impl Session {
             if item.link.is_empty() {
                 continue;
             }
-            let rec = self.report_item_record(&run, r)?;
+            let rec = self.report_item_record(run, r)?;
             if rec
                 .borrow()
                 .filters
@@ -744,7 +744,7 @@ impl Session {
         // had before it (handlers/TestReportRuntimeContracts.al:371-390).
         let mut kept = Vec::new();
         for r in run.all_items() {
-            let rec = self.report_item_record(&run, r)?;
+            let rec = self.report_item_record(run, r)?;
             let filters = rec.borrow().filters.clone();
             kept.push((rec, filters));
         }
@@ -764,7 +764,7 @@ impl Session {
             rec.borrow_mut().filters = filters;
         }
         for i in 0..report.items.len() {
-            if report.items[i].parent.is_none() && self.report_item(&run, ItemRef::Base(i), None)? {
+            if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None)? {
                 return Ok(false);
             }
         }

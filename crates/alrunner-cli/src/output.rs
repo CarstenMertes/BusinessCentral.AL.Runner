@@ -86,6 +86,21 @@ fn esc(s: &str) -> String {
 
 /// JUnit XML grouped by test codeunit. A test that did not run is `<skipped>` with its reason.
 /// `bc_build` is recorded as a property, so a build change that flips a test shows its cause.
+/// The frames of an error's call stack for a person: one per line, innermost first. A frame whose
+/// format is not known is in the stack as a marker; it reads as such.
+pub fn stack_lines(stack: &str) -> Vec<String> {
+    stack
+        .lines()
+        .map(|l| {
+            if l.contains(al_testrun::UNTRACKED_CALL_STACK) {
+                "(a frame whose format is not known)".to_string()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect()
+}
+
 pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> String {
     let c = Counts::of(results.iter().copied());
     let mut s = format!(
@@ -123,7 +138,14 @@ pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> St
             );
             match &r.outcome {
                 Outcome::Pass => s.push_str(&format!("{head} />\n")),
-                Outcome::Fail(m) => s.push_str(&format!("{head}><failure message=\"{}\" /></testcase>\n", esc(m))),
+                Outcome::Fail(m) if r.call_stack.is_empty() => {
+                    s.push_str(&format!("{head}><failure message=\"{}\" /></testcase>\n", esc(m)))
+                }
+                Outcome::Fail(m) => s.push_str(&format!(
+                    "{head}><failure message=\"{}\">{}</failure></testcase>\n",
+                    esc(m),
+                    esc(&stack_lines(&r.call_stack).join("\n"))
+                )),
                 Outcome::NotRun(m) => s.push_str(&format!("{head}><skipped message=\"{}\" /></testcase>\n", esc(m))),
             }
         }
@@ -146,6 +168,7 @@ mod tests {
             codeunit_name: name.into(),
             test: test.into(),
             outcome,
+            call_stack: String::new(),
         }
     }
 
@@ -186,5 +209,19 @@ mod tests {
         assert!(x.contains("<skipped message=\"no &amp; way\" />"), "{x}");
         assert!(x.contains("name=\"bc_build\" value=\"27.5.1.2\""), "{x}");
         assert_eq!(x.matches("<testsuite ").count(), 2);
+    }
+
+    #[test]
+    fn junit_puts_the_call_stack_in_the_failure_and_names_an_unknown_frame() {
+        let mut f = r(1, "A", "T1", Outcome::Fail("boom".into()));
+        f.call_stack = format!(
+            "\"A\"(CodeUnit 1).Inner line 2\n{}\n\"A\"(CodeUnit 1).T1 line 1",
+            al_testrun::UNTRACKED_CALL_STACK
+        );
+        let refs = [&f];
+        let x = junit(&refs, None, 0.0);
+        assert!(x.contains("<failure message=\"boom\">&quot;A&quot;(CodeUnit 1).Inner line 2&#10;(a frame whose format is not known)&#10;"), "{x}");
+        assert!(x.contains("</failure>"), "{x}");
+        assert!(!x.contains(al_testrun::UNTRACKED_CALL_STACK), "{x}");
     }
 }

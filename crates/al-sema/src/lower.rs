@@ -3542,11 +3542,17 @@ impl Lowerer<'_> {
                     .get(name)
                     .map(|i| ir::Place::Local(*i))
                     .ok_or_else(|| format!("local `{name}`")),
-                Some(Res::Global(name)) => self
-                    .globals
-                    .get(name)
-                    .map(|i| ir::Place::Global(*i))
-                    .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
+                Some(Res::Global(name)) => {
+                    self.declared_in_both(name)?;
+                    self.globals
+                        .get(name)
+                        .map(|i| ir::Place::Global(*i))
+                        .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet"))
+                }
+                Some(Res::BaseGlobal(name)) => {
+                    let (slot, _, _) = self.base_var(name)?;
+                    Ok(ir::Place::BaseGlobal(slot))
+                }
                 Some(Res::Field { table, id }) => {
                     let (table, id) = (*table, *id);
                     let pos = self.readable_field_pos(table, id)?;
@@ -3566,6 +3572,176 @@ impl Lowerer<'_> {
                     .unwrap_or_else(|| format!("`{}` is not assignable", n.text()))),
             },
         }
+    }
+
+    /// The page or report that the page or report extension being lowered extends, with the noun
+    /// for messages and whether it is a report (ADR-023).
+    fn base_object(&self) -> Option<(usize, &'static str, bool)> {
+        let (noun, report) = match self.ws.objects[self.oi].kind {
+            ObjKind::PageExtension => ("page", false),
+            ObjKind::ReportExtension => ("report", true),
+            _ => return None,
+        };
+        Some((self.ws.extension_target(self.oi)?, noun, report))
+    }
+
+    /// An extension variable named like a visible variable of its base: how AL resolves the clash
+    /// is probe P6 of ADR-023, so the code is refused.
+    fn declared_in_both(&self, name: &str) -> L<()> {
+        if !crate::base_access::scope_enabled() {
+            return Ok(());
+        }
+        let Some((base, noun, _)) = self.base_object() else {
+            return Ok(());
+        };
+        if crate::base_access::visible_vars(&self.ws.object_ast(base))
+            .iter()
+            .any(|(n, _)| n.eq_ignore_ascii_case(name))
+        {
+            return Err(format!(
+                "`{name}` is declared by the {noun} extension and by the {noun} it extends: which one wins is not pinned (ADR-023 probe P6)"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Variable `name` (lower case) of the base object, seen from the extension being lowered
+    /// (ADR-023): its slot among the base object's globals, and its type. Refused until the probes
+    /// of ADR-023 pin the access.
+    fn base_var(&self, name: &str) -> L<(usize, Ty, Option<String>)> {
+        let (base, noun, report) = self.base_object().ok_or("a base variable outside an extension")?;
+        let probe = if report { "R1" } else { "P1/P2" };
+        if !(if report {
+            crate::base_access::pinned("R1")
+        } else {
+            crate::base_access::pinned("P1") && crate::base_access::pinned("P2")
+        }) {
+            return Err(crate::base_access::unpinned_reason(&format!("`{name}`"), probe, noun));
+        }
+        let ast = self.ws.object_ast(base);
+        let (_, decl) = crate::base_access::visible_vars(&ast)
+            .into_iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .ok_or_else(|| format!("`{name}` is no protected variable of the {noun} it extends"))?;
+        let ty = decl.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+        // Reference-like values (a record, a list, a dialog) are probe P5 (page) or R3 (report).
+        let simple = matches!(
+            ty,
+            Ty::Integer
+                | Ty::BigInteger
+                | Ty::Decimal
+                | Ty::Boolean
+                | Ty::Char
+                | Ty::Byte
+                | Ty::Text(_)
+                | Ty::Code(_)
+                | Ty::Date
+                | Ty::Time
+                | Ty::DateTime
+                | Ty::Duration
+                | Ty::Guid
+                | Ty::Option(_)
+                | Ty::Enum(_)
+                | Ty::Label
+        );
+        let kind_probe = if report { "R3" } else { "P5" };
+        if !simple && !crate::base_access::pinned(kind_probe) {
+            return Err(crate::base_access::unpinned_reason(
+                &format!("`{name}` (a {ty} variable)"),
+                kind_probe,
+                noun,
+            ));
+        }
+        // A control's source expression is probe P9.
+        if !report && !crate::base_access::pinned("P9") && self.in_synthetic_routine() {
+            return Err(crate::base_access::unpinned_reason(
+                &format!("`{name}` in a control's source expression"),
+                "P9",
+                noun,
+            ));
+        }
+        let items = if report {
+            let l = self.layouts.report(base).ok_or("the base report has no layout")?;
+            let mut seen = std::collections::HashSet::new();
+            Some(l.items.iter().filter(|i| seen.insert(i.name.to_lowercase())).count())
+        } else {
+            None
+        };
+        let slot = crate::base_access::slot_of(&ast, items, name)
+            .ok_or_else(|| format!("`{name}` has no slot in the {noun} it extends"))?;
+        let label = decl.type_ref().as_ref().and_then(label_text);
+        Ok((slot, ty, label))
+    }
+
+    /// A procedure of the extension with the name of a callable procedure of its base: which one
+    /// AL calls is probe P6 of ADR-023.
+    fn declared_in_both_proc(&self, object: usize, offset: usize) -> L<()> {
+        if !crate::base_access::scope_enabled() {
+            return Ok(());
+        }
+        let Some((base, noun, report)) = self.base_object() else {
+            return Ok(());
+        };
+        let Some(name) = self.members[object]
+            .procedures
+            .iter()
+            .find(|p| p.offset == offset)
+            .map(|p| p.name.clone())
+        else {
+            return Ok(());
+        };
+        if crate::base_access::visible_procs(&self.ws.object_ast(base), report, &name)
+            .next()
+            .is_some()
+        {
+            return Err(format!(
+                "procedure `{name}` is declared by the {noun} extension and by the {noun} it extends: which one a call means is not pinned (ADR-023 probe P6)"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether extension code may call routine `routine` of its base object (ADR-023).
+    fn base_call_allowed(&self, object: usize, routine: usize) -> L<()> {
+        let (_, noun, report) = self.base_object().ok_or("a base call outside an extension")?;
+        let (probe, ok) = if report {
+            ("R1", crate::base_access::pinned("R1"))
+        } else {
+            ("P4", crate::base_access::pinned("P4"))
+        };
+        let node = self
+            .routine_nodes
+            .get(object)
+            .get(routine)
+            .ok_or("base procedure not found")?;
+        let name = node.name();
+        if !ok {
+            return Err(crate::base_access::unpinned_reason(&format!("`{name}`"), probe, noun));
+        }
+        if !report && !crate::base_access::pinned("P10") && self.in_synthetic_routine() {
+            return Err(crate::base_access::unpinned_reason(
+                &format!("`{name}` in a control's source expression"),
+                "P9/P10",
+                noun,
+            ));
+        }
+        for a in node.attributes() {
+            let attr = a.name();
+            if attr.eq_ignore_ascii_case("tryfunction") || attr.to_ascii_lowercase().ends_with("event") {
+                return Err(format!(
+                    "`{name}` is a [{attr}] procedure of the {noun} it extends: calling it from {noun} extension code is not lowered (ADR-023, refusals)"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the routine being lowered was made from a property expression (a control's source).
+    fn in_synthetic_routine(&self) -> bool {
+        self.routine_nodes
+            .get(self.oi)
+            .get(self.routine_idx)
+            .is_some_and(|r| crate::pages::is_synthetic(&r.name()))
     }
 
     /// `CurrPage.Chart` where `Chart` is a `usercontrol` of this page: a control add-in, which the runtime
@@ -3618,7 +3794,14 @@ impl Lowerer<'_> {
             .any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)))
             || obj.routines().any(|r| r.name().eq_ignore_ascii_case(&name));
         declared.then(|| {
-            format!("`{name}` is a variable or procedure of the {noun} it extends: {noun} extension code on base {noun} members is not lowered yet")
+            if crate::base_access::scope_enabled() {
+                // The checker already resolves what extension code may name (ADR-023), so this one
+                // is `local`, or a variable that is not `protected`.
+                return format!(
+                    "`{name}` is a variable or procedure of the {noun} it extends that extension code cannot name (a `local` procedure, or a variable that is not `protected`; the compile error text is ADR-023 probe P8)"
+                );
+            }
+            format!("`{name}` is a variable or procedure of the {noun} it extends: {noun} extension code on base {noun} members is not lowered yet (ADR-023: built, off until its probes ran)")
         })
     }
 
@@ -3797,6 +3980,10 @@ impl Lowerer<'_> {
                 Some(Res::Global(name)) if self.global_labels.contains_key(&name) => {
                     Ok(ir::Expr::Const(ir::Const::Text(self.global_labels[&name].clone())))
                 }
+                // A Label of the base object is its text.
+                Some(Res::BaseGlobal(name)) if self.base_var(&name)?.2.is_some() => Ok(ir::Expr::Const(
+                    ir::Const::Text(self.base_var(&name)?.2.unwrap_or_default()),
+                )),
                 // `CurrFieldNo` in table code: a property of the implicit `Rec` the VM reads.
                 Some(Res::Global(name)) if name == "currfieldno" && !self.globals.contains_key(&name) => {
                     let rec = self
@@ -4028,7 +4215,15 @@ impl Lowerer<'_> {
                         Some(Box::new(self.expr(r)?))
                     }
                     Some(_) => return Err("procedure calls on this receiver are not lowered yet".into()),
-                    None if object == self.oi => None,
+                    None if object == self.oi => {
+                        self.declared_in_both_proc(object, offset)?;
+                        None
+                    }
+                    // A page or report extension calling a procedure of the page or report it extends.
+                    None if self.base_object().is_some_and(|(b, _, _)| b == object) => {
+                        self.base_call_allowed(object, routine)?;
+                        Some(Box::new(ir::Expr::BaseInstance))
+                    }
                     // A table extension calling its table's procedure: on the same Rec.
                     None if self.table_of[object].is_some() && self.rec_slot.is_some() => Some(Box::new(
                         ir::Expr::Load(ir::Place::Global(self.rec_slot.expect("checked"))),
@@ -4443,6 +4638,35 @@ page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"
         );
         let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
         assert!(reasons.is_empty(), "{reasons:?}");
+    }
+
+    /// ADR-023: the slot of a base variable is computed from the base object's syntax, so the
+    /// extension lowers without the lowered base. It must equal the slot the base's own lowering
+    /// gives the variable (a page lays out its variables in declaration order; a report puts its
+    /// data items and the request-page flag first).
+    #[test]
+    fn the_slot_of_a_base_variable_computed_from_syntax_is_the_one_the_base_lowers_to() {
+        let (ws, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; A; Integer) { } } keys { key(PK; A) { } } }
+page 50100 P { SourceTable = T; var First: Integer; protected var Second: Text; Lbl: Label 'x'; var Third: Record T; }
+report 50101 R { dataset { dataitem(I1; T) { dataitem(I2; T) { } } dataitem(I3; T) { } } var RFirst: Integer; protected var RSecond: Text; }",
+            )],
+            false,
+        );
+        let find = |name: &str| ws.objects.iter().position(|o| o.name == name).unwrap();
+        let (page, report) = (find("P"), find("R"));
+        for (oi, items, names) in [
+            (page, None, &["First", "Second", "Lbl", "Third"][..]),
+            (report, Some(3), &["RFirst", "RSecond"][..]),
+        ] {
+            let ast = ws.object_ast(oi);
+            for n in names {
+                let want = l.program.objects[oi].globals.iter().position(|g| g.name == *n);
+                assert_eq!(crate::base_access::slot_of(&ast, items, n), want, "{n}");
+            }
+        }
     }
 
     /// Base Application's chart pages pass their control add-in to a `var` parameter

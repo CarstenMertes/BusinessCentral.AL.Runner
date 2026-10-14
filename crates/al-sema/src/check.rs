@@ -210,6 +210,9 @@ pub enum Res {
         object: usize,
         offset: usize,
     },
+    /// A `protected var` variable of the page or report that the page or report extension extends
+    /// (ADR-023), by lower-case name.
+    BaseGlobal(String),
     /// A catalog builtin overload id (ADR-008).
     Builtin(String),
     /// An enum value by its declared integer value (what `AsInteger()` returns).
@@ -462,6 +465,11 @@ struct Scope {
     rec_unqualified: bool,
     /// Object whose procedures are callable unqualified.
     self_obj: usize,
+    /// In a page or report extension: the page or report it extends (ADR-023).
+    base_obj: Option<usize>,
+    /// The names of the base object's variables that this extension sees (they are also in
+    /// `globals`).
+    base_vars: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 /// A section with its first argument (its name, for controls and data items).
@@ -505,6 +513,8 @@ struct ObjCtx {
     rec_unqualified: bool,
     self_obj: usize,
     base_items: HashMap<String, String>,
+    base_obj: Option<usize>,
+    base_vars: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 /// The `this` keyword: the object whose code is running (Microsoft Learn, "this keyword").
@@ -846,6 +856,30 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // ADR-023: a page or report extension sees the base object's `protected var` variables
+        // (those the extension does not declare itself) and its procedures.
+        let mut base_obj = None;
+        let mut base_vars = std::collections::HashSet::new();
+        if crate::base_access::scope_enabled() {
+            let base_kind = match o.kind {
+                ObjKind::PageExtension => Some(ObjKind::Page),
+                ObjKind::ReportExtension => Some(ObjKind::Report),
+                _ => None,
+            };
+            if let (Some(kind), Some(parts)) = (base_kind, obj.extends_parts()) {
+                if let Some(b) = self.resolve_parts(o.file, kind, &parts) {
+                    base_obj = Some(b);
+                    for (name, decl) in crate::base_access::visible_vars(&self.ws.object_ast(b)) {
+                        if globals.contains_key(&name) {
+                            continue;
+                        }
+                        let ty = decl.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+                        globals.insert(name.clone(), ty);
+                        base_vars.insert(name);
+                    }
+                }
+            }
+        }
         let file = o.file;
         // Every type the object's variables name is used by the code that runs in it.
         let tys: Vec<Ty> = globals.values().cloned().chain(rec.clone()).collect();
@@ -860,6 +894,8 @@ impl<'a> Checker<'a> {
             rec_unqualified,
             self_obj,
             base_items,
+            base_obj,
+            base_vars: std::rc::Rc::new(base_vars),
         }
     }
 
@@ -902,6 +938,8 @@ impl<'a> Checker<'a> {
             rec_unqualified,
             self_obj,
             base_items,
+            base_obj,
+            base_vars,
         } = ctx;
         let (oi, file, self_obj) = (*oi, *file, *self_obj);
         {
@@ -931,6 +969,8 @@ impl<'a> Checker<'a> {
                 rec,
                 rec_unqualified,
                 self_obj,
+                base_obj: *base_obj,
+                base_vars: base_vars.clone(),
             };
             let mut locals = HashMap::new();
             for p in r.params() {
@@ -1562,9 +1602,38 @@ impl<'a> Checker<'a> {
             }
         }
         if c.is_empty() {
+            c = self.base_proc_cands(sc, n);
+        }
+        if c.is_empty() {
             c = self.global_cands(n);
         }
         (!c.is_empty()).then_some(c)
+    }
+
+    /// The resolution of global `key`: the base object's variable in an extension that sees it
+    /// (ADR-023), else the object's own.
+    fn global_res(sc: &Scope, key: String) -> Res {
+        if sc.base_vars.contains(&key) {
+            Res::BaseGlobal(key)
+        } else {
+            Res::Global(key)
+        }
+    }
+
+    /// The procedures of the page or report an extension extends that its code may call (ADR-023).
+    fn base_proc_cands(&self, sc: &Scope, n: &str) -> Vec<Cand> {
+        let Some(b) = sc.base_obj else { return Vec::new() };
+        let report = self.ws.objects[b].kind == ObjKind::Report;
+        let ast = self.ws.object_ast(b);
+        let visible: Vec<usize> = crate::base_access::visible_procs(&ast, report, n)
+            .map(|r| usize::from(r.syntax().text_range().start()))
+            .collect();
+        self.members[b]
+            .procedures_named(n)
+            .iter()
+            .filter(|p| visible.contains(&p.offset))
+            .map(|p| proc_cand(p))
+            .collect()
     }
 
     /// `this.Name` in a codeunit: a global variable, else a procedure of the codeunit. The
@@ -1573,7 +1642,8 @@ impl<'a> Checker<'a> {
         let n = name_of(member);
         let key = n.to_lowercase();
         if let Some(t) = sc.globals.get(&key).cloned() {
-            self.record(sc, node, Res::Global(key));
+            let res = Self::global_res(sc, key);
+            self.record(sc, node, res);
             return Some(E::Val(t));
         }
         let own: Vec<Cand> = self.members[sc.self_obj]
@@ -1595,7 +1665,8 @@ impl<'a> Checker<'a> {
         }
         if let Some(t) = sc.globals.get(&key) {
             let t = t.clone();
-            self.record(sc, node, Res::Global(key));
+            let res = Self::global_res(sc, key);
+            self.record(sc, node, res);
             return Some(E::Val(t));
         }
         // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
@@ -1634,6 +1705,10 @@ impl<'a> Checker<'a> {
         };
         if !own.is_empty() || !own_obj.is_empty() {
             return Some(E::Callable(own.into_iter().chain(own_obj).collect()));
+        }
+        let base = self.base_proc_cands(sc, &n);
+        if !base.is_empty() {
+            return Some(E::Callable(base));
         }
         let globals: Vec<Cand> = self.global_cands(&n);
         if !globals.is_empty() {

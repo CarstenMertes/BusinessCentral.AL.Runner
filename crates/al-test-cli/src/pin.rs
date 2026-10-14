@@ -163,7 +163,10 @@ mod tests {
         let mid = commit(d.path());
         put(d.path(), "tests/other/app.json", "two");
         let new = commit(d.path());
-        assert!(check(d.path(), &mid, &new).is_err(), "the unscoped check sees the other app");
+        assert!(
+            check(d.path(), &mid, &new).is_err(),
+            "the unscoped check sees the other app"
+        );
         assert_eq!(check_in(d.path(), &mid, &new, "tests/probe/"), Ok(()));
         put(d.path(), "tests/probe/a.al", "two");
         let newer = commit(d.path());

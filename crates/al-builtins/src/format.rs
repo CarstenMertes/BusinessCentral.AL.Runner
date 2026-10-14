@@ -51,7 +51,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Decimal(d) => format_decimal(d, standard)?,
         Value::Text(t) | Value::Code(t) => t.clone(),
         Value::Option(o, members) => match standard {
-            2 | 9 => o.to_string(),
+            2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
         },
         Value::Enum(id, o) => match standard {
@@ -90,6 +90,15 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // The text form of a FilterPageBuilder is only known to be non-empty
         // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Format_ReturnsANonEmptyRendering).
         Value::Library(name, _) if name == "FilterPageBuilder" => "FilterPageBuilder".to_string(),
+        // A TableFilter field nobody set holds no filter: empty text. Base App's Change Log
+        // Management.HasValue formats such a value on every insert and the tests pass on BC
+        // (permissions/TestMetadataExpandedPermission.al:219-235); the text of a set filter is not
+        // pinned (docs/probes-needed.md).
+        Value::Library(name, l)
+            if name == "TableFilter" && matches!(&*l.borrow(), crate::value::LibraryValue::Empty) =>
+        {
+            String::new()
+        }
         // A WebServiceActionContext has no text form (session/TestWebServiceActionContext.al:615-650).
         Value::Library(name, _) if name == "WebServiceActionContext" => String::new(),
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs

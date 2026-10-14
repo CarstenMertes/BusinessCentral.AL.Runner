@@ -331,6 +331,15 @@ impl Checker<'_> {
         }
     }
 
+    /// Reaches the routines `pages::expand` generated for control properties (names start `__`).
+    fn reach_synthetic(&self, i: usize) {
+        for r in self.routines_of(i).iter() {
+            if r.name().starts_with("__") {
+                self.reach(i, usize::from(r.syntax().text_range().start()));
+            }
+        }
+    }
+
     /// Reaches the `k`-th event subscriber routine of object `o`.
     fn reach_subscriber(&self, o: usize, k: usize) {
         if !self.ws.usable(o) {
@@ -377,6 +386,9 @@ impl Checker<'_> {
             }
             ObjKind::Report | ObjKind::ReportExtension | ObjKind::XmlPort if level == FULL => {
                 self.reach_triggers(i);
+                // The test client evaluates the request page's expression-valued properties
+                // (`Visible = Flag;`), which `pages::expand` turned into `__visible_N` routines.
+                self.reach_synthetic(i);
                 self.activate_source_table(i);
                 self.activate_page_events(i);
             }
@@ -921,6 +933,37 @@ mod tests {
         assert!(!compiled(&l, "Lib", "Other"));
         // The stub says why it cannot run.
         assert!(reasons(&l, "Lib", "Unused")[0].contains("not compiled"));
+    }
+
+    #[test]
+    fn a_dependency_report_request_page_expression_is_reached_by_a_test_request_page() {
+        // handlers/TestReqPageBoundVisibility.al:172-188: the handler reads `.Visible()` of a control
+        // whose `Visible = FlagVisible;` is a synthetic `__visible_N` routine of Base App's report.
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var R: TestRequestPage \"Lib Rep\"; begin end; }",
+            &[(
+                "lib.al",
+                "report 10 \"Lib Rep\" { requestpage { layout { area(content) { field(Name; Nm) { Visible = FlagVisible; } } } } var Nm: Text; FlagVisible: Boolean; }",
+            )],
+        );
+        let o = object(&l, "Lib Rep");
+        let synthetic: Vec<_> = l.program.objects[o]
+            .routines
+            .iter()
+            .filter(|r| r.name.starts_with("__visible_"))
+            .map(|r| r.name.clone())
+            .collect();
+        assert_eq!(
+            synthetic.len(),
+            1,
+            "{:?}",
+            l.program.objects[o]
+                .routines
+                .iter()
+                .map(|r| &r.name)
+                .collect::<Vec<_>>()
+        );
+        assert!(compiled(&l, "Lib Rep", &synthetic[0]));
     }
 
     #[test]

@@ -524,6 +524,16 @@ impl Session {
             RtType::Guid => "GUID",
             RtType::DateFormula => "DateFormula",
             RtType::Option(_) | RtType::Enum(_) => "Option",
+            // The names are those of recordref/TestPlatformOptionsLockingContracts.al:46-63 (13 is
+            // BLOB) and :66-76 (RecordID, TableFilter, MediaSet name themselves).
+            RtType::Library(n) => match n.to_ascii_lowercase().as_str() {
+                "blob" => "BLOB",
+                "recordid" => "RecordID",
+                "tablefilter" => "TableFilter",
+                "media" => "Media",
+                "mediaset" => "MediaSet",
+                _ => return unsupported(format!("FieldRef.Type of a {:?} field", t.fields[pos].ty)),
+            },
             other => return unsupported(format!("FieldRef.Type of a {other:?} field")),
         };
         let members = al_builtins::sysenum::option_members("FieldType").expect("known");

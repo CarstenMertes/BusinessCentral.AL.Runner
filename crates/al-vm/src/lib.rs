@@ -422,7 +422,7 @@ impl Session {
                     marked_only: false,
                     read_isolation: 0,
                     // A record in a test run is Validated (corpus record/TestSecurityFilteringContracts.al:161-175).
-                    security_filtering: 2,
+                    security_filtering: 0,
                     key: 0,
                     ascending: true,
                     field_descending: false,

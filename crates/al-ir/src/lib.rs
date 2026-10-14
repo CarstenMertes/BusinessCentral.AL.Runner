@@ -348,6 +348,10 @@ pub struct XmlPort {
     pub destination_slot: usize,
     /// Why the runtime cannot run this xmlport yet; empty = it can.
     pub unsupported: Vec<String>,
+    /// Why running it (Export or Import) is refused although code that only declares or holds it
+    /// is not: a construct the corpus does not pin, which most callers never reach.
+    #[serde(default)]
+    pub run_unsupported: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

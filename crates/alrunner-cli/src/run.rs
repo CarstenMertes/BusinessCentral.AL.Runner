@@ -453,6 +453,10 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             v
         }),
         trace: a.explain.is_some(),
+        test_time_limit: match a.test_timeout_secs.unwrap_or(20) {
+            0 => None,
+            n => Some(std::time::Duration::from_secs(n)),
+        },
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))

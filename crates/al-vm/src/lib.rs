@@ -163,6 +163,9 @@ impl Engine {
     }
 }
 
+/// The reason `Signal::Unsupported` carries when the runner stopped the test (`Session::stop_flag`).
+pub const STOPPED: &str = "the runner stopped the test";
+
 pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
@@ -278,6 +281,9 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// Set from another thread to stop the AL code of this session: every loop iteration checks it
+    /// and ends the running test with `Signal::Unsupported` (the runner's per-test time limit).
+    pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
     /// How many times the session made its changes durable (`commit_transaction`). A runner reads
     /// it around a test method to see whether the method committed (test isolation, `isolation.rs`
     /// in al-test-cli).
@@ -434,6 +440,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commits: 0,
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
@@ -823,6 +830,25 @@ impl Session {
         Ok((value, frame.locals))
     }
 
+    /// The flag that stops this session's AL code (see `stop`). Setting it from another thread
+    /// ends the running test at its next loop iteration; `clear_stop` rearms it.
+    pub fn stop_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.stop.clone()
+    }
+
+    /// Rearms the stop flag for the next test.
+    pub fn clear_stop(&self) {
+        self.stop.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn check_stop(&self) -> Result<(), Signal> {
+        if self.stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(Signal::Unsupported(STOPPED.into()));
+        }
+        Ok(())
+    }
+
     fn exec_block(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
         for s in stmts {
             self.exec(s, f)?;
@@ -848,6 +874,7 @@ impl Session {
             S::While(c, body) => {
                 let here = self.call_stack.last().map(|t| t.pos);
                 while ops::truthy(&self.eval(c, f)?)? {
+                    self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         r => r?,
@@ -860,6 +887,7 @@ impl Session {
             S::Repeat(body, until) => {
                 let here = self.call_stack.last().map(|t| t.pos);
                 loop {
+                    self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         r => r?,
@@ -882,6 +910,7 @@ impl Session {
                 let end = int(&self.eval(to, f)?)?;
                 let mut i = start;
                 while if *down { i >= end } else { i <= end } {
+                    self.check_stop()?;
                     let slot_ty = self.place_type(var, f);
                     self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
                     match self.exec_block(body, f) {

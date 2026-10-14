@@ -45,7 +45,12 @@ const LAYOUT_SECTIONS: &[&str] = &["rendering", "labels", "wordlayout", "rdlclay
 /// `AutoFormatType` on most decimal columns, so a dataset that refused them would refuse nearly every
 /// report; the dataset is taken to carry the same `decimalformatter` for them
 /// (docs/probes-needed.md, "Report.SaveAs dataset").
-const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &["autoformattype", "autoformatexpression", "decimalplaces"];
+const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &[
+    "autoformattype",
+    "autoformatexpression",
+    "decimalplaces",
+    "includecaption",
+];
 
 /// Whether the data item `sec` states `UseTemporary = true`: its record is a temporary one, which
 /// holds only what the report's code inserts.
@@ -676,7 +681,25 @@ impl<'a> Owner<'a> {
                 let ordinal = self.column_starts.iter().position(|&s| s == start);
                 let routine = ordinal.and_then(|o| self.column_routines.get(&o).copied());
                 let mut unsupported = None;
-                if args.len() != 2 {
+                let mut include_caption = false;
+                let mut decimal_places = None;
+                for p in c.properties() {
+                    let value = p.value_text();
+                    match p.name().to_ascii_lowercase().as_str() {
+                        // handlers/TestReportSaveAsColumnTypesContracts.al:222-248: `true` adds the label.
+                        "includecaption" => match value.trim().to_ascii_lowercase().as_str() {
+                            "true" => include_caption = true,
+                            "false" => {}
+                            other => {
+                                unsupported.get_or_insert(format!("column {name}: IncludeCaption = {other}"));
+                            }
+                        },
+                        "decimalplaces" => decimal_places = Some(value.trim().to_string()),
+                        _ => {}
+                    }
+                }
+                if unsupported.is_some() {
+                } else if args.len() != 2 {
                     unsupported = Some(format!("column {name} does not state exactly a name and a source"));
                 } else if routine.is_none() {
                     unsupported = Some(format!("column {name} has no routine"));
@@ -705,6 +728,8 @@ impl<'a> Owner<'a> {
                     routine,
                     unsupported,
                     field,
+                    include_caption,
+                    decimal_places,
                 }
             })
             .collect()

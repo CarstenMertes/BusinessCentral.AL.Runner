@@ -1101,6 +1101,7 @@ impl Session {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
                     }
                     if id.starts_with("Report.") {
+                        self.ret_used = *ret_used;
                         return self.report_builtin(id, recv, &values, f.instance.clone());
                     }
                     if id.starts_with("FilterPageBuilder.") {

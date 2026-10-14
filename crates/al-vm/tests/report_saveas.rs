@@ -90,6 +90,13 @@ report 68302 "Probe SaveAs Report"
         Prefix: Text;
 }
 
+report 68399 "Probe Processing Only"
+{
+    UsageCategory = None;
+    ProcessingOnly = true;
+    dataset { dataitem(P; "Probe Rep Parent") { column(PNo; Id) { } } }
+}
+
 // A report without a layout, whose columns are expressions and whose triggers log.
 report 68310 "Probe Plain Report"
 {
@@ -760,32 +767,42 @@ fn a_skipped_row_is_not_written() {
     assert!(text.contains("<Column name=\"PNo\">2</Column>"), "{text}");
 }
 
-// Assumption (docs/probes-needed.md, "Report.SaveAs dataset"): an Option is written as its ordinal, a
-// Decimal expression carries the same decimalformatter attribute as a Decimal field, whatever AutoFormatType says.
+// handlers/TestReportSaveAsColumnTypesContracts.al:174-215: an Option is written as its caption (its
+// name when the field declares none), a Decimal expression keeps its scale (`12.5 * 2` is `25.0`, as
+// `12.345678 * 1.5` is `18.5185170`), and with no DecimalPlaces the formatter is the default.
 #[test]
-fn an_option_is_written_as_its_ordinal_and_a_decimal_expression_gets_the_default_formatter() {
+fn an_option_is_written_as_its_caption_and_a_decimal_expression_keeps_its_scale() {
     let text = dataset_of("Probe Types Report", "");
-    assert!(text.contains("<Column name=\"KindCol\">0</Column>"), "{text}");
+    assert!(text.contains("<Column name=\"KindCol\">Alpha</Column>"), "{text}");
     assert!(
-        text.contains("<Column name=\"DecExpr\" decimalformatter=\"#,##0.00\">25</Column>"),
+        text.contains("<Column name=\"DecExpr\" decimalformatter=\"#,##0.00\">25.0</Column>"),
         "{text}"
     );
 }
 
+// handlers/TestReportSaveAsColumnTypesContracts.al:178-182: a Time is `h:mm:ss`, U+202F, AM or PM; an
+// undefined one is blank (not pinned, docs/probes-needed.md).
 #[test]
-fn a_column_type_nothing_pins_is_refused_when_a_row_carries_it() {
-    let why = refusal(
-        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); end;",
+fn a_time_column_is_written_in_the_en_us_form_with_a_narrow_no_break_space() {
+    let text = f(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; P: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); P.Get(1); P.At := 123456T; P.Modify(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); exit(H.Lines(Buf)); end;",
     );
-    assert!(why.contains("AtCol") && why.contains("no pinned text"), "{why}");
+    assert!(
+        text.contains("<Column name=\"AtCol\">12:34:56\u{202F}PM</Column>"),
+        "{text}"
+    );
+    assert!(text.contains("<Column name=\"AtCol\"></Column>"), "{text}");
 }
 
+// handlers/TestReportSaveAsColumnTypesContracts.al:222-229: IncludeCaption adds a Labels block, between
+// the information block and the data items, with the field's caption.
 #[test]
-fn a_column_property_nothing_pins_is_refused_when_a_row_carries_the_column() {
-    let why = refusal(
-        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Caption Report\", '', ReportFormat::Xml, Out); end;",
+fn include_caption_writes_a_label_for_the_column() {
+    let text = dataset_of("Probe Caption Report", "");
+    assert!(
+        text.contains("</BCReportInformation>|  <Labels>|    <Label name=\"WithCaptionCaption\">Id</Label>|  </Labels>|  <DataItems>|"),
+        "{text}"
     );
-    assert!(why.contains("IncludeCaption"), "{why}");
 }
 
 // handlers/TestReportNestedLinkImplicitParent.al: `Change Log Setup (Table)` is `Change_Log_Setup_Table`.
@@ -931,4 +948,21 @@ fn from_bc_28_every_data_item_carries_its_table_id_and_a_distinct_guid() {
             seen.push(guid);
         }
     }
+}
+
+// handlers/TestReportSaveAsColumnTypesContracts.al:372-388: a ProcessingOnly report answers false with the
+// text and the code ReportProcessingOnly, and writes nothing; with the answer dropped it is refused.
+#[test]
+fn a_processing_only_report_answers_false_with_its_error_and_writes_nothing() {
+    let out = f(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; Saved: Boolean; begin H.Seed(); Buf.Data.CreateOutStream(Out); Saved := Report.SaveAs(Report::\"Probe Processing Only\", '', ReportFormat::Xml, Out); exit(Format(Saved) + '|' + GetLastErrorText() + '|' + GetLastErrorCode() + '|' + H.Lines(Buf)); end;",
+    );
+    assert_eq!(
+        out,
+        "No|Report 68399 is a processing-only report. Output cannot be rendered and saved to a file.|ReportProcessingOnly|"
+    );
+    let why = refusal(
+        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Processing Only\", '', ReportFormat::Xml, Out); end;",
+    );
+    assert!(why.contains("ProcessingOnly"), "{why}");
 }

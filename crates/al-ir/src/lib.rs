@@ -275,6 +275,12 @@ pub struct ReportColumn {
     /// The position of the table field the source names, when the source is just that field.
     #[serde(default)]
     pub field: Option<usize>,
+    /// `IncludeCaption = true`: the dataset's Labels block carries `<Name>Caption`.
+    #[serde(default)]
+    pub include_caption: bool,
+    /// The `DecimalPlaces` property as written (`1 : 1`); it decides the `decimalformatter`.
+    #[serde(default)]
+    pub decimal_places: Option<String>,
 }
 
 /// What a reportextension adds to a run of the report it extends.

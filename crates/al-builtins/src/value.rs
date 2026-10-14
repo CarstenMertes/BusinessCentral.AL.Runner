@@ -182,6 +182,9 @@ pub struct QueryState {
     pub security_filtering: Option<i32>,
     /// The result set between `Open` and `Close`.
     pub run: Option<QueryRun>,
+    /// The instance of a query with code: its variables live as long as the query variable
+    /// (query/TestQueryOnBeforeOpenVariablesContracts.al:104-140). Made on first use.
+    pub instance: Option<Rc<RefCell<Instance>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -727,6 +730,7 @@ impl Value {
                 top: None,
                 security_filtering: None,
                 run: None,
+                instance: None,
             }))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,

@@ -935,6 +935,7 @@ impl Session {
     /// is the one refusal BC answers with `false` that a test pins; Pdf, Word and Excel render a
     /// layout, which this runtime does not do (docs/probes-needed.md).
     fn report_save_as(&mut self, id: &str, receiver: Option<Value>, args: &[Value]) -> Result<Value, Signal> {
+        let result_used = self.ret_used;
         let at = usize::from(id == "Report.SaveAs#2");
         let parameters = match args.get(at) {
             Some(Value::Text(s)) => s.clone(),
@@ -981,14 +982,28 @@ impl Session {
                 ));
             }
         }
+        // handlers/TestReportSaveAsColumnTypesContracts.al:372-388: false with the text and the code
+        // `ReportProcessingOnly`, no trigger runs and nothing is written. With the answer dropped
+        // BC's behaviour is not pinned.
+        if schema.report().processing_only {
+            if !result_used {
+                return unsupported(format!(
+                    "Report.SaveAs of \"{}\", which is ProcessingOnly, with the result unused (not pinned)",
+                    schema.name()
+                ));
+            }
+            self.last_error = al_builtins::native::AlError {
+                message: format!(
+                    "Report {} is a processing-only report. Output cannot be rendered and saved to a file.",
+                    self.object_id_of(schema.object as u32)
+                ),
+                code: "ReportProcessingOnly".into(),
+                call_stack: String::new(),
+            };
+            return Ok(Value::Boolean(false));
+        }
         if let Some(why) = schema.report().dataset_unsupported.first() {
             return unsupported(format!("Report.SaveAs of \"{}\": {why}", schema.name()));
-        }
-        if schema.report().processing_only {
-            return unsupported(format!(
-                "Report.SaveAs of \"{}\", which is ProcessingOnly (what SaveAs writes for it is not pinned)",
-                schema.name()
-            ));
         }
         if schema.report().transaction_type.is_some() {
             return unsupported(format!(
@@ -1118,14 +1133,15 @@ impl Session {
         let name = dataset::dataset_name(&item.name)?;
         let (owner, object) = run.owner(r);
         let owner = owner.clone();
+        let table = rec.borrow().table as usize;
         let mut columns = Vec::new();
         for c in &item.columns {
-            columns.push(self.dataset_column(c, &owner, object)?);
+            columns.push(self.dataset_column(c, &owner, object, table)?);
         }
         if let (ItemRef::Base(i), Some((ext_inst, e)), Some(x)) = (r, &run.ext, run.ext_ir()) {
             for add in x.adds.iter().filter(|a| a.item == i) {
                 for c in &add.columns {
-                    columns.push(self.dataset_column(c, ext_inst, *e)?);
+                    columns.push(self.dataset_column(c, ext_inst, *e, table)?);
                 }
             }
         }
@@ -1175,33 +1191,100 @@ impl Session {
         ))
     }
 
-    /// One column of a row: the value of its source, as the dataset writes it. The types the probe
-    /// pins are Integer, Text, Code, Date, Boolean and Decimal
-    /// (handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText); an Option is
-    /// written as its ordinal, which docs/probes-needed.md lists as an assumption. Every other type is
-    /// refused.
-    fn dataset_column(&mut self, c: &ir::ReportColumn, owner: &Inst, object: usize) -> Result<Column, Signal> {
+    /// One column of a row: the value of its source, as the dataset writes it
+    /// (handlers/TestReportSaveAsColumnTypesContracts.al:12-22 and :167-248, probed on BC 27.5): digits for
+    /// Integer, BigInteger and Code, escaped text, `True`/`False`, `m/d/yyyy` for a Date (blank when
+    /// undefined), `h:mm:ss` plus U+202F plus AM/PM for a Time, both for a DateTime, an Option and an Enum
+    /// as their captions, a Duration as words, a Guid without braces, and a Decimal in full with a
+    /// `decimalformatter` attribute from `DecimalPlaces` of the column, else of the field. Every other
+    /// type is refused. A column that asks for its caption adds to the Labels block.
+    fn dataset_column(
+        &mut self,
+        c: &ir::ReportColumn,
+        owner: &Inst,
+        object: usize,
+        table: usize,
+    ) -> Result<Column, Signal> {
         let name = dataset::dataset_name(&c.name)?;
         if let Some(why) = &c.unsupported {
             return unsupported(format!("report column {}: {why}", c.name));
         }
         let routine = c.routine.expect("a column without a routine is unsupported");
         let (value, _) = self.call(object, routine, owner.clone(), Vec::new())?;
+        let t = self.engine.tables[table].clone();
+        if c.include_caption {
+            // The caption of the field the column reads (the corpus label is the field's Caption).
+            let (Some(t), Some(pos)) = (&t, c.field) else {
+                return unsupported(format!(
+                    "report column {}: IncludeCaption on a column that is not one field (not pinned)",
+                    c.name
+                ));
+            };
+            let label = (format!("{name}Caption"), self.field_caption(t, pos));
+            let ds = self.dataset.as_mut().expect("a SaveAs run has a dataset");
+            if !ds.labels.contains(&label) {
+                ds.labels.push(label);
+            }
+        }
         let mut attribute = None;
         let text = match &value {
             Value::Integer(n) => n.to_string(),
+            Value::BigInteger(n) => n.to_string(),
             Value::Text(s) | Value::Code(s) => dataset::escape(s)?,
             Value::Boolean(b) => if *b { "True" } else { "False" }.to_string(),
             Value::Date(0, false) => String::new(),
-            Value::Date(d, false) => {
-                let (y, m, day) = al_builtins::format::civil_from_day(*d);
-                format!("{m}/{day}/{y}")
+            Value::Date(d, false) => dataset::date_text(*d),
+            // An undefined Time or DateTime is blank like an undefined Date (docs/probes-needed.md).
+            Value::Time(0) | Value::DateTime(0) => String::new(),
+            Value::Time(t) => dataset::time_text(t - 1)?,
+            Value::DateTime(t) => {
+                let ms = t - 1;
+                let day = ms.div_euclid(86_400_000) as i32 + 1;
+                format!(
+                    "{} {}",
+                    dataset::date_text(day),
+                    dataset::time_text(ms.rem_euclid(86_400_000))?
+                )
             }
             Value::Decimal(_) => {
-                attribute = Some(("decimalformatter", dataset::DECIMAL_FORMATTER));
-                al_builtins::format::try_format(&value, 0, 9, self).map_err(Signal::Unsupported)?
+                let from_field = match (&t, c.field) {
+                    (Some(t), Some(pos)) => self.field_property(t, pos, "DecimalPlaces"),
+                    _ => None,
+                };
+                let places = c.decimal_places.clone().or(from_field);
+                attribute = Some(("decimalformatter", dataset::decimal_formatter(places.as_deref())?));
+                // The decimal as it is, scale and all: `12.345678 * 1.5` is `18.5185170`
+                // (handlers/TestReportSaveAsColumnTypesContracts.al:174-180); Format would trim the zero.
+                let Value::Decimal(d) = &value else {
+                    unreachable!("matched a Decimal")
+                };
+                d.to_string()
             }
-            Value::Option(n, _) => n.to_string(),
+            // An Option field shows its OptionCaption (`Beta cap`), the way Format(Opt) does.
+            Value::Option(n, _) if t.is_some() && c.field.is_some() => {
+                let (t, pos) = (t.as_ref().expect("checked"), c.field.expect("checked"));
+                match self.members_of_field(t, pos)? {
+                    Some((_, members)) => match members.iter().find(|(ord, _, _)| ord == n) {
+                        Some((_, _, caption)) => dataset::escape(caption)?,
+                        None => n.to_string(),
+                    },
+                    None => n.to_string(),
+                }
+            }
+            Value::Option(..) | Value::Enum(..) | Value::Duration(_) => {
+                dataset::escape(&al_builtins::format::try_format(&value, 0, 0, self).map_err(Signal::Unsupported)?)?
+            }
+            Value::Guid(_) => {
+                let g = al_builtins::format::try_format(&value, 0, 0, self).map_err(Signal::Unsupported)?;
+                let g = g.trim_matches(|ch| ch == '{' || ch == '}');
+                if g.chars().any(|ch| ch.is_ascii_alphabetic()) {
+                    return unsupported(format!(
+                        "report column {}: a Guid with hex letters in a dataset (their case is not pinned)",
+                        c.name
+                    ));
+                }
+                g.to_string()
+            }
             other => {
                 return unsupported(format!(
                     "report column {} holds {other:?}, a type the dataset has no pinned text for",

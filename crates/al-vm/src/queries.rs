@@ -113,10 +113,16 @@ impl Session {
         object: usize,
         q: std::rc::Rc<std::cell::RefCell<al_builtins::value::QueryState>>,
     ) -> std::rc::Rc<std::cell::RefCell<al_builtins::value::Instance>> {
+        if let Some(inst) = q.borrow().instance.clone() {
+            return inst;
+        }
+        // Made once per query variable: its variables live as long as it does (`Clear` makes a new
+        // state without an instance). The hidden slot points back at the state.
         let inst = self.instance(object);
         if let Some(slot) = self.engine.program.objects[object].rec_slot {
-            inst.borrow_mut().globals[slot] = Value::Query(q);
+            inst.borrow_mut().globals[slot] = Value::Query(q.clone());
         }
+        q.borrow_mut().instance = Some(inst.clone());
         inst
     }
 
@@ -139,6 +145,16 @@ impl Session {
                 // Query_StateMisuse_DoesNotThrow); once rows were read what it does is not pinned.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
                     return unsupported("Open on a query that is already open and was read from (not pinned)");
+                }
+                // OnBeforeOpen runs inside Open, after the filters set so far, and a filter it sets
+                // applies to this read (query/TestQueryOnBeforeOpenVariablesContracts.al:104-140).
+                if let Some(ri) = engine.program.objects[object]
+                    .routines
+                    .iter()
+                    .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnBeforeOpen"))
+                {
+                    let inst = self.query_instance(object, qs.clone());
+                    self.call(object, ri, inst, Vec::new())?;
                 }
                 // Open does not run the query; the first Read does.
                 qs.borrow_mut().run = Some(QueryRun {
@@ -531,9 +547,26 @@ impl Session {
         };
         // Groups with no OrderBy come back in an order no corpus test pins; a single group has none
         // to get wrong (record/TestSalesQuoteVatRounding.al:67-79).
+        // Groups whose grouping columns start with the root item's primary key come in that key's
+        // order (query/TestQueryCrossJoinContracts.al:202-213: `1=12 2=12 3=12`, no OrderBy).
+        let root_key_grouped = def.items.first().is_some_and(|root| {
+            self.engine.tables[root.table].as_ref().is_some_and(|t| {
+                let grouping: Vec<_> = def
+                    .columns
+                    .iter()
+                    .filter(|c| c.method.is_none() && !c.filter_element)
+                    .collect();
+                t.keys[0].len() <= grouping.len()
+                    && t.keys[0]
+                        .iter()
+                        .zip(&grouping)
+                        .all(|(&f, c)| c.item == 0 && c.field == Some(f))
+            })
+        });
         if aggregated
             && def.order_by.is_empty()
             && rows.len() > 1
+            && !root_key_grouped
             && def.columns.iter().any(|c| c.method.is_none() && !c.filter_element)
         {
             return unsupported(
@@ -551,7 +584,7 @@ impl Session {
         // pinned way: grouped rows. Ties under a descending OrderBy still ascend by primary key
         // (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus: .
         let k = dirs.len();
-        if aggregated {
+        if aggregated && k > 0 {
             for w in rows.windows(2) {
                 if key_cmp(&w[0].key[..k], &w[1].key[..k], &dirs) == Ordering::Equal {
                     return unsupported(

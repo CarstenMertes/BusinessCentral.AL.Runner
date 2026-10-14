@@ -37,6 +37,18 @@ table 50902 "ALT Counter"
     }
     keys { key(PK; Id) { } }
 }
+table 50904 "ALT Keys"
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; A; Integer) { }
+        field(3; B; Text[10]) { }
+        field(4; C; Code[10]) { }
+        field(5; D; Decimal) { }
+    }
+    keys { key(PK; Id) { } key(KA; A) { } key(KBA; B, A) { } key(KD; D) { } }
+}
 table 50903 "ALT Library Types"
 {
     fields
@@ -632,4 +644,40 @@ fn set_rec_filter_filters_the_primary_key_to_the_current_values() {
         "F",
     );
     assert_eq!(text(r), "1A");
+}
+
+#[test]
+fn current_key_index_numbers_the_keys_and_the_hidden_system_id_key() {
+    // recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:75-105 (KeyCount counts the hidden key last;
+    // CurrentKeyIndex(n) selects, the hidden key is `System ID`), :107-124 (outside 1..KeyCount raises
+    // DB:KeyNotFound), :126-148 (the direction stays, Reset goes back to key 1), :150-176 (GetTable
+    // follows the record's key; fields no key starts with report -1).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; R: Record \"ALT Keys\"; i: Integer; s: Text; begin
+            RR.Open(50904);
+            s := Format(RR.KeyCount()) + '|' + Format(RR.CurrentKeyIndex()) + RR.CurrentKey() + '|';
+            for i := 1 to RR.KeyCount() do begin
+                RR.CurrentKeyIndex(i);
+                s += Format(RR.CurrentKeyIndex()) + '=' + RR.CurrentKey() + ';';
+            end;
+            asserterror RR.CurrentKeyIndex(0);
+            s += '|' + GetLastErrorText() + '|' + GetLastErrorCode();
+            asserterror RR.CurrentKeyIndex(6);
+            s += '|' + GetLastErrorText();
+            RR.CurrentKeyIndex(2); RR.Ascending(false); RR.CurrentKeyIndex(1);
+            s += '|' + Format(RR.Ascending());
+            RR.CurrentKeyIndex(4); RR.Reset();
+            s += '|' + Format(RR.CurrentKeyIndex());
+            R.SetCurrentKey(B, A); RR.GetTable(R);
+            s += '|' + Format(RR.CurrentKeyIndex()) + RR.CurrentKey();
+            R.SetCurrentKey(C); RR.GetTable(R);
+            s += '|' + Format(RR.CurrentKeyIndex()) + RR.CurrentKey();
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "5|1Id|1=Id;2=A;3=B,A;4=D;5=System ID;|The ALT Keys table does not have an active key at index 0.|DB:KeyNotFound|The ALT Keys table does not have an active key at index 6.|No|1|3B,A|-1C"
+    );
 }

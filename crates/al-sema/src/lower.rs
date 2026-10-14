@@ -1084,6 +1084,9 @@ fn lower_object<'a>(
     // the VM fills when it makes the instance (`Session::query_instance`).
     if o.kind == ObjKind::Query {
         rec_slot = Some(globals.len());
+        // `CurrQuery` in the query's triggers and procedures
+        // (query/TestQueryOnBeforeOpenVariablesContracts.al:75-77).
+        lw.globals.insert("currquery".into(), globals.len());
         globals.push(ir::Slot {
             name: "__query".into(),
             ty: RtType::Query(oi as u32),

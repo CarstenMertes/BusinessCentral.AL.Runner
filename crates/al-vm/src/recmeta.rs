@@ -327,7 +327,14 @@ impl Session {
                 Ok(Value::Text(
                     t.keys[key]
                         .iter()
-                        .map(|&p| t.fields[p].name.as_str())
+                        // The hidden key on SystemId (recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:101).
+                        .map(|&p| {
+                            if t.fields[p].id == 2_000_000_000 {
+                                "System ID"
+                            } else {
+                                t.fields[p].name.as_str()
+                            }
+                        })
                         .collect::<Vec<_>>()
                         .join(","),
                 ))

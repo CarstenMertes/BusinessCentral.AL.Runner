@@ -553,16 +553,67 @@ query 60996 "QC Unordered Groups"
 {
     elements { dataitem(Row; "QC Row") { column(Kind; Kind) { } column(Total; Amt) { Method = Sum; } } }
 }
+query 60997 "QC Cross"
+{
+    elements
+    {
+        dataitem(A; "QC Row")
+        {
+            DataItemTableFilter = Id = filter('>=2');
+            column(Id; Id) { }
+            dataitem(B; "QC Log")
+            {
+                SqlJoinType = CrossJoin;
+                column(Name; Name) { }
+            }
+        }
+    }
+}
+query 60998 "QC Cross Sum"
+{
+    elements
+    {
+        dataitem(A; "QC Row")
+        {
+            column(Id; Id) { }
+            dataitem(B; "QC Row")
+            {
+                SqlJoinType = CrossJoin;
+                column(SumAmt; Amt) { Method = Sum; }
+            }
+        }
+    }
+}
+query 60999 "QC Cross Linked"
+{
+    elements
+    {
+        dataitem(A; "QC Row")
+        {
+            column(Id; Id) { }
+            dataitem(B; "QC Row")
+            {
+                SqlJoinType = CrossJoin;
+                DataItemLink = Id = A.Id;
+                column(Amt; Amt) { }
+            }
+        }
+    }
+}
 query 60994 "QC With Variable"
 {
     elements { dataitem(Row; "QC Row") { column(Id; Id) { } } }
-    var Counter: Integer;
-    procedure Bump() begin Counter += 1; end;
-}
-query 60995 "QC With Trigger Code"
-{
-    elements { dataitem(Row; "QC Row") { column(Id; Id) { } } }
-    trigger OnBeforeOpen() begin SetRange(Id, 1); end;
+    var
+        OpenCount: Integer;
+    trigger OnBeforeOpen()
+    var L: Record "QC Log";
+    begin
+        OpenCount += 1;
+        L.Name := Format(L.Count()) + 'open' + Format(OpenCount) + '[' + CurrQuery.GetFilters() + ']'; L.Insert();
+        if OpenCount = 2 then
+            CurrQuery.SetRange(Id, 3);
+    end;
+    procedure Opens(): Integer begin exit(OpenCount); end;
 }
 "#;
 
@@ -1432,21 +1483,43 @@ fn an_empty_on_before_open_changes_nothing() {
     assert_eq!(text(r), "Yes5");
 }
 
-// What no corpus test pins is refused, but only for the code that uses the query: a variable of a
-// query (its persistence across calls) and an OnBeforeOpen with statements (when it runs relative to
-// the filters).
+// query/TestQueryOnBeforeOpenVariablesContracts.al:104-140: OnBeforeOpen runs inside Open after the
+// filters set so far, may change them, and the query's variables live as long as the query variable
+// (Close and Open keep them); Clear starts again.
 #[test]
-fn query_variables_and_trigger_bodies_are_refused() {
+fn on_before_open_sees_the_filters_and_the_variables_live_with_the_query() {
     let r = run(&with(
         "",
-        "procedure F(): Text var Q: Query \"QC With Variable\"; begin exit('x'); end;",
+        "procedure Rows(var Q: Query \"QC With Variable\"): Text
+        var s: Text;
+        begin
+            Q.Open();
+            while Q.Read() do s += Format(Q.Id) + ' ';
+            exit(s);
+        end;
+        procedure F(): Text
+        var Q: Query \"QC With Variable\"; R: Record \"QC Row\"; L: Record \"QC Log\"; s: Text;
+        begin
+            R.Id := 1; R.Insert(); R.Id := 2; R.Insert(); R.Id := 3; R.Insert();
+            Q.SetFilter(Id, '>=2');
+            s := Rows(Q) + '/' + Format(Q.Opens()) + ';';
+            Q.Close();
+            s += Rows(Q) + ';';
+            Q.Close();
+            s += Q.GetFilters() + ';';
+            s += Rows(Q) + '/' + Format(Q.Opens()) + ';';
+            Q.Close();
+            Clear(Q);
+            Q.Open();
+            s += Format(Q.Opens());
+            if L.FindSet() then repeat s += '|' + L.Name; until L.Next() = 0;
+            exit(s);
+        end;",
     ));
-    assert!(unsupported(r).contains("variables"), "variables");
-    let r = run(&with(
-        "",
-        "procedure F(): Text var Q: Query \"QC With Trigger Code\"; begin exit('x'); end;",
-    ));
-    assert!(unsupported(r).contains("OnBeforeOpen"), "trigger");
+    assert_eq!(
+        text(r),
+        "2 3 /1;3 ;Id: 3;3 /3;1|0open1[Id: >=2]|1open2[Id: >=2]|2open3[Id: 3]|3open1[]"
+    );
 }
 
 // Base App's query 1302 groups with no OrderBy; query/TestQueryAggregation.al always orders its
@@ -1478,4 +1551,39 @@ fn groups_without_an_order_by_are_refused_only_when_there_are_several() {
         end;",
     ));
     assert!(unsupported(r).contains("group order"));
+}
+
+// query/TestQueryCrossJoinContracts.al:162-226: SqlJoinType = CrossJoin without a DataItemLink gives the
+// product (outer key order, then inner), the table filter of each item applies, a Sum of the inner
+// item is the same for every outer row, and an empty inner table gives no rows.
+#[test]
+fn cross_join_gives_the_product_of_both_tables() {
+    let seed =
+        "R.Id := 1; R.Amt := 1; R.Insert(); R.Id := 2; R.Amt := 2; R.Insert(); R.Id := 3; R.Amt := 3; R.Insert();
+                L.Name := 'X'; L.Insert(); L.Name := 'Y'; L.Insert();";
+    let r = run(&with(
+        "",
+        &format!(
+            "procedure F(): Text
+        var Q: Query \"QC Cross\"; SQ: Query \"QC Cross Sum\"; R: Record \"QC Row\"; L: Record \"QC Log\"; s: Text;
+        begin
+            {seed}
+            Q.Open(); while Q.Read() do s += Format(Q.Id) + Q.Name + ' ';
+            SQ.Open(); s += '|'; while SQ.Read() do s += Format(SQ.Id) + '=' + Format(SQ.SumAmt) + ' ';
+            L.DeleteAll();
+            Q.Close(); Q.Open(); s += '|'; while Q.Read() do s += Format(Q.Id) + Q.Name + ' ';
+            exit(s);
+        end;"
+        ),
+    ));
+    assert_eq!(text(r), "2X 2Y 3X 3Y |1=6 2=6 3=6 |");
+}
+
+#[test]
+fn cross_join_with_a_data_item_link_is_refused() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text var Q: Query \"QC Cross Linked\"; begin exit(''); end;",
+    ));
+    assert!(unsupported(r).contains("CrossJoin"), "refusal");
 }

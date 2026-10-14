@@ -172,31 +172,26 @@ fn request_update(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
 
 // ---- Notification ------------------------------------------------------------------------
 
-/// `Message(text)` sets, `Message()` reads (handlers/TestNotificationHandler.al:28-35). Reading a
-/// message nobody set is not pinned.
+/// `Message(text)` sets, `Message()` reads (handlers/TestNotificationHandler.al:28-35). A message
+/// nobody set is empty (handlers/TestNotificationSendRecallContracts.al:65).
 fn n_message(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_notification(r, |n| n.message.clone())?
-            .map(Value::Text)
-            .ok_or_else(|| {
-                Signal::Unsupported("Notification.Message of a notification nobody gave one (not pinned)".into())
-            });
+        return with_notification(r, |n| n.message.clone().unwrap_or_default()).map(Value::Text);
     }
     let t = text(a, 0)?;
     with_notification(r, |n| n.message = Some(t)).map(|()| Value::Null)
 }
 
-/// `Id := guid` sets, `Id` reads (handlers/TestNotificationHandler.al:55-56). Reading the id of a
-/// notification nobody gave one is not pinned.
+/// `Id := guid` sets, `Id` reads (handlers/TestNotificationHandler.al:55-56). The id of a
+/// notification nobody gave one, and that was not sent, is the null Guid
+/// (handlers/TestNotificationSendRecallContracts.al:69).
 fn n_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     match a.first() {
         Some(Value::Guid(g)) => {
             let g = *g;
             with_notification(r, |n| n.id = Some(g)).map(|()| Value::Null)
         }
-        None => with_notification(r, |n| n.id)?.map(Value::Guid).ok_or_else(|| {
-            Signal::Unsupported("Notification.Id of a notification nobody gave one (not pinned)".into())
-        }),
+        None => with_notification(r, |n| n.id.unwrap_or([0; 16])).map(Value::Guid),
         Some(other) => unsupported(format!("Notification.Id with {other:?}")),
     }
 }
@@ -209,16 +204,13 @@ fn n_scope(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             let o = *o;
             with_notification(r, |n| n.scope = Some(o)).map(|()| Value::Null)
         }
-        None => with_notification(r, |n| n.scope)?
-            .map(|o| {
-                let members: std::sync::Arc<[String]> = crate::sysenum::option_members("NotificationScope")
-                    .expect("a system option")
-                    .into();
-                Value::Option(o, members)
-            })
-            .ok_or_else(|| {
-                Signal::Unsupported("Notification.Scope of a notification nobody set one on (not pinned)".into())
-            }),
+        // A notification nobody set a scope on is LocalScope (handlers/TestNotificationSendRecallContracts.al:66).
+        None => with_notification(r, |n| n.scope.unwrap_or(0)).map(|o| {
+            let members: std::sync::Arc<[String]> = crate::sysenum::option_members("NotificationScope")
+                .expect("a system option")
+                .into();
+            Value::Option(o, members)
+        }),
         Some(other) => unsupported(format!("Notification.Scope with {other:?}")),
     }
 }
@@ -239,14 +231,17 @@ fn n_has_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     with_notification(r, |n| Value::Boolean(n.data.iter().any(|(name, _)| *name == k)))
 }
 
-/// Reading a name nobody set is not pinned.
+/// A name nobody set reads empty (handlers/TestNotificationSendRecallContracts.al:68).
 fn n_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let k = text(a, 0)?;
     with_notification(r, |n| {
-        n.data.iter().find(|(name, _)| *name == k).map(|(_, v)| v.clone())
-    })?
+        n.data
+            .iter()
+            .find(|(name, _)| *name == k)
+            .map(|(_, v)| v.clone())
+            .unwrap_or_default()
+    })
     .map(Value::Text)
-    .ok_or_else(|| Signal::Unsupported("Notification.GetData of a name nobody set (not pinned)".into()))
 }
 
 /// Stored, never run: an action only matters when the notification is sent to a client
@@ -259,29 +254,53 @@ fn n_add_action(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
 
 /// A copy of the notification for a handler, which gets its own (handlers/TestNotificationHandler.al:
 /// 74-79 read the message from the parameter).
-fn notification_copy(r: Option<&mut Value>) -> Result<(Value, Option<[u8; 16]>), Signal> {
+fn notification_copy(r: Option<&mut Value>) -> Result<Value, Signal> {
     let state = with_notification(r, |n| n.clone())?;
-    let id = state.id;
-    Ok((
-        Value::Library(
-            "Notification".into(),
-            std::rc::Rc::new(std::cell::RefCell::new(LibraryValue::Notification(state))),
-        ),
-        id,
+    Ok(Value::Library(
+        "Notification".into(),
+        std::rc::Rc::new(std::cell::RefCell::new(LibraryValue::Notification(state))),
     ))
 }
 
-/// `Send()` goes to the test's `[SendNotificationHandler]` (handlers/TestNotificationHandler.al:15-26).
+/// `Send()` gives a notification without one an Id, goes to the test's `[SendNotificationHandler]`
+/// if there is one, and answers true whatever the handler answers. What the handler changed in its
+/// `var Notification` is seen by the sender (handlers/TestNotificationSendRecallContracts.al:59-93).
 fn n_send(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    let (copy, id) = notification_copy(r)?;
-    c.ui_send_notification(copy, id).map(|()| Value::Null)
+    let Some(recv) = r else {
+        return unsupported("Notification.Send without a receiver");
+    };
+    let fresh = c.new_guid();
+    let id = with_notification(Some(&mut *recv), |n| *n.id.get_or_insert(fresh))?;
+    let copy = notification_copy(Some(&mut *recv))?;
+    if let Some(Value::Library(_, cell)) = c.ui_send_notification(copy, id)? {
+        let left = match &*cell.borrow() {
+            LibraryValue::Notification(s) => Some(s.clone()),
+            _ => None,
+        };
+        if let Some(left) = left {
+            with_notification(Some(recv), |n| {
+                n.message = left.message;
+                n.scope = left.scope;
+                n.data = left.data;
+                n.actions = left.actions;
+            })?;
+        }
+    }
+    Ok(Value::Boolean(true))
 }
 
-/// `Recall()` after a handled `Send` does not throw with only a send handler bound
-/// (handlers/TestNotificationHandler.al:60-72).
+/// `Recall()` of a sent notification is true, of one never sent false
+/// (handlers/TestNotificationSendRecallContracts.al:95-131).
 fn n_recall(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    let id = with_notification(r, |n| n.id)?;
-    c.ui_recall_notification(id).map(|()| Value::Null)
+    let Some(recv) = r else {
+        return unsupported("Notification.Recall without a receiver");
+    };
+    let id = with_notification(Some(&mut *recv), |n| n.id)?;
+    let Some(id) = id else {
+        return Ok(Value::Boolean(false));
+    };
+    let copy = notification_copy(Some(recv))?;
+    c.ui_recall_notification(copy, id).map(Value::Boolean)
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {

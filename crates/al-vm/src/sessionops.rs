@@ -198,20 +198,31 @@ impl Session {
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
             }
-            // The type of the next transaction. A read answers Update, the documented default (docs/
-            // probes-needed.md); session/TestDatabaseExtended.al:Database_CurrentTransactionType_
-            // ReturnsType only reads it. A set is refused: BC raises an error once a transaction has
-            // started, which is at the first database call (:Database_CurrentTransactionType_
-            // SetAfterWriteOp_Throws, the text is not pinned), and this runtime does not track that.
+            // The type of the transaction. A test starts as UpdateNoLocks, not Update, and a set before
+            // any database access takes effect; once the transaction has written, a read answers
+            // Update and a set to another type is ignored without an error
+            // (session/TestClearAllTransactionTypeContracts.al:224-253). A set to Update itself after a
+            // write is session/TestDatabaseExtended.al:Database_CurrentTransactionType_SetAfterWriteOp_
+            // Throws, which expects an error whose text is not pinned: refused. A set after a read only
+            // is not pinned either and takes effect (docs/probes-needed.md).
             "Database.CurrentTransactionType#1" => {
                 let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("TransactionType")
                     .expect("a system option")
                     .into();
+                let wrote = self.tx_wrote || self.in_write_transaction();
                 match args.first() {
-                    None | Some(Value::Null) => return Ok(Value::Option(self.transaction_type, members)),
+                    None | Some(Value::Null) => {
+                        let t = if wrote { 1 } else { self.transaction_type };
+                        return Ok(Value::Option(t, members));
+                    }
+                    Some(Value::Option(t, _)) if !wrote => {
+                        self.transaction_type = *t;
+                        return Ok(Value::Null);
+                    }
+                    Some(Value::Option(t, _)) if *t != 1 => return Ok(Value::Null),
                     Some(_) => {
                         return unsupported(
-                            "Database.CurrentTransactionType set (whether a transaction has started, and the error then, are not pinned)",
+                            "Database.CurrentTransactionType set to Update after a write (BC raises an error whose text is not pinned)",
                         );
                     }
                 }

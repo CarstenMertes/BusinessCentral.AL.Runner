@@ -783,6 +783,26 @@ impl<'a> Checker<'a> {
             ObjKind::Report | ObjKind::ReportExtension => {
                 globals.insert("currreport".into(), Ty::Object(ObjKind::Report, o.name.clone()));
                 globals.insert("requestoptionspage".into(), Ty::Builtin("RequestPage".into()));
+                // The request page of a report states a `SourceTable`: its triggers and controls name
+                // that table's current record as `Rec` (handlers/TestReportRequestPageSourceTable
+                // CompiledContracts.al). The checker only needs the name to resolve; running such a
+                // report with a request page Rec is refused by the lowerer.
+                if o.kind == ObjKind::Report {
+                    let source = ast::sections_in(obj.syntax())
+                        .into_iter()
+                        .filter(|sec| sec.name().eq_ignore_ascii_case("requestpage"))
+                        .find_map(|sec| {
+                            sec.properties()
+                                .find(|p| p.name().eq_ignore_ascii_case("SourceTable"))
+                                .map(|p| unquote(p.value_text()))
+                        });
+                    if let Some(table) = source {
+                        rec = Some(Ty::Record {
+                            table,
+                            temporary: false,
+                        });
+                    }
+                }
             }
             ObjKind::XmlPort => {
                 globals.insert("currxmlport".into(), Ty::Object(ObjKind::XmlPort, o.name.clone()));
@@ -793,6 +813,8 @@ impl<'a> Checker<'a> {
             ObjKind::Query => {
                 rec = Some(Ty::Object(ObjKind::Query, o.name.clone()));
                 rec_unqualified = true;
+                // `CurrQuery` is the running query in its triggers (query/TestQueryOnBeforeOpenVariablesContracts.al:75-77).
+                globals.insert("currquery".into(), Ty::Object(ObjKind::Query, o.name.clone()));
             }
             _ => {}
         }

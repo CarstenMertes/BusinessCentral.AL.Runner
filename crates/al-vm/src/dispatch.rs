@@ -156,7 +156,12 @@ impl Session {
             // (codeunit/TestIsolatedEventSubscriberError.al). The swallowed error becomes the last
             // error, and a subscriber that succeeds has its writes committed (corpus
             // record/TestTableEventSequenceContracts.al:IsolatedEvent_SubscriberError_BecomesTheLastError_...).
-            *self.event_stats.calls.borrow_mut().entry((s.object, s.routine)).or_insert(0) += 1;
+            *self
+                .event_stats
+                .calls
+                .borrow_mut()
+                .entry((s.object, s.routine))
+                .or_insert(0) += 1;
             let isolate = isolated && !self.store.has_uncommitted();
             let before = isolate.then(|| self.store.clone());
             let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {

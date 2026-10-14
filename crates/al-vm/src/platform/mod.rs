@@ -458,7 +458,9 @@ impl VirtualTables for Providers {
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
             Virtual::WindowsLanguage => host_tables::windows_language_get(t, pk),
-            Virtual::EventSubscription => Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.get(t, pk)?)),
+            Virtual::EventSubscription => {
+                Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.get(t, pk)?))
+            }
             k => self.listed(t, k)?.get(t, pk),
         }
     }

@@ -351,8 +351,11 @@ impl Session {
         let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
         let event_stats = Rc::new(platform::EventStats::default());
-        let mut store =
-            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone(), event_stats.clone())));
+        let mut store = al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(
+            &engine,
+            ident.clone(),
+            event_stats.clone(),
+        )));
         if let Some(td) = &engine.test_data {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }

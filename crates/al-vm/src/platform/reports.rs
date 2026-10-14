@@ -82,7 +82,13 @@ fn layout_row(o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &mut al_data::
     };
     // A layout without a Caption reads blank here (assumed: docs/probes-needed.md).
     r[pos(t, 3)] = Value::Text(literal("Caption")?.unwrap_or_default().chars().take(250).collect());
-    r[pos(t, 10)] = Value::Text(literal("Summary")?.unwrap_or_else(|| l.name.clone()).chars().take(250).collect());
+    r[pos(t, 10)] = Value::Text(
+        literal("Summary")?
+            .unwrap_or_else(|| l.name.clone())
+            .chars()
+            .take(250)
+            .collect(),
+    );
     // Pending is obsolete (TestPrecompiledReportLayouts.al:63-72); Removed is not pinned.
     r[pos(t, 16)] = Value::Boolean(match lprop(l, "ObsoleteState").map(ident) {
         None => false,

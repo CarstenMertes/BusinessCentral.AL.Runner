@@ -156,13 +156,18 @@ fn field_row(
             .map(|(_, v)| v.trim())
     };
     // SystemId is named `$systemId` (record/TestFieldLenAndFeatureKeyContracts.al:107-112).
-    r[pos(t, 4)] = Value::Text(if f.id == 2_000_000_000 { "$systemId".into() } else { f.name.clone() });
+    r[pos(t, 4)] = Value::Text(if f.id == 2_000_000_000 {
+        "$systemId".into()
+    } else {
+        f.name.clone()
+    });
     r[pos(t, 5)] = blank.option(
         t,
         5,
         type_ordinal(&f.ty).ok_or_else(|| format!("{}: the type is not understood", what()))?,
     );
-    r[pos(t, 6)] = Value::Integer(field_len(&f.ty).ok_or_else(|| format!("{}: the length of the type is not pinned", what()))?);
+    r[pos(t, 6)] =
+        Value::Integer(field_len(&f.ty).ok_or_else(|| format!("{}: the length of the type is not pinned", what()))?);
     // Class: Normal, FlowField, FlowFilter (TestFieldDataClassificationInheritance.al, the FlowField case).
     let is_flow_field = !f.stored && !f.flow_filter;
     r[pos(t, 7)] = blank.option(t, 7, if f.flow_filter { 2 } else { i32::from(is_flow_field) });
@@ -292,7 +297,8 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 10)] = Value::Boolean(n == 0 || kprop("Clustered").is_some_and(truthy));
             // True only for a key that has SumIndexFields and does not say `MaintainSIFTIndex = false`
             // (record/TestPlatformMetadataDeclarationContracts.al:269-280).
-            r[pos(t, 9)] = Value::Boolean(kprop("SumIndexFields").is_some() && kprop("MaintainSIFTIndex").is_none_or(truthy));
+            r[pos(t, 9)] =
+                Value::Boolean(kprop("SumIndexFields").is_some() && kprop("MaintainSIFTIndex").is_none_or(truthy));
             let state = match kprop("ObsoleteState") {
                 None => 0,
                 Some(v) => match ordinal_of(OBSOLETE_STATES, v) {

@@ -374,7 +374,9 @@ fn a_null_string_result_says_it_is_a_string_and_a_null_object_does_not() {
         .unwrap();
     assert_eq!(r.value, DotNetValue::NullString);
     // A null object: `Type.GetType` of an unknown name returns a null Type.
-    let r = sess.invoke(st("System.Type"), "GetType", vec![s("No.Such.Type")]).unwrap();
+    let r = sess
+        .invoke(st("System.Type"), "GetType", vec![s("No.Such.Type")])
+        .unwrap();
     assert_eq!(r.value, DotNetValue::Null);
     sess.close();
 }
@@ -392,9 +394,7 @@ fn a_date_time_offset_is_built_from_ticks_and_a_zero_offset() {
         )
         .unwrap();
     let at = handle_of(&r);
-    let local = sess
-        .get_property(DotNetTarget::Instance(at), "LocalDateTime")
-        .unwrap();
+    let local = sess.get_property(DotNetTarget::Instance(at), "LocalDateTime").unwrap();
     assert_eq!(local.value, DotNetValue::DateTime(ticks));
     let offset = sess.get_property(DotNetTarget::Instance(at), "Offset").unwrap();
     assert_eq!(offset.value, DotNetValue::TimeSpan(0));

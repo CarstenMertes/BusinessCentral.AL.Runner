@@ -424,7 +424,11 @@ fn a_null_string_is_empty_a_null_object_is_refused_and_ordering_a_string_is_refu
     let r = run(&host, "C: DotNet Convert;", "exit(C.NullThing() + 'x');", ": Text");
     assert!(unsupported(&r).contains("null .NET object"));
     let r = run(&host, "C: DotNet Convert;", "exit(C.Name() = 'abc');", ": Boolean");
-    assert!(matches!(r.result, Ok(Value::Boolean(false))), "case sensitive: {:?}", r.result);
+    assert!(
+        matches!(r.result, Ok(Value::Boolean(false))),
+        "case sensitive: {:?}",
+        r.result
+    );
     let r = run(&host, "C: DotNet Convert;", "exit(C.Name() < 'b');", ": Boolean");
     assert!(unsupported(&r).contains("not pinned"));
 }

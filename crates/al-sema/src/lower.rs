@@ -4202,7 +4202,8 @@ impl Lowerer<'_> {
                     return Ok(ir::Expr::In(Box::new(l), elems));
                 }
                 let r = self.operand(&kids[1], operand_use)?;
-                let dotnet = matches!(self.ty_of(&kids[0]), Ty::DotNet(_)) || matches!(self.ty_of(&kids[1]), Ty::DotNet(_));
+                let dotnet =
+                    matches!(self.ty_of(&kids[0]), Ty::DotNet(_)) || matches!(self.ty_of(&kids[1]), Ty::DotNet(_));
                 let op = match op.as_str() {
                     "=" if dotnet => ir::BinOp::DotNetEq,
                     "<>" if dotnet => ir::BinOp::DotNetNe,
@@ -4700,10 +4701,7 @@ impl Lowerer<'_> {
                             _ => match scalar {
                                 Some(rt) if !p.by_var && alias.is_empty() => ir::Expr::DotNetCoerce(
                                     rt,
-                                    Box::new(ir::Expr::DotNetOperand(
-                                        Box::new(self.expr(a)?),
-                                        ir::OperandUse::Strict,
-                                    )),
+                                    Box::new(ir::Expr::DotNetOperand(Box::new(self.expr(a)?), ir::OperandUse::Strict)),
                                 ),
                                 _ => {
                                     return Err(format!(

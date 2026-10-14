@@ -559,9 +559,9 @@ impl Session {
             | Value::DateTime(_)
             | Value::Duration(_)
             | Value::Guid(_) => Ok(v),
-            Value::Text(_) | Value::Code(_) if how == U::NoText => unsupported(
-                "ordering a .NET string with <, <=, > or >= (what BC compares is not pinned)",
-            ),
+            Value::Text(_) | Value::Code(_) if how == U::NoText => {
+                unsupported("ordering a .NET string with <, <=, > or >= (what BC compares is not pinned)")
+            }
             Value::Text(_) | Value::Code(_) => Ok(v),
             Value::Null if self.dotnet.null_string => match how {
                 U::Variant => Ok(Value::Null),

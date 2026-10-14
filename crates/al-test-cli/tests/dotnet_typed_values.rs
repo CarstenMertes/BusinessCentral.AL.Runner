@@ -13,7 +13,6 @@ use al_vm::{Engine, Session};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-
 const SRC: &str = r#"
 dotnet
 {
@@ -355,12 +354,16 @@ fn why(v: Result<Value, Signal>) -> String {
     }
 }
 
-
 #[test]
 fn the_fixture_lowers_without_any_refusal() {
     let f = fixture();
     for (i, r) in f.program.objects[f.oi].routines.iter().enumerate() {
-        assert!(f.blocked[f.oi][i].is_none(), "{} is refused statically: {:?}", r.name, f.blocked[f.oi][i]);
+        assert!(
+            f.blocked[f.oi][i].is_none(),
+            "{} is refused statically: {:?}",
+            r.name,
+            f.blocked[f.oi][i]
+        );
     }
 }
 
@@ -427,7 +430,10 @@ fn strlen_of_a_null_string_is_refused_because_bc_raises_an_uncatchable_error() {
 
 #[test]
 fn format_of_a_dotnet_object_is_its_to_string() {
-    assert!(matches!(txt("FormatOfType").as_deref(), Some("System.Text.StringBuilder") | None));
+    assert!(matches!(
+        txt("FormatOfType").as_deref(),
+        Some("System.Text.StringBuilder") | None
+    ));
     assert!(matches!(txt("FormatOfEnum").as_deref(), Some("Number") | None));
     assert!(matches!(txt("FormatOfBuilder").as_deref(), Some("hello") | None));
 }

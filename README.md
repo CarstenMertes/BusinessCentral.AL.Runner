@@ -146,6 +146,8 @@ runners until many more of these tests run.
 - `docs/probes-needed.md`: behavior taken from documentation only, waiting for a probe on real BC.
 - `docs/corpus-inventory.md`: what the corpus contains.
 - `CLAUDE.md`: the rules every contributor and agent follows.
+- `docs/agents/brief.md`: the working method for implementation agents (worktree, TDD, gates, memory caps, report).
+- `docs/agents/remote-worker.md`: setup and task loop for a session on another machine that takes GitHub issues.
 - `oracle/`: the real-BC results the pass rate is measured against.
 - `metrics/<major>/passing.txt`: the cases that must keep passing, per BC major.
 - `docs/history/`: the original spike brief and report.

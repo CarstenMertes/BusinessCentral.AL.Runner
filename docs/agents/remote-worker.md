@@ -1,0 +1,162 @@
+# Remote worker: setup and task loop
+
+For a Claude Code session that runs on another machine and takes tasks from
+GitHub issues. It works on a branch, pushes the branch, and comments a report
+on the issue. The orchestrator on the main machine reviews and merges.
+Read `docs/agents/brief.md` first. It holds the rules for the work itself.
+
+## Prerequisites
+
+- **Rust 1.98.1.** CI pins this version. Install it with
+  `rustup toolchain install 1.98.1 --component rustfmt clippy`. Then run
+  `rustup override set 1.98.1` in the clone, or use `cargo +1.98.1`.
+- **.NET 8 SDK.** The runtime starts a .NET 8 helper for AL code that uses the
+  `DotNet` type. The helper builds itself on first use when the SDK is present.
+  Without .NET, tests that reach a `DotNet` call are refused, and
+  `--update-baseline` is refused too (the new baseline would be incomplete).
+  You cannot finish a task that changes the passing set without .NET. Install
+  it.
+- **git, `gh`, `python3`.** `gh auth status` must show a login with push
+  rights to `StefanMaron/al-runtime-rs`. `python3` is needed by
+  `tools/demand_vs_eager.sh`.
+- **Disk.** About 10 GB free. Microsoft artifacts download automatically to
+  `~/.cache/al-runtime` (override with `ALRUNNER_CACHE`). Each worktree also
+  has its own `target/` directory of several GB. Remove a worktree after its
+  branch is pushed.
+- **Memory.** Keep a corpus run under about 3 GB (see "Memory and threads" in
+  the brief).
+- **Operating system.** Linux, macOS and WSL work. `check.sh` is plain bash
+  and cargo. `systemd-run` exists only on Linux with systemd. Elsewhere, use
+  `timeout` and watch memory. Native Windows is not supported.
+- **No BC container.** Probes run on the main machine. Do not attempt them.
+
+## First run
+
+1. Clone with the corpus submodule:
+   `git clone --recurse-submodules https://github.com/StefanMaron/al-runtime-rs`
+2. `cd al-runtime-rs`, then fetch the corpus history, which the pin check
+   needs: `git -C corpus fetch --unshallow` (skip it if the command says the
+   repository is complete).
+3. `cargo build --release`
+4. `./target/release/al-test-cli --root .`
+   The first run downloads Microsoft artifacts and takes longer.
+5. Compare the counts with the table in `README.md` ("Status") and
+   `docs/status.md`. On `main` today every BC version (27.5, 28.5 and 29.0)
+   shows 0 failing, and the same cases are not run on each. If your numbers
+   differ, `README.md` may lag behind `main`. The ratchet is the check: the
+   exit code must be 0. Exit code 1 means a baseline case no longer passes,
+   and 2 is a setup error. Fix setup problems before you take any task.
+6. `./check.sh` must pass on a clean `main`. It takes minutes.
+7. Create the labels if they are missing, once:
+   `agent-ready`, `in-progress`, `ready-for-review`, `blocked`,
+   `found-by-agent` (`gh label create NAME`).
+
+## The task loop
+
+Work on one issue at a time. Repeat until no issue is left.
+
+1. **Find the oldest open issue** that is ready and not taken:
+   `gh issue list --state open --limit 50 --search 'label:agent-ready -label:in-progress -label:ready-for-review -label:blocked sort:created-asc' --json number,title,labels`
+   Take the first one. If the list is empty, stop and say so.
+2. **Claim it.**
+   `gh issue edit N --add-label in-progress`
+   `gh issue comment N --body "Taking this."`
+   Add one line if useful, such as where you start.
+3. **Read the issue and the docs** named in `docs/agents/brief.md`. If the
+   issue is unclear, comment one specific question, label it `blocked`
+   (see "If you are blocked") and move on.
+4. **Make a worktree and branch** from current `origin/main`. The branch name is
+   `remote/<issue-number>-<slug>`, where the slug is two to five lowercase
+   words from the title:
+   ```
+   git fetch origin
+   git worktree add ../wt-N-slug -b remote/N-slug origin/main
+   cd ../wt-N-slug
+   git submodule update --init
+   ```
+   If a branch `remote/N-...` already exists on origin (for example after a
+   review round), continue on it instead: merge `origin/main` into it first.
+5. **Do the work** under `docs/agents/brief.md`: red/green TDD, no guessing,
+   refuse what you cannot pin, never weaken an oracle.
+6. **Run the finishing gates** from the brief, in order: baselines for 27, 28
+   and 29, `./check.sh`, the release-only tests, the demand/eager differential
+   when it applies, then merge `origin/main`, regenerate the baselines and run
+   `./check.sh` again. All must be green.
+7. **Push the branch only:** `git push -u origin remote/N-slug`.
+   Never push `main`. Never merge. Never open the merge yourself.
+8. **Report on the issue** (format below).
+   `gh issue edit N --add-label ready-for-review --remove-label in-progress`
+9. **Clean up:** `cd` back to the clone and `git worktree remove ../wt-N-slug`.
+   Then go to step 1.
+
+### Report format
+
+Post one comment per finished issue. Keep it factual and short. Use plain
+American English, first person, no marketing words.
+
+```
+Branch: remote/N-slug, last commit <hash>.
+
+Changed
+- <what changed, one line each, with the module or file>
+
+Counts (passed / failed / not run), before -> after
+- BC 27.5: 4913 / 0 / 234 -> ...
+- BC 28.5: ...
+- BC 29.0: ...
+No baseline case regressed: yes/no.
+
+Gates
+- check.sh: green
+- release-only tests: green
+- demand/eager differential: green / not needed (reason)
+
+Decisions taken without the owner
+- <decision, and where it is recorded (ADR section, docs/owner-review.md)>
+
+Probes needed
+- <assumption added to docs/probes-needed.md, and the probe wanted>, or "none"
+
+Review first
+- <the file or change a reviewer should read first>
+```
+
+The counts come from `al-test-cli --root . --all-versions` on `main` before
+you start and on your branch at the end.
+
+### If you are blocked
+
+Examples: the issue needs a probe, an ADR decision about a seam, a change to an
+oracle, or something you cannot reproduce.
+
+1. Comment why, in a few lines: what you tried, what is missing, what you
+   need from the owner.
+2. `gh issue edit N --add-label blocked --remove-label in-progress`
+3. If you pushed partial work, say the branch name in the comment.
+4. Go to the next issue.
+
+## What not to do
+
+- No probes that need a BC container.
+- No pushes to `main`. No pushes to the corpus repo. No edits in `corpus/` or
+  `oracle/`.
+- No merges, and no closing of issues. The orchestrator closes an issue after
+  it merges the branch.
+- No new issues, except for a bug you found while working. Label those
+  `found-by-agent`. Say in the issue how to reproduce it.
+- No force pushes. No rewriting of history on a branch that is already pushed.
+- No attribution or session lines in commit messages or comments.
+- No Microsoft code and no third-party project code in the repository.
+- Public comments stay factual and short. No promises, no praise, no
+  speculation about the owner's plans.
+- If a command asks for a secret or a login you do not have, stop and comment
+  on the issue. Do not look for credentials.
+
+## Starting prompt
+
+Paste this into the session on the laptop, from the repository clone. It uses
+`/loop` without an interval, so the session paces itself.
+
+```
+/loop Work through the GitHub issues of StefanMaron/al-runtime-rs, one at a time, following docs/agents/remote-worker.md. Before the first issue, read docs/agents/remote-worker.md, docs/agents/brief.md, CLAUDE.md, docs/architecture.md, docs/status.md, docs/codemap.md and docs/adr/README.md. Each round: find the oldest open issue with label agent-ready and without the labels in-progress, ready-for-review and blocked; claim it (label in-progress, comment "Taking this."); make a worktree and branch remote/<number>-<slug> from origin/main; do the work with red/green TDD under the rules in docs/agents/brief.md; run all finishing gates (baselines for BC 27, 28 and 29, ./check.sh, the release-only tests, tools/demand_vs_eager.sh run when it applies, merge origin/main, regenerate baselines, ./check.sh again); push the branch only; comment the report in the format of docs/agents/remote-worker.md on the issue; add label ready-for-review and remove in-progress; remove the worktree; then take the next issue. If an issue is blocked (needs a probe, an ADR decision, an oracle change, or is unclear), comment why, label it blocked, remove in-progress, and move on. Never push main or the corpus repo, never merge, never close issues, never edit corpus/ or oracle/, never weaken a baseline, run corpus runs one at a time under a memory cap or timeout, and keep public comments factual and short. Open a new issue only for a bug you found, with label found-by-agent. When no matching issue is left, stop and say so.
+```

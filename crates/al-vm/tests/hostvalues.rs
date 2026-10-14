@@ -422,6 +422,8 @@ fn hyperlink_lowers_and_is_refused_only_when_it_runs() {
         Err(Signal::Unsupported(why)) => assert!(why.contains("Hyperlink"), "{why}"),
         other => panic!("{other:?}"),
     }
+}
+
 // ---------------------------------------------------------------- randomness
 // No corpus test pins `Random` or `Randomize`; the range 1..MaxNumber is the documented one
 // (corpus/scripts/al-surface.json, system-random-method) and the rest is recorded in

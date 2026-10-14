@@ -1088,7 +1088,10 @@ mod tests {
         let live = app(
             "foundation",
             &[],
-            &[("sc.al", "namespace Microsoft.Foundation.AuditCodes; table 230 \"Source Code\" { fields { field(1; Code; Code[10]) { } } }")],
+            &[(
+                "sc.al",
+                "namespace Microsoft.Foundation.AuditCodes; table 230 \"Source Code\" { fields { field(1; Code; Code[10]) { } } }",
+            )],
         );
         let old = app(
             "base",

@@ -1102,7 +1102,16 @@ pub(crate) mod tests {
         ));
         // The security audit log has no effect AL can see, like LogSecurityAudit.
         assert!(matches!(
-            call("Session.LogAuditMessage#1", vec![t("D"), Value::Integer(0), Value::Integer(0), Value::Integer(1), Value::Integer(0)]),
+            call(
+                "Session.LogAuditMessage#1",
+                vec![
+                    t("D"),
+                    Value::Integer(0),
+                    Value::Integer(0),
+                    Value::Integer(1),
+                    Value::Integer(0)
+                ]
+            ),
             Ok(Value::Null)
         ));
     }

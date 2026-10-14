@@ -396,7 +396,11 @@ impl Session {
                     if r.filter_group != 0 || dst.borrow().filter_group != 0 {
                         return unsupported("CopyFilter inside a filter group (not pinned)");
                     }
-                    r.filters.iter().filter(|f| f.field == from && f.group == 0).cloned().collect()
+                    r.filters
+                        .iter()
+                        .filter(|f| f.field == from && f.group == 0)
+                        .cloned()
+                        .collect()
                 };
                 let mut d = dst.borrow_mut();
                 d.filters.retain(|f| !(f.field == to && f.group == 0));

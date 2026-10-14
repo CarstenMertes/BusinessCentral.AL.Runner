@@ -1092,14 +1092,16 @@ impl<'a> Checker<'a> {
                     // method is a control of that page (corpus
                     // handlers/TestPagePlatformPageSourceTable_Tests.al:66).
                     if field_pos && a.kind() == NameRef {
-                        if let Some(t @ (Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_))) = receiver.clone() {
+                        if let Some(t @ (Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_))) = receiver.clone()
+                        {
                             // A variable of that name wins; `Code` is also a type name, so the
                             // name lookup in general is not asked.
                             let var = name_of(a).to_lowercase();
                             if !sc.vars.iter().any(|f| f.contains_key(&var)) {
                                 if let Some(E::Val(ct)) = self.page_control_member(sc, &t, &name_of(a)) {
                                     let r = a.text_range();
-                                    self.types.insert((sc.file, r.start().into(), r.end().into()), ct.clone());
+                                    self.types
+                                        .insert((sc.file, r.start().into(), r.end().into()), ct.clone());
                                     arg_tys.push(ct);
                                     continue;
                                 }

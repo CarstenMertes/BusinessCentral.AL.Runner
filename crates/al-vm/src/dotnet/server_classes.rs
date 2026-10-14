@@ -270,7 +270,9 @@ fn member(name: &str, pin: Pin, f: MemberFn) -> RegistryMember {
 /// A member with `var`/`out` arguments (see [`MemberRefFn`]).
 fn member_ref(name: &str, pin: Pin, f: MemberRefFn) -> RegistryMember {
     fn unused(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {
-        Err(Signal::Unsupported("a member with var arguments called without them".into()))
+        Err(Signal::Unsupported(
+            "a member with var arguments called without them".into(),
+        ))
     }
     RegistryMember {
         call_ref: Some(f),

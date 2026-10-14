@@ -386,7 +386,9 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
                 .chunks_exact(unit)
                 .position(|u| u.iter().all(|b| *b == 0))
                 .ok_or_else(|| {
-                    Signal::Unsupported("InStream.Read into a Text with no zero terminator in the stream (not pinned)".into())
+                    Signal::Unsupported(
+                        "InStream.Read into a Text with no zero terminator in the stream (not pinned)".into(),
+                    )
                 })?;
             let body = &rest[..end * unit];
             if !s.enc.decode(body).is_ascii() {
@@ -465,10 +467,13 @@ pub(crate) fn read_serialised_text(stream: &mut Value) -> Result<String, Signal>
         let enc = st.enc;
         let bytes = st.rest();
         let text = match enc {
-            Encoding::Utf8 => String::from_utf8(bytes)
-                .map_err(|_| Signal::Unsupported("reading bytes that are not UTF-8 from a UTF-8 InStream as text".into()))?,
+            Encoding::Utf8 => String::from_utf8(bytes).map_err(|_| {
+                Signal::Unsupported("reading bytes that are not UTF-8 from a UTF-8 InStream as text".into())
+            })?,
             Encoding::Windows | Encoding::MsDos if bytes.is_ascii() => String::from_utf8(bytes).expect("ASCII"),
-            Encoding::Utf16 => return unsupported("reading text from a UTF-16 InStream as serialised data (not pinned)"),
+            Encoding::Utf16 => {
+                return unsupported("reading text from a UTF-16 InStream as serialised data (not pinned)");
+            }
             _ => return unsupported("reading non-ASCII bytes of a code-page InStream as serialised data (not pinned)"),
         };
         st.drain();

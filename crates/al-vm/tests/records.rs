@@ -682,7 +682,11 @@ codeunit 50101 D {
         .map(|o| o.iter().map(|r| r.first().cloned()).collect())
         .collect();
     let oi = l.program.objects.iter().position(|o| o.name == "D").unwrap();
-    let ri = l.program.objects[oi].routines.iter().position(|r| r.name == "F").unwrap();
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
     let engine = Engine::new(l.program, blocked);
     let mut s = Session::new(engine);
     let inst = s.instance(oi);

@@ -1107,12 +1107,21 @@ fn evaluate_into_an_enum_reads_the_xml_ordinal_and_member_names() {
         Ok(Value::Text(s)) => s,
         other => panic!("{other:?}"),
     };
-    assert_eq!(t("R := Evaluate(E, Format(E::Zed, 0, 9), 9); exit(Format(R) + Format(E));"), "YesZed");
+    assert_eq!(
+        t("R := Evaluate(E, Format(E::Zed, 0, 9), 9); exit(Format(R) + Format(E));"),
+        "YesZed"
+    );
     assert_eq!(t("R := Evaluate(E, '1', 9); exit(Format(R) + Format(E));"), "YesBee");
     assert_eq!(t("R := Evaluate(E, 'Zed'); exit(Format(R) + Format(E));"), "YesZed");
     // A number that is no member, and a name that is none, make Evaluate return false.
-    assert_eq!(t("E := E::Bee; R := Evaluate(E, '2', 9); exit(Format(R) + Format(E));"), "NoBee");
-    assert_eq!(t("E := E::Bee; R := Evaluate(E, 'Nope'); exit(Format(R) + Format(E));"), "NoBee");
+    assert_eq!(
+        t("E := E::Bee; R := Evaluate(E, '2', 9); exit(Format(R) + Format(E));"),
+        "NoBee"
+    );
+    assert_eq!(
+        t("E := E::Bee; R := Evaluate(E, 'Nope'); exit(Format(R) + Format(E));"),
+        "NoBee"
+    );
     // The statement form of a failure is refused: its text is not pinned.
     assert!(matches!(
         enum_text_of("E: Enum \"Ev Enum\";", "Evaluate(E, 'Nope'); exit('');"),

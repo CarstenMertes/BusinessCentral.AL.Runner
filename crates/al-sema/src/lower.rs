@@ -3348,10 +3348,16 @@ impl Lowerer<'_> {
         // session/TestSessionSettings.al:534): a builtin call, not a place.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
             if id == "System.GlobalLanguage#1" && kids[0].kind() != SyntaxKind::MemberExpr {
-                if sig_tokens(n).iter().any(|t| t.kind() != SyntaxKind::Assign && matches!(
-                    t.kind(),
-                    SyntaxKind::PlusAssign | SyntaxKind::MinusAssign | SyntaxKind::StarAssign | SyntaxKind::SlashAssign
-                )) {
+                if sig_tokens(n).iter().any(|t| {
+                    t.kind() != SyntaxKind::Assign
+                        && matches!(
+                            t.kind(),
+                            SyntaxKind::PlusAssign
+                                | SyntaxKind::MinusAssign
+                                | SyntaxKind::StarAssign
+                                | SyntaxKind::SlashAssign
+                        )
+                }) {
                     return Err("compound assignment to GlobalLanguage is not lowered yet".into());
                 }
                 let rhs = self.expr(&kids[1])?;
@@ -4067,7 +4073,10 @@ impl Lowerer<'_> {
                         && self.res(a).is_none()
                         && matches!(self.ty_of(a), Ty::Builtin(ref b) if b == "TestField")
                         && receiver_node.as_ref().is_some_and(|r| {
-                            matches!(self.ty_of(r), Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_))
+                            matches!(
+                                self.ty_of(r),
+                                Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_)
+                            )
                         })
                     {
                         let name = a

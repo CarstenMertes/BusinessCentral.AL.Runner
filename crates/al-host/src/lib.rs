@@ -17,6 +17,7 @@
 
 pub mod dotnet;
 pub mod random;
+pub mod testdata;
 
 /// The wall clock.
 pub trait Clock {
@@ -211,6 +212,66 @@ impl Identity for AlRunnerIdentity {
     }
 }
 
+/// An identity that runs in another company than the one it would name.
+struct InCompany {
+    inner: Box<dyn Identity>,
+    company: String,
+}
+
+impl Identity for InCompany {
+    fn user_id(&self) -> String {
+        self.inner.user_id()
+    }
+    fn user_security_id(&self) -> [u8; 16] {
+        self.inner.user_security_id()
+    }
+    fn company_name(&self) -> String {
+        self.company.clone()
+    }
+    fn session_id(&self) -> i32 {
+        self.inner.session_id()
+    }
+    fn service_instance_id(&self) -> i32 {
+        self.inner.service_instance_id()
+    }
+    fn tenant_id(&self) -> String {
+        self.inner.tenant_id()
+    }
+    fn gui_allowed(&self) -> bool {
+        self.inner.gui_allowed()
+    }
+    fn is_service_tier(&self) -> bool {
+        self.inner.is_service_tier()
+    }
+    fn windows_language(&self) -> i32 {
+        self.inner.windows_language()
+    }
+    fn global_language(&self) -> i32 {
+        self.inner.global_language()
+    }
+    fn locale_id(&self) -> i32 {
+        self.inner.locale_id()
+    }
+    fn time_zone(&self) -> String {
+        self.inner.time_zone()
+    }
+    fn current_client_type(&self) -> ClientType {
+        self.inner.current_client_type()
+    }
+    fn default_client_type(&self) -> ClientType {
+        self.inner.default_client_type()
+    }
+    fn company_id(&self) -> [u8; 16] {
+        self.inner.company_id()
+    }
+    fn host_name(&self) -> String {
+        self.inner.host_name()
+    }
+    fn time_zones(&self) -> Vec<TimeZoneInfo> {
+        self.inner.time_zones()
+    }
+}
+
 /// The file system AL code sees through the `File` type (ADR-006). Paths are the text AL passes;
 /// the capability does not interpret them. A file is a byte string.
 ///
@@ -278,6 +339,16 @@ impl Host {
             files: Box::new(MemFileSystem::default()),
             random_seed: DEFAULT_RANDOM_SEED,
         }
+    }
+
+    /// The same host, running in the company `company` (`CompanyName()` answers it). Test data
+    /// from a restored company runs in that company.
+    pub fn in_company(mut self, company: &str) -> Host {
+        self.identity = Box::new(InCompany {
+            inner: self.identity,
+            company: company.to_string(),
+        });
+        self
     }
 
     /// The same host on another file system.

@@ -1990,6 +1990,7 @@ impl Lowerer<'_> {
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
                     calc,
                     calc_refusal: refusal,
+                    declared_in: f.declared_in.map(|o| o as u32),
                 }
             })
             .collect();

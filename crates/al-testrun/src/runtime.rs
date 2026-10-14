@@ -217,6 +217,9 @@ pub struct RunOptions {
     pub only: Option<Vec<(usize, u32)>>,
     /// Record where tests are refused or fail (`--explain`).
     pub trace: bool,
+    /// Rows of a restored company, read when a session first touches a table (ADR-020). `None`:
+    /// a run without test data, as every corpus run is.
+    pub test_data: Option<al_host::testdata::TestData>,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -377,6 +380,9 @@ impl CorpusRuntime {
                 dotnet.clone(),
             );
             global_triggers_find_unavailable(&mut engine, &lowered);
+            if let Some(e) = Arc::get_mut(&mut engine) {
+                e.test_data = opts.test_data.clone();
+            }
             engine
         };
         let mut engine = make_engine();

@@ -54,6 +54,12 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `main.rs` (28): The al-bcdb binary: reads BC database backups (.bak, .bacpac). Entry: `main` 17.
 - `opts.rs` (108): Option parsing, strict the way bcdb's is. Entry: `command_keys` 20, `parse` 68.
 
+### al-bcdb-std
+
+- `file.rs` (66): A file as a byte source (pread), the OS side of `al-bcdb` (ADR-006). Entry: `FileSource` 17.
+- `lib.rs` (9): The OS side of `al-bcdb`: file byte source and the backup table provider for `--test-data` (ADR-020).
+- `provider.rs` (260): `BackupProvider`: the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
+
 ### al-builtins
 
 - `catalog.rs` (432): Generating the signature catalog from the docs scrape (ADR-008). Entry: `Catalog` 54, `load` 65, `for_target` 72, `generate` 219.
@@ -96,7 +102,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `contract.rs` (220): The conformance suite every `Store` must pass (ADR-003). Entry: `table` 7, `cx` 36, `row` 43, `scan_all` 59.
 - `lib.rs` (153): The Store trait and table definitions (TableDef, Row, AccessContext). Entry: `Store` 120, `TableDef` 21, `FieldDef` 12, `AccessContext` 40, `InsertOutcome` 58.
-- `memory.rs` (444): In-memory store on persistent maps. Entry: `MemStore` 33, `with_virtual_tables` 63, `detached` 72, `attached` 83.
+- `memory.rs` (640): In-memory store on persistent maps; a `Backing` gives untouched tables their restored rows (test data). Entry: `MemStore` 33, `with_virtual_tables` 63, `detached` 72, `attached` 83.
 
 ### al-deps
 
@@ -115,6 +121,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `dotnet.rs` (238): The `DotNet` provider seam (ADR-014 section 2). Entry: `DotNetType` 10, `DotNetHandle` 26, `DotNetValue` 30, `DotNetArg` 65.
 - `lib.rs` (350): The host seam: clock, identity, client type, file system (ADR-006). Entry: `Clock` 21, `Identity` 70, `ClientType` 54, `Host` 258.
+- `testdata.rs` (330): Test data capability (ADR-020): `TableProvider`, `Cell`, `TestData` (reads each table once for all threads) and `LoadStats` (the counts behind the summary line). Entry: `TableProvider`, `TestData`, `LoadStats`, `Summary`.
 - `random.rs` (112): .NET's seeded `System.Random` for `Random` and `Randomize`. Entry: `NetRandom` 15.
 
 ### al-ir
@@ -248,6 +255,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `rename.rs` (214): Rename propagation to related tables. Entry: `rename_references` 33, `propagate_rename` 86.
 - `reports.rs` (1209): Report objects at run time: dataset walk, triggers, request page, `Report.SaveAs` and the dataset rows. Entry: `report_builtin` 80, `first_use` 314, `report_save_as` 936, `dataset_begin` 1109.
 - `sessionops.rs` (422): Builtins that act on session state. Entry: `Sequence` 11.
+- `testdata.rs` (420): Test data (ADR-020): `TestBacking` maps a provider's columns onto the compiled table's fields, rebuilds the values and builds the table once per thread. Entry: `TestBacking`, `convert`, `sql_name`.
 - `transactions.rs` (446): Transactions as AL code sees them. Entry: `TxModel` 15, `CommitBehavior` 27, `codeunit_run` 193.
 - `ui.rs` (347): Dialogs raised by the code under test (`Message`, `Confirm`, `StrMenu`) and the test handler functions that answer them. Entry: `UiKind` 18, `UiHandler` 66, `dispatch_ui` 158, `dispatch_ui_returning` 163.
 - `views.rs` (377): Filter and view text: SetView, GetFilters, filter group text. Entry: `parse_filter_text` 28, `filter_text` 50, `get_filters` 117.
@@ -291,6 +299,11 @@ functions or methods; the file is in the module list above.
    so it sees Base Application without declaring it.
 4. `CorpusRuntime::run_suites_with` (the same compile and run as the corpus job; see "Corpus run" step 4), with
    `RunOptions::only` set to the selected codeunits. `CorpusRuntime::results` lists every test with its codeunit.
+   With `--test-data`, `run::open_test_data` opens the backup (`al_bcdb_std::BackupProvider`; the cached artifact of the
+   Microsoft apps' build when no PATH is given) and passes it as `RunOptions::test_data`; `run_suites_with` puts it on
+   each `Engine`. `Session::with_host` gives the store a `TestBacking` (al-vm/testdata.rs): a table the store holds no
+   entry for reads `provider.read` once for all threads (`TestData::read`), maps columns to fields, and builds the
+   table once per thread. `run::test` prints `LoadStats::summary` before the test summary.
 5. `run::test` filters to the selected tests, prints failures, `refusals::rank` / `render_top`, the summary line and the
    timing line, writes `output::junit`, and returns `output::exit_code`.
 

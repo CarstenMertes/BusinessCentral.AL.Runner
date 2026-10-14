@@ -29,6 +29,8 @@ pub struct TestArgs {
     pub junit: Option<PathBuf>,
     /// `--top-refusals [N]`: how many refusal reasons to list (default 10).
     pub top_refusals: Option<usize>,
+    /// `--top-failures [N]`: how many failure messages to list, ranked (default 10).
+    pub top_failures: Option<usize>,
     /// `--refusal-detail TEXT`: the reasons that contain TEXT, grouped finer than `--top-refusals`.
     pub refusal_detail: Option<String>,
     pub allow_not_run: bool,
@@ -41,6 +43,18 @@ pub struct TestArgs {
     pub dotnet_timeout_secs: Option<u64>,
     pub require_dotnet: bool,
     pub files_dir: Option<PathBuf>,
+    /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
+    pub test_data: bool,
+    /// The `.bak` or `.bacpac` named; else the cached artifact for the selected BC build.
+    pub test_data_path: Option<PathBuf>,
+    /// `--test-data-company NAME`: which company of the backup (default: the demo company).
+    pub test_data_company: Option<String>,
+}
+
+/// Whether `v` names a database backup, which is how `--test-data PATH` tells a path from an APP.
+fn is_backup(v: &str) -> bool {
+    let v = v.to_ascii_lowercase();
+    v.ends_with(".bak") || v.ends_with(".bacpac")
 }
 
 pub const DEFAULT_TOP: usize = 10;
@@ -79,6 +93,8 @@ OUTPUT
     --verbose            One line per test (PASS, FAIL, NOT RUN with its reason).
     --quiet              Summary only.
     --top-refusals [N]   List the N most common reasons tests were not run (default 10).
+    --top-failures [N]   List the N most common failure messages (default 10), numbers and quoted
+                         values folded.
     --refusal-detail TEXT  List the not-run reasons that contain TEXT (site and call arguments
                          folded, names kept), most common first (default 30 lines).
     --junit FILE         Write JUnit XML. A test that did not run is <skipped> with its reason.
@@ -93,9 +109,18 @@ EXIT CODES
     Order when several apply: 2, 6, 1, 7.
 
 TEST DATA
-    There is no test data yet (ADR-020 is Proposed). Microsoft's tests expect a CRONUS company,
-    so many of them fail on missing setup data. Trust the NOT RUN counts and reasons of such a
-    run; do not trust its failures.
+    Without --test-data a run has no company data. Microsoft's tests expect a CRONUS company, so
+    many of them fail on missing setup data; do not trust the failures of such a run.
+    --test-data [PATH]   Restore a company from a BC database backup (.bak or .bacpac). A table
+                         is read the first time a test touches it; the rest is never read.
+                         Without PATH: the cached Microsoft artifact of the selected BC build,
+                         ~/.bcartifacts.cache/sandbox/<version>/w1/BusinessCentral-W1.bak.
+                         Write `--test-data=PATH` or end the name in .bak/.bacpac: a bare name
+                         after --test-data is an APP.
+    --test-data-company NAME  The company to restore (exact name or prefix). Default: the only
+                         company, else 'CRONUS International Ltd.'.
+    The summary says what was loaded and every exclusion: tables the runtime could not rebuild,
+    tables the reader failed on (with its text), and columns left out.
 
 OTHER
     --files-dir DIR      Let the File data type read and write real files under DIR.
@@ -148,6 +173,35 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             a.top_refusals = Some(n);
             continue;
         }
+        if flag == "--top-failures" {
+            let n = match it.peek() {
+                Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => {
+                    let v = it.next().unwrap_or_default();
+                    let n = number("--top-failures", &v)?;
+                    if n == 0 {
+                        return Err("--top-failures needs a count of at least 1".into());
+                    }
+                    n
+                }
+                _ => DEFAULT_TOP,
+            };
+            a.top_failures = Some(n);
+            continue;
+        }
+        if flag == "--test-data" {
+            // The path is optional and an APP is positional, so only a name that ends in a
+            // backup's extension is taken as the path: `--test-data Tests.Source.zip` is an APP.
+            a.test_data = true;
+            if it.peek().is_some_and(|v| is_backup(v)) {
+                a.test_data_path = it.next().map(PathBuf::from);
+            }
+            continue;
+        }
+        if let Some(path) = flag.strip_prefix("--test-data=") {
+            a.test_data = true;
+            a.test_data_path = Some(PathBuf::from(path));
+            continue;
+        }
         if !flag.starts_with("--") {
             a.apps.push(PathBuf::from(flag));
             continue;
@@ -180,9 +234,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 let v = text()?;
                 a.dotnet_timeout_secs = Some(number(&flag, &v)? as u64);
             }
-            "--test-data" | "--test-data-company" | "--test-data-normalize-company" => {
+            "--test-data-company" => a.test_data_company = Some(text()?),
+            "--test-data-normalize-company" => {
                 return Err(format!(
-                    "{flag} is not available yet: test data from a BC backup needs ADR-020 (Proposed). Until then a run has no company data"
+                    "{flag} is not available: AL Runner v2's company normalization rules are not ported (ADR-020)"
                 ));
             }
             "--watch" | "--affected" | "--tdd" | "--per-suite" | "--include-failing" | "--strict-environment" => {
@@ -195,6 +250,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     }
     if a.apps.is_empty() {
         return Err("alrunner test needs at least one APP (an app folder or a *.Source.zip)".into());
+    }
+    if a.test_data_company.is_some() && !a.test_data {
+        return Err("--test-data-company needs --test-data".into());
     }
     if a.verbose && a.quiet {
         return Err("--verbose and --quiet cannot be combined".into());
@@ -248,6 +306,15 @@ mod tests {
     }
 
     #[test]
+    fn top_failures_count_is_optional_like_top_refusals() {
+        assert_eq!(test_args("test A --top-failures").top_failures, Some(DEFAULT_TOP));
+        assert_eq!(test_args("test A --top-failures 15").top_failures, Some(15));
+        let a = test_args("test --top-failures A");
+        assert_eq!(a.apps, vec![PathBuf::from("A")]);
+        assert!(p("test A --top-failures 0").is_err());
+    }
+
+    #[test]
     fn top_refusals_count_is_optional() {
         assert_eq!(test_args("test A --top-refusals").top_refusals, Some(DEFAULT_TOP));
         assert_eq!(test_args("test A --top-refusals 25").top_refusals, Some(25));
@@ -256,6 +323,30 @@ mod tests {
         assert_eq!(a.top_refusals, Some(DEFAULT_TOP));
         assert_eq!(a.apps, vec![PathBuf::from("A")]);
         assert!(p("test A --top-refusals 0").is_err());
+    }
+
+    #[test]
+    fn test_data_takes_an_optional_backup_path_that_cannot_be_mistaken_for_an_app() {
+        let a = test_args("test A --test-data");
+        assert!(a.test_data && a.test_data_path.is_none());
+        let a = test_args("test A --test-data x/y.bak");
+        assert_eq!(a.test_data_path, Some(PathBuf::from("x/y.bak")));
+        assert_eq!(a.apps, vec![PathBuf::from("A")]);
+        let a = test_args("test --test-data B.Source.zip");
+        assert!(
+            a.test_data && a.test_data_path.is_none(),
+            "an app after a bare --test-data is an app"
+        );
+        assert_eq!(a.apps, vec![PathBuf::from("B.Source.zip")]);
+        let a = test_args("test A --test-data=some/Demo.BACPAC");
+        assert_eq!(a.test_data_path, Some(PathBuf::from("some/Demo.BACPAC")));
+        let a = test_args("test A --test-data --test-data-company CRONUS");
+        assert_eq!(a.test_data_company.as_deref(), Some("CRONUS"));
+        assert!(
+            p("test A --test-data-company X")
+                .unwrap_err()
+                .contains("needs --test-data")
+        );
     }
 
     #[test]
@@ -270,7 +361,11 @@ mod tests {
 
     #[test]
     fn deferred_and_unavailable_options_are_refused_by_name() {
-        assert!(p("test A --test-data").unwrap_err().contains("ADR-020"));
+        assert!(
+            p("test A --test-data-normalize-company")
+                .unwrap_err()
+                .contains("not available")
+        );
         assert!(p("test A --watch").unwrap_err().contains("deferred"));
         assert!(p("serve").unwrap_err().contains("not implemented yet"));
     }

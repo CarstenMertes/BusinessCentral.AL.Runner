@@ -762,6 +762,10 @@ pub struct Field {
     pub calc: Option<CalcFormula>,
     /// Why a declared `CalcFormula` cannot be calculated yet.
     pub calc_refusal: Option<String>,
+    /// The object index of the table or table extension that declares the field; `None` for a
+    /// system field. Its app is the app that owns the field's column (test data, ADR-020).
+    #[serde(default)]
+    pub declared_in: Option<u32>,
 }
 
 /// One arm of a `TableRelation`: `if (Kind = const(A)) Table.Field where(...)`.

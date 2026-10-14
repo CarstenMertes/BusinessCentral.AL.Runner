@@ -154,7 +154,8 @@ fn a_bad_invocation_exits_2_and_says_why() {
     for (args, why) in [
         (vec!["test"], "at least one APP"),
         (vec!["test", ".", "--nope"], "unknown option"),
-        (vec!["test", ".", "--test-data"], "ADR-020"),
+        (vec!["test", ".", "--test-data-company", "X"], "needs --test-data"),
+        (vec!["test", ".", "--test-data", "/no/such/Demo.bak"], "Demo.bak"),
         (vec!["serve"], "not implemented yet"),
     ] {
         let o = alrunner(&args);
@@ -181,6 +182,7 @@ fn a_run_reports_pass_fail_and_not_run_and_exits_1_on_a_failure() {
     // The summary says failures are not to be trusted without test data.
     assert!(t.contains("no test data"), "{t}");
     assert!(t.contains("Top refusals"), "{t}");
+    assert!(!t.contains("Top failures"), "failures are ranked only on request: {t}");
     assert!(t.contains("Result: FAILED (exit 1)"), "{t}");
     assert!(t.contains("threads: check 2 (AL_CHECK_THREADS)"), "{t}");
 }
@@ -386,4 +388,93 @@ fn an_app_folder_may_be_given_as_a_dependency_and_a_build_fills_microsoft_variab
     ]);
     assert_eq!(code(&o), 0, "{}", text(&o));
     assert!(text(&o).contains("Tests: 1 total, 1 passed"), "{}", text(&o));
+}
+
+const TP_TESTS: &str = r#"
+table 50100 "exttest" { fields { field(1; id; Integer) { } field(2; own; Text[50]) { } } keys { key(PK; id) { } } }
+table 50101 "stray" { fields { field(1; id; Integer) { } } keys { key(PK; id) { } } }
+codeunit 50100 "Data Tests" { Subtype = Test;
+  [Test] procedure RestoredRows() var E: Record "exttest"; begin
+    if E.Count() <> 3 then Error('count %1', E.Count());
+    E.Get(2);
+    if E.own <> 'base-two' then Error(E.own);
+    if CompanyName() <> 'TP' then Error(CompanyName());
+  end;
+  [Test] procedure AnEmptyTable() var S: Record "stray"; begin if not S.IsEmpty() then Error('rows'); end; }
+"#;
+
+fn typeprobe() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../al-bcdb/tests/fixtures/typeprobe.bak")
+}
+
+#[test]
+fn test_data_restores_a_company_from_a_backup_and_the_summary_says_what_was_loaded() {
+    let d = tempfile::tempdir().unwrap();
+    let dir = d.path().join("tp");
+    write(
+        &dir,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000002", "TP", &[]),
+    );
+    write(&dir, "src/Tests.al", TP_TESTS);
+    let bak = typeprobe();
+    let o = alrunner(&[
+        "test",
+        dir.to_str().unwrap(),
+        "--no-download",
+        "--test-data",
+        bak.to_str().unwrap(),
+        "--test-data-company",
+        "TP",
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 0, "{t}");
+    assert!(t.contains("Tests: 2 total, 2 passed, 0 failed, 0 not run"), "{t}");
+    assert!(
+        !t.contains("no test data"),
+        "a run with test data carries no such warning: {t}"
+    );
+    assert!(
+        t.contains("Test data: 3 rows loaded from 1 tables of company 'TP' in typeprobe.bak"),
+        "{t}"
+    );
+    assert!(
+        t.contains("test data: ") && t.contains("typeprobe.bak (company 'TP'"),
+        "the header names the source: {t}"
+    );
+}
+
+#[test]
+fn a_company_the_backup_does_not_hold_is_a_start_up_error_that_lists_the_companies() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let bak = typeprobe();
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--test-data",
+        bak.to_str().unwrap(),
+        "--test-data-company",
+        "Nope",
+    ]);
+    assert_eq!(code(&o), 2);
+    assert!(
+        text(&o).contains("'ProbeCo'") && text(&o).contains("'TP'"),
+        "{}",
+        text(&o)
+    );
+}
+
+#[test]
+fn top_failures_ranks_the_failure_messages_with_numbers_folded() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--top-failures", "5"]);
+    let t = text(&o);
+    assert!(
+        t.contains("Top failures, failed tests: 1 failed, 1 distinct reasons"),
+        "{t}"
+    );
+    assert!(t.contains("boom N"), "{t}");
 }

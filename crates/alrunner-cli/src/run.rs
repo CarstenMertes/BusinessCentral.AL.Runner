@@ -3,8 +3,10 @@
 use crate::apps::{self, AppInput};
 use crate::args::{DEFAULT_TOP, TestArgs};
 use crate::output::{self, Counts};
+use al_bcdb_std::BackupProvider;
 use al_deps::load::WorkspaceApp;
 use al_host::dotnet::DotNetHost;
+use al_host::testdata::TestData;
 use al_testrun::deps::{self, Provision};
 use al_testrun::discover;
 use al_testrun::dotnet::{SidecarConfig, SidecarHost};
@@ -91,6 +93,23 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Opens the backup `--test-data` names, else the cached artifact whose build is one of `builds`
+/// (the versions of the Microsoft apps the run loaded), else the newest of the target's BC version.
+fn open_test_data(
+    a: &TestArgs,
+    builds: &[String],
+    major: u16,
+    minor: Option<u16>,
+) -> Result<(TestData, PathBuf), String> {
+    let path = match &a.test_data_path {
+        Some(p) => p.clone(),
+        None => al_bcdb_std::default_backup(builds, major, minor).map_err(|e| format!("--test-data: {e}"))?,
+    };
+    let provider = BackupProvider::open(&path, a.test_data_company.as_deref())
+        .map_err(|e| format!("--test-data {}: {e}", path.display()))?;
+    Ok((TestData::new(Arc::new(provider)), path))
+}
+
 pub fn test(a: &TestArgs) -> Result<u8, String> {
     let started = Instant::now();
     if let Some(dir) = &a.files_dir {
@@ -100,6 +119,12 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     if let Some(p) = &a.junit {
         write_file(p, "")?;
     }
+    // A backup named on the command line is opened before the long part: a wrong path or company
+    // fails here. The cached artifact is chosen once the Microsoft apps are known.
+    let mut test_data = match (a.test_data, &a.test_data_path) {
+        (true, Some(_)) => Some(open_test_data(a, &[], NEWEST_VERIFIED, None)?),
+        _ => None,
+    };
     let inputs = a
         .apps
         .iter()
@@ -181,6 +206,22 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         a.bc_version.as_deref(),
         true,
     )?;
+    if a.test_data && test_data.is_none() {
+        // The build of the Microsoft apps is the build of the data: what the feed gave, what
+        // --bc-version named, then the versions of the loaded packages and of the APPs
+        // (Microsoft's test archives carry the build as their version).
+        let mut builds: Vec<String> = Vec::new();
+        builds.extend(dependencies.build.as_ref().map(|u| u.build.to_string()));
+        builds.extend(a.bc_version.clone());
+        builds.extend(dependencies.manifests.iter().map(|m| m.version.clone()));
+        builds.extend(inputs.iter().map(|i| i.manifest.version.clone()));
+        test_data = Some(open_test_data(
+            a,
+            &builds,
+            chosen.target.bc.major,
+            Some(chosen.target.bc.minor),
+        )?);
+    }
     let mut bc_build = None;
     if let Some(u) = &dependencies.build {
         chosen.target.bc.build = Some(u.build.to_string());
@@ -241,6 +282,13 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             threads("AL_TEST_THREADS")
         );
         println!("isolation: TestIsolation = Codeunit (the default of Microsoft's test runner)");
+        if let Some((data, path)) = &test_data {
+            println!(
+                "test data: {} (company '{}', rows read when a test first touches a table)",
+                path.display(),
+                data.provider.company()
+            );
+        }
         if selection.active() {
             println!("selection: {} test codeunits of {}", chosen_units.len(), found.len());
         }
@@ -291,6 +339,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             v
         }),
         trace: false,
+        test_data: test_data.as_ref().map(|(d, _)| d.clone()),
     };
     let load_time = started.elapsed();
     let rt = CorpusRuntime::run_suites_with(
@@ -394,6 +443,20 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         println!("\n{}", refusals::render_top("not-run tests", &list, n));
     }
 
+    if let Some(n) = a.top_failures.filter(|_| counts.fail > 0) {
+        let list = refusals::rank(results.iter().filter_map(|r| match &r.outcome {
+            Outcome::Fail(why) => Some((
+                CaseId {
+                    codeunit: r.codeunit,
+                    name: r.test.clone(),
+                },
+                why.clone(),
+            )),
+            _ => None,
+        }));
+        println!("\n{}", refusals::render_top_failures("failed tests", &list, n));
+    }
+
     if let Some(needle) = &a.refusal_detail {
         let list = refusals::detail(
             results.iter().filter_map(|r| match &r.outcome {
@@ -427,7 +490,18 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     } else {
         0.0
     };
-    println!("{}", output::summary_line(&counts));
+    if let Some((data, _)) = &test_data {
+        let summary = data.stats.summary();
+        println!("{}", summary.line(&data.provider.source(), data.provider.company()));
+        let refusals = summary.refusals();
+        for line in refusals.iter().take(if a.verbose { usize::MAX } else { 10 }) {
+            println!("{}", al_testrun::refusals::clip(line, 400));
+        }
+        if !a.verbose && refusals.len() > 10 {
+            println!("... {} more refused tables (--verbose lists them)", refusals.len() - 10);
+        }
+    }
+    println!("{}", output::summary_line(&counts, test_data.is_some()));
     println!(
         "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",
         secs(load_time),

@@ -28,6 +28,14 @@ impl Baseline {
 }
 
 impl Session {
+    /// Whether a restored company (test data, ADR-020) has rows for table `object` in the session
+    /// company. Reading it loads the table.
+    pub fn backs_rows(&self, object: u32) -> bool {
+        self.store
+            .backed_rows(&self.cx.company, object)
+            .is_some_and(|r| !r.is_empty())
+    }
+
     /// Commits and captures the session's data.
     pub fn capture_baseline(&mut self) -> Baseline {
         self.commit_transaction();

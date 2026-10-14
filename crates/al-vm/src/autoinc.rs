@@ -52,6 +52,17 @@ impl Session {
         )
     }
 
+    /// The AutoIncrement counter of a table: what this session has handed out, else the largest
+    /// value among the restored rows (test data), else 0. A restored identity column continues
+    /// above its rows.
+    fn counter(&self, t: &TableDef, slot: &(String, u32)) -> i64 {
+        self.autoinc.get(slot).copied().unwrap_or_else(|| {
+            self.store
+                .backed_rows(&slot.0, t.object)
+                .map_or(0, |r| r.auto_increment_floor())
+        })
+    }
+
     /// Gives a zero key the next counter value (corpus
     /// record/TestAutoIncrementContracts.al:25: setting the key to 0 requests a new value).
     /// Returns whether a value was taken.
@@ -66,7 +77,7 @@ impl Session {
             return Ok(false);
         }
         let slot = Self::counter_slot(t, company);
-        let next = self.autoinc.get(&slot).copied().unwrap_or(0) + 1;
+        let next = self.counter(t, &slot) + 1;
         row[field] = ops::convert(Value::BigInteger(next), &t.fields[field].ty)?;
         self.autoinc.insert(slot, next);
         Ok(true)
@@ -77,7 +88,7 @@ impl Session {
     pub(crate) fn note_explicit_key(&mut self, t: &TableDef, field: usize, row: &[Value], company: &str) {
         let Some(k) = number(&row[field]) else { return };
         let slot = Self::counter_slot(t, company);
-        let cur = self.autoinc.get(&slot).copied().unwrap_or(0);
+        let cur = self.counter(t, &slot);
         if k > cur {
             self.autoinc.insert(slot, k);
         }
@@ -138,11 +149,8 @@ impl Session {
         // A filter on a normal field limits what Truncate deletes (corpus
         // record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_WithFilterOnANormalField_RemovesOnlyTheFilteredRows).
         let slot = Self::counter_slot(t, &cx.company);
-        if let Some(counter) = self.autoinc.get(&slot).copied() {
-            self.truncate_undo.entry(slot.clone()).or_insert(counter);
-        } else {
-            self.truncate_undo.entry(slot.clone()).or_insert(0);
-        }
+        let counter = self.counter(t, &slot);
+        self.truncate_undo.entry(slot.clone()).or_insert(counter);
         if reset {
             self.autoinc.insert(slot, 0);
         }

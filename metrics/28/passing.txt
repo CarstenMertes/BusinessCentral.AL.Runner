@@ -222,6 +222,7 @@
 60059 Record_CurrentCompany_ReturnsCompanyName
 60059 Record_DeleteLink_RemovesLink
 60059 Record_DeleteLinks_RemovesAll
+60059 Record_FieldActive_EnabledField_ReturnsTrue
 60059 Record_FieldCaption_ReturnsCaption
 60059 Record_FieldName_ReturnsFieldName
 60059 Record_FieldNo_ReturnsFieldNumber

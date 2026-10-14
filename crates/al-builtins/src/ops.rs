@@ -460,7 +460,7 @@ mod tests {
         // json/TestJsonComplete.al JsonObject_GetOption_ReturnsInteger: `Opt: Integer; Opt := JObj.GetOption('o')`;
         // JsonArray_GetDuration_ReturnsDuration: `Dur: Duration; Dur := 86400000`.
         assert!(matches!(
-            convert(Value::Option(2, std::rc::Rc::from(vec![])), &RtType::Integer),
+            convert(Value::Option(2, std::sync::Arc::from(vec![])), &RtType::Integer),
             Ok(Value::Integer(2))
         ));
         assert!(matches!(

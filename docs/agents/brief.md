@@ -1,0 +1,176 @@
+# Brief for implementation agents
+
+The rules every agent follows when it works on al-runtime-rs, whether it runs
+on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
+`CLAUDE.md` holds the hard rules. This file adds the working method.
+
+## Before you start
+
+1. Read `CLAUDE.md`, `docs/architecture.md`, `docs/status.md`, `docs/codemap.md`,
+   `docs/adr/README.md` and every ADR for your area. The hard rules in
+   `CLAUDE.md` are binding.
+2. Work in your own worktree and branch, never in the main checkout:
+   `git worktree add ../wt-<area> -b <branch> origin/main`.
+   If the worktree already exists, continue in it.
+3. In a new worktree, run `git submodule update --init`. The corpus pin check
+   needs the corpus history, so also run `git -C corpus fetch --unshallow` if
+   `git -C corpus rev-parse --is-shallow-repository` prints `true`.
+4. Build once: `cargo build --release`. Then use the binary, not `cargo run`.
+
+## How to work
+
+- **Red/green TDD for every behavior.** Write the failing test first. Keep the
+  red run output for your report. A bug fix starts with a test that reproduces
+  the bug.
+- **No guessing at semantics.** Cite the corpus test (`file:line`) that pins a
+  behavior in a code comment. If nothing pins it, refuse explicitly and add the
+  assumption to `docs/probes-needed.md`, with the probe you would want. Do not
+  implement the guess. Error texts come from the corpus and are never invented.
+- **Unsupported is refused explicitly.** Use a lowering reason, a diagnostic in
+  `al-sema`, or `Signal::Unsupported`. Never run a guessed or partial behavior
+  silently.
+- **Never weaken an oracle.** Never edit `corpus/` or `oracle/`. Never remove
+  lines from `metrics/<major>/passing.txt`. The one exception is a case shown
+  to have passed by accident, in its own commit that names each case. If real
+  BC and the corpus disagree, say so in your report; the owner opens the corpus
+  issue.
+- **Seams change only through an ADR.** Additive changes (a new `Value`
+  variant, an IR field, a defaulted `Ctx` method) need no ADR. Core crates do
+  no OS access (ADR-006).
+- **Do not build features that only hide start-up or run cost** (watch mode,
+  `--affected`, warm server state, `--jobs`, persistent caches). See ADR-016.
+- **Performance.** The goal is a corpus run with Microsoft's apps in under one
+  second, then lower. A cache is the last resort. Never add a cache to reach a
+  number; make the work itself cheaper. Measure before and after any change on
+  a compile or run path (`al-test-cli --timings`).
+- **Nothing from Microsoft and nothing from other projects in the repo.**
+  Never commit Microsoft source, packages or downloaded artifacts. Never
+  commit code copied from a third-party project, including AL Runner v2. You
+  may read such code for guidance. You may not paste it.
+- **Probes need real BC.** You have no BC container. Do not try to run one.
+  Record what a probe must show in `docs/probes-needed.md` and refuse the
+  behavior until the owner's probe result arrives.
+
+## When the owner is not available
+
+Work does not stop for an owner decision. Pick the sensible default, using AL
+Runner v2 behavior as guidance. Then:
+
+1. Record the decision in the relevant ADR under
+   "Decided without owner review (<date>)".
+2. Add one line to `docs/owner-review.md`.
+3. Never weaken an oracle or a hard rule to make progress. A decision that
+   needs a seam change is not yours: write the ADR as Proposed, stop that part
+   of the task, and say so in your report.
+
+## Code navigation: read less text
+
+Large files cost many tokens (`lower.rs` about 4700 lines, `pages.rs` about
+3700, `check.rs` and `runtime.rs` about 2300 each).
+
+1. Read `docs/codemap.md` first. It says which module owns what.
+2. Use the LSP tool (rust-analyzer). Load it once with ToolSearch
+   `select:LSP`. Then:
+   - `documentSymbol` for the outline of a file, before you read it.
+   - `workspaceSymbol` to find a definition anywhere.
+   - `goToDefinition`, `findReferences`, `incomingCalls`, `outgoingCalls` and
+     `hover` instead of grep plus reading.
+   The first query in a new worktree waits for indexing (about a minute).
+3. Read with `offset` and `limit`. Never read a file over 500 lines whole.
+4. Keep tool output small: pipe through `head`, use `grep -c`, and use the
+   `al-test-cli` selection and report flags instead of dumping JUnit XML.
+
+## Fast loop
+
+A full corpus run takes about 20 s with Microsoft's apps, and `check.sh` takes
+minutes. Do not iterate on either. `al-test-cli --help` lists every flag.
+
+1. Find work: `./target/release/al-test-cli --root . --top-refusals 15` ranks
+   the refusal reasons of the not-run cases, with one example test each.
+   `--top-refusals-area FOLDER` does it for one corpus folder.
+2. Understand one test: `--explain TestName` prints its outcome, the refusal
+   reason with routine and `file:line`, and for a failure the error, code and
+   stack. Add `--codeunit ID` if the name is not unique.
+3. Iterate: select with `--codeunit ID`, `--test SUBSTR`, `--area FOLDER` or
+   `--file SUFFIX` (each repeats; the union is used). Only the selected test
+   codeunits compile and run, and the ratchet covers only them. Add
+   `--no-deps` (about 0.5 s) when the test needs no Microsoft app. A selected
+   codeunit runs whole, because its tests share state.
+4. Before you commit: one full run with `--baseline-diff`. It shows what newly
+   passes, what failed, and which baseline cases stopped passing, by area.
+5. `--timings` shows where a run spends its time.
+
+Do not write ad-hoc scripts that parse JUnit XML. If a view of a run is
+missing, add a flag to `al-test-cli`.
+
+## Memory and threads
+
+A corpus run must stay under about 3 GB. One uncapped run once reached 14 GB.
+A run that hits a cap is a bug in your change (unbounded recursion, a loop
+that never ends, a snapshot per iteration). Find it with a unit test before
+you run the corpus again.
+
+- **Linux with systemd:** run under a cap:
+  `systemd-run --user --scope -q -p MemoryMax=3G ./target/release/al-test-cli ...`
+  Use 4 to 6 GB for eager runs or runs with test data.
+- **Everywhere else (macOS, WSL without systemd):** keep a run under about
+  3 GB, watch it, and always use `timeout`, for example
+  `timeout 600 ./target/release/al-test-cli ...`.
+- Do not use `prlimit --as` or `ulimit -v` on runs that use Microsoft's apps.
+  They also cap the .NET helper process. CoreCLR then fails to start ("Failed
+  to create CoreCLR, 0x8007000E") and every DotNet test is refused. That looks
+  like many baseline regressions and is not.
+- Never run several corpus runs at once. Never run `cargo-mutants` with more
+  than `-j 1`.
+- Set thread counts to fit the machine. The runtime uses one worker thread per
+  core by default. On a shared or small machine use, for example:
+  `CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=4 AL_CHECK_THREADS=4 AL_LOWER_THREADS=4 AL_TEST_THREADS=4`
+  Use fewer than 4 on a machine with fewer than 8 cores.
+- Timing measurements need a quiet machine. Note the load average with every
+  number you report.
+
+## Finishing
+
+Run these in order. Do not skip any.
+
+1. Regenerate the baseline for every major, never by hand:
+   `./target/release/al-test-cli --root . --update-baseline --bc-version N`
+   for N in 27, 28 and 29. It refuses while a selection is active or while a
+   baseline case regresses. Commit the `metrics/<major>/passing.txt` files with
+   the code.
+2. `./check.sh` must be green. It runs fmt, clippy with `-D warnings`, all
+   tests and the corpus ratchet.
+3. Run the release-only tests. `check.sh` skips these `#[ignore]`d tests and CI
+   runs them:
+   `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget --test corpus_resolve_deps -- --ignored`
+   If the golden list of unresolved items changes, review the change and
+   justify it in your report before you regenerate it with `UPDATE_GOLDEN=1`.
+4. Run the demand/eager differential if you touched dependency loading,
+   demand-driven compile, lowering, the checker or anything a Microsoft app
+   reaches. When unsure, run it:
+   `tools/demand_vs_eager.sh run`
+   It takes about 3 minutes and needs `python3`. It compares a normal run with
+   an eager run (`AL_EAGER_DEPENDENCIES=1`). Any difference not listed in
+   `tools/demand-eager-known-differences.txt` fails. Never add to that list to
+   make it pass.
+5. Commit on your branch. Do not add attribution or session lines to commit
+   messages. The message says what changed and why, in plain American English.
+6. Merge current `origin/main` into your branch (`git fetch`, then
+   `git merge origin/main`). Resolve conflicts. Regenerate the baselines after
+   the merge; never hand-merge `metrics/<major>/passing.txt`. Run `check.sh`
+   again and commit.
+7. Do not merge into `main`. Whether you push is set by your task: a local
+   agent does not push, a remote worker pushes its own branch and nothing else.
+
+## Report
+
+Your final message or issue comment has these parts:
+
+- Branch and final commit.
+- Passed, failed and not run, before and after, for each BC version (27, 28,
+  29). Confirm no baseline case regressed.
+- What you implemented, with the corpus files that now pass.
+- What is still refused or failing in your area, with the reason and counts.
+- Gates run (`check.sh`, release-only tests, demand/eager) and their result.
+- Assumptions you added to `docs/probes-needed.md`, and the probes you want.
+- Decisions taken without the owner, and what a reviewer should look at first.

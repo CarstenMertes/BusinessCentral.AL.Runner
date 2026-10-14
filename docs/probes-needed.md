@@ -597,13 +597,21 @@ refused (or assumed, where the row says so) until its probe is in the corpus.
    Integer, a Decimal, a Boolean, a Date, an Option and an Enum field, a FlowField and a Blob: the exact
    text (separator, which fields, FlowFields calculated or not), and whether two records that differ in
    only one field format differently.
-5. **Variables of a table object persist per record variable.** NOT MODELLED (a gap, not a refusal): a
-   `var` section of a table holds state that lives as long as the record variable (a trigger sets
-   `Hold := 10`, a later trigger or procedure of the same variable reads it). Each trigger and each
-   procedure call here gets a fresh table instance, so the state is lost. Price List Line relies on
-   it (the global `PriceAsset` set in the Asset Type trigger is read in the Amount Type trigger), and
-   Tests-ERM's `T043_AmountTypeMustBeDiscountForItemDiscGroup` (two tests) fails on it. Probe wanted:
-   a table with `var Hold: Integer; Buf: Record X temporary`, field A's OnValidate sets both, field B's
-   OnValidate reads them, and a procedure reads them: on the same record variable, on a copy made by
-   `:=`, by `Copy`, by value parameter, on `TransferFields`, after `Init()` and `Clear()`, and a
-   second variable of the same table.
+5. **Variables of a table object persist per record variable.** DONE (ADR-021). Probed on BC 27.5
+   (corpus branch `al-runtime-rs`, head `eb46da5`, `tests/al-language/tableglobals/`, 58 tests) and
+   modelled; the two `T043` tests of Tests-ERM pass. What the probes did not pin is in "Table globals
+   (ADR-021)" below.
+
+## Table globals (ADR-021)
+
+Assumptions and open points beside the 58 probe tests (corpus branch `al-runtime-rs`, head `eb46da5`, folder
+`tests/al-language/tableglobals/`; cited by path until the corpus bump).
+
+| Area | Assumption | Pinned by | Where |
+|---|---|---|---|
+| Page Insert and Modify | A page `Insert` or `Modify` that follows no field validation (a draft row from `New()` and `Close()`, a modify after an action changed `Rec`) runs the triggers and subscribers on the page record's own globals. After a validation they see fresh globals (pinned) | TableGlobals_PageInsert_*, TableGlobals_PageModify_* (after a validation only) | `pages.rs` |
+| Page validation | The page client sets the page record's globals back to their initial values before and after each field validation. Measured: the trigger starts fresh and the record is fresh afterwards. Validations the client runs for other reasons (filter-stamped defaults on a new row) are not reset | TableGlobals_PageFieldValidate_*, TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation | `pages.rs` |
+| xRec in a plain procedure | In a procedure called on a record variable (no trigger), `xRec` here holds a copy of `Rec`'s fields taken at the call and the variable's xRec globals. Its field values are not pinned | none | `records.rs` `enter_record` |
+| Reset of record-typed globals | `Clear` and `Reset` set every global of the table back to its initial value, record variables included (pinned for Integer and Text) | TableGlobals_Clear_*, TableGlobals_Reset_* | `records.rs` `reset_table_globals` |
+| Records in arrays and `SetTable` targets | Same per-state rules by construction; not probed | none | |
+| `Rename` | `OnRename` runs on the variable's instance like the other write triggers; not probed | none | `records.rs` |

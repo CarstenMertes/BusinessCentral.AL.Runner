@@ -89,7 +89,7 @@ pub enum Value {
     Guid([u8; 16]),
     DateFormula(String),
     /// Ordinal and the option's member names (needed by Format).
-    Option(i32, Rc<[String]>),
+    Option(i32, std::sync::Arc<[String]>),
     Enum(u32, i32),
     List(Rc<RefCell<Vec<Value>>>),
     Dictionary(Rc<RefCell<Vec<(Value, Value)>>>),
@@ -451,6 +451,96 @@ pub struct RecordState {
     /// AL code has written a field of the buffer. BC builds the buffer of a record variable on
     /// the first write, and evaluates the `InitValue`s only then (record/TestDateTimeInitValue.Codeunit.al).
     pub touched: bool,
+    /// The table's and its extensions' global variables of this record variable (ADR-021).
+    pub globals: TableGlobals,
+}
+
+/// The global variables of a table and of its table extensions, as one record variable holds
+/// them (ADR-021). They live as long as the variable: every procedure and trigger call on it
+/// runs on the same `Instance`, created on the first call. `Clone` gives an EMPTY set, because
+/// a copy of a record state (a record passed by value, a row image, `RecordRef.GetTable`) starts
+/// with fresh globals; use [`TableGlobals::share`] to keep two states on one set.
+///
+/// The instances hold `Rec` and `xRec` only while a call runs (the VM puts back what the slots
+/// held before), so a state owns its globals and nothing points back: no `Rc` cycle.
+#[derive(Default)]
+pub struct TableGlobals {
+    // Interior mutability: a handle is made through a shared borrow of the record state, which a
+    // caller may hold (`xrec_handle(rec, rec.borrow().fields.clone())`).
+    data: RefCell<Option<Rc<RefCell<GlobalsData>>>>,
+}
+
+/// Debug prints the number of instances only: while a call runs, an instance points at its record.
+impl std::fmt::Debug for TableGlobals {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let n = self.data.borrow().as_ref().map_or(0, |d| d.borrow().instances.len());
+        write!(f, "TableGlobals({n})")
+    }
+}
+
+#[derive(Default)]
+struct GlobalsData {
+    /// One instance per object (the table, each table extension) that has been called.
+    instances: Vec<(u32, Rc<RefCell<Instance>>)>,
+    /// `xRec`'s own set: it persists with the variable and survives `Clear` and `Reset` of `Rec`.
+    xrec: TableGlobals,
+}
+
+impl Clone for TableGlobals {
+    fn clone(&self) -> Self {
+        TableGlobals::default()
+    }
+}
+
+impl TableGlobals {
+    /// An empty set that other states can [`share`](TableGlobals::share).
+    pub fn new_shared() -> TableGlobals {
+        TableGlobals {
+            data: RefCell::new(Some(Rc::default())),
+        }
+    }
+
+    /// Whether nothing has been called on this set yet.
+    pub fn is_unset(&self) -> bool {
+        self.data.borrow().is_none()
+    }
+
+    fn data(&self) -> Rc<RefCell<GlobalsData>> {
+        self.data.borrow_mut().get_or_insert_with(Default::default).clone()
+    }
+
+    /// A second handle onto this very set (not a copy). Creates the set if there is none yet.
+    pub fn share(&self) -> TableGlobals {
+        TableGlobals {
+            data: RefCell::new(Some(self.data())),
+        }
+    }
+
+    /// The instance of `object`, if one was created.
+    pub fn instance(&self, object: u32) -> Option<Rc<RefCell<Instance>>> {
+        let data = self.data.borrow();
+        let d = data.as_ref()?.borrow();
+        d.instances.iter().find(|(o, _)| *o == object).map(|(_, i)| i.clone())
+    }
+
+    pub fn set_instance(&self, object: u32, inst: Rc<RefCell<Instance>>) {
+        self.data().borrow_mut().instances.push((object, inst));
+    }
+
+    /// Every instance created so far.
+    pub fn instances(&self) -> Vec<(u32, Rc<RefCell<Instance>>)> {
+        match &*self.data.borrow() {
+            Some(d) => d.borrow().instances.clone(),
+            None => Vec::new(),
+        }
+    }
+
+    /// A handle onto `xRec`'s set (created on first use).
+    pub fn xrec(&self) -> TableGlobals {
+        let data = self.data();
+        let d = data.borrow();
+        d.xrec.share()
+    }
 }
 
 /// A set of field positions.
@@ -689,6 +779,33 @@ pub enum LibraryValue {
 }
 
 impl Value {
+    /// Whether the value holds no `Rc` handle: plain data (`Option` member lists and blob buffers
+    /// are `Arc`s), so
+    /// that rows made of such values can be read from several threads.
+    pub fn is_plain(&self) -> bool {
+        matches!(
+            self,
+            Value::Null
+                | Value::Boolean(_)
+                | Value::Integer(_)
+                | Value::BigInteger(_)
+                | Value::Decimal(_)
+                | Value::Byte(_)
+                | Value::Char(_)
+                | Value::Text(_)
+                | Value::Code(_)
+                | Value::Date(..)
+                | Value::Time(_)
+                | Value::DateTime(_)
+                | Value::Duration(_)
+                | Value::Guid(_)
+                | Value::DateFormula(_)
+                | Value::Option(..)
+                | Value::Enum(..)
+                | Value::Blob(_)
+        )
+    }
+
     pub fn default_for(t: &RtType) -> Value {
         match t {
             RtType::Boolean => Value::Boolean(false),
@@ -705,7 +822,7 @@ impl Value {
             RtType::Duration => Value::Duration(0),
             RtType::Guid => Value::Guid([0; 16]),
             RtType::DateFormula => Value::DateFormula(String::new()),
-            RtType::Option(m) => Value::Option(0, Rc::from(m.as_slice())),
+            RtType::Option(m) => Value::Option(0, std::sync::Arc::from(m.as_slice())),
             RtType::Enum(id) => Value::Enum(*id, 0),
             RtType::Variant => Value::Null,
             RtType::List(_) => Value::List(Rc::default()),
@@ -872,8 +989,23 @@ mod tests {
         assert!(!Value::Integer(1).is("Decimal"));
         assert!(Value::Code("A".into()).is("code"));
         assert!(!Value::Code("A".into()).is("Text"));
-        assert!(Value::Option(1, Rc::from(vec![])).is("Option"));
+        assert!(Value::Option(1, std::sync::Arc::from(vec![])).is("Option"));
         assert!(Value::Enum(1, 0).is("Option"));
         assert!(!Value::Null.is("Integer"));
+    }
+
+    #[test]
+    fn scalars_and_options_are_plain_and_handles_are_not() {
+        let plain = [
+            Value::Null,
+            Value::Integer(1),
+            Value::Text("a".into()),
+            Value::Guid([1; 16]),
+            Value::Enum(1, 2),
+            Value::Option(1, std::sync::Arc::from(vec!["a".to_string()])),
+        ];
+        assert!(plain.iter().all(Value::is_plain));
+        assert!(!Value::List(Default::default()).is_plain());
+        assert!(!Value::Library("X".into(), Default::default()).is_plain());
     }
 }

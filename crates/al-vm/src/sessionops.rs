@@ -206,7 +206,7 @@ impl Session {
             // Throws, which expects an error whose text is not pinned: refused. A set after a read only
             // is not pinned either and takes effect (docs/probes-needed.md).
             "Database.CurrentTransactionType#1" => {
-                let members: std::rc::Rc<[String]> = al_builtins::sysenum::option_members("TransactionType")
+                let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("TransactionType")
                     .expect("a system option")
                     .into();
                 let wrote = self.tx_wrote || self.in_write_transaction();

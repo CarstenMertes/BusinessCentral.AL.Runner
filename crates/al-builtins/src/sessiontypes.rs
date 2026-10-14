@@ -5,7 +5,6 @@
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, NotificationState, SessionSettingsState, Value};
-use std::rc::Rc;
 
 type Out = Result<Value, Signal>;
 
@@ -207,7 +206,7 @@ fn n_scope(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         }
         // A notification nobody set a scope on is LocalScope (handlers/TestNotificationSendRecallContracts.al:66).
         None => with_notification(r, |n| n.scope.unwrap_or(0)).map(|o| {
-            let members: Rc<[String]> = crate::sysenum::option_members("NotificationScope")
+            let members: std::sync::Arc<[String]> = crate::sysenum::option_members("NotificationScope")
                 .expect("a system option")
                 .into();
             Value::Option(o, members)

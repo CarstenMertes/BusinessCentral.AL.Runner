@@ -13,6 +13,8 @@ rust-version.workspace = true
 # to skip a failing test.
 default = ["cli-e2e"]
 cli-e2e = []
+# Links mimalloc as the global allocator (ADR-016: musl's allocator is slow).
+mimalloc = ["dep:mimalloc"]
 
 [[test]]
 name = "corpus_harness"
@@ -36,6 +38,9 @@ quick-xml.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+mimalloc = { version = "0.1", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

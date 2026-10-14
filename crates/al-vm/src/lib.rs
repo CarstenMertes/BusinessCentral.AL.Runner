@@ -891,7 +891,14 @@ impl Session {
                 Ok(())
             }
             S::Foreach { var, collection, body } => {
-                let items: Vec<Value> = match self.eval(collection, f)? {
+                let coll = self.eval(collection, f)?;
+                // A .NET collection, or a DotNet variable that holds none (ADR-024 section 4).
+                let dotnet_var = matches!(coll, Value::Null)
+                    && matches!(collection, ir::Expr::Load(p) if matches!(self.place_type(p, f), RtType::DotNet(_)));
+                if matches!(coll, Value::DotNet(_)) || dotnet_var {
+                    return self.foreach_dotnet(var, coll, collection, body, f);
+                }
+                let items: Vec<Value> = match coll {
                     Value::List(l) => l.borrow().clone(),
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
                     other => match al_builtins::xml::node_list_items(&other) {
@@ -1037,6 +1044,8 @@ impl Session {
                     B::Le => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Greater),
                     B::Gt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Greater),
                     B::Ge => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Less),
+                    B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(&l, &r)?),
+                    B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(&l, &r)?),
                 })
             }
             E::In(v, set) => {
@@ -1139,8 +1148,14 @@ impl Session {
                     })
             }
             E::DotNetCoerce(t, e) => {
+                self.dotnet.clear_null_string();
                 let v = self.eval(e, f)?;
                 self.dotnet_coerce(v, t)
+            }
+            E::DotNetOperand(e, how) => {
+                self.dotnet.clear_null_string();
+                let v = self.eval(e, f)?;
+                self.settle_operand(v, *how)
             }
             E::Builtin {
                 id,
@@ -1673,6 +1688,12 @@ impl al_builtins::format::FormatCtx for Session {
 impl al_builtins::native::Ctx for Session {
     fn format_composite(&mut self, v: &Value) -> Option<Result<String, Signal>> {
         self.format_composite_value(v)
+    }
+    fn copy_stream_dotnet(&mut self, out: &Value, src: &Value, count: Option<i64>) -> Option<Result<(), Signal>> {
+        Some(self.copy_stream_with_dotnet(out, src, count))
+    }
+    fn format_dotnet(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        self.format_dotnet_value(v)
     }
     fn last_error(&self) -> AlError {
         self.last_error.clone()

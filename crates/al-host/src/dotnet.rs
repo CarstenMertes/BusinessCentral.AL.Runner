@@ -29,6 +29,10 @@ pub type DotNetHandle = u64;
 #[derive(Debug, Clone, PartialEq)]
 pub enum DotNetValue {
     Null,
+    /// A null whose declared CLR type is `string` (ADR-024). BC reads it as an empty text in an
+    /// expression and as an empty Variant when assigned; a null of any other type is `Null`.
+    /// Only the host sends it, never the VM.
+    NullString,
     Bool(bool),
     Byte(u8),
     Char(u16),
@@ -165,6 +169,19 @@ pub trait DotNetSession {
         name: &str,
         value: DotNetValue,
     ) -> Result<DotNetReply, DotNetFailure>;
+    /// Appends `bytes` to the .NET stream held under `handle` (ADR-024, `CopyStream` into a
+    /// `DotNet` stream). The default refuses; a handle that is not a `System.IO.Stream` is
+    /// refused with its CLR type.
+    fn stream_write(&mut self, _handle: DotNetHandle, _bytes: &[u8]) -> Result<(), DotNetFailure> {
+        Err(DotNetFailure::Refused("this host cannot copy a stream".into()))
+    }
+    /// Reads from the .NET stream held under `handle` (ADR-024, `CopyStream` out of a `DotNet`
+    /// stream). A `MemoryStream` read without a count returns the whole stream whatever its position
+    /// and leaves the position at 0; with a count it reads from the position and the position
+    /// follows. The default refuses.
+    fn stream_read(&mut self, _handle: DotNetHandle, _max: Option<usize>) -> Result<Vec<u8>, DotNetFailure> {
+        Err(DotNetFailure::Refused("this host cannot copy a stream".into()))
+    }
     /// Drops host objects. Called before the next call and when the session closes.
     fn release(&mut self, handles: &[DotNetHandle]);
     /// Ends the host side for this session (the sidecar process).

@@ -2108,7 +2108,7 @@ fn is_stmt(k: SyntaxKind) -> bool {
 /// - `Report.UseRequestPage`: handlers/TestReportGetFilterInTriggers.al:66 and
 ///   codeunit/TestWriteTxTestBoundary.al:272 (`UseRequestPage(false)`).
 /// - `System.WorkDate`: session/TestSessionFunctions.al:63-65 (`WorkDate(20240101D)`).
-/// - `HttpRequestMessage.Method`: network/TestHttpRequestMessage.al:23.
+/// - `HttpRequestMessage.Method`: network/TestHttpRequestMessage.al:23; `.Content`: :39.
 /// - `File.TextMode`, `File.WriteMode`: Base Application's "Export Consolidation" report.
 fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
@@ -2136,7 +2136,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
             | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
             | ("System", "WorkDate")
-            | ("HttpRequestMessage", "Method")
+            | ("HttpRequestMessage", "Method" | "Content")
             | ("File", "TextMode" | "WriteMode")
     )
 }
@@ -5643,6 +5643,18 @@ codeunit 50101 C2
         let (oi, r) = routine(&l, "P");
         assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
         assert!(format!("{:?}", r.body).contains("DotNetCoerce(Text"), "{:?}", r.body);
+    }
+
+    // NPR install code and Base Application's Job Queue Entry compare with `ReportLayoutType::Rdlc` and `::Word`.
+    // The members are the documentation's (a documentation-only assumption, docs/probes-needed.md).
+    #[test]
+    fn report_layout_type_members_lower() {
+        let (ws, l) = lower_src(
+            "codeunit 50100 C { procedure P(): Boolean begin exit(ReportLayoutType::Rdlc <> ReportLayoutType::Word); end; }",
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, _) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
     }
 
     // A `[Native]` procedure of a platform app has an empty AL body: the service tier implements it. Running

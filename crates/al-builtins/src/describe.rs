@@ -149,6 +149,8 @@ impl Describe for LibraryValue {
             LibraryValue::ModuleInfo(_) => "ModuleInfo".into(),
             LibraryValue::DataTransfer(_) => "DataTransfer".into(),
             LibraryValue::HttpRequest(_) => "HttpRequestMessage".into(),
+            LibraryValue::HttpContent(_) => "HttpContent".into(),
+            LibraryValue::HttpHeaders(_) => "HttpHeaders".into(),
             LibraryValue::Version(_) => "Version".into(),
             LibraryValue::ErrorInfo(_) => "ErrorInfo".into(),
             LibraryValue::Json(_) => "a JSON node".into(),

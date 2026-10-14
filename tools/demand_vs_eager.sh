@@ -53,12 +53,14 @@ run() {
   mkdir -p "$dir"
   rm -f "$dir"/runtime-junit*.xml "$dir"/eager-junit*.xml
   # One corpus run at a time, under a memory cap (a run must stay under 3 GB).
-  local cap=()
+  local cap=() eager_cap=()
   command -v systemd-run >/dev/null && cap=(systemd-run --user --scope -q -p MemoryMax=3G)
+  # The eager compile holds every dependency routine and checks on all cores: 4 to 6 GB (docs/agents/brief.md).
+  command -v systemd-run >/dev/null && eager_cap=(systemd-run --user --scope -q -p MemoryMax=6G)
   (cd "$dir" && "${cap[@]}" "$bin" --root "$root" --all-versions --require-dotnet --no-ratchet \
     --junit runtime-junit.xml > normal.log 2>&1) || { echo "normal run failed, see $dir/normal.log" >&2; status=1; }
   for v in $versions; do
-    (cd "$dir" && AL_EAGER_DEPENDENCIES=1 "${cap[@]}" "$bin" --root "$root" --bc-version "$v" --require-dotnet \
+    (cd "$dir" && AL_EAGER_DEPENDENCIES=1 "${eager_cap[@]}" "$bin" --root "$root" --bc-version "$v" --require-dotnet \
       --no-ratchet --junit "eager-junit-$v.xml" > "eager-$v.log" 2>&1) \
       || { echo "eager run for BC $v failed, see $dir/eager-$v.log" >&2; status=1; }
   done

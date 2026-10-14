@@ -19,6 +19,8 @@ pub struct CompileTimings {
     pub members: std::time::Duration,
     pub check: crate::check::CheckTimings,
     pub lower: std::time::Duration,
+    /// With the compile cache: checking the cache against the apps and reading its blocks.
+    pub cache_blocks: std::time::Duration,
 }
 
 pub struct Lowered {
@@ -190,11 +192,19 @@ pub(crate) fn lower_core(
     checked: &CheckResult,
     positions: bool,
     workers: usize,
-    provided: Option<&Provided<'_>>,
+    provided: Option<Provided<'_>>,
     export: bool,
 ) -> Result<Lowered, String> {
     let catalog = al_builtins::catalog::Catalog::load();
-    let prov = |oi: usize| provided.is_some_and(|p| p.has(oi));
+    let (src, mut blocks): (Option<&dyn crate::provided::DepSource>, Vec<Option<crate::provided::DepBlock>>) =
+        match provided {
+            Some(p) => (Some(p.src), p.blocks),
+            None => (None, Vec::new()),
+        };
+    let flags: Vec<bool> = (0..ws.objects.len())
+        .map(|oi| blocks.get(oi).is_some_and(Option::is_some))
+        .collect();
+    let prov = |oi: usize| flags[oi];
     // With dependency apps the checker found what the workspace reaches in them (ADR-013);
     // the rest is not compiled and no longer resolves.
     let demand = checked.demand.as_ref();
@@ -218,9 +228,8 @@ pub(crate) fn lower_core(
             .into_par_iter()
             .map(|oi| {
                 if prov(oi) {
-                    return provided
+                    return src
                         .expect("provided")
-                        .src
                         .facts(oi)
                         .routine_offsets
                         .iter()
@@ -334,9 +343,9 @@ pub(crate) fn lower_core(
     let mut page_runs: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
     // What the cache supplied about the objects it supplies.
     let usize_of = |v: &[u32]| -> Vec<usize> { v.iter().map(|&i| i as usize).collect() };
-    if let Some(pv) = provided {
-        for oi in (0..ws.objects.len()).filter(|&oi| pv.has(oi)) {
-            let f = pv.src.facts(oi);
+    if let Some(src) = src {
+        for oi in (0..ws.objects.len()).filter(|&oi| prov(oi)) {
+            let f = src.facts(oi);
             table_of[oi] = f.table_of.map(|t| t as usize);
             page_temporary[oi] = f.page_temporary;
             page_reasons[oi] = f.page_reasons.clone();
@@ -660,9 +669,9 @@ pub(crate) fn lower_core(
     let mut report_extension: Vec<Option<usize>> = (0..n_objects)
         .map(|oi| report_irs[oi].as_ref().and_then(|r| r.extension))
         .collect();
-    if let Some(pv) = provided {
-        for oi in (0..n_objects).filter(|&oi| pv.has(oi)) {
-            let f = pv.src.facts(oi);
+    if let Some(src) = src {
+        for oi in (0..n_objects).filter(|&oi| prov(oi)) {
+            let f = src.facts(oi);
             xml_reasons[oi] = f.xml_reason.clone();
             report_reasons[oi] = f.report_reason.clone();
             report_extension[oi] = f.report_extension.map(|e| e as usize);
@@ -731,10 +740,9 @@ pub(crate) fn lower_core(
             }
         }
     }
-    if let Some(pv) = provided {
-        for e in (0..n_objects).filter(|&e| pv.has(e)) {
-            ext_slot_table[e] = pv
-                .src
+    if let Some(src) = src {
+        for e in (0..n_objects).filter(|&e| prov(e)) {
+            ext_slot_table[e] = src
                 .facts(e)
                 .ext_slots
                 .iter()
@@ -795,13 +803,13 @@ pub(crate) fn lower_core(
         pieces[oi] = Some(piece);
     }
     // Objects the cache supplies.
-    if let Some(pv) = provided {
-        for (oi, slot) in pv.blocks.iter().enumerate() {
-            if let Some(b) = slot {
+    {
+        for (oi, slot) in blocks.iter_mut().enumerate() {
+            if let Some(b) = slot.take() {
                 pieces[oi] = Some(Piece {
-                    object: b.object.clone(),
+                    object: b.object,
                     positions: Vec::new(),
-                    unsupported: b.unsupported.clone(),
+                    unsupported: b.unsupported,
                     calls: b
                         .calls
                         .iter()
@@ -883,7 +891,7 @@ pub(crate) fn lower_core(
         out.calls.push(piece.calls);
     }
     out.exported = exported;
-    if provided.is_some() {
+    if src.is_some() {
         out.driven = Some(shared.driven.clone());
     }
     out.program = std::sync::Arc::new(program);
@@ -4595,6 +4603,7 @@ pub fn compile_loaded_cached(
     src: &dyn crate::provided::DepSource,
 ) -> Result<(Workspace, Lowered), (Workspace, String)> {
     use rayon::prelude::*;
+    let blocks_started = std::time::Instant::now();
     let prepared = (|| {
         let n_dep = crate::provided::dependency_prefix(&ws).ok_or("a dependency app follows a workspace app")?;
         crate::provided::check_identity(&ws, n_dep, src)?;
@@ -4616,6 +4625,7 @@ pub fn compile_loaded_cached(
         Err(why) => return Err((ws, why)),
     };
     let provided = Provided { src, blocks };
+    let cache_blocks = blocks_started.elapsed();
     let started = std::time::Instant::now();
     let members = crate::members::build(&ws);
     let members_time = started.elapsed();
@@ -4626,13 +4636,14 @@ pub fn compile_loaded_cached(
         .collect();
     let checked = crate::check::check_with(&ws, &members, catalog, roots);
     let started = std::time::Instant::now();
-    let mut lowered = lower_core(&ws, &members, &checked, true, lower_workers(), Some(&provided), false)
+    let mut lowered = lower_core(&ws, &members, &checked, true, lower_workers(), Some(provided), false)
         .expect("a cache that passed its checks lowers");
     lowered.timings = CompileTimings {
         load,
         members: members_time,
         check: checked.timings,
         lower: started.elapsed(),
+        cache_blocks,
     };
     drop(members);
     Ok((ws, lowered))
@@ -4678,6 +4689,7 @@ pub fn compile_loaded(
         members: members_time,
         check: checked.timings,
         lower: started.elapsed(),
+        cache_blocks: Default::default(),
     };
     drop(checked);
     drop(members);

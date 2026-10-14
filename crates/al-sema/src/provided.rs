@@ -230,6 +230,21 @@ codeunit 50007 DEnum { procedure G(En: Enum E): Integer var F: Interface IFoo; b
 codeunit 50008 DPlain { procedure Plain(): Integer begin exit(7); end; procedure Twice(): Integer begin exit(Plain() * 2); end; }
 "#;
 
+    const MORE: &str = r#"
+query 50009 DQ { elements { dataitem(T; T) { column(A; A) { } column(B; B) { } } } }
+codeunit 50010 DQUse { procedure Sum(): Integer var Q: Query DQ; begin Q.Open(); if Q.Read() then exit(Q.A); end; }
+page 50011 P3 { PageType = List; SourceTable = T; layout { area(Content) { part(Deep; P2) { } } } }
+codeunit 50012 DPage { procedure Open() var TP: TestPage P3; begin TP.OpenView(); end; }
+report 50013 R { dataset { dataitem(TD; T) { column(A; A) { } } } }
+reportextension 50014 DRE extends R { dataset { add(TD) { column(B; B) { } } } }
+codeunit 50015 DRun { procedure Go() begin Report.Run(50013); end; }
+xmlport 50016 X { schema { textelement(Root) { tableelement(TE; T) { fieldelement(A; TE.A) { } } } } }
+codeunit 50017 DX { procedure Imp() var XP: XmlPort X; begin end; }
+interface IBar extends IFoo { procedure Name(): Text; }
+codeunit 50018 DBar implements IBar { procedure Bump(): Integer begin exit(1); end; procedure Name(): Text begin exit('b'); end; }
+codeunit 50019 DUseBar { procedure Use(F: Interface IFoo): Boolean begin exit(F is IFoo); end; }
+"#;
+
     const OTHER: &str = r#"
 table 51000 U { fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
 codeunit 51001 OUse { procedure R(var X: Record U) begin X.K := 1; end; }
@@ -301,8 +316,24 @@ codeunit 60004 WUse { procedure W() var R: Record T; begin R.WX := 1; R.DX := 2;
     }
 
     fn deps() -> Vec<AppSource> {
-        vec![app("d1", &[], BASE), app("d2", &["d1"], OTHER)]
+        vec![app("d1", &[], BASE), app("d2", &["d1"], OTHER), app("d3", &["d1"], MORE)]
     }
+
+    const USES_DEPENDENCY_OBJECTS: &str = r#"
+codeunit 60010 WQ { procedure R() var Q: Query DQ; begin Q.Open(); if Q.Read() then exit(Q.A); end; }
+codeunit 60011 WP { procedure P() var TP: TestPage P3; begin TP.OpenView(); end; }
+"#;
+
+    const EXTENDS_A_PART_PAGE: &str = r#"
+pageextension 60020 WPartExt extends P { layout { addlast(Content) { field(WAC; Rec.B) { } } } }
+codeunit 60021 WUse { procedure P() var TP: TestPage P3; begin TP.OpenView(); end; }
+"#;
+
+    const EXTENDS_REPORT_AND_INTERFACE: &str = r#"
+reportextension 60030 WRE extends R { dataset { add(TD) { column(WB; B) { } } } }
+interface IWork extends IBar { procedure More(); }
+codeunit 60031 WBar implements IWork { procedure Bump(): Integer begin exit(3); end; procedure Name(): Text begin exit('w'); end; procedure More() begin end; }
+"#;
 
     #[test]
     fn a_workspace_that_changes_nothing_takes_every_dependency_object_from_the_cache() {
@@ -327,5 +358,25 @@ codeunit 60004 WUse { procedure W() var R: Record T; begin R.WX := 1; R.DX := 2;
             relowered >= 4,
             "table, page, interface users and the enum ({relowered})"
         );
+    }
+
+    fn workspace(id: &str, src: &str) -> Vec<AppSource> {
+        vec![app(id, &["d1", "d2", "d3"], src)]
+    }
+
+    #[test]
+    fn workspace_code_that_uses_dependency_queries_and_pages_gives_the_complete_compile() {
+        assert_cached_equals_eager(deps(), workspace("w", USES_DEPENDENCY_OBJECTS));
+    }
+
+    #[test]
+    fn extending_a_page_that_other_pages_show_as_parts_relowers_those_pages() {
+        let relowered = assert_cached_equals_eager(deps(), workspace("w", EXTENDS_A_PART_PAGE));
+        assert!(relowered >= 3, "the page, and the pages that show it as a part ({relowered})");
+    }
+
+    #[test]
+    fn a_report_extension_and_an_interface_implementation_in_the_workspace() {
+        assert_cached_equals_eager(deps(), workspace("w", EXTENDS_REPORT_AND_INTERFACE));
     }
 }

@@ -477,6 +477,9 @@ fn run_version(
             c.lower.as_secs_f64(),
             p.engine.as_secs_f64()
         );
+        if p.cache.is_some() {
+            eprintln!("compile cache: reading the blocks {:.2} s", c.cache_blocks.as_secs_f64());
+        }
         let slowest: Vec<String> = p
             .slowest
             .iter()

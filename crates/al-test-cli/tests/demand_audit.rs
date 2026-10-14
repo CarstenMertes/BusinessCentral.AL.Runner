@@ -50,8 +50,20 @@ struct Probe<'a> {
     dep: &'a [(&'a str, &'a str)],
 }
 
+/// How a probe is compiled.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// Only what the workspace reaches in the dependency app (ADR-013).
+    Demand,
+    /// Every dependency routine.
+    Eager,
+    /// The dependency app from a compile cache (ADR-022): built by a compile of it alone.
+    Cached,
+}
+
 /// The outcome of test `Go` over a dependency app `dep` (files) and workspace objects `extra`.
-fn go(p: &Probe, eager: bool) -> Outcome {
+fn go(p: &Probe, mode: Mode) -> Outcome {
+    let eager = mode == Mode::Eager;
     let Probe {
         vars: main_vars,
         body,
@@ -74,23 +86,39 @@ fn go(p: &Probe, eager: bool) -> Outcome {
         dependencies: deps.iter().map(|d| d.to_string()).collect(),
         files,
     };
-    let (_, l) = al_sema::lower::compile_apps_with(
-        vec![
-            app("main", &["dep"], vec![("main.al".into(), main)]),
-            app(
-                "dep",
-                &[],
-                dep.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect(),
-            ),
-        ],
-        vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
-        &Default::default(),
-        None,
-        al_sema::check::Roots {
-            eager,
-            ..Default::default()
-        },
+    let dep_app = app(
+        "dep",
+        &[],
+        dep.iter().map(|(n, s)| (n.to_string(), s.to_string())).collect(),
     );
+    let main_app = app("main", &["dep"], vec![("main.al".into(), main)]);
+    let l = if mode == Mode::Cached {
+        // The dependency app comes first in the program, which is how a cache is used.
+        let set = al_sema::lower::lower_for_cache(vec![dep_app.clone()], &Default::default(), None);
+        let Ok((_, l)) = al_sema::lower::compile_apps_cached(
+            vec![dep_app, main_app],
+            vec![al_sema::AppKind::Dependency, al_sema::AppKind::Workspace],
+            &Default::default(),
+            None,
+            Default::default(),
+            &set,
+        ) else {
+            panic!("the cache does not fit the apps it was built for");
+        };
+        l
+    } else {
+        al_sema::lower::compile_apps_with(
+            vec![main_app, dep_app],
+            vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+            &Default::default(),
+            None,
+            al_sema::check::Roots {
+                eager,
+                ..Default::default()
+            },
+        )
+        .1
+    };
     let blocked = l
         .unsupported
         .iter()
@@ -110,13 +138,17 @@ fn go(p: &Probe, eager: bool) -> Outcome {
 
 fn check(p: Probe) {
     let (name, want) = (p.name, p.want);
-    let demand = go(&p, false);
-    let eager = go(&p, true);
+    let demand = go(&p, Mode::Demand);
+    let eager = go(&p, Mode::Eager);
+    let cached = go(&p, Mode::Cached);
     eprintln!(
-        "PROBE {name}\n  demand: {}\n  eager:  {}",
+        "PROBE {name}\n  demand: {}\n  eager:  {}\n  cached: {}",
         short(&demand),
-        short(&eager)
+        short(&eager),
+        short(&cached)
     );
+    // ADR-022: a compile cache gives the outcome of the complete compile, to the letter.
+    assert_eq!(cached, eager, "{name}: the cached compile differs from the complete compile");
     assert!(
         !matches!(demand, Outcome::Fail(_)),
         "{name}: the implicit code was skipped without a refusal: {}",
@@ -1140,7 +1172,7 @@ fn a_dependency_query_with_an_unsupported_property_is_refused_in_both_compiles()
                elements { dataitem(Row; DepRow) { column(K; K) { } } } }",
         )],
     };
-    let (demand, eager) = (short(&go(&p, false)), short(&go(&p, true)));
+    let (demand, eager) = (short(&go(&p, Mode::Demand)), short(&go(&p, Mode::Eager)));
     eprintln!("demand: {demand}\neager:  {eager}");
     assert!(demand.contains("ReadState"), "{demand}");
     assert!(!eager.contains("panic"), "{eager}");

@@ -451,6 +451,10 @@ impl CorpusRuntime {
         let opts_only = only;
         // A dependency file that does not parse takes every object in it out of the compile, and the
         // tests that need one are refused as "outside the workspace". Say so, once, with the first lines.
+        // A file whose second parse gave another result is a defect, not a property of the file (issue 15).
+        for flake in ws.parse_flakes() {
+            eprintln!("parse: WARNING {flake}");
+        }
         let mut unparsed = ws.lazy_parse_problems();
         // The files the cache supplies were parsed when it was built.
         if let Some(c) = &cache_report {

@@ -855,6 +855,9 @@ pub fn run_codeunit_observed(
     // (corpus isolation probe T5 and T6; oracle/28/xunit-isolation-function.xml).
     let checkpoint = (isolation == TestIsolation::Function).then(|| Checkpoint::take(&mut session));
     let mut out = Vec::new();
+    // Set by the first test that was refused while it ran: it stopped half way, so what it left in
+    // the codeunit's AL state (globals, single-instance codeunits) is not what BC would have left.
+    let mut refused_mid_run: Option<String> = None;
     for r in tests {
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
@@ -929,12 +932,22 @@ pub fn run_codeunit_observed(
                         // reach the next test of the codeunit.
                         Err(Signal::Unsupported(r)) => {
                             session.rollback_transaction();
+                            refused_mid_run.get_or_insert_with(|| format!("{}: {r}", routine.name));
                             Outcome::NotRun(r)
                         }
                         Err(other) => Outcome::Fail(format!("unexpected signal {other:?}")),
                     }
                 }
             }
+        };
+        // A failure after a test that was refused mid-run is not trusted: the test may have set a
+        // global (an "initialized" flag, a binding) whose setup was rolled back with it, and the
+        // codeunit's tests share that state (TestIsolation keeps the instance). Passes stay.
+        let outcome = match (outcome, &refused_mid_run) {
+            (Outcome::Fail(m), Some(first)) => Outcome::NotRun(format!(
+                "an earlier test of this codeunit was refused while it ran ({first}), so its shared state is not BC's; this failure is not trusted: {m}"
+            )),
+            (o, _) => o,
         };
         // Whether a Commit() inside a test is kept or ignored under Function isolation is not
         // pinned (docs/probes-needed.md): a test that passed through one is not reported as run.
@@ -1361,6 +1374,32 @@ mod tests {
 
     const ROWS: &str = "table 60900 S { fields { field(1; K; Code[10]) { } } }
         codeunit 60910 Inserter { trigger OnRun() var R: Record S; begin R.K := 'RUN'; R.Insert(); end; }";
+
+    #[test]
+    fn a_failure_after_a_test_that_was_refused_mid_run_is_not_trusted() {
+        // A refused test stops half way: it may have set globals the next tests rely on (an
+        // "initialized" flag whose setup was rolled back). A failure that follows is then
+        // not BC's answer, and is reported as not run; passes are kept, and a refusal before
+        // the test body starts (a static block) leaves the state alone.
+        let src = "table 60901 T9 { fields { field(1; K; Code[10]) { } } }
+            codeunit 60103 T { Subtype = Test; var Flag: Boolean;
+                [Test] procedure T1() var R: Record T9; begin Flag := true; R.LockTable(false); end;
+                [Test] procedure T2() begin if not Flag then Error('flag lost'); end;
+                [Test] procedure T3() begin Error('real failure'); end; }
+            codeunit 60104 U { Subtype = Test;
+                [Test] procedure U1() begin Error('real failure'); end; }";
+        let o = outcomes_of(src, "T");
+        let by = |n: &str| o.iter().find(|(x, _)| x == n).map(|(_, x)| x.clone()).unwrap();
+        assert!(matches!(by("T1"), Outcome::NotRun(_)), "{:?}", by("T1"));
+        assert_eq!(by("T2"), Outcome::Pass);
+        assert!(
+            matches!(by("T3"), Outcome::NotRun(r) if r.contains("earlier test") && r.contains("LockTable")),
+            "{:?}",
+            by("T3")
+        );
+        let u = outcomes_of(src, "U");
+        assert_eq!(u[0].1, Outcome::Fail("real failure".into()));
+    }
 
     // record/TestTransactionModelAutoRollback.al:Test01-Test03: an AutoRollback test's write is
     // rolled back when it finishes; the next default-model test's write survives.
@@ -2439,10 +2478,11 @@ table 50003 "Watched Later" { fields { field(1; K; Integer) { } } keys { key(PK;
     }
 
     #[test]
-    fn a_missing_row_read_by_dependency_code_is_refused_only_where_the_baseline_did_not_create_it() {
+    fn a_missing_row_is_refused_only_where_the_baseline_did_not_create_it() {
         // The installer cannot run (MinimumActiveRowVersion is not implemented), so the rows it
-        // would create are missing: a Get that finds nothing in dependency code is then not BC's
-        // answer. Where the baseline did create rows, the real error is reported.
+        // would create are missing: a Get that finds nothing, from dependency code or from the
+        // tests' own, is then not BC's answer. Where the baseline did create rows, the real
+        // error is reported.
         let dep = r#"
 table 50100 "K" { fields { field(1; "No."; Code[10]) { } } }
 table 50103 "Seeded" { fields { field(1; "No."; Code[10]) { } } }
@@ -2458,11 +2498,12 @@ codeunit 50101 "Lib" { procedure ReadK() var S: Record "K"; begin S.Get(); end; 
              [Test] procedure Seeded() begin asserterror L.ReadSeeded(); end; }",
             dep,
         );
-        assert_eq!(outcome("Own"), Outcome::Pass);
-        let Outcome::NotRun(why) = outcome("Unseeded") else {
-            panic!("{:?}", outcome("Unseeded"))
-        };
-        assert!(why.contains("dependency app"), "{why}");
+        for name in ["Own", "Unseeded"] {
+            let Outcome::NotRun(why) = outcome(name) else {
+                panic!("{name}: {:?}", outcome(name))
+            };
+            assert!(why.contains("row not found"), "{name}: {why}");
+        }
         // The installer's rollback leaves `Seeded` empty too, so it is unseeded as well.
         assert!(matches!(outcome("Seeded"), Outcome::NotRun(_) | Outcome::Pass));
     }

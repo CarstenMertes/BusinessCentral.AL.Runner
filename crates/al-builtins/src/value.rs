@@ -691,7 +691,7 @@ impl Value {
             RtType::Duration => Value::Duration(0),
             RtType::Guid => Value::Guid([0; 16]),
             RtType::DateFormula => Value::DateFormula(String::new()),
-            RtType::Option(m) => Value::Option(0, m.clone().into()),
+            RtType::Option(m) => Value::Option(0, Rc::from(m.as_slice())),
             RtType::Enum(id) => Value::Enum(*id, 0),
             RtType::Variant => Value::Null,
             RtType::List(_) => Value::List(Rc::default()),

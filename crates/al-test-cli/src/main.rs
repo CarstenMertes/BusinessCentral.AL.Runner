@@ -45,6 +45,14 @@ fn run() -> Result<ExitCode, String> {
         }
         Parsed::Run(a) => *a,
     };
+    if !args.timings_tables.is_empty() {
+        let mut ts = Vec::new();
+        for f in &args.timings_tables {
+            ts.push(report::Timings::from_report_json(&read(f)?).map_err(|e| format!("{}: {e}", f.display()))?);
+        }
+        print!("{}", output::timings_table(&ts));
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(dir) = &args.files_dir {
         al_test_cli::host::set_files_dir(dir.clone());
     }
@@ -369,17 +377,47 @@ fn run_version(
         &runs,
         &opts,
     );
+    let p = &rt.phases;
+    let timings = report::Timings {
+        bc_version: version.bc_version.clone(),
+        eager: std::env::var_os("AL_EAGER_DEPENDENCIES").is_some(),
+        load_s: load_time.as_secs_f64(),
+        compile_s: p.compile.as_secs_f64(),
+        baseline_s: p.baseline.as_secs_f64(),
+        tests_s: p.tests.as_secs_f64(),
+        total_s: started.elapsed().as_secs_f64(),
+        suites: p
+            .suites
+            .iter()
+            .map(|(name, d)| report::SuiteTime {
+                name: if name.is_empty() { "corpus".into() } else { name.clone() },
+                tests_s: d.as_secs_f64(),
+            })
+            .collect(),
+    };
     if args.timings {
-        let p = &rt.phases;
         eprintln!(
             "timings: BC {}: load apps and dependencies {:.2} s, compile {:.2} s, install baseline {:.2} s, run tests {:.2} s, total {:.2} s",
-            version.bc_version,
-            load_time.as_secs_f64(),
-            p.compile.as_secs_f64(),
-            p.baseline.as_secs_f64(),
-            p.tests.as_secs_f64(),
-            started.elapsed().as_secs_f64()
+            version.bc_version, timings.load_s, timings.compile_s, timings.baseline_s, timings.tests_s, timings.total_s
         );
+        let c = &p.compile_parts;
+        eprintln!(
+            "compile: load {:.2} s, members {:.2} s, check workspace {:.2} s, baseline roots {:.2} s, demand {:.2} s, check rest {:.2} s, lower {:.2} s, engine {:.2} s",
+            c.load.as_secs_f64(),
+            c.members.as_secs_f64(),
+            c.check.workspace.as_secs_f64(),
+            c.check.baseline.as_secs_f64(),
+            c.check.demand.as_secs_f64(),
+            c.check.rest.as_secs_f64(),
+            c.lower.as_secs_f64(),
+            p.engine.as_secs_f64()
+        );
+        let slowest: Vec<String> = p
+            .slowest
+            .iter()
+            .map(|(id, name, t)| format!("{id} {name} {:.2} s", t.as_secs_f64()))
+            .collect();
+        eprintln!("slowest test codeunits: {}", slowest.join("; "));
     }
     if rt.panics > 0 {
         eprintln!(
@@ -392,6 +430,7 @@ fn run_version(
     let mut rep = report::build(&cases, &area_of, &outcome);
     rep.dependencies = dependency_summary;
     rep.bc_build = bc_build.clone();
+    rep.timings = Some(timings);
     if !rep.unmapped.is_empty() {
         return Err(format!(
             "{} oracle case(s) have no test codeunit in the corpus, e.g. {}",

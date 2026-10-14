@@ -68,12 +68,15 @@ fn refusal(t: &TableDef, why: &str) -> StoreError {
 
 impl Mat {
     pub(crate) fn new(t: &TableDef, mut entries: Vec<Entry>) -> Mat {
-        entries.sort_by(|a, b| key_cmp(&t.primary_key(&a.row), &t.primary_key(&b.row)));
-        entries.dedup_by(|a, b| key_cmp(&t.primary_key(&a.row), &t.primary_key(&b.row)) == Ordering::Equal);
+        // Each row's key is built once: building it per comparison was most of the time of a
+        // 37,000-row listing. The sort is stable and the first of equal keys stays, as before.
+        let mut keyed: Vec<(Vec<Value>, Entry)> = entries.drain(..).map(|e| (t.primary_key(&e.row), e)).collect();
+        keyed.sort_by(|a, b| key_cmp(&a.0, &b.0));
+        keyed.dedup_by(|a, b| key_cmp(&a.0, &b.0) == Ordering::Equal);
         let mut rows = Vec::new();
         let mut poison = Vec::new();
         let mut known = Vec::new();
-        for e in entries {
+        for (_, e) in keyed {
             rows.push(e.row);
             poison.push(e.poison);
             known.push(e.known);

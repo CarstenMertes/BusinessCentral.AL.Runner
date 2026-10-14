@@ -596,7 +596,7 @@ xmlport 50010 X
             &Default::default(),
         );
         assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-        l.program.objects.into_iter().find(|o| o.kind == "xmlport").unwrap()
+        l.program.objects.iter().find(|o| o.kind == "xmlport").cloned().unwrap()
     }
 
     // The element variables take the first global slots, then the two hidden streams, then the

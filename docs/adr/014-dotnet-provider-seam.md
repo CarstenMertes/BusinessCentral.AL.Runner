@@ -44,9 +44,9 @@ directly.
    faked session (`MetadataPatches.cs` builds that session). Each registry member records its
    source: `Pin::AlRunner("AL Runner v2 <file:line>")` now, `Pin::Probe` once a probe pins it,
    `Pin::Corpus` where a corpus test does. Where a probe and AL Runner differ, the probe wins.
-5. The probe batch (corpus-probes branch `al-runtime-rs`, head c542144, BC 27.5) pinned the
-   ALConfigSettings flags and limits, `IsSandbox` true, `IsProduction` false, `IsAzure` true
-   (through `IsSaaSInfrastructure`), `GetApplicationFamily` `W1`, the empty Power Platform
+5. The probe batch (corpus tests under `tests/al-language/session/`, measured on BC 27.5 and later) pinned the
+   ALConfigSettings flags and limits, `IsSandbox` true, `IsProduction` false, `IsAzure` true on
+   27 and 28, false from 29 (through `IsSaaSInfrastructure`, `Gate::NotSaaSInfrastructure`), `GetApplicationFamily` `W1`, the empty Power Platform
    environment id, and `IsInTestMode` (through `CanStartSession`). AL Runner's tenant is
    Production on an on-premises topology, so the oracle tenant, a sandbox on Azure topology,
    differs from it in `IsSandbox`, `IsProduction` and `IsAzure`. The shipped values follow the

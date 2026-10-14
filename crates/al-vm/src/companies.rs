@@ -21,7 +21,7 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 
 impl Session {
     /// The Company table, if the program compiled it.
-    fn company_table(&self) -> Option<TableDef> {
+    fn company_table(&self) -> Option<std::sync::Arc<TableDef>> {
         let oi = self
             .engine
             .program

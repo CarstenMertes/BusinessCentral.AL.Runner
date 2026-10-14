@@ -222,8 +222,27 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetUrl#4", |_, _, _| {
         unsupported("GetUrl (the server address is not a host value)")
     }),
-    // False in a test: measured on real BC by session/TestEnvironmentUserTenantContracts.al:172
-    // (corpus-probes head c542144; the citation is pending until the corpus bump).
+    // Measured on real BC: session/TestEnvironmentUserTenantContracts.al:237-241.
+    ("Session.CurrentExecutionMode#1", |_, _, _| {
+        let members: Rc<[String]> = crate::sysenum::option_members("ExecutionMode")
+            .expect("a system option")
+            .into();
+        Ok(Value::Option(0, members))
+    }),
+    ("Session.ApplicationIdentifier#1", |_, _, _| {
+        Ok(Value::Text("NAV".into()))
+    }),
+    ("ProductName.Full#1", |_, _, _| {
+        Ok(Value::Text("Dynamics 365 Business Central".into()))
+    }),
+    ("ProductName.Short#1", |_, _, _| {
+        Ok(Value::Text("Business Central".into()))
+    }),
+    ("ProductName.Marketing#1", |_, _, _| {
+        Ok(Value::Text("Microsoft Dynamics 365 Business Central".into()))
+    }),
+    // False in a test: measured on real BC by session/TestEnvironmentUserTenantContracts.al:238
+    // (Assert.IsFalse(TaskScheduler.CanCreateTask())).
     ("TaskScheduler.CanCreateTask#1", |_, _, _| Ok(Value::Boolean(false))),
     // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
     // and nothing more). A task starts in a session of its own after the creating transaction

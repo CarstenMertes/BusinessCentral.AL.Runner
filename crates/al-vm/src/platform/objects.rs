@@ -10,7 +10,7 @@
 //! the rule used is stated at the column.
 
 use super::mat::Entry;
-use super::{Providers, blank, ids, option, pos};
+use super::{Blank, Providers, ids, option, pos};
 use crate::Engine;
 use al_builtins::value::{RtType, Value};
 use al_data::{Row, TableDef};
@@ -154,22 +154,34 @@ pub(super) struct Catalog<'a> {
     pub apps: &'a [al_ir::AppInfo],
     /// (base kind, lower-case name) to the ids of the objects of that name.
     names: HashMap<(&'a str, String), Vec<u32>>,
+    /// Table id to the first table object of that id.
+    tables: HashMap<u32, &'a Object>,
 }
 
 impl<'a> Catalog<'a> {
     pub(super) fn new(engine: &'a Engine) -> Catalog<'a> {
         let program = &engine.program;
         let mut names: HashMap<(&str, String), Vec<u32>> = HashMap::new();
+        let mut tables: HashMap<u32, &Object> = HashMap::new();
         for o in &program.objects {
             if let Some(id) = o.id {
                 names.entry((base_kind(o), o.name.to_lowercase())).or_default().push(id);
+                if base_kind(o) == "table" {
+                    tables.entry(id).or_insert(o);
+                }
             }
         }
         Catalog {
             objects: &program.objects,
             apps: &program.apps,
             names,
+            tables,
         }
+    }
+
+    /// The first table object with this id.
+    pub(super) fn table_by_id(&self, id: u32) -> Option<&'a Object> {
+        self.tables.get(&id).copied()
     }
 
     /// The manifest id of the app that owns `o`; empty for the platform's own objects, which no
@@ -264,16 +276,17 @@ pub(super) fn entries(
     build: impl Fn(&Object, &mut Row) -> Result<(), String>,
 ) -> Vec<Entry> {
     let mut out = Vec::new();
+    let blank = Blank::new(t);
     for o in c.objects {
         let Some(key) = wanted(o) else { continue };
-        let mut r = blank(t);
+        let mut r = blank.row();
         for (id, v) in &key {
             r[pos(t, *id)] = v.clone();
         }
         match build(o, &mut r) {
             Ok(()) => out.push(Entry::ok(r)),
             Err(why) => {
-                let mut k = blank(t);
+                let mut k = blank.row();
                 for (id, v) in key {
                     k[pos(t, id)] = v;
                 }

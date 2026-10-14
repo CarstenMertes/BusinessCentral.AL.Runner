@@ -21,6 +21,33 @@ use std::rc::Rc;
 
 type Rec = Rc<RefCell<RecordState>>;
 
+/// Whether the rows of `t` that pass `filters`, read in primary key order, are in the order of
+/// `field`: the first row has the smallest value and the last the largest. That holds when
+/// `field` is a number or date in the primary key and every key field before it is pinned by
+/// one equality filter. Then min and max need one row, not the whole range.
+fn key_ordered_by(t: &TableDef, filters: &[FieldFilter], field: usize) -> bool {
+    let orderable = matches!(
+        t.fields[field].ty,
+        RtType::Integer | RtType::BigInteger | RtType::Decimal | RtType::Date | RtType::Time | RtType::DateTime
+    );
+    let Some(at) = t.keys[0].iter().position(|&k| k == field).filter(|_| orderable) else {
+        return false;
+    };
+    t.keys[0][..at].iter().all(|&k| {
+        let mut on_k = filters.iter().filter(|f| f.field == k);
+        matches!(
+            (on_k.next(), on_k.next()),
+            (
+                Some(FieldFilter {
+                    expr: FilterExpr::Eq(_),
+                    ..
+                }),
+                None
+            )
+        )
+    })
+}
+
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
@@ -347,22 +374,45 @@ impl Session {
                 if calc.negate {
                     return unsupported("a sign on min, max or lookup");
                 }
+                // Lookup reads the first matching row in primary key order (corpus
+                // record/TestCalcFieldsTruncateUniqueContracts.al:
+                // CalcFields_Lookup_OverSeveralRows_ReadsTheFirstInPrimaryKeyOrder), so it
+                // needs one row. When the primary key already orders the rows by the field, so
+                // do min (the first row) and max (the last row): no need to walk millions of
+                // rows of a computed table such as Date
+                // (corpus record/TestDateVirtualTableFlowField.al:94-110).
+                let first_only = calc.method == M::Lookup;
+                let ends = !first_only && key_ordered_by(&src_t, &filters, at);
                 let mut best: Option<Value> = None;
-                self.each_row(&cx, &src_t, &filters, |row| {
-                    let v = &row[at];
-                    best = match best.take() {
-                        None => Some(v.clone()),
-                        Some(b) => match (calc.method, ops::compare(v, &b)?) {
-                            (M::Min, Ordering::Less) | (M::Max, Ordering::Greater) => Some(v.clone()),
-                            // The first matching row in primary key order wins (corpus
-                            // record/TestCalcFieldsTruncateUniqueContracts.al:
-                            // CalcFields_Lookup_OverSeveralRows_ReadsTheFirstInPrimaryKeyOrder).
-                            (M::Lookup, _) => Some(b),
-                            (_, _) => Some(b),
-                        },
-                    };
-                    Ok(())
-                })?;
+                if first_only || ends {
+                    let ascending = calc.method != M::Max;
+                    let row = self
+                        .store
+                        .next(
+                            &cx,
+                            &src_t,
+                            &Scan {
+                                key: 0,
+                                filters: &filters,
+                                ascending,
+                                after: None,
+                            },
+                        )
+                        .map_err(store_err)?;
+                    best = row.map(|r| r[at].clone());
+                } else {
+                    self.each_row(&cx, &src_t, &filters, |row| {
+                        let v = &row[at];
+                        best = match best.take() {
+                            None => Some(v.clone()),
+                            Some(b) => match (calc.method, ops::compare(v, &b)?) {
+                                (M::Min, Ordering::Less) | (M::Max, Ordering::Greater) => Some(v.clone()),
+                                (_, _) => Some(b),
+                            },
+                        };
+                        Ok(())
+                    })?;
+                }
                 // Nothing matched: the type default (corpus
                 // record/TestCalcFormulaMinMaxAvgTests.Codeunit.al:250).
                 match best {
@@ -619,5 +669,75 @@ impl Session {
             return Ok(());
         }
         self.calc_fields(rec, &auto)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use al_data::FieldDef;
+
+    fn table(keys: Vec<usize>, types: &[RtType]) -> TableDef {
+        TableDef {
+            object: 0,
+            name: "T".into(),
+            fields: types
+                .iter()
+                .enumerate()
+                .map(|(i, ty)| FieldDef {
+                    id: i as u32 + 1,
+                    name: format!("F{i}"),
+                    ty: ty.clone(),
+                    stored: true,
+                })
+                .collect(),
+            keys: vec![keys],
+            per_company: false,
+        }
+    }
+
+    fn eq(field: usize, v: i32) -> FieldFilter {
+        FieldFilter {
+            field,
+            expr: FilterExpr::Eq(Value::Integer(v)),
+            group: 0,
+        }
+    }
+
+    fn range(field: usize) -> FieldFilter {
+        FieldFilter {
+            field,
+            expr: FilterExpr::Range(Some(Value::Integer(1)), None),
+            group: 0,
+        }
+    }
+
+    #[test]
+    fn rows_come_in_the_order_of_the_first_key_field() {
+        let t = table(vec![0, 1], &[RtType::Integer, RtType::Date]);
+        assert!(key_ordered_by(&t, &[], 0));
+        assert!(key_ordered_by(&t, &[range(0)], 0));
+    }
+
+    #[test]
+    fn a_later_key_field_orders_the_rows_only_when_the_earlier_ones_are_pinned() {
+        // Date's key: (Period Type, Period Start). Corpus record/TestDateVirtualTableFlowField.al:140.
+        let t = table(vec![0, 1], &[RtType::Integer, RtType::Date]);
+        assert!(!key_ordered_by(&t, &[], 1));
+        assert!(!key_ordered_by(&t, &[range(0)], 1));
+        assert!(key_ordered_by(&t, &[eq(0, 0)], 1));
+        // Two filters on the pinned field are not one pin.
+        assert!(!key_ordered_by(&t, &[eq(0, 0), range(0)], 1));
+        // A filter on the ordered field itself does not matter.
+        assert!(key_ordered_by(&t, &[eq(0, 0), range(1)], 1));
+    }
+
+    #[test]
+    fn only_numbers_and_dates_sort_the_same_as_the_comparison_a_formula_uses() {
+        let t = table(vec![0], &[RtType::Code(Some(20)), RtType::Integer]);
+        assert!(!key_ordered_by(&t, &[], 0));
+        // A field outside the primary key says nothing about the order.
+        let t = table(vec![0], &[RtType::Integer, RtType::Integer]);
+        assert!(!key_ordered_by(&t, &[], 1));
     }
 }

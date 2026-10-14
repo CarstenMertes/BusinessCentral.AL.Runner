@@ -261,7 +261,13 @@ impl Checker<'_> {
     pub(super) fn reach_baseline(&self) {
         for i in 0..self.ws.objects.len() {
             let o = &self.ws.objects[i];
-            if !self.ws.is_dependency(i) || o.kind != ObjKind::Codeunit || !self.ws.usable(i) {
+            if !self.ws.is_dependency(i) || o.kind != ObjKind::Codeunit {
+                continue;
+            }
+            // Cheap facts first: `usable` parses the object's file, and most codeunits are no root.
+            let company_initialize =
+                o.id == Some(COMPANY_INITIALIZE) && o.name.eq_ignore_ascii_case("Company-Initialize");
+            if !(o.install || company_initialize) || !self.ws.usable(i) {
                 continue;
             }
             if o.install {
@@ -274,7 +280,7 @@ impl Checker<'_> {
                         self.reach(i, usize::from(r.syntax().text_range().start()));
                     }
                 }
-            } else if o.id == Some(COMPANY_INITIALIZE) && o.name.eq_ignore_ascii_case("Company-Initialize") {
+            } else if company_initialize {
                 self.reach_run(i);
             }
         }
@@ -773,8 +779,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Runs the demand loop to its end and reports what it reached.
-    pub(super) fn run_demand(&mut self) -> Option<Demand> {
+    /// Runs the demand loop to its end and reports what it reached. With `workers > 1` the
+    /// reached routines are checked on that many threads (see [`Pool`]); the result is the same.
+    pub(super) fn run_demand(&mut self, workers: usize, objects: Vec<usize>) -> Option<Demand> {
         self.demand.borrow().as_ref()?;
         // The stored platform tables are part of every tenant (the Company, the User, the links of
         // a record): compile their shape so the platform can seed and write them.
@@ -786,39 +793,280 @@ impl Checker<'_> {
                 self.raise(i, READ);
             }
         }
-        loop {
-            let fresh = self.demand.borrow_mut().as_mut().and_then(|s| s.fresh.pop());
-            if let Some((i, level)) = fresh {
-                self.activate(i, level);
-                continue;
+        if workers <= 1 {
+            self.demand_loop(None, objects);
+        } else {
+            let (ws, members, catalog) = (self.ws, self.members, self.catalog);
+            let enums = self.system_enums.clone();
+            let outs = std::thread::scope(|scope| {
+                let mut pool = Pool::default();
+                let mut handles = Vec::new();
+                for _ in 0..workers {
+                    let (batch_tx, batch_rx) = std::sync::mpsc::channel::<std::sync::Arc<RoundWork>>();
+                    let (delta_tx, delta_rx) = std::sync::mpsc::channel::<Delta>();
+                    let enums = enums.clone();
+                    let handle = std::thread::Builder::new()
+                        .stack_size(WORKER_STACK)
+                        .spawn_scoped(scope, move || worker(ws, members, catalog, enums, batch_rx, delta_tx))
+                        .expect("spawn a check worker");
+                    pool.senders.push(batch_tx);
+                    pool.receivers.push(delta_rx);
+                    handles.push(handle);
+                }
+                self.demand_loop(Some(&pool), objects);
+                // Closing the channels ends the workers.
+                drop(pool);
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("a check worker panicked"))
+                    .collect::<Vec<WorkerOut>>()
+            });
+            let mut types = vec![std::mem::take(&mut self.types)];
+            let mut resolutions = vec![std::mem::take(&mut self.resolutions)];
+            for out in outs {
+                self.diags.extend(out.diags);
+                types.push(out.types);
+                resolutions.push(out.resolutions);
             }
-            let op = self.demand.borrow_mut().as_mut().and_then(|s| s.fresh_ops.pop());
-            if let Some((t, ops)) = op {
-                self.activate_ops(t, ops);
-                continue;
-            }
-            let global = self
-                .demand
-                .borrow_mut()
-                .as_mut()
-                .map(|s| std::mem::take(&mut s.fresh_global))
-                .unwrap_or(0);
-            if global != 0 {
-                self.activate_global(global);
-                continue;
-            }
-            let next = self.demand.borrow_mut().as_mut().and_then(|s| s.queue.pop());
-            if let Some((o, off)) = next {
-                self.check_reached(o, off);
-                continue;
-            }
-            break;
+            self.types = PosMap::union(types);
+            self.resolutions = PosMap::union(resolutions);
         }
         let st = self.demand.borrow_mut().take()?;
         Some(Demand {
             level: st.level,
             reached: st.reached,
         })
+    }
+
+    /// The fixpoint, a round at a time: the first round checks the workspace's `objects`; each
+    /// round after it activates what the one before raised and checks what it reached, until a
+    /// round has nothing left to do. The order within a round does not matter (everything only
+    /// ever grows), so a round is spread over the worker threads.
+    fn demand_loop(&mut self, pool: Option<&Pool>, objects: Vec<usize>) {
+        let mut round: Vec<Task> = objects.into_iter().map(Task::Object).collect();
+        loop {
+            {
+                let mut guard = self.demand.borrow_mut();
+                let Some(st) = guard.as_mut() else { return };
+                round.extend(
+                    std::mem::take(&mut st.fresh)
+                        .into_iter()
+                        .map(|(i, l)| Task::Activate(i, l)),
+                );
+                round.extend(
+                    std::mem::take(&mut st.fresh_ops)
+                        .into_iter()
+                        .map(|(t, o)| Task::Ops(t, o)),
+                );
+                let global = std::mem::take(&mut st.fresh_global);
+                if global != 0 {
+                    round.push(Task::Global(global));
+                }
+                round.extend(
+                    std::mem::take(&mut st.queue)
+                        .into_iter()
+                        .map(|(o, off)| Task::Check(o, off)),
+                );
+            }
+            if round.is_empty() {
+                break;
+            }
+            self.run_round(std::mem::take(&mut round), pool);
+        }
+    }
+
+    /// Does one task on this thread.
+    fn run_task(&mut self, task: Task) {
+        match task {
+            Task::Object(oi) => {
+                self.check_object(oi);
+                self.take_calls();
+            }
+            Task::Check(o, off) => self.check_reached(o, off),
+            Task::Activate(i, level) => self.activate(i, level),
+            Task::Ops(t, ops) => self.activate_ops(t, ops),
+            Task::Global(ops) => self.activate_global(ops),
+        }
+    }
+
+    /// Does the tasks of one round. They are cut into chunks, the tasks about one object together
+    /// (so its context is built once), and the workers take chunks until none is left.
+    fn run_round(&mut self, mut tasks: Vec<Task>, pool: Option<&Pool>) {
+        let Some(pool) = pool.filter(|p| tasks.len() >= PARALLEL_MIN && !p.senders.is_empty()) else {
+            for task in tasks {
+                self.run_task(task);
+            }
+            return;
+        };
+        tasks.sort_unstable_by_key(Task::order);
+        let mut chunks: Vec<Vec<Task>> = Vec::new();
+        let mut at = 0;
+        while at < tasks.len() {
+            let object = tasks[at].object();
+            let mut end = at + 1;
+            while end < tasks.len() && end - at < CHUNK_MAX && tasks[end].object() == object {
+                end += 1;
+            }
+            chunks.push(tasks[at..end].to_vec());
+            at = end;
+        }
+        let work = std::sync::Arc::new(RoundWork {
+            chunks,
+            next: std::sync::atomic::AtomicUsize::new(0),
+        });
+        for sender in &pool.senders {
+            sender.send(work.clone()).expect("a check worker stopped");
+        }
+        // Applied in worker order, whatever order they finish in.
+        for receiver in &pool.receivers {
+            let delta = receiver.recv().expect("a check worker stopped");
+            self.apply(delta);
+        }
+    }
+
+    /// What a worker's checks reached and raised, applied to this checker's state.
+    fn apply(&self, d: Delta) {
+        for (i, level) in d.raised {
+            self.raise(i, level);
+        }
+        for (i, ops) in d.ops {
+            self.touch_ops(i, ops);
+        }
+        self.touch_global_ops(d.global);
+        if let Some(st) = self.demand.borrow_mut().as_mut() {
+            for r in d.reached {
+                if st.reached.insert(r) {
+                    st.queue.push(r);
+                }
+            }
+        }
+    }
+}
+
+/// One piece of work of a round of the demand loop.
+#[derive(Clone, Copy, Debug)]
+enum Task {
+    /// Check the routines of a workspace object (its code is the root of the demand).
+    Object(usize),
+    /// Check the reached routine at this offset of this dependency object.
+    Check(usize, usize),
+    /// An object was raised to this level: reach what using it at that level sets off.
+    Activate(usize, u8),
+    /// A table is written to with these operations: reach the triggers and subscribers.
+    Ops(usize, u8),
+    /// These operations raise the events of `Global Triggers`.
+    Global(u8),
+}
+
+impl Task {
+    /// The object the task is about.
+    fn object(&self) -> usize {
+        match *self {
+            Task::Object(o) | Task::Check(o, _) | Task::Activate(o, _) | Task::Ops(o, _) => o,
+            Task::Global(_) => 0,
+        }
+    }
+
+    /// A deterministic order for the tasks of a round, whatever order they were found in.
+    fn order(&self) -> (usize, u8, usize, u8) {
+        match *self {
+            Task::Object(o) => (o, 0, 0, 0),
+            Task::Activate(o, l) => (o, 1, 0, l),
+            Task::Ops(o, ops) => (o, 2, 0, ops),
+            Task::Check(o, off) => (o, 3, off, 0),
+            Task::Global(g) => (0, 4, 0, g),
+        }
+    }
+}
+
+/// The chunks of one round, shared by the workers, which take them in turn.
+struct RoundWork {
+    chunks: Vec<Vec<Task>>,
+    next: std::sync::atomic::AtomicUsize,
+}
+
+/// The most tasks in a chunk: a bigger object is split over workers.
+const CHUNK_MAX: usize = 32;
+
+/// A round with fewer tasks than this is done on the calling thread.
+const PARALLEL_MIN: usize = 48;
+
+/// Stack of a check worker: the checker recurses on the nesting of the code it reads.
+const WORKER_STACK: usize = 64 << 20;
+
+/// The channels to the check workers of a parallel demand run. Routines reached in one round
+/// are sent out, each worker answers with the [`Delta`] its checks produced, and the calling
+/// thread applies the deltas and activates what they raised (the fixpoint stays on one thread;
+/// only the checking of routines, the bulk of the work, is spread out).
+#[derive(Default)]
+struct Pool {
+    senders: Vec<std::sync::mpsc::Sender<std::sync::Arc<RoundWork>>>,
+    receivers: Vec<std::sync::mpsc::Receiver<Delta>>,
+}
+
+/// What a worker's checks asked for since its last answer.
+struct Delta {
+    /// Objects raised to a level, in the order they were.
+    raised: Vec<(usize, u8)>,
+    /// Write operations reached on a table.
+    ops: Vec<(usize, u8)>,
+    /// Write operations whose `Global Triggers` subscribers are reached.
+    global: u8,
+    /// Routines reached.
+    reached: Vec<(usize, usize)>,
+}
+
+impl State {
+    fn take_delta(&mut self) -> Delta {
+        Delta {
+            raised: std::mem::take(&mut self.fresh),
+            ops: std::mem::take(&mut self.fresh_ops),
+            global: std::mem::take(&mut self.fresh_global),
+            reached: std::mem::take(&mut self.queue),
+        }
+    }
+}
+
+/// What a worker leaves behind when its channel closes.
+struct WorkerOut {
+    diags: Vec<crate::workspace::Diagnostic>,
+    types: PosMap<crate::types::Ty>,
+    resolutions: PosMap<Res>,
+}
+
+/// A check worker: its own checker, with its own caches and a state that only records what the
+/// checks reach, so the calling thread can fold it into the real one.
+fn worker(
+    ws: &Workspace,
+    members: &crate::members::MemberTable<'_>,
+    catalog: &al_builtins::catalog::Catalog,
+    enums: HashSet<String>,
+    batches: std::sync::mpsc::Receiver<std::sync::Arc<RoundWork>>,
+    deltas: std::sync::mpsc::Sender<Delta>,
+) -> WorkerOut {
+    let mut c = Checker::new(ws, members, catalog, enums, true);
+    while let Ok(work) = batches.recv() {
+        loop {
+            let k = work.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(chunk) = work.chunks.get(k) else { break };
+            for &task in chunk {
+                c.run_task(task);
+            }
+        }
+        let delta = c
+            .demand
+            .borrow_mut()
+            .as_mut()
+            .map(State::take_delta)
+            .expect("demand state");
+        if deltas.send(delta).is_err() {
+            break;
+        }
+    }
+    WorkerOut {
+        diags: c.diags,
+        types: c.types,
+        resolutions: c.resolutions,
     }
 }
 
@@ -916,6 +1164,76 @@ mod tests {
 
     fn compiled(l: &Lowered, obj: &str, name: &str) -> bool {
         reasons(l, obj, name).iter().all(|r| !r.contains("not compiled"))
+    }
+
+    /// The program, the refusals, the call graph and the diagnostics of a compile of `main` over
+    /// `dep` with `workers` check threads.
+    fn compile_with_workers(main: &str, dep: &[(String, String)], workers: usize) -> String {
+        compile_with_both(main, dep, workers, workers)
+    }
+
+    /// Like `compile_with_workers`, with `check` threads checking and `lower` threads lowering.
+    fn compile_with_both(main: &str, dep: &[(String, String)], check: usize, lower: usize) -> String {
+        let app = |id: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files,
+        };
+        let roots = crate::check::Roots {
+            workers: Some(check),
+            ..Default::default()
+        };
+        let ws = Workspace::load_apps(
+            vec![
+                app("main", &["dep"], vec![("main.al".into(), main.into())]),
+                app("dep", &[], dep.to_vec()),
+            ],
+            vec![AppKind::Workspace, AppKind::Dependency],
+            &Default::default(),
+        );
+        let members = crate::members::build(&ws);
+        let checked = crate::check::check_with(&ws, &members, &al_builtins::catalog::Catalog::load(), roots);
+        let l = crate::lower::lower_with_workers(&ws, &members, &checked, true, lower);
+        format!(
+            "{}\n{:?}\n{:?}\n{:?}",
+            serde_json::to_string(&*l.program).unwrap(),
+            l.unsupported,
+            l.calls,
+            ws.diagnostics
+        )
+    }
+
+    #[test]
+    fn checking_on_several_threads_compiles_the_same_program() {
+        // 80 libraries reached in one round (more than a round needs to be spread over threads),
+        // each calling a helper in the next round, one of which cannot run.
+        let n = 80;
+        let main = format!(
+            "codeunit 1 Main {{ procedure Go() var {} begin {} end; }}",
+            (0..n).map(|i| format!("L{i}: Codeunit Lib{i};")).collect::<String>(),
+            (0..n).map(|i| format!("L{i}.Entry();")).collect::<String>()
+        );
+        let dep: Vec<(String, String)> = (0..n)
+            .map(|i| {
+                let broken = if i % 7 == 0 { "T := NoSuchBuiltin(1);" } else { "" };
+                (
+                    format!("lib{i}.al"),
+                    format!(
+                        "codeunit {} Lib{i} {{ procedure Entry() begin Helper(); end; \
+                         local procedure Helper() var T: Text; begin {broken} end; \
+                         procedure Unused() begin end; }}",
+                        100 + i
+                    ),
+                )
+            })
+            .collect();
+        let one = compile_with_workers(&main, &dep, 1);
+        assert!(one.contains("Helper"), "the fixture compiles something");
+        assert_eq!(one, compile_with_workers(&main, &dep, 4));
+        assert_eq!(one, compile_with_workers(&main, &dep, 7));
+        // Lowering the dependency objects on several threads does not change the program either.
+        assert_eq!(one, compile_with_both(&main, &dep, 1, 5));
     }
 
     #[test]

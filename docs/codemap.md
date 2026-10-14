@@ -249,7 +249,10 @@ functions or methods; the file is in the module list above.
    (Microsoft apps from `.alpackages`, `--deps` or the artifact feed) -> `CorpusRuntime::run_suites_with`.
 4. `run_suites_with`: `al_sema::lower::compile_apps_with` (compile pipeline below) -> `Engine::with_config`
    (`events::Registry::build`) -> `global_triggers_find_unavailable` -> `baseline::run` (install roots, once) ->
-   for each test codeunit `run_codeunit_isolated` -> `run_codeunit_observed`.
+   for each test codeunit `run_codeunit_isolated` -> `run_codeunit_observed`. Test codeunits run on worker threads
+   (`AL_TEST_THREADS`, `run_unit`); a baseline cannot cross threads, so each worker runs the install roots again
+   on the engine that ran them first. `--explain` keeps one thread. `--timings` prints the compile parts and the
+   slowest codeunits.
 5. `run_codeunit_observed`: `Session::with_host` -> `restore_baseline` -> `run_install_codeunits` -> `OnRun` via
    `Session::call` -> per `[Test]` routine: `resolve_handlers`, `blocked_site` (refusal decided at lowering),
    `bind_handlers`, then `Session::call` -> `call_inner` -> `exec_block` -> `exec` / `eval`. The result becomes
@@ -270,10 +273,16 @@ functions or methods; the file is in the module list above.
    out: `Roots::only_tests`), then `reach_baseline` (install roots) and `run_demand` (check/demand.rs):
    `activate` / `activate_table` / `activate_ops` / `activate_global` queue routines, `check_reached` checks them;
    files of newly reached dependency objects are parsed ahead on worker threads. Result: `CheckResult`
-   (types and resolutions by node position, `Demand`).
+   (types and resolutions by node position, `Demand`). The demand loop runs in rounds of tasks (check a workspace
+   object or a reached routine, activate a raised object); worker threads (`AL_CHECK_THREADS`) take chunks of a
+   round, each with its own `Checker`, and report deltas that the calling thread merges (`demand.rs`: `Task`,
+   `Pool`, `Delta`). Types and resolutions are a position map in 16 shards merged one thread per shard.
 5. `lower::lower_with_positions`: `Workspace::restrict_to` (what demand did not reach stops resolving), then per object
    `Lowerer::routine` -> `stmt` / `expr` / `call` for reached routines and `stub` for the rest. Anything inexpressible
-   becomes a refusal reason in `Lowered::unsupported`. Output: `al_ir::Program` + call graph.
+   becomes a refusal reason in `Lowered::unsupported`. Output: `al_ir::Program` (an `Arc`, shared with the engine) +
+   call graph. `lower_object` is a function of the plain `Shared` data plus per-thread `Local`/`Seq` (syntax nodes
+   and layouts belong to the thread that built them): worker threads (`AL_LOWER_THREADS`) lower the dependency
+   objects while the calling thread lowers the workspace's in order (source positions are numbered as they come).
 
 ### Record.Insert(true): trigger, events, Global Triggers, store
 

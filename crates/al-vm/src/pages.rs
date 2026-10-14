@@ -2460,9 +2460,8 @@ impl Session {
                 }
             }
         }
-        if Self::same_values(std::slice::from_ref(&current), std::slice::from_ref(&parsed)) {
-            return Ok(Value::Null);
-        }
+        // A value equal to the one held still validates: OnValidate runs again (corpus
+        // handlers/TestPageRuntimeContracts.al:179-194 TestPage_SetValue_OfTheValueAlreadyHeld_StillRunsOnValidate).
         let rec = if rec_bound { Some(self.page_rec(st)) } else { None };
         let before = rec.as_ref().map(|r| r.borrow().fields.clone());
         let was_dirty = st.borrow().dirty;

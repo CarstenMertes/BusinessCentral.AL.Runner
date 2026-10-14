@@ -8,23 +8,22 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 | Field | Value |
 |---|---|
 | Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `al-runtime-rs` |
-| Corpus pin | `cdf315abd1e7115fcbfbcc88c720371e75989b8e` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
+| Corpus pin | `348a7441c3b4be2dfad3e570e83d5bdc4bfad2cb` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `cdf315a` (the pin) | 38476427517 | `junit-test-results-27.5` | 11856955675 | 5059 |
-| 28 | 28.5 | `cdf315a` (the pin) | 38480686379 | `junit-test-results-28.5` | 11858881269 | 5059 (+26 `OnRun`) |
-| 29 | 29.0 | `cf6e546793a9` (older) | 38306086475 | `junit-test-results-29.0` | 11773034371 | 4836 (+26 `OnRun`) |
+| 27 | 27.5 | `348a744` (the pin) | 38511560267 | `junit-test-results-27.5` | 11870821886 | 5112 |
+| 28 | 28.5 | `348a744` (the pin) | 38512914332 | `junit-test-results-28.5` | 11870949831 | 5112 (+26 `OnRun`) |
+| 29 | 29.0 | `348a744` (the pin) | 38514656113 | `junit-test-results-29.0` | 11872093217 | 5112 (+26 `OnRun`) |
 
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is
 the OnPrem suite and is not used.
 
-BC 29 stays on the older commit because the 29.0 run on the pin is unusable: the
-corpus workflow's dispatch path does not define `BC29PLUS`, so four guarded tests
-failed (`docs/owner-review.md`). The CLI accepts an oracle for an older commit only
-when the corpus diff since then adds files under `tests/` and changes none (ADR-007).
-The 223 cases the pin added are then absent from the BC 29 report and ratchet.
+All three legs come from one corpus commit. The corpus workflow now defines `BC29PLUS` on
+dispatch, so the 29.0 run on the pin is usable. The CLI still accepts a `corpus_commit` inside a
+`[[version]]` table for an older commit, when the corpus diff since then adds files under
+`tests/` and changes none (ADR-007). No table uses it today.
 
 Layout:
 

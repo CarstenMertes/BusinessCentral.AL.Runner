@@ -54,10 +54,10 @@ fn every_oracle_case_is_reported_and_attributed_to_an_area() {
     require_corpus();
     let (code, r) = json(&[]);
     assert_eq!(code, 0);
-    assert_eq!(r["overall"]["total"], 4836);
+    assert_eq!(r["overall"]["total"], 5112);
     assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "{}", r["unmapped"]);
-    assert_eq!(r["areas"]["json"]["total"], 117);
-    assert_eq!(r["areas"]["record"]["total"], 1018);
+    assert_eq!(r["areas"]["json"]["total"], 129);
+    assert_eq!(r["areas"]["record"]["total"], 1076);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "cdf315abd1e7115fcbfbcc88c720371e75989b8e",
+            "348a7441c3b4be2dfad3e570e83d5bdc4bfad2cb",
             "0000000000000000000000000000000000000000",
         ),
     )
@@ -81,16 +81,22 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     assert!(err.contains("corpus pin"), "{err}");
 }
 
-/// The real oracle with BC 29's recorded corpus commit replaced.
+/// The real oracle with an older corpus commit recorded for BC 29 (every table is on the pin).
 fn oracle_with_29_recorded_for(commit: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let t = std::fs::read_to_string(root().join("oracle/oracle.toml")).unwrap();
+    let marker = "bc_version = \"29.0\"\n";
+    assert!(t.contains(marker), "BC 29 has a table");
     assert!(
-        t.contains("corpus_commit = \"cf6e546"),
-        "BC 29's oracle is recorded for the older commit"
+        !t.contains("workflow_run = 38306086475"),
+        "BC 29 is recorded for the pin"
     );
     let bad = dir.path().join("oracle.toml");
-    std::fs::write(&bad, t.replace("cf6e546793a92c482499ce86eadf0a0b13d2a742", commit)).unwrap();
+    std::fs::write(
+        &bad,
+        t.replace(marker, &format!("{marker}corpus_commit = \"{commit}\"\n")),
+    )
+    .unwrap();
     for v in ["27", "28", "29"] {
         std::fs::create_dir(dir.path().join(v)).unwrap();
         std::fs::copy(
@@ -190,10 +196,8 @@ fn every_bc_major_has_an_oracle_with_the_same_cases() {
     require_corpus();
     // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
     // run stops with exit 2 (ADR-015 1.6).
-    // BC 27 and 28 are recorded for the pinned corpus commit (223 probe tests more). BC 29 is
-    // recorded for the older commit, which the pin only adds files to (ADR-007), so its cases are
-    // the 4836 it had.
-    for (v, total) in [("27", 5059), ("28", 5059), ("29", 4836)] {
+    // All three are recorded for the pinned corpus commit.
+    for (v, total) in [("27", 5112), ("28", 5112), ("29", 5112)] {
         let (code, r) = json(&["--bc-version", v]);
         assert_eq!(code, 0, "BC {v}");
         assert_eq!(r["overall"]["total"], total, "BC {v}");
@@ -222,9 +226,8 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     }
     assert!(!json.exists(), "all-versions writes only per-version files");
     assert!(out.contains("Version comparison"), "{out}");
-    // BC 29's oracle lacks the 223 cases that the pinned corpus added. Re-recording it for the
-    // pin makes this line say "same cases in every version" again.
-    assert!(out.contains("oracle: 223 case(s) differ"), "{out}");
+    // Every oracle is recorded for the pin and has the same cases.
+    assert!(out.contains("oracle: same cases in every version"), "{out}");
     // The three known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same
     // cases on every version, among the cases every oracle has. A new difference would be
     // listed here.

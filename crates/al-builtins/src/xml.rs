@@ -1417,7 +1417,7 @@ fn node_matches(h: &Handle, test: &Test, principal_attr: bool, prefixes: Prefixe
                 }),
         }
     };
-    Ok(match (&*test, principal_attr) {
+    Ok(match (test, principal_attr) {
         (Test::Name(pre, n), false) if with(h, |d| matches!(d, XData::Element { .. })) => {
             let want = wanted(pre)?;
             with(

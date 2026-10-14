@@ -65,7 +65,10 @@ fn every_call_on_a_variable_of_a_report_extension_is_lowered() {
     for (oi, o) in l.unsupported.iter().enumerate() {
         for (ri, r) in o.iter().enumerate() {
             if let Some(r) = r.first() {
-                reasons.push(format!("{}.{}: {r}", l.program.objects[oi].name, l.program.objects[oi].routines[ri].name));
+                reasons.push(format!(
+                    "{}.{}: {r}",
+                    l.program.objects[oi].name, l.program.objects[oi].routines[ri].name
+                ));
             }
         }
     }

@@ -647,6 +647,8 @@ pub enum LibraryValue {
     XmlAttrs(crate::json::Handle),
     /// An XmlNameTable (opaque).
     XmlNameTable,
+    /// An XmlNamespaceManager: the (prefix, namespace) pairs added to it.
+    XmlNamespaces(Vec<(String, String)>),
     /// An InStream: a snapshot being read.
     InStream(crate::stream::InState),
     /// An OutStream: appends to a Blob buffer.

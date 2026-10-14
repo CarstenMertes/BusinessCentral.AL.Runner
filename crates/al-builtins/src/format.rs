@@ -39,7 +39,27 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
         Value::Date(0, _) | Value::Time(0) | Value::DateTime(0) => String::new(),
         Value::Date(day, closing) => format_date(*day, *closing, standard),
         Value::Time(t) if standard == 2 => format_time_12h(t - 1),
+        // The round-trip form of a Time: `14:30:05`, with `.fff` only when milliseconds are set
+        // (json/TestJsonRuntimeContracts.al:JsonToken_ReadAsDateTimeTimeDuration).
+        Value::Time(t) if standard == 9 && (t - 1) % 1000 == 0 => {
+            let s = (t - 1) / 1000;
+            format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+        }
         Value::DateTime(t) if standard == 2 || standard == 9 => format_datetime(t - 1, standard),
+        // The round-trip form of a Duration: `P0DT0H0M5.0S`, `P1DT1H1M1.001S`
+        // (json/TestJsonRuntimeContracts.al:214, types/TestFormatEvaluateTextContracts.al:125).
+        // A fraction with trailing zeros is not pinned.
+        Value::Duration(ms) if standard == 9 && *ms >= 0 && (ms % 1000 == 0 || ms % 10 != 0) => {
+            let (d, h, m, s, f) = (
+                ms / 86_400_000,
+                ms / 3_600_000 % 24,
+                ms / 60_000 % 60,
+                ms / 1000 % 60,
+                ms % 1000,
+            );
+            let frac = if f == 0 { "0".to_string() } else { format!("{f:03}") };
+            format!("P{d}DT{h}H{m}M{s}.{frac}S")
+        }
         Value::DateFormula(f) => f.clone(),
         // A Version reads `major.minor.build.revision` (session/TestBCPlatformContracts.al:120-136
         // compares the formatted AppVersion with the manifest's `1.0.0.0`).
@@ -187,7 +207,10 @@ fn format_datetime(ms: i64, standard: i32) -> String {
             in_day / 1000 % 60,
             in_day % 1000,
         );
-        format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{f:03}Z")
+        // The fraction is left out when it is zero
+        // (types/TestDateRoundFormatStringContracts.al:36, json/TestJsonRuntimeContracts.al:206).
+        let frac = if f == 0 { String::new() } else { format!(".{f:03}") };
+        format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}{frac}Z")
     } else {
         format!("{m:02}/{d:02}/{:02} {}", y.rem_euclid(100), format_time_12h(in_day))
     }

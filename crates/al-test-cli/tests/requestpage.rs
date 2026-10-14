@@ -222,6 +222,15 @@ reportextension 61241 "RQ Protected Base Ext" extends "RQ Protected Base"
         } } }
     }
 }
+// handlers/TestReportRequestPageBoundVisibility (60008) and Rpt RequestPage SourceTable (60928): a request page
+// that says ShowFilter = false.
+report 61242 "RQ No Filters"
+{
+    ProcessingOnly = true;
+    dataset { dataitem(Rows; "RQ Row") { } }
+    requestpage { ShowFilter = false; layout { area(Content) { field(OptCtl; Opt) { ApplicationArea = All; } } } }
+    var Opt: Text[30];
+}
 // A report without a requestpage section: the page still shows the data items' filters.
 report 61220 "RQ Default Page"
 {
@@ -832,4 +841,25 @@ fn a_reportextension_that_only_adds_controls_bound_to_protected_base_variables_o
             RP.\"Prod Flag\".AssertEquals('No'); RP.\"Prod No.\".AssertEquals('');
             RP.Cancel().Invoke(); end;"
     ));
+}
+
+// A request page with ShowFilter = false opens and its controls work; touching a data item of it is refused (not pinned).
+#[test]
+fn a_request_page_with_show_filter_false_opens_but_its_data_items_are_refused() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('ControlOnly')]
+        procedure ControlsWork() begin
+            Seed(); Report.Run(Report::\"RQ No Filters\"); if not HandlerRan then Error('handler'); end;
+        [RequestPageHandler] procedure ControlOnly(var RP: TestRequestPage \"RQ No Filters\") begin
+            HandlerRan := true; RP.OptCtl.SetValue('x'); RP.OptCtl.AssertEquals('x'); RP.Cancel().Invoke(); end;"
+    ));
+    let why = refused(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('FilterItem')]
+        procedure Filters() begin Seed(); Report.Run(Report::\"RQ No Filters\"); end;
+        [RequestPageHandler] procedure FilterItem(var RP: TestRequestPage \"RQ No Filters\") begin
+            RP.Rows.SetFilter(\"Entry No.\", '1'); RP.Cancel().Invoke(); end;"
+    ));
+    assert!(why.contains("ShowFilter"), "{why}");
 }

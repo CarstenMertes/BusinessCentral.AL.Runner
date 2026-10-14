@@ -126,6 +126,19 @@ impl Session {
         }
     }
 
+    /// A request page with `ShowFilter = false` hides the filters of its data items. What a TestRequestPage or
+    /// `RunRequestPage` then does with them is not pinned by the corpus (docs/probes-needed.md).
+    fn require_filters_shown(&self, object: usize) -> Result<(), Signal> {
+        let hidden = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("ShowFilter") && v.trim().eq_ignore_ascii_case("false"));
+        if hidden {
+            return unsupported("a data item of a request page with ShowFilter = false (not pinned)");
+        }
+        Ok(())
+    }
+
     /// The record of data item control `idx` of the open request page.
     fn request_item_record(&self, st: &St, idx: usize) -> Result<Rec, Signal> {
         let engine = self.engine();
@@ -151,6 +164,7 @@ impl Session {
         idx: usize,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        self.require_filters_shown(st.borrow().object as usize)?;
         let rec = self.request_item_record(st, idx)?;
         let table = self.table(&rec)?;
         let field_arg = |i: usize| match args.get(i) {
@@ -241,6 +255,7 @@ impl Session {
                     ));
                 }
                 (ir::ControlKind::DataItem, ir::Binding::Var(slot)) => {
+                    self.require_filters_shown(object)?;
                     let rec = match inst.borrow().globals[*slot].clone() {
                         Value::Record(r) => r,
                         other => return unsupported(format!("data item {} holds {other:?}", c.name)),
@@ -353,6 +368,7 @@ impl Session {
                     "a parameter for the data item {name}, which the request page does not have"
                 ));
             };
+            self.require_filters_shown(object)?;
             let ir::Binding::Var(slot) = c.binding else { continue };
             let Value::Record(rec) = inst.borrow().globals[slot].clone() else {
                 continue;

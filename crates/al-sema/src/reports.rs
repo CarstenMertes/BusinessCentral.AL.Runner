@@ -226,8 +226,13 @@ pub fn request_layout(
     if let Some(s) = &section {
         for p in s.properties() {
             let name = p.name().to_ascii_lowercase();
+            // `ShowFilter` hides the data item filters of the request page. Whether a TestRequestPage then still
+            // has them is not pinned, so a literal value passes here and the test client refuses to touch a
+            // data item of a page that says `false` (docs/probes-needed.md).
+            let show_filter = name == "showfilter" && matches!(bool_prop(&p.value_text()), Some(_));
             if !["caption", "savevalues"].contains(&name.as_str())
                 && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
+                && !show_filter
             {
                 layout
                     .reasons

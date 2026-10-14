@@ -164,12 +164,15 @@ struct Unit {
     isolation: TestIsolation,
 }
 
+/// What a test codeunit left: each test's outcome, and the call stack of each AL error that failed one.
+type UnitOutcomes = (Vec<(String, Outcome)>, Vec<(String, String)>);
+
 struct UnitResult {
     si: usize,
     oi: usize,
     id: u32,
     /// The outcome of each test, or the message of a Rust panic.
-    result: Result<(Vec<(String, Outcome)>, Vec<(String, String)>), String>,
+    result: Result<UnitOutcomes, String>,
     took: std::time::Duration,
     sidecar_start: std::time::Duration,
 }

@@ -1085,37 +1085,38 @@ fn runrequestpage_is_refused_with_a_pending_write() {
 // ---------------------------------------------------------------- refusals
 
 #[test]
-fn a_request_page_that_would_open_is_refused() {
-    // handlers/TestReportRunWithRequestPage.al:78-99: the page opens for a run that does not
-    // switch it off, and only a handler can answer it. Request pages are not implemented.
-    let why = refusal(
-        "var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; begin
-            H.Seed(); Commit(); R.Run(); exit('ran');
-        end;",
+fn a_request_page_that_would_open_with_no_handler_raises_unhandled_ui() {
+    // handlers/TestReportRuntimeContracts.al:416-430: the page opens for a run that does not
+    // switch it off, and with no handler the run raises the Unhandled UI error.
+    assert_eq!(
+        f("var H: Codeunit Helpers; R: Report \"TxRpt ReqPage Marker\"; begin
+            H.Seed(); Commit(); asserterror R.Run(); exit(GetLastErrorText() + '|' + GetLastErrorCode());
+        end;"),
+        "Unhandled UI: RequestPage 60026|MissingUIHandler"
     );
-    assert!(why.contains("request page"), "{why}");
 }
 
 #[test]
-fn a_report_without_a_request_page_section_still_counts_as_using_one_by_default() {
-    // No corpus test runs such a report without switching the page off, so whether an empty
-    // default page opens is not pinned: the run is refused.
-    let why = refusal(
-        "var H: Codeunit Helpers; begin
-            H.Seed(); Commit(); Report.Run(Report::\"Default Page Report\"); exit('ran');
-        end;",
+fn a_report_without_a_request_page_section_opens_its_page_by_default() {
+    // handlers/TestReportRuntimeContracts.al:416-430: even without a requestpage section.
+    assert_eq!(
+        f("var H: Codeunit Helpers; begin
+            H.Seed(); Commit(); asserterror Report.Run(Report::\"Default Page Report\");
+            exit(GetLastErrorText());
+        end;"),
+        "Unhandled UI: RequestPage 60876"
     );
-    assert!(why.contains("request page"), "{why}");
 }
 
 #[test]
-fn currreport_skip_is_refused_statically() {
-    let why = refusal(
-        "var R: Report \"Skipper Report\"; H: Codeunit Helpers; begin
+fn currreport_skip_in_on_after_get_record_skips_the_row() {
+    // handlers/TestReportRuntimeContracts.al:322-337.
+    assert_eq!(
+        f("var R: Report \"Skipper Report\"; H: Codeunit Helpers; begin
             H.Seed(); R.UseRequestPage(false); R.Run(); exit('ran');
-        end;",
+        end;"),
+        "ran"
     );
-    assert!(why.contains("Report.Skip"), "{why}");
 }
 
 #[test]

@@ -43,6 +43,8 @@ pub struct DepFacts {
     pub ext_slots: Vec<(String, u32)>,
     /// The source offset of every routine, in the order the object numbers them.
     pub routine_offsets: Vec<u32>,
+    /// The role of every routine (`lower::ROLE_*`), in the same order.
+    pub routine_roles: Vec<u8>,
     /// Why a variable of the xmlport or report is refused (the first reason), if it is.
     pub xml_reason: Option<String>,
     pub report_reason: Option<String>,

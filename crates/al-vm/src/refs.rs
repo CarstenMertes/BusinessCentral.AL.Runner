@@ -25,6 +25,24 @@ type FieldMembers = (bool, Vec<(i32, String, String)>);
 /// not counted by `FieldCount` (docs/probes-needed.md).
 const SYSTEM_FIELD_BASE: u32 = 2_000_000_000;
 
+/// The field number AL code sees for a field. SystemRowVersion is field 0 there: the corpus pins that
+/// `KeyRef.FieldIndex(n).Number()` equals `FieldNo(SystemRowVersion)`
+/// (recordref/TestKeyMetadataRowVersionRemoved.al:51, :85) and that the rowversion "sits at field id 0"
+/// (record/TestCalcFormulaSystemFieldsTests.Codeunit.al:213-215); a real project reads
+/// `KeyRef.FieldIndex(1).Number = 0` for a key that starts with it ("FieldRef 0 is rowversion").
+/// No corpus test names the number itself: docs/probes-needed.md, batch 7. The other system fields
+/// keep 2000000000 to 2000000004.
+pub(crate) fn al_field_no(id: u32) -> i32 {
+    if id == SYSTEM_ROW_VERSION_ID {
+        0
+    } else {
+        id as i32
+    }
+}
+
+/// The internal id of SystemRowVersion, which AL code sees as field 0.
+pub(crate) const SYSTEM_ROW_VERSION_ID: u32 = 2_000_000_005;
+
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
@@ -336,7 +354,7 @@ impl Session {
             | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(method, &rec, args),
             "Field" => {
                 let no = int_arg(args, 0)?;
-                match t.fields.iter().position(|f| i64::from(f.id) == no) {
+                match t.fields.iter().position(|f| i64::from(al_field_no(f.id)) == no) {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
                     None => unsupported(format!(
                         "RecordRef.Field({no}) on a field {} does not have (error text not pinned yet)",
@@ -346,7 +364,7 @@ impl Session {
             }
             "FieldExist" => {
                 let no = int_arg(args, 0)?;
-                Ok(Value::Boolean(t.fields.iter().any(|f| i64::from(f.id) == no)))
+                Ok(Value::Boolean(t.fields.iter().any(|f| i64::from(al_field_no(f.id)) == no)))
             }
             "FieldCount" => Ok(Value::Integer(enumerable_fields(&t).len() as i32)),
             "FieldIndex" => {
@@ -469,13 +487,7 @@ impl Session {
                     Ok(Value::Null)
                 }
             },
-            // BC does not number SystemRowVersion 2000000005 (a real project reads 0 and the corpus
-            // puts the rowversion at field id 0 for table relations, record/TestCalcFormulaSystemFieldsTests.Codeunit.al:213),
-            // but no corpus test reads this FieldRef's Number: refused (docs/probes-needed.md, batch 7).
-            "Number" if field.id == 2_000_000_005 => unsupported(
-                "FieldRef.Number of SystemRowVersion (not pinned: 0 or 2000000005, docs/probes-needed.md)",
-            ),
-            "Number" => Ok(Value::Integer(field.id as i32)),
+            "Number" => Ok(Value::Integer(al_field_no(field.id))),
             "Name" => Ok(Value::Text(field.name.clone())),
             "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
             "Type" => self.field_type(&t, pos),

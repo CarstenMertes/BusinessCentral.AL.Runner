@@ -663,19 +663,20 @@ fn a_tableextension_key_on_systemrowversion_is_visible_through_keyref() {
 }
 
 #[test]
-fn the_field_number_of_systemrowversion_is_refused_until_a_probe_pins_it() {
-    // NaviPartner's npcore-partners (APIRequest.FindRowVersionKeyIndex) reads
-    // `KeyRef.FieldIndex(1).Number = 0 //FieldRef 0 is rowversion`, and corpus
-    // record/TestCalcFormulaSystemFieldsTests.Codeunit.al:213-215 says the rowversion sits at
-    // field id 0 for a table relation. No corpus test reads FieldRef.Number() of that field
-    // (docs/probes-needed.md), so the answer is refused rather than 2000000005 or 0.
-    let m = unsupported(run(
-        "procedure F(): Integer var RR: RecordRef; KR: KeyRef; begin
+fn systemrowversion_is_field_0_through_fieldno_number_and_field() {
+    // Corpus recordref/TestKeyMetadataRowVersionRemoved.al:51,:85 pins that KeyRef.FieldIndex(1).Number()
+    // equals FieldNo(SystemRowVersion); the rowversion sits at field id 0 (record/TestCalcFormulaSystemFieldsTests
+    // .Codeunit.al:213-215), which is also what a real project reads (`KeyRef.FieldIndex(1).Number = 0`).
+    // The literal is an assumption (docs/probes-needed.md, batch 7). The other system fields keep their numbers.
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; KR: KeyRef; R: Record \"ALT RV\"; begin
             RR.Open(50960);
             KR := RR.KeyIndex(2);
-            exit(KR.FieldIndex(1).Number());
+            exit(Format(KR.FieldIndex(1).Number()) + '|' + Format(R.FieldNo(SystemRowVersion)) + '|' +
+                Format(R.FieldNo(SystemId)) + '|' + Format(RR.Field(0).Name()) + '|' + Format(RR.FieldExist(0)) + '|' +
+                Format(RR.Field(R.FieldNo(SystemRowVersion)).Number()));
         end;",
         "F",
-    ));
-    assert!(m.contains("SystemRowVersion"), "{m}");
+    );
+    assert_eq!(text(r), "0|0|2000000000|SystemRowVersion|Yes|0");
 }

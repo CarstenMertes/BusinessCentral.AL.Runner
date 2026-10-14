@@ -8,17 +8,17 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 | Field | Value |
 |---|---|
 | Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `al-runtime-rs` |
-| Corpus pin | `6219bf4b41cb9802e1d7fe20efc252778f2e02ef` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
+| Corpus pin | `337859e7007337a0bf52ae2d82c6b802c2b5fba0` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `6219bf4` (the pin) | 38534169906 | `junit-test-results-27.5` | 11879854446 | 5147 |
-| 28 | 28.5 | `6219bf4` (the pin) | 38536067343 | `junit-test-results-28.5` | 11880912241 | 5147 (+26 `OnRun`) |
-| 29 | 29.0 | `6219bf4` (the pin) | 38537727198 | `junit-test-results-29.0` | 11882110288 | 5147 (+26 `OnRun`) |
+| 27 | 27.5 | `337859e` (the pin) | 38564280267 | `junit-test-results-27.5` | 11895492179 | 5221 |
+| 28 | 28.5 | `337859e` (the pin) | 38566708821 | `junit-test-results-28.5` | 11897001202 | 5221 (+26 `OnRun`) |
+| 29 | 29.0 | `337859e` (the pin) | 38569781950 | `junit-test-results-29.0` | 11898113141 | 5221 (+26 `OnRun`) |
 
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is
-the OnPrem suite (`junit-al-language-onprem.xml`, 64 cases): it is the oracle of the
+the OnPrem suite (`junit-al-language-onprem.xml`, 67 cases): it is the oracle of the
 `onprem` test app below.
 
 ## Other test apps
@@ -29,7 +29,7 @@ overall count.
 
 | Name | App | Oracle file | From | Cases |
 |---|---|---|---|---|
-| `onprem` (27, 28, 29) | `tests/al-language-onprem` | `<major>/junit-onprem.xml` | the small artifact of the same CI run as the main oracle (ids 11879757125, 11880277344, 11881077716), copied unchanged | 64 |
+| `onprem` (27, 28, 29) | `tests/al-language-onprem` | `<major>/junit-onprem.xml` | the small artifact of the same CI run as the main oracle (ids 11894245312, 11896561384, 11896847119), copied unchanged | 67 |
 | `isolation-function` (28 only) | `tests/al-language-isolation-probe` | `28/xunit-isolation-function.xml` | the Windows nightly of 2026-10-13, BC 28.4, run 38341042967, artifact 11788517730 | 7 |
 | `isolation-codeunit` (28 only) | the same app | `28/xunit-isolation-codeunit.xml` | the same artifact | 7 (T5 fails on BC, on purpose) |
 

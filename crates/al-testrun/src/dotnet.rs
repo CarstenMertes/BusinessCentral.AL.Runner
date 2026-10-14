@@ -37,6 +37,8 @@ pub struct SidecarConfig {
     pub assembly_dirs: Vec<PathBuf>,
     /// `--dotnet-allow-roll-forward`: run on a newer major than 8, with a warning.
     pub allow_roll_forward: bool,
+    /// Where each process gets its working folders; default: the system temporary folder.
+    pub work_root: Option<PathBuf>,
     /// Deadline of one call; on expiry the process is killed (ADR-014 section 10).
     pub timeout: Duration,
 }
@@ -50,6 +52,7 @@ impl Default for SidecarConfig {
             cache_dir: None,
             assembly_dirs: Vec::new(),
             allow_roll_forward: false,
+            work_root: None,
             timeout: Duration::from_secs(60),
         }
     }
@@ -62,49 +65,249 @@ struct Resolved {
     sidecar: PathBuf,
 }
 
-pub struct SidecarHost {
+/// What the sidecars of one host cost, so start-up is reported apart from the calls
+/// (`--timings`, the perf budget). `start_*` is the time from spawning the process to its
+/// answer to `hello` (and the assembly probe), measured per process.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SidecarStats {
+    /// Processes that started and answered `hello`: one per session that made a call, and the
+    /// standbys (see [`SidecarHost::prewarm`]).
+    pub started: usize,
+    pub start_total: Duration,
+    pub start_max: Duration,
+    /// Finding `dotnet` and the sidecar, once per host (it runs `dotnet --list-runtimes`, and
+    /// builds the sidecar the first time).
+    pub find_total: Duration,
+    /// Sessions that were given a standby process instead of starting their own.
+    pub from_standby: usize,
+    /// How long sessions waited for their process: the start-up share of their wall time. A
+    /// standby that was ready makes it zero, however long the start took.
+    pub waited_total: Duration,
+    /// Requests after the start, and their total time.
+    pub calls: usize,
+    pub call_total: Duration,
+}
+
+/// How many standby sidecars a run that has the Microsoft apps keeps ready (`prewarm`). The
+/// corpus has two test codeunits that call .NET; two is enough for the sessions that start
+/// together, and a taken one is replaced while the next codeunit runs.
+pub const STANDBY_SIDECARS: usize = 2;
+
+thread_local! {
+    /// Start-up time of the sidecars that threads started on this thread since the last
+    /// [`take_start_time`]: the test runner reads it after each test codeunit.
+    static START_ON_THIS_THREAD: std::cell::Cell<Duration> = const { std::cell::Cell::new(Duration::ZERO) };
+}
+
+/// The time sidecar processes started on this thread took since the last call, and resets it.
+/// A test codeunit runs on one thread, so this is the start-up share of its wall time.
+pub fn take_start_time() -> Duration {
+    START_ON_THIS_THREAD.with(|c| c.replace(Duration::ZERO))
+}
+
+/// What the host, its sessions and its background starts share.
+struct Shared {
     cfg: SidecarConfig,
     resolved: OnceLock<Result<Resolved, String>>,
+    stats: Mutex<SidecarStats>,
+    pool: Pool,
+}
+
+impl Shared {
+    fn resolve(&self) -> &Result<Resolved, String> {
+        self.resolved.get_or_init(|| {
+            let began = std::time::Instant::now();
+            let r = resolve(&self.cfg);
+            lock(&self.stats).find_total = began.elapsed();
+            r
+        })
+    }
+
+    /// `resolve`, charging the time the caller waited (it may be waiting for another thread's
+    /// `dotnet --list-runtimes`) to its codeunit as sidecar start-up.
+    fn resolve_waiting(&self) -> &Result<Resolved, String> {
+        let began = std::time::Instant::now();
+        let r = self.resolve();
+        self.waited(began.elapsed());
+        r
+    }
+
+    fn waited(&self, w: Duration) {
+        lock(&self.stats).waited_total += w;
+        START_ON_THIS_THREAD.with(|c| c.set(c.get() + w));
+    }
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A started process nobody has used. One session takes it whole, so static .NET state never
+/// leaks between sessions (ADR-014 section 6).
+struct Standby {
+    proc: Proc,
+    next_id: u64,
+}
+
+#[derive(Default)]
+struct PoolState {
+    ready: Vec<Standby>,
+    /// Standbys being started in the background.
+    starting: usize,
+    /// How many to keep ready or starting. A taken one is replaced.
+    target: usize,
+    closed: bool,
+}
+
+#[derive(Default)]
+struct Pool {
+    state: Mutex<PoolState>,
+    changed: std::sync::Condvar,
+}
+
+impl Pool {
+    /// Counts the standbys the caller must start now to reach the target.
+    fn reserve(&self) -> usize {
+        let mut st = lock(&self.state);
+        if st.closed {
+            return 0;
+        }
+        let need = st.target.saturating_sub(st.ready.len() + st.starting);
+        st.starting += need;
+        need
+    }
+
+    /// A background start ended. A failed one stops the pool: the session that needs a process
+    /// starts its own and reports the real reason.
+    fn deposit(&self, started: Result<Standby, String>) {
+        let mut st = lock(&self.state);
+        st.starting -= 1;
+        match started {
+            Ok(s) if !st.closed => st.ready.push(s),
+            Ok(_) => {}
+            Err(_) => st.target = 0,
+        }
+        self.changed.notify_all();
+    }
+
+    /// A ready standby, or one that is starting (waited for at most `within`), or `None`.
+    fn take(&self, within: Duration) -> Option<Standby> {
+        let until = std::time::Instant::now() + within;
+        let mut st = lock(&self.state);
+        loop {
+            if let Some(s) = st.ready.pop() {
+                return Some(s);
+            }
+            let left = until.checked_duration_since(std::time::Instant::now())?;
+            if st.starting == 0 {
+                return None;
+            }
+            st = self.changed.wait_timeout(st, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
+    }
+
+    fn close(&self) {
+        let ready = {
+            let mut st = lock(&self.state);
+            st.closed = true;
+            st.target = 0;
+            std::mem::take(&mut st.ready)
+        };
+        self.changed.notify_all();
+        drop(ready); // kills the processes and removes their folders
+    }
+}
+
+/// Starts `n` (already reserved) standby processes, each on its own thread.
+fn start_standbys(shared: &Arc<Shared>, n: usize) {
+    for _ in 0..n {
+        let shared = shared.clone();
+        let spawned = std::thread::Builder::new().name("dotnet-standby".into()).spawn({
+            let shared = shared.clone();
+            move || {
+                let started = (|| {
+                    shared.resolve().clone()?;
+                    let mut s = SidecarSession::new(shared.clone(), shared.resolve().clone());
+                    s.start_process()?;
+                    let proc = s.proc.take().ok_or("the process is gone")?;
+                    Ok(Standby {
+                        proc,
+                        next_id: s.next_id,
+                    })
+                })();
+                shared.pool.deposit(started);
+            }
+        });
+        if spawned.is_err() {
+            shared.pool.deposit(Err("no room for another thread".into()));
+        }
+    }
+}
+
+pub struct SidecarHost {
+    shared: Arc<Shared>,
 }
 
 impl SidecarHost {
     pub fn new(cfg: SidecarConfig) -> SidecarHost {
         SidecarHost {
-            cfg,
-            resolved: OnceLock::new(),
+            shared: Arc::new(Shared {
+                cfg,
+                resolved: OnceLock::new(),
+                stats: Mutex::new(SidecarStats::default()),
+                pool: Pool::default(),
+            }),
         }
+    }
+
+    /// Start-up and call time of every sidecar this host has run so far.
+    pub fn stats(&self) -> SidecarStats {
+        *lock(&self.shared.stats)
     }
 
     /// The sidecar this host runs, once it has been found (or built).
     pub fn sidecar_path(&self) -> Option<PathBuf> {
-        self.resolve().as_ref().ok().map(|r| r.sidecar.clone())
+        self.shared.resolve().as_ref().ok().map(|r| r.sidecar.clone())
     }
 
-    fn resolve(&self) -> &Result<Resolved, String> {
-        self.resolved.get_or_init(|| resolve(&self.cfg))
+    /// Starts up to `n` sidecar processes in the background and keeps them waiting, so the first
+    /// sessions that make a `DotNet` call find one running instead of paying for the start
+    /// (ADR-014 section 6, "warm standby"). Call it at the beginning of a run that is likely to
+    /// reach `DotNet`, so the starts overlap the compile. A session takes a standby whole and
+    /// alone; the host starts a replacement. Nothing is loaded into a standby, so it cannot be
+    /// told from a fresh process. [`SidecarHost::shutdown`] ends the unused ones.
+    pub fn prewarm(&self, n: usize) {
+        lock(&self.shared.pool.state).target = n;
+        let need = self.shared.pool.reserve();
+        start_standbys(&self.shared, need);
+    }
+
+    /// Ends the standby processes nobody used and stops starting new ones. Sessions that call
+    /// later start their own process.
+    pub fn shutdown(&self) {
+        self.shared.pool.close();
+    }
+}
+
+impl Drop for SidecarHost {
+    fn drop(&mut self) {
+        self.shutdown();
     }
 }
 
 impl DotNetHost for SidecarHost {
     fn availability(&self) -> Result<(), DotNetUnavailable> {
-        match self.resolve() {
+        match self.shared.resolve_waiting() {
             Ok(_) => Ok(()),
             Err(why) => Err(DotNetUnavailable(why.clone())),
         }
     }
 
     fn open_session(&self, _cfg: &DotNetSessionConfig) -> Box<dyn DotNetSession> {
-        // Unique in the process, whichever host opens the session: the working folder is named by it.
-        static SESSIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let n = SESSIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        Box::new(SidecarSession {
-            cfg: self.cfg.clone(),
-            resolved: self.resolve().clone(),
-            number: n,
-            proc: None,
-            dead: None,
-            next_id: 1,
-        })
+        Box::new(SidecarSession::new(
+            self.shared.clone(),
+            self.shared.resolve_waiting().clone(),
+        ))
     }
 }
 
@@ -232,7 +435,7 @@ fn default_cache_dir() -> Option<PathBuf> {
     Some(Path::new(&home).join(".cache/al-runtime-rs/dotnet-sidecar"))
 }
 
-const NOT_BUILT: &str = "sidecar not built; run 'dotnet publish tools/dotnet-sidecar -c Release -o <dir>' and pass --dotnet-sidecar <dir>/AlDotNetSidecar.dll";
+const NOT_BUILT: &str = "sidecar not built; run 'dotnet publish tools/dotnet-sidecar -c Release -o <dir> --disable-build-servers' and pass --dotnet-sidecar <dir>/AlDotNetSidecar.dll";
 
 /// ADR-014 section 10, lookup order: the flag or `ALRT_DOTNET_SIDECAR`; `dotnet-sidecar/` next to
 /// this binary; a cache keyed by the source hash, built there once when the .NET SDK is present.
@@ -289,6 +492,9 @@ fn find_sidecar(cfg: &SidecarConfig, dotnet: &Path) -> Result<PathBuf, String> {
         .arg(&src)
         .args(["-c", "Release", "-o"])
         .arg(&tmp)
+        // No build servers: a VBCSCompiler left running for minutes inherits our open file
+        // descriptors (pipes, locks) and keeps whoever waits on them waiting.
+        .args(["--disable-build-servers", "-p:UseSharedCompilation=false"])
         .env("DOTNET_NOLOGO", "1")
         .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
         .output()
@@ -316,6 +522,14 @@ fn find_sidecar(cfg: &SidecarConfig, dotnet: &Path) -> Result<PathBuf, String> {
 
 // ---- one sidecar process per VM session ---------------------------------------------------
 
+impl Drop for Proc {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.workdir);
+    }
+}
+
 struct Proc {
     child: Child,
     stdin: ChildStdin,
@@ -328,8 +542,9 @@ struct Proc {
 }
 
 struct SidecarSession {
-    cfg: SidecarConfig,
+    shared: Arc<Shared>,
     resolved: Result<Resolved, String>,
+    /// Unique in the process, whichever host starts the process: its working folder is named by it.
     number: u64,
     proc: Option<Proc>,
     /// Why every further call is refused: the process died, timed out or never started.
@@ -346,9 +561,55 @@ fn read_frame(r: &mut impl Read) -> Option<Vec<u8>> {
 }
 
 impl SidecarSession {
+    fn new(shared: Arc<Shared>, resolved: Result<Resolved, String>) -> SidecarSession {
+        static PROCESSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        SidecarSession {
+            shared,
+            resolved,
+            number: PROCESSES.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1,
+            proc: None,
+            dead: None,
+            next_id: 1,
+        }
+    }
+
+    /// Gets this session its process: a standby when one is ready or starting, else a new one.
+    /// The time this takes is what the session's codeunit waits for (`take_start_time`).
     fn start(&mut self) -> Result<(), String> {
+        let began = std::time::Instant::now();
+        // A standby that is starting has a head start on a process begun now; wait for it, but
+        // not past the deadline a start of our own would get.
+        let standby = self
+            .shared
+            .pool
+            .take(self.shared.cfg.timeout.max(Duration::from_secs(30)));
+        let result = match standby {
+            Some(sb) => {
+                self.proc = Some(sb.proc);
+                self.next_id = sb.next_id;
+                lock(&self.shared.stats).from_standby += 1;
+                // Keep the pool at its target for the sessions that follow.
+                let need = self.shared.pool.reserve();
+                start_standbys(&self.shared, need);
+                Ok(())
+            }
+            None => self.start_process(),
+        };
+        self.shared.waited(began.elapsed());
+        result
+    }
+
+    /// Spawns the process and checks its `hello`.
+    fn start_process(&mut self) -> Result<(), String> {
+        let began = std::time::Instant::now();
         let r = self.resolved.clone()?;
-        let workdir = std::env::temp_dir().join(format!("al-runtime-dotnet-{}-{}", std::process::id(), self.number));
+        let workdir = self
+            .shared
+            .cfg
+            .work_root
+            .clone()
+            .unwrap_or_else(std::env::temp_dir)
+            .join(format!("al-runtime-dotnet-{}-{}", std::process::id(), self.number));
         let (cwd, home, tmp) = (workdir.join("cwd"), workdir.join("home"), workdir.join("tmp"));
         for d in [&cwd, &home, &tmp] {
             std::fs::create_dir_all(d).map_err(|e| format!("cannot create {}: {e}", d.display()))?;
@@ -372,7 +633,7 @@ impl SidecarSession {
         if let Some(root) = r.dotnet.parent() {
             cmd.env("DOTNET_ROOT", root);
         }
-        if self.cfg.allow_roll_forward {
+        if self.shared.cfg.allow_roll_forward {
             cmd.env("DOTNET_ROLL_FORWARD", "Major");
         }
         let mut child = cmd
@@ -409,7 +670,7 @@ impl SidecarSession {
         });
         // The first message checks the protocol version and the runtime.
         // Starting a process is not a call: it gets at least 30 s however short the call deadline.
-        let start_deadline = self.cfg.timeout.max(Duration::from_secs(30));
+        let start_deadline = self.shared.cfg.timeout.max(Duration::from_secs(30));
         let hello = self
             .raw_request_within(json!({"op":"hello","protocol":PROTOCOL}), start_deadline)
             .map_err(|f| match f {
@@ -423,15 +684,16 @@ impl SidecarSession {
                 v["protocol"]
             ));
         }
-        if v["major"].as_u64() != Some(8) && !self.cfg.allow_roll_forward {
+        if v["major"].as_u64() != Some(8) && !self.shared.cfg.allow_roll_forward {
             return Err(format!(
                 "the sidecar runs on {}; it needs Microsoft.NETCore.App 8.x",
                 v["runtime"].as_str().unwrap_or("an unknown runtime")
             ));
         }
         // Where assemblies other than the standard library come from (ADR-014 section 3).
-        if !self.cfg.assembly_dirs.is_empty() {
+        if !self.shared.cfg.assembly_dirs.is_empty() {
             let dirs: Vec<Value> = self
+                .shared
                 .cfg
                 .assembly_dirs
                 .iter()
@@ -440,12 +702,17 @@ impl SidecarSession {
             self.raw_request(json!({"op":"probe","dirs":dirs}))
                 .map_err(|f| format!("{f:?}"))?;
         }
+        let took = began.elapsed();
+        let mut st = lock(&self.shared.stats);
+        st.started += 1;
+        st.start_total += took;
+        st.start_max = st.start_max.max(took);
         Ok(())
     }
 
     /// Sends one request and returns the whole reply object, or the refusal or exception.
     fn raw_request(&mut self, req: Value) -> Result<Value, DotNetFailure> {
-        let timeout = self.cfg.timeout;
+        let timeout = self.shared.cfg.timeout;
         self.raw_request_within(req, timeout)
     }
 
@@ -547,7 +814,12 @@ impl SidecarSession {
                 return Err(DotNetFailure::Refused(why));
             }
         }
-        self.raw_request(req)
+        let began = std::time::Instant::now();
+        let reply = self.raw_request(req);
+        let mut st = lock(&self.shared.stats);
+        st.calls += 1;
+        st.call_total += began.elapsed();
+        reply
     }
 }
 

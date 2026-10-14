@@ -145,12 +145,7 @@ impl Session {
                 let name = al_builtins::native::text_of(c).unwrap_or_default();
                 match self.resolve_company(&name)? {
                     Some(company) => company,
-                    // BC's error for a company that does not exist is not pinned.
-                    None => {
-                        return unsupported(format!(
-                            "RecordRef.Open on the company `{name}`, which does not exist (error text not pinned)"
-                        ));
-                    }
+                    None => return Err(Self::company_missing(&name)),
                 }
             }
         };
@@ -191,6 +186,28 @@ impl Session {
                 n => Err(self.missing_object("Table", n)),
             };
         };
+        // A table of TableType CRM can only be opened through a registered table connection; with none
+        // registered the open fails (session/TestCrmTableNoConnectionContracts.al:111-118, BC 27.5).
+        // With one registered, what the open does is not pinned. Other table types are not pinned.
+        let table_type = self.engine.program.objects[table]
+            .properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("TableType"))
+            .map(|(_, v)| v.trim().to_ascii_lowercase());
+        match table_type.as_deref() {
+            None | Some("normal") | Some("temporary") => {}
+            Some("crm") if !self.table_connections.iter().any(|(kind, _)| *kind == 0) => {
+                return Err(crate::transactions::al_error_code(
+                    "Table connection  for table type CRM must be registered using RegisterTableConnection or cmdlet New-NAVTableConnection before it can be used.",
+                    "Argument",
+                ));
+            }
+            Some(other) => {
+                return unsupported(format!(
+                    "RecordRef.Open of a table with TableType = {other} (a table connection is not modelled)"
+                ));
+            }
+        }
         let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, temp)) else {
             return unsupported("record buffer for RecordRef.Open");
         };

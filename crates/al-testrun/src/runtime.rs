@@ -134,7 +134,19 @@ pub struct Phases {
     pub engine: std::time::Duration,
     /// The test codeunits (object id, name) that took longest, slowest first (at most
     /// [`SLOWEST`]).
-    pub slowest: Vec<(u32, String, std::time::Duration)>,
+    pub slowest: Vec<CodeunitTime>,
+}
+
+/// How long one test codeunit took.
+#[derive(Debug, Clone)]
+pub struct CodeunitTime {
+    pub id: u32,
+    pub name: String,
+    /// Wall time of the whole codeunit.
+    pub took: std::time::Duration,
+    /// The part of `took` spent starting .NET sidecar processes (ADR-014): start-up of a helper
+    /// process, not the runtime. A budget on the runtime subtracts it.
+    pub sidecar_start: std::time::Duration,
 }
 
 /// How many test codeunits `--timings` names.
@@ -155,6 +167,7 @@ struct UnitResult {
     /// The outcome of each test, or the message of a Rust panic.
     result: Result<Vec<(String, Outcome)>, String>,
     took: std::time::Duration,
+    sidecar_start: std::time::Duration,
 }
 
 /// The `[Test]` routines of a codeunit.
@@ -173,6 +186,7 @@ fn run_unit(
     observe: Option<&mut Observer>,
 ) -> UnitResult {
     let started = std::time::Instant::now();
+    crate::dotnet::take_start_time();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         run_codeunit_observed(engine, lowered, u.oi, baseline, u.isolation, observe)
     }))
@@ -188,6 +202,7 @@ fn run_unit(
         id: u.id,
         result,
         took: started.elapsed(),
+        sidecar_start: crate::dotnet::take_start_time(),
     }
 }
 
@@ -443,7 +458,7 @@ impl CorpusRuntime {
         let mut outcomes = std::collections::HashMap::new();
         let mut details = std::collections::HashMap::new();
         let mut panics = 0;
-        let mut codeunit_times: Vec<(u32, String, std::time::Duration)> = Vec::new();
+        let mut codeunit_times: Vec<CodeunitTime> = Vec::new();
         // The test codeunits to run, in the order the report lists them.
         let mut units: Vec<Unit> = Vec::new();
         let mut list: Vec<TestResult> = Vec::new();
@@ -551,7 +566,12 @@ impl CorpusRuntime {
         let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();
         for r in results {
             suite_work.push((r.si, r.took));
-            codeunit_times.push((r.id, lowered.program.objects[r.oi].name.clone(), r.took));
+            codeunit_times.push(CodeunitTime {
+                id: r.id,
+                name: lowered.program.objects[r.oi].name.clone(),
+                took: r.took,
+                sidecar_start: r.sidecar_start,
+            });
             let o = &lowered.program.objects[r.oi];
             let push = |list: &mut Vec<TestResult>, test: &str, outcome: &Outcome| {
                 list.push(TestResult {
@@ -592,7 +612,7 @@ impl CorpusRuntime {
                 )
             })
             .collect();
-        codeunit_times.sort_by_key(|c| std::cmp::Reverse(c.2));
+        codeunit_times.sort_by_key(|c| std::cmp::Reverse(c.took));
         codeunit_times.truncate(SLOWEST);
         let suites = suites.iter().map(|s| s.name.clone()).collect();
         // The workspace and the lowered program are big: dropping them takes as long as lowering
@@ -858,7 +878,7 @@ pub fn run_codeunit_observed(
                     session.last_error = Default::default();
                     // The AL test runner enables every application area before each test method
                     // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
-                    session.application_areas.clear();
+                    session.start_test_method();
                     let model = models.get(&r).copied().unwrap_or_default();
                     // TransactionModel::None is handled before the method body: every active
                     // transaction is ended on the way in (codeunit/TestWriteTxTestBoundary.al:
@@ -978,9 +998,6 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                 let why = match kind_attr.to_ascii_lowercase().as_str() {
                     "filterpagehandler" => {
                         "no corpus test pins how FilterPageBuilder.RunModal reaches a filter page handler"
-                    }
-                    "recallnotificationhandler" => {
-                        "no corpus test pins what Notification.Recall does with a recall handler"
                     }
                     _ => "this handler kind",
                 };

@@ -695,3 +695,153 @@ fn the_marshalling_table_against_the_real_sidecar_decodes_each_row_to_its_clr_ty
     assert_eq!(text_of(&r), "aGk=");
     sess.close();
 }
+
+// ---- start-up is measured apart from the calls (perf budget, sidecar-start) -------------
+
+#[test]
+fn the_host_reports_how_many_sidecars_started_and_how_long_starting_took() {
+    let Some(h) = host() else { return };
+    let none = h.stats();
+    assert_eq!(none.started, 0, "nothing started yet: {none:?}");
+    // Finding `dotnet` (it runs `dotnet --list-runtimes`) is timed apart from the processes.
+    assert!(none.find_total > Duration::ZERO, "{none:?}");
+    let mut a = h.open_session(&DotNetSessionConfig::default());
+    a.invoke(st("System.Convert"), "ToInt32", vec![s("1")]).unwrap();
+    a.invoke(st("System.Convert"), "ToInt32", vec![s("2")]).unwrap();
+    let one = h.stats();
+    assert_eq!(one.started, 1, "two calls in one session are one process: {one:?}");
+    assert!(
+        one.start_total > Duration::ZERO && one.start_max == one.start_total,
+        "{one:?}"
+    );
+    assert_eq!(one.calls, 2, "{one:?}");
+    let mut b = h.open_session(&DotNetSessionConfig::default());
+    b.invoke(st("System.Convert"), "ToInt32", vec![s("3")]).unwrap();
+    let two = h.stats();
+    assert_eq!(two.started, 2, "{two:?}");
+    assert!(
+        two.start_total >= two.start_max && two.start_max > Duration::ZERO,
+        "{two:?}"
+    );
+    a.close();
+    b.close();
+}
+
+// ---- standby sidecars: started in the background, used once (ADR-014 section 6) --------
+
+/// Waits until `n` sidecar processes have finished starting.
+fn wait_for_started(h: &SidecarHost, n: usize) {
+    let until = std::time::Instant::now() + Duration::from_secs(60);
+    while h.stats().started < n {
+        assert!(
+            std::time::Instant::now() < until,
+            "no {n} standby started: {:?}",
+            h.stats()
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn entries_of(dir: &Path) -> usize {
+    std::fs::read_dir(dir).unwrap().count()
+}
+
+#[test]
+fn a_session_takes_a_standby_that_started_in_the_background_and_waits_for_nothing() {
+    let Some(h) = host() else { return };
+    h.prewarm(1);
+    wait_for_started(&h, 1);
+    let ready = h.stats();
+    let mut a = h.open_session(&DotNetSessionConfig::default());
+    a.invoke(st("System.Convert"), "ToInt32", vec![s("1")]).unwrap();
+    let used = h.stats();
+    assert_eq!(used.from_standby, 1, "{used:?}");
+    // Starting took real time; the session did not wait for it.
+    assert!(ready.start_total > Duration::ZERO, "{ready:?}");
+    // (Finding `dotnet`, and building the sidecar on a cold cache, was waited for before.)
+    let waited = used.waited_total - ready.waited_total;
+    assert!(
+        waited < ready.start_total / 2,
+        "waited {waited:?}, start {:?}",
+        ready.start_total
+    );
+    a.close();
+    h.shutdown();
+}
+
+#[test]
+fn a_session_that_calls_while_the_standby_is_starting_waits_for_it_instead_of_starting_another() {
+    let Some(h) = host() else { return };
+    h.prewarm(1);
+    let mut a = h.open_session(&DotNetSessionConfig::default());
+    a.invoke(st("System.Convert"), "ToInt32", vec![s("1")]).unwrap();
+    assert_eq!(h.stats().from_standby, 1, "{:?}", h.stats());
+    a.close();
+    h.shutdown();
+}
+
+#[test]
+fn a_standby_is_used_by_one_session_only_so_static_state_still_does_not_leak() {
+    let Some(h) = host() else { return };
+    h.prewarm(2);
+    wait_for_started(&h, 2);
+    let mut a = h.open_session(&DotNetSessionConfig::default());
+    a.invoke(st("System.AppContext"), "SetData", vec![s("k"), s("v")])
+        .unwrap();
+    let mut b = h.open_session(&DotNetSessionConfig::default());
+    assert_eq!(
+        b.invoke(st("System.AppContext"), "GetData", vec![s("k")])
+            .unwrap()
+            .value,
+        DotNetValue::Null,
+        "a second session gets its own process, standby or not"
+    );
+    a.close();
+    b.close();
+    h.shutdown();
+}
+
+#[test]
+fn a_taken_standby_is_replaced_and_shutdown_removes_the_ones_nobody_used() {
+    let work = tempfile::tempdir().unwrap();
+    let Some(h) = host_with(SidecarConfig {
+        work_root: Some(work.path().to_path_buf()),
+        ..config()
+    }) else {
+        return;
+    };
+    h.prewarm(1);
+    wait_for_started(&h, 1);
+    let mut a = h.open_session(&DotNetSessionConfig::default());
+    a.invoke(st("System.Convert"), "ToInt32", vec![s("1")]).unwrap();
+    wait_for_started(&h, 2); // the taken one was replaced
+    a.close();
+    h.shutdown();
+    assert_eq!(h.stats().started, 2, "nothing starts after shutdown: {:?}", h.stats());
+    assert_eq!(entries_of(work.path()), 0, "every working folder is gone");
+    // After shutdown a session still works; it starts its own process.
+    let mut b = h.open_session(&DotNetSessionConfig::default());
+    b.invoke(st("System.Convert"), "ToInt32", vec![s("1")]).unwrap();
+    assert_eq!(h.stats().from_standby, 1);
+    b.close();
+}
+
+#[test]
+fn a_standby_that_cannot_start_leaves_the_session_to_report_the_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let dll = dir.path().join("AlDotNetSidecar.dll");
+    std::fs::write(&dll, b"").unwrap();
+    let script = "if [ \"$1\" = \"--list-runtimes\" ]; then echo 'Microsoft.NETCore.App 8.0.1 [/x]'; exit 0; fi\necho boom >&2\nexit 3";
+    let h = SidecarHost::new(SidecarConfig {
+        dotnet: Some(fake_dotnet(dir.path(), script)),
+        sidecar: Some(dll),
+        ..Default::default()
+    });
+    h.prewarm(2);
+    let mut a = h.open_session(&DotNetSessionConfig::default());
+    let why = refused(a.invoke(st("System.Convert"), "ToInt32", vec![s("1")]));
+    assert!(why.contains("sidecar process ended") || why.contains("boom"), "{why}");
+    assert_eq!(h.stats().from_standby, 0);
+    a.close();
+    h.shutdown();
+}

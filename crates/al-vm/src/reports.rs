@@ -819,7 +819,7 @@ impl Session {
                     self.call(*e, t, ext_inst.clone(), Vec::new())?;
                 }
                 if run.dataset {
-                    self.dataset_begin(run, r)?;
+                    self.dataset_begin(run, r, &rec)?;
                 }
                 for child in run.children(r) {
                     if self.report_item(run, child, Some(rec.clone()))? {
@@ -1113,7 +1113,7 @@ impl Session {
 
     /// Opens the `DataItem` element of the current row of item `r` with its columns, evaluated now:
     /// after `OnAfterGetRecord` and before the nested items.
-    fn dataset_begin(&mut self, run: &Run, r: ItemRef) -> Result<(), Signal> {
+    fn dataset_begin(&mut self, run: &Run, r: ItemRef, rec: &Rec) -> Result<(), Signal> {
         let item = run.item(r);
         let name = dataset::dataset_name(&item.name)?;
         let (owner, object) = run.owner(r);
@@ -1129,11 +1129,50 @@ impl Session {
                 }
             }
         }
-        self.dataset
-            .as_mut()
-            .expect("a SaveAs run has a dataset")
-            .begin(&name, &columns);
+        // From BC 28 each DataItem names its table and a GUID that differs per element
+        // (handlers/TestReportSaveAsDatasetContracts.al:253-300, `#if BC28PLUS`). Whether the GUID is the
+        // record's SystemId is not pinned; the record's own is used, which is distinct per row.
+        let identity = if al_version::gate_on(
+            self.engine.target.as_ref(),
+            al_version::Gate::ReportSaveAsDataItemIdentity,
+        ) {
+            Some(self.dataset_identity(rec)?)
+        } else {
+            None
+        };
+        self.dataset.as_mut().expect("a SaveAs run has a dataset").begin(
+            &name,
+            identity.as_ref().map(|(t, g)| (*t, g.as_str())),
+            &columns,
+        );
         Ok(())
+    }
+
+    /// The table id and the lower case GUID of the row `rec` stands on.
+    fn dataset_identity(&self, rec: &Rec) -> Result<(u32, String), Signal> {
+        let object = rec.borrow().table as usize;
+        let id = self.object_id_of(object as u32);
+        let Some(t) = self.engine.tables.get(object).and_then(|t| t.clone()) else {
+            return unsupported("a data item over a table the program did not compile");
+        };
+        let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) else {
+            return unsupported("a data item over a table without a SystemId");
+        };
+        let Value::Guid(g) = rec.borrow().fields[i].clone() else {
+            return unsupported("a data item row whose SystemId is not a Guid");
+        };
+        let hex: String = g.iter().map(|b| format!("{b:02x}")).collect();
+        Ok((
+            id,
+            format!(
+                "{}-{}-{}-{}-{}",
+                &hex[0..8],
+                &hex[8..12],
+                &hex[12..16],
+                &hex[16..20],
+                &hex[20..32]
+            ),
+        ))
     }
 
     /// One column of a row: the value of its source, as the dataset writes it. The types the probe

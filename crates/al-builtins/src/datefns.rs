@@ -302,6 +302,20 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
             i += 3;
             continue;
         }
+        // A `D` before its number is a day step (`D1`, types/TestDateFormulaEvaluateLeftoversContracts.al:
+        // Evaluate_Accepted). The other letters before a number are not pinned.
+        if b.get(i) == Some(&b'D') && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
+            let start = i + 1;
+            i = start;
+            while b.get(i).is_some_and(u8::is_ascii_digit) {
+                i += 1;
+            }
+            let Ok(n) = body[start..i].parse::<i32>() else {
+                return refuse();
+            };
+            terms.push(Term::Step(Unit::Day, if negative { -n } else { n }));
+            continue;
+        }
         let start = i;
         while b.get(i).is_some_and(u8::is_ascii_digit) {
             i += 1;
@@ -338,6 +352,57 @@ pub fn is_blank_formula(text: &str) -> bool {
 pub fn is_garbage_formula(text: &str) -> bool {
     text.bytes()
         .any(|b| b.is_ascii_alphabetic() && !matches!(b.to_ascii_uppercase(), b'C' | b'D' | b'W' | b'M' | b'Q' | b'Y'))
+}
+
+/// What `Evaluate` makes of a text for a DateFormula.
+pub enum Evaluated {
+    /// The formula to store, in the normal form `<TERMS>` (empty for the empty formula).
+    Stored(String),
+    /// `Evaluate` answers false.
+    Rejected,
+}
+
+/// `Evaluate` into a DateFormula (types/TestDateFormulaEvaluateLeftoversContracts.al:35-69, BC 27.5):
+/// lower case letters are read, angle brackets and white space are ignored (`< >` is the empty
+/// formula), a sign in front is kept. A `D` or `WD` before its number is a formula (`D1`, `WD1`).
+/// Rejected: a letter no formula uses (`1X`, `LW`), a `D` alone, a number alone, a decimal point,
+/// and two parts without a sign (`1D1W`). Any other text stays refused (docs/probes-needed.md).
+pub fn evaluate_formula(text: &str) -> Result<Evaluated, Signal> {
+    // Only a pair of brackets around the whole text is pinned.
+    let trimmed = text.trim();
+    let inner = match trimmed.strip_prefix('<').and_then(|t| t.strip_suffix('>')) {
+        Some(inner) => inner,
+        None => trimmed,
+    };
+    if inner.contains(['<', '>']) {
+        return unsupported(format!(
+            "date formula `{text}`: angle brackets that do not wrap it are not pinned"
+        ));
+    }
+    let n: String = inner
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    if n.is_empty() {
+        return Ok(Evaluated::Stored(String::new()));
+    }
+    if n.contains('.') || is_garbage_formula(&n) || n == "D" || n.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(Evaluated::Rejected);
+    }
+    // A step (`digits` then a unit) followed by a digit starts a second part with no sign.
+    let b = n.as_bytes();
+    for i in 0..b.len().saturating_sub(2) {
+        let after_step = b[i].is_ascii_digit()
+            && matches!(b[i + 1], b'D' | b'W' | b'M' | b'Q' | b'Y')
+            && b[i + 2].is_ascii_digit()
+            && !(b[i + 1] == b'D' && i > 0 && b[i - 1] == b'W');
+        if after_step {
+            return Ok(Evaluated::Rejected);
+        }
+    }
+    parse_formula(&n)?;
+    Ok(Evaluated::Stored(format!("<{n}>")))
 }
 
 /// Whether `text` is a date formula `Evaluate` can store (see [`parse_formula`]).
@@ -417,9 +482,6 @@ fn calcdate(formula: &str, base: Option<&Value>) -> Out {
     let Some(base) = base else {
         return unsupported("CalcDate without a date uses the work date, which is not available");
     };
-    if terms.is_empty() && matches!(base, Value::Date(0, false)) {
-        return unsupported("CalcDate of the undefined date with an empty formula (not pinned)");
-    }
     if matches!(base, Value::Date(0, false)) {
         // types/TestDateRoundFormatStringContracts.al:CalcDate_UndefinedDate_Throws (CR and backslash line breaks).
         return raise(
@@ -776,8 +838,17 @@ mod tests {
         // types/TestDateFormulaDurationFormatContracts.al:30-43: the empty formula moves nothing.
         is_date(c("", date(2024, 1, 1)), 2024, 1, 1);
         is_date(call("System.CalcDate#2", vec![t(""), date(2024, 3, 5)]), 2024, 3, 5);
-        // The undefined date is not pinned for the empty formula.
-        refused(c("", Value::Date(0, false)));
+        // The empty formula on the undefined date raises the same error as any other formula
+        // (types/TestDateFormulaEvaluateLeftoversContracts.al:CalcDate_EmptyFormula).
+        let Err(Signal::Error(e)) = c("", Value::Date(0, false)) else {
+            panic!("expected an AL error")
+        };
+        assert!(
+            e.message
+                .starts_with("You cannot base a date calculation on an undefined date."),
+            "{}",
+            e.message
+        );
     }
 
     // types/TestDateFormulaDurationFormatContracts.al:28-74.
@@ -798,6 +869,49 @@ mod tests {
         assert_eq!(eval("", "<0D>"), (true, "0D".into()));
         // A failed Evaluate leaves the value.
         assert_eq!(eval("<0D>", "xyz"), (false, "0D".into()));
+    }
+
+    // types/TestDateFormulaEvaluateLeftoversContracts.al:35-69 (BC 27.5): what Format prints back and what
+    // CalcDate(formula, 2024-01-31) gives, for the inputs the other tests leave open.
+    #[test]
+    fn evaluate_reads_lower_case_brackets_white_space_signs_and_a_letter_before_its_number() {
+        let f = lookup("System.Evaluate#1").unwrap();
+        let eval = |text: &str| {
+            let mut args = vec![Value::DateFormula("<9D>".into()), t(text)];
+            let r = f(&mut TestCtx::default(), None, &mut args);
+            let Value::DateFormula(now) = &args[0] else { panic!() };
+            match r {
+                Ok(Value::Boolean(true)) => {
+                    let shown = super::formula_text(now);
+                    let d = call("System.CalcDate#1", vec![args[0].clone(), date(2024, 1, 31)]);
+                    Ok((shown, d))
+                }
+                Ok(Value::Boolean(false)) => Err(()),
+                other => panic!("{text}: {other:?}"),
+            }
+        };
+        let ok = |text: &str, shown: &str, y, m, d| {
+            let (s, r) = eval(text).unwrap_or_else(|()| panic!("{text} was rejected"));
+            assert_eq!(s, shown, "{text}");
+            is_date(r, y, m, d);
+        };
+        ok("1d", "1D", 2024, 2, 1);
+        ok("1D", "1D", 2024, 2, 1);
+        ok("< >", "", 2024, 1, 31);
+        ok("-1W", "-1W", 2024, 1, 24);
+        ok("CM", "CM", 2024, 1, 31);
+        ok("<1M+CM>", "1M+CM", 2024, 2, 29);
+        ok("+1D", "+1D", 2024, 2, 1);
+        ok("D1", "D1", 2024, 2, 1);
+        ok("1Y-1D", "1Y-1D", 2025, 1, 30);
+        ok("WD1", "WD1", 2024, 2, 5);
+        ok("<-WD1>", "-WD1", 2024, 1, 29);
+        ok("CQ", "CQ", 2024, 3, 31);
+        ok(" 1D ", "1D", 2024, 2, 1);
+        ok("1 D", "1D", 2024, 2, 1);
+        for bad in ["1X", "D", "<D>", "1d1w", "1D1W", "1", "LW", "1.5D"] {
+            assert!(eval(bad).is_err(), "{bad} should be rejected");
+        }
     }
 
     #[test]

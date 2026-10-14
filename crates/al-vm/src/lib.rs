@@ -203,6 +203,8 @@ pub struct Session {
     guid_seed: i32,
     /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
     pub(crate) sent_notifications: Vec<[u8; 16]>,
+    /// Ids of the notifications `Recall` has taken back.
+    pub(crate) recalled_notifications: Vec<[u8; 16]>,
     /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
     pub(crate) rng: al_host::random::NetRandom,
     /// How many `Randomize()` calls without a seed the session has seen.
@@ -274,8 +276,12 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
-    /// `Database.CurrentTransactionType`: a member index of the TransactionType option.
+    /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
+    /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
+    /// A write has been called since the test method started: the transaction has started, so
+    /// `CurrentTransactionType` reads Update and refuses a set to another type.
+    pub(crate) tx_wrote: bool,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
@@ -362,6 +368,7 @@ impl Session {
             next_guid: 0,
             guid_seed: random_seed,
             sent_notifications: Vec::new(),
+            recalled_notifications: Vec::new(),
             rng: al_host::random::NetRandom::new(random_seed),
             unseeded_randomizes: 0,
             next_row_version: 0,
@@ -402,7 +409,8 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
-            transaction_type: 1,
+            transaction_type: 0,
+            tx_wrote: false,
             media: Default::default(),
             dotnet: Default::default(),
             application_areas: String::new(),
@@ -416,6 +424,14 @@ impl Session {
         };
         session.seed_platform_rows(&ident);
         session
+    }
+
+    /// What the AL test runner does before each test method: every application area on, and the
+    /// transaction type back at UpdateNoLocks.
+    pub fn start_test_method(&mut self) {
+        self.application_areas.clear();
+        self.transaction_type = 0;
+        self.tx_wrote = false;
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
@@ -1055,20 +1071,32 @@ impl Session {
                     return Ok(Value::Integer(self.curr_field_of(&rec)));
                 }
                 // `ClearAll()` resets every global variable of the running object to its default;
-                // locals are untouched (docs/probes-needed.md "ClearAll"). A codeunit has nothing
-                // else in its globals; an object with an implicit Rec or page state is refused.
+                // locals are untouched (docs/probes-needed.md "ClearAll"). In a codeunit with a TableNo,
+                // a table and a page the record stays as it is and so does the page itself
+                // (session/TestClearAllTransactionTypeContracts.al:224-285, BC 27.5). Any other object
+                // kind is refused.
                 if id == "System.ClearAll#1" {
                     let object = f.instance.borrow().object as usize;
                     let o = &self.engine.program.objects[object];
-                    if o.kind != "codeunit" || o.rec_slot.is_some() {
-                        return Err(Signal::Unsupported(
-                            "ClearAll outside a codeunit without a source table (the implicit record is not pinned)"
-                                .into(),
-                        ));
-                    }
+                    let keep: Vec<usize> = match o.kind.as_str() {
+                        "codeunit" | "table" => o.rec_slot.into_iter().collect(),
+                        "page" => o
+                            .rec_slot
+                            .into_iter()
+                            .chain(o.page.as_ref().map(|p| p.curr_page_slot))
+                            .collect(),
+                        _ => {
+                            return Err(Signal::Unsupported(format!("ClearAll in a {} (not pinned)", o.kind)));
+                        }
+                    };
                     let tys: Vec<RtType> = o.globals.iter().map(|g| g.ty.clone()).collect();
                     let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
-                    f.instance.borrow_mut().globals = fresh;
+                    let mut inst = f.instance.borrow_mut();
+                    for (i, v) in fresh.into_iter().enumerate() {
+                        if !keep.contains(&i) {
+                            inst.globals[i] = v;
+                        }
+                    }
                     return Ok(Value::Null);
                 }
                 if id == "Session.ApplicationArea#1" {
@@ -1626,11 +1654,11 @@ impl al_builtins::native::Ctx for Session {
     fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
         Session::ui_session_settings(self, settings)
     }
-    fn ui_send_notification(&mut self, notification: Value, id: Option<[u8; 16]>) -> Result<(), Signal> {
+    fn ui_send_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<Option<Value>, Signal> {
         Session::ui_send_notification(self, notification, id)
     }
-    fn ui_recall_notification(&mut self, id: Option<[u8; 16]>) -> Result<(), Signal> {
-        Session::ui_recall_notification(self, id)
+    fn ui_recall_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<bool, Signal> {
+        Session::ui_recall_notification(self, notification, id)
     }
     fn new_guid(&mut self) -> [u8; 16] {
         self.fresh_guid()

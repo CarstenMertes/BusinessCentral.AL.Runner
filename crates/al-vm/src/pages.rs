@@ -634,15 +634,60 @@ impl Session {
                 }
                 other => unsupported(format!("Page.SetRecord with {other:?}")),
             },
-            // What rows `SetSelectionFilter` selects on a page driven by the test client is not pinned: no corpus
-            // test reads the filter it sets (docs/probes-needed.md). Reaching it is refused at run time, so the
-            // many tests that open a page which merely declares a routine calling it still run.
-            "SetSelectionFilter" => unsupported(
-                "Page.SetSelectionFilter: which rows a test client page has selected is not pinned by the corpus",
-            ),
+            // `CurrPage.SetSelectionFilter(var Rec)` on a list the test client stands on a row of: the record is
+            // filtered to that row (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:239-250). A
+            // record that already has filters, and a page on no row, are not pinned.
+            "SetSelectionFilter" => {
+                let (Some(Value::Record(dst)), Some(inst)) = (args.first(), st.borrow().instance.clone()) else {
+                    return unsupported("Page.SetSelectionFilter of a page that never ran (not pinned)");
+                };
+                let object = st.borrow().object as usize;
+                let Some(slot) = self.engine.program.objects[object].rec_slot else {
+                    return unsupported("Page.SetSelectionFilter of a page without a source table (not pinned)");
+                };
+                let Value::Record(src) = inst.borrow().globals[slot].clone() else {
+                    return unsupported("Page.SetSelectionFilter: the page's Rec is no record");
+                };
+                if src.borrow().table != dst.borrow().table {
+                    return unsupported("Page.SetSelectionFilter into a record of another table (not pinned)");
+                }
+                if st.borrow().cursor != Cursor::Row {
+                    return unsupported("Page.SetSelectionFilter of a page on no row (not pinned)");
+                }
+                if !dst.borrow().filters.is_empty() {
+                    return unsupported("Page.SetSelectionFilter into a record that has filters (not pinned)");
+                }
+                let fields = src.borrow().fields.clone();
+                dst.borrow_mut().fields = fields;
+                self.record_op("SetRecFilter", dst, &mut [])?;
+                Ok(Value::Null)
+            }
             // Which record a page variable reports after it ran is not pinned: no corpus test calls GetRecord
             // (docs/probes-needed.md). Refused when reached, like SetSelectionFilter.
-            "GetRecord" => unsupported("Page.GetRecord: which record a page reports is not pinned by the corpus"),
+            // `P.GetRecord(var Rec)` after the page ran: the row it stood on when it closed, the picked row after
+            // OK and the last positioned row after Cancel too, without filters
+            // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:250-285).
+            "GetRecord" => {
+                let (Some(Value::Record(dst)), Some(inst)) = (args.first(), st.borrow().instance.clone()) else {
+                    return unsupported("Page.GetRecord of a page that never ran (not pinned)");
+                };
+                let object = st.borrow().object as usize;
+                let Some(slot) = self.engine.program.objects[object].rec_slot else {
+                    return unsupported("Page.GetRecord of a page without a source table (not pinned)");
+                };
+                let Value::Record(src) = inst.borrow().globals[slot].clone() else {
+                    return unsupported("Page.GetRecord: the page's Rec is no record");
+                };
+                if src.borrow().table != dst.borrow().table {
+                    return unsupported("Page.GetRecord into a record of another table (not pinned)");
+                }
+                if st.borrow().cursor != Cursor::Row {
+                    return unsupported("Page.GetRecord of a page that closed on no row (not pinned)");
+                }
+                let fields = src.borrow().fields.clone();
+                dst.borrow_mut().fields = fields;
+                Ok(Value::Null)
+            }
             // `P.SetTableView(Rec)` hands the page variable the view of Rec (filters and sorting) but not its
             // position, so the page opens on its first row (corpus handlers/TestPageModalNewRowLine_Tests.al:
             // ReEditable_LookupModeTrue_HasNoNewRowLine, Plain_LookupModeFalse_HasTheNewRowLine).
@@ -2880,7 +2925,7 @@ impl Session {
         // is not on the runtime page at all (corpus handlers/TestPageFieldVisibleGroup_Tests.al:1-30).
         // Neither is one that application areas removed.
         self.check_areas_pinned(st, idx)?;
-        if self.control_eliminated(st, idx) || self.area_removed(st, idx) {
+        if self.control_eliminated(st, idx) || self.area_removed(st, idx) || self.action_without_behaviour(st, idx) {
             let engine = self.engine();
             let ctl = &page_of(&engine, st).controls[idx];
             let what = match ctl.kind {
@@ -2891,14 +2936,18 @@ impl Session {
             // (see `control_id`); it matches the ids the corpus pins for Base Application controls
             // (pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:57, :92, :124)
             // and for a part (testpart/TestTestPart.al:233). The code of a field is pinned by
-            // handlers/TestPageRuntimeContracts.al:260; that of an action is not.
+            // handlers/TestPageRuntimeContracts.al:260; that of an action is TestActionNotFound
+            // (handlers/TestPageLabelControlContracts.al:141-145).
             let ctl_name = ctl.name.clone();
             let owner = ctl.owner;
             let object = st.borrow().object as usize;
             let declaring = self.object_id_of(owner.unwrap_or(object) as u32);
             let id = control_id(declaring, &ctl_name);
             return Err(match what {
-                "action" => error(format!("The action with ID = {id} is not found on the page.")),
+                "action" => error_code(
+                    format!("The action with ID = {id} is not found on the page."),
+                    "TestActionNotFound",
+                ),
                 _ => error_code(
                     format!("The field with ID = {id} is not found on the page."),
                     "TestFieldNotFound",
@@ -3027,6 +3076,23 @@ impl Session {
             }
             other => unsupported(format!("TestField.{other}")),
         }
+    }
+
+    /// An action with no `OnAction` trigger (its own or a page extension's) and no `RunObject` is not
+    /// on the TestPage: naming it raises TestActionNotFound (handlers/TestPageLabelControlContracts.al:
+    /// 131-145, BC 27.5). Whether other behaviour (a `RunPageLink` without a `RunObject`, a report
+    /// action) also counts is not pinned.
+    fn action_without_behaviour(&self, st: &St, idx: usize) -> bool {
+        let engine = self.engine();
+        let ctl = &page_of(&engine, st).controls[idx];
+        matches!(ctl.kind, ir::ControlKind::Action)
+            && ctl.action_ref.is_none()
+            && ctl.run_object.is_none()
+            && !ctl.triggers.iter().any(|(n, _)| n.eq_ignore_ascii_case("onaction"))
+            && !ctl
+                .ext_triggers
+                .iter()
+                .any(|(n, _, _)| n.eq_ignore_ascii_case("onaction"))
     }
 
     fn control_eliminated(&self, st: &St, idx: usize) -> bool {

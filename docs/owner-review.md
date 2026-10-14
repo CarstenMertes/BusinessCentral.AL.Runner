@@ -277,6 +277,14 @@ reviewed it.
   oracles are on the pin, so the older-commit check is not involved. A bump that used it would have been refused.
 - 2026-10-14, ADR-007: the corpus bump to 6219bf4 (probe batch 3: 35 new cases and 3 new OnPrem cases) only adds 8 files under
   `tests/`. All three oracles are on the pin. No baseline case stopped passing, so nothing was removed.
+- 2026-10-14, ADR-007: the corpus bump to 337859e (probe batch 4: 74 new cases, 3 new OnPrem cases) changes only the corpus's own
+  compile log `tests/al-language/.dev/compile-errors.log` among existing files. The per-version pin check ignores `.dev/` paths
+  (it is not a test), so the isolation oracle recorded for cf6e546 stays valid. No baseline case was removed.
+- 2026-10-14, corpus bump 4: probe batch 4 contradicted assumptions that main made; the runtime now follows the oracle for the transaction
+  type default (UpdateNoLocks), Notification Send/Recall, DateFormula Evaluate, ChangeCompany (case sensitive, missing company), the
+  XmlPort Metadata Encoding default (UTF16), ClearAll in a codeunit with TableNo, a table and a page, the SaveAs DataItem identity from
+  BC 28, and the actions of a TestPage (an action with no behaviour is not on it). Decided without owner review: the DataItem GUID is
+  the row's SystemId, and an Encoding property names a member of the Encoding column. See `docs/probes-needed.md`.
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
   passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.
@@ -304,3 +312,4 @@ reviewed it.
 - 2026-10-14, ADR-019 (round 3): a platform table nothing provides lowers; a temporary record of it works as an ordinary temporary table (pinned for Field, Date and Aggregate Permission Set, extended to the rest); reads and writes of its persistent rows are refused at run time instead of the whole codeunit being refused up front.
 - 2026-10-14, ADR-019 (round 3): columns the declaration describes are filled from it although no corpus test reads them (Page Metadata Caption and CardPageID; Field TableName, Class, Enabled, Field Caption; Key MaintainSIFTIndex, ObsoleteState; Report Layout List Application ID; Table Metadata DrillDownPageId). Probe batch 5 lists each with the probe that pins it.
 - 2026-10-14, ADR-020, test-data: `alrunner test --test-data [PATH] [--test-data-company NAME]` is built. New crate `al-bcdb-std` (the OS side: pread `FileSource` shared with `al-bcdb-cli`, and `BackupProvider`), `al-host::testdata` (`TableProvider`, additive), `al-data::memory::Backing` (additive), `Engine::test_data`, `RunOptions::test_data`, an additive IR field `Field::declared_in`. Order decided: the backup is armed before the install roots (v2's order); install code cannot modify, delete or rename a row the backup holds (refused, reported as a root that did not run to its end), and an insert of a restored key fails as in BC. Restored rows live in a per-thread map built once per table; nothing is copied into the install baseline. Recorded in ADR-020 "Decided without owner review".
+- 2026-10-14, ADR-014, sidecar-start: warm standby sidecars. A run with the Microsoft apps starts two .NET helper processes in the background before the compile (`SidecarHost::prewarm`), a session takes one whole, and unused ones are ended at the end. No trait changes. A run without dependency apps starts nothing. `--timings`, the markdown report and `--json` now report sidecar start-up apart from the tests; the per-codeunit perf limit (2 s) excludes the wait for a sidecar, and the start has its own limit (10 s). Say no to drop the prewarm and keep only the reporting.

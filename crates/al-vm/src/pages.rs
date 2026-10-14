@@ -3897,6 +3897,29 @@ impl Session {
             return unsupported(format!("control text of a {name} value"));
         }
         let f = self.control_format(st, idx)?;
+        // The unit amount formats (AutoFormatType 2 and 5, enum "Auto Format" UnitAmountFormat and
+        // UnitAmountFormatNoSymbol) take their decimals from General Ledger Setup (default 2:5) or the
+        // currency, through Base Application's `Amount AutoFormat` codeunit, which the runtime does not
+        // call. A value with more than two decimals would be rounded to two here, which BC does not do
+        // in the default setup (Tests-ERM codeunit 134833): refused (docs/probes-needed.md).
+        if let Value::Decimal(d) = v {
+            if f.decimal_places.is_none() && d.scale() > 2 && d.normalize().scale() > 2 {
+                let kind = match self.control_field(st, idx) {
+                    Some(fld) => fld
+                        .properties
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("AutoFormatType"))
+                        .map(|(_, v)| v.trim().to_string()),
+                    None => None,
+                };
+                if matches!(kind.as_deref(), Some("2" | "5")) {
+                    return unsupported(format!(
+                        "a control with AutoFormatType = {}: its decimals come from General Ledger Setup or the currency, and the value has more than two; not pinned (docs/probes-needed.md)",
+                        kind.unwrap_or_default()
+                    ));
+                }
+            }
+        }
         let engine = self.engine();
         let caption = move |id: u32, ordinal: i32| {
             let o = &engine.program.objects[id as usize];

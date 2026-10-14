@@ -427,6 +427,14 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 if let Some(v) = args.first() {
                     r.filter_group = match v {
+                        // The OR group: filters on different fields are alternatives in BC, which the
+                        // runtime does not model (every group applies as an AND). Not pinned by the
+                        // corpus (docs/probes-needed.md), so refused.
+                        Value::Integer(n) if *n < 0 => {
+                            return unsupported(format!(
+                                "FilterGroup({n}) (the OR group: its filters are alternatives); not pinned (docs/probes-needed.md)"
+                            ));
+                        }
                         Value::Integer(n) => *n,
                         other => return unsupported(format!("FilterGroup({})", other.describe())),
                     };

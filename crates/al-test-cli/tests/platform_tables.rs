@@ -518,23 +518,89 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "Rows");
 }
 
-/// The code coverage tables hold nothing until a recording starts; after one they are refused until
-/// a DeleteAll empties them (codeunit/TestCodeCoverageTable.al).
+/// The code coverage tables hold nothing until a recording starts; after one they hold what ran
+/// (codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al). `Line No.` is a source line.
 #[test]
-fn code_coverage_tables_are_empty_before_recording_and_refused_after_it() {
+fn code_coverage_tables_hold_what_was_recorded_and_delete_all_empties_them() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Initialize() var C: Record "Code Coverage"; R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin CodeCoverageLog(false, false); C.DeleteAll(); R.DeleteAll(); L.DeleteAll(); end;
+  procedure Branch(V: Integer): Integer
+  begin
+    if V > 1 then
+      exit(1);
+    exit(0);
+  end;
   [Test] procedure EmptyAtFirst() var C: Record "Code Coverage"; begin if not C.IsEmpty() then Error('rows'); end;
-  [Test] procedure RefusedAfterRecording() var C: Record "Code Coverage"; begin CodeCoverageLog(true, false); CodeCoverageLog(false, false); if C.IsEmpty() then; end;
-  [Test] procedure DeleteAllEmptiesIt() var C: Record "Code Coverage"; begin CodeCoverageLog(true, false); CodeCoverageLog(false, false); C.DeleteAll(); if not C.IsEmpty() then Error('rows'); end;
-  [Test] procedure ADeleteAllWithAFilterDoesNot() var C: Record "Code Coverage"; begin CodeCoverageLog(true, false); CodeCoverageLog(false, false); C.SetRange("Object ID", 1); C.DeleteAll(); C.Reset(); if C.IsEmpty() then; end; }"#,
+  [Test] procedure RowsAfterRecording()
+  var C: Record "Code Coverage";
+  begin Initialize();
+    CodeCoverageLog(true, false); Branch(5); CodeCoverageLog(false, false);
+    C.SetRange("Object Type", C."Object Type"::Codeunit); C.SetRange("Object ID", 50000);
+    C.SetRange("Line Type", C."Line Type"::"Trigger/Function"); C.SetRange("Line No.", 3);
+    if C.IsEmpty() then Error('declaration row');
+    C.SetRange("Line Type", C."Line Type"::Code); C.SetRange("Line No.", 6);
+    C.FindFirst(); if C."No. of Hits" = 0 then Error('hit');
+    C.SetRange("Line No.", 7);
+    C.FindFirst(); if C."No. of Hits" <> 0 then Error('not hit');
+  end;
+  [Test] procedure NothingRecordedWhileOff()
+  var C: Record "Code Coverage";
+  begin Initialize();
+    Branch(5); C.SetRange("Object ID", 50000);
+    if not C.IsEmpty() then Error('rows');
+  end;
+  [Test] procedure DeleteAllEmptiesIt() var C: Record "Code Coverage"; begin Initialize(); CodeCoverageLog(true, false); Branch(1); CodeCoverageLog(false, false); C.DeleteAll(); if not C.IsEmpty() then Error('rows'); end;
+  [Test] procedure AFilteredDeleteAllLeavesTheOtherRows() var C: Record "Code Coverage"; begin Initialize(); CodeCoverageLog(true, false); Branch(1); CodeCoverageLog(false, false); C.SetRange("Object ID", 1); C.DeleteAll(); C.Reset(); if C.IsEmpty() then Error('gone'); end;
+  [Test] procedure ARecordingAfterDeleteAllStartsFromNothing()
+  var C: Record "Code Coverage";
+  begin Initialize();
+    CodeCoverageLog(true, false); Branch(1); CodeCoverageLog(false, false); C.DeleteAll();
+    CodeCoverageLog(true, false); CodeCoverageLog(false, false);
+    C.SetRange("Object ID", 50000); C.SetRange("Line No.", 6);
+    if not C.IsEmpty() then Error('old rows came back');
+  end; }"#,
     );
     passes(&o, "EmptyAtFirst");
+    passes(&o, "RowsAfterRecording");
+    passes(&o, "NothingRecordedWhileOff");
     passes(&o, "DeleteAllEmptiesIt");
-    for t in ["RefusedAfterRecording", "ADeleteAllWithAFilterDoesNot"] {
-        let why = not_run(&o, t);
-        assert!(why.contains("code coverage recording"), "{why}");
-    }
+    passes(&o, "AFilteredDeleteAllLeavesTheOtherRows");
+    passes(&o, "ARecordingAfterDeleteAllStartsFromNothing");
+}
+
+/// A `[Test]` procedure that starts while recording has a Tests Run row, and the methods that run
+/// inside it a Test Lookup row each; a call outside any test leaves none
+/// (codeunit/TestCodeCoveragePerTest.al).
+#[test]
+fn code_coverage_notes_the_tests_that_start_while_recording() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  procedure Initialize() var C: Record "Code Coverage"; R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup"; begin CodeCoverageLog(false, false); C.DeleteAll(); R.DeleteAll(); L.DeleteAll(); end;
+  procedure Helper(): Integer begin exit(1); end;
+  [Test] procedure Inner() begin Helper(); end;
+  [Test] procedure ATestStartedWhileRecording()
+  var R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup";
+  begin Initialize();
+    CodeCoverageLog(true, false); Inner(); CodeCoverageLog(false, false);
+    R.SetRange("Object ID", 50000);
+    if R.Count() <> 1 then Error('one test row');
+    R.FindFirst(); if R."Method Name" <> 'Inner' then Error('name');
+    L.SetRange("Object ID", 50000); L.SetRange("Test ID", R."Test ID");
+    if L.Count() <> 1 then Error('one method inside the test');
+    L.FindFirst(); if L."Method ID" = R."Method ID" then Error('the test itself is no method inside it');
+  end;
+  [Test] procedure ACallOutsideAnyTest()
+  var R: Record "Code Coverage Tests Run"; L: Record "Code Coverage Test Lookup";
+  begin Initialize();
+    CodeCoverageLog(true, false); Helper(); CodeCoverageLog(false, false);
+    R.SetRange("Object ID", 50000); L.SetRange("Object ID", 50000);
+    if not R.IsEmpty() then Error('tests run');
+    if not L.IsEmpty() then Error('lookup');
+  end; }"#,
+    );
+    passes(&o, "ATestStartedWhileRecording");
+    passes(&o, "ACallOutsideAnyTest");
 }
 
 /// All Profile (profile/TestAllProfileTable.al): stored and seeded from the profile objects. The delete

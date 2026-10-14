@@ -77,8 +77,9 @@ List, Report Metadata, Report Data Items, XmlPort Metadata, Query Metadata, Even
 subscribers) and Table Relations Metadata. Company, User, Access Control, All Profile, Record Link, the code
 coverage tables and a few tenant tables are stored (the session seeds the first four). Everything else in the
 System app lowers, works as a temporary record, and has its persistent rows refused with `platform table 'X' (id) has no provider`. Still open: Tenant License
-State, MCP Configuration, a coverage recorder (the coverage tables are refused after a recording), and Event Subscription rows for
-uncompiled codeunits.
+State, MCP Configuration and Event Subscription rows for uncompiled codeunits. The three code coverage tables hold what a
+`CodeCoverageLog` recording saw (hits per statement, the tests that started, the methods that ran in them; `docs/probes-needed.md`,
+"Code coverage rows").
 
 ## What is implemented
 

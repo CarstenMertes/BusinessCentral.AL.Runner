@@ -145,6 +145,13 @@ page 62093 "PM Runs Scheduled"
     actions { area(Processing) { action(Print) { trigger OnAction() var R: Report "PM Scheduled"; begin R.Run(); end; } } }
     var Dummy: Text[10];
 }
+page 62094 "PM Selection"
+{
+    PageType = List; SourceTable = "PM Row";
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
+    procedure Selected(var Out: Record "PM Row") begin CurrPage.SetSelectionFilter(Out); end;
+    procedure Picked(var Out: Record "PM Row") var Other: Page "PM Selection"; begin Other.GetRecord(Out); end;
+}
 page 62091 "PM Kinds"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -548,4 +555,29 @@ fn running_a_report_with_allow_scheduling_is_refused() {
         procedure Runs() begin Report.Run(Report::\"PM Scheduled\", false); end;"
     ));
     assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("allowscheduling")), "{o:?}");
+}
+
+// SetSelectionFilter and GetRecord are in no corpus test: a page that declares a routine calling them
+// opens (handlers/TestPrecompiledOptionCaption.al:81 over Base App's Item Tracing, pageapplicationarea/
+// TestPageApplicationAreaPrecompiledActionRemoval.al:39 over Package No. Information List), reaching them is refused.
+#[test]
+fn a_page_declaring_selection_routines_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var P: TestPage \"PM Selection\"; begin P.OpenView(); P.Close(); end;"
+    ));
+}
+
+#[test]
+fn reaching_set_selection_filter_or_get_record_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Selects() var P: Page \"PM Selection\"; R: Record \"PM Row\"; begin P.Selected(R); end;
+        [Test]
+        procedure Gets() var P: Page \"PM Selection\"; R: Record \"PM Row\"; begin P.Picked(R); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("SetSelectionFilter")), "{o:?}");
+    assert!(matches!(&o[1].1, Outcome::NotRun(why) if why.contains("GetRecord")), "{o:?}");
 }

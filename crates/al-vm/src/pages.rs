@@ -638,6 +638,9 @@ impl Session {
             // test reads the filter it sets (docs/probes-needed.md). Reaching it is refused at run time, so the
             // many tests that open a page which merely declares a routine calling it still run.
             "SetSelectionFilter" => unsupported("Page.SetSelectionFilter: which rows a test client page has selected is not pinned by the corpus"),
+            // Which record a page variable reports after it ran is not pinned: no corpus test calls GetRecord
+            // (docs/probes-needed.md). Refused when reached, like SetSelectionFilter.
+            "GetRecord" => unsupported("Page.GetRecord: which record a page reports is not pinned by the corpus"),
             // `P.SetTableView(Rec)` hands the page variable the view of Rec (filters and sorting) but not its
             // position, so the page opens on its first row (corpus handlers/TestPageModalNewRowLine_Tests.al:
             // ReEditable_LookupModeTrue_HasNoNewRowLine, Plain_LookupModeFalse_HasTheNewRowLine).

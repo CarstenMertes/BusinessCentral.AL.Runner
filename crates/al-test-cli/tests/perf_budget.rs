@@ -75,3 +75,58 @@ fn cold_compile_of_the_pinned_corpus_stays_within_one_second() {
         "cold compile took {best:.2} s, over the {BUDGET_SECS} s budget"
     );
 }
+
+/// A full corpus run with Microsoft's apps (Base Application and the rest of `.alpackages`, the
+/// test libraries from the artifact cache). Not the owner's target of one second: a guard against
+/// the big regressions found by profiling it (a run took 14 to 27 s before; see the commit log of
+/// branch perf-1). Wall clock of the whole process, so the limit leaves room for a CI runner with
+/// few cores.
+const WITH_APPS_BUDGET_SECS: f64 = 12.0;
+/// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date
+/// rows took 5 s of the run before.
+const SLOWEST_CODEUNIT_SECS: f64 = 2.0;
+
+#[test]
+#[ignore = "perf budget: run with `cargo test --release -p al-test-cli --test perf_budget -- --ignored`"]
+fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
+    if cfg!(debug_assertions) {
+        panic!("perf budgets are only meaningful in --release; this is a debug build");
+    }
+    let started = Instant::now();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+        .arg("--root")
+        .arg(root())
+        .args(["--bc-version", "29", "--no-ratchet", "--timings"])
+        .output()
+        .unwrap();
+    let wall = started.elapsed().as_secs_f64();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    eprintln!(
+        "full run with the apps: {wall:.1} s\n{}",
+        err.lines()
+            .filter(|l| l.starts_with("timings") || l.starts_with("compile:") || l.starts_with("slowest"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
+        err.contains("dependency: Base Application"),
+        "the Microsoft apps were not loaded:\n{err}"
+    );
+    let slowest_secs = err
+        .lines()
+        .find_map(|l| l.strip_prefix("slowest test codeunits: "))
+        .and_then(|l| l.split(';').next())
+        .and_then(|first| first.trim().strip_suffix(" s"))
+        .and_then(|first| first.rsplit(' ').next())
+        .and_then(|t| t.parse::<f64>().ok())
+        .expect("a slowest codeunit in --timings");
+    assert!(
+        slowest_secs <= SLOWEST_CODEUNIT_SECS,
+        "a test codeunit took {slowest_secs:.1} s, over {SLOWEST_CODEUNIT_SECS} s:\n{err}"
+    );
+    assert!(
+        wall <= WITH_APPS_BUDGET_SECS,
+        "the run took {wall:.1} s, over the {WITH_APPS_BUDGET_SECS} s budget:\n{err}"
+    );
+}

@@ -556,6 +556,13 @@ pub struct Field {
     pub relation: bool,
     /// (object, routine) of the field's OnValidate trigger, if any.
     pub on_validate: Option<(usize, usize)>,
+    /// The `OnBeforeValidate` triggers table extensions attach with `modify(Field)`, as
+    /// (object, routine), in extension order.
+    #[serde(default)]
+    pub ext_before_validate: Vec<(usize, usize)>,
+    /// The `OnAfterValidate` triggers table extensions attach with `modify(Field)`.
+    #[serde(default)]
+    pub ext_after_validate: Vec<(usize, usize)>,
     /// (object, routine) of the field's table-side OnLookup trigger, if any.
     pub on_lookup: Option<(usize, usize)>,
     /// Every property of the field as written (`Caption`, `OptionCaption`, ...).

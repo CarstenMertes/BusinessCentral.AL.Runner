@@ -11,6 +11,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod autoinc;
+mod baseline;
+pub use baseline::Baseline;
 mod callstack;
 mod dispatch;
 pub mod dotnet;
@@ -18,6 +20,7 @@ mod errorcollect;
 pub mod events;
 mod filterpage;
 mod flowfields;
+mod globaltriggers;
 mod hostvalues;
 mod interfaces;
 mod pages;
@@ -49,6 +52,9 @@ pub struct Engine {
     pub target: Option<al_version::Target>,
     /// The .NET host, the registry of runtime-provided classes and the policy (ADR-014).
     pub dotnet: dotnet::DotNetConfig,
+    /// Table objects whose rows the install baseline should have created and did not (ADR-013
+    /// decision 5): a `Get` that finds nothing in dependency code is not BC's answer for them.
+    pub unseeded: std::collections::HashSet<usize>,
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
@@ -123,6 +129,7 @@ impl Engine {
             events,
             target,
             dotnet,
+            unseeded: Default::default(),
             unevaluable_init,
         })
     }
@@ -154,6 +161,8 @@ pub struct Session {
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
+    /// What the subscribers of `Global Triggers` answered, per table object (globaltriggers.rs).
+    pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
     /// Private tables of temporary records, by temp id.
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
@@ -260,6 +269,7 @@ impl Session {
             depth: 0,
             singletons: Default::default(),
             store: Default::default(),
+            global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,

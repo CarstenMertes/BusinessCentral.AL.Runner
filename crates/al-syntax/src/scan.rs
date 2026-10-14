@@ -37,6 +37,8 @@ pub struct ScannedObject {
     pub extends: Option<Vec<String>>,
     pub implements: Vec<Vec<String>>,
     pub subscribers: Vec<ScannedSubscriber>,
+    /// A codeunit that declares `Subtype = Install;` in its body.
+    pub install: bool,
 }
 
 /// `[EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", 'OnBeforePost', ...)]`
@@ -234,6 +236,7 @@ fn scan_object(sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
         extends,
         implements,
         subscribers: Vec::new(),
+        install: false,
     };
     // Body: braces nest; subscriber attributes sit directly in the object body.
     let mut i = end;
@@ -247,6 +250,14 @@ fn scan_object(sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
                     i += 1;
                     break;
                 }
+            }
+            Ident
+                if depth == 1
+                    && sig[i].text.eq_ignore_ascii_case("Subtype")
+                    && sig.get(i + 1).is_some_and(|t| t.kind == Eq)
+                    && sig.get(i + 2).is_some_and(|t| t.is_kw("Install")) =>
+            {
+                obj.install = true;
             }
             LBrack if depth == 1 => {
                 if let Some(s) = subscriber(sig, i) {

@@ -1369,6 +1369,36 @@ impl Lowerer<'_> {
         self.field_pos(table, id).ok_or_else(|| "field position".to_string())
     }
 
+    /// The triggers named `trigger` that `modify(field)` blocks of the table's `extensions` declare.
+    fn ext_field_triggers(
+        &self,
+        extensions: &[usize],
+        field: &str,
+        trigger: &str,
+        routine_at: &HashMap<(usize, usize), usize>,
+    ) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        for &e in extensions {
+            if !self.ws.usable(e) {
+                continue;
+            }
+            for sec in ast::sections_in(self.ws.object_ast(e).syntax()) {
+                if !sec.name().eq_ignore_ascii_case("modify")
+                    || !sec.args().first().is_some_and(|a| a.eq_ignore_ascii_case(field))
+                {
+                    continue;
+                }
+                for t in sec.triggers().filter(|t| t.name().eq_ignore_ascii_case(trigger)) {
+                    let offset: usize = t.syntax().text_range().start().into();
+                    if let Some(&r) = routine_at.get(&(e, offset)) {
+                        out.push((e, r));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     fn table_schema(
         &self,
         oi: usize,
@@ -1417,6 +1447,8 @@ impl Lowerer<'_> {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,
                     },
+                    ext_before_validate: self.ext_field_triggers(&extensions, &f.name, "OnBeforeValidate", routine_at),
+                    ext_after_validate: self.ext_field_triggers(&extensions, &f.name, "OnAfterValidate", routine_at),
                     on_lookup: match (f.declared_in, f.on_lookup) {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
                         _ => None,
@@ -3457,15 +3489,41 @@ pub fn compile_apps_for(
     compile_with(apps, kinds, symbols, &al_builtins::catalog::Catalog::for_target(target))
 }
 
+/// [`compile_apps_for`] (or the newest catalog without a target) with extra demand roots: the
+/// install baseline (ADR-013 decision 5).
+pub fn compile_apps_with(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    roots: crate::check::Roots,
+) -> (Workspace, Lowered) {
+    let catalog = match target {
+        Some(t) => al_builtins::catalog::Catalog::for_target(t),
+        None => al_builtins::catalog::Catalog::load(),
+    };
+    compile_with_roots(apps, kinds, symbols, &catalog, roots)
+}
+
 fn compile_with(
     apps: Vec<crate::workspace::AppSource>,
     kinds: Vec<crate::workspace::AppKind>,
     symbols: &std::collections::BTreeSet<String>,
     catalog: &al_builtins::catalog::Catalog,
 ) -> (Workspace, Lowered) {
+    compile_with_roots(apps, kinds, symbols, catalog, Default::default())
+}
+
+fn compile_with_roots(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    catalog: &al_builtins::catalog::Catalog,
+    roots: crate::check::Roots,
+) -> (Workspace, Lowered) {
     let ws = Workspace::load_apps(apps, kinds, symbols);
     let members = crate::members::build(&ws);
-    let checked = crate::check::check(&ws, &members, catalog);
+    let checked = crate::check::check_with(&ws, &members, catalog, roots);
     let lowered = lower(&ws, &members, &checked);
     (ws, lowered)
 }

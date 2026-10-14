@@ -1,0 +1,300 @@
+# Code map
+
+Read this before you open a source file. It says which module owns what, where the entry points
+are, and how the main flows call through the crates. File names are checked by a test
+(`crates/al-test-cli/tests/codemap.rs`): a listed file that no longer exists fails `cargo test`.
+Line numbers are a snapshot and drift; find the current line with `rust-analyzer` (`documentSymbol`,
+`workspaceSymbol`) or `grep -n "fn name"`. The bullets in "Crates and modules" must stay one per file:
+`- `path.rs` (lines): what it owns. Entry: ...`.
+
+## Layers
+
+Dependencies point down. Core crates do no OS access (ADR-006); the host seam is `al-host`.
+
+```
+al-test-cli    binary + harness: oracle, corpus, baseline, report, runtime (test runner), reading a run
+al-vm          interpreter over the IR: Engine (immutable), Session (all mutable state), test client
+al-sema        workspace -> members -> check (+ demand) -> lower; produces al-ir
+al-builtins    values, builtin functions by catalog overload id, filters, JSON/XML, platform table registry
+al-data        Store trait and the in-memory store         al-host   clock, identity, files, DotNet seam
+al-ir          the typed IR (plain data)                   al-version  BC versions, run target, gates
+al-syntax      lexer, preprocessor, parser, rowan tree, AST views, cheap declaration scan
+al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, package/zip reading
+```
+
+## Crates and modules
+
+### al-builtins
+
+- `catalog.rs` (430): Generating the signature catalog from the docs scrape (ADR-008). Entry: `Catalog` 52, `load` 63, `for_target` 70, `generate` 217.
+- `collation.rs` (135): Text order for `<`, `>`, `<=` and `>=` Entry: `compare` 74.
+- `collections.rs` (286): List and Dictionary methods..
+- `datatransfer.rs` (74): DataTransfer (install and upgrade code only). Entry: `native_for` 58.
+- `datefns.rs` (769): Date, Time and DateTime builtins Entry: `formula_text` 237, `check_formula` 323.
+- `errorinfo.rs` (307): ErrorInfo: the property bag, Error(ErrorInfo), collected errors. Entry: `raise` 239, `copy_of` 263, `native_for` 283.
+- `evaluate.rs` (265): `Evaluate(var Variable, String [, Number])`. Entry: `evaluate` 205.
+- `filter.rs` (626): Record filters as data (shared by the VM and the store). Entry: `FilterExpr` 8, `parse_filter` 70, `parse_filter_with` 79, `FieldFilter` 371.
+- `format.rs` (619): `Format(Value [, Length] [, FormatNumber])`. Entry: `FormatCtx` 8, `FormatFail` 15, `try_format` 29, `format_value` 37.
+- `formatstr.rs` (389): `Format(Value, Length, FormatString)` Entry: `format_with_string` 50.
+- `iso.rs` (121): ISO 8601 text to AL date/time values (JSON strings, XML-format Evaluate). Entry: `days_in_month` 11, `parse_date` 21, `parse_time` 36, `parse_datetime` 56.
+- `json.rs` (1415): JsonObject, JsonArray, JsonToken and JsonValue. Entry: `Handle` 17, `JsonCell` 21, `JsonNode` 27, `Scalar` 34.
+- `lib.rs` (38): Crate root of the AL standard library: values, builtins, catalog..
+- `mathfns.rs` (245): Round and Power. Entry: `round` 31.
+- `media.rs` (197): `Media` and `MediaSet` fields (corpus media/). Entry: `Id` 14, `MediaObject` 18, `MediaStore` 26.
+- `moduleinfo.rs` (287): `NavApp.GetCurrentModuleInfo` and friends, and the `ModuleInfo` type Entry: `native_for` 169.
+- `native.rs` (1251): Native builtin implementations, registered by catalog overload id (ADR-008). Entry: `Signal` 26, `AlError` 9, `Ctx` 48, `lookup` 412, `raise` 16.
+- `ops.rs` (630): Value operations: conversion, arithmetic, comparison, truthiness. Entry: `convert` 16, `arith` 180, `compare_order` 281, `truthy` 364.
+- `pagebuiltins.rs` (122): `TestPage`, `TestPart`, `TestField`, `TestAction` and `TestFilter` methods (ADR-012)..
+- `pagefmt.rs` (683): The text a page control shows for a value (ADR-012), en-US. Entry: `Blank` 11, `ControlFormat` 37, `parse_decimal_places` 50, `parse_precision` 62.
+- `platform.rs` (259): The registry of platform tables that have a native row provider (ADR-013 decision 7, ADR-019). Entry: `Provider` 14, `Virtual` 23, `provider` 157, `virtual_table` 162.
+- `querybuiltins.rs` (31): `Query` variable methods..
+- `refs.rs` (257): `RecordRef`, `FieldRef` and `KeyRef` methods..
+- `sessionfns.rs` (65): Builtins that act on session state..
+- `sessiontypes.rs` (271): `SessionSettings` and `Notification` Entry: `native_for` 250.
+- `signature.rs` (457): Parsing the `syntax` line of a documented builtin into a signature. Entry: `Param` 4, `Signature` 14, `DocEntry` 33, `DocParam` 47.
+- `stream.rs` (549): In-memory streams over Blob fields, plus the array helpers that share their corpus folder (`streams/`). Entry: `BlobBuf` 23, `BlobRef` 33, `new_blob` 35, `copy_blob` 44.
+- `sysenum.rs` (116): Platform option types whose values AL writes `FieldClass::Normal` Entry: `members` 9, `option_members` 113.
+- `textfns.rs` (724): Text functions and methods, TextBuilder and BigText. Entry: `secret_or_text` 493, `native_for` 679.
+- `value.rs` (852): Runtime values (ADR-010). Entry: `Value` 70, `RtType` 26, `Instance` 600, `DotNetObject` 133.
+- `version.rs` (33): The Version type. Entry: `native_for` 20.
+- `wsac.rs` (119): `WebServiceActionContext` Entry: `native_for` 104.
+- `xml.rs` (2642): XmlDocument, XmlElement, XmlAttribute, XmlText, XmlCData, XmlComment, XmlProcessingInstruction, XmlDeclaration, XmlNode, Entry: `XmlCell` 23, `XData` 29, `escape_text` 774, `escape_attr` 786.
+- `xmlport.rs` (286): The document side of XmlPort import and export (Format = Xml) Entry: `Elem` 12, `Node` 19, `ReadFailure` 58, `parse` 66.
+
+### al-data
+
+- `contract.rs` (220): The conformance suite every `Store` must pass (ADR-003). Entry: `table` 7, `cx` 36, `row` 43, `scan_all` 59.
+- `lib.rs` (153): The Store trait and table definitions (TableDef, Row, AccessContext). Entry: `Store` 120, `TableDef` 21, `FieldDef` 12, `AccessContext` 40, `InsertOutcome` 58.
+- `memory.rs` (444): In-memory store on persistent maps Entry: `MemStore` 33, `with_virtual_tables` 63, `detached` 72, `attached` 83.
+
+### al-deps
+
+- `artifact.rs` (1153): Dependency apps from Microsoft's artifact feed, as the fallback behind the project's `.alpackages` and `--deps` (ADR-013 Entry: `Cdn` 28, `HttpCdn` 38, `Fetch` 79, `ArtifactUse` 89.
+- `build.rs` (424): Which Business Central build supplies the Microsoft apps (ADR-013 decision 2, "Layer A"). Entry: `BuildId` 14, `parse_index` 91, `BuildQuery` 106, `Origin` 160.
+- `cache.rs` (349): The artifact cache (ADR-013 decision 3) Entry: `cache_root` 21, `cache_root_from_env` 44, `Store` 48, `BuildDir` 86.
+- `lib.rs` (17): Dependency apps for the runtime (ADR-013).
+- `load.rs` (577): Finding, choosing and reading the dependency apps of a project (ADR-013). Entry: `parse_app_json` 26, `read_package_at` 96, `scan_dir` 103.
+- `package.rs` (531): Reading an .app package: manifest, sources, resources. Entry: `Manifest` 9, `parse_manifest` 51, `Sources` 48.
+- `remote.rs` (517): A ZIP archive read by byte ranges Entry: `RemoteError` 14, `RangeSource` 65, `FileSource` 73, `HttpSource` 114.
+- `select.rs` (644): Which package satisfies each dependency (ADR-013 decision 2, "Layer B"). Entry: `DepDecl` 27, `Candidate` 40, `Project` 65, `MissingPolicy` 72.
+- `version.rs` (62): App version numbers. Entry: `Version` 7.
+- `zip.rs` (499): A small ZIP reader over a byte slice, and the NAVX wrapper of `.app` files. Entry: `ZipError` 11, `Entry` 55, `Zip` 64, `EndRecord` 89.
+
+### al-host
+
+- `dotnet.rs` (238): The `DotNet` provider seam (ADR-014 section 2). Entry: `DotNetType` 10, `DotNetHandle` 26, `DotNetValue` 30, `DotNetArg` 65.
+- `lib.rs` (275): The host seam: clock, identity, client type, file system (ADR-006). Entry: `Clock` 21, `Identity` 70, `ClientType` 54, `Host` 212.
+
+### al-ir
+
+- `lib.rs` (1014): The typed IR (ADR-011): Program, Object, Routine, Stmt, Expr. Plain serde data, no syntax nodes. Entry: `Program` 8, `Object` 107, `Routine` 704, `Stmt` 891, `Expr` 801, `SrcPos` 42, `NO_POS` 36.
+
+### al-sema
+
+- `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
+- `check.rs` (2374): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 118, `Checker` 320, `check_object` 634, `check_routine_in` 643, `CheckResult` 43, `Res` 67, `Roots` 103.
+- `check/demand.rs` (1005): Demand-driven checking of dependency apps (ADR-013 decision 6): what a test reaches is compiled, the rest is not. Entry: `Demand` 43, `run_demand` 647, `reach` 235, `reach_baseline` 249, `activate` 339, `activate_table` 384, `activate_ops` 437, `activate_global` 473.
+- `lib.rs` (16): Crate root of the semantic model..
+- `lower.rs` (4761): Lowers resolved syntax to the typed IR (ADR-011). Anything inexpressible becomes a refusal reason on the routine. Entry: `lower_with_positions` 33, `Lowered` 17, `Lowerer` 1104, `routine` 2358, `stmt` 2553, `expr` 2919, `call` 3238, `compile_apps_with` 3503, `compile_with_roots` 3526.
+- `members.rs` (708): Members of objects: table fields (extensions merged), enum values, procedure signatures. Entry: `MemberTable` 108, `build` 147, `FieldInfo` 15, `ProcSig` 48.
+- `pages.rs` (932): Pages for the test client (ADR-012) Entry: `expand` 153, `expand_ranges` 159, `control_sections` 143, `classify_source` 81.
+- `queries.rs` (760): Query objects (corpus query/) Entry: `QueryLayout` 16, `layout` 56.
+- `relation.rs` (359): `TableRelation` property text → arms (before names are resolved). Entry: `ParsedArm` 13, `ParsedWhere` 23, `parse` 262.
+- `reports.rs` (792): Report objects: dataset walk and the IR it lowers to. Entry: `layout` 78, `request_layout` 196, `build` 567, `build_ext` 622.
+- `types.rs` (240): Semantic types (Ty) and their display names. Entry: `Ty` 7, `display_name` 66, `from_type_ref` 71.
+- `workspace.rs` (1478): A set of apps: parse every file, build the object table, resolve names across apps. Entry: `Workspace` 189, `load_apps` 233, `ObjKind` 10, `ObjectSym` 155, `AppSource` 30, `AppKind` 40, `restrict_to` 522, `subscribers_of` 429, `resolve_ref` 669.
+- `xmlports.rs` (712): XmlPort objects (Format = Xml) Entry: `RawNode` 24, `Layout` 33, `layout` 97, `Context` 248.
+
+### al-syntax
+
+- `ast.rs` (904): Typed views over the untyped tree. Entry: `routines_in` 45, `sections_in` 57, `Routine` 33.
+- `builder.rs` (204): Green tree construction for the parser. Entry: `TreeCache` 19, `Checkpoint` 64, `TreeBuilder` 66.
+- `grammar/declarations.rs` (409): Variables, types, parameters, procedures, triggers, attributes. Entry: `var_section` 8, `type_ref` 92, `property_value` 166, `attributes` 184.
+- `grammar/expressions.rs` (432): Expression grammar. Entry: `expr` 63, `arg_list` 185.
+- `grammar/mod.rs` (38): Grammar entry module..
+- `grammar/objects.rs` (270): Files, objects and object bodies. Entry: `source_file` 39.
+- `grammar/statements.rs` (311): Statements and code blocks. Entry: `block` 7, `stmt` 47.
+- `lexer.rs` (491): Lossless lexer. Entry: `lex` 12, `Token` 6.
+- `lib.rs` (16): Crate root of the AL syntax: lexer, parser, tree, AST views..
+- `parser.rs` (352): Parser infrastructure and the parse entry points. Entry: `parse` 32, `parse_with_cache` 45, `Parse` 20.
+- `preprocessor.rs` (287): Token-level preprocessor (#if and friends). Entry: `preprocess` 23.
+- `scan.rs` (463): A cheap declaration scan: objects, ids, subscribers, without a tree (used for dependency apps). Entry: `scan` 121, `ScannedObject` 29, `ScannedSubscriber` 50.
+- `syntax_kind.rs` (177): Every token and node kind. Entry: `SyntaxKind` 7, `AlLanguage` 155, `SyntaxNode` 169, `SyntaxToken` 170.
+
+### al-test-cli
+
+- `args.rs` (285): Command-line parsing and the --help text. Entry: `parse` 76, `Args` 7, `HELP` 170.
+- `baseline.rs` (337): The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`, `CompanyInitializer`, `TestExecu Entry: `BaselineRun` 22, `run` 51, `tables_written` 152.
+- `config.rs` (292): oracle/oracle.toml: versions, suites, corpus pin. Entry: `OracleFile` 7, `VersionEntry` 16, `SuiteEntry` 51.
+- `corpus.rs` (210): Corpus discovery: test codeunits, their area folder and file. Entry: `discover` 32, `CorpusIndex` 20, `TestCodeunit` 12.
+- `deps.rs` (123): Dependency apps for a corpus run (ADR-013) Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
+- `dotnet.rs` (816): The .NET sidecar host (ADR-014) Entry: `SidecarConfig` 26, `SidecarHost` 65, `encode` 675, `decode` 695.
+- `drift.rs` (119): Comparing case sets across BC versions (ADR-015 3.6). Entry: `differences` 11, `common` 26, `restrict` 39, `table` 46.
+- `explain.rs` (134): --explain: where a test was refused or failed, with file and line. Entry: `describe` 38, `detail` 73, `render` 86, `TestDetail` 27.
+- `host.rs` (37): The host the command line gives a session (ADR-006) Entry: `SystemClock` 8, `system_host` 21.
+- `insight.rs` (356): --top-refusals (folded reason ranking) and --baseline-diff. Entry: `normalise_reason` 22, `top_refusals` 116, `baseline_diff` 188, `render_top` 145, `render_diff` 216.
+- `isolation.rs` (172): TestIsolation of the runner codeunit; Checkpoint for Function isolation. Entry: `TestIsolation` 27, `runner_isolation` 65, `Checkpoint` 99.
+- `lib.rs` (22): Runs the corpus's `[Test]` codeunits and reports them against the oracle..
+- `main.rs` (775): The binary: run each oracle version, report, ratchet. Exit 0 ok, 1 regression, 2 setup error. Entry: `main` 17, `run` 40, `run_version` 132, `find_explained` 646, `drift_summary` 121.
+- `oracle.rs` (288): The oracle: JUnit and xUnit cases of real BC, identified by (codeunit, name). Entry: `CaseId` 7, `OracleCase` 13, `parse_junit` 30, `parse_xunit` 74.
+- `output.rs` (238): Renders a report as Markdown (CI step summary) and the runtime's outcomes as JUnit in the same shape the corpus CI emits Entry: `markdown` 7, `junit` 69.
+- `pin.rs` (169): The per-version corpus pin check (ADR-007, "Decided without owner review (2026-10-13/14)"). Entry: `check` 13.
+- `report.rs` (461): Joins the oracle with the runtime's outcomes into the pass-rate report, and enforces the ratchet Entry: `Outcome` 9, `build` 108, `ratchet` 177, `decide` 199, `parse_baseline` 221.
+- `runner.rs` (18): The seam between the harness and the runtime. Entry: `Runner` 6, `NoRuntime` 11.
+- `runtime.rs` (2422): Runs test codeunits the way BC's test runner does; one Session per codeunit; install baseline; handlers. Entry: `CorpusRuntime` 96, `run_suites_with` 235, `run_codeunit_observed` 517, `run_codeunit_isolated` 492, `blocked_site` 951, `RunOptions` 118, `resolve_handlers` 710.
+- `select.rs` (139): Test selection: --codeunit, --test, --area, --file (union). Entry: `Selection` 16, `matches` 34, `filter` 53.
+- `target.rs` (100): Reads the version fields of an app.json (ADR-015 step 4). Entry: `build_query` 13, `read_app_versions` 19, `app_versions_from_json` 25.
+
+### al-version
+
+- `choose.rs` (238): How the target of a run is chosen (ADR-015 3.2, 3.8). Entry: `AppVersions` 10, `TargetError` 58, `Chosen` 84, `choose_target` 98.
+- `gates.rs` (115): Behaviour that differs between BC versions, as named facts in one table (ADR-015 3.4). Entry: `Evidence` 12, `Gate` 18, `has` 69.
+- `lib.rs` (291): BC versions and the run target (ADR-015). Entry: `VersionError` 21, `BcVersion` 42, `Runtime` 50, `Target` 56.
+
+### al-vm
+
+- `autoinc.rs` (194): AutoIncrement fields: taking the next value, explicit keys. Entry: `auto_increment_field` 28, `take_auto_increment` 58.
+- `baseline.rs` (66): The install baseline (ADR-013 decision 5, ADR-004) Entry: `Baseline` 12.
+- `callstack.rs` (78): The AL call stack of an error (`GetLastErrorCallStack`). Entry: `add_frame` 36, `add_top_frame` 29, `frame_line` 48.
+- `dispatch.rs` (330): Event dispatch: publishers run their subscribers; EventCall; isolated events. Entry: `publish` 69, `raise` 117, `event_targets` 183, `has_listeners` 241, `subscription` 271.
+- `dotnet/mod.rs` (488): `DotNet` calls (ADR-014). Entry: `DotNetConfig` 33, `DotNetState` 58, `fit` 455.
+- `dotnet/policy.rs` (269): What is refused before a `DotNet` request is sent (ADR-014 section 8). Entry: `Access` 6, `Policy` 14.
+- `dotnet/registry.rs` (113): Runtime-provided .NET classes (ADR-014 section 1) Entry: `MemberKind` 19, `Pin` 28, `MemberFn` 45, `RegistryMember` 47.
+- `errorcollect.rs` (140): ErrorBehavior::Collect scopes. Entry: `declares_collect` 44, `collect_error` 71, `close_error_scope` 86.
+- `events.rs` (418): Event publishers and subscribers Entry: `Registry` 37, `build` 102, `Subscriber` 14, `Publisher` 26.
+- `faultsite.rs` (57): Where a refusal or a failure was raised, for `al-test-cli --explain`. Entry: `FaultFrame` 14, `trace_faults` 23, `fault_site` 30, `note_fault` 40.
+- `filterpage.rs` (268): FilterPageBuilder. Entry: `filter_page_builder_op` 64.
+- `flowfields.rs` (623): FlowFields (`CalcFormula`), FlowFilters, `CalcFields`, `CalcSums` and `SetAutoCalcFields`..
+- `globaltriggers.rs` (225): The events of the platform codeunit `Global Triggers` (2000000002, in the platform `System.app`). Entry: `global_setup` 63, `global_enabled` 142, `global_trigger` 157.
+- `hostvalues.rs` (259): Builtins that answer from the host (ADR-006) Entry: `datetime_of_unix_millis` 26, `Replaced` 142.
+- `interfaces.rs` (106): Interface variables: dispatch through the implementing codeunit. Entry: `interface_test` 32, `interface_target` 54, `enum_implementation` 81.
+- `lib.rs` (1474): The tree-walking interpreter: Engine (immutable program), Session (all mutable state). Entry: `Engine` 46, `Session` 141, `call` 489, `call_inner` 518, `exec` 619, `eval` 780, `read` 1100, `write` 1147, `record` 1343, `finish_call` 1018.
+- `pages.rs` (3682): The page test client (ADR-012): open, navigate, read and write controls, close. Entry: `page_op` 337, `page_open` 723, `open_page_as` 841, `test_page_op` 443, `page_instance` 742, `construct_page` 781, `page_close` 1072, `close_with` 1087.
+- `pages/areas.rs` (104): Application areas on the test client.
+- `pages/background.rs` (246): Page background tasks under the test client Entry: `BgWorker` 11.
+- `pages/filter.rs` (135): `TestPage.Filter` / `TestPart.Filter` (the `TestFilter` handle).
+- `pages/parts.rs` (324): Page parts (ADR-012 follow-up).
+- `pages/request.rs` (571): The request page of a report Entry: `RequestClosed` 18, `action_id` 532.
+- `pages/runobject.rs` (321): `RunObject` actions (ADR-012 follow-up).
+- `partial.rs` (208): Partial records (SetLoadFields). Entry: `note_partial_fetch` 54, `load_fields_op` 122.
+- `platform/apps.rs` (67): The tables that list the apps of the tenant.
+- `platform/date.rs` (361): The `Date` table (2000000007).
+- `platform/fields.rs` (264): The Field and Key platform tables. Entry: `field_row` 116, `shell_entries` 65.
+- `platform/host_tables.rs` (145): Tables whose rows are facts about the host.
+- `platform/identity.rs` (67): The Session and Active Session tables.
+- `platform/ids.rs` (45): Identifiers the runtime makes up for what a service tier would assign. Entry: `package_id` 11.
+- `platform/integer.rs` (83): The `Integer` table (2000000026).
+- `platform/links.rs` (225): `Record.AddLink`, `HasLinks`, `DeleteLink`, `DeleteLinks` and `CopyLinks`.
+- `platform/mat.rs` (259): A computed table whose rows are listed in full once, then scanned like a stored one. Entry: `Entry` 11, `Mat` 29.
+- `platform/mod.rs` (279): Row providers for the platform's system tables (ADR-013 decision 7, ADR-019). Entry: `Ident` 40, `Providers` 74, `pos` 181, `blank` 189.
+- `platform/objects.rs` (480): The tables that list the compiled objects.
+- `platform/pages.rs` (391): The page platform tables. Entry: `source_table` 36.
+- `platform/permissions.rs` (572): The permission set tables.
+- `platform/ranges.rs` (164): Filters on one integer-like field as a sorted set of closed intervals, for the generated tables (Integer, Date), whose r Entry: `Iv` 8, `Set` 11, `intersect` 26, `of_expr` 60.
+- `platform/seed.rs` (73): The rows a tenant holds before any AL runs, for the stored platform tables whose rows AL reads as facts about the sessio.
+- `queries.rs` (881): Query objects: Open, Read, column values, SaveAs. Entry: `query_op` 107, `query_column` 350.
+- `recmeta.rs` (734): Record builtins that read table metadata or guard on session state Entry: `string_literal` 29, `mentions_table` 49, `is_blank` 60.
+- `records.rs` (1565): Record.* on the store: Insert, Modify, Delete, Get, Find, filters, triggers, events. Entry: `record_op` 733, `table_event` 205, `run_trigger` 499, `delete_row` 297, `scan` 545, `unique_violation` 346.
+- `refs.rs` (617): `RecordRef`, `FieldRef` and `KeyRef` on the VM. Entry: `record_ref_value` 42.
+- `relations.rs` (179): TableRelation: lookups and Validate checks. Entry: `field_relation` 70, `validate_relation` 94.
+- `rename.rs` (214): Rename propagation to related tables. Entry: `rename_references` 33, `propagate_rename` 86.
+- `reports.rs` (876): Report objects at run time: dataset walk, triggers, request page. Entry: `report_builtin` 79, `first_use` 300.
+- `sessionops.rs` (404): Builtins that act on session state Entry: `Sequence` 11.
+- `transactions.rs` (446): Transactions as AL code sees them Entry: `TxModel` 15, `CommitBehavior` 27, `codeunit_run` 193.
+- `ui.rs` (347): Dialogs raised by the code under test (`Message`, `Confirm`, `StrMenu`) and the test handler functions that answer them. Entry: `UiKind` 18, `UiHandler` 66, `dispatch_ui` 158, `dispatch_ui_returning` 163.
+- `views.rs` (377): Filter and view text: SetView, GetFilters, filter group text. Entry: `parse_filter_text` 28, `filter_text` 50, `get_filters` 117.
+- `xmlports.rs` (1304): XmlPort import and export (Format = Xml).
+
+## Flows
+
+Each chain is `caller -> callee` in call order; `[a, b]` means both happen in that order. Names are
+functions or methods; the file is in the module list above.
+
+### Corpus run: from main to a test outcome
+
+1. `main` (al-test-cli/main.rs) starts a thread with a large stack and calls `run`.
+2. `run`: `args::parse` -> `config::OracleFile::parse` (oracle/oracle.toml) -> per BC version `run_version`.
+3. `run_version`: `pin::check` -> `oracle::parse_junit` (cases of real BC) -> `corpus::discover` ->
+   `select::Selection::filter` / `find_explained` -> `runtime::load_app` per app -> `deps::load_with`
+   (Microsoft apps from `.alpackages`, `--deps` or the artifact feed) -> `CorpusRuntime::run_suites_with`.
+4. `run_suites_with`: `al_sema::lower::compile_apps_with` (compile pipeline below) -> `Engine::with_config`
+   (`events::Registry::build`) -> `global_triggers_find_unavailable` -> `baseline::run` (install roots, once) ->
+   for each test codeunit `run_codeunit_isolated` -> `run_codeunit_observed`.
+5. `run_codeunit_observed`: `Session::with_host` -> `restore_baseline` -> `run_install_codeunits` -> `OnRun` via
+   `Session::call` -> per `[Test]` routine: `resolve_handlers`, `blocked_site` (refusal decided at lowering),
+   `bind_handlers`, then `Session::call` -> `call_inner` -> `exec_block` -> `exec` / `eval`. The result becomes
+   `Outcome::{Pass, Fail, NotRun}` (`Signal::Error` is a failure, `Signal::Unsupported` is a refusal).
+6. Back in `run_version`: `report::build` (counts by area) -> `output::junit` / `markdown` -> `report::ratchet` and
+   `decide` against `metrics/<major>/passing.txt` -> `format_baseline` with `--update-baseline`.
+   Reading a run: `insight::top_refusals`, `insight::baseline_diff`, `explain::render`.
+
+### Compile pipeline: parse -> workspace -> demand -> check -> lower
+
+1. `lower::compile_apps_with` -> `compile_with_roots`.
+2. `Workspace::load_apps` (al-sema/workspace.rs): workspace apps are parsed (`parse_file`, in parallel,
+   `pages::expand_ranges` first for page expressions); dependency apps are only scanned (`scanned_file` ->
+   `al_syntax::scan::scan`) and parsed later on demand (`Workspace::green`). Then `index_extensions_and_subscribers`
+   and `resolve_references`.
+3. `members::build`: fields (extensions merged), enum values, procedure signatures.
+4. `check::check_with`: `check_object` for every workspace object (a test selection leaves unselected test codeunits
+   out: `Roots::only_tests`), then `reach_baseline` (install roots) and `run_demand` (check/demand.rs):
+   `activate` / `activate_table` / `activate_ops` / `activate_global` queue routines, `check_reached` checks them;
+   files of newly reached dependency objects are parsed ahead on worker threads. Result: `CheckResult`
+   (types and resolutions by node position, `Demand`).
+5. `lower::lower_with_positions`: `Workspace::restrict_to` (what demand did not reach stops resolving), then per object
+   `Lowerer::routine` -> `stmt` / `expr` / `call` for reached routines and `stub` for the rest. Anything inexpressible
+   becomes a refusal reason in `Lowered::unsupported`. Output: `al_ir::Program` + call graph.
+
+### Record.Insert(true): trigger, events, Global Triggers, store
+
+1. `Session::eval` (al-vm/lib.rs) on `Expr::Builtin("Record.Insert#2")` -> `al_builtins::native::lookup` -> the entry
+   in `native.rs` calls `Ctx::record("Insert", ..)` -> `Session::record` (lib.rs) -> `records::record_op`, arm `"Insert"`.
+2. `record_op`, in order: `auto_increment_field` -> `table_event("onbeforeinsertevent")` (`listened`, then
+   `dispatch::raise`) -> `assign_system_id` -> with RunTrigger: `run_ext_trigger("OnBeforeInsert")`,
+   `run_trigger(OnInsert)` (`Session::call`), `run_ext_trigger("OnInsert")` -> `globaltriggers::global_trigger(Insert)`
+   (`global_setup`, then `raise` on the platform codeunit `Global Triggers`, event `ondatabaseinsert`) ->
+   `check_system_id_unique` (Insert(_, true) keeps the buffer's SystemId) -> `bump_row_version`, `stamp_insert` ->
+   `take_auto_increment` -> `unique_violation` (duplicate key fails here, `fail_unique`) ->
+   `store_for(rec).insert` (al-data `Store::insert`, `MemStore`) -> `run_ext_trigger("OnAfterInsert")` ->
+   `table_event("onafterinsertevent")`.
+
+### TestPage open
+
+1. `Session::eval` on `Expr::Builtin("TestPage.OpenEdit#1")` -> native entry -> `Ctx::page` -> `pages::page_op`
+   (wraps a page transaction: `in_page_transaction`) -> `page_op_inner` -> `test_page_op` -> `test_page_op_inner`
+   (`"OpenEdit"`, `"OpenView"`, `"OpenNew"`) -> `page_open` -> `open_page` -> `open_page_as`.
+2. `open_page_as`: `page_instance` / `construct_page` (instance of the page object) -> `page_trigger("oninit")` ->
+   UI handler lookup (`ui.rs`, `resolve_handlers` in the runner) -> `check_page_events` ->
+   `page_trigger("onopenpage")` and `page_event("onopenpageevent")` -> `load_first_row` -> `populate_current` /
+   `populate_window` (control expressions, FlowFields). Controls are then read and written through `test_page_op_inner`.
+3. Closing: `page_close` -> `close_with` (OnQueryClosePage, OnClosePage, saving values).
+
+### Event raise
+
+1. A call to a publisher routine: `Session::call` sees `engine.events.publishers` holds `(object, routine)` ->
+   `dispatch::publish` (converts parameters, builds `EventCall`) -> `raise`.
+   Table events build an `EventCall` themselves (`records::table_event`), `Global Triggers` events too
+   (`globaltriggers::global_trigger`), page events via `pages::page_event`.
+2. `raise`: `event_targets` (subscribers from `engine.events.subscribers[(object, event)]`, static or bound instances
+   via `static_instance` / `bound_instances`; a Global Triggers subscriber that cannot run refuses here) -> per
+   subscriber map parameters by name -> `Session::call(subscriber)` -> `var` values are written back into the arguments.
+3. The registry is built once per program: `events::Registry::build` reads the `EventSubscriber` attributes of the IR.
+   At compile time the same relation is `Workspace::subscribers_of`, which demand uses to reach subscribers.
+
+### Guarded Codeunit.Run
+
+1. `if Codeunit.Run(..) then` lowers to `Expr::Builtin("Codeunit.Run#1" | "#3")` with `ret_used = true`.
+   `Session::eval` (lib.rs, the `Codeunit.Run#` branch) evaluates receiver and arguments, then
+   `transactions::codeunit_run(id, recv, args, guarded = ret_used)`.
+2. `codeunit_run`: unguarded -> `bg_refuse_transaction_call`; resolve the codeunit (`shared_instance` / `instance`);
+   refuse a test codeunit started from a test (`nested_test_codeunit`); TableNo codeunits take the record as `Rec`;
+   guarded and `in_write_transaction` -> `transaction_stopped()` (BC refuses a guarded run over an uncommitted write).
+3. `Session::call(object, OnRun)` inside `tx_world += 1`. `Ok` + guarded -> `commit_transaction`, returns true.
+   `Err(Signal::Error)` + guarded -> `add_top_frame` (call stack text), `rollback_transaction`, `last_error` set,
+   returns false. Unguarded errors propagate. `Signal::Unsupported` always propagates (a refusal, not a failure).
+
+## Reading a failure or a refusal
+
+`al-test-cli --explain TEST` (explain.rs) shows the outcome, the reason and, with `Session::trace_faults`
+(al-vm/faultsite.rs), the call stack the error or refusal left from, each frame with `file:line:col`
+(`Program::positions`, docs/architecture.md "Source positions").

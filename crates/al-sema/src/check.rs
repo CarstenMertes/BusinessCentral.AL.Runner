@@ -51,6 +51,15 @@ pub struct CheckResult {
     /// With dependency apps: which of their objects and routines the workspace reaches.
     /// `None` when every object is checked.
     pub demand: Option<demand::Demand>,
+    /// Per object: a test codeunit a selection left out (`Roots::only_tests`). Empty without one.
+    pub skipped: Vec<bool>,
+}
+
+impl CheckResult {
+    /// Whether object `oi` was left out of the check by a test selection.
+    pub fn is_skipped(&self, oi: usize) -> bool {
+        self.skipped.get(oi).copied().unwrap_or(false)
+    }
 }
 
 /// The target of a resolved name, member or call.
@@ -90,11 +99,16 @@ pub enum Res {
 }
 
 /// Extra roots of the demand-driven check, besides the workspace's own code (ADR-013 decision 5).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Roots {
     /// The install baseline: the install codeunits of the dependency apps and Base Application's
     /// `Company-Initialize` (codeunit 2).
     pub baseline: bool,
+    /// A test selection (`al-test-cli --codeunit ...`): the test codeunits to run, as (app index,
+    /// object id). Every other test codeunit of a workspace app is neither checked nor compiled
+    /// (its routines are stubs that refuse), so the demand starts from the selected tests and the
+    /// workspace's non-test code only. `None`: every test codeunit is a root.
+    pub only_tests: Option<Vec<(usize, u32)>>,
 }
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
@@ -105,6 +119,14 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
     // With dependency apps, only what the workspace's code reaches in them is checked.
     let demand_mode = ws.kinds.contains(&crate::workspace::AppKind::Dependency)
         && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
+    // A test codeunit the selection leaves out is not a root; nothing else in the workspace is.
+    let skipped: Vec<bool> = match &roots.only_tests {
+        None => Vec::new(),
+        Some(keep) => (0..ws.objects.len())
+            .map(|oi| unselected_test(ws, oi, keep))
+            .collect(),
+    };
+    let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
     let mut c = Checker {
         ws,
         members,
@@ -141,7 +163,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
             }
             c.prefetch = Some(tx);
             for oi in 0..ws.objects.len() {
-                if !ws.is_dependency(oi) {
+                if !ws.is_dependency(oi) && !skip(oi) {
                     c.check_object(oi);
                     c.take_calls();
                 }
@@ -155,7 +177,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         })
     } else {
         for oi in 0..ws.objects.len() {
-            c.check_object(oi);
+            if !skip(oi) {
+                c.check_object(oi);
+            }
             c.take_calls();
         }
         None
@@ -181,7 +205,31 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         resolutions: c.resolutions,
         queries,
         demand,
+        skipped,
     }
+}
+
+/// Whether object `oi` is a test codeunit of a workspace app that `keep` (app index, id) leaves out.
+fn unselected_test(ws: &Workspace, oi: usize, keep: &[(usize, u32)]) -> bool {
+    let o = &ws.objects[oi];
+    if o.kind != ObjKind::Codeunit || ws.is_dependency(oi) {
+        return false;
+    }
+    let Some(id) = o.id else { return false };
+    if keep.contains(&(o.app, id)) {
+        return false;
+    }
+    let ast = ws.object_ast(oi);
+    let is_test = ast
+        .properties()
+        .any(|p| p.name().eq_ignore_ascii_case("Subtype") && p.value_text().eq_ignore_ascii_case("Test"));
+    // A test codeunit that subscribes to events listens during every test, so it stays compiled.
+    is_test
+        && !ast
+            .syntax()
+            .to_string()
+            .to_ascii_lowercase()
+            .contains("eventsubscriber")
 }
 
 /// Types that appear in the catalog's signatures but are not receivers or

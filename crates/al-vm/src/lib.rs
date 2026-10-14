@@ -13,10 +13,12 @@ use std::sync::Arc;
 mod autoinc;
 mod baseline;
 pub use baseline::Baseline;
+pub use faultsite::FaultFrame;
 mod callstack;
 mod dispatch;
 pub mod dotnet;
 mod errorcollect;
+mod faultsite;
 pub mod events;
 mod filterpage;
 mod flowfields;
@@ -150,6 +152,9 @@ pub struct Session {
     /// The routine and current statement position of every frame, parallel to `frames`
     /// (`callstack.rs`).
     pub(crate) call_stack: Vec<CallFrame>,
+    /// `faultsite.rs`: whether to record where errors and refusals leave from, and the last one.
+    fault_trace: bool,
+    fault_site: Vec<faultsite::FaultFrame>,
     /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
@@ -312,6 +317,8 @@ impl Session {
             code_coverage: false,
             frames: Vec::new(),
             call_stack: Vec::new(),
+            fault_trace: false,
+            fault_site: Vec::new(),
             isolated_storage: Default::default(),
             install_scope: false,
             sequences: Default::default(),
@@ -564,6 +571,9 @@ impl Session {
             pos: ir::NO_POS,
         });
         let mut outcome = self.exec_block(&r.body, &mut frame);
+        if self.fault_trace && matches!(outcome, Err(Signal::Error(_) | Signal::Unsupported(_))) {
+            self.note_fault();
+        }
         // An error that leaves the routine takes the routine's frame into its call stack.
         if let (Err(Signal::Error(e)), Some(&top)) = (&mut outcome, self.call_stack.last()) {
             self.add_frame(e, object, top);

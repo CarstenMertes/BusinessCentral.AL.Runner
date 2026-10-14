@@ -4,7 +4,8 @@
 
 use crate::isolation::{Checkpoint, TestIsolation, runner_isolation};
 use crate::report::Outcome;
-use al_builtins::native::Signal;
+use crate::explain::{self, TestDetail};
+use al_builtins::native::{AlError, Signal};
 use al_sema::lower::Lowered;
 use al_vm::{Engine, Session, UiKind};
 use std::collections::BTreeSet;
@@ -98,6 +99,28 @@ pub struct CorpusRuntime {
     outcomes: std::collections::HashMap<(usize, u32, String), Outcome>,
     suites: Vec<String>,
     pub panics: usize,
+    /// How long the compile, the install baseline and the tests took.
+    pub phases: Phases,
+    /// With `RunOptions::trace`: where each test of the run codeunits was refused or failed.
+    details: std::collections::HashMap<(usize, u32, String), TestDetail>,
+}
+
+/// Wall time of the phases of a run (`--timings`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Phases {
+    pub compile: std::time::Duration,
+    pub baseline: std::time::Duration,
+    pub tests: std::time::Duration,
+}
+
+/// What a run is asked to do beyond running everything.
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    /// Only these test codeunits (app index of the compile, object id) are roots of the compile
+    /// and are run. `None`: all of them.
+    pub only: Option<Vec<(usize, u32)>>,
+    /// Record where tests are refused or fail (`--explain`).
+    pub trace: bool,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -195,10 +218,44 @@ impl CorpusRuntime {
         dotnet: al_vm::dotnet::DotNetConfig,
         suites: &[SuiteRun],
     ) -> CorpusRuntime {
+        Self::run_suites_with(
+            apps,
+            kinds,
+            manifests,
+            symbols,
+            target,
+            dotnet,
+            suites,
+            &RunOptions::default(),
+        )
+    }
+
+    /// [`run_suites`](Self::run_suites) with a test selection and tracing (`RunOptions`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_suites_with(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+        suites: &[SuiteRun],
+        opts: &RunOptions,
+    ) -> CorpusRuntime {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
+        let compile_started = std::time::Instant::now();
         let (_ws, mut lowered) =
-            al_sema::lower::compile_apps_with(apps, kinds, symbols, target, al_sema::check::Roots { baseline });
+            al_sema::lower::compile_apps_with(
+                apps,
+                kinds,
+                symbols,
+                target,
+                al_sema::check::Roots {
+                    baseline,
+                    only_tests: opts.only.clone(),
+                },
+            );
         for (app, m) in lowered.program.apps.iter_mut().zip(manifests) {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
@@ -211,6 +268,7 @@ impl CorpusRuntime {
             .collect();
         let mut engine = Engine::with_config(lowered.program.clone(), blocked, target.cloned(), dotnet);
         global_triggers_find_unavailable(&mut engine, &lowered);
+        let compile_time = compile_started.elapsed();
         let started = std::time::Instant::now();
         let baseline = if baseline {
             crate::baseline::run(&engine, &lowered)
@@ -233,8 +291,11 @@ impl CorpusRuntime {
                 e.unseeded = b.unseeded.iter().map(|&t| t as usize).collect();
             }
         }
+        let baseline_time = started.elapsed();
         let baseline = baseline.map(|b| b.baseline);
+        let tests_started = std::time::Instant::now();
         let mut outcomes = std::collections::HashMap::new();
+        let mut details = std::collections::HashMap::new();
         let mut panics = 0;
         for (si, suite) in suites.iter().enumerate() {
             let isolation = match suite.runner {
@@ -245,6 +306,10 @@ impl CorpusRuntime {
                 let is_test = o.kind == "codeunit"
                     && !lowered.dependency[oi]
                     && suite.app.is_none_or(|a| o.app as usize == a)
+                    && opts
+                        .only
+                        .as_ref()
+                        .is_none_or(|only| o.id.is_some_and(|id| only.contains(&(o.app as usize, id))))
                     && o.properties
                         .iter()
                         .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
@@ -265,7 +330,23 @@ impl CorpusRuntime {
                 };
                 // A Rust panic is a runtime bug; contain it to this codeunit and report it.
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_codeunit_isolated(&engine, &lowered, oi, baseline.as_ref(), isolation)
+                    let mut observe = |name: &str, _: &Outcome, seen: &Observed| {
+                        let mut d = explain::detail(
+                            &lowered.program,
+                            seen.session.fault_site(),
+                            seen.error.map(|e| explain::ErrorInfo {
+                                message: e.message.clone(),
+                                code: e.code.clone(),
+                                call_stack: e.call_stack.clone(),
+                            }),
+                        );
+                        d.refused_in = seen
+                            .refused_in
+                            .map(|(o, r)| explain::describe(&lowered.program, o, r, al_ir::NO_POS));
+                        details.insert((si, id, name.to_lowercase()), d);
+                    };
+                    let trace: Option<&mut Observer> = opts.trace.then_some(&mut observe);
+                    run_codeunit_observed(&engine, &lowered, oi, baseline.as_ref(), isolation, trace)
                 }));
                 match result {
                     Ok(list) => {
@@ -295,11 +376,23 @@ impl CorpusRuntime {
             outcomes,
             suites,
             panics,
+            phases: Phases {
+                compile: compile_time,
+                baseline: baseline_time,
+                tests: tests_started.elapsed(),
+            },
+            details,
         }
     }
 }
 
 impl CorpusRuntime {
+    /// Where `case` of the run named `suite` was refused or failed; only with `RunOptions::trace`.
+    pub fn detail_in(&self, suite: &str, case: &crate::oracle::CaseId) -> Option<&TestDetail> {
+        let si = self.suites.iter().position(|s| s == suite)?;
+        self.details.get(&(si, case.codeunit, case.name.to_lowercase()))
+    }
+
     /// The outcome of `case` in the run named `suite` (the first run has the empty name).
     pub fn outcome_in(&self, suite: &str, case: &crate::oracle::CaseId) -> Outcome {
         self.suites
@@ -403,11 +496,38 @@ pub fn run_codeunit_isolated(
     baseline: Option<&al_vm::Baseline>,
     isolation: TestIsolation,
 ) -> Vec<(String, Outcome)> {
+    run_codeunit_observed(engine, lowered, object, baseline, isolation, None)
+}
+
+/// What an observer sees of a test that has just ended.
+pub struct Observed<'a> {
+    /// The session, with its fault site (tracing is on when there is an observer).
+    pub session: &'a Session,
+    /// The error that failed the test.
+    pub error: Option<&'a AlError>,
+    /// The routine a refusal decided before the run belongs to (object, routine).
+    pub refused_in: Option<(usize, usize)>,
+}
+
+/// Called with the test's name and outcome after each test of the codeunit that ran.
+pub type Observer<'a> = dyn FnMut(&str, &Outcome, &Observed) + 'a;
+
+/// [`run_codeunit_isolated`] that tells `observe` how each test ended and turns on the session's
+/// fault tracing for it (`--explain`).
+pub fn run_codeunit_observed(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    object: usize,
+    baseline: Option<&al_vm::Baseline>,
+    isolation: TestIsolation,
+    mut observe: Option<&mut Observer>,
+) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
     if let Some(b) = baseline {
         session.restore_baseline(b);
     }
+    session.trace_faults(observe.is_some());
     let instance = session.instance(object);
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
@@ -479,10 +599,14 @@ pub fn run_codeunit_isolated(
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
         let mut committed = false;
+        let mut failure: Option<AlError> = None;
+        let mut refused_in = None;
+        session.clear_fault_site();
         let outcome = if let Err(reason) = &handlers {
             Outcome::NotRun(reason.clone())
-        } else if let Some(reason) = blocked_reason(lowered, object, r) {
-            Outcome::NotRun(reason)
+        } else if let Some(b) = blocked_site(lowered, object, r) {
+            refused_in = Some((b.object, b.routine));
+            Outcome::NotRun(b.text)
         } else if let Some(reason) = skipped_installs
             .iter()
             .find(|(tables, _)| !tables.is_disjoint(&tables_touched(lowered, object, r)))
@@ -537,7 +661,9 @@ pub fn run_codeunit_isolated(
                         }
                         Err(Signal::Error(e)) => {
                             session.rollback_transaction();
-                            Outcome::Fail(e.message)
+                            let message = e.message.clone();
+                            failure = Some(e);
+                            Outcome::Fail(message)
                         }
                         // A refused test did not run: what it wrote before the refusal must not
                         // reach the next test of the codeunit.
@@ -558,6 +684,17 @@ pub fn run_codeunit_isolated(
             ),
             o => o,
         };
+        if let Some(observe) = observe.as_mut() {
+            observe(
+                &routine.name,
+                &outcome,
+                &Observed {
+                    session: &session,
+                    error: failure.as_ref(),
+                    refused_in,
+                },
+            );
+        }
         if let Some(cp) = &checkpoint {
             cp.restore(&mut session);
         }
@@ -798,6 +935,20 @@ pub(crate) fn subscribers_reached(
 /// Why routine `routine` of `object` cannot run: the first reason found in
 /// anything it can reach through static calls (hard rule 4: decided before running).
 pub fn blocked_reason(lowered: &Lowered, object: usize, routine: usize) -> Option<String> {
+    blocked_site(lowered, object, routine).map(|b| b.text)
+}
+
+/// A routine that cannot run, found from a root by [`blocked_site`].
+pub struct Blocked {
+    /// The routine that carries the lowering reason.
+    pub object: usize,
+    pub routine: usize,
+    /// `Object.Routine: reason`.
+    pub text: String,
+}
+
+/// [`blocked_reason`] with the routine the reason was found in.
+pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<Blocked> {
     let mut seen = BTreeSet::new();
     let mut stack = vec![(object, routine)];
     while let Some((o, r)) = stack.pop() {
@@ -807,7 +958,11 @@ pub fn blocked_reason(lowered: &Lowered, object: usize, routine: usize) -> Optio
         if let Some(reason) = lowered.unsupported[o][r].first() {
             let name = &lowered.program.objects[o].routines[r].name;
             let obj = &lowered.program.objects[o].name;
-            return Some(format!("{obj}.{name}: {reason}"));
+            return Some(Blocked {
+                object: o,
+                routine: r,
+                text: format!("{obj}.{name}: {reason}"),
+            });
         }
         stack.extend(lowered.calls[o][r].iter().copied());
     }

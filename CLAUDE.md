@@ -1,7 +1,9 @@
 # Agent instructions
 
 al-runtime-rs is a Rust-native AL runtime (see `README.md`). Read
-`docs/architecture.md`, `docs/status.md` and `docs/adr/README.md` first.
+`docs/architecture.md`, `docs/status.md` and `docs/adr/README.md` first, then
+`docs/codemap.md` (which module owns what, and the call chains of the main flows)
+before you open a source file.
 
 ## Hard rules
 
@@ -48,6 +50,20 @@ al-runtime-rs is a Rust-native AL runtime (see `README.md`). Read
   --update-baseline` and commit `metrics/<major>/passing.txt` with the code (add `--bc-version
   N` for another BC major; the default is the newest). The update refuses while
   any baseline case regresses.
+- **Fast loop** (a full run takes about 20 s with Microsoft's apps and `check.sh` minutes; do not
+  iterate on either). `./target/release/al-test-cli --help` lists every flag.
+  1. Rank what is refused: `al-test-cli --root . --top-refusals 15` (add `--top-refusals-area record`
+     for one folder). Reasons are folded: quoted names and numbers become `<name>` and `N`.
+  2. Pick a test and see why it ends as it does: `al-test-cli --root . --explain TestName` prints the
+     outcome, the refusal reason with routine and `file:line`, or for a failure the error, code and
+     stack. Add `--codeunit ID` when the name is not unique.
+  3. Iterate on one codeunit, area or file: `--codeunit ID`, `--test SUBSTR`, `--area FOLDER`,
+     `--file SUFFIX` (repeatable, union). Only the selected test codeunits are compiled and run,
+     and only the selected baseline cases are ratcheted. Add `--no-deps` for a run of about half a
+     second when the test needs no Microsoft app.
+  4. Before committing, one full run: `--baseline-diff` lists, by area, what newly passes and which
+     baseline cases stopped passing. `--update-baseline` refuses while a selection is active.
+  5. `--timings` says where a run spent its time (load, compile, install baseline, tests).
 - `./check.sh` before every commit: fmt, clippy -D warnings, all tests, and the
   corpus ratchet. It fails on the first error.
 - Perf budgets (cold compile of the corpus ≤ 1 s, parser ≥ 50 MB/s) are

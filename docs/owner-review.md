@@ -277,6 +277,9 @@ reviewed it.
   oracles are on the pin, so the older-commit check is not involved. A bump that used it would have been refused.
 - 2026-10-14, ADR-007: the corpus bump to 6219bf4 (probe batch 3: 35 new cases and 3 new OnPrem cases) only adds 8 files under
   `tests/`. All three oracles are on the pin. No baseline case stopped passing, so nothing was removed.
+- 2026-10-14, ADR-007: the corpus bump to 337859e (probe batch 4: 74 new cases, 3 new OnPrem cases) changes only the corpus's own
+  compile log `tests/al-language/.dev/compile-errors.log` among existing files. The per-version pin check ignores `.dev/` paths
+  (it is not a test), so the isolation oracle recorded for cf6e546 stays valid. No baseline case was removed.
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
   passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.

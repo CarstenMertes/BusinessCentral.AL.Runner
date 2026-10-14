@@ -27,6 +27,8 @@ pub fn check(repo: &Path, recorded: &str, pinned: &str) -> Result<(), String> {
             pinned,
             "--",
             "tests/",
+            // The corpus's compile log: not a test, rewritten by every compile.
+            ":(exclude,glob)tests/**/.dev/**",
         ])
         .output()
         .map_err(|e| format!("git: {e}"))?;
@@ -128,6 +130,19 @@ mod tests {
         let (d, old) = repo();
         put(d.path(), "workflow.yml", "two");
         let new = commit(d.path());
+        assert_eq!(check(d.path(), &old, &new), Ok(()));
+    }
+
+    /// `tests/al-language/.dev/compile-errors.log` is the corpus's own compile log. It is not a test
+    /// and it changes with every compile, so it never makes an older oracle stale.
+    #[test]
+    fn changes_to_the_dev_log_directory_are_ignored() {
+        let (d, old) = repo();
+        put(d.path(), "tests/app/.dev/compile-errors.log", "one");
+        let mid = commit(d.path());
+        put(d.path(), "tests/app/.dev/compile-errors.log", "two");
+        let new = commit(d.path());
+        assert_eq!(check(d.path(), &mid, &new), Ok(()));
         assert_eq!(check(d.path(), &old, &new), Ok(()));
     }
 

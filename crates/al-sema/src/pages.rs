@@ -685,8 +685,12 @@ impl Tree {
         for a in areas {
             let mut roots = Vec::new();
             for c in a.children {
-                roots.push(controls.len());
+                let first = controls.len();
                 emit(&mut slots, c, None, &mut controls);
+                // An anchor emits nothing, so it is no root.
+                if controls.len() > first {
+                    roots.push(first);
+                }
             }
             if a.in_actions {
                 action_areas.push(al_ir::ActionArea { name: a.name, roots });
@@ -1020,6 +1024,19 @@ mod tests {
         let l = merged(base, &[ext]);
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
         assert_eq!(names(&l), ["A", "AfterNotes", "Flow"]);
+    }
+
+    // A customaction (or a label, a systempart, a usercontrol) stays in the tree as an anchor and is no control
+    // of the page, so it is no root of an action area either. A root past the controls panicked the Page Action
+    // table over handlers/TestPageLabelControlContracts.al: page "Probe Label Kinds" (`action(Plain)` then
+    // `customaction(Cust)` in area(Processing)).
+    #[test]
+    fn an_action_area_has_no_root_for_a_customaction() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } actions { area(Processing) { action(Plain) { } customaction(Cust) { } } } }";
+        let l = merged(base, &[]);
+        assert_eq!(names(&l), ["A", "Plain"]);
+        let roots: Vec<usize> = l.action_areas.iter().flat_map(|a| a.roots.clone()).collect();
+        assert_eq!(roots, [1]);
     }
 
     // A page that declares no `actions` still has the area an extension adds to. Microsoft's own extensions of

@@ -915,7 +915,11 @@ fn is_azure_follows_the_bc_major() {
         (Some("30.0"), "No"),
         (None, "No"),
     ] {
-        assert_eq!(text(run_as(bc, u, "exit(Format(U.IsAzure()));", ": Text")), want, "{bc:?}");
+        assert_eq!(
+            text(run_as(bc, u, "exit(Format(U.IsAzure()));", ": Text")),
+            want,
+            "{bc:?}"
+        );
     }
 }
 

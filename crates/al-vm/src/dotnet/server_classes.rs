@@ -298,7 +298,11 @@ pub fn types() -> Vec<RegistryType> {
         RegistryType {
             clr_name: USER_ACCOUNT_HELPER.into(),
             members: vec![
-                member("IsAzure", probe("164-174 (IsSaaSInfrastructure true on 27 and 28, false from 29)"), is_azure),
+                member(
+                    "IsAzure",
+                    probe("164-174 (IsSaaSInfrastructure true on 27 and 28, false from 29)"),
+                    is_azure,
+                ),
                 member(
                     "GetEffectivePermissionForObject",
                     Pin::Corpus("session/TestSessionCompanyInfoExperienceClose.al:62-90".into()),

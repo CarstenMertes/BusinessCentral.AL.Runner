@@ -229,11 +229,15 @@ const REGISTRY: &[(&str, NativeFn)] = &[
             .into();
         Ok(Value::Option(0, members))
     }),
-    ("Session.ApplicationIdentifier#1", |_, _, _| Ok(Value::Text("NAV".into()))),
+    ("Session.ApplicationIdentifier#1", |_, _, _| {
+        Ok(Value::Text("NAV".into()))
+    }),
     ("ProductName.Full#1", |_, _, _| {
         Ok(Value::Text("Dynamics 365 Business Central".into()))
     }),
-    ("ProductName.Short#1", |_, _, _| Ok(Value::Text("Business Central".into()))),
+    ("ProductName.Short#1", |_, _, _| {
+        Ok(Value::Text("Business Central".into()))
+    }),
     ("ProductName.Marketing#1", |_, _, _| {
         Ok(Value::Text("Microsoft Dynamics 365 Business Central".into()))
     }),

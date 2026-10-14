@@ -16,7 +16,7 @@ fn listed(text: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
         if let Some(h) = line.strip_prefix("### ") {
-            krate = h.trim().starts_with("al-").then(|| h.trim());
+            krate = (h.trim().starts_with("al-") || h.trim().starts_with("alrunner-")).then(|| h.trim());
         } else if let (Some(k), Some(rest)) = (krate, line.strip_prefix("- `")) {
             if let Some(file) = rest.split('`').next().filter(|f| f.ends_with(".rs")) {
                 out.push((k.to_string(), file.to_string()));

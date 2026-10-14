@@ -20,6 +20,21 @@ pub struct Dependencies {
     /// The Microsoft build the feed was consulted for (Layer A), when some dependency was not
     /// in `.alpackages` or `--deps`. `None`: every dependency was found on disk.
     pub build: Option<ArtifactUse>,
+    /// The ids the `Application` aggregate depends on (see [`Dependencies::implied_dependencies`]).
+    pub application_aggregate: Vec<String>,
+}
+
+impl Dependencies {
+    /// What an app with a `platform` and/or `application` floor depends on without declaring it
+    /// (only with `implied` on in [`load_project`]): `System`, `Application` and the apps
+    /// `Application` propagates. The caller adds these to its own apps' dependencies.
+    pub fn implied_dependencies(&self, platform: bool, application: bool) -> Vec<String> {
+        al_deps::load::Loaded {
+            application_aggregate: self.application_aggregate.clone(),
+            ..Default::default()
+        }
+        .implied_dependencies(platform, application)
+    }
 }
 
 /// How a run may use Microsoft's artifact feed (ADR-013 Layer A).
@@ -67,11 +82,30 @@ pub fn load_with(
     }
     let mut search_dirs = vec![app_dir.join(".alpackages")];
     search_dirs.extend(extra_dirs.iter().cloned());
+    load_project(&project, &workspace_apps, &search_dirs, provision, None, false)
+}
+
+/// Resolves and reads the dependencies of `project`. `workspace_apps` are built from source by the
+/// caller and satisfy their own dependents. `search` is the package search list in order: each
+/// entry a directory of packages, a package file or an app folder (`al_deps::load::scan_path`).
+/// `source_build` is an exact build that fills Microsoft's build variables in source archives and
+/// folders that no record or path names a build for. `implied` makes an app with an `application`
+/// or `platform` floor depend on `Application` and `System` without declaring them.
+pub fn load_project(
+    project: &AppJson,
+    workspace_apps: &[WorkspaceApp],
+    search: &[PathBuf],
+    provision: Option<&Provision>,
+    source_build: Option<&str>,
+    implied: bool,
+) -> Result<Dependencies, String> {
     let req = Request {
-        project: &project,
-        workspace_apps: &workspace_apps,
-        search_dirs: &search_dirs,
+        project,
+        workspace_apps,
+        search_dirs: search,
         missing: MissingPolicy::Skip,
+        source_build,
+        application_implies_dependencies: implied,
     };
     let mut log = Vec::new();
     let (loaded, build) = match provision {
@@ -96,6 +130,7 @@ pub fn load_with(
     let mut apps = Vec::new();
     let mut summary = Vec::new();
     let mut manifests = Vec::new();
+    let application_aggregate = loaded.application_aggregate.clone();
     for d in loaded.apps {
         let files = d.app.files.len();
         log.push(format!(
@@ -118,5 +153,6 @@ pub fn load_with(
         summary,
         log,
         build,
+        application_aggregate,
     })
 }

@@ -1,7 +1,7 @@
 //! `--explain TEST`: why one test ended as it did, with the routine and source position where a
 //! refusal or a failure was raised (`Program::positions`, docs/architecture.md "Source positions").
 
-use crate::report::Outcome;
+use crate::Outcome;
 use al_ir as ir;
 use al_vm::FaultFrame;
 

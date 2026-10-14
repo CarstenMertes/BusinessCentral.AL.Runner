@@ -173,12 +173,14 @@ fn subscription_row(
     mut r: al_data::Row,
 ) -> Result<al_data::Row, String> {
     let what = || format!("subscriber '{}' of codeunit '{}'", routine, o.name);
-    if o.properties
+    let manual = o
+        .properties
         .iter()
-        .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"))
-    {
-        return Err(format!("{}: a manual instance is not pinned (Active)", what()));
-    }
+        .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"));
+    // "Subscriber Instance" reads Static-Automatic or Manual, "Error Information" is blank (record/
+    // TestEventSubscriptionColumnsReportLayoutListContracts.al:98-107). "Number of Calls" and
+    // "Active Manual Instances" are the session's, added when a row is read.
+    r[pos(t, 12)] = Value::Text(if manual { "Manual" } else { "Static-Automatic" }.into());
     let args = crate::events::split_args(&a.text);
     if args.len() < 3 {
         return Err(format!("{}: the attribute has fewer than three arguments", what()));
@@ -403,6 +405,19 @@ pub(super) fn table_relations_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             continue;
         };
         for f in &table.fields {
+            // SystemCreatedBy and SystemModifiedBy relate to the User table (field 1), tested and not
+            // validated (record/TestTableRelationsSequenceMetadataContracts.al:66-67, 83-84).
+            if matches!(f.id, 2_000_000_002 | 2_000_000_004) {
+                let mut r = key.clone();
+                r[pos(t, 2)] = Value::Integer(f.id as i32);
+                r[pos(t, 3)] = Value::Integer(1);
+                r[pos(t, 4)] = Value::Integer(1);
+                r[pos(t, 5)] = Value::Integer(2_000_000_120);
+                r[pos(t, 6)] = Value::Integer(1);
+                r[pos(t, 10)] = Value::Boolean(true);
+                out.push(Entry::ok(r));
+                continue;
+            }
             if !f.relation {
                 continue;
             }
@@ -423,6 +438,8 @@ struct Arm {
     related_table: u32,
     related_field: u32,
     conditions: Vec<u32>,
+    /// The ordinal each condition's `const(...)` names, when the relation is understood.
+    values: Vec<Option<i32>>,
 }
 
 /// The first primary key field of a compiled table.
@@ -468,10 +485,20 @@ fn arms_of(c: &Catalog, table: &al_ir::Table, f: &al_ir::Field, what: &str) -> R
                         .ok_or_else(|| format!("{what}: condition field not found"))
                 })
                 .collect::<Result<_, _>>()?;
+            let values = arm
+                .conditions
+                .iter()
+                .map(|cond| match &cond.value {
+                    al_ir::Const::Enum(_, v) => Some(*v),
+                    al_ir::Const::Option(i, _) => Some(*i),
+                    _ => None,
+                })
+                .collect();
             out.push(Arm {
                 related_table,
                 related_field,
                 conditions,
+                values,
             });
         }
         return Ok(out);
@@ -508,6 +535,7 @@ fn arms_of(c: &Catalog, table: &al_ir::Table, f: &al_ir::Field, what: &str) -> R
             related_table,
             related_field,
             conditions,
+            values: Vec::new(),
         });
     }
     Ok(out)
@@ -523,13 +551,22 @@ fn field_relations(
 ) -> Result<Vec<al_data::Row>, String> {
     let what = format!("field '{}' of table '{}'", f.name, o.name);
     let mut rows = Vec::new();
+    // ValidateTableRelation = false is declared; a relation validates otherwise. Test Table
+    // Relation is No for every declared relation (record/TestTableRelationsSequenceMetadataContracts.al:63-71).
+    let validate = !f
+        .properties
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("ValidateTableRelation") && v.trim().eq_ignore_ascii_case("false"));
     for (n, arm) in arms_of(c, table, f, &what)?.iter().enumerate() {
         let mut row = fkey.clone();
         row[pos(t, 3)] = Value::Integer(n as i32 + 1);
         row[pos(t, 5)] = Value::Integer(arm.related_table as i32);
         row[pos(t, 6)] = Value::Integer(arm.related_field as i32);
+        row[pos(t, 11)] = Value::Boolean(validate);
+        // An arm with no condition is one row with Condition No. 1, Condition Field No. 0, type CONST and
+        // an empty value (ibid.).
         if arm.conditions.is_empty() {
-            row[pos(t, 4)] = Value::Integer(0);
+            row[pos(t, 4)] = Value::Integer(1);
             row[pos(t, 8)] = Value::Integer(0);
             rows.push(row.clone());
         }
@@ -537,6 +574,9 @@ fn field_relations(
             let mut r = row.clone();
             r[pos(t, 4)] = Value::Integer(k as i32 + 1);
             r[pos(t, 8)] = Value::Integer(*own as i32);
+            if let Some(Some(v)) = arm.values.get(k) {
+                r[pos(t, 9)] = Value::Text(v.to_string());
+            }
             rows.push(r);
         }
     }

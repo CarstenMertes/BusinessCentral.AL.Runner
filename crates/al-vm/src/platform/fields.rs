@@ -61,6 +61,27 @@ fn type_ordinal(ty: &RtType) -> Option<i32> {
     })
 }
 
+/// The Field "Len" column: the declared length of a Text or Code, else the type's storage size
+/// (record/TestFieldLenAndFeatureKeyContracts.al:104-129, corpus branch al-runtime-rs d0f5d52).
+fn field_len(ty: &RtType) -> Option<i32> {
+    Some(match ty {
+        RtType::Text(Some(n)) | RtType::Code(Some(n)) => *n as i32,
+        RtType::Integer | RtType::Boolean | RtType::Date | RtType::Time | RtType::Option(_) | RtType::Enum(_) => 4,
+        RtType::BigInteger | RtType::DateTime | RtType::Duration => 8,
+        RtType::Decimal => 12,
+        RtType::Guid => 16,
+        RtType::DateFormula => 32,
+        RtType::Library(n) => match n.to_ascii_lowercase().as_str() {
+            "blob" => 8,
+            "media" | "mediaset" => 16,
+            "recordid" => 448,
+            "tablefilter" => 504,
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
 /// A table of the program that nothing compiled: it has a name and an id and no fields.
 fn shell_entries(o: &Object, t: &TableDef, key_of: &dyn Fn(u32) -> Vec<(u32, Value)>) -> Entry {
     let mut k = blank(t);
@@ -97,6 +118,10 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             continue;
         };
         for f in &schema.fields {
+            // The rowversion is not a row of the Field table (record/TestFieldLenAndFeatureKeyContracts.al:107-112).
+            if f.id == 2_000_000_005 {
+                continue;
+            }
             let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(tid as i32);
             r[pos(t, 2)] = Value::Integer(f.id as i32);
@@ -130,12 +155,19 @@ fn field_row(
             .find(|(k, _)| k.eq_ignore_ascii_case(name))
             .map(|(_, v)| v.trim())
     };
-    r[pos(t, 4)] = Value::Text(f.name.clone());
+    // SystemId is named `$systemId` (record/TestFieldLenAndFeatureKeyContracts.al:107-112).
+    r[pos(t, 4)] = Value::Text(if f.id == 2_000_000_000 {
+        "$systemId".into()
+    } else {
+        f.name.clone()
+    });
     r[pos(t, 5)] = blank.option(
         t,
         5,
         type_ordinal(&f.ty).ok_or_else(|| format!("{}: the type is not understood", what()))?,
     );
+    r[pos(t, 6)] =
+        Value::Integer(field_len(&f.ty).ok_or_else(|| format!("{}: the length of the type is not pinned", what()))?);
     // Class: Normal, FlowField, FlowFilter (TestFieldDataClassificationInheritance.al, the FlowField case).
     let is_flow_field = !f.stored && !f.flow_filter;
     r[pos(t, 7)] = blank.option(t, 7, if f.flow_filter { 2 } else { i32::from(is_flow_field) });
@@ -194,13 +226,17 @@ fn field_row(
             ([], []) => None,
             ([arm], _) => Some((arm.table, arm.field, arm.table_name.clone())),
             ([], [m]) => Some((Some(m.table), m.field, c.objects[m.table].name.clone())),
-            _ => {
-                return Err(format!(
-                    "{}: a conditional TableRelation (which table it reports is not pinned)",
-                    what()
-                ));
-            }
+            // A conditional relation (if ... else if ...) reads 0 and 0 (record/
+            // TestPlatformMetadataDeclarationContracts.al:262-264).
+            _ => return Ok(()),
         };
+    // Created By and Modified By relate to the User table's field 0 (record/
+    // TestPlatformMetadataDeclarationContracts.al:240-241).
+    if matches!(f.id, 2_000_000_002 | 2_000_000_004) {
+        r[pos(t, 21)] = Value::Integer(2_000_000_120);
+        r[pos(t, 22)] = Value::Integer(0);
+        return Ok(());
+    }
     if let Some((table_index, field, table_name)) = single {
         let Some(rt) = table_index else {
             return Err(format!("{}: the related table `{table_name}` is not compiled", what()));
@@ -259,9 +295,10 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             );
             r[pos(t, 7)] = Value::Boolean(kprop("Enabled").is_none_or(truthy));
             r[pos(t, 10)] = Value::Boolean(n == 0 || kprop("Clustered").is_some_and(truthy));
-            // MaintainSIFTIndex and ObsoleteState are the key's declared properties (AL default: true, No);
-            // not pinned by a corpus test (docs/probes-needed.md, probe batch 5).
-            r[pos(t, 9)] = Value::Boolean(kprop("MaintainSIFTIndex").is_none_or(truthy));
+            // True only for a key that has SumIndexFields and does not say `MaintainSIFTIndex = false`
+            // (record/TestPlatformMetadataDeclarationContracts.al:269-280).
+            r[pos(t, 9)] =
+                Value::Boolean(kprop("SumIndexFields").is_some() && kprop("MaintainSIFTIndex").is_none_or(truthy));
             let state = match kprop("ObsoleteState") {
                 None => 0,
                 Some(v) => match ordinal_of(OBSOLETE_STATES, v) {

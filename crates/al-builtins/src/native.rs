@@ -381,6 +381,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunRequestPage#2", vm_only),
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
+    ("Report.Language#1", vm_only),
+    ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
     // name (SaveAsXml, SaveAsPdf, ...) writes a file no corpus test pins and stays refused.
     ("Report.SaveAs#1", vm_only),

@@ -456,7 +456,11 @@ fn visit(
             let pn = p.name().to_ascii_lowercase();
             let temporary_ok =
                 pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
-            if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
+            if pn == "dataitemlinkreference" {
+                reasons.push(format!(
+                    "dataitem {name}: DataItemLinkReference (a link to a data item that is not the enclosing one) is not pinned: no corpus test links to another data item (docs/probes-needed.md)"
+                ));
+            } else if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
                 && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
                 && !temporary_ok
             {
@@ -798,7 +802,11 @@ fn item_ir(
             .map(|p| p.value_text())
     };
     let mut link = Vec::new();
-    if let Some(text) = prop("DataItemLink") {
+    // With a DataItemLinkReference the link fields name another data item than the enclosing one; the
+    // layout already refused it with its own reason, and reading them against the parent would only add
+    // a misleading "entry is not understood".
+    let referenced = prop("DataItemLinkReference").is_some();
+    if let Some(text) = prop("DataItemLink").filter(|_| !referenced) {
         match parent_table.zip(table) {
             None => reasons.push(format!(
                 "dataitem {}: DataItemLink needs an enclosing data item",
@@ -1116,6 +1124,21 @@ mod tests {
         let output = l.output.join("; ");
         assert!(output.contains("defaultlayout"), "{output}");
         assert!(output.contains("section rendering"), "{output}");
+    }
+
+    #[test]
+    fn a_data_item_link_reference_is_refused_with_its_own_reason_not_as_a_link_entry_that_is_not_understood() {
+        // Base Application links a data item to an ancestor that is not its parent (`DataItemLinkReference =
+        // AccScheduleName` under an Integer data item). The corpus pins only the link to the enclosing data
+        // item (handlers/TestReportNestedLinkImplicitParent.al), so the reference is refused and says so.
+        let l = layout_of(
+            "report 1 R { ProcessingOnly = true; dataset { dataitem(A; Cust) { dataitem(Loop; \"Integer\") { dataitem(B; Ledger) { DataItemLink = No = field(No); DataItemLinkReference = A; } } } } }",
+        );
+        let all = l.reasons.join("; ");
+        assert!(
+            all.contains("DataItemLinkReference") && all.contains("not pinned"),
+            "{all}"
+        );
     }
 
     #[test]

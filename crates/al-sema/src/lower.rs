@@ -1732,6 +1732,7 @@ fn is_stmt(k: SyntaxKind) -> bool {
 /// - `Record.Ascending`, `.Mark`, `.MarkedOnly`: record/TestRecordFind.al:237-284 (`Mark`,
 ///   `MarkedOnly`), handlers/TestPartOwnSortVsSubPageView.al:187 and :300 (`Ascending(false)`),
 ///   handlers/TestPageActionRunPageView.al:134 (`Ascending()`).
+/// - `Report.Language`, `.FormatRegion`: handlers/TestReportCurrReportLanguage.al:58-103.
 /// - `Report.UseRequestPage`: handlers/TestReportGetFilterInTriggers.al:66 and
 ///   codeunit/TestWriteTxTestBoundary.al:272 (`UseRequestPage(false)`).
 /// - `System.WorkDate`: session/TestSessionFunctions.al:63-65 (`WorkDate(20240101D)`).
@@ -1761,7 +1762,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             )
             | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
-            | ("Report", "UseRequestPage")
+            | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
             | ("System", "WorkDate")
             | ("HttpRequestMessage", "Method")
             | ("File", "TextMode" | "WriteMode")
@@ -3561,9 +3562,36 @@ impl Lowerer<'_> {
                 ),
                 _ => Err(self
                     .base_member(n)
+                    .or_else(|| self.control_add_in(n))
                     .unwrap_or_else(|| format!("`{}` is not assignable", n.text()))),
             },
         }
+    }
+
+    /// `CurrPage.Chart` where `Chart` is a `usercontrol` of this page: a control add-in, which the runtime
+    /// does not model (no corpus test uses one; Base Application's chart pages pass theirs to a `var`
+    /// parameter).
+    fn control_add_in(&self, n: &SyntaxNode) -> Option<String> {
+        let text = n.text().to_string();
+        let name = text
+            .trim()
+            .strip_prefix("CurrPage.")?
+            .trim()
+            .trim_matches('"')
+            .to_string();
+        if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ' ') {
+            return None;
+        }
+        let object = self
+            .ws
+            .object_ast(self.oi)
+            .syntax()
+            .text()
+            .to_string()
+            .to_ascii_lowercase();
+        let lower = name.to_ascii_lowercase();
+        (object.contains(&format!("usercontrol({lower};")) || object.contains(&format!("usercontrol(\"{lower}\";")))
+            .then(|| format!("`CurrPage.{name}` is a control add-in (usercontrol): control add-ins are not modelled"))
     }
 
     /// Why a name cannot be lowered in a page or report extension: it is a variable or procedure of
@@ -4415,6 +4443,30 @@ page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"
         );
         let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
         assert!(reasons.is_empty(), "{reasons:?}");
+    }
+
+    /// Base Application's chart pages pass their control add-in to a `var` parameter
+    /// (`BusinessChartBuffer.UpdateChart(CurrPage.BusinessChart)`). Control add-ins are not modelled, so the
+    /// routine is refused, and the reason names the control add-in instead of "is not assignable".
+    #[test]
+    fn a_control_add_in_passed_by_reference_is_refused_as_a_control_add_in() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "controladdin MyChart { }
+codeunit 50100 Buf { procedure UpdateChart(var Chart: ControlAddIn \"MyChart\") begin end; }
+page 50100 P { PageType = Card; layout { area(Content) { usercontrol(BusinessChart; MyChart) { } } }
+  trigger OnOpenPage() var B: Codeunit Buf; begin B.UpdateChart(CurrPage.BusinessChart); end; }",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert!(
+            reasons
+                .iter()
+                .any(|r| r.contains("control add-in") && !r.contains("not assignable")),
+            "{reasons:?}"
+        );
     }
 
     /// Tests-SCM: a page extension's field `field(X; Item."Qty. on Component Lines")` names a

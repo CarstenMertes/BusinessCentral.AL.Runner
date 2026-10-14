@@ -286,6 +286,7 @@ fn run_version(
             cache_dir: args.cache_dir.clone(),
             download: !args.no_download,
             query: target::build_query(Some(&leg.to_string()), &chosen, &app_versions),
+            local_artifacts: None,
         };
         let deps = deps::load_with(
             &root.join(&cfg.corpus_app),
@@ -787,6 +788,7 @@ fn origin_word(o: al_deps::build::Origin) -> &'static str {
     match o {
         al_deps::build::Origin::Cache => "from the artifact cache",
         al_deps::build::Origin::Published => "newest published, downloaded",
+        al_deps::build::Origin::Local => "from the local artifacts, ~/.bcartifacts.cache",
     }
 }
 
@@ -835,6 +837,7 @@ fn fetch_project(args: &Args, root: &Path, project: &Path) -> Result<ExitCode, S
         cache_dir: args.cache_dir.clone(),
         download: !args.no_download,
         query: target::build_query(args.bc_version.as_deref(), &chosen, &app_versions),
+        local_artifacts: None,
     };
     let deps = deps::load_with(project, &[], &args.deps, Some(&provision))?;
     for line in &deps.log {

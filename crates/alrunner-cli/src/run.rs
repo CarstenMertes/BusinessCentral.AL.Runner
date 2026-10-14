@@ -197,6 +197,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         cache_dir: a.cache_dir.clone(),
         download: !a.no_download,
         query: target::build_query(a.bc_version.as_deref(), &chosen, floor_versions),
+        local_artifacts: al_deps::cache::bcartifacts_sandbox_from_env(),
     };
     let dependencies = deps::load_project(
         &project,

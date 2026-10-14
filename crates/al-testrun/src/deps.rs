@@ -44,6 +44,9 @@ pub struct Provision {
     /// False for `--no-download`.
     pub download: bool,
     pub query: BuildQuery,
+    /// Extracted artifacts on disk (`~/.bcartifacts.cache/sandbox`), see
+    /// [`al_deps::artifact::Fetch::local_artifacts`].
+    pub local_artifacts: Option<PathBuf>,
 }
 
 fn app_json(dir: &Path) -> Result<AppJson, String> {
@@ -115,6 +118,7 @@ pub fn load_project(
                 cache_root: al_deps::cache::cache_root_from_env(p.cache_dir.as_deref()),
                 download: p.download,
                 query: p.query.clone(),
+                local_artifacts: p.local_artifacts.clone(),
             };
             let got = load_with_artifacts(&req, &fetch, &HttpCdn::from_env()).map_err(|e| {
                 format!("{e}\n(pass --no-download to run without the dependency apps the artifact feed would supply)")

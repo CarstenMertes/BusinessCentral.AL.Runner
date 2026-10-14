@@ -844,9 +844,7 @@ fn testfield_on_the_blank_member_of_an_option_or_enum_is_refused_not_guessed() {
     // runtime refuses instead of answering with the wrong text.
     for field in ["Kind", "Kind2", "Kind3"] {
         let r = run(
-            &format!(
-                "procedure F() var R: Record \"ALT Blank\"; begin R.Id := 'A'; R.TestField({field}); end;"
-            ),
+            &format!("procedure F() var R: Record \"ALT Blank\"; begin R.Id := 'A'; R.TestField({field}); end;"),
             "F",
         );
         assert!(

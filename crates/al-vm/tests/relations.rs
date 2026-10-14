@@ -256,5 +256,8 @@ fn a_where_const_naming_an_option_member_with_a_hyphen_is_enforced() {
         end;",
     );
     let t = text(r);
-    assert!(t.contains("cannot be found in the related table") && t.ends_with("|P"), "{t}");
+    assert!(
+        t.contains("cannot be found in the related table") && t.ends_with("|P"),
+        "{t}"
+    );
 }

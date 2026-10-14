@@ -578,12 +578,19 @@ fn format_of_a_value_without_a_text_form_names_its_type_not_its_contents() {
     for (vars, body, kind) in [
         ("R: Record \"ALT T\";", "exit(Format(R));", "a Record"),
         ("L: List of [Integer];", "exit(Format(L));", "a List"),
-        ("D: Dictionary of [Integer, Integer];", "exit(Format(D));", "a Dictionary"),
+        (
+            "D: Dictionary of [Integer, Integer];",
+            "exit(Format(D));",
+            "a Dictionary",
+        ),
     ] {
         let r = run(&format!("procedure F(): Text var {vars} begin {body} end;"));
         let Err(Signal::Unsupported(m)) = r else {
             panic!("{kind}: {r:?}");
         };
-        assert!(m.contains(kind) && !m.contains("RefCell") && !m.contains('{'), "{kind}: {m}");
+        assert!(
+            m.contains(kind) && !m.contains("RefCell") && !m.contains('{'),
+            "{kind}: {m}"
+        );
     }
 }

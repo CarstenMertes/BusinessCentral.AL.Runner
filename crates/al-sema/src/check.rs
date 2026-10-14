@@ -37,8 +37,100 @@ impl Hasher for FxHasher {
     }
 }
 
+type PosKey = (usize, usize, usize);
+
 /// A `HashMap` keyed by node position, hashed with [`FxHasher`].
-pub type PosMap<V> = HashMap<(usize, usize, usize), V, BuildHasherDefault<FxHasher>>;
+type RawPosMap<V> = HashMap<PosKey, V, BuildHasherDefault<FxHasher>>;
+
+/// How many maps a [`PosMap`] is split into. The workers of a parallel check each fill their own
+/// `PosMap`; with the same split everywhere, the union is built one shard per thread instead of
+/// by one thread inserting every entry.
+const POS_SHARDS: usize = 16;
+
+/// Node position (file index, start offset, end offset) to a value, split into [`POS_SHARDS`]
+/// hash maps by position.
+pub struct PosMap<V> {
+    shards: Vec<RawPosMap<V>>,
+}
+
+impl<V> Default for PosMap<V> {
+    fn default() -> Self {
+        PosMap {
+            shards: (0..POS_SHARDS).map(|_| RawPosMap::default()).collect(),
+        }
+    }
+}
+
+impl<V> PosMap<V> {
+    fn shard_of(key: &PosKey) -> usize {
+        let h = (key.0 as u64)
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .wrapping_add((key.1 as u64).wrapping_mul(0x517c_c1b7_2722_0a95));
+        (h >> 40) as usize % POS_SHARDS
+    }
+
+    pub fn get(&self, key: &PosKey) -> Option<&V> {
+        self.shards[Self::shard_of(key)].get(key)
+    }
+
+    pub fn insert(&mut self, key: PosKey, value: V) -> Option<V> {
+        self.shards[Self::shard_of(&key)].insert(key, value)
+    }
+
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(RawPosMap::len).sum()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shards.iter().all(RawPosMap::is_empty)
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &PosKey> {
+        self.shards.iter().flat_map(RawPosMap::keys)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&PosKey, &V)> {
+        self.shards.iter().flat_map(RawPosMap::iter)
+    }
+
+    /// The union of `parts`, built with one thread per shard. A key does not repeat across parts
+    /// (a routine is checked once); if one did, one of its values would be kept.
+    fn union(mut parts: Vec<PosMap<V>>) -> PosMap<V>
+    where
+        V: Send,
+    {
+        if parts.len() <= 1 {
+            return parts.pop().unwrap_or_default();
+        }
+        let mut per_shard: Vec<Vec<RawPosMap<V>>> = (0..POS_SHARDS).map(|_| Vec::new()).collect();
+        for part in parts {
+            for (shard, map) in part.shards.into_iter().enumerate() {
+                per_shard[shard].push(map);
+            }
+        }
+        let shards = std::thread::scope(|scope| {
+            let handles: Vec<_> = per_shard
+                .into_iter()
+                .map(|mut maps| {
+                    scope.spawn(move || {
+                        // Start from the biggest map so the fewest entries move.
+                        let biggest = (0..maps.len()).max_by_key(|&i| maps[i].len()).unwrap_or(0);
+                        let mut union = maps.swap_remove(biggest);
+                        for map in maps {
+                            union.extend(map);
+                        }
+                        union
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("merging a shard"))
+                .collect()
+        });
+        PosMap { shards }
+    }
+}
 
 pub struct CheckResult {
     pub diagnostics: Vec<Diagnostic>,
@@ -113,6 +205,10 @@ pub struct Roots {
     /// environment variable `AL_EAGER_DEPENDENCIES` does the same for a whole process. Used to
     /// compare the demand-driven compile with the complete one (outcomes must not differ).
     pub eager: bool,
+    /// How many threads check the routines the demand reaches in dependency apps. `None`: the
+    /// environment variable `AL_CHECK_THREADS`, else the number of cores. The result does not
+    /// depend on it.
+    pub workers: Option<usize>,
 }
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
@@ -130,20 +226,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
-    let mut c = Checker {
-        ws,
-        members,
-        catalog,
-        diags: Vec::new(),
-        types: Default::default(),
-        resolutions: Default::default(),
-        system_enums: system_enums(catalog),
-        sections: Default::default(),
-        queries: (0..ws.objects.len()).map(|_| std::cell::OnceCell::new()).collect(),
-        calls: Vec::new(),
-        demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
-        prefetch: None,
-    };
+    let mut c = Checker::new(ws, members, catalog, system_enums(catalog), demand_mode);
     // The files of the dependency objects the checker reaches are parsed ahead on other
     // threads; parsing is a third of the cost and the checker only waits for what is not ready.
     let demand = if demand_mode {
@@ -174,7 +257,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
             if roots.baseline {
                 c.reach_baseline();
             }
-            let demand = c.run_demand();
+            let demand = c.run_demand(roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32)));
             c.prefetch = None;
             demand
         })
@@ -212,6 +295,16 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         demand,
         skipped,
     }
+}
+
+/// How many threads check the reached routines of dependency apps. `AL_CHECK_THREADS` sets it
+/// (1 checks on one thread); the default is the number of cores.
+fn check_workers() -> usize {
+    std::env::var("AL_CHECK_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
+        .clamp(1, 32)
 }
 
 /// Whether object `oi` is a test codeunit of a workspace app that `keep` (app index, id) leaves out.
@@ -396,6 +489,29 @@ fn is_expr(k: SyntaxKind) -> bool {
 }
 
 impl<'a> Checker<'a> {
+    fn new(
+        ws: &'a Workspace,
+        members: &'a MemberTable<'a>,
+        catalog: &'a Catalog,
+        system_enums: HashSet<String>,
+        demand_mode: bool,
+    ) -> Checker<'a> {
+        Checker {
+            ws,
+            members,
+            catalog,
+            diags: Vec::new(),
+            types: Default::default(),
+            resolutions: Default::default(),
+            system_enums,
+            sections: Default::default(),
+            queries: (0..ws.objects.len()).map(|_| std::cell::OnceCell::new()).collect(),
+            calls: Vec::new(),
+            demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
+            prefetch: None,
+        }
+    }
+
     fn diag(&mut self, sc: &Scope, node: &SyntaxNode, code: &'static str, message: String) {
         self.diags.push(Diagnostic {
             file: self.ws.files[sc.file].path.clone(),

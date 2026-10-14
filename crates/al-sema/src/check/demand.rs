@@ -767,8 +767,9 @@ impl Checker<'_> {
         }
     }
 
-    /// Runs the demand loop to its end and reports what it reached.
-    pub(super) fn run_demand(&mut self) -> Option<Demand> {
+    /// Runs the demand loop to its end and reports what it reached. With `workers > 1` the
+    /// reached routines are checked on that many threads (see [`Pool`]); the result is the same.
+    pub(super) fn run_demand(&mut self, workers: usize) -> Option<Demand> {
         self.demand.borrow().as_ref()?;
         // The stored platform tables are part of every tenant (the Company, the User, the links of
         // a record): compile their shape so the platform can seed and write them.
@@ -780,6 +781,54 @@ impl Checker<'_> {
                 self.raise(i, READ);
             }
         }
+        if workers <= 1 {
+            self.demand_loop(None);
+        } else {
+            let (ws, members, catalog) = (self.ws, self.members, self.catalog);
+            let enums = self.system_enums.clone();
+            let outs = std::thread::scope(|scope| {
+                let mut pool = Pool::default();
+                let mut handles = Vec::new();
+                for _ in 0..workers {
+                    let (batch_tx, batch_rx) = std::sync::mpsc::channel::<Vec<(usize, usize)>>();
+                    let (delta_tx, delta_rx) = std::sync::mpsc::channel::<Delta>();
+                    let enums = enums.clone();
+                    let handle = std::thread::Builder::new()
+                        .stack_size(WORKER_STACK)
+                        .spawn_scoped(scope, move || worker(ws, members, catalog, enums, batch_rx, delta_tx))
+                        .expect("spawn a check worker");
+                    pool.senders.push(batch_tx);
+                    pool.receivers.push(delta_rx);
+                    handles.push(handle);
+                }
+                self.demand_loop(Some(&pool));
+                // Closing the channels ends the workers.
+                drop(pool);
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("a check worker panicked"))
+                    .collect::<Vec<WorkerOut>>()
+            });
+            let mut types = vec![std::mem::take(&mut self.types)];
+            let mut resolutions = vec![std::mem::take(&mut self.resolutions)];
+            for out in outs {
+                self.diags.extend(out.diags);
+                types.push(out.types);
+                resolutions.push(out.resolutions);
+            }
+            self.types = PosMap::union(types);
+            self.resolutions = PosMap::union(resolutions);
+        }
+        let st = self.demand.borrow_mut().take()?;
+        Some(Demand {
+            level: st.level,
+            reached: st.reached,
+        })
+    }
+
+    /// The fixpoint: activate what was raised, then check what was reached, until neither
+    /// produces anything new. Reached routines are checked a round at a time.
+    fn demand_loop(&mut self, pool: Option<&Pool>) {
         loop {
             let fresh = self.demand.borrow_mut().as_mut().and_then(|s| s.fresh.pop());
             if let Some((i, level)) = fresh {
@@ -810,15 +859,132 @@ impl Checker<'_> {
             if batch.is_empty() {
                 break;
             }
+            self.check_round(batch, pool);
+        }
+    }
+
+    /// Checks the routines of one round. Routines of one object go to the same worker, so each
+    /// object's context is built once.
+    fn check_round(&mut self, mut batch: Vec<(usize, usize)>, pool: Option<&Pool>) {
+        let Some(pool) = pool.filter(|p| batch.len() >= PARALLEL_MIN && !p.senders.is_empty()) else {
             for (o, off) in batch {
                 self.check_reached(o, off);
             }
+            return;
+        };
+        batch.sort_unstable();
+        let mut parts: Vec<Vec<(usize, usize)>> = vec![Vec::new(); pool.senders.len()];
+        for item in batch {
+            parts[item.0 % pool.senders.len()].push(item);
         }
-        let st = self.demand.borrow_mut().take()?;
-        Some(Demand {
-            level: st.level,
-            reached: st.reached,
-        })
+        let mut sent = Vec::new();
+        for (w, part) in parts.into_iter().enumerate() {
+            if !part.is_empty() {
+                pool.senders[w].send(part).expect("a check worker stopped");
+                sent.push(w);
+            }
+        }
+        // Applied in worker order, whatever order they finish in.
+        for w in sent {
+            let delta = pool.receivers[w].recv().expect("a check worker stopped");
+            self.apply(delta);
+        }
+    }
+
+    /// What a worker's checks reached and raised, applied to this checker's state.
+    fn apply(&self, d: Delta) {
+        for (i, level) in d.raised {
+            self.raise(i, level);
+        }
+        for (i, ops) in d.ops {
+            self.touch_ops(i, ops);
+        }
+        self.touch_global_ops(d.global);
+        if let Some(st) = self.demand.borrow_mut().as_mut() {
+            for r in d.reached {
+                if st.reached.insert(r) {
+                    st.queue.push(r);
+                }
+            }
+        }
+    }
+}
+
+/// A round with fewer routines than this is checked on the calling thread.
+const PARALLEL_MIN: usize = 48;
+
+/// Stack of a check worker: the checker recurses on the nesting of the code it reads.
+const WORKER_STACK: usize = 64 << 20;
+
+/// The channels to the check workers of a parallel demand run. Routines reached in one round
+/// are sent out, each worker answers with the [`Delta`] its checks produced, and the calling
+/// thread applies the deltas and activates what they raised (the fixpoint stays on one thread;
+/// only the checking of routines, the bulk of the work, is spread out).
+#[derive(Default)]
+struct Pool {
+    senders: Vec<std::sync::mpsc::Sender<Vec<(usize, usize)>>>,
+    receivers: Vec<std::sync::mpsc::Receiver<Delta>>,
+}
+
+/// What a worker's checks asked for since its last answer.
+struct Delta {
+    /// Objects raised to a level, in the order they were.
+    raised: Vec<(usize, u8)>,
+    /// Write operations reached on a table.
+    ops: Vec<(usize, u8)>,
+    /// Write operations whose `Global Triggers` subscribers are reached.
+    global: u8,
+    /// Routines reached.
+    reached: Vec<(usize, usize)>,
+}
+
+impl State {
+    fn take_delta(&mut self) -> Delta {
+        Delta {
+            raised: std::mem::take(&mut self.fresh),
+            ops: std::mem::take(&mut self.fresh_ops),
+            global: std::mem::take(&mut self.fresh_global),
+            reached: std::mem::take(&mut self.queue),
+        }
+    }
+}
+
+/// What a worker leaves behind when its channel closes.
+struct WorkerOut {
+    diags: Vec<crate::workspace::Diagnostic>,
+    types: PosMap<crate::types::Ty>,
+    resolutions: PosMap<Res>,
+}
+
+/// A check worker: its own checker, with its own caches and a state that only records what the
+/// checks reach, so the calling thread can fold it into the real one.
+fn worker(
+    ws: &Workspace,
+    members: &crate::members::MemberTable<'_>,
+    catalog: &al_builtins::catalog::Catalog,
+    enums: HashSet<String>,
+    batches: std::sync::mpsc::Receiver<Vec<(usize, usize)>>,
+    deltas: std::sync::mpsc::Sender<Delta>,
+) -> WorkerOut {
+    let mut c = Checker::new(ws, members, catalog, enums, true);
+    while let Ok(batch) = batches.recv() {
+        for (o, off) in batch {
+            c.check_reached(o, off);
+        }
+        let delta = c
+            .demand
+            .borrow_mut()
+            .as_mut()
+            .map(State::take_delta)
+            .expect("demand state");
+        if deltas.send(delta).is_err() {
+            break;
+        }
+    }
+    WorkerOut {
+        diags: c.diags,
+        types: c.types,
+        resolutions: c.resolutions,
     }
 }
 
@@ -916,6 +1082,68 @@ mod tests {
 
     fn compiled(l: &Lowered, obj: &str, name: &str) -> bool {
         reasons(l, obj, name).iter().all(|r| !r.contains("not compiled"))
+    }
+
+    /// The program, the refusals, the call graph and the diagnostics of a compile of `main` over
+    /// `dep` with `workers` check threads.
+    fn compile_with_workers(main: &str, dep: &[(String, String)], workers: usize) -> String {
+        let app = |id: &str, deps: &[&str], files: Vec<(String, String)>| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files,
+        };
+        let roots = crate::check::Roots {
+            workers: Some(workers),
+            ..Default::default()
+        };
+        let (ws, l) = crate::lower::compile_apps_with(
+            vec![
+                app("main", &["dep"], vec![("main.al".into(), main.into())]),
+                app("dep", &[], dep.to_vec()),
+            ],
+            vec![AppKind::Workspace, AppKind::Dependency],
+            &Default::default(),
+            None,
+            roots,
+        );
+        format!(
+            "{}\n{:?}\n{:?}\n{:?}",
+            serde_json::to_string(&l.program).unwrap(),
+            l.unsupported,
+            l.calls,
+            ws.diagnostics
+        )
+    }
+
+    #[test]
+    fn checking_on_several_threads_compiles_the_same_program() {
+        // 80 libraries reached in one round (more than a round needs to be spread over threads),
+        // each calling a helper in the next round, one of which cannot run.
+        let n = 80;
+        let main = format!(
+            "codeunit 1 Main {{ procedure Go() var {} begin {} end; }}",
+            (0..n).map(|i| format!("L{i}: Codeunit Lib{i};")).collect::<String>(),
+            (0..n).map(|i| format!("L{i}.Entry();")).collect::<String>()
+        );
+        let dep: Vec<(String, String)> = (0..n)
+            .map(|i| {
+                let broken = if i % 7 == 0 { "T := NoSuchBuiltin(1);" } else { "" };
+                (
+                    format!("lib{i}.al"),
+                    format!(
+                        "codeunit {} Lib{i} {{ procedure Entry() begin Helper(); end; \
+                         local procedure Helper() var T: Text; begin {broken} end; \
+                         procedure Unused() begin end; }}",
+                        100 + i
+                    ),
+                )
+            })
+            .collect();
+        let one = compile_with_workers(&main, &dep, 1);
+        assert!(one.contains("Helper"), "the fixture compiles something");
+        assert_eq!(one, compile_with_workers(&main, &dep, 4));
+        assert_eq!(one, compile_with_workers(&main, &dep, 7));
     }
 
     #[test]

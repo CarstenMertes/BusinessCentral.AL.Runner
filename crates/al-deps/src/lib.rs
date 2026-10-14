@@ -8,6 +8,7 @@
 pub mod artifact;
 pub mod build;
 pub mod cache;
+pub mod demo;
 pub mod load;
 pub mod package;
 pub mod remote;

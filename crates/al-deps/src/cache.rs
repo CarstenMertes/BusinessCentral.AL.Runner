@@ -45,6 +45,60 @@ pub fn cache_root_from_env(flag: Option<&Path>) -> PathBuf {
     cache_root(flag, &|k| std::env::var(k).ok())
 }
 
+/// BcContainerHelper's artifact folder, `~/.bcartifacts.cache/sandbox`, when it exists. The
+/// artifacts there are extracted: `<build>/platform/Applications/**` holds the same files as the
+/// platform archive the feed serves.
+pub fn bcartifacts_sandbox(env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    let home = env("HOME")
+        .or_else(|| env("USERPROFILE"))
+        .filter(|v| !v.trim().is_empty())?;
+    let dir = PathBuf::from(home).join(".bcartifacts.cache").join("sandbox");
+    dir.is_dir().then_some(dir)
+}
+
+/// [`bcartifacts_sandbox`] over the process environment.
+pub fn bcartifacts_sandbox_from_env() -> Option<PathBuf> {
+    bcartifacts_sandbox(&|k| std::env::var(k).ok())
+}
+
+/// The builds of a folder of extracted artifacts (`<root>/<build>/platform`).
+pub fn local_builds(root: &Path) -> Vec<BuildId> {
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out: Vec<BuildId> = rd
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().join("platform").is_dir())
+        .filter_map(|e| BuildId::parse(&e.file_name().to_string_lossy()).ok())
+        .collect();
+    out.sort();
+    out
+}
+
+/// The files of an extracted platform artifact that can hold a Microsoft app: everything under
+/// `Applications` and `ModernDev` (the platform's `System.app`), as (entry name as the archive
+/// would spell it, path). The rest of the artifact (service tier, web client) is not walked.
+pub fn local_platform_files(root: &Path, build: &BuildId) -> Vec<(String, PathBuf)> {
+    let platform = root.join(build.as_str()).join("platform");
+    let mut out = Vec::new();
+    for top in ["Applications", "ModernDev"] {
+        let mut stack = vec![platform.join(top)];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.filter_map(|e| e.ok()) {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if let Ok(rel) = p.strip_prefix(&platform) {
+                    out.push((rel.to_string_lossy().replace('\\', "/"), p));
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 pub struct Store {
     artifacts: PathBuf,
 }

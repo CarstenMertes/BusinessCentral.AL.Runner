@@ -2,6 +2,9 @@
 
 - Status: Accepted (owner, 2026-10-14: build the loader in point 3). The loader is built (branch `test-data`): `alrunner test --test-data`.
 - Date: 2026-10-14
+- Owner decision (Stefan, 2026-10-14): test data is **on by default**. `alrunner test APP` loads the CRONUS demo
+  company of the matching BC artifact; `--no-test-data` turns it off. `--test-data [PATH]` stays, to name a
+  backup or to insist (a missing backup then stops the run). Built on branch `zero-config`.
 
 ## Context
 
@@ -191,6 +194,22 @@ runtime defects, not differences between the restored company and a freshly prep
 - **Default backup**: the cached artifact folder named for the build (`--bc-version` with four numbers),
   else the newest folder with the same `major.minor`, else the newest of the major; country `w1`, else
   `us`, else the only one.
+
+## Decided without owner review (2026-10-14, zero-config)
+
+- **Where the default backup comes from, in order**: the build of the Microsoft apps in
+  `~/.bcartifacts.cache/sandbox/<build>/w1`; the same build in the artifact cache
+  (`<cache>/artifacts/<build>/demo/w1/BusinessCentral-W1.bak`); a download of the `BusinessCentral-W1.bak` entry of the
+  feed's country artifact (`<feed>/<build>/w1`, a ZIP; read by range and streamed through the inflater to a `.part` file,
+  size and CRC-32 checked, then renamed; `al_deps::demo`); then a backup of another build of the same BC version, with a
+  note that names both builds. The download is about 520 MB and happens once. `--no-download` forbids it.
+- **A default run that finds no backup, or cannot open one, runs with test data off** and prints one `note:` line with the
+  reason, so a failed download never fails the run silently and never stops it. A run that asked for test data
+  (`--test-data`, `--test-data PATH`) stops with the reason instead.
+- **A default run with no Microsoft app in it** (no Microsoft APP and no Microsoft dependency loaded) has no test data
+  and prints nothing: the CRONUS company means nothing to it, and it must not download 520 MB for nothing.
+- **The country is `w1`.** Other countries are not selectable yet.
+- **`--test-data-company` no longer needs `--test-data`**; it conflicts with `--no-test-data`.
 
 ## Conformance
 

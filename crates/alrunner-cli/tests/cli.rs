@@ -154,7 +154,7 @@ fn a_bad_invocation_exits_2_and_says_why() {
     for (args, why) in [
         (vec!["test"], "at least one APP"),
         (vec!["test", ".", "--nope"], "unknown option"),
-        (vec!["test", ".", "--test-data-company", "X"], "needs --test-data"),
+        (vec!["test", ".", "--test-data", "--no-test-data"], "cannot be combined"),
         (vec!["test", ".", "--test-data", "/no/such/Demo.bak"], "Demo.bak"),
         (vec!["serve"], "not implemented yet"),
     ] {

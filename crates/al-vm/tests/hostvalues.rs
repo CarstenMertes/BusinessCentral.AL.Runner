@@ -628,7 +628,6 @@ fn format_of_a_value_without_a_text_form_names_its_type_not_its_contents() {
     // Record(RefCell { value: RecordState { ... } })`). The reason is a type name: it groups, and
     // it fits on a line.
     for (vars, body, kind) in [
-        ("R: Record \"ALT T\";", "exit(Format(R));", "a Record"),
         ("L: List of [Integer];", "exit(Format(L));", "a List"),
         (
             "D: Dictionary of [Integer, Integer];",
@@ -645,4 +644,15 @@ fn format_of_a_value_without_a_text_form_names_its_type_not_its_contents() {
             "{kind}: {m}"
         );
     }
+}
+
+#[test]
+fn format_of_a_record_joins_the_formats_of_its_fields_by_tab() {
+    // record/TestFormatRecordContracts.al:111-145 (corpus branch al-runtime-rs, d0f5d52).
+    let t = text(
+        "R: Record \"ALT T\"; Ref: RecordRef;",
+        "R.\"No.\" := 5; R.Amount := 2; R.Note := 'x'; Ref.GetTable(R); \
+         if Format(R) <> Format(Ref) then exit('ref differs'); exit(Format(R));",
+    );
+    assert_eq!(t, "5\t2\tx");
 }

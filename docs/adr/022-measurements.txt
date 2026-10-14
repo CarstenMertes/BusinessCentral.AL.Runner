@@ -1,0 +1,256 @@
+# Session at the final commit (rows 1 to 3 of the table in ADR-022; its 32-bucket runs were killed at 10 GB, see the note there)
+buckets: 32
+session start 18:46:33, load 4.12 10.29 13.81, cores 12
+RESULT small-A: wall 1.60 s, cpu 7.13 s, peak 1259 MB, load 4.1, exit 0
+    compile: load 0.08 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.63 s, check rest 0.00 s, lower 0.31 s, engine 0.02 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 1.11 s, install baseline 0.17 s, run 0.00 s (765 tests/s), total 1.49 s, peak memory 1259 MB
+    Result: PASSED (exit 0)
+RESULT small-cold: wall 5.33 s, cpu 23.63 s, peak 3922 MB, load 4.1, exit 0
+    compile cache: building the entry for 4 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-97997577458f16bbef38361385a2ceb1.alcc)
+    compile: load 0.07 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.01 s, engine 0.02 s
+    compile cache: miss, built in 4.51 s; /home/stefan/.cache/al-runtime/compile/deps-97997577458f16bbef38361385a2ceb1.alcc 
+    compile cache: 13.1 MB, 9839 dependency objects, 0 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.05 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 4.72 s, install baseline 0.16 s, run 0.00 s (817 tests/s), total 5.09 s, peak memory 3922 MB
+    Result: PASSED (exit 0)
+RESULT small-hit: wall 0.74 s, cpu 2.60 s, peak 896 MB, load 4.8, exit 0
+    compile: load 0.07 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.03 s, engine 0.02 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-97997577458f16bbef38361385a2ceb1.alcc 
+    compile cache: 13.1 MB, 9839 dependency objects, 0 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.11 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 0.27 s, install baseline 0.19 s, run 0.00 s (733 tests/s), total 0.66 s, peak memory 895 MB
+    Result: PASSED (exit 0)
+RESULT small-hit: wall 0.75 s, cpu 2.62 s, peak 895 MB, load 4.8, exit 0
+    compile: load 0.07 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.03 s, engine 0.02 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-97997577458f16bbef38361385a2ceb1.alcc 
+    compile cache: 13.1 MB, 9839 dependency objects, 0 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.11 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 0.27 s, install baseline 0.20 s, run 0.00 s (826 tests/s), total 0.67 s, peak memory 895 MB
+    Result: PASSED (exit 0)
+RESULT small-A2: wall 1.51 s, cpu 6.99 s, peak 1253 MB, load 4.5, exit 0
+    compile: load 0.07 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.58 s, check rest 0.00 s, lower 0.28 s, engine 0.02 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 1.03 s, install baseline 0.17 s, run 0.00 s (880 tests/s), total 1.39 s, peak memory 1253 MB
+    Result: PASSED (exit 0)
+RESULT corpus29-A: wall 2.24 s, cpu 12.22 s, peak 1445 MB, load 4.5, exit 0
+    timings: BC 29.0: load apps and dependencies 0.20 s, compile 1.32 s, install baseline 0.22 s, run tests 0.34 s, total 2.10 s
+    compile: load 0.18 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.60 s, check rest 0.00 s, lower 0.40 s, engine 0.03 s
+    BC 29.0: 5060/5279 pass (95.9%), 0 fail, 219 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-cold: wall 6.49 s, cpu 28.31 s, peak 3766 MB, load 4.5, exit 0
+    compile cache: building the entry for 7 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-627476d8811fe9f76df670f3e818658b.alcc)
+    timings: BC 29.0: load apps and dependencies 0.20 s, compile 5.45 s, install baseline 0.19 s, run tests 0.34 s, total 6.20 s
+    compile: load 0.17 s, members 0.00 s, check workspace 0.07 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.08 s, engine 0.03 s
+    compile cache: reading the blocks 0.05 s
+    compile cache: miss, built in 5.00 s; 13.0 MB, 9683 dependency objects, 29 compiled again because the workspace extends or implements what they embed
+    BC 29.0: 5055/5279 pass (95.8%), 0 fail, 224 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-hit: wall 1.46 s, cpu 7.08 s, peak 1232 MB, load 6.5, exit 0
+    timings: BC 29.0: load apps and dependencies 0.21 s, compile 0.55 s, install baseline 0.20 s, run tests 0.34 s, total 1.32 s
+    compile: load 0.18 s, members 0.00 s, check workspace 0.08 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.11 s, engine 0.03 s
+    compile cache: reading the blocks 0.11 s
+    compile cache: hit, opened in 0.03 s; 13.0 MB, 9683 dependency objects, 29 compiled again because the workspace extends or implements what they embed
+    BC 29.0: 5055/5279 pass (95.8%), 0 fail, 224 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-hit: wall 1.51 s, cpu 7.35 s, peak 1232 MB, load 6.5, exit 0
+    timings: BC 29.0: load apps and dependencies 0.20 s, compile 0.58 s, install baseline 0.21 s, run tests 0.36 s, total 1.38 s
+    compile: load 0.18 s, members 0.00 s, check workspace 0.08 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.12 s, engine 0.03 s
+    compile cache: reading the blocks 0.11 s
+    compile cache: hit, opened in 0.03 s; 13.0 MB, 9683 dependency objects, 29 compiled again because the workspace extends or implements what they embed
+    BC 29.0: 5055/5279 pass (95.8%), 0 fail, 224 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-A2: wall 2.48 s, cpu 12.51 s, peak 1425 MB, load 6.5, exit 0
+    timings: BC 29.0: load apps and dependencies 0.20 s, compile 1.49 s, install baseline 0.22 s, run tests 0.42 s, total 2.35 s
+    compile: load 0.19 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.72 s, check rest 0.00 s, lower 0.43 s, engine 0.03 s
+    BC 29.0: 5060/5279 pass (95.9%), 0 fail, 219 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT erm-A: wall 12.02 s, cpu 39.05 s, peak 3107 MB, load 7.2, exit 1
+    compile: load 1.30 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 1.31 s, check rest 0.01 s, lower 1.15 s, engine 0.04 s
+    Tests: 9333 total, 557 passed, 1 failed, 8775 not run
+    Time: load 1.89 s, compile 4.15 s, install baseline 0.19 s, run 5.49 s (1700 tests/s), total 11.75 s, peak memory 3106 MB
+    Result: FAILED (exit 1)
+RESULT erm-cold: wall 13.99 s, cpu 50.73 s, peak 4183 MB, load 7.8, exit 1
+    compile cache: building the entry for 11 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-1f1abbe7076f6d35e30310532e11a84c.alcc)
+    compile: load 0.87 s, members 0.00 s, check workspace 0.29 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.23 s, engine 0.03 s
+    compile cache: miss, built in 5.76 s; /home/stefan/.cache/al-runtime/compile/deps-1f1abbe7076f6d35e30310532e11a84c.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 14 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.07 s
+    Tests: 9333 total, 557 passed, 1 failed, 8775 not run
+    Time: load 0.21 s, compile 7.37 s, install baseline 0.17 s, run 5.78 s (1614 tests/s), total 13.62 s, peak memory 4183 MB
+    Result: FAILED (exit 1)
+RESULT erm-hit: wall 8.09 s, cpu 27.79 s, peak 2112 MB, load 8.3, exit 1
+    compile: load 1.23 s, members 0.00 s, check workspace 0.35 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.31 s, engine 0.03 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-1f1abbe7076f6d35e30310532e11a84c.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 14 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.19 s
+    Tests: 9333 total, 557 passed, 1 failed, 8775 not run
+    Time: load 0.28 s, compile 2.25 s, install baseline 0.19 s, run 5.09 s (1832 tests/s), total 7.86 s, peak memory 2111 MB
+    Result: FAILED (exit 1)
+RESULT erm-hit: wall 8.34 s, cpu 28.22 s, peak 2154 MB, load 8.9, exit 1
+    compile: load 1.00 s, members 0.00 s, check workspace 0.32 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.28 s, engine 0.03 s
+    compile cache: hit, opened in 0.04 s; /home/stefan/.cache/al-runtime/compile/deps-1f1abbe7076f6d35e30310532e11a84c.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 14 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.15 s
+    Tests: 9333 total, 557 passed, 1 failed, 8775 not run
+    Time: load 0.24 s, compile 1.93 s, install baseline 0.15 s, run 5.71 s (1634 tests/s), total 8.09 s, peak memory 2154 MB
+    Result: FAILED (exit 1)
+RESULT erm-A2: wall 11.72 s, cpu 40.72 s, peak 3076 MB, load 8.8, exit 1
+    compile: load 1.58 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 1.35 s, check rest 0.01 s, lower 1.34 s, engine 0.04 s
+    Tests: 9333 total, 557 passed, 1 failed, 8775 not run
+    Time: load 0.26 s, compile 4.65 s, install baseline 0.19 s, run 6.30 s (1481 tests/s), total 11.44 s, peak memory 3076 MB
+    Result: FAILED (exit 1)
+RESULT buckets32-A: wall 223.27 s, cpu 356.54 s, peak 10174 MB, load 9.7, exit -9
+RESULT buckets32-cold: wall 203.78 s, cpu 338.20 s, peak 10199 MB, load 6.0, exit -9
+    compile cache: building the entry for 11 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-1f1abbe7076f6d35e30310532e11a84c.alcc)
+RESULT buckets32-hit: wall 203.37 s, cpu 319.65 s, peak 10173 MB, load 2.2, exit -9
+RESULT buckets32-hit: wall 186.75 s, cpu 305.93 s, peak 10201 MB, load 2.3, exit -9
+RESULT buckets32-A2: wall 222.12 s, cpu 368.46 s, peak 10213 MB, load 1.8, exit -9
+RESULT buckets32-hit: wall 96.38 s, cpu 217.41 s, peak 10155 MB, load 11.4, exit -9
+RESULT buckets32-A3: wall 137.22 s, cpu 268.11 s, peak 10160 MB, load 11.7, exit -9
+RESULT buckets32-hit: wall 103.13 s, cpu 216.73 s, peak 8820 MB, load 14.9, exit -9
+RESULT buckets32-A4: wall 141.70 s, cpu 292.67 s, peak 10205 MB, load 21.1, exit -9
+session end 19:13:10, load 16.16 16.47 13.04
+buckets: 32
+session start 18:25:23, load 6.48 9.35 16.51, cores 12
+RESULT small-A: wall 2.02 s, cpu 7.46 s, peak 1254 MB, load 6.5, exit 0
+    compile: load 0.08 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.79 s, check rest 0.00 s, lower 0.53 s, engine 0.02 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 1.52 s, install baseline 0.18 s, run 0.00 s (732 tests/s), total 1.91 s, peak memory 1255 MB
+    Result: PASSED (exit 0)
+RESULT small-cold: wall 6.11 s, cpu 24.83 s, peak 3925 MB, load 6.5, exit 0
+    compile cache: building the entry for 4 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-c194e2cc67fec5b802eff89b2ad823f1.alcc)
+    compile: load 0.08 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.01 s, engine 0.02 s
+    compile cache: miss, built in 5.28 s; /home/stefan/.cache/al-runtime/compile/deps-c194e2cc67fec5b802eff89b2ad823f1.alcc 
+    compile cache: 13.1 MB, 9839 dependency objects, 0 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.05 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.19 s, compile 5.49 s, install baseline 0.17 s, run 0.00 s (762 tests/s), total 5.87 s, peak memory 3925 MB
+    Result: PASSED (exit 0)
+RESULT small-hit: wall 0.76 s, cpu 2.60 s, peak 895 MB, load 7.2, exit 0
+    compile: load 0.07 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.03 s, engine 0.02 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-c194e2cc67fec5b802eff89b2ad823f1.alcc 
+    compile cache: 13.1 MB, 9839 dependency objects, 0 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.11 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 0.28 s, install baseline 0.20 s, run 0.00 s (812 tests/s), total 0.68 s, peak memory 894 MB
+    Result: PASSED (exit 0)
+RESULT small-hit: wall 0.77 s, cpu 2.60 s, peak 895 MB, load 7.8, exit 0
+    compile: load 0.07 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.03 s, engine 0.03 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-c194e2cc67fec5b802eff89b2ad823f1.alcc 
+    compile cache: 13.1 MB, 9839 dependency objects, 0 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.11 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.18 s, compile 0.28 s, install baseline 0.19 s, run 0.00 s (739 tests/s), total 0.68 s, peak memory 894 MB
+    Result: PASSED (exit 0)
+RESULT small-A2: wall 1.56 s, cpu 7.03 s, peak 1254 MB, load 7.8, exit 0
+    compile: load 0.07 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.60 s, check rest 0.00 s, lower 0.29 s, engine 0.02 s
+    Tests: 1 total, 1 passed, 0 failed, 0 not run (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)
+    Time: load 0.19 s, compile 1.07 s, install baseline 0.17 s, run 0.00 s (702 tests/s), total 1.44 s, peak memory 1255 MB
+    Result: PASSED (exit 0)
+RESULT corpus29-A: wall 2.23 s, cpu 12.03 s, peak 1433 MB, load 7.8, exit 0
+    timings: BC 29.0: load apps and dependencies 0.19 s, compile 1.35 s, install baseline 0.20 s, run tests 0.33 s, total 2.09 s
+    compile: load 0.19 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.63 s, check rest 0.00 s, lower 0.39 s, engine 0.03 s
+    BC 29.0: 5056/5279 pass (95.8%), 0 fail, 223 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-cold: wall 6.52 s, cpu 28.56 s, peak 3766 MB, load 7.3, exit 0
+    compile cache: building the entry for 7 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-ea96ca4f035296c8bf2424d38d71e717.alcc)
+    timings: BC 29.0: load apps and dependencies 0.19 s, compile 5.45 s, install baseline 0.21 s, run tests 0.38 s, total 6.26 s
+    compile: load 0.20 s, members 0.00 s, check workspace 0.07 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.09 s, engine 0.03 s
+    compile cache: reading the blocks 0.05 s
+    compile cache: miss, built in 4.97 s; 13.0 MB, 9683 dependency objects, 29 compiled again because the workspace extends or implements what they embed
+    BC 29.0: 5051/5279 pass (95.7%), 0 fail, 228 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-hit: wall 1.80 s, cpu 7.34 s, peak 1229 MB, load 8.1, exit 0
+    timings: BC 29.0: load apps and dependencies 0.23 s, compile 0.74 s, install baseline 0.22 s, run tests 0.42 s, total 1.64 s
+    compile: load 0.28 s, members 0.00 s, check workspace 0.10 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.13 s, engine 0.03 s
+    compile cache: reading the blocks 0.14 s
+    compile cache: hit, opened in 0.03 s; 13.0 MB, 9683 dependency objects, 29 compiled again because the workspace extends or implements what they embed
+    BC 29.0: 5051/5279 pass (95.7%), 0 fail, 228 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-hit: wall 1.50 s, cpu 7.01 s, peak 1234 MB, load 8.1, exit 0
+    timings: BC 29.0: load apps and dependencies 0.20 s, compile 0.60 s, install baseline 0.21 s, run tests 0.35 s, total 1.38 s
+    compile: load 0.20 s, members 0.00 s, check workspace 0.08 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.11 s, engine 0.03 s
+    compile cache: reading the blocks 0.12 s
+    compile cache: hit, opened in 0.03 s; 13.0 MB, 9683 dependency objects, 29 compiled again because the workspace extends or implements what they embed
+    BC 29.0: 5051/5279 pass (95.7%), 0 fail, 228 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT corpus29-A2: wall 2.44 s, cpu 12.22 s, peak 1416 MB, load 8.1, exit 0
+    timings: BC 29.0: load apps and dependencies 0.18 s, compile 1.57 s, install baseline 0.20 s, run tests 0.35 s, total 2.31 s
+    compile: load 0.37 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.65 s, check rest 0.00 s, lower 0.40 s, engine 0.03 s
+    BC 29.0: 5056/5279 pass (95.8%), 0 fail, 223 not run
+    BC 29.0 onprem: 45/67 pass (67.2%), 0 fail, 22 not run; BC fails 0 on purpose, the runtime fails 0 of them
+RESULT erm-A: wall 6.68 s, cpu 29.79 s, peak 3094 MB, load 7.6, exit 1
+    compile: load 1.10 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.81 s, check rest 0.00 s, lower 0.70 s, engine 0.04 s
+    Tests: 9333 total, 557 passed, 2 failed, 8774 not run
+    Time: load 0.22 s, compile 2.93 s, install baseline 0.14 s, run 3.13 s (2982 tests/s), total 6.44 s, peak memory 3094 MB
+    Result: FAILED (exit 1)
+RESULT erm-cold: wall 9.95 s, cpu 40.41 s, peak 4140 MB, load 8.1, exit 1
+    compile cache: building the entry for 11 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc)
+    compile: load 0.77 s, members 0.00 s, check workspace 0.22 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.17 s, engine 0.03 s
+    compile cache: miss, built in 4.64 s; /home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 14 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.05 s
+    Tests: 9333 total, 557 passed, 2 failed, 8774 not run
+    Time: load 0.20 s, compile 5.98 s, install baseline 0.14 s, run 3.25 s (2868 tests/s), total 9.63 s, peak memory 4139 MB
+    Result: FAILED (exit 1)
+RESULT erm-hit: wall 5.58 s, cpu 20.25 s, peak 2106 MB, load 9.2, exit 1
+    compile: load 0.89 s, members 0.00 s, check workspace 0.22 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.20 s, engine 0.03 s
+    compile cache: hit, opened in 0.05 s; /home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 14 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.12 s
+    Tests: 9333 total, 557 passed, 2 failed, 8774 not run
+    Time: load 0.25 s, compile 1.60 s, install baseline 0.14 s, run 3.35 s (2789 tests/s), total 5.37 s, peak memory 2106 MB
+    Result: FAILED (exit 1)
+RESULT erm-hit: wall 5.14 s, cpu 19.61 s, peak 2091 MB, load 8.6, exit 1
+    compile: load 0.87 s, members 0.00 s, check workspace 0.21 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.20 s, engine 0.03 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 14 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.11 s
+    Tests: 9333 total, 557 passed, 2 failed, 8774 not run
+    Time: load 0.20 s, compile 1.52 s, install baseline 0.14 s, run 3.03 s (3077 tests/s), total 4.93 s, peak memory 2091 MB
+    Result: FAILED (exit 1)
+RESULT erm-A2: wall 6.80 s, cpu 30.71 s, peak 3101 MB, load 8.9, exit 1
+    compile: load 1.09 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 0.84 s, check rest 0.00 s, lower 0.76 s, engine 0.03 s
+    Tests: 9333 total, 557 passed, 2 failed, 8774 not run
+    Time: load 0.20 s, compile 3.01 s, install baseline 0.15 s, run 3.16 s (2951 tests/s), total 6.55 s, peak memory 3101 MB
+    Result: FAILED (exit 1)
+RESULT buckets32-A: wall 33.44 s, cpu 130.79 s, peak 6310 MB, load 7.8, exit 1
+    compile: load 2.23 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 1.51 s, check rest 0.01 s, lower 1.73 s, engine 0.06 s
+    Tests: 40300 total, 2172 passed, 255 failed, 37873 not run
+    Time: load 0.40 s, compile 6.38 s, install baseline 0.21 s, run 25.92 s (1555 tests/s), total 32.94 s, peak memory 6310 MB
+    Result: FAILED (exit 1)
+RESULT buckets32-cold: wall 29.17 s, cpu 124.88 s, peak 4963 MB, load 11.2, exit 1
+    compile cache: building the entry for 11 dependency apps once (/home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc)
+    compile: load 1.88 s, members 0.00 s, check workspace 0.73 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 0.60 s, engine 0.05 s
+    compile cache: miss, built in 4.71 s; /home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 25 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.05 s
+    Tests: 40300 total, 2167 passed, 253 failed, 37880 not run
+    Time: load 0.40 s, compile 8.43 s, install baseline 0.16 s, run 19.58 s (2058 tests/s), total 28.62 s, peak memory 4963 MB
+    Result: FAILED (exit 1)
+RESULT buckets32-hit: wall 34.96 s, cpu 118.48 s, peak 4710 MB, load 10.5, exit 1
+    compile: load 2.47 s, members 0.00 s, check workspace 1.31 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 1.48 s, engine 0.06 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 25 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.14 s
+    Tests: 40300 total, 2167 passed, 253 failed, 37880 not run
+    Time: load 0.40 s, compile 6.16 s, install baseline 0.20 s, run 27.39 s (1471 tests/s), total 34.24 s, peak memory 4710 MB
+    Result: FAILED (exit 1)
+RESULT buckets32-hit: wall 34.78 s, cpu 116.07 s, peak 4665 MB, load 14.1, exit 1
+    compile: load 2.81 s, members 0.00 s, check workspace 1.33 s, baseline roots 0.00 s, demand 0.00 s, check rest 0.00 s, lower 1.14 s, engine 0.06 s
+    compile cache: hit, opened in 0.03 s; /home/stefan/.cache/al-runtime/compile/deps-4b3bb3d2c65a75960e8178e8ced48a60.alcc 
+    compile cache: 13.3 MB, 9919 dependency objects, 25 compiled again because the workspace extends or implements what they embed
+    compile cache: reading the blocks 0.17 s
+    Tests: 40300 total, 2167 passed, 253 failed, 37880 not run
+    Time: load 0.49 s, compile 6.03 s, install baseline 0.18 s, run 27.29 s (1477 tests/s), total 34.10 s, peak memory 4665 MB
+    Result: FAILED (exit 1)
+RESULT buckets32-A2: wall 30.39 s, cpu 125.51 s, peak 6301 MB, load 15.3, exit 1
+    compile: load 3.31 s, members 0.00 s, check workspace 0.00 s, baseline roots 0.00 s, demand 2.17 s, check rest 0.01 s, lower 2.34 s, engine 0.07 s
+    Tests: 40300 total, 2172 passed, 255 failed, 37873 not run
+    Time: load 0.79 s, compile 9.10 s, install baseline 0.19 s, run 19.78 s (2038 tests/s), total 29.89 s, peak memory 6300 MB
+    Result: FAILED (exit 1)
+session end 18:29:06, load 15.44 12.23 16.11

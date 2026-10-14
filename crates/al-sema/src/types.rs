@@ -3,7 +3,7 @@
 use crate::workspace::ObjKind;
 use al_syntax::ast::TypeRef;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Ty {
     Integer,
     BigInteger,

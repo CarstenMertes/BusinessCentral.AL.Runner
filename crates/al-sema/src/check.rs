@@ -210,6 +210,9 @@ pub enum Res {
         object: usize,
         offset: usize,
     },
+    /// A `protected var` variable of the page or report that the page or report extension extends
+    /// (ADR-023), by lower-case name.
+    BaseGlobal(String),
     /// A catalog builtin overload id (ADR-008).
     Builtin(String),
     /// An enum value by its declared integer value (what `AsInteger()` returns).
@@ -248,6 +251,12 @@ pub struct Roots {
     /// environment variable `AL_CHECK_THREADS`, else the number of cores. The result does not
     /// depend on it.
     pub workers: Option<usize>,
+    /// Per object: its lowered form comes from a compile cache (`provided.rs`), so it is neither
+    /// checked nor given a query layout. Only with `eager`; empty: none.
+    pub provided: Vec<bool>,
+    /// With `provided`: the query layouts of the objects that come from the cache (the lowering of
+    /// the workspace's code reads them), by object index.
+    pub provided_queries: Vec<Option<crate::queries::QueryLayout>>,
 }
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
@@ -265,6 +274,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
+    let provided = |oi: usize| roots.provided.get(oi).copied().unwrap_or(false);
     let mut timings = CheckTimings::default();
     let mut c = Checker::new(ws, members, catalog, system_enums(catalog), demand_mode);
     // The files of the dependency objects the checker reaches are parsed ahead on other
@@ -306,11 +316,15 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         })
     } else {
         let started = std::time::Instant::now();
-        for oi in 0..ws.objects.len() {
-            if !skip(oi) {
+        let objects: Vec<usize> = (0..ws.objects.len()).filter(|&oi| !skip(oi) && !provided(oi)).collect();
+        let workers = roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32));
+        if workers > 1 && objects.len() >= PARALLEL_OBJECTS {
+            c.check_objects_parallel(workers, &objects);
+        } else {
+            for oi in objects {
                 c.guard((oi, ANY_ROUTINE), |c| c.check_object(oi));
+                c.take_calls();
             }
-            c.take_calls();
         }
         timings.workspace = started.elapsed();
         None
@@ -321,7 +335,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
     // Without a demand state (the eager compile) every dependency object is lowered, so every one
     // needs its layout.
-    let wanted = |oi: usize| !ws.is_dependency(oi) || demand.as_ref().is_none_or(|d| d.active(oi));
+    let wanted = |oi: usize| !provided(oi) && (!ws.is_dependency(oi) || demand.as_ref().is_none_or(|d| d.active(oi)));
     for oi in 0..ws.objects.len() {
         if wanted(oi) {
             c.query(oi);
@@ -331,7 +345,13 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         .queries
         .into_iter()
         .enumerate()
-        .map(|(oi, cell)| cell.into_inner().flatten().filter(|_| wanted(oi)))
+        .map(|(oi, cell)| {
+            if provided(oi) {
+                roots.provided_queries.get(oi).cloned().flatten()
+            } else {
+                cell.into_inner().flatten().filter(|_| wanted(oi))
+            }
+        })
         .collect();
     timings.rest = rest_started.elapsed();
     CheckResult {
@@ -345,6 +365,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         panicked: c.panicked,
     }
 }
+
+/// The complete check of fewer objects than this stays on the calling thread.
+const PARALLEL_OBJECTS: usize = 64;
 
 /// How many threads check the reached routines of dependency apps. `AL_CHECK_THREADS` sets it
 /// (1 checks on one thread); the default is the number of cores.
@@ -462,6 +485,11 @@ struct Scope {
     rec_unqualified: bool,
     /// Object whose procedures are callable unqualified.
     self_obj: usize,
+    /// In a page or report extension: the page or report it extends (ADR-023).
+    base_obj: Option<usize>,
+    /// The names of the base object's variables that this extension sees (they are also in
+    /// `globals`).
+    base_vars: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 /// A section with its first argument (its name, for controls and data items).
@@ -505,6 +533,8 @@ struct ObjCtx {
     rec_unqualified: bool,
     self_obj: usize,
     base_items: HashMap<String, String>,
+    base_obj: Option<usize>,
+    base_vars: std::rc::Rc<std::collections::HashSet<String>>,
 }
 
 /// The `this` keyword: the object whose code is running (Microsoft Learn, "this keyword").
@@ -846,6 +876,30 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // ADR-023: a page or report extension sees the base object's `protected var` variables
+        // (those the extension does not declare itself) and its procedures.
+        let mut base_obj = None;
+        let mut base_vars = std::collections::HashSet::new();
+        if crate::base_access::scope_enabled() {
+            let base_kind = match o.kind {
+                ObjKind::PageExtension => Some(ObjKind::Page),
+                ObjKind::ReportExtension => Some(ObjKind::Report),
+                _ => None,
+            };
+            if let (Some(kind), Some(parts)) = (base_kind, obj.extends_parts()) {
+                if let Some(b) = self.resolve_parts(o.file, kind, &parts) {
+                    base_obj = Some(b);
+                    for (name, decl) in crate::base_access::visible_vars(&self.ws.object_ast(b)) {
+                        if globals.contains_key(&name) {
+                            continue;
+                        }
+                        let ty = decl.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+                        globals.insert(name.clone(), ty);
+                        base_vars.insert(name);
+                    }
+                }
+            }
+        }
         let file = o.file;
         // Every type the object's variables name is used by the code that runs in it.
         let tys: Vec<Ty> = globals.values().cloned().chain(rec.clone()).collect();
@@ -860,6 +914,8 @@ impl<'a> Checker<'a> {
             rec_unqualified,
             self_obj,
             base_items,
+            base_obj,
+            base_vars: std::rc::Rc::new(base_vars),
         }
     }
 
@@ -902,6 +958,8 @@ impl<'a> Checker<'a> {
             rec_unqualified,
             self_obj,
             base_items,
+            base_obj,
+            base_vars,
         } = ctx;
         let (oi, file, self_obj) = (*oi, *file, *self_obj);
         {
@@ -931,6 +989,8 @@ impl<'a> Checker<'a> {
                 rec,
                 rec_unqualified,
                 self_obj,
+                base_obj: *base_obj,
+                base_vars: base_vars.clone(),
             };
             let mut locals = HashMap::new();
             for p in r.params() {
@@ -1562,9 +1622,38 @@ impl<'a> Checker<'a> {
             }
         }
         if c.is_empty() {
+            c = self.base_proc_cands(sc, n);
+        }
+        if c.is_empty() {
             c = self.global_cands(n);
         }
         (!c.is_empty()).then_some(c)
+    }
+
+    /// The resolution of global `key`: the base object's variable in an extension that sees it
+    /// (ADR-023), else the object's own.
+    fn global_res(sc: &Scope, key: String) -> Res {
+        if sc.base_vars.contains(&key) {
+            Res::BaseGlobal(key)
+        } else {
+            Res::Global(key)
+        }
+    }
+
+    /// The procedures of the page or report an extension extends that its code may call (ADR-023).
+    fn base_proc_cands(&self, sc: &Scope, n: &str) -> Vec<Cand> {
+        let Some(b) = sc.base_obj else { return Vec::new() };
+        let report = self.ws.objects[b].kind == ObjKind::Report;
+        let ast = self.ws.object_ast(b);
+        let visible: Vec<usize> = crate::base_access::visible_procs(&ast, report, n)
+            .map(|r| usize::from(r.syntax().text_range().start()))
+            .collect();
+        self.members[b]
+            .procedures_named(n)
+            .iter()
+            .filter(|p| visible.contains(&p.offset))
+            .map(|p| proc_cand(p))
+            .collect()
     }
 
     /// `this.Name` in a codeunit: a global variable, else a procedure of the codeunit. The
@@ -1573,7 +1662,8 @@ impl<'a> Checker<'a> {
         let n = name_of(member);
         let key = n.to_lowercase();
         if let Some(t) = sc.globals.get(&key).cloned() {
-            self.record(sc, node, Res::Global(key));
+            let res = Self::global_res(sc, key);
+            self.record(sc, node, res);
             return Some(E::Val(t));
         }
         let own: Vec<Cand> = self.members[sc.self_obj]
@@ -1595,7 +1685,8 @@ impl<'a> Checker<'a> {
         }
         if let Some(t) = sc.globals.get(&key) {
             let t = t.clone();
-            self.record(sc, node, Res::Global(key));
+            let res = Self::global_res(sc, key);
+            self.record(sc, node, res);
             return Some(E::Val(t));
         }
         // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
@@ -1634,6 +1725,10 @@ impl<'a> Checker<'a> {
         };
         if !own.is_empty() || !own_obj.is_empty() {
             return Some(E::Callable(own.into_iter().chain(own_obj).collect()));
+        }
+        let base = self.base_proc_cands(sc, &n);
+        if !base.is_empty() {
+            return Some(E::Callable(base));
         }
         let globals: Vec<Cand> = self.global_cands(&n);
         if !globals.is_empty() {

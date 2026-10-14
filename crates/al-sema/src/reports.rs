@@ -456,7 +456,11 @@ fn visit(
             let pn = p.name().to_ascii_lowercase();
             let temporary_ok =
                 pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
-            if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
+            if pn == "dataitemlinkreference" {
+                reasons.push(format!(
+                    "dataitem {name}: DataItemLinkReference (a link to a data item that is not the enclosing one) is not pinned: no corpus test links to another data item (docs/probes-needed.md)"
+                ));
+            } else if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
                 && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
                 && !temporary_ok
             {
@@ -637,7 +641,7 @@ pub struct Context<'a> {
     pub slots: &'a HashMap<String, usize>,
     pub request_flag_slot: usize,
     /// (object, source offset) to routine index.
-    pub routine_at: &'a HashMap<(usize, usize), usize>,
+    pub routine_at: &'a crate::lower::RoutineAt,
     /// Reportextensions that change what a run does: why the report cannot run yet.
     pub extension_reasons: Vec<String>,
     /// The one reportextension (object index) that changes what a run does.
@@ -657,7 +661,7 @@ struct Owner<'a> {
     members: &'a crate::members::MemberTable<'a>,
     file: usize,
     oi: usize,
-    routine_at: &'a HashMap<(usize, usize), usize>,
+    routine_at: &'a crate::lower::RoutineAt,
     /// Source offsets of the object's `column` sections, in source order: the index of an offset
     /// is the ordinal `pages::column_name` names the column's routine by.
     column_starts: Vec<usize>,
@@ -671,7 +675,7 @@ impl<'a> Owner<'a> {
         members: &'a crate::members::MemberTable<'a>,
         file: usize,
         oi: usize,
-        routine_at: &'a HashMap<(usize, usize), usize>,
+        routine_at: &'a crate::lower::RoutineAt,
         obj: &ast::Object,
     ) -> Owner<'a> {
         let column_starts: Vec<usize> = crate::pages::column_sections(obj)
@@ -686,7 +690,7 @@ impl<'a> Owner<'a> {
         let mut column_routines = HashMap::new();
         for r in ast::routines_in(obj.syntax()) {
             if let Some(&ordinal) = names.get(&r.name()) {
-                if let Some(&idx) = routine_at.get(&(oi, usize::from(r.syntax().text_range().start()))) {
+                if let Some(idx) = routine_at.get(&(oi, usize::from(r.syntax().text_range().start()))) {
                     column_routines.insert(ordinal, idx);
                 }
             }
@@ -782,7 +786,6 @@ fn item_ir(
         sec.triggers()
             .find(|t| t.name().eq_ignore_ascii_case(name))
             .and_then(|t| o.routine_at.get(&(o.oi, usize::from(t.syntax().text_range().start()))))
-            .copied()
     };
     let table = table_object(o.ws, o.file, &raw.table);
     if slot.is_none() || table.is_none() {
@@ -798,7 +801,11 @@ fn item_ir(
             .map(|p| p.value_text())
     };
     let mut link = Vec::new();
-    if let Some(text) = prop("DataItemLink") {
+    // With a DataItemLinkReference the link fields name another data item than the enclosing one; the
+    // layout already refused it with its own reason, and reading them against the parent would only add
+    // a misleading "entry is not understood".
+    let referenced = prop("DataItemLinkReference").is_some();
+    if let Some(text) = prop("DataItemLink").filter(|_| !referenced) {
         match parent_table.zip(table) {
             None => reasons.push(format!(
                 "dataitem {}: DataItemLink needs an enclosing data item",
@@ -855,7 +862,6 @@ fn object_trigger(o: &Owner, obj: &ast::Object, name: &str) -> Option<usize> {
     obj.triggers()
         .find(|t| t.name().eq_ignore_ascii_case(name))
         .and_then(|t| o.routine_at.get(&(o.oi, usize::from(t.syntax().text_range().start()))))
-        .copied()
 }
 
 /// The IR of report `cx.oi`. `reasons` are what the lowering of the item variables found.
@@ -903,7 +909,7 @@ pub struct ExtContext<'a> {
     /// The extended report's IR (its items' tables).
     pub base_items: &'a [ir::ReportItem],
     pub layout: &'a ExtLayout,
-    pub routine_at: &'a HashMap<(usize, usize), usize>,
+    pub routine_at: &'a crate::lower::RoutineAt,
 }
 
 /// The slot of base item `i` in the extension's globals: the extension names the base items'
@@ -926,13 +932,10 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
     let mut modifies = Vec::new();
     for (name, sec) in &cx.layout.modifies {
         let trigger = |t: &str| {
-            sec.triggers()
-                .find(|x| x.name().eq_ignore_ascii_case(t))
-                .and_then(|x| {
-                    cx.routine_at
-                        .get(&(cx.oi, usize::from(x.syntax().text_range().start())))
-                })
-                .copied()
+            sec.triggers().find(|x| x.name().eq_ignore_ascii_case(t)).and_then(|x| {
+                cx.routine_at
+                    .get(&(cx.oi, usize::from(x.syntax().text_range().start())))
+            })
         };
         match base_index(name) {
             Some(item) => modifies.push(ir::ReportExtModify {
@@ -1116,6 +1119,21 @@ mod tests {
         let output = l.output.join("; ");
         assert!(output.contains("defaultlayout"), "{output}");
         assert!(output.contains("section rendering"), "{output}");
+    }
+
+    #[test]
+    fn a_data_item_link_reference_is_refused_with_its_own_reason_not_as_a_link_entry_that_is_not_understood() {
+        // Base Application links a data item to an ancestor that is not its parent (`DataItemLinkReference =
+        // AccScheduleName` under an Integer data item). The corpus pins only the link to the enclosing data
+        // item (handlers/TestReportNestedLinkImplicitParent.al), so the reference is refused and says so.
+        let l = layout_of(
+            "report 1 R { ProcessingOnly = true; dataset { dataitem(A; Cust) { dataitem(Loop; \"Integer\") { dataitem(B; Ledger) { DataItemLink = No = field(No); DataItemLinkReference = A; } } } } }",
+        );
+        let all = l.reasons.join("; ");
+        assert!(
+            all.contains("DataItemLinkReference") && all.contains("not pinned"),
+            "{all}"
+        );
     }
 
     #[test]

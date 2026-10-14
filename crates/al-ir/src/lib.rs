@@ -996,6 +996,10 @@ pub enum Const {
 pub enum Place {
     Local(usize),
     Global(usize),
+    /// Global slot `n` of the *base object's instance*, in a routine of a page or report extension
+    /// (ADR-023). The lowering emits it nowhere else. The slot is the variable's position in the
+    /// base object's globals.
+    BaseGlobal(usize),
     /// Element of an array place.
     Index(Box<Place>, Vec<Expr>),
     /// Field at position `.1` of the record in place `.0`.
@@ -1065,6 +1069,9 @@ pub enum Expr {
         targets: Vec<(usize, usize)>,
         args: Vec<Arg>,
     },
+    /// The instance of the page or report that the running extension extends (ADR-023). A call
+    /// with `instance: Some(BaseInstance)` runs a procedure of the base object on it.
+    BaseInstance,
     /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
     /// value) on an interface value. `objects` are the codeunits that implement `I`.
     InterfaceTest {
@@ -1320,5 +1327,26 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let back: Program = serde_json::from_str(&json).unwrap();
         assert_eq!(back, p);
+    }
+
+    /// ADR-023: the two variants for base-object access serialize like the rest of the IR.
+    #[test]
+    fn base_access_variants_round_trip() {
+        let e = Expr::Call {
+            object: 1,
+            routine: 2,
+            instance: Some(Box::new(Expr::BaseInstance)),
+            args: vec![Arg::Ref(Place::Index(
+                Box::new(Place::BaseGlobal(3)),
+                vec![Expr::Load(Place::BaseGlobal(4))],
+            ))],
+            try_call: false,
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: Expr = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, e);
+        let s = Stmt::Assign(Place::BaseGlobal(0), Expr::Const(Const::Integer(1)));
+        let back: Stmt = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(back, s);
     }
 }

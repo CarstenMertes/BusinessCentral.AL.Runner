@@ -15,7 +15,8 @@ Dependencies point down. Core crates do no OS access (ADR-006); the host seam is
 al-test-cli    corpus job: oracle, corpus, baseline file, ratchet, pass-rate report      alrunner-cli  user command line `alrunner test`
 al-testrun     test runner (runtime), install baseline, dependency loading, sidecar host, explain, refusal ranking
 al-vm          interpreter over the IR: Engine (immutable), Session (all mutable state), test client
-al-sema        workspace -> members -> check (+ demand) -> lower; produces al-ir
+al-sema        workspace -> members -> check (+ demand) -> lower; produces al-ir; takes dependency objects from a compile cache (provided.rs)
+al-cache       the compile cache file (ADR-022): key, per-object zstd blocks, index; bytes in, bytes out
 al-builtins    values, builtin functions by catalog overload id, filters, JSON/XML, platform table registry
 al-data        Store trait and the in-memory store         al-host   clock, identity, files, DotNet seam
 al-ir          the typed IR (plain data)                   al-version  BC versions, run target, gates
@@ -59,6 +60,12 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `file.rs` (66): A file as a byte source (pread), the OS side of `al-bcdb` (ADR-006). Entry: `FileSource` 17.
 - `lib.rs` (9): The OS side of `al-bcdb`: file byte source and the backup table provider for `--test-data` (ADR-020).
 - `provider.rs` (260): `BackupProvider`: the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
+
+### al-cache
+
+- `format.rs` (330): The cache entry file: header, dictionary, per-object blocks, index; open checks the header, the index and the dictionary, a block is checked when read. Entry: `build` 82, `Entry::open` 205, `Entry::verify` 263, `CacheError` 39.
+- `key.rs` (170): The key of an entry: every input of the compile of the dependency set, hashed without `..`. Entry: `Key` 41, `Key::digest` 80, `AppKey` 21, `FORMAT` 10.
+- `lib.rs` (14): Crate root of the compile cache format (ADR-022). Core crate: no OS access.
 
 ### al-builtins
 
@@ -133,12 +140,14 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 ### al-sema
 
+- `base_access.rs` (78): Page and report extension code that names the base object's members (ADR-023): which probes are pinned (`PINNED`), the `AL_UNPINNED_BASE_ACCESS` switch, the base's visible variables and procedures, and the slot of a base variable from syntax. Entry: `PINNED`, `pinned`, `scope_enabled`, `visible_vars`, `visible_procs`, `slot_of`.
 - `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax. Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
 - `check.rs` (2492): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 122, `Checker` 323, `check_object` 647, `check_routine_in` 672, `CheckResult` 43, `Res` 67, `Roots` 103.
 - `check/demand.rs` (1417): Demand-driven checking of dependency apps (ADR-013 decision 6): what a test reaches is compiled, the rest is not. Entry: `Demand` 44, `run_demand` 765, `reach` 247, `reach_baseline` 261, `activate` 351, `activate_table` 398, `activate_ops` 451, `activate_global` 498.
 - `lib.rs` (16): Crate root of the semantic model.
 - `lower.rs` (4806): Lowers resolved syntax to the typed IR (ADR-011). Anything inexpressible becomes a refusal reason on the routine. Entry: `lower_with_positions` 33, `Lowered` 17, `Lowerer` 1110, `routine` 2390, `stmt` 2585, `expr` 2946, `call` 3276, `compile_apps_with` 3543, `compile_with_roots` 3566.
 - `members.rs` (708): Members of objects: table fields (extensions merged), enum values, procedure signatures. Entry: `MemberTable` 108, `build` 147, `FieldInfo` 15, `ProcSig` 48.
+- `provided.rs` (330): Dependency objects whose lowered form comes from a compile cache (ADR-022): `DepFacts`, `DepBlock`, `DepSource`, which blocks the workspace invalidates (`relower_set`). Entry: `DepSet` 76, `relower_set` 150, `touched` 120, `check_identity` 100.
 - `pages.rs` (932): Pages for the test client (ADR-012). Entry: `expand` 153, `expand_ranges` 159, `control_sections` 143, `classify_source` 81.
 - `queries.rs` (760): Query objects (corpus query/). Entry: `QueryLayout` 16, `layout` 56.
 - `relation.rs` (359): `TableRelation` property text → arms (before names are resolved). Entry: `ParsedArm` 13, `ParsedWhere` 23, `parse` 262.
@@ -182,6 +191,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-testrun
 
 - `baseline.rs` (336): The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`, `CompanyInitializer`, `TestExecu. Entry: `BaselineRun` 22, `run` 51, `tables_written` 152.
+- `compile_cache.rs` (220): The OS side of the compile cache (ADR-022): the key of a run (hash of the executable and of each app's source), reading, writing (temporary file, rename) and building the entry file. Entry: `CompileCache` 14, `key_for` 83, `read_entry` 108, `write_entry` 128, `open_or_build` 170.
 - `deps.rs` (158): Dependency apps for a corpus run (ADR-013). Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
 - `discover.rs` (90): Finds `Subtype = Test` codeunits and their `[Test]` procedure names in AL text, without a syntax tree. Entry: `test_codeunits`.
 - `dotnet.rs` (1084): The .NET sidecar host (ADR-014): one process per session, standby processes started at run start (`prewarm`), start-up stats. Entry: `SidecarConfig` 26, `SidecarStats` 72, `SidecarHost` 247, `prewarm` 279, `encode` 944, `decode` 964.
@@ -337,6 +347,24 @@ functions or methods; the file is in the module list above.
    call graph. `lower_object` is a function of the plain `Shared` data plus per-thread `Local`/`Seq` (syntax nodes
    and layouts belong to the thread that built them): worker threads (`AL_LOWER_THREADS`) and the calling thread take all active objects in turn,
    each lowered with positions numbered from 0 that `Routine::shift_positions` moves into place in object order.
+
+### Compile cache: a run that finds the dependency apps already lowered (ADR-022)
+
+1. `CorpusRuntime::try_run_suites_with` (testrun/runtime.rs), with `RunOptions::compile_cache`: the apps are put in the
+   program order a cache needs, dependency apps first (the caller's order is kept in `order` for `TestResult::app`,
+   `SuiteRun::app` and `RunOptions::only`). No cache with `AL_EAGER_DEPENDENCIES` or without dependency apps.
+2. `compile_with_cache` -> `compile_cache::open_or_build`: `key_for` (executable hash, target, symbols, each app's
+   manifest and source hash) -> `read_entry` (`al_cache::Entry::open` checks header, index, dictionary; a refused file is
+   removed and reported) or, on a miss, `build_entry` = `lower::lower_for_cache` (the complete compile of the dependency
+   apps alone, `Lowered::exported`) -> `al_cache::build` -> `write_entry`.
+3. `lower::compile_loaded_cached`: `Workspace::load_apps` for all apps; `provided::check_identity`; `relower_set` (the
+   dependency objects whose `DepFacts::embeds` the workspace extends or implements, with the objects that extend each
+   other); the blocks of the others are read in parallel (`DepSource::block`); the checker skips them
+   (`Roots::provided`); `lower_core` takes their pieces from the blocks and their facts (`Shared`: page reasons, parts,
+   routine numbers, ...) from `DepFacts`, and lowers the rest as the eager compile does. An error gives the workspace
+   back and the run compiles without the cache.
+4. `Lowered::calls_of` / `calls_into` give the call graph: the direct calls stored in the block plus what a page,
+   report or xmlport variable drives (`driven_edges`).
 
 ### Record.Insert(true): trigger, events, Global Triggers, store
 

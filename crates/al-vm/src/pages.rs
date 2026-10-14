@@ -894,7 +894,7 @@ impl Session {
         // Each extension runs on an instance of its own that shares the page's Rec, xRec and CurrPage.
         let mut exts = Vec::new();
         for &e in &page.extensions {
-            let ext = self.instance(e);
+            let ext = self.extension_instance(e, &inst);
             let (page_object, ext_object) = (&engine.program.objects[object], &engine.program.objects[e]);
             for (from, to) in [
                 (page_object.rec_slot, ext_object.rec_slot),

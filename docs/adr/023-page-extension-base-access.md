@@ -1,6 +1,6 @@
 # ADR-023: Page and report extension code that uses the base object's variables and procedures
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-14)
 - Date: 2026-10-14
 - Changes: how the lowering names a variable or procedure of the base page or base report in extension code, and one field of `Instance`. Additive in the IR (`Place::BaseGlobal`, `Expr::BaseInstance`); no seam is removed. It needs the owner's decision because it adds to the IR and to `Instance` (CLAUDE.md rule 5).
 
@@ -165,7 +165,34 @@ R2. A public (non-protected) procedure of the base report from the extension, an
 R3. A `protected var` of type Dialog, Record and List in the base report, used from the extension (`Window.Open`, `Update`, `Close`).
 R4. Two reportextensions of one report that both change the run: today refused; whether they share the base variable (they would, under this ADR).
 
-## Decisions needed
+## Decided by the owner (2026-10-14)
+
+1. **Option B accepted**: instance link, `Place::BaseGlobal`, `Expr::BaseInstance`.
+2. **Probes and build run in parallel.** The plumbing is built now. Every access that no probe pins
+   stays refused, with a reason that names the probe (`al-sema/src/base_access.rs`, `PINNED`). A
+   confirmed probe turns its case on in a commit that cites the corpus test.
+3. **Scope**: page extensions and report extensions. Table extensions stay out (refused as today).
+   This is recorded in `docs/owner-review.md` as not reviewed by the owner.
+4. **Order**: both sides use one mechanism; the probe results decide which cases turn on first.
+
+## Implementation notes
+
+- The checker puts the base object's `protected var` variables and its visible procedures into the
+  extension's scope only while the mechanism is in use (`base_access::scope_enabled`: a probe is
+  pinned, or `AL_UNPINNED_BASE_ACCESS` is set). Before that the compile reaches what it reached
+  before. A variable resolves to `Res::BaseGlobal`; a procedure resolves to `Res::Proc` of the base
+  routine, so the existing call edge reaches the base routine and nothing else in demand changes.
+- Gates: `P1/P2` variable access on a page, `P4` base procedure call, `P5` a record, list or
+  other reference variable, `P9` a control's source expression, `R1` variable or procedure of a
+  report, `R3` the reference types on a report. `P6` (a name declared twice) and `P8` (a `local`
+  member, a variable that is not `protected`), `R2` (a public report procedure) are refusals that
+  stay until the probe gives the compile error text.
+- `AL_UNPINNED_BASE_ACCESS=1` (or a list of probe ids) turns the cases on without a probe. It is for
+  development and for measuring how many tests move. A run with it is not a conformance result.
+- The slot of a base variable is computed from the base's syntax (`base_access::slot_of`); a test
+  compares it with the slot the base's own lowering gives.
+
+## Decisions that were needed
 
 1. **Accept option B** (instance link, `Place::BaseGlobal`, `Expr::BaseInstance`), or ask for A (one merged instance) with the cache cost described above.
 2. **Probes first, or build first.** Everything in "Decision" except the refusals is unpinned. Build first, record what is assumed in `docs/probes-needed.md` and refuse nothing the language reference allows; or probe first (about ten tests) and build exactly what they pin.

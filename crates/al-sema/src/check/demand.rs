@@ -839,6 +839,61 @@ impl Checker<'_> {
         })
     }
 
+    /// Checks every routine of `objects` on `workers` threads, each with a checker of its own, and
+    /// folds what they found into this one. Nothing is reached on demand: this is the complete
+    /// compile of those objects (the eager compile, and the objects a cache does not supply). A
+    /// routine's result does not depend on which thread checks it, so the result is the one a
+    /// single thread gives.
+    pub(super) fn check_objects_parallel(&mut self, workers: usize, objects: &[usize]) {
+        let (ws, members, catalog) = (self.ws, self.members, self.catalog);
+        let enums = self.system_enums.clone();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let outs: Vec<WorkerOut> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..workers)
+                .map(|_| {
+                    let enums = enums.clone();
+                    let next = &next;
+                    std::thread::Builder::new()
+                        .stack_size(WORKER_STACK)
+                        .spawn_scoped(scope, move || {
+                            let mut c = Checker::new(ws, members, catalog, enums, false);
+                            loop {
+                                let k = next.fetch_add(OBJECT_CHUNK, std::sync::atomic::Ordering::Relaxed);
+                                if k >= objects.len() {
+                                    break;
+                                }
+                                for &oi in &objects[k..(k + OBJECT_CHUNK).min(objects.len())] {
+                                    c.guard((oi, ANY_ROUTINE), |c| c.check_object(oi));
+                                    c.take_calls();
+                                }
+                            }
+                            WorkerOut {
+                                panicked: c.panicked,
+                                diags: c.diags,
+                                types: c.types,
+                                resolutions: c.resolutions,
+                            }
+                        })
+                        .expect("spawn a check worker")
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("a check worker panicked"))
+                .collect()
+        });
+        let mut types = vec![std::mem::take(&mut self.types)];
+        let mut resolutions = vec![std::mem::take(&mut self.resolutions)];
+        for out in outs {
+            self.panicked.extend(out.panicked);
+            self.diags.extend(out.diags);
+            types.push(out.types);
+            resolutions.push(out.resolutions);
+        }
+        self.types = PosMap::union(types);
+        self.resolutions = PosMap::union(resolutions);
+    }
+
     /// The fixpoint, a round at a time: the first round checks the workspace's `objects`; each
     /// round after it activates what the one before raised and checks what it reached, until a
     /// round has nothing left to do. The order within a round does not matter (everything only
@@ -991,6 +1046,9 @@ const CHUNK_MAX: usize = 32;
 
 /// A round with fewer tasks than this is done on the calling thread.
 const PARALLEL_MIN: usize = 48;
+
+/// Objects a thread of `check_objects_parallel` takes at a time.
+const OBJECT_CHUNK: usize = 2;
 
 /// Stack of a check worker: the checker recurses on the nesting of the code it reads.
 const WORKER_STACK: usize = 64 << 20;

@@ -35,8 +35,42 @@ Several buckets can be named in one run (all 32 together: 40300 tests, one compi
 
 ## Reading the result
 
-There is no test data (ADR-020 is Proposed). Microsoft's tests expect a CRONUS company, so most failures are missing
-setup data. The not-run counts and their reasons are the measurement; use `--top-refusals N`. The failures are not.
+Without `--test-data` there is no company data. Microsoft's tests expect a CRONUS company, so most failures are
+missing setup data. The not-run counts and their reasons are the measurement; use `--top-refusals N`. The failures
+are not.
+
+With `--test-data` (ADR-020) the cached demo backup of the same build (`~/.bcartifacts.cache/sandbox/27.5.46862.48827/w1/`)
+is restored table by table when a test first touches the table: add `--test-data` to the command above, and
+`--top-failures N` to rank the failure messages. Measured on 2026-10-14 (branch `test-data`; 4 threads each for
+check, lowering and tests; one run each; under `MemoryMax=4G`):
+
+| Bucket | Test data | Passed | Failed | Not run | Run | Total | Peak memory |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Tests-SMB | off | 6 | 6 | 1018 | 0.14 s | 3.17 s | 1810 MB |
+| Tests-SMB | on | 10 | 3 | 1017 | 0.19 s | 3.64 s | 1818 MB |
+| Tests-ERM | off | 224 | 121 | 8988 | 0.24 s | 4.54 s | 2840 MB |
+| Tests-ERM | on | 431 | 9 | 8893 | 2.18 s | 6.18 s | 2916 MB |
+
+With test data Tests-SMB loads 2953 rows from 97 tables and Tests-ERM 15350 rows from 165 tables; no table is
+refused. The data costs nothing before a table is touched, which is why the run phase grows only with the tests that
+now get far enough to run (ERM: 2.18 s for 431 passing tests instead of 0.24 s).
+
+### Failures with test data
+
+Every failure of the two buckets, ranked by `--top-failures`. Triage rule (the AL Runner v2 skill): a failure
+is a data-recipe difference when the runtime did the right thing for the company it was handed. None of these are.
+
+| Count | Message (numbers and quoted values folded) | Bucket | Cause |
+|---:|---|---|---|
+| 3 | `The Office Add-in does not exist. ... Application ID=<name>` | SMB | Runtime gap. The test that creates the default add-ins (`CreateDefaultAddinsWhenPageRuns`) is not run (`Uri.Scheme` is a DotNet value used as an operand), and three later tests of the codeunit rely on its rows. The backup holds no Office Add-in row |
+| 4 | `An error was expected inside an ASSERTERROR statement.` | ERM | Runtime. `Validate` of `Price List Line."Amount Type"` raises nothing (2 tests); validating `Bank Account` with an export code of the wrong direction raises nothing (2 tests); not investigated further, probably a TableRelation filter that `Validate` does not enforce |
+| 3 | `The record in table <Positive Pay Entry / Purch. Comment Line Archive> already exists ...` | ERM | Runtime. `CreateGuid` is deterministic with a counter in the last 8 bytes, so `CopyStr(Format(CreateGuid()), 1, 20)` is `{00000000-0000-4000-` for every Guid. Both tables are empty in the backup |
+| 1 | `Assert.ExpectedError failed. Expected: Bal. Account Type must not be   in Payment Registration Setup. Actual: ... must have a value ...` | ERM | Runtime. The text of a TestField error on an Option whose blank member is a space |
+| 1 | `The User Personalization does not exist. ... User SID=<name>` | ERM | Runtime. The platform table has no row for the test user |
+
+Without test data Tests-ERM failed 121 tests; the first 30 failures are missing setup data (`General Posting Setup`
+must contain records, `Sales & Receivables Setup`, `Tax Setup` and `Purchases & Payables Setup` do not exist, a date
+calculation on an undefined date).
 
 ## Measured (4 threads each for check, lowering and tests; one run per bucket; under `MemoryMax=3G`)
 

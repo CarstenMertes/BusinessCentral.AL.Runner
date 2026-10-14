@@ -122,10 +122,17 @@ install scope the store refuses `Modify`, `Delete`, `Rename` and `DeleteAll` of 
 exists"; an `Insert` of a new key adds a row. A refused root stops where it stops: an install trigger is
 rolled back and `Company-Initialize` keeps the rows before it, both reported as before.
 
+### Measured (2026-10-14, 27.5 recipe, `docs/alrunner-buckets.md`)
+
+Tests-SMB: 6 passed, 6 failed, 1018 not run without test data; 10, 3 and 1017 with it (2953 rows from 97
+tables, 3.64 s in all, 1818 MB). Tests-ERM: 224, 121 and 8988 without; 431, 9 and 8893 with (15350 rows
+from 165 tables, 6.2 s, 2.9 GB, the same peak as without within 3 percent). No install root was refused by
+the restored-row guard in either bucket. The failures that remain are listed in the buckets document and are
+runtime defects, not differences between the restored company and a freshly prepared one.
+
 ## Consequences
 
-- `--test-data` can be implemented without a .NET process and without a second program on the
-  path. Nothing is built on the loader design in point 3 until it is accepted.
+- `--test-data` needs no .NET process and no second program on the path.
 - The reader's memory use is bounded by one table's rows in flight; the page map (about 1 MB
   for the 28.1 demo backup) is the only whole-file state.
 - Every behaviour of the port is held to the published bcdb by `crates/al-bcdb-cli/tests/differential.rs`

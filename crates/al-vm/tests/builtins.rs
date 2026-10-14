@@ -499,12 +499,13 @@ fn notification_scope_and_actions_are_accepted() {
     assert_eq!(r.unwrap(), "Yes");
 }
 
+// handlers/TestNotificationSendRecallContracts.al:65-69: a notification nobody set reads empty.
 #[test]
-fn notification_reads_that_the_corpus_does_not_pin_are_refused() {
-    for body in ["if n.GetData('missing') = '' then;", "if n.Message() = '' then;"] {
-        let r = notification(&format!("{body} exit('');"));
-        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
-    }
+fn a_notification_nobody_set_reads_empty() {
+    let r = notification(
+        "exit(n.Message() + '|' + n.GetData('missing') + '|' + Format(n.Scope()) + '|' + Format(n.HasData('k')));",
+    );
+    assert_eq!(r.unwrap(), "||LocalScope|No");
 }
 
 // ---------------------------------------------------------------- ErrorInfo

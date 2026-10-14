@@ -35,6 +35,10 @@ pub enum Gate {
     /// `ReportCaption` element after `ReportName` and, after `Minute`, the company information
     /// block. Before, it has neither.
     ReportSaveAsXmlHeaderHasCompanyBlock,
+    /// Every `DataItem` element of the dataset XML that `Report.SaveAs` writes carries
+    /// ` tableId="<table id>" systemId="<guid>"` after its name. Before BC 28 it carries neither
+    /// (27.5 absent, 28.5 and 29.0 present; BC 28.0 to 28.4 were not measured).
+    ReportSaveAsDataItemIdentity,
 }
 
 impl Gate {
@@ -44,6 +48,7 @@ impl Gate {
         Gate::SuperPermissionSetIgnoresAppId,
         Gate::NotSaaSInfrastructure,
         Gate::ReportSaveAsXmlHeaderHasCompanyBlock,
+        Gate::ReportSaveAsDataItemIdentity,
     ];
 
     /// The first BC major with the new behaviour.
@@ -54,6 +59,7 @@ impl Gate {
             | Gate::SuperPermissionSetIgnoresAppId
             | Gate::NotSaaSInfrastructure
             | Gate::ReportSaveAsXmlHeaderHasCompanyBlock => 29,
+            Gate::ReportSaveAsDataItemIdentity => 28,
         }
     }
 
@@ -79,6 +85,10 @@ impl Gate {
             Gate::ReportSaveAsXmlHeaderHasCompanyBlock => &[Evidence {
                 file: "handlers/TestReportSaveAsDatasetContracts.al",
                 lines: "243",
+            }],
+            Gate::ReportSaveAsDataItemIdentity => &[Evidence {
+                file: "handlers/TestReportSaveAsDatasetContracts.al",
+                lines: "299",
             }],
         }
     }
@@ -108,8 +118,9 @@ mod tests {
     #[test]
     fn a_gate_opens_at_its_major() {
         for g in Gate::ALL {
+            let since = g.since_bc();
             assert!(!target("27.5").has(*g), "{g:?}");
-            assert!(!target("28.5").has(*g), "{g:?}");
+            assert_eq!(target("28.5").has(*g), since <= 28, "{g:?}");
             assert!(target("29").has(*g), "{g:?}");
         }
     }

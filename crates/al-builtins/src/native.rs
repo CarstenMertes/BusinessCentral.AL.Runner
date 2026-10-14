@@ -177,13 +177,15 @@ pub trait Ctx: FormatCtx {
     fn ui_confirm(&mut self, _question: String, _default: bool) -> Result<bool, Signal> {
         Err(Signal::Unsupported("Confirm: this context has no UI".into()))
     }
-    /// `Notification.Send()`: hands a copy of the notification (and its id, when set) to the bound
-    /// `[SendNotificationHandler]`.
-    fn ui_send_notification(&mut self, _notification: Value, _id: Option<[u8; 16]>) -> Result<(), Signal> {
+    /// `Notification.Send()`: hands a copy of the notification (with its id) to the bound
+    /// `[SendNotificationHandler]`, if there is one, and answers the notification as the handler
+    /// left it. With no handler nothing is shown and `None` comes back.
+    fn ui_send_notification(&mut self, _notification: Value, _id: [u8; 16]) -> Result<Option<Value>, Signal> {
         Err(Signal::Unsupported("Notification.Send: this context has no UI".into()))
     }
-    /// `Notification.Recall()` for the notification with this id.
-    fn ui_recall_notification(&mut self, _id: Option<[u8; 16]>) -> Result<(), Signal> {
+    /// `Notification.Recall()` of the notification with this id: false when it was never sent.
+    /// A bound `[RecallNotificationHandler]` gets a copy of the notification.
+    fn ui_recall_notification(&mut self, _notification: Value, _id: [u8; 16]) -> Result<bool, Signal> {
         Err(Signal::Unsupported(
             "Notification.Recall: this context has no UI".into(),
         ))

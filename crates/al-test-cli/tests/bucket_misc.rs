@@ -92,30 +92,60 @@ fn a_send_notification_handler_that_never_fires_fails_the_test() {
     assert!(matches!(&o[0].1, Outcome::Fail(_)), "{o:?}");
 }
 
-// No corpus test sends without a handler, recalls a notification nobody sent, or has a handler
-// answer false: refused.
+// handlers/TestNotificationSendRecallContracts.al:59-75, 123-131 (BC 27.5): a notification nobody set has an
+// empty message, LocalScope, no data and the null Guid for an id; Send without a handler shows nothing, raises
+// nothing, returns true and gives it an Id; Recall of a sent notification returns true, of one never sent false.
 #[test]
-fn send_without_a_handler_is_refused() {
-    not_run(
-        "[Test] procedure NoHandler() var N: Notification; begin N.Message('x'); N.Send(); end;",
-        "Notification.Send without a [SendNotificationHandler]",
-    );
+fn a_fresh_notification_has_empty_defaults_and_send_gives_it_an_id() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Defaults() var N: Notification; Null: Guid; begin
+            Check('', N.Message()); Check('LocalScope', Format(N.Scope())); Check('No', Format(N.HasData('k')));
+            Check('', N.GetData('k')); Check('Yes', Format(N.Id() = Null));
+            N.Message('no handler');
+            Check('Yes', Format(N.Send())); Check('No', Format(N.Id() = Null));
+            Check('Yes', Format(N.Recall())); end;
+        [Test]
+        procedure NeverSent() var N: Notification; begin N.Message('never sent'); Check('No', Format(N.Recall())); end;
+        [Test]
+        procedure NeverSentWithAnId() var N: Notification; begin N.Id := CreateGuid(); Check('No', Format(N.Recall())); end;"
+    ));
 }
 
+// :77-93: a handler that answers false still gets true back from Send, it sees the sender's message, scope and data,
+// and its change to the message is seen by the sender afterwards.
 #[test]
-fn recall_of_a_notification_nobody_sent_is_refused() {
-    not_run(
-        "[Test] procedure Unsent() var N: Notification; begin N.Id := CreateGuid(); N.Recall(); end;",
-        "Notification.Recall of a notification that was not sent",
-    );
+fn send_returns_true_for_a_handler_answering_false_and_the_sender_sees_the_change() {
+    passes(&format!(
+        "{HELPERS}
+        var Log: Text;
+        [Test] [HandlerFunctions('Handler')]
+        procedure False1() var N: Notification; begin
+            Log := ''; N.Message('hello'); N.SetData('k', 'v');
+            Check('Yes', Format(N.Send()));
+            Check('send msg=hello data=v;', Log); Check('changed', N.Message()); end;
+        [SendNotificationHandler] procedure Handler(var Notif: Notification): Boolean begin
+            Log += 'send msg=' + Notif.Message() + ' data=' + Notif.GetData('k') + ';'; Notif.Message('changed'); exit(false); end;"
+    ));
 }
 
+// :95-109: Recall runs the [RecallNotificationHandler] with the sender's current notification; :111-121: Recall after
+// a Send with no recall handler returns true.
 #[test]
-fn a_handler_that_answers_false_is_refused() {
-    not_run(
-        "[Test] [HandlerFunctions('Handler')]
-        procedure False1() var N: Notification; begin N.Message('x'); N.Send(); end;
-        [SendNotificationHandler] procedure Handler(var Notif: Notification): Boolean begin exit(false); end;",
-        "only true is pinned",
-    );
+fn recall_runs_the_recall_handler_with_the_current_notification() {
+    passes(&format!(
+        "{HELPERS}
+        var Log: Text;
+        [Test] [HandlerFunctions('SendH,RecallH')]
+        procedure Both() var N: Notification; begin
+            Log := ''; N.Message('hello'); Check('Yes', Format(N.Send())); Check('changed too', N.Message());
+            Check('Yes', Format(N.Recall())); Check('send msg=hello;recall msg=changed too;', Log); end;
+        [Test] [HandlerFunctions('SendH')]
+        procedure NoRecallHandler() var N: Notification; begin N.Message('hello'); N.Send(); Check('Yes', Format(N.Recall())); end;
+        [SendNotificationHandler] procedure SendH(var Notif: Notification): Boolean begin
+            Log += 'send msg=' + Notif.Message() + ';'; Notif.Message('changed too'); exit(true); end;
+        [RecallNotificationHandler] procedure RecallH(var Notif: Notification): Boolean begin
+            Log += 'recall msg=' + Notif.Message() + ';'; exit(true); end;"
+    ));
 }

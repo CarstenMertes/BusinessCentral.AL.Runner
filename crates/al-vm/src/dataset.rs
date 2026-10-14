@@ -236,7 +236,7 @@ impl Dataset {
     }
 
     /// Opens a row of a data item: `<DataItem ..>` and its `Columns`.
-    pub(crate) fn begin(&mut self, name: &str, columns: &[Column]) {
+    pub(crate) fn begin(&mut self, name: &str, identity: Option<(u32, &str)>, columns: &[Column]) {
         let depth = self.open.len();
         if depth == 0 {
             if !self.root {
@@ -256,6 +256,10 @@ impl Dataset {
                 .push_str(&format!(" language=\"{LANGUAGE}\" formatRegion=\"{LANGUAGE}\""));
         }
         self.body.push_str(&format!(" name=\"{name}\""));
+        // From BC 28 (`Gate::ReportSaveAsDataItemIdentity`): the data item's table id and a GUID.
+        if let Some((table, guid)) = identity {
+            self.body.push_str(&format!(" tableId=\"{table}\" systemId=\"{guid}\""));
+        }
         self.body.push_str(">\n");
         self.pad(at + 2);
         self.body.push_str("<Columns>\n");

@@ -881,6 +881,10 @@ impl Session {
             self.bg_refuse_write(t.object as usize, method)?;
             self.gate_write(method)?;
             self.user_bulk_refusal(&t, rec.borrow().temporary, method)?;
+            // A write call starts the transaction, also a DeleteAll that finds no row
+            // (session/TestClearAllTransactionTypeContracts.al:245-252, session/TestDatabaseExtended.al:
+            // Database_CurrentTransactionType_SetAfterWriteOp_Throws over fixture DeleteAlls).
+            self.tx_wrote = true;
         }
         match method {
             "Init" => {

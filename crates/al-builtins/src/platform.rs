@@ -236,7 +236,7 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (
         2_000_000_138,
         &[
-            1, 2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
+            1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
         ],
     ),
     // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
@@ -266,8 +266,9 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Report Metadata, Report Data Items: handlers/TestReportMetadataColumns.al.
     (2_000_000_139, &[1, 4, 9, 17, 18]),
     (2_000_000_203, &[1, 2, 3, 4, 5, 6, 7, 8]),
-    // XmlPort Metadata: xmlport/TestXmlPortMetadataVirtualTable.al. Encoding (7) and the Inherent* columns are not read.
-    (2_000_000_280, &[1, 2, 3, 4, 5, 6, 8, 9, 10]),
+    // XmlPort Metadata: xmlport/TestXmlPortMetadataVirtualTable.al, and Encoding (7) from
+    // xmlport/TestPlatformMetadataDefaultsContracts.al:93. The Inherent* columns are not read.
+    (2_000_000_280, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
     // Query Metadata: query/TestQueryMetadataVirtualTable.al. Category (9) is not read.
     (2_000_000_142, &[1, 2, 3, 4, 5, 6, 7, 8, 10]),
     // Event Subscription: record/TestEventSubscriptionVirtualTable.al. "Number of Calls" and later columns are not read.

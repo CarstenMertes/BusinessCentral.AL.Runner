@@ -209,6 +209,14 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
     r[pos(t, 2)] = Value::Text(o.name.clone());
     r[pos(t, 5)] = option(t, 5, page_type);
     // BC's own placeholder for a declared DataCaptionExpression (TestPageMetadataProperties.al:23-26).
+    // The page named in CardPageId, 0 when it states none
+    // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:305-315).
+    r[pos(t, 6)] = Value::Integer(match prop(o, "CardPageId") {
+        None => 0,
+        Some(v) => c
+            .id_of("page", v)
+            .map_err(|why| format!("page '{}': CardPageId {why}", o.name))? as i32,
+    });
     r[pos(t, 7)] = Value::Text(
         if prop(o, "DataCaptionExpression").is_some() {
             "DataCaptionExprCode"

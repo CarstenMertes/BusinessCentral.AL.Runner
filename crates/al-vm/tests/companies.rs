@@ -345,20 +345,81 @@ fn deleting_a_company_drops_its_rows() {
     assert_eq!(out, "0;");
 }
 
+// ---- record/TestChangeCompanyFiltersCopyDeleteContracts.al (BC 27.5) -------------------------------------------
+
 #[test]
-fn what_the_corpus_does_not_pin_is_refused() {
-    // A temporary record has no company rows; a ChangeCompany whose answer is dropped and whose
-    // company does not exist; a record with filters changing company.
-    let why = refusal(
-        &format!("{NEW_CO} T: Record \"CC Row\" temporary;"),
-        &format!("{MAKE_CO} T.ChangeCompany('OTHER'); exit('');"),
+fn a_missing_company_is_false_when_the_result_is_used_and_an_error_when_it_is_not() {
+    // :215-231. The session company is the first row of the Company table here, so the session name exists.
+    let out = text(
+        "R: Record \"CC Row\"; T: Record \"CC Row\" temporary; ok: Boolean; s: Text;",
+        "ok := R.ChangeCompany('NoSuchCompany'); s += Format(ok) + Format(R.CurrentCompany() = CompanyName());
+         asserterror R.ChangeCompany('NoSuchCompany');
+         s += '|' + GetLastErrorText() + '|' + GetLastErrorCode();
+         ok := T.ChangeCompany('NoSuchCompany'); s += '|' + Format(ok); exit(s);",
     );
-    assert!(why.contains("temporary"), "{why}");
-    let why = refusal("R: Record \"CC Row\";", "R.ChangeCompany('NOPE'); exit('');");
-    assert!(why.contains("not pinned"), "{why}");
-    let why = refusal(
-        &format!("{NEW_CO} R: Record \"CC Row\";"),
-        &format!("{MAKE_CO} R.SetRange(Id, 1); R.ChangeCompany('OTHER'); exit('');"),
+    assert_eq!(
+        out,
+        "NoYes|The company \"NoSuchCompany\" does not exist.|DB:RecordNotFound|No"
     );
-    assert!(why.contains("filter"), "{why}");
+}
+
+#[test]
+fn the_company_name_is_case_sensitive() {
+    // :234-246.
+    let out = text(
+        "R: Record \"CC Row\"; ok: Boolean; s: Text;",
+        "ok := R.ChangeCompany(''); s += Format(ok) + Format(R.CurrentCompany() = CompanyName());
+         ok := R.ChangeCompany(LowerCase(CompanyName())); s += '|' + Format(ok) + Format(R.CurrentCompany() = CompanyName()); exit(s);",
+    );
+    assert_eq!(out, "YesYes|NoYes");
+}
+
+#[test]
+fn record_ref_open_on_a_missing_company_raises_the_same_error() {
+    // :249-257.
+    let out = text(
+        "Ref: RecordRef;",
+        "asserterror Ref.Open(50910, false, 'NoSuchCompany'); exit(GetLastErrorText() + '|' + GetLastErrorCode());",
+    );
+    assert_eq!(out, "The company \"NoSuchCompany\" does not exist.|DB:RecordNotFound");
+}
+
+#[test]
+fn change_company_keeps_the_filters_the_marks_and_works_on_a_temporary_record() {
+    // :25-62 (the company arm): filters, the current key and the marks stay; a temporary record keeps its rows.
+    let out = text(
+        &format!("{NEW_CO} R: Record \"CC Row\"; T: Record \"CC Row\" temporary; s: Text;"),
+        &format!(
+            "R.Id := 1; R.Insert(); R.Mark(true); R.SetFilter(Id, '>0');
+             {MAKE_CO}
+             {} s += R.GetFilter(Id) + '|';
+             T.Id := 5; T.Insert(); {} {}
+             exit(s);",
+            log("R.ChangeCompany('OTHER')"),
+            log("T.ChangeCompany('OTHER')"),
+            log("T.Count()"),
+        ),
+    );
+    assert_eq!(out, "Yes;>0|Yes;1;");
+}
+
+// ---- session/TestCrmTableNoConnectionContracts.al:111-118 (BC 27.5) --------------------------------------------
+
+#[test]
+fn record_ref_open_of_a_crm_table_without_a_connection_raises_the_connection_error() {
+    let tables = format!(
+        "{TABLES}\ntable 50920 \"CC Crm\" {{ TableType = CRM; fields {{ field(1; Id; Guid) {{ }} }} keys {{ key(PK; Id) {{ }} }} }}\n"
+    );
+    let out = match run_with(
+        &tables,
+        "Ref: RecordRef;",
+        "asserterror Ref.Open(50920); exit(GetLastErrorText() + '|' + GetLastErrorCode());",
+    ) {
+        Ok(Value::Text(s)) => s,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        out,
+        "Table connection  for table type CRM must be registered using RegisterTableConnection or cmdlet New-NAVTableConnection before it can be used.|Argument"
+    );
 }

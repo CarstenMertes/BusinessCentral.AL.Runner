@@ -357,7 +357,7 @@ Nothing here is built: every item needs `Expr::DotNetOperand`, which is the buil
 
 ## Build notes, slice 1 (2026-10-14, branch adr-024)
 
-The probe app `tests/al-language-onprem-dotnet/` (corpus branch `al-runtime-rs`, codeunit 61400) is a
+The probe app `tests/al-language-onprem-dotnet/` (corpus `tests/al-language-onprem-dotnet/`, codeunit 61400) is a
 local-container result: CI cannot compile it (it needs AL 18), so it has no oracle and is not in the corpus
 submodule. Code comments cite it by corpus path.
 

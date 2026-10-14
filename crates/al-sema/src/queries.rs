@@ -539,8 +539,7 @@ impl Builder<'_> {
     /// Combinations whose result the corpus does not pin.
     fn validate(&mut self) {
         // Aggregates over a left outer join skip the missing side: sum 0 and count 0 for a parent
-        // without children (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch
-        // now in the corpus).
+        // without children (query/TestQueryOuterJoinDescendingSaveAsContracts.al).
         // Groups without an OrderBy (query/TestQueryAggregation.al always orders its groups) have no
         // pinned order, but that only matters when a run produces several: the VM refuses then
         // (`Session::query_rows`), so a query like Base App's 1302 can be declared and used.

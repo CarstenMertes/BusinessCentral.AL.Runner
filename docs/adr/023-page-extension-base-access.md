@@ -165,7 +165,7 @@ R2. A public (non-protected) procedure of the base report from the extension, an
 R3. A `protected var` of type Dialog, Record and List in the base report, used from the extension (`Window.Open`, `Update`, `Close`).
 R4. Two reportextensions of one report that both change the run: today refused; whether they share the base variable (they would, under this ADR).
 
-## Pinned (2026-10-14, BC 27.5 container; corpus branch `al-runtime-rs`, cite by path until the submodule bump)
+## Pinned (2026-10-14, BC 27.5 container; corpus `tests/al-language/handlers/` and `reportextensiontrigger/`)
 
 `base_access::PINNED` holds P1, P2, P4, P5, P9, P10, R1, R3, citing
 `handlers/TestPageExtensionBaseAccessContracts.al` (275, 288, 310, 326),
@@ -224,4 +224,4 @@ Table extensions (a tableextension has the same problem for the table's `protect
 
 ## Conformance
 
-On acceptance: the probe tests above (corpus branch), the existing `an_extension_naming_a_variable_of_its_base_page_is_refused_with_that_reason` in `al-sema/src/lower.rs` replaced by tests that lower and run the same code, one VM test per decision 3 rule in `al-vm/tests/pageext.rs` and `al-vm/tests/reportext_calls.rs`, and the 2962-test measurement repeated with the recipe in `docs/alrunner-buckets.md` (report the new refusal reasons).
+On acceptance: the probe tests above (corpus), the existing `an_extension_naming_a_variable_of_its_base_page_is_refused_with_that_reason` in `al-sema/src/lower.rs` replaced by tests that lower and run the same code, one VM test per decision 3 rule in `al-vm/tests/pageext.rs` and `al-vm/tests/reportext_calls.rs`, and the 2962-test measurement repeated with the recipe in `docs/alrunner-buckets.md` (report the new refusal reasons).

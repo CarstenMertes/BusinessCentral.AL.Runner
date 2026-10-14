@@ -1,5 +1,4 @@
-//! Page, part, handler and report contracts pinned by the probe tests of the corpus branch
-//! `al-runtime-rs`. AL source -> compile -> run as a test codeunit. Each test names the probe it
+//! Page, part, handler and report contracts pinned by probe tests of the corpus. AL source -> compile -> run as a test codeunit. Each test names the probe it
 //! mirrors.
 
 use al_sema::workspace::AppSource;

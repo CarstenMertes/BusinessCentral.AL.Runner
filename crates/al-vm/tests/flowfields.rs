@@ -77,6 +77,13 @@ fn text(r: Result<Value, Signal>) -> String {
     }
 }
 
+fn unsupported(r: Result<Value, Signal>) -> String {
+    match r {
+        Err(Signal::Unsupported(s)) => s,
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
 /// Seeds parent 1 with two children (30 and 50) and parent 2 with one (7).
 const SEED: &str = "
     procedure Seed()
@@ -1353,8 +1360,8 @@ fn a_flow_filter_of_the_source_fields_type_applies_and_another_type_is_refused()
     assert!(unsupported(r).contains("flow filter of another type"));
 }
 
-// A lookup over several rows that agree is the value they agree on; only disagreeing rows are
-// refused (see lookup_over_rows_that_disagree_is_refused).
+// A lookup over several rows that agree is the value they agree on (disagreeing rows read the
+// first in primary key order: lookup_over_rows_that_disagree_reads_the_first_in_primary_key_order).
 #[test]
 fn lookup_over_rows_that_agree_returns_their_value() {
     let r = run_ffx(

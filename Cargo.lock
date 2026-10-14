@@ -139,6 +139,7 @@ dependencies = [
  "al-testrun",
  "al-version",
  "al-vm",
+ "libc",
  "mimalloc",
  "quick-xml",
  "serde",

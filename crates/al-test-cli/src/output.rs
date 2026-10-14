@@ -53,7 +53,7 @@ pub fn markdown(r: &Report) -> String {
         s.push_str(&format!("\nTests by test app: {}.\n", by_app.join(", ")));
         if let Some(d) = &t.dotnet {
             s.push_str(&format!(
-                "\n{}. Starting a sidecar is part of Tests, not of the runtime; the perf budget leaves it out.\n",
+                "\n{}. Time spent waiting for a sidecar is part of Tests but is not the runtime; the perf budget leaves it out.\n",
                 d.line()
             ));
         }
@@ -306,6 +306,8 @@ mod tests {
             processes: 2,
             start_s: 2.5,
             start_max_s: 1.5,
+            find_s: 0.25,
+            waited_s: 0.5,
             calls: 35,
             calls_s: 0.25,
         });
@@ -313,7 +315,7 @@ mod tests {
         let md = markdown(&r);
         assert!(
             md.contains(
-                "2 .NET sidecar process(es) started: starting 2.50 s in total, 1.50 s at most; 35 request(s) 0.25 s"
+                "2 .NET sidecar process(es) started: starting 2.50 s in total, 1.50 s at most; finding dotnet 0.25 s; sessions waited 0.50 s for theirs; 35 request(s) 0.25 s"
             ),
             "{md}"
         );

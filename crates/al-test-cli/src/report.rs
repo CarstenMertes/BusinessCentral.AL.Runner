@@ -93,6 +93,13 @@ pub struct DotNetTimes {
     pub start_s: f64,
     /// The longest single start.
     pub start_max_s: f64,
+    /// Finding `dotnet` and the sidecar (`dotnet --list-runtimes`), once per run.
+    #[serde(default)]
+    pub find_s: f64,
+    /// How long sessions waited for their process. With standby processes (started while the
+    /// compile ran) this is far less than `start_s`; it is the part that adds to the tests phase.
+    #[serde(default)]
+    pub waited_s: f64,
     pub calls: usize,
     /// Time inside `DotNet` requests after the start, summed over all sessions.
     pub calls_s: f64,
@@ -100,10 +107,12 @@ pub struct DotNetTimes {
 
 impl DotNetTimes {
     pub fn of(s: &crate::dotnet::SidecarStats) -> Option<DotNetTimes> {
-        (s.started > 0).then(|| DotNetTimes {
+        (s.started > 0).then_some(DotNetTimes {
             processes: s.started,
             start_s: s.start_total.as_secs_f64(),
             start_max_s: s.start_max.as_secs_f64(),
+            find_s: s.find_total.as_secs_f64(),
+            waited_s: s.waited_total.as_secs_f64(),
             calls: s.calls,
             calls_s: s.call_total.as_secs_f64(),
         })
@@ -112,8 +121,8 @@ impl DotNetTimes {
     /// One line, for `--timings` and the markdown report.
     pub fn line(&self) -> String {
         format!(
-            "{} .NET sidecar process(es) started: starting {:.2} s in total, {:.2} s at most; {} request(s) {:.2} s",
-            self.processes, self.start_s, self.start_max_s, self.calls, self.calls_s
+            "{} .NET sidecar process(es) started: starting {:.2} s in total, {:.2} s at most; finding dotnet {:.2} s; sessions waited {:.2} s for theirs; {} request(s) {:.2} s",
+            self.processes, self.start_s, self.start_max_s, self.find_s, self.waited_s, self.calls, self.calls_s
         )
     }
 }

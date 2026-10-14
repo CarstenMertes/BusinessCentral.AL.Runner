@@ -328,6 +328,11 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         }
     }
     let sidecar_host = host.clone();
+    if !dependencies.apps.is_empty() {
+        // The Microsoft apps call .NET (Media, images). Start the helper processes now so the
+        // starts overlap the compile; a run without them starts nothing (ADR-014 section 6).
+        sidecar_host.prewarm(al_testrun::dotnet::STANDBY_SIDECARS);
+    }
     let dotnet = al_vm::dotnet::DotNetConfig {
         host,
         ..Default::default()
@@ -354,6 +359,8 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         &opts,
     );
     let p = &rt.phases;
+    let d = sidecar_host.stats();
+    sidecar_host.shutdown();
 
     // The selected tests, in a stable order: app, codeunit, then declaration order.
     let mut results: Vec<&TestResult> = rt
@@ -390,13 +397,14 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             })
             .collect();
         eprintln!("slowest test codeunits: {}", slowest.join("; "));
-        let d = sidecar_host.stats();
         if d.started > 0 {
             eprintln!(
-                "dotnet: {} .NET sidecar process(es) started: starting {} in total, {} at most; {} request(s) {}",
+                "dotnet: {} .NET sidecar process(es) started: starting {} in total, {} at most; finding dotnet {}; sessions waited {} for theirs; {} request(s) {}",
                 d.started,
                 secs(d.start_total),
                 secs(d.start_max),
+                secs(d.find_total),
+                secs(d.waited_total),
                 d.calls,
                 secs(d.call_total)
             );

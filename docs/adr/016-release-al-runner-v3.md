@@ -533,6 +533,7 @@ test buckets as the first real target. Each item is easy to change.
 - **Not-run tests are the measurement.** With no test data (ADR-020 is Proposed) Microsoft's tests fail on missing
   setup data, so the summary line says failures are not trusted. The ranking of refusal reasons is the output to
   act on.
+- **Measured on Microsoft's buckets**: `docs/alrunner-buckets.md` has the recipe and the numbers for all 32 buckets.
 - **A run never ends in a panic of the lowering.** A binary expression the parser left with one operand is refused
   in its routine (a page field source with a hyphen in its name reached the synthetic source routine unquoted, which
   panicked and ended the whole Tests-ERM run). The cause, in `al-sema/src/pages.rs` (`Section::args` drops the quotes

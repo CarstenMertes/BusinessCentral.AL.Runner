@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod error;
 pub mod io;
 pub mod lob;
+pub(crate) mod model;
 pub mod mtf;
 pub mod pagefile;
 pub mod query;

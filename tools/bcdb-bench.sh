@@ -112,8 +112,8 @@ company = sys.argv[1].upper()
 n = 0
 for line in sys.stdin:
     head, _, rest = line.rstrip("\n").partition("\t")
-    parts = head.split()
-    rows, comp = int(parts[0]), parts[-1]
+    parts = head.split(None, 2)          # rows, compression, company (which may contain spaces)
+    rows, comp = int(parts[0]), parts[2].strip()
     name = rest.split("\t")[0]
     if rows == 0: continue
     if comp != "-" and not comp.upper().startswith(company): continue
@@ -127,7 +127,7 @@ for line in sys.stdin:
 pick_tables() {
   local file=$1
   "$PORT" tables "$file" 2>/dev/null | awk -F'\t' -v c="$COMPANY" '
-    { split($1, h, " "); rows=h[1]; comp=h[length(h)]; name=$2
+    { n=split($1, h, " "); rows=h[1]; comp=$1; sub(/^ *[0-9]+ +[^ ]+ +/, "", comp); name=$2
       if (toupper(substr(comp,1,length(c))) != toupper(c)) next
       if (rows+0 > best) { best=rows+0; big=name; bigc=comp }
     } END { print big "\t" bigc }'

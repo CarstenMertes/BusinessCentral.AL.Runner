@@ -10,6 +10,7 @@
 use crate::bcp::{BacpacColumn, BcpRowReader};
 use crate::error::{Error, Result};
 use crate::io::ByteSource;
+use crate::model::ModelScan;
 use crate::source::{BcSource, SourceTable};
 use crate::types::SysColumn;
 use crate::value::Value;
@@ -51,47 +52,14 @@ pub struct BacpacSource {
     row_counts: Mutex<HashMap<usize, i64>>,
 }
 
-// ---- a minimal element tree, for the few model.xml subtrees that matter -------------
-
-struct Node {
-    name: String,
-    attrs: Vec<(String, String)>,
-    children: Vec<Node>,
-}
-
-impl Node {
-    fn attr(&self, k: &str) -> Option<&str> {
-        self.attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
-    }
-
-    /// `Relationship[@Name=relationship]/Entry/<leaf>` children: the one shape every
-    /// lookup in model.xml has.
-    fn under<'a>(&'a self, relationship: &'a str, leaf: &'a str) -> impl Iterator<Item = &'a Node> + 'a {
-        self.children
-            .iter()
-            .filter(move |r| r.name == "Relationship" && r.attr("Name") == Some(relationship))
-            .flat_map(|r| r.children.iter().filter(|e| e.name == "Entry"))
-            .flat_map(move |e| e.children.iter().filter(move |c| c.name == leaf))
-    }
-
-    fn first_under<'a>(&'a self, relationship: &'a str, leaf: &'a str) -> Option<&'a Node> {
-        self.under(relationship, leaf).next()
-    }
-
-    fn prop(&self, name: &str) -> Option<&str> {
-        self.children
-            .iter()
-            .filter(|c| c.name == "Property")
-            .find(|p| p.attr("Name") == Some(name))
-            .and_then(|p| p.attr("Value"))
-    }
-}
-
 fn xml_err(what: &str, e: impl std::fmt::Display) -> Error {
     crate::invalid!("{what}: {e}")
 }
 
-fn start_node(e: &quick_xml::events::BytesStart<'_>, what: &str) -> Result<Node> {
+/// Local name and attributes of a start tag.
+type StartTag = (String, Vec<(String, String)>);
+
+fn start_tag(e: &quick_xml::events::BytesStart<'_>, what: &str) -> Result<StartTag> {
     let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
     let mut attrs = Vec::new();
     for a in e.attributes() {
@@ -100,142 +68,7 @@ fn start_node(e: &quick_xml::events::BytesStart<'_>, what: &str) -> Result<Node>
         let v = a.unescape_value().map_err(|x| xml_err(what, x))?.into_owned();
         attrs.push((k, v));
     }
-    Ok(Node {
-        name,
-        attrs,
-        children: Vec::new(),
-    })
-}
-
-/// Read the subtree whose start tag was just consumed.
-fn read_subtree<R: std::io::BufRead>(reader: &mut Reader<R>, start: Node, buf: &mut Vec<u8>) -> Result<Node> {
-    let mut stack = vec![start];
-    loop {
-        buf.clear();
-        match reader.read_event_into(buf).map_err(|e| xml_err("model.xml", e))? {
-            Event::Start(e) => stack.push(start_node(&e, "model.xml")?),
-            Event::Empty(e) => {
-                let n = start_node(&e, "model.xml")?;
-                stack.last_mut().unwrap().children.push(n);
-            }
-            Event::End(_) => {
-                let done = stack.pop().unwrap();
-                match stack.last_mut() {
-                    Some(parent) => parent.children.push(done),
-                    None => return Ok(done),
-                }
-            }
-            Event::Eof => return Err(Error::InvalidData("model.xml ends inside an element".into())),
-            _ => {}
-        }
-    }
-}
-
-/// Splits a model.xml identifier `[a].[b]` or `[a].[b].[c]` into its bracketed parts.
-fn split_name(bracketed: &str) -> Result<(String, String, Option<String>)> {
-    let b = bracketed.as_bytes();
-    let mut parts: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] != b'[' {
-            return Err(crate::invalid!("model.xml: malformed identifier '{bracketed}'"));
-        }
-        // find the closing ']' that is not doubled
-        let mut j = i + 1;
-        loop {
-            match bracketed[j..].find(']') {
-                None => return Err(crate::invalid!("model.xml: malformed identifier '{bracketed}'")),
-                Some(k) => {
-                    let end = j + k;
-                    if end + 1 < b.len() && b[end + 1] == b']' {
-                        j = end + 2;
-                        continue;
-                    }
-                    parts.push(bracketed[i + 1..end].replace("]]", "]"));
-                    i = end + 1;
-                    break;
-                }
-            }
-        }
-        if i < b.len() && b[i] == b'.' {
-            i += 1;
-        }
-    }
-    let n = parts.len();
-    if n != 2 && n != 3 {
-        return Err(crate::invalid!("model.xml: identifier '{bracketed}' has {n} parts"));
-    }
-    let mut it = parts.into_iter();
-    let (p1, p2, p3) = (it.next().unwrap(), it.next().unwrap(), it.next());
-    Ok((p1, p2, p3))
-}
-
-fn parse_table(el: &Node) -> Result<(String, String, Vec<BacpacColumn>)> {
-    let (schema, table, _) = split_name(el.attr("Name").unwrap_or(""))?;
-    let mut cols = Vec::new();
-    for col in el.under("Columns", "Element") {
-        // Computed columns (SqlComputedColumn) are not stored and carry no data.
-        if col.attr("Type") != Some("SqlSimpleColumn") {
-            continue;
-        }
-        let qualified = col.attr("Name").unwrap_or("");
-        let col_name = split_name(qualified)?.2.ok_or_else(|| {
-            crate::invalid!("model.xml: column identifier '{qualified}' does not name a column of a table")
-        })?;
-        let nullable = col.prop("IsNullable") != Some("False");
-        let spec = col.first_under("TypeSpecifier", "Element").ok_or_else(|| {
-            crate::invalid!("model.xml: column [{schema}].[{table}].[{col_name}] has no type specifier")
-        })?;
-        let type_name = spec
-            .first_under("Type", "References")
-            .and_then(|r| r.attr("Name"))
-            .map(|n| n.trim_matches(|c| c == '[' || c == ']').to_string())
-            .ok_or_else(|| crate::invalid!("model.xml: column [{schema}].[{table}].[{col_name}] names no type"))?;
-        let (mut is_max, mut length, mut precision, mut scale) = (false, 0i32, 0u8, 0u8);
-        for p in spec.children.iter().filter(|c| c.name == "Property") {
-            let v = p.attr("Value");
-            let num = |what: &str| -> Result<i64> {
-                v.unwrap_or("0").parse::<i64>().map_err(|_| {
-                    crate::invalid!(
-                        "model.xml: column {col_name}: {what} '{}' is not a number",
-                        v.unwrap_or("")
-                    )
-                })
-            };
-            match p.attr("Name") {
-                Some("IsMax") => is_max = v == Some("True"),
-                Some("Length") => length = num("Length")? as i32,
-                Some("Precision") => precision = num("Precision")? as u8,
-                Some("Scale") => scale = num("Scale")? as u8,
-                _ => {}
-            }
-        }
-        cols.push(BacpacColumn::from_model(
-            &col_name, &type_name, nullable, is_max, length, precision, scale,
-        ));
-    }
-    Ok((schema, table, cols))
-}
-
-fn parse_key(el: &Node) -> Result<Option<(String, Vec<String>)>> {
-    let Some(target) = el
-        .first_under("DefiningTable", "References")
-        .and_then(|r| r.attr("Name"))
-    else {
-        return Ok(None);
-    };
-    let (schema, table, _) = split_name(target)?;
-    let mut cols = Vec::new();
-    for spec in el.under("ColumnSpecifications", "Element") {
-        if let Some(n) = spec.first_under("Column", "References").and_then(|r| r.attr("Name")) {
-            cols.push(split_name(n)?.2.unwrap_or_default());
-        }
-    }
-    Ok(if cols.is_empty() {
-        None
-    } else {
-        Some((format!("{schema}.{table}"), cols))
-    })
+    Ok((name, attrs))
 }
 
 /// A reader that hashes every byte that passes through it.
@@ -268,19 +101,19 @@ fn scan_small(xml: &[u8], what: &str) -> Result<Vec<XmlEl>> {
         buf.clear();
         match reader.read_event_into(&mut buf).map_err(|e| xml_err(what, e))? {
             Event::Start(e) => {
-                let n = start_node(&e, what)?;
+                let (name, attrs) = start_tag(&e, what)?;
                 out.push(XmlEl {
-                    name: n.name,
-                    attrs: n.attrs,
+                    name,
+                    attrs,
                     text: String::new(),
                 });
                 open.push(out.len() - 1);
             }
             Event::Empty(e) => {
-                let n = start_node(&e, what)?;
+                let (name, attrs) = start_tag(&e, what)?;
                 out.push(XmlEl {
-                    name: n.name,
-                    attrs: n.attrs,
+                    name,
+                    attrs,
                     text: String::new(),
                 });
             }
@@ -393,35 +226,10 @@ impl BacpacSource {
         let mut reader = Reader::from_reader(BufReader::with_capacity(256 * 1024, hashing));
         reader.config_mut().check_end_names = false;
 
-        let mut tables_cols: Vec<(String, String, Vec<BacpacColumn>)> = Vec::new();
-        let mut keys: HashMap<String, Vec<String>> = HashMap::new();
-        let mut buf = Vec::new();
-        loop {
-            buf.clear();
-            let ev = reader.read_event_into(&mut buf).map_err(|e| xml_err("model.xml", e))?;
-            match ev {
-                Event::Start(e) if e.local_name().as_ref() == b"Element" => {
-                    let ty = e
-                        .try_get_attribute("Type")
-                        .map_err(|x| xml_err("model.xml", x))?
-                        .map(|a| a.unescape_value().map(|c| c.into_owned()))
-                        .transpose()
-                        .map_err(|x| xml_err("model.xml", x))?;
-                    if matches!(ty.as_deref(), Some("SqlTable") | Some("SqlPrimaryKeyConstraint")) {
-                        let start = start_node(&e, "model.xml")?;
-                        let mut sub = Vec::new();
-                        let el = read_subtree(&mut reader, start, &mut sub)?;
-                        if ty.as_deref() == Some("SqlTable") {
-                            tables_cols.push(parse_table(&el)?);
-                        } else if let Some((k, cols)) = parse_key(&el)? {
-                            keys.insert(k, cols);
-                        }
-                    }
-                }
-                Event::Eof => break,
-                _ => {}
-            }
-        }
+        let ModelScan {
+            tables: tables_cols,
+            keys,
+        } = crate::model::scan_streaming(&mut reader)?;
         // XmlReader may stop before the last byte; draining completes the hash and proves
         // the entry decompresses in full.
         let mut hashing = reader.into_inner().into_inner();

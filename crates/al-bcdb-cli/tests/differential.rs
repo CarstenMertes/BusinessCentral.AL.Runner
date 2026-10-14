@@ -101,7 +101,7 @@ fn fixtures_read_every_table_in_both_formats() {
         for line in listing.stdout.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
             let line = String::from_utf8_lossy(line);
             let (head, name) = line.split_once('\t').unwrap();
-            let company = head.split_whitespace().last().unwrap();
+            let company = split_head(head).1;
             let mut base = vec!["read", file, "--table", name];
             if company != "-" {
                 base.extend(["--company", company]);
@@ -268,6 +268,14 @@ fn fixtures_check_command() {
     same(&["check", fixture("typeprobe.bacpac").to_str().unwrap()]);
 }
 
+/// `"{rows,8}  {compression,-4}  {company}"` of a `tables` line; the company may hold spaces.
+fn split_head(head: &str) -> (i64, &str) {
+    let rest = head.trim_start();
+    let (rows, rest) = rest.split_once(char::is_whitespace).unwrap();
+    let (_compression, company) = rest.trim_start().split_once(char::is_whitespace).unwrap();
+    (rows.parse().unwrap(), company.trim())
+}
+
 /// Every request answered by both servers, byte for byte.
 fn serve_all(file: &str, symbols: Option<&str>, show_content: bool) {
     let tables = run(&port(), &["tables", file]);
@@ -277,9 +285,7 @@ fn serve_all(file: &str, symbols: Option<&str>, show_content: bool) {
         let Some((head, name)) = line.split_once('\t') else {
             continue;
         };
-        let mut parts = head.split_whitespace();
-        let rows: i64 = parts.next().unwrap().parse().unwrap();
-        let company = parts.last().unwrap();
+        let (rows, company) = split_head(head);
         if rows == 0 {
             continue;
         }
@@ -326,6 +332,7 @@ fn serve_all(file: &str, symbols: Option<&str>, show_content: bool) {
     );
     let (mut la, mut lb) = (Vec::new(), Vec::new());
     let mut line_no = 0;
+    let mut answered = 0;
     loop {
         la.clear();
         lb.clear();
@@ -337,6 +344,9 @@ fn serve_all(file: &str, symbols: Option<&str>, show_content: bool) {
             break;
         }
         line_no += 1;
+        if la[..la.len().min(60)].windows(11).any(|w| w == b"\"ok\": true,") {
+            answered += 1;
+        }
         if la != lb {
             // a customer's export must not end up in a log: say where and how long, not what
             let head = |v: &[u8]| {
@@ -355,6 +365,11 @@ fn serve_all(file: &str, symbols: Option<&str>, show_content: bool) {
         }
     }
     assert!(line_no as usize >= n, "only {line_no} replies for {n} requests");
+    // a comparison of two refusals proves little: most requests must have been answered with rows
+    assert!(
+        answered * 10 >= n * 8,
+        "only {answered} of {n} requests were answered ok"
+    );
 }
 
 fn artifact(version: &str, name: &str) -> String {

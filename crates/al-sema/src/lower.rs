@@ -58,27 +58,36 @@ pub fn lower_with_positions(
             }
         })
         .collect();
+    // The start offset of every routine, numbered as `routine_nodes` numbers them. Asking a node
+    // for its text range walks its earlier siblings, so it is asked once.
+    let routine_offsets: Vec<Vec<usize>> = routine_nodes
+        .iter()
+        .map(|rs| {
+            rs.iter()
+                .map(|r| usize::from(r.syntax().text_range().start()))
+                .collect()
+        })
+        .collect();
     // The routines of object `q` that exist in the compiled program: all of a workspace object's,
     // the reached ones of a dependency's. What a variable can drive is limited to those.
-    let compiled_routines = |q: usize| -> Vec<(usize, usize)> {
-        (0..routine_nodes[q].len())
-            .filter(|&ri| {
-                demand.is_none_or(|d| {
-                    !ws.is_dependency(q)
-                        || d.reached(q, usize::from(routine_nodes[q][ri].syntax().text_range().start()))
-                })
-            })
-            .map(|ri| (q, ri))
-            .collect()
+    let compiled_memo: std::cell::RefCell<HashMap<usize, std::rc::Rc<Vec<(usize, usize)>>>> = Default::default();
+    let compiled_routines = |q: usize| -> std::rc::Rc<Vec<(usize, usize)>> {
+        if let Some(hit) = compiled_memo.borrow().get(&q) {
+            return hit.clone();
+        }
+        let found: std::rc::Rc<Vec<(usize, usize)>> = std::rc::Rc::new(
+            (0..routine_offsets[q].len())
+                .filter(|&ri| demand.is_none_or(|d| !ws.is_dependency(q) || d.reached(q, routine_offsets[q][ri])))
+                .map(|ri| (q, ri))
+                .collect(),
+        );
+        compiled_memo.borrow_mut().insert(q, found.clone());
+        found
     };
-    let routine_at: HashMap<(usize, usize), usize> = routine_nodes
+    let routine_at: HashMap<(usize, usize), usize> = routine_offsets
         .iter()
         .enumerate()
-        .flat_map(|(oi, rs)| {
-            rs.iter()
-                .enumerate()
-                .map(move |(ri, r)| ((oi, usize::from(r.syntax().text_range().start())), ri))
-        })
+        .flat_map(|(oi, offsets)| offsets.iter().enumerate().map(move |(ri, &at)| ((oi, at), ri)))
         .collect();
     let mut out = Lowered {
         program: ir::Program {
@@ -746,9 +755,7 @@ pub fn lower_with_positions(
             }
             // A dependency routine nothing reached was never checked: a stub that refuses.
             let reached = !checked.is_skipped(oi)
-                && demand.is_none_or(|d| {
-                    !ws.is_dependency(oi) || d.reached(oi, usize::from(r.syntax().text_range().start()))
-                });
+                && demand.is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, routine_offsets[oi][ri]));
             let routine = if reached { lw.routine(r) } else { lw.stub(r) };
             // A TestPage drives page routines the call graph cannot see (ADR-012).
             for s in routine.locals.iter().chain(&globals) {
@@ -759,10 +766,10 @@ pub fn lower_with_positions(
                     while at < seen.len() {
                         let q = seen[at];
                         at += 1;
-                        lw.calls.extend(compiled_routines(q));
+                        lw.calls.extend(compiled_routines(q).iter().copied());
                         // The extensions' triggers and procedures run with the page.
                         for &e in page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
-                            lw.calls.extend(compiled_routines(e));
+                            lw.calls.extend(compiled_routines(e).iter().copied());
                         }
                         for &part in page_parts[q].iter().chain(&page_runs[q]) {
                             if !seen.contains(&part) {
@@ -776,10 +783,10 @@ pub fn lower_with_positions(
                 if let RtType::Codeunit(p) = s.ty {
                     let p = p as usize;
                     if matches!(ws.objects[p].kind, ObjKind::XmlPort | ObjKind::Report) {
-                        lw.calls.extend(compiled_routines(p));
+                        lw.calls.extend(compiled_routines(p).iter().copied());
                     }
                     if let Some(e) = report_irs[p].as_ref().and_then(|r| r.extension) {
-                        lw.calls.extend(compiled_routines(e));
+                        lw.calls.extend(compiled_routines(e).iter().copied());
                     }
                 }
             }

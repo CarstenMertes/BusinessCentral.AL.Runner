@@ -13,8 +13,22 @@
 use al_syntax::ast;
 
 /// Probe ids whose behavior a corpus test pins. The ids are the ones of ADR-023: `P1` to `P10` for
-/// pages, `R1` to `R4` for reports.
-pub const PINNED: &[&str] = &[];
+/// pages, `R1` to `R4` for reports. Pinned on BC 27.5 by the corpus branch `al-runtime-rs`
+/// (tests/al-language/...; the submodule bump is pending, cite by that path):
+/// - P1, P2, P5: handlers/TestPageExtensionBaseAccessContracts.al:275 (reads), :288 (writes seen by
+///   the base and a second extension, also Record filters, List, Dictionary).
+/// - P4, P10: same file :310 (public and protected base procedures, return value, var parameter,
+///   changing a variable, CurrPage.Update/Editable/Caption).
+/// - P9: same file :326 (control sources naming a base variable or a field of a base Record).
+/// - R1, R3: reportextensiontrigger/TestReportExtensionBaseMembersContracts.al:256 (and the header
+///   comment, lines 9-15: protected Integer, Decimal, Record, Dialog, List, protected and public
+///   procedure; Window.Open/Update/Close).
+/// P3 and R4 (several extensions share the base's variables) are in the same two files. P6 is
+/// settled without a gate: an extension variable with the name of a base variable is a separate
+/// variable (BaseAccess :20, Shadow); an extension procedure named like a base procedure is compile
+/// error AL0440, a non-protected base variable or a local base procedure AL0161, both refused here
+/// because BC never runs them.
+pub const PINNED: &[&str] = &["P1", "P2", "P4", "P5", "P9", "P10", "R1", "R3"];
 
 /// The value of `AL_UNPINNED_BASE_ACCESS`, if set.
 fn switch() -> Option<String> {
@@ -23,10 +37,11 @@ fn switch() -> Option<String> {
 
 /// Whether the behavior of probe `id` is pinned (or the measurement switch pins it).
 pub fn pinned(id: &str) -> bool {
-    PINNED.contains(&id)
-        || switch().is_some_and(|v| {
-            v == "1" || v.eq_ignore_ascii_case("all") || v.split(',').any(|x| x.trim().eq_ignore_ascii_case(id))
-        })
+    match switch() {
+        // The switch, when set, decides alone (`none` pins nothing: for the tests of the refusals).
+        Some(v) => v == "1" || v.eq_ignore_ascii_case("all") || v.split(',').any(|x| x.trim().eq_ignore_ascii_case(id)),
+        None => PINNED.contains(&id),
+    }
 }
 
 /// Whether the checker puts the base object's members into an extension's scope. Off while
@@ -57,15 +72,11 @@ pub fn declares_var(base: &ast::Object, name: &str) -> bool {
         .any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(name)))
 }
 
-/// The routine `name` of the base object that extension code may call: a page's procedure that is
-/// not `local`; a report's `protected` procedure (whether a public one is callable is probe R2).
-pub fn visible_procs<'a>(
-    base: &'a ast::Object,
-    report: bool,
-    name: &'a str,
-) -> impl Iterator<Item = ast::Routine> + 'a {
+/// The routine `name` of the base object that extension code may call: a procedure that is not
+/// `local` (public and `protected` ones work, pages and reports alike).
+pub fn visible_procs<'a>(base: &'a ast::Object, name: &'a str) -> impl Iterator<Item = ast::Routine> + 'a {
     base.routines()
-        .filter(move |r| r.name().eq_ignore_ascii_case(name) && if report { r.is_protected() } else { !r.is_local() })
+        .filter(move |r| r.name().eq_ignore_ascii_case(name) && !r.is_local())
 }
 
 /// The slot of variable `name` among the globals of the base object, from its syntax only (the

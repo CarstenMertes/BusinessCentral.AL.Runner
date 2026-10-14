@@ -1623,9 +1623,8 @@ impl<'a> Checker<'a> {
     /// The procedures of the page or report an extension extends that its code may call (ADR-023).
     fn base_proc_cands(&self, sc: &Scope, n: &str) -> Vec<Cand> {
         let Some(b) = sc.base_obj else { return Vec::new() };
-        let report = self.ws.objects[b].kind == ObjKind::Report;
         let ast = self.ws.object_ast(b);
-        let visible: Vec<usize> = crate::base_access::visible_procs(&ast, report, n)
+        let visible: Vec<usize> = crate::base_access::visible_procs(&ast, n)
             .map(|r| usize::from(r.syntax().text_range().start()))
             .collect();
         self.members[b]

@@ -3542,13 +3542,13 @@ impl Lowerer<'_> {
                     .get(name)
                     .map(|i| ir::Place::Local(*i))
                     .ok_or_else(|| format!("local `{name}`")),
-                Some(Res::Global(name)) => {
-                    self.declared_in_both(name)?;
-                    self.globals
-                        .get(name)
-                        .map(|i| ir::Place::Global(*i))
-                        .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet"))
-                }
+                // An extension variable named like a base variable is its own (corpus
+                // handlers/TestPageExtensionBaseAccessContracts.al:20, Shadow).
+                Some(Res::Global(name)) => self
+                    .globals
+                    .get(name)
+                    .map(|i| ir::Place::Global(*i))
+                    .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::BaseGlobal(name)) => {
                     let (slot, _, _) = self.base_var(name)?;
                     Ok(ir::Place::BaseGlobal(slot))
@@ -3583,26 +3583,6 @@ impl Lowerer<'_> {
             _ => return None,
         };
         Some((self.ws.extension_target(self.oi)?, noun, report))
-    }
-
-    /// An extension variable named like a visible variable of its base: how AL resolves the clash
-    /// is probe P6 of ADR-023, so the code is refused.
-    fn declared_in_both(&self, name: &str) -> L<()> {
-        if !crate::base_access::scope_enabled() {
-            return Ok(());
-        }
-        let Some((base, noun, _)) = self.base_object() else {
-            return Ok(());
-        };
-        if crate::base_access::visible_vars(&self.ws.object_ast(base))
-            .iter()
-            .any(|(n, _)| n.eq_ignore_ascii_case(name))
-        {
-            return Err(format!(
-                "`{name}` is declared by the {noun} extension and by the {noun} it extends: which one wins is not pinned (ADR-023 probe P6)"
-            ));
-        }
-        Ok(())
     }
 
     /// Variable `name` (lower case) of the base object, seen from the extension being lowered
@@ -3673,13 +3653,14 @@ impl Lowerer<'_> {
         Ok((slot, ty, label))
     }
 
-    /// A procedure of the extension with the name of a callable procedure of its base: which one
-    /// AL calls is probe P6 of ADR-023.
+    /// A procedure of the extension with the name of a callable procedure of its base is compile
+    /// error AL0440 in BC (corpus handlers/TestPageExtensionBaseAccessContracts.al:20), so it is
+    /// refused: BC never runs such code.
     fn declared_in_both_proc(&self, object: usize, offset: usize) -> L<()> {
         if !crate::base_access::scope_enabled() {
             return Ok(());
         }
-        let Some((base, noun, report)) = self.base_object() else {
+        let Some((base, noun, _)) = self.base_object() else {
             return Ok(());
         };
         let Some(name) = self.members[object]
@@ -3690,12 +3671,12 @@ impl Lowerer<'_> {
         else {
             return Ok(());
         };
-        if crate::base_access::visible_procs(&self.ws.object_ast(base), report, &name)
+        if crate::base_access::visible_procs(&self.ws.object_ast(base), &name)
             .next()
             .is_some()
         {
             return Err(format!(
-                "procedure `{name}` is declared by the {noun} extension and by the {noun} it extends: which one a call means is not pinned (ADR-023 probe P6)"
+                "AL0440: the {noun} extension declares a method `{name}` that the {noun} it extends already defines (BC does not compile it)"
             ));
         }
         Ok(())
@@ -3797,8 +3778,13 @@ impl Lowerer<'_> {
             if crate::base_access::scope_enabled() {
                 // The checker already resolves what extension code may name (ADR-023), so this one
                 // is `local`, or a variable that is not `protected`.
+                // AL0161 in BC (corpus handlers/TestPageExtensionBaseAccessContracts.al, header; the text
+                // is the compiler's): BC never runs such code.
+                let is_proc = obj.routines().any(|r| r.name().eq_ignore_ascii_case(&name))
+                    && !obj.var_decls().any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)));
+                let shown = if is_proc { format!("{name}()") } else { name.clone() };
                 return format!(
-                    "`{name}` is a variable or procedure of the {noun} it extends that extension code cannot name (a `local` procedure, or a variable that is not `protected`; the compile error text is ADR-023 probe P8)"
+                    "'{shown}' is inaccessible due to its protection level (a variable of the {noun} it extends that is not `protected`, or a `local` procedure; AL0161)"
                 );
             }
             format!("`{name}` is a variable or procedure of the {noun} it extends: {noun} extension code on base {noun} members is not lowered yet (ADR-023: built, off until its probes ran)")
@@ -4694,54 +4680,55 @@ page 50100 P { PageType = Card; layout { area(Content) { usercontrol(BusinessCha
     }
 
     /// Tests-SCM: a page extension's field `field(X; Item."Qty. on Component Lines")` names a
-    /// `protected var` of the page it extends. Extension code runs on its own object, which holds
-    /// none of the base page's variables (only a bare control name binds to one, `BaseVar`), so the
-    /// routine is refused, and the reason says why instead of "`Item.X` is not assignable".
+    /// `protected var` of the page it extends. It lowers (ADR-023; corpus
+    /// handlers/TestPageExtensionBaseAccessContracts.al:326), and a name the base does not make
+    /// visible is refused with the compiler's text (AL0161).
     #[test]
-    fn an_extension_naming_a_variable_of_its_base_page_is_refused_with_that_reason() {
+    fn an_extension_naming_a_variable_of_its_base_page_lowers_and_a_private_one_is_refused() {
         let (_, l) = lower_files(
             &[(
                 "f.al",
                 "table 50100 T { fields { field(1; \"Qty. A\"; Integer) { } } }
-page 50100 Base { SourceTable = T; layout { area(Content) { field(A; Rec.\"Qty. A\") { } } } protected var Item: Record T; }
-pageextension 50101 Ext extends Base { layout { addlast(Content) { field(\"X\"; Item.\"Qty. A\") { } } } }",
+page 50100 Base { SourceTable = T; layout { area(Content) { field(A; Rec.\"Qty. A\") { } } } protected var Item: Record T; var Hidden: Integer; }
+pageextension 50101 Ext extends Base { layout { addlast(Content) { field(\"X\"; Item.\"Qty. A\") { } } } }
+pageextension 50102 Ext2 extends Base { trigger OnOpenPage() begin Hidden := 1; end; }",
             )],
             true,
         );
         let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
         assert!(
-            reasons
-                .iter()
-                .any(|r| r.contains("of the page it extends") && !r.contains("not assignable")),
+            reasons[0].contains("'Hidden' is inaccessible due to its protection level"),
             "{reasons:?}"
         );
     }
 
     /// Tests-ERM: the Manufacturing report extensions call `Window.Open(..)` and
     /// `ExchangeAmtLCYToFCY(..)`, a `protected var` and a `protected procedure` of the report they
-    /// extend (Microsoft's "Adjust Add. Reporting Currency"). Extension code runs on its own object,
-    /// which holds none of the base report's variables, so the routine is refused and the reason says
-    /// why instead of printing an unresolved callee.
+    /// extend (Microsoft's "Adjust Add. Reporting Currency"). They lower (corpus
+    /// reportextensiontrigger/TestReportExtensionBaseMembersContracts.al:256); a `local` procedure
+    /// is refused with the compiler's text.
     #[test]
-    fn a_report_extension_naming_a_member_of_its_base_report_is_refused_with_that_reason() {
+    fn a_report_extension_naming_a_member_of_its_base_report_lowers_and_a_local_one_is_refused() {
         let (_, l) = lower_files(
             &[(
                 "f.al",
                 "table 50100 T { fields { field(1; Id; Integer) { } } }
-report 50100 Base { dataset { dataitem(Item; T) { } } protected var Window: Dialog; protected procedure Conv(A: Decimal): Decimal begin exit(A); end; }
+report 50100 Base { dataset { dataitem(Item; T) { } } protected var Window: Dialog; protected procedure Conv(A: Decimal): Decimal begin exit(A); end; local procedure Priv() begin end; }
 reportextension 50101 Ext extends Base
 {
     dataset { modify(Item) { trigger OnPreDataItem() begin Window.Open('x'); end; } }
-    trigger OnPreReport() begin Message(Format(Conv(1))); end;
+    trigger OnPreReport() begin Message(Format(Conv(1))); Priv(); end;
 }",
             )],
             true,
         );
         let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
-        assert_eq!(reasons.len(), 2, "{reasons:?}");
-        for r in reasons {
-            assert!(r.contains("of the report it extends") && !r.contains("None"), "{r}");
-        }
+        assert_eq!(reasons.len(), 1, "{reasons:?}");
+        assert!(
+            reasons[0].contains("'Priv()' is inaccessible due to its protection level"),
+            "{reasons:?}"
+        );
     }
 
     const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"

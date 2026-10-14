@@ -98,6 +98,17 @@ pub fn classify_source(text: &str, globals: &BTreeSet<String>) -> Source {
     Source::Expr
 }
 
+/// Whether `text` is one bare name, quoted or not (`ProdOrderNo`, `"Prod. Order No."`): the only form in which
+/// a control of an extension can name a `protected var` of its base object.
+pub fn plain_name(text: &str) -> Option<String> {
+    let t = text.trim();
+    if let Some(inner) = t.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
+        return (!inner.is_empty() && !inner.contains('"')).then(|| inner.to_string());
+    }
+    (!t.is_empty() && t.chars().all(|c| c.is_alphanumeric() || c == '_') && !t.starts_with(|c: char| c.is_ascii_digit()))
+        .then(|| t.to_string())
+}
+
 /// Global variable names (lower case) declared in `obj`.
 pub fn global_names(obj: &ast::Object) -> BTreeSet<String> {
     obj.var_decls()
@@ -108,7 +119,17 @@ pub fn global_names(obj: &ast::Object) -> BTreeSet<String> {
 
 /// A control's section and the properties and source of it that need routines:
 /// (property name, type, offset used in the name, expression text).
-fn needed(section: &ast::Section, base: usize, globals: &BTreeSet<String>) -> Vec<(String, PropType, usize, String)> {
+///
+/// `extension_routines` are the routines of an extension object (empty for any other object): a field of an extension
+/// whose source is a bare name that is none of them and no global of the extension gets no routine, because it
+/// names a variable of the base object (corpus handlers/TestRequestPageControlErrorName.al, Ext5803Handler:
+/// `field(...; ResetProdOrderCosting)` in Base App's "Mfg. Reset Cost Is Adjusted"). Lowering binds it there or refuses.
+fn needed(
+    section: &ast::Section,
+    base: usize,
+    globals: &BTreeSet<String>,
+    extension_routines: Option<&BTreeSet<String>>,
+) -> Vec<(String, PropType, usize, String)> {
     let mut out = Vec::new();
     for p in section.properties() {
         let name = p.name();
@@ -126,7 +147,10 @@ fn needed(section: &ast::Section, base: usize, globals: &BTreeSet<String>) -> Ve
     if section.name().eq_ignore_ascii_case("field") {
         let args = section.args();
         if let Some(src) = args.get(1) {
-            if classify_source(src, globals) == Source::Expr {
+            let names_a_base_variable = extension_routines.is_some_and(|routines| {
+                plain_name(src).is_some_and(|n| !routines.contains(&n.to_lowercase()))
+            });
+            if classify_source(src, globals) == Source::Expr && !names_a_base_variable {
                 out.push((
                     "source".into(),
                     PropType::Variant,
@@ -170,10 +194,13 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
             continue;
         };
         let globals = global_names(&obj);
+        let extension_routines: Option<BTreeSet<String>> = kind.ends_with("extension").then(|| {
+            obj.routines().map(|r| r.name().to_lowercase()).collect()
+        });
         let base = usize::from(obj.syntax().text_range().start());
         let mut text = String::new();
         for sec in control_sections(&obj) {
-            for (prop, ty, offset, expr) in needed(&sec, base, &globals) {
+            for (prop, ty, offset, expr) in needed(&sec, base, &globals, extension_routines.as_ref()) {
                 text.push_str(&format!(
                     "\nprocedure {}(): {} begin exit({}); end;",
                     synthetic_name(&prop, offset),

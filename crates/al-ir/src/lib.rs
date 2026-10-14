@@ -503,10 +503,25 @@ pub enum Binding {
     None,
     /// A field of the page's source record (position in the table).
     Field(usize),
-    /// A global variable of the page.
+    /// A global variable of the control's owner: the page, or the extension that declares the control.
     Var(usize),
+    /// A global variable of the BASE page or report, which a control of an extension names (a `protected var`).
+    /// It lives on the base object's instance whoever owns the control.
+    BaseVar(usize),
     /// A read-only expression: a routine returning the value.
     Expr(usize),
+}
+
+impl Binding {
+    /// The global slot a variable binding reads and writes and the owner whose instance holds it,
+    /// for a control owned by `owner`.
+    pub fn var_slot(&self, owner: Option<usize>) -> Option<(usize, Option<usize>)> {
+        match self {
+            Binding::Var(slot) => Some((*slot, owner)),
+            Binding::BaseVar(slot) => Some((*slot, None)),
+            _ => None,
+        }
+    }
 }
 
 /// A control property: written as a literal, or an expression compiled to a

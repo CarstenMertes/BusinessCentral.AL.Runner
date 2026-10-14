@@ -224,9 +224,10 @@ impl Session {
         let mut items = String::new();
         for c in &page.controls {
             match (&c.kind, &c.binding) {
-                (ir::ControlKind::Field, ir::Binding::Var(slot)) => {
-                    let owner = owner_inst(inst, exts, c.owner);
-                    let v = owner.borrow().globals[*slot].clone();
+                (ir::ControlKind::Field, b) if b.var_slot(c.owner).is_some() => {
+                    let (slot, who) = b.var_slot(c.owner).expect("a variable binding");
+                    let owner = owner_inst(inst, exts, who);
+                    let v = owner.borrow().globals[slot].clone();
                     let text = match &v {
                         Value::Boolean(b) => b.to_string(),
                         // An option travels as its ordinal.
@@ -302,10 +303,10 @@ impl Session {
                     "a parameter for the control {name}, which the request page does not have"
                 ));
             };
-            let ir::Binding::Var(slot) = c.binding else {
+            let Some((slot, who)) = c.binding.var_slot(c.owner) else {
                 return unsupported(format!("a parameter for the control {name}, which shows no variable"));
             };
-            let owner = owner_inst(inst, exts, c.owner);
+            let owner = owner_inst(inst, exts, who);
             let current = owner.borrow().globals[slot].clone();
             let value = match &current {
                 Value::Text(_) => Value::Text(text),

@@ -365,7 +365,7 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
     // extension that variable keeps (extensionevents/TestExtensionDeclaredEvents.al:105-117 pins a
     // procedure that raises an event of its own). What state that instance keeps is not pinned,
     // so a procedure next to a global variable or an added data item is refused.
-    let has_procedures = obj.routines().next().is_some();
+    let has_procedures = obj.routines().any(|r| !crate::pages::is_synthetic(&r.name()));
     if has_procedures && obj.var_decls().next().is_some() {
         out.reasons
             .push("a reportextension that declares procedures and global variables is not supported yet".into());

@@ -2616,8 +2616,9 @@ impl Session {
                     self.curr_field_no.pop();
                     validated?;
                 }
-                ir::Binding::Var(slot) => {
-                    let inst = self.owner_instance(st, ctl.owner);
+                ir::Binding::Var(_) | ir::Binding::BaseVar(_) => {
+                    let (slot, owner) = ctl.binding.var_slot(ctl.owner).expect("a variable binding");
+                    let inst = self.owner_instance(st, owner);
                     inst.borrow_mut().globals[slot] = parsed.clone();
                 }
                 _ => return unsupported("SetValue on a read-only control"),
@@ -2645,8 +2646,8 @@ impl Session {
                 // SetValue_TrueFalseSpelling_IsRefused: the stored value is untouched).
                 if let (Some(rec), Some(before)) = (&rec, before) {
                     rec.borrow_mut().fields = before;
-                } else if let ir::Binding::Var(slot) = ctl.binding {
-                    let inst = self.owner_instance(st, ctl.owner);
+                } else if let Some((slot, owner)) = ctl.binding.var_slot(ctl.owner) {
+                    let inst = self.owner_instance(st, owner);
                     inst.borrow_mut().globals[slot] = current.clone();
                 }
                 Err(refuse(self, e.message))
@@ -3431,8 +3432,9 @@ impl Session {
                 }
                 Ok(self.page_rec(st).borrow().fields[pos].clone())
             }
-            ir::Binding::Var(slot) => {
-                let inst = self.owner_instance(st, page_of(&engine, st).controls[idx].owner);
+            b @ (ir::Binding::Var(_) | ir::Binding::BaseVar(_)) => {
+                let (slot, owner) = b.var_slot(page_of(&engine, st).controls[idx].owner).expect("a variable binding");
+                let inst = self.owner_instance(st, owner);
                 let v = inst.borrow().globals[slot].clone();
                 Ok(v)
             }
@@ -3577,8 +3579,8 @@ impl Session {
         }
         let engine = self.engine();
         let ctl = &page_of(&engine, st).controls[idx];
-        if let ir::Binding::Var(slot) = ctl.binding {
-            let object = ctl.owner.unwrap_or(st.borrow().object as usize);
+        if let Some((slot, owner)) = ctl.binding.var_slot(ctl.owner) {
+            let object = owner.unwrap_or(st.borrow().object as usize);
             return Some(engine.program.objects[object].globals[slot].ty.clone());
         }
         let _ = v;
@@ -3695,7 +3697,10 @@ impl Session {
         // A control bound to a page variable stays editable on a read-only page (corpus
         // handlers/TestPageReadOnlySetValue.al:365 OpenView_PageVariableControl_StaysEditable).
         let engine = self.engine();
-        let rec_bound = !matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Var(_))
+        let rec_bound = !matches!(
+            page_of(&engine, st).controls[idx].binding,
+            ir::Binding::Var(_) | ir::Binding::BaseVar(_)
+        )
             || (st.borrow().lookup && self.is_list_page(st))
             || st.borrow().editable_off;
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)

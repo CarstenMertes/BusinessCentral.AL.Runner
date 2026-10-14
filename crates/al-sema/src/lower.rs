@@ -372,7 +372,9 @@ pub fn lower_with_positions(
             continue;
         }
         let ext = ws.object_ast(oi);
-        let changes_a_run = ext.routines().next().is_some()
+        // The routines `pages::expand` adds for expression-valued control properties and sources of the
+        // request page are not the author's: they do not change a run.
+        let changes_a_run = ext.routines().any(|r| !crate::pages::is_synthetic(&r.name()))
             || ext.triggers().next().is_some()
             || ext.sections().any(|s| !s.name().eq_ignore_ascii_case("requestpage"));
         if let (true, Some(base)) = (changes_a_run, ext.extends_parts()) {
@@ -1783,7 +1785,21 @@ impl Lowerer<'_> {
                         let off = usize::from(sec.syntax().text_range().start()) - ow.base;
                         match routine_named(&ow, &crate::pages::synthetic_name("source", off)) {
                             Some(r) => binding = ir::Binding::Expr(r),
-                            None => unsupported.push(format!("control {} has no source routine", raw.name)),
+                            // A control of an extension that names a variable of the base object
+                            // (`pages::needed` made no routine for it).
+                            None => {
+                                let base_slot = raw
+                                    .owner
+                                    .and_then(|_| crate::pages::plain_name(args.get(1)?))
+                                    .and_then(|n| globals.iter().position(|g| g.name.eq_ignore_ascii_case(&n)));
+                                match base_slot {
+                                    Some(slot) => binding = ir::Binding::BaseVar(slot),
+                                    None => unsupported.push(format!(
+                                        "control {} is bound to a name that is no variable of its base object",
+                                        raw.name
+                                    )),
+                                }
+                            }
                         }
                     }
                     None => {}

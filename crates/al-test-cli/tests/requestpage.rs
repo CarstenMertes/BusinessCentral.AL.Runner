@@ -202,6 +202,26 @@ report 61219 "RQ Closing"
     }
     var QtyOption: Integer;
 }
+// handlers/TestRequestPageControlErrorName.al:Ext5803Handler (cases 21-24): a reportextension that only adds request
+// page controls bound to the PROTECTED variables of the base report (Base App's "Mfg. Reset Cost Is Adjusted").
+report 61240 "RQ Protected Base"
+{
+    ProcessingOnly = true;
+    requestpage { layout { area(Content) { group(Options) { field(BaseCtl; BaseFlag) { ApplicationArea = All; } } } } }
+    var BaseFlag: Boolean;
+    protected var ProdNo: Code[20]; ProdFlag: Boolean;
+}
+reportextension 61241 "RQ Protected Base Ext" extends "RQ Protected Base"
+{
+    requestpage
+    {
+        layout { addafter(Options) { group(ProdGroup)
+        {
+            field("Prod Flag"; ProdFlag) { ApplicationArea = All; Caption = 'Adjust Production Orders'; }
+            field("Prod No."; ProdNo) { ApplicationArea = All; Caption = 'No.'; }
+        } } }
+    }
+}
 // A report without a requestpage section: the page still shows the data items' filters.
 report 61220 "RQ Default Page"
 {
@@ -789,5 +809,27 @@ fn a_report_that_shows_its_request_page_follows_the_transaction_rules() {
             if StrPos(GetLastErrorText(), 'the transaction is stopped') = 0 then Error(GetLastErrorText());
             Check(false, BaseExists(51), 'pending write kept');
             Check(false, HandlerRan, 'the page opened'); end;"
+    ));
+}
+
+// handlers/TestRequestPageControlErrorName.al:PrecompiledReportExtension_BooleanControl_AssertEquals_Mismatch_NamesTheControl,
+// _TextControl_AssertEquals_Mismatch_..., _BooleanControl_SetValue_Refusal_..., _AssertEquals_Match_RaisesNothing
+#[test]
+fn a_reportextension_that_only_adds_controls_bound_to_protected_base_variables_opens() {
+    passes(&format!(
+        "{HELPERS}
+        var Seen1: Text; Seen2: Text; Seen3: Text;
+        [Test] [HandlerFunctions('ProtectedHandler')]
+        procedure ProtectedVars() begin
+            Report.RunRequestPage(Report::\"RQ Protected Base\");
+            Check('AssertEquals for Field: Prod Flag Expected = ''Wrong'', Actual = ''No''', Seen1);
+            Check('AssertEquals for Field: Prod No. Expected = ''Wrong'', Actual = ''''', Seen2);
+            Check('Validation error for Field: Prod Flag,  Message = ''Your entry of ''Maybe'' is not an acceptable value for ''Adjust Production Orders''.''', Seen3); end;
+        [RequestPageHandler] procedure ProtectedHandler(var RP: TestRequestPage \"RQ Protected Base\") begin
+            asserterror RP.\"Prod Flag\".AssertEquals('Wrong'); Seen1 := GetLastErrorText();
+            asserterror RP.\"Prod No.\".AssertEquals('Wrong'); Seen2 := GetLastErrorText();
+            asserterror RP.\"Prod Flag\".SetValue('Maybe'); Seen3 := GetLastErrorText();
+            RP.\"Prod Flag\".AssertEquals('No'); RP.\"Prod No.\".AssertEquals('');
+            RP.Cancel().Invoke(); end;"
     ));
 }

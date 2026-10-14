@@ -179,6 +179,15 @@ pub struct Session {
     /// The routine and current statement position of every frame, parallel to `frames`
     /// (`callstack.rs`).
     pub(crate) call_stack: Vec<CallFrame>,
+    /// The test runner's frames below a test, in `Callstack` form (`callstack.rs`); empty
+    /// outside a test run.
+    pub(crate) runner_frames: String,
+    /// `publish` is about to raise its event: the next `raise` has an event frame on the stack.
+    pub(crate) publish_frame: bool,
+    /// Events being raised that have no publisher routine (table, page and Global Triggers
+    /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
+    /// live call stack is not answered while one runs.
+    pub(crate) unpinned_event_depth: usize,
     /// `faultsite.rs`: whether to record where errors and refusals leave from, and the last one.
     fault_trace: bool,
     fault_site: Vec<faultsite::FaultFrame>,
@@ -394,6 +403,9 @@ impl Session {
             recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
+            runner_frames: String::new(),
+            publish_frame: false,
+            unpinned_event_depth: 0,
             fault_trace: false,
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
@@ -755,6 +767,7 @@ impl Session {
         };
         self.frames.push(object);
         self.call_stack.push(CallFrame {
+            event: false,
             routine,
             pos: ir::NO_POS,
         });
@@ -1587,6 +1600,9 @@ type Cells = Rc<RefCell<Vec<Value>>>;
 /// A routine on the call stack and the position of the statement it is running.
 #[derive(Clone, Copy)]
 pub(crate) struct CallFrame {
+    /// An event publisher's frame (`dispatch::publish`): shown as `(Event)` at the line of the
+    /// routine's `end`, whatever `pos` says.
+    pub(crate) event: bool,
     pub(crate) routine: usize,
     /// `Program::positions` id of the current statement; `NO_POS` before the first one.
     pub(crate) pos: u32,
@@ -1724,6 +1740,9 @@ impl al_builtins::native::Ctx for Session {
             .apps
             .get(self.engine.program.objects[obj].app as usize)?;
         Some((app.name.clone(), app.resources.clone()))
+    }
+    fn runner_call_stack(&self) -> String {
+        self.runner_frames.clone()
     }
     fn module_callstack(&self, skip: usize) -> Vec<al_builtins::value::ModuleInfoState> {
         let mut seen = Vec::new();

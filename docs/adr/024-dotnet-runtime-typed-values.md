@@ -324,3 +324,33 @@ On implementation (not part of this docs-only change):
 - A sidecar test for `stream_write` / `stream_read` on a `MemoryStream` and on a non-stream handle.
 - The Tests-ERM, Tests-SMB and NP Retail figures above are the before numbers; `--baseline-diff` is the check.
 - `tools/demand_vs_eager.sh run`, since lowering and the checker change.
+
+## Probe results, round 6 (2026-10-14, BC 27.5, notes for the build)
+
+Probed in the OnPrem corpus app: `tests/al-language-onprem/dotnet/TestDotNetValueKindsContracts.al` (codeunit 61250,
+nine tests). The runtime still refuses all nine; this section is what the build must match. The facts are listed in
+`docs/probes-needed.md`, "Probe results". Where they change this ADR:
+
+- **Decision 3 is answered by the probe**, not by an assumption: the kind map of the marshalling table is right
+  (`int`/`short` Integer, `long` BigInteger, `byte` Byte, `char` Char, `float`/`double`/`decimal` Decimal, `bool`
+  Boolean, `string` Text, `TimeSpan` Duration, `Guid`, `DateTime`). An enum stays a DotNet object.
+- **"Refusals that stay" 1 (null result).** A null `string` is an empty Variant: `= ''` true, `Format` `''`, `+ 'x'`
+  gives `'x'`. It is no longer refused for a string. A null object in `Format` or `StrLen` is an UNCATCHABLE error
+  ("Unexpected CLR exception thrown.: System.ArgumentNullException"; `asserterror` does not catch it). The run-time settle
+  step cannot tell a null string from a null object by value alone, so the sidecar reply must carry the declared CLR
+  return type for a null (additive wire change), or the null stays refused.
+- **Refusals that stay 2 and 3 (objects, enums, `Format`).** `Format` of an object is `ToString()` (Type, enum member name,
+  StringBuilder content; the length and format-number arguments change nothing). Enum `+` adds the numbers, `=` and
+  `<>` compare, `=` between two class objects does not compile (AL0175), so it needs no run-time rule.
+- **String compare** against a literal is case sensitive: the settled operand must compare as a CLR string, unlike a
+  Text variable.
+- **foreach** error texts and codes are pinned (see probes-needed): a null collection is `DotNetVariableNotCreated`, a
+  collection modified in the loop `DotNetInvoke:InvalidOperation` after the first element, a wrong element kind
+  `Argument` or `Conversion`. The `Current` conversion into a Text variable over int elements is an error, not a
+  settle by `fit`.
+- **CopyStream with a MemoryStream.** The whole MemoryStream is copied into an OutStream whatever its position, and its
+  position is 0 afterwards; with a count it copies from the current position and leaves the position after the
+  count. This replaces the sentence "reads the unread bytes" in decision 3 for the MemoryStream-to-AL direction.
+- **Probe 4 (enum operators)** and **probe 7 (`=` between objects)** are done as listed; probe 8 (DateTimeOffset) too.
+
+Nothing here is built: every item needs `Expr::DotNetOperand`, which is the build this ADR defers.

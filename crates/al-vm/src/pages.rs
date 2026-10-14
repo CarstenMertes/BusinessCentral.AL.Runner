@@ -647,11 +647,18 @@ impl Session {
             },
             "Editable" if method.starts_with("Page.") => {
                 // A Page variable that has not run (Base App sets `Languages.Editable := false` before
-                // `RunModal`): BC does not raise "not open" there, and no corpus test says what it does.
+                // `RunModal`): no "not open" error. It reads true until set, and what it was set to is
+                // what the page opens with, for Run and RunModal alike
+                // (handlers/TestPageVariableEditableContracts.al).
                 if !st.borrow().open {
-                    return unsupported(
-                        "Page.Editable on a page variable that is not running: what BC does is not pinned (docs/probes-needed.md)",
-                    );
+                    return match args.first() {
+                        Some(v) => {
+                            let on = ops::truthy(v)?;
+                            st.borrow_mut().editable_preset = Some(on);
+                            Ok(Value::Null)
+                        }
+                        None => Ok(Value::Boolean(st.borrow().editable_preset.unwrap_or(true))),
+                    };
                 }
                 match args.first() {
                     // CurrPage.Editable(false) in OnOpenPage makes the page, page-variable controls
@@ -1007,7 +1014,7 @@ impl Session {
             s.refused = false;
             s.pending = None;
             s.result = None;
-            s.editable_off = false;
+            s.editable_off = s.editable_preset == Some(false);
             s.caption = None;
             s.opening = true;
             s.parts = Vec::new();
@@ -1214,15 +1221,18 @@ impl Session {
     /// `TestPage.Close()`: the page closes the way a Cancel does (corpus
     /// testpageclose/TestPageClosingActions.al:Dialog arms, `qcp:Cancel` after Close()).
     fn page_close(&mut self, st: &St) -> Result<Value, Signal> {
-        // A Card reports OK (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+        // Card, List, Document, Worksheet and ListPlus report OK (handlers/TestPageCloseActionByPageTypeContracts.al:
+        // TestPageClose_IsOk_ForEveryPageType; a Card also in handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
         // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose); the dialogs report Cancel.
         // Other page types are not pinned and keep Cancel.
         let object = st.borrow().object as usize;
-        let card = self.engine.program.objects[object]
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("PageType") && v.trim().eq_ignore_ascii_case("card"));
-        let action = if card && !st.borrow().modal { "OK" } else { "Cancel" };
+        let ok_type = self.engine.program.objects[object].properties.iter().any(|(k, v)| {
+            k.eq_ignore_ascii_case("PageType")
+                && ["card", "list", "document", "worksheet", "listplus"]
+                    .iter()
+                    .any(|t| v.trim().eq_ignore_ascii_case(t))
+        });
+        let action = if ok_type && !st.borrow().modal { "OK" } else { "Cancel" };
         let r = self.close_with(st, action, false, false);
         // A refused TestPage.Close() leaves the variable not open all the same (corpus
         // handlers/TestPageCloseVeto_Tests.al: PlainVeto_SecondCloseRaisesNotOpen).
@@ -2785,15 +2795,21 @@ impl Session {
         } else {
             ""
         };
-        let refuse = |this: &mut Session, msg: String| -> Signal {
+        let refuse_code = |msg: String, code: &str| -> Signal {
             let stored = format!("{msg}{suffix}");
             st.borrow_mut().errors.push((idx, stored.clone()));
-            let _ = this;
-            error(format!(
-                "Validation error for Field: {},  Message = '{stored}'",
-                page_of(&engine, st).controls[idx].name
-            ))
+            error_code(
+                format!(
+                    "Validation error for Field: {},  Message = '{stored}'",
+                    page_of(&engine, st).controls[idx].name
+                ),
+                code,
+            )
         };
+        let refuse = |_: &mut Session, msg: String| -> Signal { refuse_code(msg, "") };
+        // The bounds and the length of a Text variable raise a TestValidation error
+        // (handlers/TestPageVariableMinMaxContracts.al:15-16, :119).
+        let refuse_bound = |msg: String| -> Signal { refuse_code(msg, "TestValidation") };
         let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
@@ -2807,61 +2823,75 @@ impl Session {
                 ));
             }
         };
-        let parsed = ops::convert(parsed, &ty)?;
-        // A control's own MinValue / MaxValue (on a control bound to a variable) is not pinned: only the
-        // field's is (below). A value outside the bounds is refused instead of written.
-        if self.control_field(st, idx).is_none() {
-            let out_of_bounds = {
-                let engine = self.engine();
-                let ctl = &page_of(&engine, st).controls[idx];
-                let bound = |n: &str| match ctl.prop(n) {
-                    Some(ir::PropVal::Lit(v)) => v.trim().parse::<rust_decimal::Decimal>().ok(),
-                    _ => None,
-                };
-                let value = match &parsed {
-                    Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
-                    Value::BigInteger(i) => Some(rust_decimal::Decimal::from(*i)),
-                    Value::Decimal(d) => Some(*d),
-                    _ => None,
-                };
-                value.is_some_and(|v| {
-                    bound("minvalue").is_some_and(|m| v < m) || bound("maxvalue").is_some_and(|m| v > m)
-                })
-            };
-            if out_of_bounds {
-                return unsupported(
-                    "SetValue outside the MinValue/MaxValue of a control bound to a variable (not pinned)",
-                );
+        // A Text variable given too many characters (handlers/TestPageVariableMinMaxContracts.al:119).
+        // A table field's overlong text is not pinned.
+        if let (RtType::Text(Some(max)), Value::Text(t), false) = (&ty, &parsed, rec_bound) {
+            let len = Value::text_len(t);
+            if len > *max as usize {
+                return Err(refuse_bound(format!(
+                    "The length of the string is {len}, but it must be less than or equal to {max} characters. Value: {t}"
+                )));
             }
         }
+        let parsed = ops::convert(parsed, &ty)?;
         // MinValue / MaxValue are enforced on a control write, not on Rec.Validate (corpus
-        // handlers/TestPageFieldMinMaxValue_Tests.al:20-110).
-        if let Some(f) = self.control_field(st, idx) {
-            let bound = |n: &str| {
-                f.properties
+        // handlers/TestPageFieldMinMaxValue_Tests.al:20-110). A control bound to a variable has
+        // its own bounds, with the same texts; a table field's adds the "Select Refresh" suffix
+        // (handlers/TestPageVariableMinMaxContracts.al:60-130). The value shows as typed for an
+        // integer and with two decimals for a decimal (2.60, 0.40; more decimals are not pinned).
+        {
+            let bound = |n: &str| match self.control_field(st, idx) {
+                Some(f) => f
+                    .properties
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case(n))
-                    .map(|(_, v)| v.trim().to_string())
+                    .map(|(_, v)| v.trim().to_string()),
+                None => match page_of(&engine, st).controls[idx].prop(n) {
+                    Some(ir::PropVal::Lit(v)) => Some(v.trim().to_string()),
+                    _ => None,
+                },
             };
-            let num = |v: &Value| match v {
-                Value::Integer(i) => Some(rust_decimal::Decimal::from(*i)),
-                Value::BigInteger(i) => Some(rust_decimal::Decimal::from(*i)),
-                Value::Decimal(d) => Some(*d),
+            let num = match &parsed {
+                Value::Integer(i) => Some((rust_decimal::Decimal::from(*i), i.to_string())),
+                Value::BigInteger(i) => Some((rust_decimal::Decimal::from(*i), i.to_string())),
+                Value::Decimal(d) if d.normalize().scale() <= 2 => Some((*d, format!("{:.2}", d))),
                 _ => None,
             };
-            if let Some(n) = num(&parsed) {
-                if let Some(min) = bound("minvalue") {
-                    if min.parse::<rust_decimal::Decimal>().is_ok_and(|m| n < m) {
-                        return Err(refuse(
-                            self,
-                            format!("The value must be greater than or equal to {min}"),
-                        ));
-                    }
+            let beyond_pinned = matches!(&parsed, Value::Decimal(d) if d.normalize().scale() > 2);
+            let min = bound("minvalue");
+            let max = bound("maxvalue");
+            let breaks = |b: &Option<String>, below: bool| match (b, &parsed) {
+                (Some(b), Value::Decimal(_) | Value::Integer(_) | Value::BigInteger(_)) => {
+                    b.parse::<rust_decimal::Decimal>().ok().is_some_and(|m| {
+                        let v = match &parsed {
+                            Value::Integer(i) => rust_decimal::Decimal::from(*i),
+                            Value::BigInteger(i) => rust_decimal::Decimal::from(*i),
+                            Value::Decimal(d) => *d,
+                            _ => return false,
+                        };
+                        if below { v < m } else { v > m }
+                    })
                 }
-                if let Some(max) = bound("maxvalue") {
-                    if max.parse::<rust_decimal::Decimal>().is_ok_and(|m| n > m) {
-                        return Err(refuse(self, format!("The value must be less than or equal to {max}")));
-                    }
+                _ => false,
+            };
+            let (under, over) = (breaks(&min, true), breaks(&max, false));
+            if (under || over) && beyond_pinned {
+                return unsupported(
+                    "SetValue outside MinValue/MaxValue with more than two decimals (how BC shows the value is not pinned)",
+                );
+            }
+            if let Some((_, shown)) = num {
+                if under {
+                    let min = min.unwrap_or_default();
+                    return Err(refuse_bound(format!(
+                        "The value must be greater than or equal to {min}. Value: {shown}."
+                    )));
+                }
+                if over {
+                    let max = max.unwrap_or_default();
+                    return Err(refuse_bound(format!(
+                        "The value must be less than or equal to {max}. Value: {shown}."
+                    )));
                 }
             }
         }

@@ -301,6 +301,9 @@ pub struct PageState {
     /// OnInit/OnOpenPage are running, and `CurrPage.Editable(false)` has been called in them.
     pub opening: bool,
     pub editable_off: bool,
+    /// `P.Editable(false)` or `P.Editable := false` on a Page variable before it runs: the page
+    /// opens non-editable (handlers/TestPageVariableEditableContracts.al).
+    pub editable_preset: Option<bool>,
     /// `CurrPage.Caption := x` (handlers/TestPageCaption_Page.al:44); reset when the page opens.
     pub caption: Option<String>,
     /// The pages shown by the part controls of this page: (control index, child page). Only parts
@@ -378,6 +381,7 @@ impl PageState {
             draft_stored: false,
             opening: false,
             editable_off: false,
+            editable_preset: None,
             caption: None,
             parts: Vec::new(),
             lower_key: None,

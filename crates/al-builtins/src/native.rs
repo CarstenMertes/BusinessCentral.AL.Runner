@@ -102,6 +102,11 @@ pub trait Ctx: FormatCtx {
     fn module_callstack(&self, _skip: usize) -> Vec<crate::value::ModuleInfoState> {
         Vec::new()
     }
+    /// The frames of the test runner below the test, in `Callstack` form (backslash after each
+    /// frame); empty where the context has no runner (al-vm/callstack.rs).
+    fn runner_call_stack(&self) -> String {
+        String::new()
+    }
     /// The name and packaged resources of the app that owns the running code.
     fn app_resources(&self) -> Option<AppResources> {
         None
@@ -656,7 +661,18 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
         // the function (error-handling/TestGetLastError.al) still passes.
         return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string()));
     }
-    Ok(Value::Text(e.call_stack))
+    if e.call_stack.is_empty() {
+        return Ok(Value::Text(String::new()));
+    }
+    // The frames are separated by a backslash and the text ends with one, the runner's frames
+    // below the test's (session/TestSessionInformationCallstackContracts.al:200-218).
+    let mut out = String::with_capacity(e.call_stack.len() + 64);
+    for frame in e.call_stack.split('\n') {
+        out.push_str(frame);
+        out.push('\\');
+    }
+    out.push_str(&ctx.runner_call_stack());
+    Ok(Value::Text(out))
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

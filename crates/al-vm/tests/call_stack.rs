@@ -6,7 +6,7 @@
 //! was raised. The rest of the frame text, and the line numbers, follow AL Runner v2, which
 //! measured them on real BC (`docs/probes-needed.md`, "Call stacks").
 
-use al_builtins::native::{Signal, UNTRACKED_CALL_STACK};
+use al_builtins::native::Signal;
 use al_builtins::value::Value;
 use al_sema::workspace::AppSource;
 use al_vm::{Engine, Session};
@@ -82,7 +82,7 @@ fn an_error_through_a_helper_lists_both_frames_innermost_first() {
     assert_eq!(
         text(run(TWO_FRAMES, "Caller")),
         format!(
-            "\"Stack Helper\"(CodeUnit 50101).Fail line 2 - {APP}\n\"Stack Test\"(CodeUnit 50100).Caller line 4 - {APP}"
+            "\"Stack Helper\"(CodeUnit 50101).Fail line 2 - {APP}\\\"Stack Test\"(CodeUnit 50100).Caller line 4 - {APP}\\"
         )
     );
 }
@@ -158,7 +158,7 @@ fn the_line_is_the_innermost_statement_counted_from_the_procedure_line() {
     let stack = text(run(src, "Caller"));
     assert_eq!(
         stack,
-        format!("\"C\"(CodeUnit 50100).F line 8 - {APP}\n\"C\"(CodeUnit 50100).Caller line 2 - {APP}")
+        format!("\"C\"(CodeUnit 50100).F line 8 - {APP}\\\"C\"(CodeUnit 50100).Caller line 2 - {APP}\\")
     );
 }
 
@@ -191,7 +191,7 @@ codeunit 50100 C
     assert_eq!(
         stack,
         format!(
-            "\"Stack Row\"(Table 50103).OnInsert(Trigger) line 3 - {APP}\n\"C\"(CodeUnit 50100).Caller line 4 - {APP}"
+            "\"Stack Row\"(Table 50103).OnInsert(Trigger) line 3 - {APP}\\\"C\"(CodeUnit 50100).Caller line 4 - {APP}\\"
         )
     );
 }
@@ -215,7 +215,7 @@ fn a_try_function_error_lists_the_try_frame_and_the_frame_that_caught_it() {
 "#;
     assert_eq!(
         text(run(src, "Caller")),
-        format!("\"C\"(CodeUnit 50100).Try line 2 - {APP}\n\"C\"(CodeUnit 50100).Caller line 2 - {APP}")
+        format!("\"C\"(CodeUnit 50100).Try line 2 - {APP}\\\"C\"(CodeUnit 50100).Caller line 2 - {APP}\\")
     );
 }
 
@@ -245,14 +245,15 @@ fn a_loop_condition_error_names_the_loop_line() {
 "#;
     let stack = text(run(src, "Caller"));
     assert!(
-        stack.ends_with(&format!("\"C\"(CodeUnit 50100).Caller line 5 - {APP}")),
+        stack.ends_with(&format!("\"C\"(CodeUnit 50100).Caller line 5 - {APP}\\")),
         "{stack}"
     );
 }
 
-// A frame whose text BC's format leaves open is not guessed: the stack stays unreadable.
+// A field trigger frame is "<field> - OnValidate"(Trigger), counted from the trigger line
+// (corpus session/TestSessionInformationCallstackContracts.al:60-66 and :164).
 #[test]
-fn a_frame_the_format_is_not_pinned_for_makes_the_stack_unreadable() {
+fn a_field_trigger_frame_names_the_field() {
     let src = r#"table 50104 "Field Row"
 {
     fields
@@ -280,6 +281,151 @@ codeunit 50100 C
     end;
 }
 "#;
-    let stack = text(run(src, "Caller"));
-    assert!(stack.contains(UNTRACKED_CALL_STACK), "{stack:?}");
+    assert_eq!(
+        text(run(src, "Caller")),
+        format!(
+            "\"Field Row\"(Table 50104).\"Name - OnValidate\"(Trigger) line 2 - {APP}\\\"C\"(CodeUnit 50100).Caller line 4 - {APP}\\"
+        )
+    );
+}
+
+// session/TestSessionInformationCallstackContracts.al:130-143: innermost first, backslash after
+// every frame, the line of a statement counted from the procedure line, the caller's line the
+// line of its call.
+#[test]
+fn session_callstack_lists_the_live_frames() {
+    let src = r#"codeunit 50100 C
+{
+    local procedure Inner(): Text
+    begin
+        exit(SessionInformation.Callstack);
+    end;
+
+    local procedure Middle(): Text
+    begin
+        exit(Inner());
+    end;
+
+    procedure Caller(): Text
+    begin
+        exit(Middle());
+    end;
+}
+"#;
+    assert_eq!(
+        text(run(src, "Caller")),
+        format!(
+            "\"C\"(CodeUnit 50100).Inner line 2 - {APP}\\\"C\"(CodeUnit 50100).Middle line 2 - {APP}\\\"C\"(CodeUnit 50100).Caller line 2 - {APP}\\"
+        )
+    );
+}
+
+// :170-199 (the log expects exactly these frames): a table trigger, OnRun, and a subscriber that
+// follows its publisher's event frame, whose line is the `end` of the publisher.
+#[test]
+fn session_callstack_names_triggers_and_event_frames() {
+    let src = r#"table 50103 "Stack Row"
+{
+    fields { field(1; PK; Integer) { } }
+    keys { key(PK; PK) { Clustered = true; } }
+
+    trigger OnInsert()
+    begin
+        Stack.Add(SessionInformation.Callstack);
+    end;
+
+    var
+        Stack: Codeunit "Stack Log";
+}
+
+codeunit 50101 "Stack Log"
+{
+    SingleInstance = true;
+    var
+        Log: List of [Text];
+    procedure Add(T: Text) begin Log.Add(T); end;
+    procedure Get(i: Integer): Text begin exit(Log.Get(i)); end;
+}
+
+codeunit 50102 Pub
+{
+    [IntegrationEvent(false, false)]
+    procedure OnEvent()
+    begin
+    end;
+
+    procedure Fire()
+    begin
+        OnEvent();
+    end;
+}
+
+codeunit 50103 Sub
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnEvent', '', false, false)]
+    local procedure Handle()
+    var
+        L: Codeunit "Stack Log";
+    begin
+        L.Add(SessionInformation.Callstack);
+    end;
+}
+
+codeunit 50100 C
+{
+    procedure Caller(): Text
+    var
+        R: Record "Stack Row";
+        P: Codeunit Pub;
+        L: Codeunit "Stack Log";
+    begin
+        R.Insert(true);
+        P.Fire();
+        exit(L.Get(1) + '|' + L.Get(2));
+    end;
+}
+"#;
+    assert_eq!(
+        text(run(src, "Caller")),
+        format!(
+            "\"Stack Row\"(Table 50103).OnInsert(Trigger) line 2 - {APP}\\\"C\"(CodeUnit 50100).Caller line 6 - {APP}\\|\
+             \"Sub\"(CodeUnit 50103).Handle line 4 - {APP}\\\"Pub\"(CodeUnit 50102).OnEvent(Event) line 2 - {APP}\\\
+             \"Pub\"(CodeUnit 50102).Fire line 2 - {APP}\\\"C\"(CodeUnit 50100).Caller line 7 - {APP}\\"
+        )
+    );
+}
+
+// The frames BC puts between a table event's subscriber and the record operation are not pinned,
+// so the live stack is refused there rather than answered without them.
+#[test]
+fn session_callstack_in_a_table_event_subscriber_is_refused() {
+    let src = r#"table 50103 "Stack Row"
+{
+    fields { field(1; PK; Integer) { } }
+    keys { key(PK; PK) { Clustered = true; } }
+}
+
+codeunit 50101 Sub
+{
+    [EventSubscriber(ObjectType::Table, Database::"Stack Row", 'OnAfterInsertEvent', '', false, false)]
+    local procedure Handle(var Rec: Record "Stack Row")
+    begin
+        if SessionInformation.Callstack = '' then;
+    end;
+}
+
+codeunit 50100 C
+{
+    procedure Caller()
+    var
+        R: Record "Stack Row";
+    begin
+        R.Insert(true);
+    end;
+}
+"#;
+    match run(src, "Caller") {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("Callstack"), "{why}"),
+        other => panic!("{other:?}"),
+    }
 }

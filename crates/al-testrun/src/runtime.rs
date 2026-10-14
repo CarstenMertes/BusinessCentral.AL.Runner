@@ -922,6 +922,37 @@ pub fn run_codeunit_observed(
     run_codeunit_full(engine, lowered, object, baseline, isolation, observe, &mut Vec::new())
 }
 
+/// The frames BC's test runner has below a test, as `SessionInformation.Callstack` shows them
+/// (corpus session/TestSessionInformationCallstackContracts.al:89-97 and the failure texts of the
+/// corpus CI on 27.5, 28.5 and 29.0, where the lines are the same). The runner's own app is
+/// `Test Runner by Microsoft`; its version is the loaded app's, else the run's BC version.
+fn runner_frames(program: &al_ir::Program, engine: &Engine) -> String {
+    let version = program
+        .apps
+        .iter()
+        .find(|a| a.name == "Test Runner" && a.publisher == "Microsoft")
+        .map(|a| a.version.clone())
+        .or_else(|| {
+            engine
+                .target
+                .as_ref()
+                .map(|t| format!("{}.{}.0.0", t.bc.major, t.bc.minor))
+        })
+        .unwrap_or_else(|| "0.0.0.0".into());
+    const FRAMES: [&str; 6] = [
+        "\"Test Runner - Mgt\"(CodeUnit 130454).RunTests line 26",
+        "\"Test Runner - Isol. Codeunit\"(CodeUnit 130450).OnRun(Trigger) line 4",
+        "\"Test Suite Mgt.\"(CodeUnit 130456).RunTests line 2",
+        "\"Test Suite Mgt.\"(CodeUnit 130456).RunSelectedTests line 35",
+        "\"Test Suite Mgt.\"(CodeUnit 130456).RunNextTest line 20",
+        "\"Command Line Test Tool\"(Page 130455).\"RunNextTest - OnAction\"(Trigger) line 7",
+    ];
+    FRAMES
+        .iter()
+        .map(|f| format!("{f} - Test Runner by Microsoft version {version}\\"))
+        .collect()
+}
+
 /// [`run_codeunit_observed`] that also collects, for each test that failed with an AL error, the AL
 /// call stack of that error as `(test name, stack)` (`GetLastErrorCallStack` form, innermost first).
 pub fn run_codeunit_full(
@@ -1049,7 +1080,9 @@ pub fn run_codeunit_full(
                     }
                     session.tx_model = model;
                     let commits_before = session.commits;
+                    session.set_runner_frames(runner_frames(&lowered.program, engine));
                     let result = session.call(object, r, instance.clone(), Vec::new());
+                    session.set_runner_frames(String::new());
                     committed = session.commits != commits_before;
                     session.tx_model = al_vm::TxModel::AutoCommit;
                     let unexecuted = session.end_ui_scope();

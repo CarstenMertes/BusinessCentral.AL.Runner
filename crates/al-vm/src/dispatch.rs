@@ -103,8 +103,25 @@ impl Session {
             names: &names,
             sender,
         };
-        if let Err(e) = self.raise(&call, &mut values) {
+        // The publisher's event frame stands below its subscribers' (corpus
+        // session/TestSessionInformationCallstackContracts.al:187).
+        self.frames.push(object);
+        self.call_stack.push(crate::CallFrame {
+            event: true,
+            routine,
+            pos: al_ir::NO_POS,
+        });
+        self.publish_frame = true;
+        let raised = self.raise(&call, &mut values);
+        self.publish_frame = false;
+        let top = self.call_stack.pop();
+        self.frames.pop();
+        if let Err(e) = raised {
             // What earlier subscribers wrote back is what the publisher's caller sees.
+            let mut e = e;
+            if let (Signal::Error(err), Some(top)) = (&mut e, top) {
+                self.add_frame(err, object, top);
+            }
             if matches!(e, Signal::Error(_)) {
                 self.error_finals = Some(values);
             }
@@ -116,6 +133,18 @@ impl Session {
     /// Delivers the event to its subscribers. `var` parameters of subscribers are written
     /// back into `args`. Isolated events: see below.
     pub(crate) fn raise(&mut self, ev: &EventCall, args: &mut [Value]) -> Result<(), Signal> {
+        let from_publisher = std::mem::take(&mut self.publish_frame);
+        if !from_publisher {
+            self.unpinned_event_depth += 1;
+        }
+        let r = self.raise_to_subscribers(ev, args);
+        if !from_publisher {
+            self.unpinned_event_depth -= 1;
+        }
+        r
+    }
+
+    fn raise_to_subscribers(&mut self, ev: &EventCall, args: &mut [Value]) -> Result<(), Signal> {
         let EventCall {
             object,
             event,

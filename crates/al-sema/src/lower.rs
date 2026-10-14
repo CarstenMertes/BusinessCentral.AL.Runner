@@ -3879,16 +3879,33 @@ impl Lowerer<'_> {
                 };
                 let mut out = Vec::new();
                 for (i, a) in args.iter().enumerate() {
-                    if matches!(self.ty_of(a), Ty::DotNet(_)) {
-                        return Err(format!(
-                            "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
-                        ));
-                    }
                     let p = sig
                         .params
                         .get(i)
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
+                    if let Ty::DotNet(alias) = self.ty_of(a) {
+                        // `IsNull(DotNet)` takes the value as it is. A DotNet result (no static
+                        // type) passed to a plain Text, Integer or Boolean parameter must fit it
+                        // exactly at run time, as in an assignment (ADR-014 section 4). Anything
+                        // else is refused.
+                        let slot = match p.ty.as_str() {
+                            "DotNet" => None,
+                            "Text" if !p.by_var && alias.is_empty() => Some(RtType::Text(None)),
+                            "Integer" if !p.by_var && alias.is_empty() => Some(RtType::Integer),
+                            "Boolean" if !p.by_var && alias.is_empty() => Some(RtType::Boolean),
+                            _ => {
+                                return Err(format!(
+                                    "a DotNet value passed to builtin {id}: its type is only known at run time; assign it to a typed variable first"
+                                ));
+                            }
+                        };
+                        out.push(ir::Arg::Value(match slot {
+                            Some(rt) => ir::Expr::DotNetCoerce(rt, Box::new(self.expr(a)?)),
+                            None => self.expr(a)?,
+                        }));
+                        continue;
+                    }
                     let field_param = p.name.to_ascii_lowercase().starts_with("field")
                         || p.name.eq_ignore_ascii_case("FromField")
                         || p.name.to_ascii_lowercase().starts_with("column");
@@ -4363,6 +4380,21 @@ codeunit 50101 C2
             "{:?}",
             l.unsupported[oi][0]
         );
+    }
+
+    // session/TestEnvironmentUserTenantContracts.al:204-216 reaches `CopyStr(TenantInfo.PreferredLanguage(), 1, 2)`
+    // and `IsNull(TenantInfo)` in Microsoft's Azure AD Tenant Impl.: a DotNet result passed to a Text
+    // parameter must fit it exactly (ADR-014 section 4), and IsNull takes a DotNet value.
+    #[test]
+    fn a_dotnet_result_passed_to_a_text_parameter_is_coerced_and_isnull_takes_a_dotnet_value() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P(): Text var Convert: DotNet Convert; begin if IsNull(Convert) then exit(''); exit(CopyStr(Convert.ToBase64String('x'), 1, 2)); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        let dump = format!("{:?}", r.body);
+        assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
     }
 
     #[test]

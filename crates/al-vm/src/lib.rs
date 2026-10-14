@@ -466,6 +466,7 @@ impl Session {
             publisher: app.publisher.clone(),
             version,
             dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
+            synthesized: false,
         })
     }
 
@@ -1475,6 +1476,18 @@ impl al_builtins::native::Ctx for Session {
             }
         }
         out
+    }
+    fn application_module(&self) -> al_builtins::value::ModuleInfoState {
+        let bc = self.engine.target.as_ref().map(|t| &t.bc);
+        let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
+        al_builtins::value::ModuleInfoState {
+            id: [0; 16],
+            name: String::new(),
+            publisher: String::new(),
+            version: Some([major, minor, 0, 0]),
+            dependencies: Vec::new(),
+            synthesized: true,
+        }
     }
     fn module_by_id(&self, id: &[u8; 16]) -> al_builtins::native::ModuleLookup {
         use al_builtins::native::ModuleLookup;

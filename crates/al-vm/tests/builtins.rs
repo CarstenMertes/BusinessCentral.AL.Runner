@@ -1225,6 +1225,20 @@ fn a_cleared_date_formula_is_the_empty_formula() {
     assert_eq!(r.unwrap(), "|2024-03-05|Yes|2024-03-05");
 }
 
+// session/TestEnvironmentUserTenantContracts.al:195-201 and session/TestNavAppExtended.al:116-117:
+// GetModuleInfo of the null app id is true and answers a module whose data version is the installed
+// application's, at least 27. Its name and the rest are not pinned: refused.
+#[test]
+fn get_module_info_of_the_null_id_answers_the_application_version() {
+    let r = text_of(
+        "G: Guid; M: ModuleInfo;",
+        "exit(Format(NavApp.GetModuleInfo(G, M)) + Format(M.DataVersion().Major() >= 27));",
+    );
+    assert_eq!(r.unwrap(), "YesYes");
+    let r = text_of("G: Guid; M: ModuleInfo;", "NavApp.GetModuleInfo(G, M); exit(M.Name());");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
 // A table with a DateFormula field inserts with the field blank. Base Application's setup tables
 // (General Ledger Setup, Sales & Receivables Setup) have such fields and Company-Initialize
 // inserts them as `Init(); Insert();`.

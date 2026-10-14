@@ -100,6 +100,17 @@ pub trait Ctx: FormatCtx {
     fn app_resources(&self) -> Option<AppResources> {
         None
     }
+    /// The module BC answers `GetModuleInfo` with for the null app id: the installed application.
+    fn application_module(&self) -> crate::value::ModuleInfoState {
+        crate::value::ModuleInfoState {
+            id: [0; 16],
+            name: String::new(),
+            publisher: String::new(),
+            version: None,
+            dependencies: Vec::new(),
+            synthesized: true,
+        }
+    }
     /// The installed app with this id.
     fn module_by_id(&self, _id: &[u8; 16]) -> ModuleLookup {
         ModuleLookup::NotInstalled
@@ -358,6 +369,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.Skip#1", vm_only),
     ("Report.Break#1", vm_only),
     ("System.CreateGuid#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    // `IsNull(DotNet)`: an unassigned DotNet variable, or a .NET call that returned null, holds
+    // `Null` (ADR-014). Microsoft's Azure AD Tenant Impl. and Json Impl. ask it
+    // (session/TestEnvironmentUserTenantContracts.al:204-232 reaches them).
+    ("System.IsNull#1", |_, _, a| {
+        Ok(Value::Boolean(matches!(a.first(), Some(Value::Null))))
+    }),
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
     }),

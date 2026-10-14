@@ -270,7 +270,7 @@ mod tests {
     fn display_reads_as_al_and_never_as_a_rust_dump() {
         assert_eq!(ty("Option").to_string(), "Option");
         assert_eq!(ty("Integer").to_string(), "Integer");
-        assert_eq!(ty("Label").to_string(), "Label");
+        assert_eq!(Ty::Label.to_string(), "Label");
         assert_eq!(ty("Variant").to_string(), "Variant");
         assert_eq!(Ty::Unknown.to_string(), "an unknown type");
         assert_eq!(Ty::Option(vec!["A".into(), "B".into()]).to_string(), "Option");

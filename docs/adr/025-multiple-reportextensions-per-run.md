@@ -41,7 +41,7 @@ The order is now pinned (BC 27.5, corpus branch `al-runtime-rs`):
 1. `Report::extension` is replaced by `Report::extensions` (one source of truth); every reader is updated.
 2. Reportextensions of different apps stay refused until probed.
 3. `addlast` of two extensions under one parent and two items from one extension `After` stay refused until probed. `addfirst` and `addbefore` with several items of one extension are pinned (declaration order) and allowed.
-4. `al_cache::FORMAT` is 2 in the same change; the cache owner is no longer running, so `provided.rs` was reviewed by the implementer.
+4. `al_cache::FORMAT` is 3 (the zero-diff change took 2); the cache owner is no longer running, so `provided.rs` was reviewed by the implementer.
 
 ## Decisions that were needed
 

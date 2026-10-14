@@ -222,6 +222,8 @@ pub struct Workspace {
     iface_derived: HashMap<usize, Vec<usize>>,
     /// Per object: whether it can be used (see `usable`); filled on first ask.
     usable_cache: Vec<OnceLock<bool>>,
+    /// See [`Workspace::parse_flakes`].
+    flakes: std::sync::Mutex<Vec<String>>,
     /// Once set, the dependency objects that take part in the compile (see `restrict_to`).
     compiled: OnceLock<Vec<bool>>,
 }
@@ -255,6 +257,7 @@ impl Workspace {
             iface_base: HashMap::new(),
             iface_derived: HashMap::new(),
             usable_cache: Vec::new(),
+            flakes: Default::default(),
             compiled: OnceLock::new(),
         };
         ws.visible = (0..apps.len()).map(|i| visible_from(&apps, i)).collect();
@@ -485,26 +488,52 @@ impl Workspace {
         let f = &self.files[fi];
         f.green
             .get_or_init(|| {
-                let src = &self.apps[f.app].files[f.file_in_app].1;
-                // Only a page can have properties to turn into routines; skip the extra parse otherwise.
-                let expanded = f
-                    .has_page
-                    .then(|| crate::pages::expand_ranges(src, &self.symbols))
-                    .flatten();
-                let src = expanded.as_ref().map(|(t, _)| t.as_str()).unwrap_or(src);
-                let _ = f
-                    .synthetic
-                    .set(expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default());
-                let parsed = with_tree_cache(|cache| parse_file(src, &self.symbols, cache));
-                let problem = parsed.errors.first().map(|e| {
-                    let line = src[..e.offset.min(src.len())].matches('\n').count() + 1;
-                    let text = src.lines().nth(line - 1).unwrap_or("").trim();
-                    format!("{}:{line}: {} (`{text}`)", f.path, e.message)
-                });
-                let _ = f.problem.set(problem);
-                parsed.green.expect("a parsed file has a tree")
+                let (kept, flake) = settle(self.parse_lazy(f, false), || self.parse_lazy(f, true));
+                if let Some(note) = flake {
+                    self.flakes
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(format!("{}: {note}", f.path));
+                }
+                let (green, synthetic) = kept.green;
+                let _ = f.synthetic.set(synthetic);
+                let _ = f.problem.set(kept.problem);
+                green
             })
             .clone()
+    }
+
+    /// One parse of a lazily parsed file: the text with its synthetic routines, the tree, and the first
+    /// parse error if there is one. `fresh` starts from an empty token cache.
+    fn parse_lazy(&self, f: &SourceFileData, fresh: bool) -> Attempt<(rowan::GreenNode, Vec<ByteRange>)> {
+        let src = &self.apps[f.app].files[f.file_in_app].1;
+        // Only a page can have properties to turn into routines; skip the extra parse otherwise.
+        let expanded = f
+            .has_page
+            .then(|| crate::pages::expand_ranges(src, &self.symbols))
+            .flatten();
+        let text = expanded.as_ref().map(|(t, _)| t.as_str()).unwrap_or(src);
+        let synthetic = expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default();
+        let parsed = if fresh {
+            parse_file(text, &self.symbols, &mut al_syntax::TreeCache::default())
+        } else {
+            with_tree_cache(|cache| parse_file(text, &self.symbols, cache))
+        };
+        let problem = parsed.errors.first().map(|e| {
+            let line = text[..e.offset.min(text.len())].matches('\n').count() + 1;
+            let shown = text.lines().nth(line - 1).unwrap_or("").trim();
+            format!("{}:{line}: {} (`{shown}`)", f.path, e.message)
+        });
+        Attempt {
+            green: (parsed.green.expect("a parsed file has a tree"), synthetic),
+            problem,
+        }
+    }
+
+    /// Files whose second parse did not give the result of the first (a defect: a parse is a function of
+    /// the text), as one line each with both results. Empty in every run so far.
+    pub fn parse_flakes(&self) -> Vec<String> {
+        self.flakes.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// The byte ranges of file `fi`'s parsed text that the compiler added (page expression routines).
@@ -931,6 +960,34 @@ fn with_tree_cache<T>(f: impl FnOnce(&mut al_syntax::TreeCache) -> T) -> T {
     })
 }
 
+/// One parse of a file: its tree and the first error, if any.
+struct Attempt<G> {
+    green: G,
+    problem: Option<String>,
+}
+
+/// A file that fails to parse is parsed once more; a parse is a function of the text, so a second result
+/// that differs is a defect (a race, a torn read of the archive) and is reported with both results. The
+/// clean parse is kept when there is one. A failure that repeats is the file's own.
+fn settle<G>(first: Attempt<G>, again: impl FnOnce() -> Attempt<G>) -> (Attempt<G>, Option<String>) {
+    let Some(first_problem) = first.problem.clone() else {
+        return (first, None);
+    };
+    let second = again();
+    if second.problem.as_ref() == Some(&first_problem) {
+        return (first, None);
+    }
+    let note = format!(
+        "parsed again with a different result: first `{first_problem}`, second {}",
+        match &second.problem {
+            Some(p) => format!("`{p}`"),
+            None => "clean".to_string(),
+        }
+    );
+    let kept = if second.problem.is_none() { second } else { first };
+    (kept, Some(note))
+}
+
 fn parse_file(src: &str, symbols: &BTreeSet<String>, cache: &mut al_syntax::TreeCache) -> ParsedFile {
     let parse = al_syntax::parse_with_cache(src, symbols, cache);
     let root = ast::SourceFile::cast(parse.syntax()).expect("root is a SourceFile");
@@ -1039,6 +1096,50 @@ fn visible_from(apps: &[AppSource], start: usize) -> BTreeSet<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A parse is a function of the text. When a dependency file fails to parse, it is parsed once more
+    /// (a fresh token cache, a fresh expansion); a second result that differs is a defect somewhere (a
+    /// race, a torn read of the archive) and is reported with both texts, and the clean parse is kept.
+    #[test]
+    fn a_second_parse_that_differs_is_reported_and_the_clean_one_is_kept() {
+        let bad = Attempt {
+            green: 1,
+            problem: Some("f.al:7: expected `;` (`oAdd`)".into()),
+        };
+        let good = Attempt {
+            green: 2,
+            problem: None,
+        };
+        let (kept, flake) = settle(bad, || good);
+        assert_eq!(kept.green, 2);
+        assert!(kept.problem.is_none());
+        let flake = flake.expect("the two parses differ");
+        assert!(
+            flake.contains("oAdd") && flake.contains("parsed again") && flake.contains("clean"),
+            "{flake}"
+        );
+    }
+
+    #[test]
+    fn a_failure_that_repeats_is_the_files_own_and_is_not_a_flake() {
+        let bad = || Attempt {
+            green: 1,
+            problem: Some("f.al:7: expected `;` (`x`)".into()),
+        };
+        let (kept, flake) = settle(bad(), bad);
+        assert_eq!(kept.problem.as_deref(), Some("f.al:7: expected `;` (`x`)"));
+        assert!(flake.is_none());
+        // A clean first parse is never parsed again.
+        let (kept, flake) = settle(
+            Attempt {
+                green: 3,
+                problem: None,
+            },
+            || panic!("no second parse"),
+        );
+        assert_eq!(kept.green, 3);
+        assert!(flake.is_none());
+    }
 
     fn app(id: &str, deps: &[&str], files: &[(&str, &str)]) -> AppSource {
         AppSource {
@@ -1213,6 +1314,62 @@ mod tests {
             alone.resolve_relation_target(file, ObjKind::Table, &name),
             Resolution::Found(_)
         ));
+    }
+
+    /// Issue 15: one eager run of Microsoft's apps reported a parse error in a report that parsed fine in every
+    /// other run (a stray token next to a synthetic column routine). A parse is a function of the text, so
+    /// many threads parsing many files with synthetic routines must agree with one thread, every time. Not
+    /// a reproduction (the failure did not repeat in 36 runs); the guard against it.
+    #[test]
+    fn parsing_report_and_page_files_in_parallel_gives_the_same_trees_as_parsing_them_alone() {
+        let report = |i: usize| {
+            format!(
+                "report {} R{i} {{ ProcessingOnly = true; dataset {{ dataitem(A; Integer) {{ column(Num; Number) {{ }} column(Twice; Number * 2) {{ }} dataitem(B; Integer) {{ column(Inner; Number + {i}) {{ }} }} }} }} \
+                 requestpage {{ layout {{ area(Content) {{ field(F; Opt) {{ ApplicationArea = All; Visible = Opt > {i}; }} }} }} }} var Opt: Integer; }}",
+                60000 + i
+            )
+        };
+        let page = |i: usize| {
+            format!(
+                "page {} P{i} {{ PageType = Card; layout {{ area(Content) {{ field(F; Opt) {{ ApplicationArea = All; Editable = Opt > {i}; Caption = 'x'; }} }} }} var Opt: Integer; }}",
+                61000 + i
+            )
+        };
+        let files: Vec<(String, String)> = (0..120)
+            .map(|i| (format!("f{i:03}.al"), if i % 2 == 0 { report(i) } else { page(i) }))
+            .collect();
+        let dep = AppSource {
+            id: "d".into(),
+            name: "d".into(),
+            dependencies: vec![],
+            files,
+        };
+        let parse_all = |parallel: bool| {
+            let ws = Workspace::load_apps(
+                vec![dep.clone()],
+                vec![AppKind::Dependency],
+                &al_version::corpus_symbols(27),
+            );
+            let ids: Vec<usize> = (0..ws.files.len()).collect();
+            if parallel {
+                ids.par_iter().for_each(|&fi| {
+                    ws.green(fi);
+                });
+            }
+            let trees: Vec<String> = ids.iter().map(|&fi| format!("{:?}", ws.green(fi))).collect();
+            let synthetic: Vec<usize> = ids.iter().map(|&fi| ws.synthetic(fi).len()).collect();
+            assert!(ws.lazy_parse_problems().is_empty(), "{:?}", ws.lazy_parse_problems());
+            assert!(ws.parse_flakes().is_empty(), "{:?}", ws.parse_flakes());
+            (trees, synthetic)
+        };
+        let alone = parse_all(false);
+        assert!(alone.1.iter().all(|&n| n > 0), "every file has synthetic routines");
+        for round in 0..40 {
+            assert!(
+                parse_all(true) == alone,
+                "round {round}: a parallel parse differs from a serial one"
+            );
+        }
     }
 
     #[test]

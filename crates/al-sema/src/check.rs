@@ -1581,14 +1581,32 @@ impl<'a> Checker<'a> {
         let Some(first) = args.first().filter(|a| a.kind() == SyntaxKind::ScopeExpr) else {
             return;
         };
-        let text = first.text().to_string();
-        let Some((lhs, name)) = text.split_once("::") else {
+        // `Report::"X"`, `Report::Ns."X"`: the object's name in the form types carry.
+        let mut kids = first.children();
+        let (Some(lhs), Some(rhs)) = (kids.next(), kids.next()) else {
             return;
         };
-        if !lhs.trim().eq_ignore_ascii_case(base.text().to_string().trim()) {
+        if !lhs
+            .text()
+            .to_string()
+            .trim()
+            .eq_ignore_ascii_case(base.text().to_string().trim())
+        {
             return;
         }
-        if let Some(oi) = self.resolve_at(sc.file, kind, name.trim()) {
+        fn parts(n: &SyntaxNode, out: &mut Vec<String>) {
+            if n.kind() == SyntaxKind::MemberExpr {
+                for k in n.children() {
+                    parts(&k, out);
+                }
+            } else {
+                out.push(name_of(n));
+            }
+        }
+        let mut p = Vec::new();
+        parts(&rhs, &mut p);
+        let name = p.join(crate::types::QUAL_SEP);
+        if let Some(oi) = self.resolve_at(sc.file, kind, &name) {
             self.touch_full(oi);
         }
     }
@@ -1941,6 +1959,12 @@ impl<'a> Checker<'a> {
                 }
                 // `CurrPage.<Part>`: the part control, whose `.Page` is the page it shows.
                 if *kind == ObjKind::Page {
+                    // `P.Run()`, `P.RunModal()`: a platform method of a page variable opens the
+                    // page, so its code is reached (a declared variable alone reaches nothing).
+                    if self.named_section(oi, name).is_none() {
+                        self.touch_full(oi);
+                        self.reach_run_targets(oi);
+                    }
                     if let Some(sec) = self.named_section(oi, name) {
                         if sec.name().eq_ignore_ascii_case("part") {
                             if let Some(page) = crate::types::section_object_name(&sec, 1) {

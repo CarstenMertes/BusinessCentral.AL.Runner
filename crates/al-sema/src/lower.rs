@@ -55,7 +55,38 @@ pub(crate) struct DrivenCtx {
     /// Per object: an xmlport or report, whose triggers Import, Export and Run call.
     runs_triggers: Vec<bool>,
     report_extension: Vec<Vec<usize>>,
-    routine_counts: Vec<usize>,
+    /// Per object: whether it belongs to a dependency app.
+    dependency: Vec<bool>,
+    /// Per object: whether it is a codeunit (a `RunObject` target that runs its `OnRun`).
+    codeunit: Vec<bool>,
+    /// Per object: whether it is a report, report extension, xmlport or query. Using one reaches
+    /// its triggers and the routines made for its properties, not its other procedures.
+    triggers_only: Vec<bool>,
+    /// Per object and routine: the `ROLE_*` bits of the routine. Structure only: the same for
+    /// every compile of the same sources, whatever of them was compiled.
+    routine_roles: Vec<Vec<u8>>,
+}
+
+/// Routine roles (`DrivenCtx::routine_roles`).
+pub(crate) const ROLE_TRIGGER: u8 = 1;
+/// A routine `pages::expand` generated for a control property (its name starts `__`).
+pub(crate) const ROLE_SYNTHETIC: u8 = 2;
+pub(crate) const ROLE_ON_RUN: u8 = 4;
+
+/// The role bits of a routine.
+pub(crate) fn role_of(r: &ast::Routine) -> u8 {
+    let name = r.name();
+    let mut role = 0;
+    if r.is_trigger() {
+        role |= ROLE_TRIGGER;
+        if name.eq_ignore_ascii_case("OnRun") {
+            role |= ROLE_ON_RUN;
+        }
+    }
+    if name.starts_with("__") {
+        role |= ROLE_SYNTHETIC;
+    }
+    role
 }
 
 impl Lowered {
@@ -76,39 +107,85 @@ impl Lowered {
         if let Some(d) = &self.driven {
             let object = &self.program.objects[o];
             let routine = &object.routines[r];
-            driven_edges(
-                d,
-                &|q| (0..d.routine_counts[q]).map(|ri| (q, ri)).collect(),
-                routine.locals.iter().chain(&object.globals),
-                out,
-            );
+            driven_edges(d, routine.locals.iter().chain(&object.globals), out);
         }
     }
 }
 
 /// The routines driven by the slots of a routine (its locals) and its object (its globals).
-fn driven_edges<'a>(
-    d: &DrivenCtx,
-    compiled: &dyn Fn(usize) -> Vec<(usize, usize)>,
-    slots: impl Iterator<Item = &'a ir::Slot>,
-    out: &mut Vec<(usize, usize)>,
-) {
+///
+/// The edges are a function of the sources alone, never of how much of them was compiled
+/// (owner decision of 2026-10-14: the demand-driven, the complete and the cached compile give one
+/// outcome). The demand-driven compile reaches exactly these routines for the same slots
+/// (`check/demand.rs`: `activate` for a page, report or xmlport that is used, `reach_run_objects`
+/// for the `RunObject` of a workspace page), so that an edge never leads to a routine that was
+/// not compiled.
+fn driven_edges<'a>(d: &DrivenCtx, slots: impl Iterator<Item = &'a ir::Slot>, out: &mut Vec<(usize, usize)>) {
+    let with_role = |q: usize, mask: u8, out: &mut Vec<(usize, usize)>| {
+        out.extend(
+            d.routine_roles[q]
+                .iter()
+                .enumerate()
+                .filter(|(_, role)| **role & mask != 0)
+                .map(|(ri, _)| (q, ri)),
+        );
+    };
+    // The routines using object `q` reaches: all of a page's, the triggers of a report's.
+    let used = |q: usize, out: &mut Vec<(usize, usize)>| {
+        let mask = if d.triggers_only[q] {
+            ROLE_TRIGGER | ROLE_SYNTHETIC
+        } else {
+            u8::MAX
+        };
+        out.extend(
+            d.routine_roles[q]
+                .iter()
+                .enumerate()
+                .filter(|(_, role)| mask == u8::MAX || **role & mask != 0)
+                .map(|(ri, _)| (q, ri)),
+        );
+    };
     for s in slots {
+        // `CurrPage` is the page's handle on itself, not a variable that drives it.
+        if s.name == "CurrPage" {
+            continue;
+        }
         if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
+            let p = p as usize;
+            // The demand-driven compile reaches the code of a `Page` variable's page when the
+            // variable runs it (`Page.Run`), not when it is declared, so a dependency page
+            // that a `Page` variable names adds no edge. A workspace page is always compiled.
+            if matches!(s.ty, RtType::Page(_)) && d.dependency[p] {
+                continue;
+            }
             // The page and, transitively, the pages it shows as parts.
-            let mut seen = vec![p as usize];
+            let mut seen = vec![p];
             let mut at = 0;
             while at < seen.len() {
                 let q = seen[at];
                 at += 1;
-                out.extend(compiled(q));
+                used(q, out);
                 // The extensions' triggers and procedures run with the page.
                 for &e in d.page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
-                    out.extend(compiled(e));
+                    used(e, out);
                 }
-                for &part in d.page_parts[q].iter().chain(&d.page_runs[q]) {
+                for &part in &d.page_parts[q] {
                     if !seen.contains(&part) {
                         seen.push(part);
+                    }
+                }
+                // What the `RunObject` actions of workspace pages run: a page like a part, a
+                // codeunit by its `OnRun`. Those of a dependency page are compiled (the test can
+                // invoke the action, `Demand::reach_run_targets`) but add no edge: nothing says
+                // that the test invokes it, and the code behind it refuses when it runs.
+                if d.dependency[q] {
+                    continue;
+                }
+                for &t in &d.page_runs[q] {
+                    if d.codeunit[t] {
+                        with_role(t, ROLE_ON_RUN, out);
+                    } else if !seen.contains(&t) {
+                        seen.push(t);
                     }
                 }
             }
@@ -118,10 +195,10 @@ fn driven_edges<'a>(
         if let RtType::Codeunit(p) = s.ty {
             let p = p as usize;
             if d.runs_triggers[p] {
-                out.extend(compiled(p));
+                with_role(p, ROLE_TRIGGER | ROLE_SYNTHETIC, out);
             }
             for &e in &d.report_extension[p] {
-                out.extend(compiled(e));
+                with_role(e, ROLE_TRIGGER | ROLE_SYNTHETIC, out);
             }
         }
     }
@@ -224,29 +301,28 @@ pub(crate) fn lower_core(
     // is what other threads need, so it is asked of a node once.
     let active_v: Vec<bool> = (0..ws.objects.len()).map(active).collect();
     // Each thread builds the nodes of the objects it takes and keeps only the offsets.
-    let routine_offsets: Vec<Vec<usize>> = {
+    let (routine_offsets, routine_roles): (Vec<Vec<usize>>, Vec<Vec<u8>>) = {
         use rayon::prelude::*;
-        (0..ws.objects.len())
+        let both: Vec<(Vec<usize>, Vec<u8>)> = (0..ws.objects.len())
             .into_par_iter()
             .map(|oi| {
                 if prov(oi) {
-                    return src
-                        .expect("provided")
-                        .facts(oi)
-                        .routine_offsets
-                        .iter()
-                        .map(|&o| o as usize)
-                        .collect();
+                    let f = src.expect("provided").facts(oi);
+                    return (
+                        f.routine_offsets.iter().map(|&o| o as usize).collect(),
+                        f.routine_roles.clone(),
+                    );
                 }
                 if !active_v[oi] {
-                    return Vec::new();
+                    return (Vec::new(), Vec::new());
                 }
                 ast::routines_in(ws.object_ast(oi).syntax())
                     .iter()
-                    .map(|r| usize::from(r.syntax().text_range().start()))
-                    .collect()
+                    .map(|r| (usize::from(r.syntax().text_range().start()), role_of(r)))
+                    .unzip()
             })
-            .collect()
+            .collect();
+        both.into_iter().unzip()
     };
     let routine_offsets = std::sync::Arc::new(routine_offsets);
     let routine_at = RoutineAt(routine_offsets.clone());
@@ -735,7 +811,19 @@ pub(crate) fn lower_core(
             .map(|o| matches!(o.kind, ObjKind::XmlPort | ObjKind::Report))
             .collect(),
         report_extension,
-        routine_counts: routine_offsets.iter().map(Vec::len).collect(),
+        dependency: (0..n_objects).map(|oi| ws.is_dependency(oi)).collect(),
+        codeunit: ws.objects.iter().map(|o| o.kind == ObjKind::Codeunit).collect(),
+        triggers_only: ws
+            .objects
+            .iter()
+            .map(|o| {
+                matches!(
+                    o.kind,
+                    ObjKind::Report | ObjKind::ReportExtension | ObjKind::XmlPort | ObjKind::Query
+                )
+            })
+            .collect(),
+        routine_roles,
     };
     // From here on objects are lowered one at a time, each a function of the data above.
     let mut shared = Shared {
@@ -921,6 +1009,7 @@ pub(crate) fn lower_core(
                     v
                 },
                 routine_offsets: shared.routine_offsets[oi].iter().map(|&o| o as u32).collect(),
+                routine_roles: shared.driven.routine_roles[oi].clone(),
                 xml_reason: shared.xml_reasons[oi].clone(),
                 report_reason: shared.report_reasons[oi].clone(),
                 report_extensions: shared.driven.report_extension[oi].iter().map(|&e| e as u32).collect(),
@@ -1042,15 +1131,10 @@ impl<'a> Nodes<'a> {
     }
 }
 
-/// Routines as (object, routine) pairs, shared.
-type Calls = std::rc::Rc<Vec<(usize, usize)>>;
-
 /// What one thread keeps while it lowers objects.
 struct Local<'a> {
     nodes: Nodes<'a>,
     memo: Memo,
-    /// `compiled_routines` memo.
-    compiled: std::cell::RefCell<HashMap<usize, Calls>>,
 }
 
 impl<'a> Local<'a> {
@@ -1058,28 +1142,7 @@ impl<'a> Local<'a> {
         Local {
             nodes,
             memo: Memo::default(),
-            compiled: Default::default(),
         }
-    }
-
-    /// The routines of object `q` that exist in the compiled program: all of a workspace object's,
-    /// the reached ones of a dependency's. What a variable can drive is limited to those.
-    fn compiled_routines(&self, sh: &Shared<'_>, q: usize) -> Calls {
-        if let Some(hit) = self.compiled.borrow().get(&q) {
-            return hit.clone();
-        }
-        let offsets = &sh.routine_offsets[q];
-        let found: std::rc::Rc<Vec<(usize, usize)>> = std::rc::Rc::new(
-            (0..offsets.len())
-                .filter(|&ri| {
-                    sh.demand
-                        .is_none_or(|d| !sh.ws.is_dependency(q) || d.reached(q, offsets[ri]))
-                })
-                .map(|ri| (q, ri))
-                .collect(),
-        );
-        self.compiled.borrow_mut().insert(q, found.clone());
-        found
     }
 }
 
@@ -1523,12 +1586,7 @@ fn lower_object<'a>(
         // A TestPage drives page routines the call graph cannot see (ADR-012). An xmlport's
         // triggers are run by Import and Export, and a report's by Run, which the graph cannot
         // see either.
-        driven_edges(
-            &sh.driven,
-            &|q| tl.compiled_routines(sh, q).to_vec(),
-            routine.locals.iter().chain(&globals),
-            &mut lw.calls,
-        );
+        driven_edges(&sh.driven, routine.locals.iter().chain(&globals), &mut lw.calls);
         unsupported.push(std::mem::take(&mut lw.reasons));
         calls.push(std::mem::take(&mut lw.calls));
         routines.push(routine);

@@ -74,9 +74,11 @@ dealt with them. Tests-ERM with test data went from 480 passed, 18 failed (main 
 | 198 not run: `Format of Record(RefCell { ... })` | A debug dump of the value in the refusal text | The text names the type: `Format of a Record (standard format 0) is not pinned yet`. 213 Tests-ERM tests and 1 more (`FieldRef`) stop there: Base Application compares `Format(Rec) = Format(xRec)` in its Global Triggers subscribers. Probe in "Probe batch 6" |
 | 3 (Tests-SMB): `The Office Add-in does not exist` | Unchanged. The test that creates the default add-ins is not run (`Uri.Scheme` is a DotNet value used as an operand), and three later tests of the codeunit rely on its rows. The backup holds no Office Add-in row | ADR-014 question |
 
-Still failing in Tests-ERM (5): `T043_AmountTypeMustBeDiscountForItemDiscGroup` (Price List Line UT and Price
-Worksheet Line UT) because variables of a table object do not persist per record variable (Probe batch 6, item 5);
-`GLAccountCategoryDelete`, `AddTextforLanguageInReminderLevelCommunication` (`The TestPage is not open`) and
+`T043_AmountTypeMustBeDiscountForItemDiscGroup` (Price List Line UT and Price Worksheet Line UT) failed because
+variables of a table object did not persist per record variable; ADR-021 (`table-globals`) fixes it: Tests-ERM with
+test data went from 487 passed, 5 failed to 490 passed, 3 failed.
+
+Still failing in Tests-ERM (3): `GLAccountCategoryDelete`, `AddTextforLanguageInReminderLevelCommunication` (`The TestPage is not open`) and
 `AccountScheduleNoIndentationAnyValue` (`Commit` under AutoRollback) are not triaged.
 
 Without test data Tests-ERM failed 121 tests; the first 30 failures are missing setup data (`General Posting Setup`

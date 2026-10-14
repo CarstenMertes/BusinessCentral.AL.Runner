@@ -641,7 +641,7 @@ pub struct Context<'a> {
     pub slots: &'a HashMap<String, usize>,
     pub request_flag_slot: usize,
     /// (object, source offset) to routine index.
-    pub routine_at: &'a HashMap<(usize, usize), usize>,
+    pub routine_at: &'a crate::lower::RoutineAt,
     /// Reportextensions that change what a run does: why the report cannot run yet.
     pub extension_reasons: Vec<String>,
     /// The one reportextension (object index) that changes what a run does.
@@ -661,7 +661,7 @@ struct Owner<'a> {
     members: &'a crate::members::MemberTable<'a>,
     file: usize,
     oi: usize,
-    routine_at: &'a HashMap<(usize, usize), usize>,
+    routine_at: &'a crate::lower::RoutineAt,
     /// Source offsets of the object's `column` sections, in source order: the index of an offset
     /// is the ordinal `pages::column_name` names the column's routine by.
     column_starts: Vec<usize>,
@@ -675,7 +675,7 @@ impl<'a> Owner<'a> {
         members: &'a crate::members::MemberTable<'a>,
         file: usize,
         oi: usize,
-        routine_at: &'a HashMap<(usize, usize), usize>,
+        routine_at: &'a crate::lower::RoutineAt,
         obj: &ast::Object,
     ) -> Owner<'a> {
         let column_starts: Vec<usize> = crate::pages::column_sections(obj)
@@ -690,7 +690,7 @@ impl<'a> Owner<'a> {
         let mut column_routines = HashMap::new();
         for r in ast::routines_in(obj.syntax()) {
             if let Some(&ordinal) = names.get(&r.name()) {
-                if let Some(&idx) = routine_at.get(&(oi, usize::from(r.syntax().text_range().start()))) {
+                if let Some(idx) = routine_at.get(&(oi, usize::from(r.syntax().text_range().start()))) {
                     column_routines.insert(ordinal, idx);
                 }
             }
@@ -786,7 +786,6 @@ fn item_ir(
         sec.triggers()
             .find(|t| t.name().eq_ignore_ascii_case(name))
             .and_then(|t| o.routine_at.get(&(o.oi, usize::from(t.syntax().text_range().start()))))
-            .copied()
     };
     let table = table_object(o.ws, o.file, &raw.table);
     if slot.is_none() || table.is_none() {
@@ -863,7 +862,6 @@ fn object_trigger(o: &Owner, obj: &ast::Object, name: &str) -> Option<usize> {
     obj.triggers()
         .find(|t| t.name().eq_ignore_ascii_case(name))
         .and_then(|t| o.routine_at.get(&(o.oi, usize::from(t.syntax().text_range().start()))))
-        .copied()
 }
 
 /// The IR of report `cx.oi`. `reasons` are what the lowering of the item variables found.
@@ -911,7 +909,7 @@ pub struct ExtContext<'a> {
     /// The extended report's IR (its items' tables).
     pub base_items: &'a [ir::ReportItem],
     pub layout: &'a ExtLayout,
-    pub routine_at: &'a HashMap<(usize, usize), usize>,
+    pub routine_at: &'a crate::lower::RoutineAt,
 }
 
 /// The slot of base item `i` in the extension's globals: the extension names the base items'
@@ -934,13 +932,10 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
     let mut modifies = Vec::new();
     for (name, sec) in &cx.layout.modifies {
         let trigger = |t: &str| {
-            sec.triggers()
-                .find(|x| x.name().eq_ignore_ascii_case(t))
-                .and_then(|x| {
-                    cx.routine_at
-                        .get(&(cx.oi, usize::from(x.syntax().text_range().start())))
-                })
-                .copied()
+            sec.triggers().find(|x| x.name().eq_ignore_ascii_case(t)).and_then(|x| {
+                cx.routine_at
+                    .get(&(cx.oi, usize::from(x.syntax().text_range().start())))
+            })
         };
         match base_index(name) {
             Some(item) => modifies.push(ir::ReportExtModify {

@@ -84,6 +84,23 @@ jobs:
       - name: Fetch dependency apps (warms the cache)
         run: ./target/release/al-test-cli --all-versions --fetch-deps
 
+      # ADR-022. The compile cache holds the lowered form of the dependency apps, made on this
+      # runner from the downloaded apps; it is saved with actions/cache and never uploaded
+      # anywhere else. The key names the BC builds (the apps) and the sources of the runtime (the
+      # entry file's own key also holds a hash of the executable, so a build that differs misses
+      # and rebuilds). No restore-keys: an entry of another build is never usable.
+      - name: Compile cache, restore
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/al-runtime/compile
+          key: compile-cache-${{ steps.bc.outputs.key }}-${{ hashFiles('Cargo.lock', 'crates/**/*.rs') }}
+      # Builds the entry of each version when it is not there, or reads and checks every block of
+      # the one that is. The measured run below is then always a cache hit, and the time of the
+      # build is reported on its own line.
+      - name: Compile cache, build or verify
+        run: |
+          ./target/release/al-test-cli --all-versions --build-compile-cache | tee cache-build.txt
+
       # The corpus pass rate fails the job on any regression against metrics/<major>/passing.txt of
       # every version in oracle/oracle.toml (exit 1), or when the oracle and the corpus pin disagree
       # (exit 2).
@@ -157,6 +174,41 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # ADR-022. The measured run: every dependency app comes from the compile cache
+      # (`--require-compile-cache` turns a miss into an error). Its outcomes must be those of the
+      # normal run above for every test, except the tests in tools/demand-eager-known-differences.txt
+      # (the cache holds the complete compile, like the eager run). The job summary has the times
+      # with the cache on; the time to build the cache is a line of its own.
+      - name: Corpus with the compile cache, against the uncached run
+        run: |
+          status=0
+          ./target/release/al-test-cli --all-versions --require-dotnet --no-ratchet --require-compile-cache \
+            --json cached-pass-rate.json --markdown cached-pass-rate.md --junit cached-junit.xml || status=1
+          tools/cache_vs_uncached.sh compare . || status=1
+          {
+            echo
+            echo "## With the compile cache"
+            echo
+            echo "The times of the measured run, every dependency app taken from the cache:"
+            echo
+            cat cached-pass-rate-*.md
+            echo
+            echo "### Time to build the compile cache (not part of the times above)"
+            echo
+            grep "^compile cache build time" cache-build.txt | sed 's/^/- /' || true
+            grep "^compile cache: BC" cache-build.txt | sed 's/^/- /' || true
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+      # Keeps the entries this run used and drops the rest, so the cache that is saved at the end of
+      # the job holds only what the next run can use.
+      - name: Compile cache, prune
+        run: |
+          used=$(grep -o '[^ ]*deps-[0-9a-f]*\.alcc' cache-build.txt | sort -u)
+          for f in ~/.cache/al-runtime/compile/*.alcc; do
+            [ -e "$f" ] || continue
+            echo "$used" | grep -qx "$f" || { echo "pruned $f"; rm -f "$f"; }
+          done
+
       - name: Date stamp
         if: always()
         id: date
@@ -171,6 +223,9 @@ jobs:
             runtime-junit-*.xml
             eager-junit-*.xml
             eager-report-*.json
+            cached-pass-rate-*.json
+            cached-pass-rate-*.md
+            cached-junit-*.xml
           retention-days: 90
 
   release-tests:

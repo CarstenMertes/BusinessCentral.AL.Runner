@@ -19,6 +19,8 @@ pub struct CompileTimings {
     pub members: std::time::Duration,
     pub check: crate::check::CheckTimings,
     pub lower: std::time::Duration,
+    /// With the compile cache: checking the cache against the apps and reading its blocks.
+    pub cache_blocks: std::time::Duration,
 }
 
 pub struct Lowered {
@@ -33,6 +35,96 @@ pub struct Lowered {
     pub calls: Vec<Vec<Vec<(usize, usize)>>>,
     /// Per object: it belongs to a dependency app, so no test or install code of it runs (ADR-013).
     pub dependency: Vec<bool>,
+    /// Per object: its lowered form came from a compile cache (`provided.rs`). `calls` holds only
+    /// the direct calls of such an object; `calls_of` adds the rest.
+    pub provided: Vec<bool>,
+    /// What a variable of a page, report or xmlport can drive (see `Driven`); set with `provided`.
+    driven: Option<DrivenCtx>,
+    /// With `lower_for_cache`: the lowered dependency objects and what the lowering of others
+    /// reads about them, ready to be stored.
+    pub exported: Option<crate::provided::DepSet>,
+}
+
+/// The routines a variable of a page, report or xmlport type can run besides the ones the code
+/// calls: a test page drives every routine of its page, the page's extensions and its parts.
+#[derive(Clone)]
+pub(crate) struct DrivenCtx {
+    page_extensions: HashMap<usize, Vec<usize>>,
+    page_parts: Vec<Vec<usize>>,
+    page_runs: Vec<Vec<usize>>,
+    /// Per object: an xmlport or report, whose triggers Import, Export and Run call.
+    runs_triggers: Vec<bool>,
+    report_extension: Vec<Option<usize>>,
+    routine_counts: Vec<usize>,
+}
+
+impl Lowered {
+    /// The routines routine `r` of object `o` can call: the ones its code names and the ones a
+    /// variable of a page, report or xmlport type drives.
+    pub fn calls_of(&self, o: usize, r: usize) -> Vec<(usize, usize)> {
+        let mut out = Vec::new();
+        self.calls_into(o, r, &mut out);
+        out
+    }
+
+    /// [`calls_of`](Self::calls_of), appended to `out`.
+    pub fn calls_into(&self, o: usize, r: usize, out: &mut Vec<(usize, usize)>) {
+        out.extend(self.calls[o][r].iter().copied());
+        if !self.provided.get(o).copied().unwrap_or(false) {
+            return;
+        }
+        if let Some(d) = &self.driven {
+            let object = &self.program.objects[o];
+            let routine = &object.routines[r];
+            driven_edges(
+                d,
+                &|q| (0..d.routine_counts[q]).map(|ri| (q, ri)).collect(),
+                routine.locals.iter().chain(&object.globals),
+                out,
+            );
+        }
+    }
+}
+
+/// The routines driven by the slots of a routine (its locals) and its object (its globals).
+fn driven_edges<'a>(
+    d: &DrivenCtx,
+    compiled: &dyn Fn(usize) -> Vec<(usize, usize)>,
+    slots: impl Iterator<Item = &'a ir::Slot>,
+    out: &mut Vec<(usize, usize)>,
+) {
+    for s in slots {
+        if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
+            // The page and, transitively, the pages it shows as parts.
+            let mut seen = vec![p as usize];
+            let mut at = 0;
+            while at < seen.len() {
+                let q = seen[at];
+                at += 1;
+                out.extend(compiled(q));
+                // The extensions' triggers and procedures run with the page.
+                for &e in d.page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
+                    out.extend(compiled(e));
+                }
+                for &part in d.page_parts[q].iter().chain(&d.page_runs[q]) {
+                    if !seen.contains(&part) {
+                        seen.push(part);
+                    }
+                }
+            }
+        }
+        // An xmlport's triggers are run by Import and Export, and a report's by Run, which
+        // the graph cannot see.
+        if let RtType::Codeunit(p) = s.ty {
+            let p = p as usize;
+            if d.runs_triggers[p] {
+                out.extend(compiled(p));
+            }
+            if let Some(e) = d.report_extension[p] {
+                out.extend(compiled(e));
+            }
+        }
+    }
 }
 
 impl Lowered {
@@ -66,7 +158,55 @@ pub fn lower_with_workers(
     positions: bool,
     workers: usize,
 ) -> Lowered {
+    lower_core(ws, members, checked, positions, workers, None, false).expect("no cache, no cache error")
+}
+
+/// What a compile cache supplies to a run (see `provided.rs`).
+pub(crate) struct Provided<'a> {
+    pub src: &'a dyn crate::provided::DepSource,
+    /// The blocks of the objects that are supplied, read and checked.
+    pub blocks: Vec<Option<crate::provided::DepBlock>>,
+}
+
+impl Provided<'_> {
+    /// Whether object `oi` comes from the cache.
+    fn has(&self, oi: usize) -> bool {
+        self.blocks.get(oi).is_some_and(Option::is_some)
+    }
+}
+
+/// The routine numbering of the objects: routine `r` of object `o` starts at `offsets[o][r]`.
+/// Offsets ascend, so the number of a routine is found by search.
+#[derive(Clone)]
+pub struct RoutineAt(pub std::sync::Arc<Vec<Vec<usize>>>);
+
+impl RoutineAt {
+    pub fn get(&self, key: &(usize, usize)) -> Option<usize> {
+        self.0.get(key.0)?.binary_search(&key.1).ok()
+    }
+}
+
+pub(crate) fn lower_core(
+    ws: &Workspace,
+    members: &MemberTable<'_>,
+    checked: &CheckResult,
+    positions: bool,
+    workers: usize,
+    provided: Option<Provided<'_>>,
+    export: bool,
+) -> Result<Lowered, String> {
     let catalog = al_builtins::catalog::Catalog::load();
+    let (src, mut blocks): (
+        Option<&dyn crate::provided::DepSource>,
+        Vec<Option<crate::provided::DepBlock>>,
+    ) = match provided {
+        Some(p) => (Some(p.src), p.blocks),
+        None => (None, Vec::new()),
+    };
+    let flags: Vec<bool> = (0..ws.objects.len())
+        .map(|oi| blocks.get(oi).is_some_and(Option::is_some))
+        .collect();
+    let prov = |oi: usize| flags[oi];
     // With dependency apps the checker found what the workspace reaches in them (ADR-013);
     // the rest is not compiled and no longer resolves.
     let demand = checked.demand.as_ref();
@@ -89,6 +229,15 @@ pub fn lower_with_workers(
         (0..ws.objects.len())
             .into_par_iter()
             .map(|oi| {
+                if prov(oi) {
+                    return src
+                        .expect("provided")
+                        .facts(oi)
+                        .routine_offsets
+                        .iter()
+                        .map(|&o| o as usize)
+                        .collect();
+                }
                 if !active_v[oi] {
                     return Vec::new();
                 }
@@ -99,11 +248,8 @@ pub fn lower_with_workers(
             })
             .collect()
     };
-    let routine_at: HashMap<(usize, usize), usize> = routine_offsets
-        .iter()
-        .enumerate()
-        .flat_map(|(oi, offsets)| offsets.iter().enumerate().map(move |(ri, &at)| ((oi, at), ri)))
-        .collect();
+    let routine_offsets = std::sync::Arc::new(routine_offsets);
+    let routine_at = RoutineAt(routine_offsets.clone());
     let mut program = ir::Program {
         objects: Vec::new(),
         apps: ws
@@ -141,6 +287,9 @@ pub fn lower_with_workers(
         unsupported: Vec::new(),
         calls: Vec::new(),
         dependency: (0..ws.objects.len()).map(|oi| ws.is_dependency(oi)).collect(),
+        provided: (0..ws.objects.len()).map(prov).collect(),
+        driven: None,
+        exported: None,
     };
     if positions {
         program.sources = ws
@@ -160,6 +309,9 @@ pub fn lower_with_workers(
     let mut page_temporary: Vec<bool> = vec![false; ws.objects.len()];
     let mut page_extensions: HashMap<usize, Vec<usize>> = HashMap::new();
     for (oi, o) in ws.objects.iter().enumerate() {
+        if prov(oi) {
+            continue;
+        }
         if o.kind == ObjKind::PageExtension && active(oi) {
             if let Some(base) = ws.object_ast(oi).extends_parts() {
                 if let Resolution::Found(p) = ws.resolve_ref(o.file, ObjKind::Page, &base) {
@@ -191,8 +343,23 @@ pub fn lower_with_workers(
     let mut page_parts: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
     // The pages and codeunits each page's RunObject actions run.
     let mut page_runs: Vec<Vec<usize>> = vec![Vec::new(); ws.objects.len()];
+    // What the cache supplied about the objects it supplies.
+    let usize_of = |v: &[u32]| -> Vec<usize> { v.iter().map(|&i| i as usize).collect() };
+    if let Some(src) = src {
+        for oi in (0..ws.objects.len()).filter(|&oi| prov(oi)) {
+            let f = src.facts(oi);
+            table_of[oi] = f.table_of.map(|t| t as usize);
+            page_temporary[oi] = f.page_temporary;
+            page_reasons[oi] = f.page_reasons.clone();
+            page_parts[oi] = usize_of(&f.page_parts);
+            page_runs[oi] = usize_of(&f.page_runs);
+            if !f.page_extensions.is_empty() {
+                page_extensions.insert(oi, usize_of(&f.page_extensions));
+            }
+        }
+    }
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::Page || !active(oi) {
+        if o.kind != ObjKind::Page || !active(oi) || prov(oi) {
             continue;
         }
         let obj = ws.object_ast(oi);
@@ -318,6 +485,7 @@ pub fn lower_with_workers(
     for (oi, o) in ws.objects.iter().enumerate() {
         match o.kind {
             ObjKind::Table => table_of[oi] = Some(oi),
+            _ if prov(oi) => {}
             // `Rec` of a codeunit with TableNo (a RunObject action hands it the host's record).
             ObjKind::Codeunit if active(oi) => {
                 let table_no = ws
@@ -350,7 +518,7 @@ pub fn lower_with_workers(
     let mut xml_layouts: Vec<Option<crate::xmlports::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
     let mut xml_irs: Vec<Option<ir::XmlPort>> = (0..ws.objects.len()).map(|_| None).collect();
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::XmlPort || !active(oi) {
+        if o.kind != ObjKind::XmlPort || !active(oi) || prov(oi) {
             continue;
         }
         let l = crate::xmlports::layout(&ws.object_ast(oi));
@@ -392,7 +560,7 @@ pub fn lower_with_workers(
     // Per report: the reportextensions that change a run.
     let mut changing: HashMap<usize, Vec<usize>> = HashMap::new();
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::ReportExtension || !active(oi) {
+        if o.kind != ObjKind::ReportExtension || !active(oi) || prov(oi) {
             continue;
         }
         let ext = ws.object_ast(oi);
@@ -410,7 +578,7 @@ pub fn lower_with_workers(
         }
     }
     for (oi, o) in ws.objects.iter().enumerate() {
-        if o.kind != ObjKind::Report || !active(oi) {
+        if o.kind != ObjKind::Report || !active(oi) || prov(oi) {
             continue;
         }
         let obj = ws.object_ast(oi);
@@ -503,6 +671,38 @@ pub fn lower_with_workers(
             );
         }
     }
+    // Why a variable of an xmlport or report is refused, and the report extension that changes a
+    // run: the cache supplies them for its objects.
+    let n_objects = ws.objects.len();
+    let mut xml_reasons: Vec<Option<String>> = (0..n_objects)
+        .map(|oi| xml_irs[oi].as_ref().and_then(|p| p.unsupported.first().cloned()))
+        .collect();
+    let mut report_reasons: Vec<Option<String>> = (0..n_objects)
+        .map(|oi| report_irs[oi].as_ref().and_then(|p| p.unsupported.first().cloned()))
+        .collect();
+    let mut report_extension: Vec<Option<usize>> = (0..n_objects)
+        .map(|oi| report_irs[oi].as_ref().and_then(|r| r.extension))
+        .collect();
+    if let Some(src) = src {
+        for oi in (0..n_objects).filter(|&oi| prov(oi)) {
+            let f = src.facts(oi);
+            xml_reasons[oi] = f.xml_reason.clone();
+            report_reasons[oi] = f.report_reason.clone();
+            report_extension[oi] = f.report_extension.map(|e| e as usize);
+        }
+    }
+    let driven = DrivenCtx {
+        page_extensions,
+        page_parts,
+        page_runs,
+        runs_triggers: ws
+            .objects
+            .iter()
+            .map(|o| matches!(o.kind, ObjKind::XmlPort | ObjKind::Report))
+            .collect(),
+        report_extension,
+        routine_counts: routine_offsets.iter().map(Vec::len).collect(),
+    };
     // From here on objects are lowered one at a time, each a function of the data above.
     let mut shared = Shared {
         ws,
@@ -514,18 +714,19 @@ pub fn lower_with_workers(
         active: active_v,
         table_of,
         page_temporary,
-        page_extensions,
         page_reasons,
-        page_parts,
-        page_runs,
+        driven,
         xml_irs,
         report_irs,
+        xml_reasons,
+        report_reasons,
         ext_irs,
         ext_slots: Vec::new(),
         routine_offsets,
         routine_at,
         extensions,
         ext_base,
+        export,
     };
     // The global slot of each variable of a page extension, by lower-case name. The page's control
     // tree is built before the extensions are lowered, and binds their controls to these slots.
@@ -533,8 +734,11 @@ pub fn lower_with_workers(
     {
         let local = Local::new(Nodes::new(ws, shared.active.clone()));
         let seq = Seq::new(&shared);
-        for exts in shared.page_extensions.values() {
+        for exts in shared.driven.page_extensions.values() {
             for &e in exts {
+                if prov(e) {
+                    continue;
+                }
                 let lw = make_lowerer(&shared, &local, &seq, e);
                 let mut slots = HashMap::new();
                 for v in ws.object_ast(e).var_decls() {
@@ -550,6 +754,16 @@ pub fn lower_with_workers(
             }
         }
     }
+    if let Some(src) = src {
+        for e in (0..n_objects).filter(|&e| prov(e)) {
+            ext_slot_table[e] = src
+                .facts(e)
+                .ext_slots
+                .iter()
+                .map(|(n, i)| (n.clone(), *i as usize))
+                .collect();
+        }
+    }
     shared.ext_slots = ext_slot_table;
     let n = ws.objects.len();
     // Worker threads and this one take the active objects in turn, the workspace's own first (they
@@ -557,9 +771,9 @@ pub fn lower_with_workers(
     // are moved to their place in the program's table below, in object order, so the numbering is
     // the one a single thread would have made.
     let mut theirs: Vec<usize> = (0..n)
-        .filter(|&oi| shared.active[oi] && !ws.is_dependency(oi))
+        .filter(|&oi| shared.active[oi] && !ws.is_dependency(oi) && !prov(oi))
         .collect();
-    theirs.extend((0..n).filter(|&oi| shared.active[oi] && ws.is_dependency(oi)));
+    theirs.extend((0..n).filter(|&oi| shared.active[oi] && ws.is_dependency(oi) && !prov(oi)));
     let workers = workers.min(theirs.len() / PARALLEL_OBJECTS_PER_WORKER);
     let next = std::sync::atomic::AtomicUsize::new(0);
     let take_some = |local: &Local<'_>, seq: &Seq<'_>| -> Vec<(usize, Piece)> {
@@ -602,6 +816,25 @@ pub fn lower_with_workers(
     for (oi, piece) in done.into_iter().flatten() {
         pieces[oi] = Some(piece);
     }
+    // Objects the cache supplies.
+    {
+        for (oi, slot) in blocks.iter_mut().enumerate() {
+            if let Some(b) = slot.take() {
+                pieces[oi] = Some(Piece {
+                    object: b.object,
+                    positions: Vec::new(),
+                    unsupported: b.unsupported,
+                    calls: b
+                        .calls
+                        .iter()
+                        .map(|r| r.iter().map(|&(o, r)| (o as usize, r as usize)).collect())
+                        .collect(),
+                    direct: Vec::new(),
+                    embeds: Vec::new(),
+                });
+            }
+        }
+    }
     // Objects nothing compiled are shells.
     let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
     #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
@@ -610,7 +843,56 @@ pub fn lower_with_workers(
             pieces[oi] = Some(lower_object(&shared, &local, &seq, oi, &mut line_cache));
         }
     }
-    for mut piece in pieces.into_iter().flatten() {
+    let mut exported = export.then(crate::provided::DepSet::default);
+    let embeds_of_all: Vec<Vec<usize>> = pieces
+        .iter()
+        .map(|p| p.as_ref().map_or_else(Vec::new, |p| p.embeds.clone()))
+        .collect();
+    for (oi, mut piece) in pieces.into_iter().flatten().enumerate() {
+        if let Some(set) = exported.as_mut() {
+            set.blocks.push(crate::provided::DepBlock {
+                object: piece.object.clone(),
+                unsupported: piece.unsupported.clone(),
+                calls: piece
+                    .direct
+                    .iter()
+                    .map(|r| r.iter().map(|&(o, r)| (o as u32, r as u32)).collect())
+                    .collect(),
+            });
+            let o = &ws.objects[oi];
+            let recorded: std::collections::BTreeSet<usize> = embeds_of_all[oi].iter().copied().collect();
+            set.facts.push(crate::provided::DepFacts {
+                kind: Some(o.kind),
+                id: o.id,
+                name: o.name.clone(),
+                app: o.app as u32,
+                embeds: crate::provided::embeds_of(oi, &recorded, &|p| shared.driven.page_parts[p].clone()),
+                table_of: shared.table_of[oi].map(|t| t as u32),
+                page_temporary: shared.page_temporary[oi],
+                page_reasons: shared.page_reasons[oi].clone(),
+                page_parts: shared.driven.page_parts[oi].iter().map(|&p| p as u32).collect(),
+                page_runs: shared.driven.page_runs[oi].iter().map(|&p| p as u32).collect(),
+                page_extensions: shared
+                    .driven
+                    .page_extensions
+                    .get(&oi)
+                    .map(|v| v.iter().map(|&p| p as u32).collect())
+                    .unwrap_or_default(),
+                ext_slots: {
+                    let mut v: Vec<(String, u32)> = shared.ext_slots[oi]
+                        .iter()
+                        .map(|(n, &i)| (n.clone(), i as u32))
+                        .collect();
+                    v.sort();
+                    v
+                },
+                routine_offsets: shared.routine_offsets[oi].iter().map(|&o| o as u32).collect(),
+                xml_reason: shared.xml_reasons[oi].clone(),
+                report_reason: shared.report_reasons[oi].clone(),
+                report_extension: shared.driven.report_extension[oi].map(|e| e as u32),
+                query: checked.queries[oi].clone(),
+            });
+        }
         if !piece.positions.is_empty() {
             let base = program.positions.len() as u32;
             for r in &mut piece.object.routines {
@@ -622,8 +904,12 @@ pub fn lower_with_workers(
         out.unsupported.push(piece.unsupported);
         out.calls.push(piece.calls);
     }
+    out.exported = exported;
+    if src.is_some() {
+        out.driven = Some(shared.driven.clone());
+    }
     out.program = std::sync::Arc::new(program);
-    out
+    Ok(out)
 }
 
 /// The lowering of one object: its IR, why each routine cannot run, and the routines each calls.
@@ -633,6 +919,10 @@ struct Piece {
     positions: Vec<ir::SrcPos>,
     unsupported: Vec<Vec<String>>,
     calls: Vec<Vec<(usize, usize)>>,
+    /// With `Shared::export`: `calls` without what a page, report or xmlport variable drives.
+    direct: Vec<Vec<(usize, usize)>>,
+    /// The objects whose extensions or implementers the lowering read (see `provided.rs`).
+    embeds: Vec<usize>,
 }
 
 /// How many threads lower dependency objects. `AL_LOWER_THREADS` sets it; the default is the
@@ -666,22 +956,27 @@ struct Shared<'a> {
     /// The table whose record is the implicit `Rec` of each object.
     table_of: Vec<Option<usize>>,
     page_temporary: Vec<bool>,
-    page_extensions: HashMap<usize, Vec<usize>>,
     page_reasons: Vec<Vec<String>>,
-    page_parts: Vec<Vec<usize>>,
-    page_runs: Vec<Vec<usize>>,
+    /// What a variable of a page, report or xmlport type drives: the page extensions of each
+    /// page, the parts and actions of each page, the report extension of each report.
+    driven: DrivenCtx,
     xml_irs: Vec<Option<ir::XmlPort>>,
     report_irs: Vec<Option<ir::Report>>,
+    /// Per object: the first reason a variable of the xmlport or report is refused.
+    xml_reasons: Vec<Option<String>>,
+    report_reasons: Vec<Option<String>>,
     ext_irs: Vec<Option<ir::ReportExt>>,
     /// The global slot of each variable of a page extension, by lower-case name.
     ext_slots: Vec<HashMap<String, usize>>,
     /// The start offset of every routine, numbered as `Nodes` numbers them.
-    routine_offsets: Vec<Vec<usize>>,
-    routine_at: HashMap<(usize, usize), usize>,
+    routine_offsets: std::sync::Arc<Vec<Vec<usize>>>,
+    routine_at: RoutineAt,
     /// The extensions of each table.
     extensions: HashMap<usize, Vec<usize>>,
     /// For a report extension that changes a run, the report it belongs to.
     ext_base: Vec<Option<usize>>,
+    /// Keep what a cache needs (`Lowered::exported`).
+    export: bool,
 }
 
 /// The routine nodes of the objects, built when first asked for. A syntax tree belongs to the
@@ -778,7 +1073,7 @@ impl<'a> Seq<'a> {
         Seq {
             ws: sh.ws,
             active: &sh.active,
-            page_extensions: &sh.page_extensions,
+            page_extensions: &sh.driven.page_extensions,
             ext_base: &sh.ext_base,
             page: cells(n),
             xml: cells(n),
@@ -860,14 +1155,15 @@ fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a Seq<'a>, oi:
         calls: Vec::new(),
         page_reasons: &sh.page_reasons,
         layouts: seq,
-        xmlports: &sh.xml_irs,
-        reports: &sh.report_irs,
+        xml_reasons: &sh.xml_reasons,
+        report_reasons: &sh.report_reasons,
         memo: &tl.memo,
         ret_ty: None,
         ret_decl: None,
         routine_nodes: &tl.nodes,
         ext_slots: &sh.ext_slots,
-        page_extensions: &sh.page_extensions,
+        page_extensions: &sh.driven.page_extensions,
+        embeds: Default::default(),
         positions: Vec::new(),
         lines: None,
         emit_pos: false,
@@ -890,10 +1186,8 @@ fn lower_object<'a>(
     let demand = sh.demand;
     let table_of = &sh.table_of;
     let page_temporary = &sh.page_temporary;
-    let page_extensions = &sh.page_extensions;
+    let page_extensions = &sh.driven.page_extensions;
     let page_reasons = &sh.page_reasons;
-    let page_parts = &sh.page_parts;
-    let page_runs = &sh.page_runs;
     let xml_irs = &sh.xml_irs;
     let report_irs = &sh.report_irs;
     let ext_irs = &sh.ext_irs;
@@ -941,6 +1235,8 @@ fn lower_object<'a>(
             positions: Vec::new(),
             unsupported: Vec::new(),
             calls: Vec::new(),
+            direct: Vec::new(),
+            embeds: Vec::new(),
         };
     }
     let obj = ws.object_ast(oi);
@@ -1135,6 +1431,7 @@ fn lower_object<'a>(
     let mut routines = Vec::new();
     let mut unsupported = Vec::new();
     let mut calls = Vec::new();
+    let mut direct = Vec::new();
     for (ri, r) in tl.nodes.get(oi).iter().enumerate() {
         lw.routine_idx = ri;
         lw.reasons = global_reasons.clone();
@@ -1186,39 +1483,18 @@ fn lower_object<'a>(
         } else {
             lw.stub(r)
         };
-        // A TestPage drives page routines the call graph cannot see (ADR-012).
-        for s in routine.locals.iter().chain(&globals) {
-            if let RtType::TestPage(p) | RtType::Page(p) = s.ty {
-                // The page and, transitively, the pages it shows as parts.
-                let mut seen = vec![p as usize];
-                let mut at = 0;
-                while at < seen.len() {
-                    let q = seen[at];
-                    at += 1;
-                    lw.calls.extend(tl.compiled_routines(sh, q).iter().copied());
-                    // The extensions' triggers and procedures run with the page.
-                    for &e in page_extensions.get(&q).map(|v| v.as_slice()).unwrap_or(&[]) {
-                        lw.calls.extend(tl.compiled_routines(sh, e).iter().copied());
-                    }
-                    for &part in page_parts[q].iter().chain(&page_runs[q]) {
-                        if !seen.contains(&part) {
-                            seen.push(part);
-                        }
-                    }
-                }
-            }
-            // An xmlport's triggers are run by Import and Export, and a report's by Run, which
-            // the graph cannot see.
-            if let RtType::Codeunit(p) = s.ty {
-                let p = p as usize;
-                if matches!(ws.objects[p].kind, ObjKind::XmlPort | ObjKind::Report) {
-                    lw.calls.extend(tl.compiled_routines(sh, p).iter().copied());
-                }
-                if let Some(e) = report_irs[p].as_ref().and_then(|r| r.extension) {
-                    lw.calls.extend(tl.compiled_routines(sh, e).iter().copied());
-                }
-            }
+        if sh.export {
+            direct.push(lw.calls.clone());
         }
+        // A TestPage drives page routines the call graph cannot see (ADR-012). An xmlport's
+        // triggers are run by Import and Export, and a report's by Run, which the graph cannot
+        // see either.
+        driven_edges(
+            &sh.driven,
+            &|q| tl.compiled_routines(sh, q).to_vec(),
+            routine.locals.iter().chain(&globals),
+            &mut lw.calls,
+        );
         unsupported.push(std::mem::take(&mut lw.reasons));
         calls.push(std::mem::take(&mut lw.calls));
         routines.push(routine);
@@ -1282,11 +1558,16 @@ fn lower_object<'a>(
         query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
     };
     let positions = std::mem::take(&mut lw.positions);
+    // Itself, whatever the lowering read about the extensions and implementers of others, and
+    // what `provided::embeds_of` adds from the pages' parts.
+    let embeds = lw.embeds.take().into_iter().collect();
     Piece {
         object,
         positions,
         unsupported,
         calls,
+        direct,
+        embeds,
     }
 }
 
@@ -1577,7 +1858,7 @@ struct Lowerer<'a> {
     members: &'a MemberTable<'a>,
     checked: &'a CheckResult,
     catalog: &'a al_builtins::catalog::Catalog,
-    routine_at: &'a HashMap<(usize, usize), usize>,
+    routine_at: &'a RoutineAt,
     oi: usize,
     file: usize,
     globals: HashMap<String, usize>,
@@ -1590,10 +1871,12 @@ struct Lowerer<'a> {
     /// Per object: why the test client cannot drive it yet (pages).
     page_reasons: &'a [Vec<String>],
     layouts: &'a Seq<'a>,
-    /// Per object: the schema of an xmlport (its `unsupported` says why a variable is refused).
-    xmlports: &'a [Option<ir::XmlPort>],
-    /// Per object: the dataset of a report (its `unsupported` says why a variable is refused).
-    reports: &'a [Option<ir::Report>],
+    /// Per object: why a variable of an xmlport is refused.
+    xml_reasons: &'a [Option<String>],
+    /// Per object: why a variable of a report is refused.
+    report_reasons: &'a [Option<String>],
+    /// The objects whose extensions or implementers the lowering read (`provided.rs`).
+    embeds: std::cell::RefCell<std::collections::BTreeSet<usize>>,
     /// Answers many routines ask for, computed once per program.
     memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
@@ -1965,7 +2248,7 @@ impl Lowerer<'_> {
         extensions: &[usize],
         field: &str,
         trigger: &str,
-        routine_at: &HashMap<(usize, usize), usize>,
+        routine_at: &RoutineAt,
     ) -> Vec<(usize, usize)> {
         let mut out = Vec::new();
         for &e in extensions {
@@ -1980,7 +2263,7 @@ impl Lowerer<'_> {
                 }
                 for t in sec.triggers().filter(|t| t.name().eq_ignore_ascii_case(trigger)) {
                     let offset: usize = t.syntax().text_range().start().into();
-                    if let Some(&r) = routine_at.get(&(e, offset)) {
+                    if let Some(r) = routine_at.get(&(e, offset)) {
                         out.push((e, r));
                     }
                 }
@@ -1989,13 +2272,7 @@ impl Lowerer<'_> {
         out
     }
 
-    fn table_schema(
-        &self,
-        oi: usize,
-        obj: &ast::Object,
-        extensions: Vec<usize>,
-        routine_at: &HashMap<(usize, usize), usize>,
-    ) -> ir::Table {
+    fn table_schema(&self, oi: usize, obj: &ast::Object, extensions: Vec<usize>, routine_at: &RoutineAt) -> ir::Table {
         let m = &self.members[oi];
         let fields = m
             .fields
@@ -2040,13 +2317,13 @@ impl Lowerer<'_> {
                         Vec::new()
                     },
                     on_validate: match (f.declared_in, f.on_validate) {
-                        (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
+                        (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, r)),
                         _ => None,
                     },
                     ext_before_validate: self.ext_field_triggers(&extensions, &f.name, "OnBeforeValidate", routine_at),
                     ext_after_validate: self.ext_field_triggers(&extensions, &f.name, "OnAfterValidate", routine_at),
                     on_lookup: match (f.declared_in, f.on_lookup) {
-                        (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, *r)),
+                        (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, r)),
                         _ => None,
                     },
                     flow_filter: f.class == crate::members::FieldClass::FlowFilter,
@@ -2154,7 +2431,6 @@ impl Lowerer<'_> {
         let routine_of = |ow: &Owner, r: &ast::Routine| {
             self.routine_at
                 .get(&(ow.object, usize::from(r.syntax().text_range().start())))
-                .copied()
         };
         // The routine behind an expression-valued property written at `p` in `ow`.
         let prop_value = |ow: &Owner, p: &ast::Property, unsupported: &mut Vec<String>, control: &str| {
@@ -2694,6 +2970,7 @@ impl Lowerer<'_> {
 
     /// The codeunits that implement `iface` (or an interface that extends it), in object order.
     fn implementers(&self, iface: usize) -> std::rc::Rc<Vec<usize>> {
+        self.embeds.borrow_mut().insert(iface);
         if let Some(hit) = self.memo.implementers.borrow().get(&iface) {
             return hit.clone();
         }
@@ -2715,7 +2992,8 @@ impl Lowerer<'_> {
             // An xmlport variable is an instance with its own globals, like a codeunit's.
             Ty::Object(ObjKind::XmlPort, n) => {
                 let x = self.resolve_obj(ObjKind::XmlPort, n)?;
-                match self.xmlports[x].as_ref().and_then(|p| p.unsupported.first()) {
+                self.embeds.borrow_mut().insert(x);
+                match self.xml_reasons[x].as_ref() {
                     None => RtType::Codeunit(x as u32),
                     Some(why) => return Err(format!("XmlPort \"{}\": {why}", crate::types::display_name(n))),
                 }
@@ -2723,13 +3001,15 @@ impl Lowerer<'_> {
             // A report variable is an instance with its own globals, like a codeunit's.
             Ty::Object(ObjKind::Report, n) => {
                 let r = self.resolve_obj(ObjKind::Report, n)?;
-                match self.reports[r].as_ref().and_then(|p| p.unsupported.first()) {
+                self.embeds.borrow_mut().insert(r);
+                match self.report_reasons[r].as_ref() {
                     None => RtType::Codeunit(r as u32),
                     Some(why) => return Err(format!("Report \"{}\": {why}", crate::types::display_name(n))),
                 }
             }
             Ty::Object(ObjKind::Page, n) => {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
+                self.embeds.borrow_mut().insert(p);
                 match self.page_reasons[p].first() {
                     None => RtType::Page(p as u32),
                     Some(why) => return Err(format!("Page \"{n}\": {why}")),
@@ -2744,6 +3024,7 @@ impl Lowerer<'_> {
             }
             Ty::TestPage(n) => {
                 let p = self.resolve_obj(ObjKind::Page, n)?;
+                self.embeds.borrow_mut().insert(p);
                 match self.page_reasons[p].first() {
                     None => RtType::TestPage(p as u32),
                     Some(why) => return Err(format!("TestPage \"{}\": {why}", crate::types::display_name(n))),
@@ -2752,6 +3033,7 @@ impl Lowerer<'_> {
             // A request page is the page of a report; the handler's variable is typed by the report.
             Ty::TestRequestPage(n) => {
                 let r = self.resolve_obj(ObjKind::Report, n)?;
+                self.embeds.borrow_mut().insert(r);
                 match self.page_reasons[r].first() {
                     None => RtType::TestPage(r as u32),
                     Some(why) => {
@@ -2867,6 +3149,8 @@ impl Lowerer<'_> {
     fn enum_impl(&self, enum_name: &str, iface: usize, value: ir::Expr) -> L<ir::Expr> {
         use crate::members::ImplSlot;
         let e = self.resolve_obj(ObjKind::Enum, enum_name)?;
+        self.embeds.borrow_mut().insert(e);
+        self.embeds.borrow_mut().insert(iface);
         let iname = &self.ws.objects[iface].name;
         let find = |slot: &ImplSlot| -> L<Option<usize>> {
             for im in self.members[e].enum_impls.iter().filter(|i| i.slot == *slot) {
@@ -2964,7 +3248,7 @@ impl Lowerer<'_> {
                     self.ws.objects[cu].name, self.ws.objects[iface].name, sig.name
                 ));
             };
-            let routine = *self.routine_at.get(&(cu, imp.offset)).ok_or("procedure not found")?;
+            let routine = self.routine_at.get(&(cu, imp.offset)).ok_or("procedure not found")?;
             self.calls.push((cu, routine));
             targets.push((cu, routine));
         }
@@ -4077,6 +4361,7 @@ impl Lowerer<'_> {
             ObjKind::Page
         };
         let page = self.resolve_obj(kind, &page)?;
+        self.embeds.borrow_mut().insert(page);
         let layout = self.layouts.page_layout(page).ok_or("page layout")?;
         let control = layout
             .controls
@@ -4197,7 +4482,7 @@ impl Lowerer<'_> {
                 self.interface_call(object, offset, receiver_node.as_ref(), args)
             }
             Some(Res::Proc { object, offset }) => {
-                let routine = *self.routine_at.get(&(object, offset)).ok_or("procedure not found")?;
+                let routine = self.routine_at.get(&(object, offset)).ok_or("procedure not found")?;
                 let sig = self.members[object]
                     .procedures
                     .iter()
@@ -4555,6 +4840,111 @@ pub fn compile_apps_with(
     compile_with_roots(apps, kinds, symbols, &catalog, roots)
 }
 
+/// The lowered form of the dependency apps `apps`, built by a complete compile of them alone,
+/// for a compile cache (ADR-022). The apps are in the order a run puts them: dependencies first.
+pub fn lower_for_cache(
+    apps: Vec<crate::workspace::AppSource>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+) -> crate::provided::DepSet {
+    let catalog = match target {
+        Some(t) => al_builtins::catalog::Catalog::for_target(t),
+        None => al_builtins::catalog::Catalog::load(),
+    };
+    let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
+    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let members = crate::members::build(&ws);
+    let roots = crate::check::Roots {
+        eager: true,
+        ..Default::default()
+    };
+    let checked = crate::check::check_with(&ws, &members, &catalog, roots);
+    let mut set = lower_core(&ws, &members, &checked, true, lower_workers(), None, true)
+        .expect("no cache, no cache error")
+        .exported
+        .expect("exported");
+    set.parse_problems = ws.lazy_parse_problems();
+    set
+}
+
+/// [`compile_apps_with`] for a run whose dependency apps (first in `apps`) are described by `src`:
+/// their objects come from it, except the ones the workspace changes (see `provided.rs`). The
+/// result is the complete (eager) compile. An error says the source does not fit the apps or is
+/// damaged; nothing was compiled then.
+pub fn compile_apps_cached(
+    apps: Vec<crate::workspace::AppSource>,
+    kinds: Vec<crate::workspace::AppKind>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    roots: crate::check::Roots,
+    src: &dyn crate::provided::DepSource,
+) -> Result<(Workspace, Lowered), Box<(Workspace, String)>> {
+    let catalog = match target {
+        Some(t) => al_builtins::catalog::Catalog::for_target(t),
+        None => al_builtins::catalog::Catalog::load(),
+    };
+    let started = std::time::Instant::now();
+    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let load = started.elapsed();
+    compile_loaded_cached(ws, load, &catalog, roots, src)
+}
+
+/// [`compile_apps_cached`] on a workspace that is loaded. An error gives the workspace back, so
+/// the caller can compile it without the cache.
+pub fn compile_loaded_cached(
+    ws: Workspace,
+    load: std::time::Duration,
+    catalog: &al_builtins::catalog::Catalog,
+    mut roots: crate::check::Roots,
+    src: &dyn crate::provided::DepSource,
+) -> Result<(Workspace, Lowered), Box<(Workspace, String)>> {
+    use rayon::prelude::*;
+    let blocks_started = std::time::Instant::now();
+    let prepared = (|| {
+        let n_dep = crate::provided::dependency_prefix(&ws).ok_or("a dependency app follows a workspace app")?;
+        crate::provided::check_identity(&ws, n_dep, src)?;
+        let relower = crate::provided::relower_set(&ws, n_dep, src);
+        let blocks: Vec<Option<crate::provided::DepBlock>> = (0..ws.objects.len())
+            .into_par_iter()
+            .map(|oi| {
+                if oi < n_dep && !relower[oi] {
+                    src.block(oi).map(Some)
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<Result<_, String>>()?;
+        Ok::<_, String>(blocks)
+    })();
+    let blocks = match prepared {
+        Ok(b) => b,
+        Err(why) => return Err(Box::new((ws, why))),
+    };
+    let provided = Provided { src, blocks };
+    let cache_blocks = blocks_started.elapsed();
+    let started = std::time::Instant::now();
+    let members = crate::members::build(&ws);
+    let members_time = started.elapsed();
+    roots.eager = true;
+    roots.provided = (0..ws.objects.len()).map(|oi| provided.has(oi)).collect();
+    roots.provided_queries = (0..ws.objects.len())
+        .map(|oi| provided.has(oi).then(|| src.facts(oi).query.clone()).flatten())
+        .collect();
+    let checked = crate::check::check_with(&ws, &members, catalog, roots);
+    let started = std::time::Instant::now();
+    let mut lowered = lower_core(&ws, &members, &checked, true, lower_workers(), Some(provided), false)
+        .expect("a cache that passed its checks lowers");
+    lowered.timings = CompileTimings {
+        load,
+        members: members_time,
+        check: checked.timings,
+        lower: started.elapsed(),
+        cache_blocks,
+    };
+    drop(members);
+    Ok((ws, lowered))
+}
+
 fn compile_with(
     apps: Vec<crate::workspace::AppSource>,
     kinds: Vec<crate::workspace::AppKind>,
@@ -4574,6 +4964,16 @@ fn compile_with_roots(
     let started = std::time::Instant::now();
     let ws = Workspace::load_apps(apps, kinds, symbols);
     let load = started.elapsed();
+    compile_loaded(ws, load, catalog, roots)
+}
+
+/// The compile of a workspace that is loaded (`load` is how long that took, for the timings).
+pub fn compile_loaded(
+    ws: Workspace,
+    load: std::time::Duration,
+    catalog: &al_builtins::catalog::Catalog,
+    roots: crate::check::Roots,
+) -> (Workspace, Lowered) {
     let started = std::time::Instant::now();
     let members = crate::members::build(&ws);
     let members_time = started.elapsed();
@@ -4585,7 +4985,10 @@ fn compile_with_roots(
         members: members_time,
         check: checked.timings,
         lower: started.elapsed(),
+        cache_blocks: Default::default(),
     };
+    drop(checked);
+    drop(members);
     (ws, lowered)
 }
 

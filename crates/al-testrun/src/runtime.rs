@@ -134,6 +134,8 @@ pub struct Phases {
     pub suites: Vec<(String, std::time::Duration)>,
     /// The parts of the compile.
     pub compile_parts: al_sema::lower::CompileTimings,
+    /// What the compile cache did, when the run used it.
+    pub cache: Option<crate::compile_cache::CacheReport>,
     /// Building the engine from the lowered program.
     pub engine: std::time::Duration,
     /// The test codeunits (object id, name) that took longest, slowest first (at most
@@ -244,6 +246,9 @@ pub struct RunOptions {
     /// Rows of a restored company, read when a session first touches a table (ADR-020). `None`:
     /// a run without test data, as every corpus run is.
     pub test_data: Option<al_host::testdata::TestData>,
+    /// Use the compile cache of the dependency apps (ADR-022). `None`: the demand-driven compile
+    /// of every run, which is the reference path.
+    pub compile_cache: Option<crate::compile_cache::CompileCache>,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -365,23 +370,94 @@ impl CorpusRuntime {
         suites: &[SuiteRun],
         opts: &RunOptions,
     ) -> CorpusRuntime {
+        Self::try_run_suites_with(apps, kinds, manifests, symbols, target, dotnet, suites, opts)
+            .expect("a run without `require` does not fail to start")
+    }
+
+    /// [`run_suites_with`](Self::run_suites_with), which says why a run could not start: the
+    /// compile cache is required (`CompileCache::require`) and has no usable entry.
+    #[allow(clippy::too_many_arguments)]
+    pub fn try_run_suites_with(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+        suites: &[SuiteRun],
+        opts: &RunOptions,
+    ) -> Result<CorpusRuntime, String> {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
         let compile_started = std::time::Instant::now();
-        let (ws, mut lowered) = al_sema::lower::compile_apps_with(
-            apps,
-            kinds,
-            symbols,
-            target,
-            al_sema::check::Roots {
-                baseline,
-                only_tests: opts.only.clone(),
-                ..Default::default()
-            },
-        );
+        // The compile cache holds the dependency apps, which come first in the program (ADR-022).
+        // The caller's order is kept in `order` (program app -> caller app) for what it gets back.
+        let use_cache = opts.compile_cache.is_some()
+            && kinds.contains(&al_sema::AppKind::Dependency)
+            && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
+        let n_apps = apps.len();
+        let (apps, kinds, manifests, suites_in, only, order) = if use_cache {
+            let order: Vec<usize> = (0..n_apps)
+                .filter(|&i| kinds[i] == al_sema::AppKind::Dependency)
+                .chain((0..n_apps).filter(|&i| kinds[i] != al_sema::AppKind::Dependency))
+                .collect();
+            let mut new_of = vec![0; n_apps];
+            for (new, &old) in order.iter().enumerate() {
+                new_of[old] = new;
+            }
+            let mut slots: Vec<Option<al_sema::workspace::AppSource>> = apps.into_iter().map(Some).collect();
+            let apps: Vec<_> = order.iter().map(|&i| slots[i].take().expect("each app once")).collect();
+            let kinds: Vec<_> = order.iter().map(|&i| kinds[i]).collect();
+            let manifests: Vec<Manifest> = order
+                .iter()
+                .map(|&i| manifests.get(i).cloned().unwrap_or_default())
+                .collect();
+            let suites: Vec<SuiteRun> = suites
+                .iter()
+                .map(|s| SuiteRun {
+                    app: s.app.map(|a| new_of[a]),
+                    ..s.clone()
+                })
+                .collect();
+            let only = opts
+                .only
+                .as_ref()
+                .map(|v| v.iter().map(|&(a, id)| (new_of[a], id)).collect::<Vec<_>>());
+            (apps, kinds, manifests, suites, only, order)
+        } else {
+            (
+                apps,
+                kinds,
+                manifests.to_vec(),
+                suites.to_vec(),
+                opts.only.clone(),
+                (0..n_apps).collect(),
+            )
+        };
+        let suites = &suites_in[..];
+        let manifests = &manifests[..];
+        let roots = al_sema::check::Roots {
+            baseline,
+            only_tests: only.clone(),
+            ..Default::default()
+        };
+        let (ws, mut lowered, cache_report) = match opts.compile_cache.as_ref().filter(|_| use_cache) {
+            Some(cc) => compile_with_cache(cc, apps, kinds, manifests, symbols, target, roots)?,
+            None => {
+                let (ws, lowered) = al_sema::lower::compile_apps_with(apps, kinds, symbols, target, roots);
+                (ws, lowered, None)
+            }
+        };
+        let opts_only = only;
         // A dependency file that does not parse takes every object in it out of the compile, and the
         // tests that need one are refused as "outside the workspace". Say so, once, with the first lines.
-        let unparsed = ws.lazy_parse_problems();
+        let mut unparsed = ws.lazy_parse_problems();
+        // The files the cache supplies were parsed when it was built.
+        if let Some(c) = &cache_report {
+            unparsed.extend(c.parse_problems.iter().cloned());
+            unparsed.sort();
+            unparsed.dedup();
+        }
         if !unparsed.is_empty() {
             eprintln!(
                 "parse: {} dependency file(s) did not parse; their objects are unusable and the tests that need them are not run",
@@ -483,8 +559,7 @@ impl CorpusRuntime {
                 let is_test = o.kind == "codeunit"
                     && !lowered.dependency[oi]
                     && suite.app.is_none_or(|a| o.app as usize == a)
-                    && opts
-                        .only
+                    && opts_only
                         .as_ref()
                         .is_none_or(|only| o.id.is_some_and(|id| only.contains(&(o.app as usize, id))))
                     && o.properties
@@ -503,7 +578,7 @@ impl CorpusRuntime {
                             outcomes.insert((si, id, r.name.to_lowercase()), Outcome::NotRun(why.clone()));
                             list.push(TestResult {
                                 suite: si,
-                                app: o.app as usize,
+                                app: order[o.app as usize],
                                 codeunit: id,
                                 codeunit_name: o.name.clone(),
                                 test: r.name.clone(),
@@ -589,7 +664,7 @@ impl CorpusRuntime {
             let push = |list: &mut Vec<TestResult>, test: &str, outcome: &Outcome, call_stack: String| {
                 list.push(TestResult {
                     suite: r.si,
-                    app: o.app as usize,
+                    app: order[o.app as usize],
                     codeunit: r.id,
                     codeunit_name: o.name.clone(),
                     test: test.to_string(),
@@ -634,7 +709,7 @@ impl CorpusRuntime {
         // a tenth of the corpus, and nothing waits for it.
         let compile_parts = lowered.timings;
         retire((ws, lowered));
-        CorpusRuntime {
+        Ok(CorpusRuntime {
             outcomes,
             suites,
             panics,
@@ -644,12 +719,13 @@ impl CorpusRuntime {
                 tests: tests_time,
                 suites: suite_times,
                 compile_parts,
+                cache: cache_report,
                 engine: engine_time,
                 slowest: codeunit_times,
             },
             details,
             results: list,
-        }
+        })
     }
 }
 
@@ -686,6 +762,55 @@ impl CorpusRuntime {
     }
 }
 
+/// The compile of a run with the compile cache (ADR-022): the key of the dependency apps (the
+/// first `kinds` entries), the entry from the cache folder or built now, then the cached compile.
+/// An entry that does not fit or is damaged is ignored (and removed), and the run compiles without
+/// it; with `require` it is an error instead.
+fn compile_with_cache(
+    cc: &crate::compile_cache::CompileCache,
+    apps: Vec<al_sema::workspace::AppSource>,
+    kinds: Vec<al_sema::AppKind>,
+    manifests: &[Manifest],
+    symbols: &BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    roots: al_sema::check::Roots,
+) -> Result<(al_sema::Workspace, Lowered, Option<crate::compile_cache::CacheReport>), String> {
+    use crate::compile_cache as cache;
+    use al_sema::provided::DepSource;
+    let n_dep = kinds.iter().take_while(|k| **k == al_sema::AppKind::Dependency).count();
+    let (entry, mut report) = cache::open_or_build(cc, &apps[..n_dep], &manifests[..n_dep], symbols, target)?;
+    report.objects = DepSource::len(&entry);
+    report.parse_problems = entry.parse_problems().to_vec();
+    let catalog = match target {
+        Some(t) => al_builtins::catalog::Catalog::for_target(t),
+        None => al_builtins::catalog::Catalog::load(),
+    };
+    let started = std::time::Instant::now();
+    let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+    let load = started.elapsed();
+    match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &entry) {
+        Ok((ws, lowered)) => {
+            report.relowered = (0..lowered.provided.len())
+                .filter(|&i| lowered.dependency[i] && !lowered.provided[i])
+                .count();
+            Ok((ws, lowered, Some(report)))
+        }
+        Err(failed) => {
+            let (ws, why) = *failed;
+            let note = format!("the entry is not used: {why}");
+            eprintln!("compile cache: {note}");
+            report.notes.push(note);
+            report.hit = false;
+            let _ = std::fs::remove_file(&report.file);
+            if cc.require {
+                return Err(format!("--require-compile-cache: {}", report.notes.join("; ")));
+            }
+            let (ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, roots);
+            Ok((ws, lowered, Some(report)))
+        }
+    }
+}
+
 /// Finds the subscribers of the platform codeunit `Global Triggers` in dependency apps that cannot
 /// run (Base Application's `GlobalTriggerManagement` reaches platform tables that have no row
 /// provider yet, and `Database::User`) and tells the engine, which refuses to raise an event one
@@ -719,7 +844,7 @@ pub fn global_triggers_find_unavailable(engine: &mut Arc<Engine>, lowered: &Lowe
                             config.insert(*t);
                         }
                     }
-                    next.extend(lowered.calls[o][r].iter().copied());
+                    lowered.calls_into(o, r, &mut next);
                 }
                 level = next;
             }
@@ -1217,7 +1342,7 @@ pub(crate) fn tables_touched(lowered: &Lowered, object: usize, routine: usize) -
         for s in obj.routines[r].locals.iter().chain(&obj.globals) {
             record_tables(&s.ty, &mut out);
         }
-        stack.extend(lowered.calls[o][r].iter().copied());
+        lowered.calls_into(o, r, &mut stack);
     }
     out
 }
@@ -1240,7 +1365,7 @@ pub(crate) fn subscribers_reached(
         if !seen.insert((o, r)) {
             continue;
         }
-        stack.extend(lowered.calls[o][r].iter().copied());
+        lowered.calls_into(o, r, &mut stack);
         let mut keys = Vec::new();
         if let Some(p) = engine.events.publishers.get(&(o, r)) {
             keys.push((p.object, p.event.clone()));
@@ -1303,7 +1428,7 @@ pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<
                 text: format!("{obj}.{name}: {reason}"),
             });
         }
-        stack.extend(lowered.calls[o][r].iter().copied());
+        lowered.calls_into(o, r, &mut stack);
     }
     None
 }

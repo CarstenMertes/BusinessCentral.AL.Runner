@@ -1,0 +1,186 @@
+//! The entry file: round trip, determinism, and what a damaged file does.
+
+use al_cache::{AppKey, CacheError, Entry, FORMAT, Key, build};
+use al_sema::provided::{DepSet, DepSource};
+use al_sema::workspace::AppSource;
+
+const SRC: &str = r#"
+table 50000 T { fields { field(1; A; Integer) { } field(2; B; Code[20]) { } } keys { key(PK; A) { } } }
+page 50002 P { PageType = Card; SourceTable = T; layout { area(Content) { field(AC; Rec.A) { } } } }
+interface IFoo { procedure Bump(): Integer; }
+codeunit 50004 DImpl implements IFoo { procedure Bump(): Integer begin exit(1); end; }
+codeunit 50005 DUse { procedure CallIt(F: Interface IFoo): Integer begin exit(F.Bump()); end; }
+codeunit 50008 DPlain { procedure Plain(): Integer begin exit(7); end; procedure Twice(): Integer begin exit(Plain() * 2); end; }
+"#;
+
+fn apps() -> Vec<AppSource> {
+    vec![AppSource {
+        id: "d".into(),
+        name: "d".into(),
+        dependencies: vec![],
+        files: vec![("f.al".into(), SRC.into())],
+    }]
+}
+
+fn key() -> Key {
+    Key::new(
+        [9; 32],
+        "BC 27.5".into(),
+        vec![],
+        vec![AppKey {
+            id: "d".into(),
+            name: "d".into(),
+            dependencies: vec![],
+            publisher: "p".into(),
+            version: "1.0.0.0".into(),
+            source: [3; 32],
+        }],
+    )
+}
+
+fn set() -> DepSet {
+    al_sema::lower::lower_for_cache(apps(), &Default::default(), None)
+}
+
+fn blocks(e: &Entry) -> Vec<al_sema::provided::DepBlock> {
+    (0..e.len()).map(|i| e.block(i).expect("block")).collect()
+}
+
+#[test]
+fn a_set_survives_the_round_trip() {
+    let set = set();
+    assert!(set.facts.len() >= 5);
+    let bytes = build(&set, &key());
+    let e = Entry::open(bytes, &key()).expect("opens");
+    e.verify().expect("verifies");
+    assert_eq!(e.len(), set.facts.len());
+    for i in 0..e.len() {
+        assert_eq!(e.facts(i), &set.facts[i], "facts of object {i}");
+    }
+    assert!(blocks(&e) == set.blocks, "blocks differ");
+}
+
+#[test]
+fn two_builds_give_the_same_bytes() {
+    assert!(build(&set(), &key()) == build(&set(), &key()));
+}
+
+#[test]
+fn another_key_or_format_is_refused_at_open() {
+    let bytes = build(&set(), &key());
+    let mut other = key();
+    other.apps[0].source[0] ^= 1;
+    assert_eq!(Entry::open(bytes.clone(), &other).err(), Some(CacheError::KeyMismatch));
+    let mut newer = key();
+    newer.format = FORMAT + 1;
+    assert!(matches!(
+        Entry::open(bytes, &newer).err(),
+        Some(CacheError::Format { .. })
+    ));
+}
+
+#[test]
+fn a_truncated_file_is_refused_whatever_its_length() {
+    let bytes = build(&set(), &key());
+    for len in (0..bytes.len()).step_by(7).chain([bytes.len() - 1]) {
+        assert!(
+            Entry::open(bytes[..len].to_vec(), &key()).is_err(),
+            "a file cut to {len} of {} bytes was opened",
+            bytes.len()
+        );
+    }
+}
+
+/// Flip every byte of the file in turn. Either the damage is found (at open or when the blocks
+/// are read), or what is read is exactly what was written. It is never something else.
+#[test]
+fn a_damaged_file_is_refused_or_reads_the_same() {
+    let good = build(&set(), &key());
+    let want = {
+        let e = Entry::open(good.clone(), &key()).unwrap();
+        blocks(&e)
+    };
+    let (mut refused, mut same) = (0, 0);
+    for at in 0..good.len() {
+        let mut bad = good.clone();
+        bad[at] ^= 0x41;
+        let Ok(e) = Entry::open(bad, &key()) else {
+            refused += 1;
+            continue;
+        };
+        match e.verify() {
+            Err(_) => refused += 1,
+            Ok(()) => {
+                let got = blocks(&e);
+                assert!(got == want, "a flipped byte at {at} changed what is read");
+                same += 1;
+            }
+        }
+    }
+    assert!(
+        refused > good.len() * 9 / 10,
+        "{refused} of {} flips refused ({same} read the same)",
+        good.len()
+    );
+}
+
+#[test]
+fn garbage_is_not_a_cache_file() {
+    assert!(Entry::open(vec![], &key()).is_err());
+    assert!(Entry::open(vec![0; 4096], &key()).is_err());
+    assert!(Entry::open(b"ALRCDEP\0 and then nothing useful".to_vec(), &key()).is_err());
+}
+
+/// Offsets and lengths are variable-width and the index is compressed: a set of a few thousand
+/// objects exercises every width, and the layout must not depend on the size of the index.
+#[test]
+fn a_set_of_thousands_of_objects_round_trips() {
+    let mut src = String::new();
+    for i in 0..3000 {
+        src.push_str(&format!(
+            "codeunit {} \"Gen {i}\" {{ procedure P{i}(): Integer begin exit({i}); end; }}\n",
+            70000 + i
+        ));
+    }
+    let set = al_sema::lower::lower_for_cache(
+        vec![AppSource {
+            id: "g".into(),
+            name: "g".into(),
+            dependencies: vec![],
+            files: vec![("g.al".into(), src)],
+        }],
+        &Default::default(),
+        None,
+    );
+    assert_eq!(set.facts.len(), 3000);
+    let bytes = build(&set, &key());
+    let e = Entry::open(bytes, &key()).expect("opens");
+    e.verify().expect("verifies");
+    assert!(blocks(&e) == set.blocks);
+}
+
+/// A dependency file that does not parse is reported by the run that builds the set. A run that
+/// takes the set from the file parses none of it, so the file has to carry the report.
+#[test]
+fn the_files_that_did_not_parse_are_kept_in_the_entry() {
+    let set = al_sema::lower::lower_for_cache(
+        vec![AppSource {
+            id: "d".into(),
+            name: "d".into(),
+            dependencies: vec![],
+            files: vec![
+                ("good.al".into(), SRC.into()),
+                (
+                    "bad.al".into(),
+                    "codeunit 59999 Broken { procedure P( begin end; }".into(),
+                ),
+            ],
+        }],
+        &Default::default(),
+        None,
+    );
+    assert_eq!(set.parse_problems.len(), 1, "{:?}", set.parse_problems);
+    assert_eq!(set.parse_problems[0].0, "bad.al");
+    let e = Entry::open(build(&set, &key()), &key()).unwrap();
+    assert_eq!(e.parse_problems(), &set.parse_problems[..]);
+}

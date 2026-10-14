@@ -38,7 +38,8 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   variant, an IR field, a defaulted `Ctx` method) need no ADR. Core crates do
   no OS access (ADR-006).
 - **Do not build features that only hide start-up or run cost** (watch mode,
-  `--affected`, warm server state, `--jobs`, persistent caches). See ADR-016.
+  `--affected`, warm server state, `--jobs`, persistent caches). See ADR-016. The one cache the
+  owner asked for is the compile cache of the dependency apps (ADR-022); do not add another.
 - **Performance.** The goal is a corpus run with Microsoft's apps in under one
   second, then lower. A cache is the last resort. Never add a cache to reach a
   number; make the work itself cheaper. Measure before and after any change on

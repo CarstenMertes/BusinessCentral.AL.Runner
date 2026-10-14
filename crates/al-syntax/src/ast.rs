@@ -553,27 +553,22 @@ impl Routine {
     pub fn is_trigger(&self) -> bool {
         self.0.kind() == SyntaxKind::Trigger
     }
-    fn keyword_pos(&self) -> Vec<SyntaxToken> {
-        significant_tokens(&self.0).collect()
+    fn is_routine_keyword(t: &SyntaxToken) -> bool {
+        t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger")
     }
     pub fn name(&self) -> String {
-        let toks = self.keyword_pos();
-        let kw = toks
-            .iter()
-            .position(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"));
-        kw.and_then(|i| toks.get(i + 1)).map(ident_text).unwrap_or_default()
+        let mut toks = significant_tokens(&self.0).skip_while(|t| !Self::is_routine_keyword(t));
+        toks.nth(1).map(|t| ident_text(&t)).unwrap_or_default()
     }
     /// Offset of the `procedure` or `trigger` keyword (after any attributes and modifiers).
     pub fn keyword_offset(&self) -> Option<usize> {
-        self.keyword_pos()
-            .iter()
-            .find(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"))
+        significant_tokens(&self.0)
+            .find(Self::is_routine_keyword)
             .map(|t| usize::from(t.text_range().start()))
     }
     fn has_modifier(&self, m: &str) -> bool {
-        self.keyword_pos()
-            .iter()
-            .take_while(|t| !t.text().eq_ignore_ascii_case("procedure") && !t.text().eq_ignore_ascii_case("trigger"))
+        significant_tokens(&self.0)
+            .take_while(|t| !Self::is_routine_keyword(t))
             .any(|t| t.text().eq_ignore_ascii_case(m))
     }
     pub fn is_local(&self) -> bool {

@@ -62,6 +62,9 @@ pub struct Args {
     pub project: Option<PathBuf>,
     /// `--codeunit`, `--test`, `--area`, `--file`: which cases to compile, run and report.
     pub select: Selection,
+    /// `--must-not-compile [DIR]`: check the must-not-compile corpus (`mnc.rs`) and stop. DIR is the
+    /// folder of the cases or the one that holds `cases/`; without it `corpus/tests/must-not-compile`.
+    pub must_not_compile: Option<Option<PathBuf>>,
     /// `--explain TEST`: run one test and say why it ended as it did.
     pub explain: Option<String>,
     /// `--top-refusals [N]`: rank the refusal reasons; N entries (default 10).
@@ -92,6 +95,15 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
     while let Some(flag) = it.next() {
         if matches!(flag.as_str(), "--help" | "-h") {
             return Ok(Parsed::Help);
+        }
+        if flag == "--must-not-compile" {
+            // The folder is optional.
+            let dir = match it.peek() {
+                Some(v) if !v.starts_with("--") => it.next().map(PathBuf::from),
+                _ => None,
+            };
+            a.must_not_compile = Some(dir);
+            continue;
         }
         if flag == "--top-refusals" {
             // The count is optional: `--top-refusals` or `--top-refusals 5`.
@@ -224,6 +236,9 @@ SELECTION (each flag repeats; the selection is their union; without one, everyth
   cases. --update-baseline refuses to run with a selection.
 
 DIAGNOSE
+  --must-not-compile [DIR]    check the corpus of AL files the real compiler rejects (DIR, else
+                              corpus/tests/must-not-compile): the same ALnnnn codes, per BC major
+                              (--bc-version, default 29); exit 1 on a mismatch, then stop
   --explain TEST              run one test; print its outcome, where it was refused or failed
                               (routine, file, line), and for a failure the error, code and stack
   --top-refusals [N]          rank the refusal reasons of the not-run cases (default 10), numbers

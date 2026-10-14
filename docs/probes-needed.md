@@ -978,3 +978,19 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | A text filter on a DateFormula field | `SetFilter(DateFormulaField, '<>''''')` (Library - ERM `GetDiscountPaymentTerm`, 67 Tests-ERM tests), and any other text. No corpus test filters a DateFormula field. REFUSED | `SetFilter` and `SetRange` on a DateFormula field with `''`, `<>''`, `1M`, `<1M>` and `CM`, against rows with an empty and a set formula, then `GetFilter` |
 | A `for` loop over a Boolean | `for Stepwise := false to true do` (27 Tests-ERM tests). No corpus test does it. REFUSED | `for B := false to true do` counting the passes, the value of `B` inside and after the loop, and `for B := true downto false` |
 | `TestField` of a Blob field | After `CalcFields` of a Blob (25 Tests-ERM tests, XSD Parser `XMLSchema.TestField(XSD)`). When a Blob counts as blank (length 0?) and the error text are not pinned. REFUSED | `TestField(BlobField)` on a Blob with and without data, with and without `CalcFields` |
+
+## Must-not-compile checks (alcodes.rs)
+
+Each check rejects only the shape a corpus case pins. The wider rule is not guessed. A probe is a new case in `tests/must-not-compile` of the corpus repo.
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| AL0162 | Only `OnInit` is refused in a page extension (case 0004). The list of triggers a page extension may declare is not known. | One case per trigger a page has (OnOpenPage, OnClosePage, OnAfterGetRecord, ...) that compiles in an extension, and one per trigger that does not. |
+| AL0161 and AL0440 in a report extension | Only the page extension is checked (cases 0001 to 0003). The lowering refuses the report extension forms, but no must-not-compile case pins their codes. | The report extension versions of cases 0001 to 0003. |
+| AL0440 | A page extension procedure clashes when the base procedure is not `local` and the parameter types (with `var`) are the same. A different parameter list is an overload and compiles. The lowering still refuses by name alone (`declared_in_both_proc`). | An overload in a page extension that compiles. |
+| AL0296 | Only `Published Application` and `API Webhook Entity` are known to be Scope = OnPrem (cases 0006, 0014). Other platform tables (`NAV App Installed App`, `Tenant Permission`, ...) are not judged. | One case per platform table whose scope is not known. |
+| AL0124 | `assemblyProbingPaths` is refused at runtime 16.0 only (case 0007). Runtime 15.x and 16.1 and later are not judged. | The same case at runtime 15.0, 16.1, 17.0. |
+| AL0132 | Only `Install`, `Uninstall`, `Upgrade` and `Report` are known to be absent from ExecutionMode (cases 0010 to 0013). `al_builtins::sysenum` lists `Profile` for it, which no case pins. | `ExecutionMode::Profile`. |
+| AL0118 | A bare call of an unknown name is refused in a codeunit without `TableNo` (case 0005). Tables, pages, reports and extensions are not judged (an implicit record or a base object may supply the name). | The same call in a table, page and report. |
+| AL0197 | Same app, object type, namespace and name. Case 0016 pins two codeunits in one namespace. Two extension objects with one name, and the same name in two namespaces, are assumed. | Both. |
+| AL0175 | NOT CHECKED. `=` between two DotNet values is an error for a class and fine for an enum. The front end has no assembly metadata. | None: needs the .NET sidecar's type metadata at compile time (an ADR). |

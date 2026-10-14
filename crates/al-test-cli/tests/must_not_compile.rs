@@ -1,0 +1,46 @@
+//! The must-not-compile corpus (`al_test_cli::mnc`): every case is AL the real compiler rejects, and
+//! the front end must report the same ALnnnn codes. The cases come from `AL_MNC_DIR`, else from the
+//! corpus submodule (`corpus/tests/must-not-compile`, once a bump brings it). When neither exists the
+//! test is skipped with a message; the cases are never faked.
+
+use al_test_cli::mnc::{Summary, Verdict, read_cases, render, run_case};
+use std::path::PathBuf;
+
+fn cases_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("AL_MNC_DIR") {
+        return Some(PathBuf::from(d));
+    }
+    let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../corpus/tests/must-not-compile");
+    d.is_dir().then_some(d)
+}
+
+#[test]
+fn every_must_not_compile_case_gets_the_expected_codes() {
+    let Some(dir) = cases_dir() else {
+        eprintln!(
+            "SKIPPED: no must-not-compile corpus. Set AL_MNC_DIR to .../tests/must-not-compile, or bump the \
+             corpus submodule to a commit that has tests/must-not-compile."
+        );
+        return;
+    };
+    let cases = read_cases(&dir).expect("cases parse");
+    assert!(!cases.is_empty(), "{} holds no case", dir.display());
+    let mut failures = Vec::new();
+    for major in [27u16, 28, 29] {
+        let outcomes: Vec<_> = cases.iter().map(|c| run_case(c, major)).collect();
+        let report = render(&outcomes, major);
+        eprintln!("{report}");
+        if Summary::of(&outcomes).mismatched > 0 {
+            failures.push(report);
+        }
+        // A case is never checked silently: every one has a verdict with its reason.
+        for o in &outcomes {
+            assert!(
+                !matches!(&o.verdict, Verdict::NotChecked(w) | Verdict::Skipped(w) if w.is_empty()),
+                "{}: a verdict without a reason",
+                o.name
+            );
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

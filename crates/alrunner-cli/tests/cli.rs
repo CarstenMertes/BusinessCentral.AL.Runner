@@ -571,12 +571,18 @@ fn a_failure_shows_the_al_call_stack_in_the_console_and_in_junit() {
     let t = text(&o);
     assert_eq!(code(&o), 1, "{t}");
     // Innermost frame first: Inner, Middle, then the test itself.
-    let frames: Vec<&str> = t.lines().filter(|l| l.trim_start().starts_with("\"Deep Tests\"(CodeUnit 50200)")).collect();
+    let frames: Vec<&str> = t
+        .lines()
+        .filter(|l| l.trim_start().starts_with("\"Deep Tests\"(CodeUnit 50200)"))
+        .collect();
     assert_eq!(frames.len(), 3, "{t}");
     assert!(frames[0].contains(".Inner line 2"), "{t}");
     assert!(frames[1].contains(".Middle line 2"), "{t}");
     assert!(frames[2].contains(".DeepFails line 2"), "{t}");
-    assert!(t.lines().any(|l| l.starts_with("FAIL") && l.contains("deep boom")), "{t}");
+    assert!(
+        t.lines().any(|l| l.starts_with("FAIL") && l.contains("deep boom")),
+        "{t}"
+    );
     let x = std::fs::read_to_string(&junit).unwrap();
     assert!(x.contains("<failure message=\"deep boom\">"), "{x}");
     assert!(x.contains(".Inner line 2"), "{x}");

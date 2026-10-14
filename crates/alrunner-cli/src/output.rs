@@ -214,7 +214,10 @@ mod tests {
     #[test]
     fn junit_puts_the_call_stack_in_the_failure_and_names_an_unknown_frame() {
         let mut f = r(1, "A", "T1", Outcome::Fail("boom".into()));
-        f.call_stack = format!("\"A\"(CodeUnit 1).Inner line 2\n{}\n\"A\"(CodeUnit 1).T1 line 1", al_testrun::UNTRACKED_CALL_STACK);
+        f.call_stack = format!(
+            "\"A\"(CodeUnit 1).Inner line 2\n{}\n\"A\"(CodeUnit 1).T1 line 1",
+            al_testrun::UNTRACKED_CALL_STACK
+        );
         let refs = [&f];
         let x = junit(&refs, None, 0.0);
         assert!(x.contains("<failure message=\"boom\">&quot;A&quot;(CodeUnit 1).Inner line 2&#10;(a frame whose format is not known)&#10;"), "{x}");

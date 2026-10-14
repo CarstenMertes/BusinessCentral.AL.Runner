@@ -27,9 +27,12 @@ alrunner test "$A/BaseApp/Test/Tests-SMB.Source.zip" --no-download \
 ```
 
 Without `--no-download` and without the last five `--dep`s, the feed supplies Application, Base Application, System
-Application and Business Foundation (build of the newest published match, which can differ from the tests' build). The
-platform `System.app` is not on the feed: without it the platform tables (`Field`, `AllObj`, `Company`) are outside
-the workspace.
+Application and Business Foundation (build of the newest published match, which can differ from the tests' build),
+and the platform `System.app` (from the `ModernDev/.../al development environment` folder of the platform artifact).
+Without `System.app` the platform tables (`Field`, `AllObj`, `Company`) are outside the workspace. A build named
+exactly with `--bc-version 27.5.46862.48827` is read from `~/.bcartifacts.cache/sandbox/<build>/platform` when it
+is there, without asking the feed (the feed lists only recent builds); any matching build there is also the
+fallback when the feed has none or cannot be reached.
 
 Several buckets can be named in one run (all 32 together: 40300 tests, one compile).
 

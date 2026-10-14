@@ -162,6 +162,8 @@ pub enum Origin {
     Cache,
     /// Newest published build, to be downloaded.
     Published,
+    /// An extracted artifact on disk (BcContainerHelper's `~/.bcartifacts.cache`).
+    Local,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

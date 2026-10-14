@@ -650,3 +650,16 @@ pin, and the default chosen:
 | A `[Test]` procedure that calls another `[Test]` procedure | Both have a Tests Run row; the methods of the inner one are noted for the inner one only | A nested test start while recording |
 | Rows after a rollback | The rows are written into the store when read, so an `asserterror` rolls them back with the other writes of the transaction | Whether BC keeps coverage rows across a rollback |
 | Recording that outlives its test | It stays on until `CodeCoverageLog(false, ...)`; the next test of the codeunit that starts while it is on is noted | |
+
+## Builtins refused until a probe pins them
+
+Found by Tests-ERM with test data (issue 8). The lowering refuses each with the reason in the second column
+(`al_builtins::native::refusal`); none is called by a corpus test.
+
+| Builtin | Tests-ERM tests it stops | Probe wanted |
+|---|---:|---|
+| `Report.ObjectId(UseNames)` (and `CurrReport.ObjectId`) | 112 | `ObjectId(false)` and `ObjectId(true)` of a report with and without a caption: the exact text (the id, or `Report 25`, or the name) and whether it depends on the language. Base Application only formats it into telemetry text (`Format(CurrReport.ObjectId(false), 0, 9)`) |
+| `RecordId.GetRecord()` | 161 | A `RecordId` of an existing and of a deleted row: does it read the row, what does it return for a missing row (an error text, a blank record), and does it set the record's filters |
+| `Record.FieldError(Field, ErrorInfo)` and `FieldRef.FieldError(ErrorInfo)` | 39 | The text and code of the error, what `GetLastErrorText` reads, and whether an `ErrorBehavior::Collect` scope collects it |
+| `HttpRequestMessage.Method`, `GetRequestUri` read before a set | 84 | The method of a new `HttpRequestMessage` (GET?) and its uri; whether `SetRequestUri` validates its text and what it returns |
+| `Record.SetPermissionFilter()`, `RecordRef.SetPermissionFilter()` | 54 | Both are a no-op here, because permission enforcement is not modelled (`ReadPermission()` is true, `Permissions Mock` is refused). Pinned: `Record.SetPermissionFilter` does not throw (record/TestRecordFilter.al:406-413). The RecordRef call is the same assumption, and the effect of the filter on a user without read permission is not pinned: probe a table with a security filter and a limited user |

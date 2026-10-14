@@ -440,11 +440,34 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Variant.IsRecord#1", |_, r, _| is(r, "Record")),
     ("Variant.IsRecordRef#1", |_, r, _| is(r, "RecordRef")),
     ("Variant.IsFieldRef#1", |_, r, _| is(r, "FieldRef")),
+    // Permission enforcement is not modelled (`Permissions Mock`, docs/probes-needed.md): the session
+    // user reads every row, so the permission filter filters nothing. Record: record/TestRecordFilter.al:
+    // 406-413 pins that it does not throw. RecordRef is the same call on the same model, not pinned itself.
+    ("Record.SetPermissionFilter#1", |_, _, _| Ok(Value::Null)),
+    ("RecordRef.SetPermissionFilter#1", |_, _, _| Ok(Value::Null)),
     // Kinds the value model has no variant for yet are never true.
     ("Variant.IsTextConstant#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsAutomation#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsFile#1", |_, _, _| Ok(Value::Boolean(false))),
 ];
+
+/// Builtins that are refused on purpose, with the reason. No corpus test pins what they answer, so
+/// the lowering says so instead of "is not implemented" (hard rule 3; each has a line in
+/// `docs/probes-needed.md`, "Builtins refused until a probe pins them").
+pub fn refusal(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "Report.ObjectId#1" => {
+            "the text of Report.ObjectId (the id or the name, with or without the object type) is not pinned"
+        }
+        "RecordId.GetRecord#1" => {
+            "RecordId.GetRecord is in no corpus test, so whether it reads the row or returns a handle is not pinned"
+        }
+        "Record.FieldError#3" | "FieldRef.FieldError#3" => {
+            "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
+        }
+        _ => return None,
+    })
+}
 
 fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
     REGISTRY
@@ -482,6 +505,7 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
                     .or_else(|| crate::datatransfer::native_for(sig))
                     .or_else(|| crate::moduleinfo::native_for(sig))
                     .or_else(|| crate::sessiontypes::native_for(sig))
+                    .or_else(|| crate::http::native_for(sig))
                     .map(|f| (cat.id(sig), f))
             })
             .collect()

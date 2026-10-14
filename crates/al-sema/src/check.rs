@@ -135,7 +135,8 @@ impl<V> PosMap<V> {
 /// Wall time of the parts of a check (`--timings`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CheckTimings {
-    /// The workspace's own objects.
+    /// The workspace's own objects. With dependency apps they are the first round of the demand
+    /// and counted there.
     pub workspace: std::time::Duration,
     /// The install baseline's roots.
     pub baseline: std::time::Duration,
@@ -263,21 +264,18 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
                 });
             }
             c.prefetch = Some(tx);
-            let started = std::time::Instant::now();
-            for oi in 0..ws.objects.len() {
-                if !ws.is_dependency(oi) && !skip(oi) {
-                    c.check_object(oi);
-                    c.take_calls();
-                }
-            }
-            timings.workspace = started.elapsed();
+            // The workspace's own objects are the first round of the demand: they are checked
+            // with everything else, on the worker threads.
+            let objects: Vec<usize> = (0..ws.objects.len())
+                .filter(|&oi| !ws.is_dependency(oi) && !skip(oi))
+                .collect();
             let started = std::time::Instant::now();
             if roots.baseline {
                 c.reach_baseline();
             }
             timings.baseline = started.elapsed();
             let started = std::time::Instant::now();
-            let demand = c.run_demand(roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32)));
+            let demand = c.run_demand(roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32)), objects);
             timings.demand = started.elapsed();
             c.prefetch = None;
             demand

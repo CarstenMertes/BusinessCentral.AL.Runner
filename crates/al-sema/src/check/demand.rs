@@ -769,7 +769,7 @@ impl Checker<'_> {
 
     /// Runs the demand loop to its end and reports what it reached. With `workers > 1` the
     /// reached routines are checked on that many threads (see [`Pool`]); the result is the same.
-    pub(super) fn run_demand(&mut self, workers: usize) -> Option<Demand> {
+    pub(super) fn run_demand(&mut self, workers: usize, objects: Vec<usize>) -> Option<Demand> {
         self.demand.borrow().as_ref()?;
         // The stored platform tables are part of every tenant (the Company, the User, the links of
         // a record): compile their shape so the platform can seed and write them.
@@ -782,7 +782,7 @@ impl Checker<'_> {
             }
         }
         if workers <= 1 {
-            self.demand_loop(None);
+            self.demand_loop(None, objects);
         } else {
             let (ws, members, catalog) = (self.ws, self.members, self.catalog);
             let enums = self.system_enums.clone();
@@ -790,7 +790,7 @@ impl Checker<'_> {
                 let mut pool = Pool::default();
                 let mut handles = Vec::new();
                 for _ in 0..workers {
-                    let (batch_tx, batch_rx) = std::sync::mpsc::channel::<Vec<(usize, usize)>>();
+                    let (batch_tx, batch_rx) = std::sync::mpsc::channel::<std::sync::Arc<RoundWork>>();
                     let (delta_tx, delta_rx) = std::sync::mpsc::channel::<Delta>();
                     let enums = enums.clone();
                     let handle = std::thread::Builder::new()
@@ -801,7 +801,7 @@ impl Checker<'_> {
                     pool.receivers.push(delta_rx);
                     handles.push(handle);
                 }
-                self.demand_loop(Some(&pool));
+                self.demand_loop(Some(&pool), objects);
                 // Closing the channels ends the workers.
                 drop(pool);
                 handles
@@ -826,67 +826,88 @@ impl Checker<'_> {
         })
     }
 
-    /// The fixpoint: activate what was raised, then check what was reached, until neither
-    /// produces anything new. Reached routines are checked a round at a time.
-    fn demand_loop(&mut self, pool: Option<&Pool>) {
+    /// The fixpoint, a round at a time: the first round checks the workspace's `objects`; each
+    /// round after it activates what the one before raised and checks what it reached, until a
+    /// round has nothing left to do. The order within a round does not matter (everything only
+    /// ever grows), so a round is spread over the worker threads.
+    fn demand_loop(&mut self, pool: Option<&Pool>, objects: Vec<usize>) {
+        let mut round: Vec<Task> = objects.into_iter().map(Task::Object).collect();
         loop {
-            let fresh = self.demand.borrow_mut().as_mut().and_then(|s| s.fresh.pop());
-            if let Some((i, level)) = fresh {
-                self.activate(i, level);
-                continue;
+            {
+                let mut guard = self.demand.borrow_mut();
+                let Some(st) = guard.as_mut() else { return };
+                round.extend(
+                    std::mem::take(&mut st.fresh)
+                        .into_iter()
+                        .map(|(i, l)| Task::Activate(i, l)),
+                );
+                round.extend(
+                    std::mem::take(&mut st.fresh_ops)
+                        .into_iter()
+                        .map(|(t, o)| Task::Ops(t, o)),
+                );
+                let global = std::mem::take(&mut st.fresh_global);
+                if global != 0 {
+                    round.push(Task::Global(global));
+                }
+                round.extend(
+                    std::mem::take(&mut st.queue)
+                        .into_iter()
+                        .map(|(o, off)| Task::Check(o, off)),
+                );
             }
-            let op = self.demand.borrow_mut().as_mut().and_then(|s| s.fresh_ops.pop());
-            if let Some((t, ops)) = op {
-                self.activate_ops(t, ops);
-                continue;
-            }
-            let global = self
-                .demand
-                .borrow_mut()
-                .as_mut()
-                .map(|s| std::mem::take(&mut s.fresh_global))
-                .unwrap_or(0);
-            if global != 0 {
-                self.activate_global(global);
-                continue;
-            }
-            let batch = self
-                .demand
-                .borrow_mut()
-                .as_mut()
-                .map(|s| std::mem::take(&mut s.queue))
-                .unwrap_or_default();
-            if batch.is_empty() {
+            if round.is_empty() {
                 break;
             }
-            self.check_round(batch, pool);
+            self.run_round(std::mem::take(&mut round), pool);
         }
     }
 
-    /// Checks the routines of one round. Routines of one object go to the same worker, so each
-    /// object's context is built once.
-    fn check_round(&mut self, mut batch: Vec<(usize, usize)>, pool: Option<&Pool>) {
-        let Some(pool) = pool.filter(|p| batch.len() >= PARALLEL_MIN && !p.senders.is_empty()) else {
-            for (o, off) in batch {
-                self.check_reached(o, off);
+    /// Does one task on this thread.
+    fn run_task(&mut self, task: Task) {
+        match task {
+            Task::Object(oi) => {
+                self.check_object(oi);
+                self.take_calls();
+            }
+            Task::Check(o, off) => self.check_reached(o, off),
+            Task::Activate(i, level) => self.activate(i, level),
+            Task::Ops(t, ops) => self.activate_ops(t, ops),
+            Task::Global(ops) => self.activate_global(ops),
+        }
+    }
+
+    /// Does the tasks of one round. They are cut into chunks, the tasks about one object together
+    /// (so its context is built once), and the workers take chunks until none is left.
+    fn run_round(&mut self, mut tasks: Vec<Task>, pool: Option<&Pool>) {
+        let Some(pool) = pool.filter(|p| tasks.len() >= PARALLEL_MIN && !p.senders.is_empty()) else {
+            for task in tasks {
+                self.run_task(task);
             }
             return;
         };
-        batch.sort_unstable();
-        let mut parts: Vec<Vec<(usize, usize)>> = vec![Vec::new(); pool.senders.len()];
-        for item in batch {
-            parts[item.0 % pool.senders.len()].push(item);
-        }
-        let mut sent = Vec::new();
-        for (w, part) in parts.into_iter().enumerate() {
-            if !part.is_empty() {
-                pool.senders[w].send(part).expect("a check worker stopped");
-                sent.push(w);
+        tasks.sort_unstable_by_key(Task::order);
+        let mut chunks: Vec<Vec<Task>> = Vec::new();
+        let mut at = 0;
+        while at < tasks.len() {
+            let object = tasks[at].object();
+            let mut end = at + 1;
+            while end < tasks.len() && end - at < CHUNK_MAX && tasks[end].object() == object {
+                end += 1;
             }
+            chunks.push(tasks[at..end].to_vec());
+            at = end;
+        }
+        let work = std::sync::Arc::new(RoundWork {
+            chunks,
+            next: std::sync::atomic::AtomicUsize::new(0),
+        });
+        for sender in &pool.senders {
+            sender.send(work.clone()).expect("a check worker stopped");
         }
         // Applied in worker order, whatever order they finish in.
-        for w in sent {
-            let delta = pool.receivers[w].recv().expect("a check worker stopped");
+        for receiver in &pool.receivers {
+            let delta = receiver.recv().expect("a check worker stopped");
             self.apply(delta);
         }
     }
@@ -910,7 +931,52 @@ impl Checker<'_> {
     }
 }
 
-/// A round with fewer routines than this is checked on the calling thread.
+/// One piece of work of a round of the demand loop.
+#[derive(Clone, Copy, Debug)]
+enum Task {
+    /// Check the routines of a workspace object (its code is the root of the demand).
+    Object(usize),
+    /// Check the reached routine at this offset of this dependency object.
+    Check(usize, usize),
+    /// An object was raised to this level: reach what using it at that level sets off.
+    Activate(usize, u8),
+    /// A table is written to with these operations: reach the triggers and subscribers.
+    Ops(usize, u8),
+    /// These operations raise the events of `Global Triggers`.
+    Global(u8),
+}
+
+impl Task {
+    /// The object the task is about.
+    fn object(&self) -> usize {
+        match *self {
+            Task::Object(o) | Task::Check(o, _) | Task::Activate(o, _) | Task::Ops(o, _) => o,
+            Task::Global(_) => 0,
+        }
+    }
+
+    /// A deterministic order for the tasks of a round, whatever order they were found in.
+    fn order(&self) -> (usize, u8, usize, u8) {
+        match *self {
+            Task::Object(o) => (o, 0, 0, 0),
+            Task::Activate(o, l) => (o, 1, 0, l),
+            Task::Ops(o, ops) => (o, 2, 0, ops),
+            Task::Check(o, off) => (o, 3, off, 0),
+            Task::Global(g) => (0, 4, 0, g),
+        }
+    }
+}
+
+/// The chunks of one round, shared by the workers, which take them in turn.
+struct RoundWork {
+    chunks: Vec<Vec<Task>>,
+    next: std::sync::atomic::AtomicUsize,
+}
+
+/// The most tasks in a chunk: a bigger object is split over workers.
+const CHUNK_MAX: usize = 32;
+
+/// A round with fewer tasks than this is done on the calling thread.
 const PARALLEL_MIN: usize = 48;
 
 /// Stack of a check worker: the checker recurses on the nesting of the code it reads.
@@ -922,7 +988,7 @@ const WORKER_STACK: usize = 64 << 20;
 /// only the checking of routines, the bulk of the work, is spread out).
 #[derive(Default)]
 struct Pool {
-    senders: Vec<std::sync::mpsc::Sender<Vec<(usize, usize)>>>,
+    senders: Vec<std::sync::mpsc::Sender<std::sync::Arc<RoundWork>>>,
     receivers: Vec<std::sync::mpsc::Receiver<Delta>>,
 }
 
@@ -963,13 +1029,17 @@ fn worker(
     members: &crate::members::MemberTable<'_>,
     catalog: &al_builtins::catalog::Catalog,
     enums: HashSet<String>,
-    batches: std::sync::mpsc::Receiver<Vec<(usize, usize)>>,
+    batches: std::sync::mpsc::Receiver<std::sync::Arc<RoundWork>>,
     deltas: std::sync::mpsc::Sender<Delta>,
 ) -> WorkerOut {
     let mut c = Checker::new(ws, members, catalog, enums, true);
-    while let Ok(batch) = batches.recv() {
-        for (o, off) in batch {
-            c.check_reached(o, off);
+    while let Ok(work) = batches.recv() {
+        loop {
+            let k = work.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(chunk) = work.chunks.get(k) else { break };
+            for &task in chunk {
+                c.run_task(task);
+            }
         }
         let delta = c
             .demand

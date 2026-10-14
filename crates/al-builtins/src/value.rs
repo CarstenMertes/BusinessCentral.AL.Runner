@@ -829,7 +829,9 @@ pub enum LibraryValue {
     /// An XmlNameTable (opaque).
     XmlNameTable,
     /// An `XmlWriteOptions` that has been set: `PreserveWhitespace`.
-    XmlWriteOptions { preserve_whitespace: bool },
+    XmlWriteOptions {
+        preserve_whitespace: bool,
+    },
     /// A `File` that was created or opened, or had a mode set (an untouched one is `Empty`).
     File(crate::file::FileState),
     /// An XmlNamespaceManager: the (prefix, namespace) pairs added to it.

@@ -2716,7 +2716,9 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlNamespaceManager", "NameTable", [] | ["XmlNameTable"]) => manager_name_table,
         ("XmlNamespaceManager", "AddNamespace", ["Text", "Text"]) => manager_add_namespace,
         (_, "WriteTo", ["Text"]) if is_node && first_by_var => write_to_text,
-        ("XmlDocument" | "XmlElement", "WriteTo", ["OutStream"] | ["XmlWriteOptions", "OutStream"]) => write_to_outstream,
+        ("XmlDocument" | "XmlElement", "WriteTo", ["OutStream"] | ["XmlWriteOptions", "OutStream"]) => {
+            write_to_outstream
+        }
         ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,
         ("XmlElement", "SetAttribute", ["Text", "Text"]) => set_attribute,
         ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"]) => remove_attribute,

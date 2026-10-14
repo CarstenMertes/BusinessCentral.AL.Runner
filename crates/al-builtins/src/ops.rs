@@ -257,7 +257,13 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 }
                 other => int_of(other),
             };
-            let moved = ms.and_then(|ms| if op == Arith::Add { a.checked_add(ms) } else { a.checked_sub(ms) });
+            let moved = ms.and_then(|ms| {
+                if op == Arith::Add {
+                    a.checked_add(ms)
+                } else {
+                    a.checked_sub(ms)
+                }
+            });
             return moved
                 .filter(|m| *m > 0)
                 .map(V::DateTime)

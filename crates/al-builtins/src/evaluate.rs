@@ -112,10 +112,7 @@ fn boolean(text: &str) -> Result<Parsed, Signal> {
 fn guid(text: &str) -> Result<Parsed, Signal> {
     // The braced, the plain (36 characters) and the 32 digit forms; anything else, the empty text
     // included, is rejected (types/TestJsonTokenUnassignedEvaluateGuidContracts.al:EvaluateGuid_Forms_AndFailures).
-    let inner = text
-        .strip_prefix('{')
-        .and_then(|t| t.strip_suffix('}'))
-        .unwrap_or(text);
+    let inner = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')).unwrap_or(text);
     let parts: Vec<&str> = inner.split('-').collect();
     let hex_only = |p: &str| p.bytes().all(|b| b.is_ascii_hexdigit());
     let hex: String = if parts.len() == 5

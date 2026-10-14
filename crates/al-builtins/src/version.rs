@@ -43,7 +43,9 @@ fn create_parts(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
 /// string '<text>' into a version." (code Argument; ibid. VersionCreate_BadText_RaisesAnArgumentError).
 fn create_text(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[0]) else {
-        return Err(Signal::Unsupported("Version.Create with a text that is not text".into()));
+        return Err(Signal::Unsupported(
+            "Version.Create with a text that is not text".into(),
+        ));
     };
     let parts: Vec<Option<i32>> = text
         .split('.')
@@ -78,11 +80,13 @@ fn to_text(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Va
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     if sig.receiver == "Version" && !sig.instance && sig.name == "Create" {
-        return Some(if sig.params.len() == 1 && sig.params[0].ty.eq_ignore_ascii_case("Text") {
-            create_text
-        } else {
-            create_parts
-        });
+        return Some(
+            if sig.params.len() == 1 && sig.params[0].ty.eq_ignore_ascii_case("Text") {
+                create_text
+            } else {
+                create_parts
+            },
+        );
     }
     if sig.receiver != "Version" || !sig.instance {
         return None;

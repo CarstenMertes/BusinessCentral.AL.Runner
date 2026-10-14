@@ -550,7 +550,11 @@ fn calcdate(ctx: &dyn Ctx, formula: &str, base: Option<&Value>) -> Out {
     let terms = parse_formula(formula)?;
     // Without a date the calculation counts from TODAY, not from WorkDate (types/
     // TestDateTimeIntegerCalcDateContracts.al:CalcDateWithoutADate_UsesToday_NotWorkDate).
-    let today = base.is_none().then(|| ctx.today_day()).flatten().map(|d| Value::Date(d, false));
+    let today = base
+        .is_none()
+        .then(|| ctx.today_day())
+        .flatten()
+        .map(|d| Value::Date(d, false));
     let Some(base) = base.or(today.as_ref()) else {
         return unsupported("CalcDate without a date needs the host's clock");
     };

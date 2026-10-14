@@ -248,6 +248,12 @@ struct Area {
     children: Vec<usize>,
 }
 
+/// Areas of the `actions` section a page extension may add to although the page declares none.
+const IMPLICIT_ACTION_AREAS: &[&str] = &["Processing", "Prompting"];
+
+/// Promoted category groups of `actions` that a page extension may place actionrefs after although the page declares none.
+const IMPLICIT_PROMOTED_CATEGORIES: &[&str] = &["Category_Process"];
+
 /// A list of sibling controls: the children of an area or of a group-like control.
 #[derive(Clone, Copy, PartialEq)]
 enum ListId {
@@ -508,6 +514,62 @@ impl Tree {
                         section: s,
                     });
                 }
+            }
+        }
+        // The areas of `actions` that every page has, declared or not. Only the two names corpus tests
+        // reach are listed (see the test `an_extension_adds_to_the_processing_area_of_a_page_that_declares_none`).
+        for op in &pending {
+            let kind = op.section.name().to_ascii_lowercase();
+            let target = op.section.args().first().cloned().unwrap_or_default();
+            if op.in_actions
+                && (kind == "addfirst" || kind == "addlast")
+                && IMPLICIT_ACTION_AREAS.iter().any(|a| a.eq_ignore_ascii_case(&target))
+                && !self
+                    .areas
+                    .iter()
+                    .any(|a| a.in_actions && a.name.eq_ignore_ascii_case(&target))
+            {
+                self.areas.push(Area {
+                    name: target,
+                    in_actions: true,
+                    children: Vec::new(),
+                });
+            }
+        }
+        // The promoted category groups that every page has. Only `Category_Process` is listed: it is the one
+        // a corpus-reachable extension names (the test `an_extension_adds_after_the_process_category_...`).
+        // The group is only an anchor: it is no control of the page.
+        for op in &pending {
+            let kind = op.section.name().to_ascii_lowercase();
+            let target = op.section.args().first().cloned().unwrap_or_default();
+            if op.in_actions
+                && ["addafter", "addbefore"].contains(&kind.as_str())
+                && IMPLICIT_PROMOTED_CATEGORIES.iter().any(|c| c.eq_ignore_ascii_case(&target))
+                && self.find_node(&target).is_none()
+            {
+                let idx = self.nodes.len();
+                self.nodes.push(Node {
+                    name: target,
+                    kind: al_ir::ControlKind::ActionGroup,
+                    section: op.section.clone(),
+                    owner: None,
+                    modifies: Vec::new(),
+                    children: Vec::new(),
+                    anchor_only: true,
+                });
+                let promoted = self
+                    .areas
+                    .iter()
+                    .position(|a| a.in_actions && a.name.eq_ignore_ascii_case("Promoted"));
+                let promoted = promoted.unwrap_or_else(|| {
+                    self.areas.push(Area {
+                        name: "Promoted".into(),
+                        in_actions: true,
+                        children: Vec::new(),
+                    });
+                    self.areas.len() - 1
+                });
+                self.areas[promoted].children.push(idx);
             }
         }
         loop {
@@ -896,6 +958,42 @@ mod tests {
         let l = merged(base, &[ext]);
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
         assert_eq!(names(&l), ["A", "AfterNotes", "Flow"]);
+    }
+
+    // A page that declares no `actions` still has the area an extension adds to. Microsoft's own extensions of
+    // Base App pages do it and compile in real BC; the corpus tests that open them pass there
+    // (handlers/TestPageModalHandler_PrecompiledPage.al:31 RunModalOnErrorMessages_HandlerInvokesOk_ReturnsActionOk
+    // over "Error Messages" + `addfirst(Processing)`, RunModalOnNoSeries_HandlerInvokesOk_ReturnsActionOk over
+    // "No. Series" + `addfirst(Prompting)`).
+    #[test]
+    fn an_extension_adds_to_the_processing_area_of_a_page_that_declares_none() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } }";
+        let ext = "pageextension 50101 E extends P { actions { addfirst(Processing) { action(Act) { } } addlast(Prompting) { action(Ask) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(names(&l), ["A", "Act", "Ask"]);
+        assert_eq!(l.action_areas.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Processing", "Prompting"]);
+    }
+
+    // Every page has the promoted category groups, declared or not: the same Microsoft extension of "Error Messages"
+    // does `addafter(Category_Process) { actionref(...) }` on a page with no actions
+    // (handlers/TestPageModalHandler_PrecompiledPage.al:31, pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69).
+    #[test]
+    fn an_extension_adds_after_the_process_category_of_a_page_that_declares_none() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } }";
+        let ext = "pageextension 50101 E extends P { actions { addfirst(Processing) { action(Act) { } } addafter(Category_Process) { actionref(Act_Promoted; Act) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(names(&l), ["A", "Act", "Act_Promoted"]);
+    }
+
+    // An area name nothing pins is still refused.
+    #[test]
+    fn an_extension_adding_to_an_unknown_area_is_still_refused() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } }";
+        let ext = "pageextension 50101 E extends P { actions { addfirst(Nowhere) { action(Act) { } } } }";
+        let l = merged(base, &[ext]);
+        assert_eq!(l.reasons.len(), 1, "{:?}", l.reasons);
     }
 
     // Corpus handlers/TestPagePromotedActionref_Page.al: an actionref is a control that names its target.

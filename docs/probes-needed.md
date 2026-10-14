@@ -713,3 +713,7 @@ reason, so a count grows when the reason above it is lifted). Order: biggest fir
     owner review (2026-10-14)"): the app under test's own install codeunits may `Modify`, `Delete` and `Rename`
     the rows of the restored company. Probe that would confirm it: publish an app whose `OnInstallAppPerCompany`
     modifies `Sales & Receivables Setup` into a CRONUS database and read the row back.
+15. **`DateTime + Integer`** (and `BigInteger`, `Decimal`; `DateTime - Integer`). REFUSED (`Add of DateTime(n) and
+    Integer(n)`); `DateTime + Duration` is pinned (session/TestDateTimeContracts.al:50-75). 98 tests, from the
+    project's `CurrentDateTime + (Seconds * 1000)`. Probe wanted: `DT + 1000` for an `Integer`, a `BigInteger` and a
+    `Decimal` constant and variable (milliseconds? a compile error?), `DT - 1000`, and `DT + 1000.5` (rounding).

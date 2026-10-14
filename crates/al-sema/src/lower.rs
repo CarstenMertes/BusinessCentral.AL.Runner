@@ -3444,6 +3444,14 @@ impl Lowerer<'_> {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
+        // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
+        // would answer the default value of the return type, which is not what the platform answers.
+        if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+            self.reasons.push(format!(
+                "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
+                r.name()
+            ));
+        }
         let field = r
             .syntax()
             .ancestors()
@@ -5622,6 +5630,27 @@ codeunit 50101 C2
         assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
         let dump = format!("{:?}", r.body);
         assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
+    }
+
+    // A `[Native]` procedure of a platform app has an empty AL body: the service tier implements it. Running
+    // the empty body would answer the default value (the corpus run showed `Agent Utilities.IsAgentSession`
+    // deciding every session is an agent session, because the native `GetCurrentSessionAgentMetadataProviderType`
+    // "returned" 0 instead of -1). Such a routine is refused when it runs.
+    #[test]
+    fn a_native_procedure_with_an_empty_body_is_refused() {
+        let (_, l) = lower_src(
+            "codeunit 50100 C { [Native] procedure Kind(): Integer begin end; procedure Other(): Integer begin exit(1); end; }",
+        );
+        let (ki, _) = routine(&l, "Kind");
+        assert!(
+            l.unsupported[0][ki]
+                .iter()
+                .any(|r| r.contains("Native") && r.contains("Kind")),
+            "{:?}",
+            l.unsupported[0][ki]
+        );
+        let (oi, _) = routine(&l, "Other");
+        assert!(l.unsupported[0][oi].is_empty());
     }
 
     // ADR-024: a DotNet result used as an operand is settled when the code runs. The comparison with

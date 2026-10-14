@@ -92,8 +92,9 @@ jobs:
       # outcome. The corpus runs a second time with every dependency routine compiled
       # (`AL_EAGER_DEPENDENCIES=1`), and no test may come out differently (pass, fail or not run).
       # A test the demand-driven compile refuses and the eager one runs shows up here as well:
-      # that is a path BC runs and the demand-driven compile did not reach. `tools/compare_junit.py`
-      # prints each difference with both reasons.
+      # that is a path BC runs and the demand-driven compile did not reach. `tools/demand_vs_eager.sh`
+      # compares the main app and every extra suite and prints each difference with both reasons;
+      # locally, `tools/demand_vs_eager.sh run` makes the runs and the comparison.
       #
       # A corpus run uses one core. The runner has four, so the normal run (all versions, one
       # process: it prints the comparison across versions) goes beside one eager run per version,
@@ -121,9 +122,9 @@ jobs:
             echo "::group::Eager run output, BC $v"
             cat eager-$v.log
             echo "::endgroup::"
-            python3 tools/compare_junit.py --allow tools/demand-eager-known-differences.txt \
-              runtime-junit-$v.xml eager-junit-$v.xml || status=1
           done
+          # The main app of each version and every extra suite (OnPrem, the isolation probes).
+          tools/demand_vs_eager.sh compare . || status=1
           exit $status
 
       - name: Date stamp

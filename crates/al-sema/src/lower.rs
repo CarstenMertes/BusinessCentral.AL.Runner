@@ -3769,11 +3769,7 @@ impl Lowerer<'_> {
                         if matches!(
                             self.ty_of(r),
                             Ty::Object(
-                                ObjKind::Codeunit
-                                    | ObjKind::Page
-                                    | ObjKind::XmlPort
-                                    | ObjKind::Report
-                                    | ObjKind::Query,
+                                ObjKind::Codeunit | ObjKind::Page | ObjKind::XmlPort | ObjKind::Report | ObjKind::Query,
                                 _
                             ) | Ty::Record { .. }
                         ) =>
@@ -3885,9 +3881,11 @@ impl Lowerer<'_> {
                         Err(_) => ir::Arg::Value(self.expr(r)?),
                     })),
                     // An unqualified record method in table code runs on the implicit Rec.
-                    None if sig.instance && matches!(sig.receiver.as_str(), "Record" | "Query") => Some(Box::new(ir::Arg::Ref(
-                        ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
-                    ))),
+                    None if sig.instance && matches!(sig.receiver.as_str(), "Record" | "Query") => {
+                        Some(Box::new(ir::Arg::Ref(ir::Place::Global(
+                            self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
+                        ))))
+                    }
                     _ => None,
                 };
                 let mut out = Vec::new();

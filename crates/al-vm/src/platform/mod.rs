@@ -10,6 +10,7 @@
 //! the corpus line that pins it; a column or a shape nothing pins is refused, not guessed.
 
 mod apps;
+pub(crate) mod coverage;
 mod date;
 mod fields;
 mod host_tables;

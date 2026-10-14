@@ -564,6 +564,7 @@ impl Session {
     ) -> Result<Option<Vec<Value>>, Signal> {
         let temporary = rec.borrow().temporary;
         self.unseeded_read(t, temporary, "reading rows")?;
+        self.coverage_read(t, temporary)?;
         let key = rec.borrow().key;
         // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
         let (filters, flow_field_filters) = self.split_filters(rec);
@@ -751,6 +752,11 @@ impl Session {
         ) {
             let temporary = rec.borrow().temporary;
             self.unseeded_read(&t, temporary, method)?;
+            self.coverage_read(&t, temporary)?;
+        }
+        if matches!(method, "Get" | "GetBySystemId" | "CalcFields") {
+            let temporary = rec.borrow().temporary;
+            self.coverage_read(&t, temporary)?;
         }
         let cx = self.cx.clone();
         // The next access of the table raises a deferred duplicate-key Insert.
@@ -1139,6 +1145,8 @@ impl Session {
                 if !flow_field_filters.is_empty() {
                     return unsupported("DeleteAll with a filter on a FlowField");
                 }
+                let temporary = rec.borrow().temporary;
+                self.coverage_cleared(&t, temporary, &filters);
                 let n = self
                     .store_for(rec)
                     .count(&cx, &t, &filters)

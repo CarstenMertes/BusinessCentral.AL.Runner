@@ -624,3 +624,22 @@ Assumptions and open points beside the 58 probe tests (corpus branch `al-runtime
 | CRM tables | A record of a `TableType = CRM` table fails on first use (Init, TableCaption, field read or write, any record method) while no CRM table connection is registered, with the pinned text (two spaces after `connection`) and code `Argument`; with a connection registered it is REFUSED | session/TestCrmTableNoConnectionContracts.al | `records.rs` `connection_check` |
 | Companies, round 2 | Pinned now: `Copy` and `SetTable` do not move the target to the source's company, `GetTable` takes it; a renamed company takes its data, a company deleted with `Delete(true)` drops it and a new company of the name starts empty; company names are case sensitive. Still REFUSED: `Delete(false)` of a company that holds rows | record/TestChangeCompanyFiltersCopyDeleteContracts.al | `companies.rs`, `records.rs` |
 | Temporary record and Variant | A temporary record WITH ROWS handed to a Variant parameter is REFUSED: a by-value copy is an empty buffer (record/TestTempTableContracts.al:141-148), but Microsoft's Assert.RecordCount counts the rows through a Variant on BC (Tests-ERM Price Source List UT.T001). Probe wanted: what a Variant holds when a temporary record is assigned or passed | none (bucket oracle only) | `al-vm/src/lib.rs` |
+
+## Code coverage rows
+
+`CodeCoverageLog(true, ...)` records, and a read of Code Coverage (2000000049), Code Coverage Test Lookup (2000000288) or Code
+Coverage Tests Run (2000000289) shows what was recorded (`crates/al-vm/src/platform/coverage.rs`). Pinned by
+codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al and TestCodeCoverageTableExtension.al. What those tests do not
+pin, and the default chosen:
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| Which lines have a row | A `Trigger/Function` row per routine of an object that ran while recording (the declaration line), a `Code` row per source line that holds a statement. `begin`, `end`, `var` and comment lines have none | List all rows of a small codeunit after recording: which lines, which `Line Type` (`Object`, `Empty`) |
+| Objects never entered while recording | No rows | Whether the table lists objects that did not run |
+| `No. of Hits` of a line with several statements | The largest count of its statements | A one-line `if X then Y;` run with X true and false, loop bodies of a known count |
+| `No. of Hits` of a `Trigger/Function` row | 0 | Whether it counts the calls |
+| `Line`, `Code Coverage Status`, `Method Id` of Code Coverage | `Line` empty, `Status` NonApplicable, `Method Id` 0 | The columns of the rows above |
+| `Test ID`, `Method ID` | `Test ID` counts from 1 per session; `Method ID` is the routine's index in its object plus one. Only compared between rows (TestCodeCoveragePerTest.al header) | none |
+| A `[Test]` procedure that calls another `[Test]` procedure | Both have a Tests Run row; the methods of the inner one are noted for the inner one only | A nested test start while recording |
+| Rows after a rollback | The rows are written into the store when read, so an `asserterror` rolls them back with the other writes of the transaction | Whether BC keeps coverage rows across a rollback |
+| Recording that outlives its test | It stays on until `CodeCoverageLog(false, ...)`; the next test of the codeunit that starts while it is on is noted | |

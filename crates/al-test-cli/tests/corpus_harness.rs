@@ -79,15 +79,7 @@ fn all_versions() -> &'static AllVersions {
         std::fs::create_dir_all(&dir).unwrap();
         let path = |f: &str| dir.join(f).to_str().unwrap().to_string();
         let (json, md, junit) = (path("pass-rate.json"), path("pass-rate.md"), path("runtime-junit.xml"));
-        let (code, out, err) = cli(&[
-            "--all-versions",
-            "--json",
-            &json,
-            "--markdown",
-            &md,
-            "--junit",
-            &junit,
-        ]);
+        let (code, out, err) = cli(&["--all-versions", "--json", &json, "--markdown", &md, "--junit", &junit]);
         AllVersions { dir, code, out, err }
     })
 }
@@ -101,7 +93,8 @@ impl AllVersions {
     fn json(&self, major: &str) -> serde_json::Value {
         assert_eq!(self.code, 0, "BC {major}: {}", self.err);
         let f = self.file("pass-rate", major, "json");
-        let text = std::fs::read_to_string(&f).unwrap_or_else(|_| panic!("no report for BC {major}; stdout:\n{}", self.out));
+        let text =
+            std::fs::read_to_string(&f).unwrap_or_else(|_| panic!("no report for BC {major}; stdout:\n{}", self.out));
         serde_json::from_str(&text).unwrap()
     }
 }
@@ -251,7 +244,12 @@ fn the_first_line_names_the_target() {
     // A run over every version starts with the oldest one's target and names the others.
     let shared = all_versions();
     assert_eq!(shared.code, 0, "{}", shared.err);
-    assert_eq!(shared.out.lines().next(), Some("target: BC 27.5, runtime 16.0"), "{}", shared.out);
+    assert_eq!(
+        shared.out.lines().next(),
+        Some("target: BC 27.5, runtime 16.0"),
+        "{}",
+        shared.out
+    );
     for line in ["target: BC 28.5, runtime 16.0", "target: BC 29.0, runtime 16.0"] {
         assert!(shared.out.lines().any(|l| l == line), "{line} in {}", shared.out);
     }
@@ -259,7 +257,11 @@ fn the_first_line_names_the_target() {
     let target_line = |v: &str| {
         let (code, out, err) = cli(&["--bc-version", v, "--codeunit", SMALL_CU]);
         assert_eq!(code, 0, "{err}");
-        assert_eq!(out.lines().next().map(|l| l.starts_with("selection: ")), Some(true), "{out}");
+        assert_eq!(
+            out.lines().next().map(|l| l.starts_with("selection: ")),
+            Some(true),
+            "{out}"
+        );
         out.lines().nth(1).unwrap_or_default().to_string()
     };
     assert_eq!(target_line("27"), "target: BC 27.5, runtime 16.0");
@@ -312,7 +314,10 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
         let f = dir.join(format!("pass-rate-{v}.json"));
         assert!(f.exists(), "no report for BC {v}; stdout:\n{out}");
     }
-    assert!(!dir.join("pass-rate.json").exists(), "all-versions writes only per-version files");
+    assert!(
+        !dir.join("pass-rate.json").exists(),
+        "all-versions writes only per-version files"
+    );
     assert!(out.contains("Version comparison"), "{out}");
     // Every oracle is recorded for the pin and has the same cases.
     assert!(out.contains("oracle: same cases in every version"), "{out}");

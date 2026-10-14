@@ -1387,11 +1387,25 @@ impl<'a> Checker<'a> {
         match t {
             // Members of a .NET type come from reflection at run time: any name, any arity,
             // a result whose type is known only then (ADR-014).
-            Ty::DotNet(_) => {
+            Ty::DotNet(alias) => {
+                // A member the runtime provides itself declares its result type (ADR-014).
+                let ret = self
+                    .ws
+                    .resolve_dotnet(sc.file, alias)
+                    .and_then(|i| al_builtins::dotnet_sigs::lookup(&self.ws.dotnet[i].decl.type_name, name))
+                    .map_or_else(
+                        || Ty::DotNet(String::new()),
+                        |r| match r {
+                            al_builtins::dotnet_sigs::Ret::Boolean => Ty::Boolean,
+                            al_builtins::dotnet_sigs::Ret::Integer => Ty::Integer,
+                            al_builtins::dotnet_sigs::Ret::Text => Ty::Text(None),
+                            al_builtins::dotnet_sigs::Ret::Object => Ty::DotNet(String::new()),
+                        },
+                    );
                 return Some(E::Callable(vec![Cand {
                     min: 0,
                     max: usize::MAX,
-                    ret: Ty::DotNet(String::new()),
+                    ret,
                     target: Res::DotNetMember(name.to_string()),
                     param_tys: Vec::new(),
                     fields: Vec::new(),

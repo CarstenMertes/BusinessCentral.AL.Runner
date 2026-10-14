@@ -6,8 +6,9 @@
 //!
 //! Every member names its pin: a corpus test (`file:line`) or a probe id from
 //! `docs/probes-needed.md`. A member without either does not build (`Registry::new` refuses it).
-//! The shipped registry is empty until a probe pins a member; the members wanted first are
-//! listed in `docs/probes-needed.md`.
+//! The shipped registry (`server_classes.rs`) mirrors AL Runner v2 until a probe on real BC pins
+//! each value (owner decision 2026-10-14, ADR-014). Each member's result type is declared in
+//! `al_builtins::dotnet_sigs`, which the compiler reads; a test keeps the two in step.
 
 use crate::Session;
 use al_builtins::native::Signal;
@@ -30,12 +31,15 @@ pub enum Pin {
     Corpus(String),
     /// A probe listed in `docs/probes-needed.md` and merged into the corpus repo.
     Probe(String),
+    /// AL Runner v2, as `file:line`, until a probe on real BC pins the value (owner decision
+    /// 2026-10-14, ADR-014). Replaced by a `Probe` when the probe batch reports.
+    AlRunner(String),
 }
 
 impl Pin {
     fn is_empty(&self) -> bool {
         match self {
-            Pin::Corpus(s) | Pin::Probe(s) => s.trim().is_empty(),
+            Pin::Corpus(s) | Pin::Probe(s) | Pin::AlRunner(s) => s.trim().is_empty(),
         }
     }
 }
@@ -63,9 +67,18 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// The registry shipped with the runtime. Empty: no member is pinned yet.
+    /// The registry shipped with the runtime: the BC server classes of `server_classes.rs`.
     pub fn builtin() -> Registry {
+        Registry::new(super::server_classes::types()).expect("the shipped registry names a source for every member")
+    }
+
+    /// A registry with no type, for tests that exercise the router without any server class.
+    pub fn empty() -> Registry {
         Registry::default()
+    }
+
+    pub fn types(&self) -> &[RegistryType] {
+        &self.types
     }
 
     /// Builds a registry, refusing any member without a pin.

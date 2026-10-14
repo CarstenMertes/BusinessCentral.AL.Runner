@@ -15,6 +15,7 @@ pub mod collation;
 pub mod collections;
 pub mod datatransfer;
 pub mod datefns;
+pub mod dotnet_sigs;
 pub mod errorinfo;
 pub mod evaluate;
 pub mod file;

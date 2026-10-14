@@ -65,7 +65,7 @@ impl Session {
     }
 
     /// The object index of the table with platform id `id`, if the program compiled it.
-    fn compiled_table(&self, id: u32) -> Option<usize> {
+    pub(crate) fn compiled_table(&self, id: u32) -> Option<usize> {
         self.engine
             .program
             .objects

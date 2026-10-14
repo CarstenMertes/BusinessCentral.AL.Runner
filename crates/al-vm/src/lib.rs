@@ -36,6 +36,7 @@ mod reports;
 mod sessionops;
 mod transactions;
 mod ui;
+mod usertable;
 mod views;
 mod xmlports;
 pub use transactions::TxModel;

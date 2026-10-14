@@ -4,6 +4,7 @@
 
 pub mod policy;
 pub mod registry;
+pub mod server_classes;
 
 use crate::{Frame, Session};
 use al_builtins::native::Signal;

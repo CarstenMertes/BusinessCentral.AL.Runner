@@ -16,6 +16,7 @@ use al_data::{Row, Store, TableDef};
 pub(super) const COMPANY: u32 = 2_000_000_006;
 pub(super) const USER: u32 = 2_000_000_120;
 pub(super) const ACCESS_CONTROL: u32 = 2_000_000_053;
+pub(super) const USER_PROPERTY: u32 = crate::usertable::USER_PROPERTY;
 
 /// A text value for the field `id`, as a Code or a Text by the field's type.
 fn text(t: &TableDef, id: u32, s: &str) -> Value {
@@ -48,6 +49,11 @@ impl Session {
                     r[pos(t, 2)] = text(t, 2, &i.user_id);
                     r[pos(t, 3)] = text(t, 3, &i.user_id);
                     r
+                }
+                // Every User has a User Property row (onprem access-control/TestUserPropertySessionUser.al:312-330).
+                USER_PROPERTY => {
+                    let telemetry = self.new_guid();
+                    crate::usertable::property_seed(t, i.user_sid, telemetry)
                 }
                 ACCESS_CONTROL => {
                     let mut r = super::blank(t);

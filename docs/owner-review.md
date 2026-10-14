@@ -63,8 +63,11 @@ reviewed it.
   others) are provided in Rust through the registry.
   - Their values mirror AL Runner v2 until a probe on real BC pins them.
   - This is not a fake of an AL object, so hard rule 7 does not apply.
-  - The work is on branch `dotnet-registry`. Probe batch 3 reads the real
-    values.
+  - The work is on branch `dotnet-registry`. Probe batch 3 (corpus-probes
+    c542144) pinned the values it covers, and the probe wins where it differs
+    from AL Runner: the oracle tenant is a sandbox on Azure topology
+    (`IsSandbox` true, `IsAzure` true), AL Runner's is Production on premises.
+    ADR-013's "Production by default" is therefore superseded for the registry.
 
 - 2026-10-14, performance phase: run tests in parallel at the test runner's
   isolation unit.
@@ -101,6 +104,16 @@ reviewed it.
   `--affected`, warm server state, `--jobs`, persistent dependency caches.
 
 ## Decided without owner review
+
+- 2026-10-14, User table triggers (`usertable.rs`): applied for every User write, with no check of
+  the topology gate the corpus header describes (unique emails only on premises). The Cloud app's
+  tier is not known to take the same branch. The error texts are the corpus fragments only.
+
+- 2026-10-14, ADR-014 registry: `NavTenantSettingsHelper.GetEnvironmentName` answers an empty
+  text. The probe only sees `'Sandbox'` through the wrapper, which also answers `'Sandbox'` for an
+  empty name. `SetTestTenantEnvironmentType` is not provided: no corpus test reaches it and the
+  tenant is already a sandbox. `PermissionTestHelper` (Permissions Mock) stays refused: it needs
+  permission enforcement, which is not modelled.
 
 - 2026-10-14, orchestrator: there were 7 corpus CI runs overnight, not about 3.
   - 3 were the probe batches.

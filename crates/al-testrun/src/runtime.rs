@@ -119,6 +119,9 @@ pub struct TestResult {
     pub codeunit_name: String,
     pub test: String,
     pub outcome: Outcome,
+    /// For a failure with an AL error: the call stack of the error, innermost frame first, one per
+    /// line (`GetLastErrorCallStack` form). Empty otherwise.
+    pub call_stack: String,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -161,12 +164,15 @@ struct Unit {
     isolation: TestIsolation,
 }
 
+/// What a test codeunit left: each test's outcome, and the call stack of each AL error that failed one.
+type UnitOutcomes = (Vec<(String, Outcome)>, Vec<(String, String)>);
+
 struct UnitResult {
     si: usize,
     oi: usize,
     id: u32,
     /// The outcome of each test, or the message of a Rust panic.
-    result: Result<Vec<(String, Outcome)>, String>,
+    result: Result<UnitOutcomes, String>,
     took: std::time::Duration,
     sidecar_start: std::time::Duration,
 }
@@ -189,7 +195,9 @@ fn run_unit(
     let started = std::time::Instant::now();
     crate::dotnet::take_start_time();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        run_codeunit_observed(engine, lowered, u.oi, baseline, u.isolation, observe)
+        let mut stacks = Vec::new();
+        let done = run_codeunit_full(engine, lowered, u.oi, baseline, u.isolation, observe, &mut stacks);
+        (done, stacks)
     }))
     .map_err(|p| {
         p.downcast_ref::<String>()
@@ -500,6 +508,7 @@ impl CorpusRuntime {
                                 codeunit_name: o.name.clone(),
                                 test: r.name.clone(),
                                 outcome: Outcome::NotRun(why.clone()),
+                                call_stack: String::new(),
                             });
                         }
                     }
@@ -577,7 +586,7 @@ impl CorpusRuntime {
                 sidecar_start: r.sidecar_start,
             });
             let o = &lowered.program.objects[r.oi];
-            let push = |list: &mut Vec<TestResult>, test: &str, outcome: &Outcome| {
+            let push = |list: &mut Vec<TestResult>, test: &str, outcome: &Outcome, call_stack: String| {
                 list.push(TestResult {
                     suite: r.si,
                     app: o.app as usize,
@@ -585,12 +594,14 @@ impl CorpusRuntime {
                     codeunit_name: o.name.clone(),
                     test: test.to_string(),
                     outcome: outcome.clone(),
+                    call_stack,
                 })
             };
             match r.result {
-                Ok(done) => {
+                Ok((done, stacks)) => {
                     for (name, outcome) in done {
-                        push(&mut list, &name, &outcome);
+                        let stack = stacks.iter().find(|(n, _)| *n == name).map(|(_, s)| s.clone());
+                        push(&mut list, &name, &outcome, stack.unwrap_or_default());
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
                     }
                 }
@@ -598,7 +609,7 @@ impl CorpusRuntime {
                     panics += 1;
                     for t in test_routines(&lowered.program.objects[r.oi]) {
                         let outcome = Outcome::NotRun(format!("runtime panic (bug): {msg}"));
-                        push(&mut list, &t.name, &outcome);
+                        push(&mut list, &t.name, &outcome, String::new());
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
                     }
                 }
@@ -781,7 +792,21 @@ pub fn run_codeunit_observed(
     object: usize,
     baseline: Option<&al_vm::Baseline>,
     isolation: TestIsolation,
+    observe: Option<&mut Observer>,
+) -> Vec<(String, Outcome)> {
+    run_codeunit_full(engine, lowered, object, baseline, isolation, observe, &mut Vec::new())
+}
+
+/// [`run_codeunit_observed`] that also collects, for each test that failed with an AL error, the AL
+/// call stack of that error as `(test name, stack)` (`GetLastErrorCallStack` form, innermost first).
+pub fn run_codeunit_full(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    object: usize,
+    baseline: Option<&al_vm::Baseline>,
+    isolation: TestIsolation,
     mut observe: Option<&mut Observer>,
+    stacks: &mut Vec<(String, String)>,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
@@ -958,6 +983,11 @@ pub fn run_codeunit_observed(
         }
         if let Some(cp) = &checkpoint {
             cp.restore(&mut session);
+        }
+        if let (Outcome::Fail(_), Some(e)) = (&outcome, &failure) {
+            if !e.call_stack.is_empty() {
+                stacks.push((routine.name.clone(), e.call_stack.clone()));
+            }
         }
         out.push((routine.name.clone(), outcome));
     }

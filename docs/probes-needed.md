@@ -598,21 +598,21 @@ refused (or assumed, where the row says so) until its probe is in the corpus.
    text (separator, which fields, FlowFields calculated or not), and whether two records that differ in
    only one field format differently.
 5. **Variables of a table object persist per record variable.** DONE (ADR-021). Probed on BC 27.5
-   (corpus branch `al-runtime-rs`, head `eb46da5`, `tests/al-language/tableglobals/`, 58 tests) and
+   (corpus `tests/al-language/tableglobals/`, 58 tests, in the submodule since `eb46da5`) and
    modelled; the two `T043` tests of Tests-ERM pass. What the probes did not pin is in "Table globals
    (ADR-021)" below.
 
 ## Table globals (ADR-021)
 
-Assumptions and open points beside the 58 probe tests (corpus branch `al-runtime-rs`, head `eb46da5`, folder
-`tests/al-language/tableglobals/`; cited by path until the corpus bump).
+Assumptions and open points beside the 58 probe tests (corpus folder `tests/al-language/tableglobals/`, in the
+submodule since `eb46da5`; `Holders` is TestTableGlobalsHolders.al, `Record` is TestTableGlobalsRecordVariable.al).
 
 | Area | Assumption | Pinned by | Where |
 |---|---|---|---|
-| Page Insert and Modify | A page `Insert` or `Modify` that follows no field validation (a draft row from `New()` and `Close()`, a modify after an action changed `Rec`) runs the triggers and subscribers on the page record's own globals. After a validation they see fresh globals (pinned) | TableGlobals_PageInsert_*, TableGlobals_PageModify_* (after a validation only) | `pages.rs` |
-| Page validation | The page client sets the page record's globals back to their initial values before and after each field validation. Measured: the trigger starts fresh and the record is fresh afterwards. Validations the client runs for other reasons (filter-stamped defaults on a new row) are not reset | TableGlobals_PageFieldValidate_*, TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation | `pages.rs` |
+| Page Insert and Modify | A page `Insert` or `Modify` that follows no field validation (a draft row from `New()` and `Close()`, a modify after an action changed `Rec`) runs the triggers and subscribers on the page record's own globals. After a validation they see fresh globals (pinned) | Holders:202 TableGlobals_PageInsert_OnInsertSeesTheValidateGlobals, Holders:219 TableGlobals_PageModify_OnModifySeesTheValidateGlobals (after a validation only) | `pages.rs` |
+| Page validation | The page client sets the page record's globals back to their initial values before and after each field validation. Measured: the trigger starts fresh and the record is fresh afterwards. Validations the client runs for other reasons (filter-stamped defaults on a new row) are not reset | Holders:140 TableGlobals_PageFieldValidate_ThenAction_SeesTheTriggerGlobals, Holders:238 TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation, Holders:280 _PageFieldValidate_WhatTheTriggerSeesOfThePageRecGlobals | `pages.rs` |
 | xRec in a plain procedure | In a procedure called on a record variable (no trigger), `xRec` here holds a copy of `Rec`'s fields taken at the call and the variable's xRec globals. Its field values are not pinned | none | `records.rs` `enter_record` |
-| Reset of record-typed globals | `Clear` and `Reset` set every global of the table back to its initial value, record variables included (pinned for Integer and Text) | TableGlobals_Clear_*, TableGlobals_Reset_* | `records.rs` `reset_table_globals` |
+| Reset of record-typed globals | `Clear` and `Reset` set every global of the table back to its initial value, record variables included (pinned for Integer and Text) | Record:272 TableGlobals_Clear_WhatHappensToTheGlobals, Record:302 TableGlobals_Reset_WhatHappensToTheGlobals | `records.rs` `reset_table_globals` |
 | Records in arrays and `SetTable` targets | Same per-state rules by construction; not probed | none | |
 | `Rename` | `OnRename` runs on the variable's instance like the other write triggers; not probed | none | `records.rs` |
 | RecordRef keys | `KeyCount` counts the declared keys and the hidden key on SystemId last; `CurrentKeyIndex(n)` selects key n (the hidden one is `System ID` in `CurrentKey()` and `$systemId` as the name of its field through `KeyRef.FieldIndex`); an index outside 1..KeyCount raises `The <table> table does not have an active key at index <n>.` / `DB:KeyNotFound`; a current key of fields no declared key starts with reports -1. Not pinned: the name `RecordRef.Field(SystemIdNo).Name()` gives | recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:75-176 | `refs.rs`, `recmeta.rs` |
@@ -663,3 +663,60 @@ Found by Tests-ERM with test data (issue 8). The lowering refuses each with the 
 | `Record.FieldError(Field, ErrorInfo)` and `FieldRef.FieldError(ErrorInfo)` | 39 | The text and code of the error, what `GetLastErrorText` reads, and whether an `ErrorBehavior::Collect` scope collects it |
 | `HttpRequestMessage.Method`, `GetRequestUri` read before a set | 84 | The method of a new `HttpRequestMessage` (GET?) and its uri; whether `SetRequestUri` validates its text and what it returns |
 | `Record.SetPermissionFilter()`, `RecordRef.SetPermissionFilter()` | 54 | Both are a no-op here, because permission enforcement is not modelled (`ReadPermission()` is true, `Permissions Mock` is refused). Pinned: `Record.SetPermissionFilter` does not throw (record/TestRecordFilter.al:406-413). The RecordRef call is the same assumption, and the effect of the filter on a user without read permission is not pinned: probe a table with a security filter and a limited user |
+
+## SessionInformation.Callstack
+
+`SessionInformation.Callstack` is REFUSED (`builtin SessionInformation.Callstack#N is not implemented`). No corpus test reads
+it (`session/TestMiscTypes.al` calls the other `SessionInformation` methods only). It stops 337 Tests-ERM tests (with test
+data, BC 27.5.46862.56320) through one caller: Base Application's `Error Message Management.GetCurrCallStack`, which the
+`Error Message` table calls to store the stack (`SetErrorCallStack`). That caller reads the text, so the refusal cannot be
+turned into an opaque value: it calls `StrPos` on it for the frame `"Error Message Management"(CodeUnit 28)`, keeps what
+follows the last such frame, then cuts at the first `\`. Two facts follow from that code alone (Microsoft's source, not a
+corpus pin, so nothing is built on them yet):
+
+- the frames of the value are separated by a backslash, not by a line feed (the same code splits `GetLastErrorCallstack` at
+  `\` in `GetCallStackTop`, while the runtime separates the frames of `GetLastErrorCallStack` by `\n`; see the "Errors"
+  row above, which notes that BC may differ);
+- a frame reads `"Error Message Management"(CodeUnit 28)...`, the form `GetLastErrorCallStack` has, and the stack lists the
+  innermost frame first, so what follows the last codeunit 28 frame are the callers.
+
+What is not known, and what the probe must show. Run on the machine with the BC container, in a test codeunit
+(`Subtype = Test`) of an app with a known name, publisher and version, and write the text out with `Error(Txt)` or read it
+character by character:
+
+```al
+local procedure Inner(): Text
+begin
+    exit(SessionInformation.Callstack);
+end;
+
+local procedure Middle(): Text
+begin
+    exit(Inner());
+end;
+
+[Test]
+procedure Probe()
+var
+    Txt: Text;
+    i: Integer;
+    Codes: Text;
+begin
+    Txt := Middle();
+    for i := 1 to StrLen(Txt) do
+        if Txt[i] < 32 then
+            Codes += StrSubstNo('[%1@%2]', Txt[i], i);   // the separator characters and where they are
+    Error('LEN=%1 CODES=%2 TEXT=%3', StrLen(Txt), Codes, Txt);
+end;
+```
+
+Read from it: (1) the separator between frames (a backslash, CR LF, LF); (2) the order (is `Inner` first); (3) the form of
+each frame: quoting of the object name, `(CodeUnit N)`, `.Procedure`, ` line N`, ` - App by Publisher version V`, whether
+`line` is relative to the procedure as in `GetLastErrorCallStack`; (4) whether the frame that calls `Callstack` is the first
+line; (5) what lies below the test procedure (runner codeunits, a platform frame) and whether the text is cut at a length;
+(6) the same from a trigger (`OnRun`, `OnValidate` of a field, a page trigger), from an event subscriber, inside
+`asserterror` and through `Codeunit.Run`; (7) the text of `GetLastErrorCallStack` after an `asserterror Inner()` in the same
+codeunit, to settle the separator there too. With those, implement it beside `al-vm/src/callstack.rs` (which already holds
+the frames of the running stack) and add the corpus citation.
+
+The test of the Error Message table that reads the stored stack, if any, is Base Application's own; no corpus test reads it.

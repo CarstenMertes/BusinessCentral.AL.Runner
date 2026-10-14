@@ -1347,8 +1347,8 @@ impl Session {
                 // With delete events or database triggers a DeleteAll deletes row by row: the events
                 // and the database trigger per row, the table's and extensions' triggers only for
                 // DeleteAll(true). Pinned on real BC 27.5 by the probe codeunit 68212
-                // (record/TestTableExtensionTriggerOrderContracts.al:Delete_And_DeleteAll_...,
-                // corpus branch `al-runtime-rs`; the citation is pending until the corpus bump).
+                // (record/TestTableExtensionTriggerOrderContracts.al:102
+                // Delete_And_DeleteAll_WithAndWithoutRunTrigger).
                 // The User table has no bulk delete: the platform deletes it row by row.
                 let user_rows = self.is_user_row(&t, rec.borrow().temporary);
                 if events || global || user_rows || (run && trigger) {

@@ -837,6 +837,7 @@ fn target_json(t: &DotNetTarget) -> Value {
     match t {
         DotNetTarget::Static(ty) => json!({"static": type_json(ty)}),
         DotNetTarget::Instance(h) => json!({"handle": h}),
+        DotNetTarget::Value(v) => json!({"value": encode(v)}),
     }
 }
 

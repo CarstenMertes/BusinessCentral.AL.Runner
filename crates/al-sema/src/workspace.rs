@@ -34,6 +34,54 @@ pub struct AppSource {
     pub files: Vec<(String, String)>,
 }
 
+/// Reads the text of one file of a dependency app when something needs it (ADR-022, "pure tests"). The
+/// text is what an eager read of the same file gives: no byte order mark, invalid UTF-8 replaced.
+pub trait SourceLoader: Send + Sync + std::fmt::Debug {
+    /// The text of file `file_in_app` of the app (the position in `AppSource::files`).
+    fn text(&self, file_in_app: usize) -> String;
+}
+
+/// What a run knows of a dependency app whose files hold no text yet (`AppSource::files` has the
+/// paths and empty texts): how to read a file, and a hash of the app's source made without reading it
+/// (for a zip package, of the name, size and CRC-32 of every entry).
+#[derive(Debug, Clone)]
+pub struct LazySource {
+    pub loader: std::sync::Arc<dyn SourceLoader>,
+    pub identity: [u8; 32],
+}
+
+impl LazySource {
+    /// Reads every file of `app` into its `files`, on all cores.
+    pub fn fill(&self, app: &mut AppSource) {
+        let texts: Vec<String> = (0..app.files.len())
+            .into_par_iter()
+            .map(|i| self.loader.text(i))
+            .collect();
+        for ((_, slot), text) in app.files.iter_mut().zip(texts) {
+            *slot = text;
+        }
+    }
+}
+
+/// What the scan of one source file found: the index entry of a file that is not parsed at load.
+/// A cache stores these for a dependency set so that a run need not read or scan the sources.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FileIndex {
+    pub namespace: Option<String>,
+    pub usings: Vec<String>,
+    /// The objects of the file, in source order.
+    pub objects: Vec<FileObject>,
+    /// The `type(..)` declarations of the file's `dotnet { }` blocks.
+    pub dotnet: Vec<ast::DotNetTypeDecl>,
+}
+
+/// A dependency app for [`Workspace::load_apps_lazy`]: the scan of each of its files (so nothing is
+/// scanned) and the way to read a file later.
+pub struct LazyDep {
+    pub index: Vec<FileIndex>,
+    pub loader: std::sync::Arc<dyn SourceLoader>,
+}
+
 /// Whether an app is the code being tested or a dependency it was compiled against.
 /// No test is discovered or run in a dependency (ADR-013 decision 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -226,6 +274,10 @@ pub struct Workspace {
     flakes: std::sync::Mutex<Vec<String>>,
     /// Once set, the dependency objects that take part in the compile (see `restrict_to`).
     compiled: OnceLock<Vec<bool>>,
+    /// Per app: how to read a file of a dependency app whose `files` hold no text (`load_apps_lazy`).
+    loaders: Vec<Option<std::sync::Arc<dyn SourceLoader>>>,
+    /// Per file: the text a loader gave, kept so a file is read once.
+    lazy_text: Vec<OnceLock<String>>,
 }
 
 impl Workspace {
@@ -238,7 +290,31 @@ impl Workspace {
     /// here: a cheap scan indexes their objects, and a file is parsed when something needs
     /// one of its objects (ADR-013 decision 6).
     pub fn load_apps(apps: Vec<AppSource>, kinds: Vec<AppKind>, symbols: &BTreeSet<String>) -> Workspace {
+        Workspace::load_apps_lazy(apps, kinds, symbols, Vec::new())
+    }
+
+    /// [`load_apps`](Self::load_apps) where the dependency apps in `lazy` (by app index; missing or
+    /// `None`: an app that has its text) are not scanned: their index comes with them, and their text
+    /// is read through the loader the first time a file is parsed or its lines are needed. The
+    /// result is the workspace `load_apps` makes from the same sources.
+    pub fn load_apps_lazy(
+        apps: Vec<AppSource>,
+        kinds: Vec<AppKind>,
+        symbols: &BTreeSet<String>,
+        mut lazy: Vec<Option<LazyDep>>,
+    ) -> Workspace {
         assert_eq!(apps.len(), kinds.len(), "one kind per app");
+        lazy.resize_with(apps.len(), || None);
+        for (i, l) in lazy.iter().enumerate() {
+            if let Some(l) = l {
+                assert_eq!(l.index.len(), apps[i].files.len(), "one index entry per file");
+                assert_eq!(kinds[i], AppKind::Dependency, "only a dependency app is lazy");
+            }
+        }
+        let loaders: Vec<Option<std::sync::Arc<dyn SourceLoader>>> =
+            lazy.iter().map(|l| l.as_ref().map(|l| l.loader.clone())).collect();
+        let mut indexes: Vec<Option<std::vec::IntoIter<FileIndex>>> =
+            lazy.into_iter().map(|l| l.map(|l| l.index.into_iter())).collect();
         let mut ws = Workspace {
             kinds,
             visible: Vec::new(),
@@ -259,6 +335,8 @@ impl Workspace {
             usable_cache: Vec::new(),
             flakes: Default::default(),
             compiled: OnceLock::new(),
+            loaders,
+            lazy_text: Vec::new(),
         };
         ws.visible = (0..apps.len()).map(|i| visible_from(&apps, i)).collect();
         // Parsing dominates loading and each file is independent, so it runs on
@@ -276,9 +354,30 @@ impl Workspace {
                     .map(move |(fi, (path, src))| (ai, fi, lazy, path.as_str(), src.as_str()))
             })
             .collect();
+        // The files of a lazy app come with their scan.
+        let given: Vec<Option<ParsedFile>> = inputs
+            .iter()
+            .map(|&(ai, ..)| {
+                indexes[ai].as_mut().map(|it| {
+                    let f = it.next().expect("one index entry per file");
+                    ParsedFile {
+                        green: None,
+                        errors: Vec::new(),
+                        namespace: f.namespace,
+                        usings: f.usings,
+                        objects: f.objects,
+                        dotnet: f.dotnet,
+                    }
+                })
+            })
+            .collect();
         let parsed: Vec<(ParsedFile, Vec<ByteRange>)> = inputs
             .par_iter()
-            .map(|&(_, _, lazy, _, src)| {
+            .zip(given.into_par_iter())
+            .map(|(&(_, _, lazy, _, src), given)| {
+                if let Some(file) = given {
+                    return (file, Vec::new());
+                }
                 if lazy {
                     (scanned_file(src, symbols), Vec::new())
                 } else {
@@ -344,6 +443,7 @@ impl Workspace {
             }
         }
         ws.apps = apps;
+        ws.lazy_text = ws.files.iter().map(|_| OnceLock::new()).collect();
         ws.usable_cache = (0..ws.objects.len()).map(|_| OnceLock::new()).collect();
         ws.index_extensions_and_subscribers();
         ws.resolve_references();
@@ -483,12 +583,64 @@ impl Workspace {
             .map_or(&[], Vec::as_slice)
     }
 
+    /// The text of file `fi` as it was given: for a file of a lazy dependency app, read now (once).
+    pub fn text(&self, fi: usize) -> &str {
+        let f = &self.files[fi];
+        match &self.loaders[f.app] {
+            Some(loader) => self.lazy_text[fi].get_or_init(|| loader.text(f.file_in_app)),
+            None => &self.apps[f.app].files[f.file_in_app].1,
+        }
+    }
+
+    /// The scan of every file of the dependency apps, per app (empty for a workspace app): what
+    /// [`load_apps_lazy`](Self::load_apps_lazy) takes in place of the sources.
+    pub fn export_index(&self) -> Vec<Vec<FileIndex>> {
+        let mut out: Vec<Vec<FileIndex>> = vec![Vec::new(); self.apps.len()];
+        let mut by_file: Vec<Vec<usize>> = vec![Vec::new(); self.files.len()];
+        for (oi, o) in self.objects.iter().enumerate() {
+            by_file[o.file].push(oi);
+        }
+        let mut dotnet: Vec<Vec<ast::DotNetTypeDecl>> = vec![Vec::new(); self.files.len()];
+        for d in &self.dotnet {
+            dotnet[d.file].push(d.decl.clone());
+        }
+        for (fi, f) in self.files.iter().enumerate() {
+            if self.kinds[f.app] != AppKind::Dependency {
+                continue;
+            }
+            let mut objects: Vec<&ObjectSym> = by_file[fi].iter().map(|&oi| &self.objects[oi]).collect();
+            objects.sort_by_key(|o| o.ordinal);
+            out[f.app].push(FileIndex {
+                namespace: f.namespace.clone(),
+                usings: f.usings.clone(),
+                objects: objects
+                    .into_iter()
+                    .map(|o| FileObject {
+                        kind: o.kind,
+                        id: o.id,
+                        name: o.name.clone(),
+                        offset: o.offset,
+                        extends: o.extends.clone(),
+                        implements: o.implements.clone(),
+                        subscribers: o.subscribers.clone(),
+                        properties: o.scanned_properties.clone(),
+                        layouts: o.scanned_layouts.clone(),
+                        install: o.install,
+                        manual_subscribers: o.manual_subscribers,
+                    })
+                    .collect(),
+                dotnet: std::mem::take(&mut dotnet[fi]),
+            });
+        }
+        out
+    }
+
     /// The parse tree of file `fi`, parsing it now if it was only scanned at load.
     pub fn green(&self, fi: usize) -> rowan::GreenNode {
         let f = &self.files[fi];
         f.green
             .get_or_init(|| {
-                let (kept, flake) = settle(self.parse_lazy(f, false), || self.parse_lazy(f, true));
+                let (kept, flake) = settle(self.parse_lazy(fi, f, false), || self.parse_lazy(fi, f, true));
                 if let Some(note) = flake {
                     self.flakes
                         .lock()
@@ -505,8 +657,8 @@ impl Workspace {
 
     /// One parse of a lazily parsed file: the text with its synthetic routines, the tree, and the first
     /// parse error if there is one. `fresh` starts from an empty token cache.
-    fn parse_lazy(&self, f: &SourceFileData, fresh: bool) -> Attempt<(rowan::GreenNode, Vec<ByteRange>)> {
-        let src = &self.apps[f.app].files[f.file_in_app].1;
+    fn parse_lazy(&self, fi: usize, f: &SourceFileData, fresh: bool) -> Attempt<(rowan::GreenNode, Vec<ByteRange>)> {
+        let src = self.text(fi);
         // Only a page can have properties to turn into routines; skip the extra parse otherwise.
         let expanded = f
             .has_page
@@ -934,18 +1086,20 @@ struct ParsedFile {
     dotnet: Vec<ast::DotNetTypeDecl>,
 }
 
-struct FileObject {
-    kind: ObjKind,
-    id: Option<u32>,
-    name: String,
-    offset: usize,
-    extends: Option<Vec<String>>,
-    implements: Vec<Vec<String>>,
-    subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
-    properties: Vec<(String, String)>,
-    layouts: Vec<al_syntax::scan::ScannedLayout>,
-    install: bool,
-    manual_subscribers: bool,
+/// One object of a scanned or parsed file.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FileObject {
+    pub kind: ObjKind,
+    pub id: Option<u32>,
+    pub name: String,
+    pub offset: usize,
+    pub extends: Option<Vec<String>>,
+    pub implements: Vec<Vec<String>>,
+    pub subscribers: Vec<al_syntax::scan::ScannedSubscriber>,
+    pub properties: Vec<(String, String)>,
+    pub layouts: Vec<al_syntax::scan::ScannedLayout>,
+    pub install: bool,
+    pub manual_subscribers: bool,
 }
 
 /// Runs `f` with this thread's token cache (one per thread: a cache is 128 KB to set up, and

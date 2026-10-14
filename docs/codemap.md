@@ -29,17 +29,17 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-bcdb
 
 - `bacpac.rs` (417): The `.bacpac` container (port of `Bacpac.cs`). Entry: `BacpacTable` 30, `BacpacSource` 45.
-- `bak.rs` (428): The SQL Server backup path (port of `BakSource` and `TableReader.cs`). Entry: `BakSource` 29.
+- `bak.rs` (524): The SQL Server backup path (port of `BakSource` and `TableReader.cs`); `open_indexed` keeps the page map and catalog between runs. Entry: `BakSource` 29.
 - `bcp.rs` (551): Reads rows out of a bacpac's native-BCP data stream (port of `Bcp.cs`). Entry: `BacpacColumn` 31, `decimal_storage_bytes` 148, `BcpRowReader` 157.
-- `catalog.rs` (820): Reads the SQL Server system catalog base tables directly from page images (port of `Catalog.cs` and `ClusteredSeek.cs`). Entry: `PagePtr` 34, `AllocUnit` 37, `RowSet` 47, `SysObject` 56.
+- `catalog.rs` (924): `to_index_bytes`/`from_index_bytes`. Reads the SQL Server system catalog base tables directly from page images (port of `Catalog.cs` and `ClusteredSeek.cs`). Entry: `PagePtr` 34, `AllocUnit` 37, `RowSet` 47, `SysObject` 56.
 - `error.rs` (56): Errors. Entry: `Error` 10, `Result` 21.
 - `io.rs` (91): The byte source the readers work on. Entry: `ByteSource` 9.
 - `lib.rs` (27): Reads Business Central data straight out of a SQL Server native backup (`.bak`) or a cloud export (`.bacpac`).
 - `lob.rs` (217): Resolves off-row values. Entry: `LobReader` 29.
 - `model.rs` (530): Reading `model.xml`. Entry: `ModelScan` 17, `scan_streaming` 77, `split_name` 267.
 - `mtf.rs` (154): Structural parser for the Microsoft Tape Format (MTF) container a SQL Server native backup (`.bak`) is written in (port. Entry: `DataRegion` 36, `MtfFile` 44.
-- `pagefile.rs` (595): Maps SQL Server 8 KB pages inside a native full backup (`.bak`) to their file offsets by parsing the backup's structure,. Entry: `Page` 50, `PageFile` 52, `CrossCheck` 110.
-- `query.rs` (792): The BC meaning layer over a [`BcSource`] (port of the shared part of `Program.cs`). Entry: `BcTable` 15, `is_guid` 30, `parse_table_name` 50, `collate_cmp` 126.
+- `pagefile.rs` (713): `IndexStore`, `open_indexed` (a kept page map, checked against the file's length and data regions). Maps SQL Server 8 KB pages inside a native full backup (`.bak`) to their file offsets by parsing the backup's structure,. Entry: `Page` 50, `PageFile` 52, `CrossCheck` 110.
+- `query.rs` (814): `plan_read_table_in` (table list parsed once by the caller). The BC meaning layer over a [`BcSource`] (port of the shared part of `Program.cs`). Entry: `BcTable` 15, `is_guid` 30, `parse_table_name` 50, `collate_cmp` 126.
 - `records.rs` (425): Record parsers (port of `Records.cs`). Entry: `record_type` 10, `is_ghost_type` 14, `live_slot` 20, `FixedVar` 41.
 - `scsu.rs` (157): Decoder for SCSU (Standard Compression Scheme for Unicode), Unicode Technical Standard #6. Entry: `decode` 60.
 - `serve.rs` (297): Serve mode (port of `Program.Serve`). Entry: `serve` 33.
@@ -59,11 +59,12 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `file.rs` (66): A file as a byte source (pread), the OS side of `al-bcdb` (ADR-006). Entry: `FileSource` 17.
 - `lib.rs` (9): The OS side of `al-bcdb`: file byte source and the backup table provider for `--test-data` (ADR-020).
-- `provider.rs` (260): `BackupProvider`: the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
+- `provider.rs` (455): `BackupProvider` (`open_with_index_dir` keeps the backup's index in the cache dir; `cost` for `--timings`): the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
 
 ### al-cache
 
 - `format.rs` (330): The cache entry file: header, dictionary, per-object blocks, index; open checks the header, the index and the dictionary, a block is checked when read. Entry: `build` 82, `Entry::open` 205, `Entry::verify` 263, `CacheError` 39.
+- `index.rs` (140): The index entry (ADR-022, pure tests): the scan of the dependency sources, keyed, for a run that reads none of them. Entry: `build_index`, `open_index`, `index_file_name`.
 - `key.rs` (170): The key of an entry: every input of the compile of the dependency set, hashed without `..`. Entry: `Key` 41, `Key::digest` 80, `AppKey` 21, `FORMAT` 10.
 - `lib.rs` (14): Crate root of the compile cache format (ADR-022). Core crate: no OS access.
 
@@ -120,6 +121,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `demo.rs` (200): The demo database backup of a build: streamed from the country artifact into the artifact cache (ADR-020). Entry: `ensure_demo_backup`, `cached_backup`, `DemoBackup`.
 - `cache.rs` (349): The artifact cache (ADR-013 decision 3). Entry: `cache_root` 21, `cache_root_from_env` 44, `Store` 48, `BuildDir` 86.
 - `lib.rs` (17): Dependency apps for the runtime (ADR-013).
+- `lazy.rs` (200): A package whose files are not read yet: zip directory and manifest only, files read by position on demand, a hash of the directory (ADR-022, pure tests). Entry: `read_lazy`, `LazyPackage`.
 - `load.rs` (577): Finding, choosing and reading the dependency apps of a project (ADR-013). Entry: `parse_app_json` 26, `read_package_at` 96, `scan_dir` 103.
 - `package.rs` (531): Reading an .app package: manifest, sources, resources. Entry: `Manifest` 9, `parse_manifest` 51, `Sources` 48.
 - `remote.rs` (517): A ZIP archive read by byte ranges. Entry: `RemoteError` 14, `RangeSource` 65, `FileSource` 73, `HttpSource` 114.
@@ -199,6 +201,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `host.rs` (112): The host the command line gives a session (ADR-006). Entry: `SystemClock` 10, `set_files_dir` 26, `system_host` 32, `DirFileSystem` 43.
 - `isolation.rs` (171): TestIsolation of the runner codeunit; Checkpoint for Function isolation. Entry: `TestIsolation` 27, `runner_isolation` 65, `Checkpoint` 99.
 - `lib.rs` (32): Running test codeunits and reading the result, shared by `al-test-cli` and `alrunner-cli` (ADR-016 section 2). `Outcome` and `CaseId` live here. Entry: `Outcome`, `CaseId`.
+- `observe.rs` (680): Whether a selected test can observe the install baseline: a whitelist over the lowered IR (no record, page, query, `DotNet`, `CreateGuid`, `IsolatedStorage`, `NumberSequence` or event publisher in the reach); the text pre-check of the demand-driven path. Entry: `may_observe_baseline`, `text_looks_pure`.
 - `reach.rs` (415): The reach report (`AL_REACH_REPORT=1`): which roots and edges pull the routines in, how many are refused, how many only matter through a refused routine. Entry: `report`.
 - `refusals.rs` (222): Ranking not-run reasons with names and numbers folded (`--top-refusals` of both command lines). Entry: `normalise_reason`, `rank`, `render_top`.
 - `runtime.rs` (2651): Runs test codeunits the way BC's test runner does; one Session per codeunit; install baseline; handlers. Entry: `CorpusRuntime` 96, `run_suites_with` 235, `run_codeunit_observed` 517, `run_codeunit_isolated` 492, `blocked_site` 951, `RunOptions` 118, `resolve_handlers` 710.

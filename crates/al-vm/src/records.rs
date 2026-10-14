@@ -1494,8 +1494,12 @@ impl Session {
                         Ok(Value::Boolean(true))
                     }
                     None if self.ret_used => Ok(Value::Boolean(false)),
-                    // The "nothing in the filter" error text is not pinned yet.
-                    None => unsupported(format!("{method} on an empty set without using the result")),
+                    // The error BC raises for an empty set has no corpus test (no `asserterror` on a Find call):
+                    // its text is not pinned (docs/probes-needed.md).
+                    None => unsupported(format!(
+                        "{method} on an empty set of table '{}' without using the result: BC's error text is not pinned (docs/probes-needed.md)",
+                        t.name
+                    )),
                 }
             }
             "Next" => {

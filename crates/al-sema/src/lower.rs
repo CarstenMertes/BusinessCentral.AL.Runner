@@ -2037,10 +2037,7 @@ struct FileLines {
 
 impl FileLines {
     fn new(ws: &Workspace, file: usize) -> FileLines {
-        let f = &ws.files[file];
-        // Files of an app are loaded in order, so the n-th file of the app is `apps[app].files[n]`.
-        let first = ws.files.iter().position(|g| g.app == f.app).unwrap_or(file);
-        let text = ws.apps[f.app].files[file - first].1.as_bytes();
+        let text = ws.text(file).as_bytes();
         let mut starts = vec![0u32];
         starts.extend(
             text.iter()
@@ -2135,7 +2132,7 @@ fn is_stmt(k: SyntaxKind) -> bool {
 /// - `Report.UseRequestPage`: handlers/TestReportGetFilterInTriggers.al:66 and
 ///   codeunit/TestWriteTxTestBoundary.al:272 (`UseRequestPage(false)`).
 /// - `System.WorkDate`: session/TestSessionFunctions.al:63-65 (`WorkDate(20240101D)`).
-/// - `HttpRequestMessage.Method`: network/TestHttpRequestMessage.al:23.
+/// - `HttpRequestMessage.Method`: network/TestHttpRequestMessage.al:23; `.Content`: :39.
 /// - `File.TextMode`, `File.WriteMode`: Base Application's "Export Consolidation" report.
 fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
@@ -2163,7 +2160,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
             | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
             | ("System", "WorkDate")
-            | ("HttpRequestMessage", "Method")
+            | ("HttpRequestMessage", "Method" | "Content")
             | ("File", "TextMode" | "WriteMode")
     )
 }
@@ -2330,9 +2327,12 @@ impl Lowerer<'_> {
     /// The constant of a `Field = const(x)` condition, typed by the field.
     fn condition_const(&self, file: usize, text: &str, ty: &Ty) -> Option<ir::Const> {
         if let Ty::Enum(name) = ty {
+            // The enum is named in the file that declares the field, as a relation target is: a
+            // dependency's file resolves it among the apps it saw (its `using`s included), so that an
+            // enum of another namespace is found (Gen. Journal Line."IC Account No.", issue 23).
             let Resolution::Found(e) =
                 self.ws
-                    .resolve_ref_certain(file, ObjKind::Enum, &crate::types::qualified_parts(name))
+                    .resolve_relation_target(file, ObjKind::Enum, &crate::types::qualified_parts(name))
             else {
                 return None;
             };
@@ -5654,6 +5654,31 @@ codeunit 50101 C2
         assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
         let dump = format!("{:?}", r.body);
         assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
+    }
+
+    // Tests-ERM Document Service Management.CheckError: `Error(Service.LastError.Message)`. A DotNet result
+    // fits the Text overload of Error, not the ErrorInfo one (ADR-024).
+    #[test]
+    fn a_dotnet_result_passed_to_error_picks_the_text_overload() {
+        let (ws, l) = lower_src(&format!(
+            "{DOTNET}codeunit 50100 C {{ procedure P() var Convert: DotNet Convert; begin Error(Convert.ToBase64String('x')); end; }}"
+        ));
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, r) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
+        assert!(format!("{:?}", r.body).contains("DotNetCoerce(Text"), "{:?}", r.body);
+    }
+
+    // NPR install code and Base Application's Job Queue Entry compare with `ReportLayoutType::Rdlc` and `::Word`.
+    // The members are the documentation's (a documentation-only assumption, docs/probes-needed.md).
+    #[test]
+    fn report_layout_type_members_lower() {
+        let (ws, l) = lower_src(
+            "codeunit 50100 C { procedure P(): Boolean begin exit(ReportLayoutType::Rdlc <> ReportLayoutType::Word); end; }",
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let (oi, _) = routine(&l, "P");
+        assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
     }
 
     // A `[Native]` procedure of a platform app has an empty AL body: the service tier implements it. Running

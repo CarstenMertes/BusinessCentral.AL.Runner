@@ -505,6 +505,142 @@ Decided without owner review (2026-10-14):
 - The facts and blocks of an entry hold the dependency objects only; the sources of the dependency apps are still read
   and scanned on every run, and the blocks are all decoded at the start (in parallel).
 
+## A pure test in an app that depends on Base Application (issue 20, 2026-10-14, branch `fast-pure`)
+
+The owner's request (issue 20): a test that touches nothing from Base Application, in an app that depends on it,
+should cost what it costs in an app without dependencies (0.16 s, 78 MB in the owner's measurement). The fixture is
+the owner's setup: a demo app (`"application": "28.0.0.0"`, an enum and a codeunit of three procedures that use no
+table) and a test app of 6 tests, run on BC 28.5 (`alrunner test demo test --no-test-data --filter
+SmallCustomerIsBronze`).
+
+### Where the time went before (1 pure test, release build)
+
+| Part | Compile cache hit | Without the cache |
+|---|---|---|
+| Load the apps: read the four dependency `.app` files, inflate every source file | 0.14 to 0.26 s | 0.09 to 0.2 s |
+| Key of the cache entry (sha256 of every source byte), read the 13 MB file, open | 0.04 s | not run |
+| Scan of the 9 752 dependency objects (lexer, preprocessor, declaration scan) | 0.09 s | 0.09 s (in "load") |
+| Decode and check every block (zstd, postcard, 9 752 objects, all cores) | 0.17 s | not run |
+| Check and lower the workspace (7 routines), build the engine | 0.06 s | 0.04 s |
+| Demand compile of what the install baseline reaches (421 routines of Base Application) | not run | 1.8 to 2.5 s check, 1.0 to 1.2 s lower |
+| Install baseline run (17 roots) | 0.19 to 0.25 s | 0.3 to 0.4 s |
+| Tests (one test, 0.00 s), two .NET helper processes started ahead, exit | about 0.1 s | about 0.1 s |
+| Total | 0.95 s wall, 2.6 s CPU, 887 MB | 4.5 to 5.1 s wall, 16 s CPU, 1 905 MB |
+
+CPU profile of a cache hit (`perf`, share of samples): lexer, preprocessor and declaration scan of the dependency
+sources 28 %, inflate of the sources 9 %, sha256 of the sources 4 %, zstd and postcard decode 8 %, the rest spread.
+After the baseline skip, with the cache off, the same profile reads: lexer, preprocessor, scan 60 %, inflate 21 %.
+So once nothing else is left, the cost of a pure run is reading the dependency sources to learn what objects they
+hold.
+
+### What changed
+
+1. The install baseline does not run when no selected test can observe it, and its roots are not compiled
+   (ADR-013, "The baseline runs only when a selected test can observe it"). That removes the two largest rows.
+2. A selection whose test codeunits look free of data (a text check) is compiled first the demand-driven way,
+   without the cache. The cache decodes all 9 752 dependency objects (0.17 s, 440 MB) to serve a test that reaches
+   7 routines; the demand-driven compile touches only those. If the rule then finds the tests may observe the
+   baseline, the run goes on with the cache as before. `--require-compile-cache` keeps the cache path. A cold cache is
+   not built for a pure selection (the build takes 5 to 6 s).
+3. The two .NET helper processes are not started ahead of time for such a selection (they start on first use).
+
+### Measured after (same fixture; wall seconds, CPU seconds, peak memory; medians of 7 back to back runs under
+`flock /tmp/al-perf.lock`, load average 19 to 22 on a 12-core machine shared with other agents, so compare the CPU
+column and the pairs, not the wall column)
+
+| Run | Before (`AL_FORCE_BASELINE=1`, and the cache path) | After | 
+|---|---|---|
+| Cache on (default), 1 pure test | 1.04 s, CPU 2.57 s, 891 MB | 0.39 s, CPU 1.12 s, 399 MB |
+| Cache on, 6 pure tests | 1.22 s, CPU 2.71 s, 891 MB | 0.58 s, CPU 1.37 s, 402 MB |
+| `--no-compile-cache`, 1 pure test | 3.86 s, CPU 15.7 s, 1 909 MB | 0.44 s, CPU 1.14 s, 400 MB |
+| `--no-compile-cache`, 6 pure tests | 3.89 s, CPU 16.0 s, 1 917 MB | 0.36 s, CPU 1.25 s, 400 MB |
+| Same 6 tests, app without `application` | 0.02 s, CPU 0.02 s, 14 MB | (the owner measured 0.16 s, 78 MB) |
+
+(The "before" rows are the same binary with `AL_FORCE_BASELINE=1`; they match the owner's numbers within the load of
+the machine: 1.9 to 2.2 s and 910 MB cached, 6.4 to 7.0 s and 1 900 MB uncached.)
+
+Nothing else got slower. Corpus BC 29 with Microsoft's apps, `al-test-cli`: 4.2 s and 4.7 s with the rule on, 4.4 s and
+4.5 s with `AL_FORCE_BASELINE=1` (load 33; CPU 20.8 and 21.5 s against 21.3 and 21.0 s; 2.0 GB both). Cached
+(`--compile-cache`), warm: 1.80 s and 1.86 s, 1 246 MB both. Tests-ERM 27.5 (`alrunner test` on the zip, with the
+cache, load 35 to 47): outcomes identical (9 333 tests, 0 differences), CPU 75 s against 70 to 72 s, peak 2.1 GB
+both; none of its 277 test codeunits passes the rule, so the baseline runs as before.
+
+### Slice 2: a pure run reads no dependency source (2026-10-14, branch `fast-pure`)
+
+The profile above ended with "the cost of a pure run is reading the dependency sources to learn what objects they
+hold". Three parts remove that:
+
+1. **A key from the zip directory.** `alrunner` loads the dependency packages lazily (`deps::load_project_with`,
+   `Request::lazy_sources`): `al-deps/src/lazy.rs` reads the end record, the central directory (5 000 entries for Base
+   Application) and the manifest, with positional reads on the open file, and nothing else. The loaded app has the
+   paths of its files and empty texts. The hash of the package is made from the name, size and CRC-32 of every entry
+   (`LazySource::identity`), which is what the first version of this ADR planned. The key of the full entry
+   (`AppKey::source`) uses it for such an app, so a hit no longer hashes 150 MB of text (30 ms CPU). The CRC-32 of an
+   entry is checked when the entry is read. `al_cache::FORMAT` is 4. A package that cannot be read this way (a folder,
+   a wrapper that holds an inner `.app`, an unusual file) is read as before and hashed over its bytes.
+2. **A small index entry.** `al-cache/src/index.rs`, file `index-<hash>.alci` in the cache folder: the scan of every
+   dependency file (`al_sema::FileIndex`: namespace, usings, the objects with their ids, names, extends, implements,
+   subscribers, scanned properties and layouts, the `dotnet { }` aliases), `zstd(postcard(..))`, with the key digest and
+   a payload hash. Base Application, System Application and the rest are about 3 MB. Its key is the key of the apps
+   without the target (the scan does not depend on the BC version). It is made by a scan, not a compile, so a cold run
+   makes it in the time of the scan it would have done anyway (0.1 s CPU, once) and no cold run builds the 5 s full
+   entry for a pure selection. `Workspace::load_apps_lazy` builds the workspace from it: the object table, the
+   extension and subscriber indexes and name resolution come out as for a scanned load (a test compares them object
+   for object, and the programs of an eager and a lazy load).
+3. **Lazy text.** `Workspace::text(file)` asks the loader (`SourceLoader`) the first time a file is parsed or its
+   lines are needed, and keeps the text. The only two readers of a dependency file's text in `al-sema` are the lazy
+   parse and the line table of `lower.rs`. A workspace that names `Record Customer` reads the file that declares it
+   and no other.
+
+The full compile entry uses the same machinery: on a hit, a run with lazily read apps reads no source and scans none
+(the index replaces the scan, the key needs no text); a miss reads them for the build, as before. A run that falls
+back to the demand-driven compile with the baseline reads them (`LazySource::fill`, on all cores, once) before it
+starts. `--no-compile-cache` reads them at once, as before: the index is a cache too. `ALRUNNER_EAGER_SOURCES=1`
+loads every package eagerly (the other side of the differential check; Tests-ERM gives the same 9 333 outcomes both
+ways).
+
+Also: `scan_path` reads a package's manifest from its directory instead of reading the whole file (Base Application's
+source archive is 31 MB), and the hash of the executable that starts every key (10 ms) is made on another thread while
+the packages load.
+
+**Measured** (same fixture and method as above, medians of 9 back to back runs under `flock`, load average 17 to 20 on
+12 cores shared with other agents; the CPU column is the one to compare; wall and memory of the quiet-machine runs in
+brackets):
+
+| Run | Slice 1 (`ALRUNNER_EAGER_SOURCES=1`) | Slice 2 |
+|---|---|---|
+| 1 pure test, cache on, index warm | 0.44 s wall, CPU 1.13 s, 387 MB | 0.14 s wall (load 7), CPU 0.18 to 0.26 s, 121 MB |
+| 6 pure tests, cache on | (slice 1: 0.58 s, CPU 1.37 s, 402 MB) | CPU 0.39 s, 123 MB, 0.13 s wall (load 7) |
+| 1 pure test, `--no-compile-cache` | 0.44 s, CPU 1.14 s, 400 MB | 0.23 s, CPU 1.01 s, 260 MB (sources read at once) |
+| 1 pure test, cold index | 0.44 s, CPU 1.13 s | 0.27 s, CPU 1.02 s, 250 MB (one scan, index saved) |
+| 1 impure test (inserts a Customer), cache on | 1.09 s, CPU 2.73 s, 3 055 MB at most (entry rebuilt once) | 0.79 s, CPU 1.75 s, 673 MB |
+| same, `--no-compile-cache` | | 4.63 s, CPU 15.8 s, 1 802 MB |
+| Same 6 tests, app without `application` | 0.02 s, 24 MB | 0.02 s, 24 MB |
+
+So the owner's pure test costs 0.14 s and 121 MB (the owner measured 0.16 s and 78 MB for the app without
+dependencies on their machine; here that case is 0.02 s). Tests-ERM 27.5 (cache on, warm): 10.2 s and 1.96 GB against
+12.0 s and 2.13 GB with eager sources, CPU 66 s against 71 s.
+
+What is left in a pure run (perf, 0.12 s CPU): the sha-256 of the executable 11 %, the zip directories 3 %, zstd and
+postcard decode of the index 7 %, the workspace load from the index (about 10 000 objects, their name maps, the
+extension and subscriber indexes) 10 %, the `lower` pass over every object to make shells 5 %, thread start-up and
+the rest in small pieces.
+
+### Not done: lazy decode of the blocks of a cached run that is not pure
+
+Measured on a run that inserts a Customer (baseline runs): reading the blocks is 0.13 s wall of 0.70 s, and the
+baseline needs about 3 100 of the 9 752 objects anyway, so decoding only what is touched would save 60 % of that, 40 to
+60 ms and about 200 MB. Getting it needs `Program::objects` to fill slots on first access (172 uses of `.objects`; the
+`Index` impl keeps most of them compiling) and, before that is worth anything, the whole-program passes to read stored
+data: `Engine::with_config` builds a table definition for every table and the event registry from every routine's
+attributes, `platform/seed.rs` and seven more passes iterate every object (and every iteration decodes everything).
+Those facts (tables, publishers and subscribers by routine) would be stored in the entry beside the blocks. A sparse
+program (stubs for the objects a rule says nothing reaches) is sound only for a run the rule of ADR-013 calls pure,
+which slice 1 and 2 already serve without any block; for any other run an object can be reached through an event, a
+number (`Codeunit.Run(id)`, `RecordRef.Open`) or a page action, so a stub would be a guess. Recommendation: not now.
+The larger costs of a non-pure cached run are the install baseline (0.2 s, which also needs the snapshot the owner
+left out of version 1) and the 0.9 s of system time that 670 MB of allocation and its release cost.
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

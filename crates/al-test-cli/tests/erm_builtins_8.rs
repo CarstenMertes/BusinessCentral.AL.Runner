@@ -1,0 +1,35 @@
+//! `Xmlport.Run` (issue 28): no corpus test runs an xmlport through `Xmlport.Run`, whose target (a file
+//! on the service tier) a test cannot read, so both forms are refused with a reason.
+
+use al_sema::workspace::AppSource;
+
+#[test]
+fn xmlport_run_is_refused_with_its_reason() {
+    let src = "xmlport 63100 X { schema { textelement(Root) { } } }
+         codeunit 63101 T { procedure Static() begin Xmlport.Run(63100, false, false); end;
+                            procedure Inst() var P: XmlPort X; begin P.Run(); end; }";
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
+    for routine in ["Static", "Inst"] {
+        let ri = l.program.objects[oi]
+            .routines
+            .iter()
+            .position(|r| r.name == routine)
+            .unwrap();
+        let why = l.unsupported[oi][ri].first().cloned().unwrap_or_default();
+        assert!(
+            why.contains("Xmlport.Run") && why.contains("not pinned"),
+            "{routine}: {why}"
+        );
+        assert!(!why.contains("is not implemented"), "{routine}: {why}");
+    }
+}

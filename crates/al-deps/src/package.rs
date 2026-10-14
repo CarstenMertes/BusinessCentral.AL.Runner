@@ -114,11 +114,11 @@ pub fn parse_manifest(xml: &str) -> Result<Manifest, PackageError> {
 /// How deep a wrapper package may nest an inner `.app`.
 const MAX_NESTING: usize = 2;
 
-fn is_al(name: &str) -> bool {
+pub(crate) fn is_al(name: &str) -> bool {
     name.len() > 3 && name[name.len() - 3..].eq_ignore_ascii_case(".al")
 }
 
-fn is_app(name: &str) -> bool {
+pub(crate) fn is_app(name: &str) -> bool {
     name.len() > 4 && name[name.len() - 4..].eq_ignore_ascii_case(".app")
 }
 
@@ -270,7 +270,7 @@ pub fn read_package_with(app: &[u8], vars: &Vars) -> Result<(Manifest, Sources),
 }
 
 /// `%20` to a space, once. Entry names in packages are encoded twice by the packer.
-fn percent_decode_once(name: &str) -> String {
+pub(crate) fn percent_decode_once(name: &str) -> String {
     let b = name.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;

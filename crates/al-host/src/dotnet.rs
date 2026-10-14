@@ -76,6 +76,8 @@ pub struct DotNetArg {
 pub enum DotNetTarget {
     Static(DotNetType),
     Instance(DotNetHandle),
+    /// A primitive an AL `DotNet` variable holds (ADR-024): the host boxes it for the call.
+    Value(DotNetValue),
 }
 
 /// What the host did with AL streams during one call (ADR-014 section 4, "Streams").

@@ -428,6 +428,7 @@ fn run_version(
         test_data: None,
         compile_cache,
         test_time_limit: None,
+        lazy: Vec::new(),
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(
@@ -479,6 +480,9 @@ fn run_version(
             c.lower.as_secs_f64(),
             p.engine.as_secs_f64()
         );
+        if let Some(line) = p.baseline_line() {
+            eprintln!("{line}");
+        }
         if p.cache.is_some() {
             eprintln!(
                 "compile cache: reading the blocks {:.2} s",

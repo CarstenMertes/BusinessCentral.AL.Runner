@@ -976,6 +976,59 @@ platform tables (`Company`, `Field`, `Table Metadata`, `AllObjWithCaption`, ...)
 `Session.ApplicationIdentifier`, `System.GetUrl`, `TaskScheduler.CanCreateTask`. The mechanism is tested with
 synthetic dependency apps (`al-test-cli/src/runtime.rs` tests).
 
+### The baseline runs only when a selected test can observe it (2026-10-14, branch `fast-pure`, issue 20)
+
+Owner request (issue 20): a test that touches nothing from Base Application should cost what it costs in an app
+with no dependencies. The install baseline was the largest part of that cost: 3.5 of 4.5 s without the compile
+cache (it adds 421 Base Application routines to the demand-driven compile and runs 17 roots), 0.25 s with it.
+
+**The rule** (`crates/al-testrun/src/observe.rs`, `may_observe_baseline`). A static whitelist over the lowered IR. The
+reach starts at every routine of every selected test codeunit (handlers are routines of the codeunit) and follows
+direct calls and the targets of interface calls. The baseline is skipped only when everything reached is plain
+computation:
+
+- Objects: a codeunit only. Every slot (global, local, parameter, return value) has a type that holds no database
+  state. A `Record`, `RecordRef`, `Query`, page, report, `DotNet` or other handle type makes the answer "may observe".
+- Statements and expressions: assignment, control flow, arithmetic, conversions, calls into the reach, interface
+  calls, `asserterror`, and builtins from a whitelist: the receivers `Text`, `Label`, `TextConst`, `List`,
+  `Dictionary`, the JSON and XML types, `TextBuilder`, `BigText`, `Date`, `Time`, `DateTime`, `Enum`, `Version`,
+  `ErrorInfo`, `Variant`, `Dialog`, and from `System` only the functions that use their arguments, the host clock or
+  the session's own settings (`Format`, `Evaluate`, `Round`, `Today`, `GetLastErrorText`, ...). A record field place,
+  the base object of an extension, an enum's interface implementation, a test page control, a query column and any
+  `DotNet` expression are not in the list.
+- Events: a call to an event publisher (`IntegrationEvent`, `BusinessEvent`, `InternalEvent`, `ExternalBusinessEvent`)
+  says "may observe", because its subscribers could do anything. A custom test runner codeunit does too.
+- Anything not named says "may observe". An unknown builtin, a new IR node or a new type runs the baseline.
+
+Why this is enough: `al_vm::Baseline` holds the rows, the counters for system ids, row versions, AutoIncrement and
+write stamps, the GUID counter, isolated storage and number sequences, and nothing else (execution state starts fresh
+in every session). The only other place the baseline shows is `Engine::unseeded`, which a `Get` or a read of a table
+consults. Each of those is reached through a record or table, `CreateGuid` (`System` and `Guid`, both left out of the
+whitelist), `IsolatedStorage` or `NumberSequence`, or through an event whose subscribers do one of those.
+
+**Where it runs.** First a text check of the selected test codeunits (`text_looks_pure`: their source holds none of
+the words `record`, `query`, `page`, `report`, `xmlport`, `isolatedstorage`, `numbersequence`, `createguid`,
+`database`, `dotnet`, `session`, `codeunit.run`). If it passes, the apps are compiled demand-driven, without the
+baseline's roots and without the compile cache (ADR-022): that reaches only what the tests reach, a few routines.
+The rule then runs on the lowered program. If it says "no test can observe the baseline", that compile is the run: no
+baseline, no cache entry read or built (a cold cache costs nothing), and no .NET helper is started ahead of time. If
+it says "may observe", the loaded apps go on to the compile they would have had (cache or demand-driven, with the
+baseline's roots); nothing is read from disk again. So the cost of a wrong guess is one extra compile of what the
+tests reach, never an outcome. A selection that fails the text check (all of the corpus, Microsoft's test buckets)
+compiles as before, and the rule runs on that compile when it is finished (with the cache every dependency routine is
+compiled, so the walk can enter any of them), which costs nothing when the first reached routine already says "may
+observe". `--require-compile-cache` never takes the first path (CI wants its measured run to be a hit).
+`--timings` says which way it went (`install baseline: not run, no selected test can observe it`, or
+`install baseline: ran, a selected test may observe it: <routine and construct>`).
+
+**Switches.** `AL_FORCE_BASELINE=1` always runs the baseline (the old behavior). `AL_NO_BASELINE=1` never does (a
+measurement switch, as before). `AL_CHECK_BASELINE_RULE=1` runs the baseline as usual but starts each test codeunit
+that the rule calls free of it on an empty store (`=list` also prints, for the other codeunits, the first construct
+that stops the rule). `tools/baseline_rule_check.sh run` makes a normal corpus run and a checked run for BC 27, 28,
+29 and the suites and compares the JUnit files with no allow list. On 2026-10-14 the rule covered 25 of 702 test
+codeunits of the corpus (the others declare records, pages and queries) and the outcomes of all 5279 tests per
+version, and the OnPrem and isolation suites, were identical. The check must stay at zero differences.
+
 ### Decided without owner review (2026-10-13/14), baseline
 
 1. **Install order.** Options: AL Runner's and this ADR's text (per codeunit: per-company, then per-database, with a

@@ -9,7 +9,9 @@
 //! (ADR-006); the caller reads, writes and renames the file.
 
 mod format;
+mod index;
 mod key;
 
 pub use format::{CacheError, Entry, build};
+pub use index::{build_index, index_file_name, open_index};
 pub use key::{AppKey, FORMAT, Key};

@@ -172,6 +172,11 @@ Run these in order. Do not skip any.
    `AL_DUMP_REACH=FILE` writes what the demand-driven compile reached, `AL_STACK_OF=TEXT` prints the routines a not-run test was refused in (for a
    diff between two runs). A static refusal may depend on the sources only,
    never on what was compiled or on which other tests are selected.
+   If you touched `al-testrun/src/observe.rs` or the baseline, also run
+   `tools/baseline_rule_check.sh run`: the rule that skips the install baseline
+   must give zero outcome differences. If you touched the lazy reading of dependency packages
+   (`al-deps/src/lazy.rs`, `Workspace::load_apps_lazy`), run `alrunner test` on Tests-ERM twice, once with
+   `ALRUNNER_EAGER_SOURCES=1`, and compare the two `--junit` files with `tools/compare_junit.py`: 0 differences.
 5. Commit on your branch. Do not add attribution or session lines to commit
    messages. The message says what changed and why, in plain American English.
 6. Merge current `origin/main` into your branch (`git fetch`, then

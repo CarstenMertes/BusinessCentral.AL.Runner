@@ -96,7 +96,12 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
 
 /// Opens a backup file.
 fn open_backup(a: &TestArgs, path: PathBuf) -> Result<(TestData, PathBuf), String> {
-    let provider = BackupProvider::open(&path, a.test_data_company.as_deref())
+    // The page map of the backup is kept next to the compile cache, so a cold or a warm open of a
+    // 900 MB backup reads the map instead of verifying every extent.
+    let index_dir = (!a.no_compile_cache
+        && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
+    .then(|| al_deps::cache::cache_root_from_env(a.cache_dir.as_deref()).join("backup-index"));
+    let provider = BackupProvider::open_with_index_dir(&path, a.test_data_company.as_deref(), index_dir.as_deref())
         .map_err(|e| format!("--test-data {}: {e}", path.display()))?;
     Ok((TestData::new(Arc::new(provider)), path))
 }
@@ -186,6 +191,12 @@ fn choose_test_data(
 
 pub fn test(a: &TestArgs) -> Result<u8, String> {
     let started = Instant::now();
+    // The key of the compile cache starts with a hash of this executable (10 ms): make it beside the loading.
+    if !a.no_compile_cache {
+        std::thread::spawn(|| {
+            al_testrun::compile_cache::runtime_build();
+        });
+    }
     if let Some(dir) = &a.files_dir {
         al_testrun::host::set_files_dir(dir.clone());
     }
@@ -282,13 +293,17 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             .with_preferred(apps::own_build(&inputs)),
         local_artifacts: al_deps::cache::bcartifacts_sandbox_from_env(),
     };
-    let dependencies = deps::load_project(
+    // The text of a package's files is left unread: a run whose tests reach nothing in it never needs it.
+    // ALRUNNER_EAGER_SOURCES=1 reads it at once, as before (the other side of the differential check).
+    let lazy_sources = std::env::var_os("ALRUNNER_EAGER_SOURCES").is_none();
+    let dependencies = deps::load_project_with(
         &project,
         &workspace,
         &search,
         Some(&provision),
         a.bc_version.as_deref(),
         true,
+        lazy_sources,
     )?;
     if a.wants_test_data() && test_data.is_none() {
         // The build of the Microsoft apps is the build of the data: what the feed gave, what
@@ -443,7 +458,18 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         }
     }
     let sidecar_host = host.clone();
-    if !dependencies.apps.is_empty() {
+    let opts_only = selection.active().then(|| {
+        let mut v: Vec<(usize, u32)> = chosen_units.iter().map(|f| (f.app, f.id)).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    });
+    // Tests that look free of data are compiled first without the baseline and may need no .NET helper
+    // at all: start the helpers only when the run turns out to need them (a session starts one then).
+    let looks_pure = opts_only.is_some()
+        && std::env::var_os("AL_FORCE_BASELINE").is_none()
+        && al_testrun::observe::text_looks_pure(&all_apps, &kinds, &symbols, opts_only.as_deref());
+    if !dependencies.apps.is_empty() && !looks_pure {
         // The Microsoft apps call .NET (Media, images). Start the helper processes now so the
         // starts overlap the compile; a run without them starts nothing (ADR-014 section 6).
         sidecar_host.prewarm(al_testrun::dotnet::STANDBY_SIDECARS);
@@ -453,12 +479,10 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         ..Default::default()
     };
     let opts = RunOptions {
-        only: selection.active().then(|| {
-            let mut v: Vec<(usize, u32)> = chosen_units.iter().map(|f| (f.app, f.id)).collect();
-            v.sort_unstable();
-            v.dedup();
-            v
-        }),
+        only: opts_only,
+        lazy: std::iter::repeat_n(None, inputs.len())
+            .chain(dependencies.lazy.iter().cloned())
+            .collect(),
         trace: a.explain.is_some() || std::env::var_os("AL_STACK_OF").is_some(),
         test_time_limit: match a.test_timeout_secs.unwrap_or(20) {
             0 => None,
@@ -536,6 +560,12 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             secs(c.lower),
             secs(p.engine)
         );
+        if let Some(line) = p.baseline_line() {
+            eprintln!("{line}");
+        }
+        if let Some(cost) = test_data.as_ref().and_then(|(d, _)| d.provider.cost()) {
+            eprintln!("test data: {cost}");
+        }
         if let Some(c) = &p.cache {
             eprintln!(
                 "compile cache: {}; {} {}",

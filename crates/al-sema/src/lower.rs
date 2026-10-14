@@ -3776,7 +3776,10 @@ impl Lowerer<'_> {
                     // no receiver (as for the call form). A static member (`System.WorkDate`)
                     // has none.
                     let current_report = sig.receiver == "Report"
-                        && self.ws.objects[self.oi].kind == ObjKind::Report
+                        && matches!(
+                            self.ws.objects[self.oi].kind,
+                            ObjKind::Report | ObjKind::ReportExtension
+                        )
                         && recv.text().to_string().trim().eq_ignore_ascii_case("CurrReport");
                     if !sig.instance || current_report {
                         None
@@ -4695,7 +4698,10 @@ impl Lowerer<'_> {
                     Some(r)
                         if sig.instance
                             && sig.receiver == "Report"
-                            && self.ws.objects[self.oi].kind == ObjKind::Report
+                            && matches!(
+                                self.ws.objects[self.oi].kind,
+                                ObjKind::Report | ObjKind::ReportExtension
+                            )
                             && r.text().to_string().trim().eq_ignore_ascii_case("CurrReport") =>
                     {
                         None

@@ -811,7 +811,16 @@ impl<'a> Checker<'a> {
                 })
             }
             ObjKind::Report | ObjKind::ReportExtension => {
-                globals.insert("currreport".into(), Ty::Object(ObjKind::Report, o.name.clone()));
+                // In a report extension `CurrReport` is the report run of the extended report, so its
+                // members resolve against the base report, not against a report named like the extension
+                // (Tests-ERM "Mfg. Document Entries", issue 19).
+                let report = match (o.kind, obj.extends_parts()) {
+                    (ObjKind::ReportExtension, Some(base)) => self
+                        .resolve_parts(o.file, ObjKind::Report, &base)
+                        .map_or_else(|| o.name.clone(), |r| self.ws.objects[r].name.clone()),
+                    _ => o.name.clone(),
+                };
+                globals.insert("currreport".into(), Ty::Object(ObjKind::Report, report));
                 globals.insert("requestoptionspage".into(), Ty::Builtin("RequestPage".into()));
                 // The request page of a report states a `SourceTable`: its triggers and controls name
                 // that table's current record as `Rec` (handlers/TestReportRequestPageSourceTable

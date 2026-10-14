@@ -637,7 +637,9 @@ impl Session {
             // What rows `SetSelectionFilter` selects on a page driven by the test client is not pinned: no corpus
             // test reads the filter it sets (docs/probes-needed.md). Reaching it is refused at run time, so the
             // many tests that open a page which merely declares a routine calling it still run.
-            "SetSelectionFilter" => unsupported("Page.SetSelectionFilter: which rows a test client page has selected is not pinned by the corpus"),
+            "SetSelectionFilter" => unsupported(
+                "Page.SetSelectionFilter: which rows a test client page has selected is not pinned by the corpus",
+            ),
             // Which record a page variable reports after it ran is not pinned: no corpus test calls GetRecord
             // (docs/probes-needed.md). Refused when reached, like SetSelectionFilter.
             "GetRecord" => unsupported("Page.GetRecord: which record a page reports is not pinned by the corpus"),
@@ -3433,7 +3435,9 @@ impl Session {
                 Ok(self.page_rec(st).borrow().fields[pos].clone())
             }
             b @ (ir::Binding::Var(_) | ir::Binding::BaseVar(_)) => {
-                let (slot, owner) = b.var_slot(page_of(&engine, st).controls[idx].owner).expect("a variable binding");
+                let (slot, owner) = b
+                    .var_slot(page_of(&engine, st).controls[idx].owner)
+                    .expect("a variable binding");
                 let inst = self.owner_instance(st, owner);
                 let v = inst.borrow().globals[slot].clone();
                 Ok(v)
@@ -3700,8 +3704,7 @@ impl Session {
         let rec_bound = !matches!(
             page_of(&engine, st).controls[idx].binding,
             ir::Binding::Var(_) | ir::Binding::BaseVar(_)
-        )
-            || (st.borrow().lookup && self.is_list_page(st))
+        ) || (st.borrow().lookup && self.is_list_page(st))
             || st.borrow().editable_off;
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }

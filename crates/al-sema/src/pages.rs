@@ -105,8 +105,10 @@ pub fn plain_name(text: &str) -> Option<String> {
     if let Some(inner) = t.strip_prefix('"').and_then(|n| n.strip_suffix('"')) {
         return (!inner.is_empty() && !inner.contains('"')).then(|| inner.to_string());
     }
-    (!t.is_empty() && t.chars().all(|c| c.is_alphanumeric() || c == '_') && !t.starts_with(|c: char| c.is_ascii_digit()))
-        .then(|| t.to_string())
+    (!t.is_empty()
+        && t.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !t.starts_with(|c: char| c.is_ascii_digit()))
+    .then(|| t.to_string())
 }
 
 /// Global variable names (lower case) declared in `obj`.
@@ -147,9 +149,8 @@ fn needed(
     if section.name().eq_ignore_ascii_case("field") {
         let args = section.args();
         if let Some(src) = args.get(1) {
-            let names_a_base_variable = extension_routines.is_some_and(|routines| {
-                plain_name(src).is_some_and(|n| !routines.contains(&n.to_lowercase()))
-            });
+            let names_a_base_variable = extension_routines
+                .is_some_and(|routines| plain_name(src).is_some_and(|n| !routines.contains(&n.to_lowercase())));
             if classify_source(src, globals) == Source::Expr && !names_a_base_variable {
                 out.push((
                     "source".into(),
@@ -194,9 +195,9 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
             continue;
         };
         let globals = global_names(&obj);
-        let extension_routines: Option<BTreeSet<String>> = kind.ends_with("extension").then(|| {
-            obj.routines().map(|r| r.name().to_lowercase()).collect()
-        });
+        let extension_routines: Option<BTreeSet<String>> = kind
+            .ends_with("extension")
+            .then(|| obj.routines().map(|r| r.name().to_lowercase()).collect());
         let base = usize::from(obj.syntax().text_range().start());
         let mut text = String::new();
         for sec in control_sections(&obj) {
@@ -571,7 +572,9 @@ impl Tree {
             let target = op.section.args().first().cloned().unwrap_or_default();
             if op.in_actions
                 && ["addafter", "addbefore"].contains(&kind.as_str())
-                && IMPLICIT_PROMOTED_CATEGORIES.iter().any(|c| c.eq_ignore_ascii_case(&target))
+                && IMPLICIT_PROMOTED_CATEGORIES
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(&target))
                 && self.find_node(&target).is_none()
             {
                 let idx = self.nodes.len();
@@ -999,7 +1002,10 @@ mod tests {
         let l = merged(base, &[ext]);
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
         assert_eq!(names(&l), ["A", "Act", "Ask"]);
-        assert_eq!(l.action_areas.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Processing", "Prompting"]);
+        assert_eq!(
+            l.action_areas.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            ["Processing", "Prompting"]
+        );
     }
 
     // Every page has the promoted category groups, declared or not: the same Microsoft extension of "Error Messages"

@@ -566,7 +566,10 @@ fn running_a_report_with_allow_scheduling_is_refused() {
         [Test]
         procedure Runs() begin Report.Run(Report::\"PM Scheduled\", false); end;"
     ));
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("allowscheduling")), "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("allowscheduling")),
+        "{o:?}"
+    );
 }
 
 // SetSelectionFilter and GetRecord are in no corpus test: a page that declares a routine calling them
@@ -590,6 +593,12 @@ fn reaching_set_selection_filter_or_get_record_is_refused() {
         [Test]
         procedure Gets() var P: Page \"PM Selection\"; R: Record \"PM Row\"; begin P.Picked(R); end;"
     ));
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("SetSelectionFilter")), "{o:?}");
-    assert!(matches!(&o[1].1, Outcome::NotRun(why) if why.contains("GetRecord")), "{o:?}");
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("SetSelectionFilter")),
+        "{o:?}"
+    );
+    assert!(
+        matches!(&o[1].1, Outcome::NotRun(why) if why.contains("GetRecord")),
+        "{o:?}"
+    );
 }

@@ -109,9 +109,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
             // report that is only named (Base App's Item Tracing page has an action that runs
             // "Item Tracing Specification"; handlers/TestPrecompiledOptionCaption.al:81 only opens the page)
             // never reaches it, so it refuses when the report is run, not when it is compiled.
-            "allowscheduling" => out
-                .output
-                .push(format!("report property {name} is not supported yet")),
+            "allowscheduling" => out.output.push(format!("report property {name} is not supported yet")),
             other => out
                 .reasons
                 .push(format!("report property {other} is not supported yet")),
@@ -229,7 +227,7 @@ pub fn request_layout(
             // `ShowFilter` hides the data item filters of the request page. Whether a TestRequestPage then still
             // has them is not pinned, so a literal value passes here and the test client refuses to touch a
             // data item of a page that says `false` (docs/probes-needed.md).
-            let show_filter = name == "showfilter" && matches!(bool_prop(&p.value_text()), Some(_));
+            let show_filter = name == "showfilter" && bool_prop(&p.value_text()).is_some();
             if !["caption", "savevalues"].contains(&name.as_str())
                 && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
                 && !show_filter

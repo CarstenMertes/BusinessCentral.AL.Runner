@@ -350,9 +350,12 @@ impl Tree {
             // The TestPage has no member for a system part (Notes, Links, MyNotes, ...), and the corpus
             // tests that open Base App pages declaring one (for example
             // handlers/TestPagePlatformPageSourceTable_Tests.al:77, handlers/TestReportRunFromPrecompiledCaller.al:31)
-            // never reach it. It stays in the tree so that `addafter`/`modify` can name it, and is dropped
-            // from the controls the page lowers.
-            "systempart" => {
+            // never reach it. A label (handlers/TestPrecompiledOptionCaption.al:81) and a customaction (Power Automate;
+            // pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69) are treated the same way:
+            // docs/probes-needed.md says what is not pinned. They stay in the tree so that `addafter`/
+            // `modify` can name them, and are dropped from the controls the page lowers, so a TestPage
+            // reference to one is refused ("control ... is not in the page layout"), never answered.
+            "systempart" | "label" | "customaction" => {
                 let idx = self.nodes.len();
                 self.nodes.push(Node {
                     name: arg0,
@@ -887,11 +890,11 @@ mod tests {
     // it is not a control of the page. An extension can still anchor on it.
     #[test]
     fn a_systempart_is_not_a_control_but_still_an_anchor() {
-        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } area(FactBoxes) { systempart(Control1; Notes) { } systempart(Control2; Links) { } } } }";
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } label(Hint) { } } area(FactBoxes) { systempart(Control1; Notes) { } systempart(Control2; Links) { } } } actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } } } }";
         let ext = "pageextension 50101 E extends P { layout { addafter(Control1) { field(AfterNotes; Rec.F) { } } } }";
         let l = merged(base, &[ext]);
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
-        assert_eq!(names(&l), ["A", "AfterNotes"]);
+        assert_eq!(names(&l), ["A", "AfterNotes", "Flow"]);
     }
 
     // Corpus handlers/TestPagePromotedActionref_Page.al: an actionref is a control that names its target.

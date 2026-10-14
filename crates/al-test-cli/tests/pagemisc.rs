@@ -133,6 +133,15 @@ page 62013 "PM Rowset"
     end;
 }
 page 62090 "PM Dialog" { PageType = StandardDialog; }
+page 62091 "PM Kinds"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout {
+        area(Content) { label(Hint) { Caption = 'x'; } field(NoCtl; Rec."No.") { } }
+        area(FactBoxes) { systempart(NotesBox; Notes) { } systempart(LinksBox; Links) { } }
+    }
+    actions { area(Processing) { group(Flow) { customaction(MakeFlow) { CustomActionType = FlowTemplateGallery; } } action(Act) { } } }
+}
 "#;
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
@@ -479,4 +488,30 @@ fn an_asserterror_in_a_modal_handler_rolls_back_to_the_last_commit() {
         [ModalPageHandler] procedure Dialog(var D: TestPage \"PM Dialog\") begin
             Put('3'); asserterror begin Put('4'); Error('in handler'); end; end;"
     ));
+}
+
+// handlers/TestPagePlatformPageSourceTable_Tests.al:77, handlers/TestReportRunFromPrecompiledCaller.al:31,
+// handlers/TestPrecompiledOptionCaption.al:81, pageextensioncontrol/TestPageExtensionModifyPrecompiled_Tests.al:69:
+// a page with a systempart, a label and a customaction opens, and its other controls work.
+#[test]
+fn a_page_with_a_systempart_a_label_and_a_customaction_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var R: Record \"PM Row\"; K: TestPage \"PM Kinds\"; begin
+            R.DeleteAll(); R.\"No.\" := 'K1'; R.Insert(); K.OpenView(); K.GoToRecord(R);
+            Check('K1', K.NoCtl.Value); Check('Yes', Format(K.Act.Enabled())); K.Close(); end;"
+    ));
+}
+
+// The TestPage has no member for these controls, so a reference is refused, not answered.
+#[test]
+fn naming_a_systempart_on_a_test_page_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Names() var K: TestPage \"PM Kinds\"; begin
+            K.OpenView(); Check('Yes', Format(K.NotesBox.Visible())); end;"
+    ));
+    assert!(matches!(&o[0].1, Outcome::NotRun(_)), "{o:?}");
 }

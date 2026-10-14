@@ -101,13 +101,11 @@ it is 3x wall.
 | full export, port only, `export --jobs 1` | | 867 | | 1,796 |
 | full export, port only, `export` (12 threads) | | 331 | | 1,323 |
 
-`tools/bcdb-bench.sh` produced these; its full output is in the report that came with this
-change. The port's `.bak` listing improved from 88 ms to 30 ms after the first run (sort keys
+`tools/bcdb-bench.sh` produced these. The port's `.bak` listing improved from 88 ms to 30 ms after the first run (sort keys
 built once), so the "list tables" row for the `.bak` mixes two runs. A second run, with the load
 at 10-45, kept every ratio in the port's favour. Run the script yourself on a quiet machine
 before quoting a number. Add `--cold` for a cold page cache; cold numbers were not taken.
 
-What the port does not beat is bcdb's own best case, a warm single small table: the open of the
-`.bak` is one 40-byte read per extent for the page map (13 ms) plus the catalog (6-8 ms). The
-rest of its time, 20 ms in all, is process start and that open.
-
+For the smallest read the port's 24 ms is process start plus the open of the `.bak`: one 40-byte
+read per extent for the page map (13 ms) and the catalog (6-8 ms). Opening a `.bacpac` costs the
+`model.xml` scan (about 0.3 s of CPU for 111 MB).

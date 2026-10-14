@@ -488,10 +488,13 @@ struct Checker<'a> {
     /// What `resolve_ref` found for a name written in a file, by (file, kind) and then name. While
     /// a check runs the answer does not change (nothing is left out of the compile before it ends),
     /// and the same few names are asked for again and again by the routines of a file.
-    resolved: std::cell::RefCell<HashMap<(usize, ObjKind), HashMap<String, Option<usize>>>>,
+    resolved: std::cell::RefCell<Resolved>,
     /// Checks that panicked (see [`CheckResult::panicked`]).
     panicked: HashMap<(usize, usize), String>,
 }
+
+/// Names resolved so far, by (file, kind) and then name; see [`Checker::resolved`].
+type Resolved = HashMap<(usize, ObjKind), HashMap<String, Option<usize>>>;
 
 /// What every routine of an object sees.
 struct ObjCtx {

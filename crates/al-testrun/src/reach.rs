@@ -309,7 +309,7 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         }
         rows.push((c.len(), k, hs.len(), w(&c)));
     }
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.sort_by_key(|a| std::cmp::Reverse(a.0));
     for (c, k, hs, wt) in &rows {
         let _ = writeln!(out, "  {k:<34} {hs:>6} heads  +{c:>6} routines  weight {wt}");
     }
@@ -350,7 +350,7 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         let _ = writeln!(out, "  {k:<16} {ob:>6} {c:>7} {wt:>9}");
     }
     let mut top: Vec<_> = per_obj.iter().collect();
-    top.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    top.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     let _ = writeln!(out, "objects with the most reached routines:");
     for &(&o, &(c, wt)) in top.iter().take(12) {
         let _ = writeln!(
@@ -379,7 +379,7 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         e.2 += u64::from(g.weight[i]);
     }
     let mut rs: Vec<_> = reasons.into_iter().collect();
-    rs.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    rs.sort_by_key(|a| std::cmp::Reverse(a.1.0));
     let _ = writeln!(
         out,
         "first refusal reasons of reached routines (routines, of them dependency, weight): {} kinds",
@@ -417,14 +417,14 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         refused_dep.len()
     );
     let mut raw: HashMap<String, (usize, usize)> = HashMap::new();
-    for (_, (c, first)) in by_object.iter() {
+    for (c, first) in by_object.values() {
         let tail = first.split_once(": ").map_or(first.as_str(), |x| x.1).to_string();
         let e = raw.entry(tail).or_default();
         e.0 += 1;
         e.1 += c;
     }
     let mut raw: Vec<_> = raw.into_iter().collect();
-    raw.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    raw.sort_by_key(|a| std::cmp::Reverse(a.1.1));
     for (k, (ob, c)) in raw.iter().take(25) {
         let _ = writeln!(
             out,

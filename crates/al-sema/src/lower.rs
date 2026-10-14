@@ -1662,6 +1662,18 @@ fn is_stmt(k: SyntaxKind) -> bool {
 /// - `Notification.Id`, `.Message`, `.Scope`: handlers/TestNotificationHandler.al:21 and :55.
 /// - `Record.ReadIsolation`, `RecordRef.ReadIsolation` and `.SecurityFiltering`: Base
 ///   Application (`Item.ReadIsolation := IsolationLevel::ReadUncommitted`).
+/// - `ErrorInfo.Message`, `.DetailedMessage`, `.Title`, `.ControlName`, `.FieldNo`, `.PageNo`,
+///   `.TableId`, `.Verbosity`, `.DataClassification`, `.Collectible`, `.ErrorType`,
+///   `.CustomDimensions`: the call form pins getter and storage (errorinfo/TestErrorInfoType.al:
+///   249-271, :284-307, :313-345; TestErrorInfoErrorType.al:25-45). Nothing sets `RecordId` in
+///   the corpus (only `Create(.., Record)` does, :360-377): its native raises `Unsupported` when
+///   run, so the assignment is refused when it is reached, not before. `SystemId` has no native.
+/// - `Record.Ascending`, `.Mark`, `.MarkedOnly`: record/TestRecordFind.al:237-284 (`Mark`,
+///   `MarkedOnly`), handlers/TestPartOwnSortVsSubPageView.al:187 and :300 (`Ascending(false)`),
+///   handlers/TestPageActionRunPageView.al:134 (`Ascending()`).
+/// - `Report.UseRequestPage`: handlers/TestReportGetFilterInTriggers.al:66 and
+///   codeunit/TestWriteTxTestBoundary.al:272 (`UseRequestPage(false)`).
+/// - `System.WorkDate`: session/TestSessionFunctions.al:63-65 (`WorkDate(20240101D)`).
 /// - `HttpRequestMessage.Method`: network/TestHttpRequestMessage.al:23.
 /// - `File.TextMode`, `File.WriteMode`: Base Application's "Export Consolidation" report.
 fn is_property_setter(receiver: &str, name: &str) -> bool {
@@ -1670,8 +1682,26 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
         ("FieldRef", "Value")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
             | ("Notification", "Id" | "Message" | "Scope")
+            | (
+                "ErrorInfo",
+                "Message"
+                    | "DetailedMessage"
+                    | "Title"
+                    | "ControlName"
+                    | "FieldNo"
+                    | "PageNo"
+                    | "TableId"
+                    | "Verbosity"
+                    | "DataClassification"
+                    | "Collectible"
+                    | "ErrorType"
+                    | "CustomDimensions"
+                    | "RecordId"
+            )
             | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
-            | ("Record", "FilterGroup")
+            | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
+            | ("Report", "UseRequestPage")
+            | ("System", "WorkDate")
             | ("HttpRequestMessage", "Method")
             | ("File", "TextMode" | "WriteMode")
     )
@@ -3241,11 +3271,19 @@ impl Lowerer<'_> {
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
-            let setter = self
+            let sig = self
                 .catalog
                 .by_id(&id)
-                .is_some_and(|s| is_property_setter(&s.receiver, &s.name));
-            if setter && kids[0].kind() == SyntaxKind::MemberExpr {
+                .filter(|s| is_property_setter(&s.receiver, &s.name))
+                .cloned();
+            let member = kids[0].kind() == SyntaxKind::MemberExpr;
+            // Without a receiver the member is a global function (`WorkDate := d`) or a Record
+            // member of the implicit Rec of table, page and dataitem code (`FilterGroup := 2`).
+            let implicit = !member
+                && sig
+                    .as_ref()
+                    .is_some_and(|s| !s.instance || (s.receiver == "Record" && self.rec_slot.is_some()));
+            if let Some(sig) = sig.filter(|_| member || implicit) {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(format!("builtin {id} is not implemented"));
                 }
@@ -3261,15 +3299,32 @@ impl Lowerer<'_> {
                 if compound {
                     return Err("compound assignment to a setter-form builtin is not lowered yet".into());
                 }
-                let recv = kids[0].children().next().ok_or("member base")?;
-                let receiver = match self.place(&recv) {
-                    Ok(p) => ir::Arg::Ref(p),
-                    Err(_) => ir::Arg::Value(self.expr(&recv)?),
+                let receiver = if member {
+                    let recv = kids[0].children().next().ok_or("member base")?;
+                    // `CurrReport` is the running report: the VM takes it when a report builtin has
+                    // no receiver (as for the call form). A static member (`System.WorkDate`)
+                    // has none.
+                    let current_report = sig.receiver == "Report"
+                        && self.ws.objects[self.oi].kind == ObjKind::Report
+                        && recv.text().to_string().trim().eq_ignore_ascii_case("CurrReport");
+                    if !sig.instance || current_report {
+                        None
+                    } else {
+                        Some(Box::new(match self.place(&recv) {
+                            Ok(p) => ir::Arg::Ref(p),
+                            Err(_) => ir::Arg::Value(self.expr(&recv)?),
+                        }))
+                    }
+                } else if sig.instance {
+                    let rec = self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?;
+                    Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec))))
+                } else {
+                    None
                 };
                 let rhs = self.expr(&kids[1])?;
                 return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
                     id,
-                    receiver: Some(Box::new(receiver)),
+                    receiver,
                     args: vec![ir::Arg::Value(rhs)],
                     ret_used: false,
                 }));
@@ -3393,9 +3448,39 @@ impl Lowerer<'_> {
                     };
                     Ok(ir::Place::Field(Box::new(base), pos))
                 }
-                _ => Err(format!("`{}` is not assignable", n.text())),
+                _ if n.kind() == SyntaxKind::NameRef && n.text().to_string().trim().eq_ignore_ascii_case("this") => Err(
+                    "`this` passed by reference (`BindSubscription(this)`) is not lowered: no corpus test passes the running instance as an argument"
+                        .into(),
+                ),
+                _ => Err(self
+                    .base_page_member(n)
+                    .unwrap_or_else(|| format!("`{}` is not assignable", n.text()))),
             },
         }
+    }
+
+    /// Why a name cannot be lowered in a page extension: it is a variable or procedure of the
+    /// page the extension extends. Extension code runs on its own object, which holds none of the
+    /// base page's variables or procedures (a bare control name binds to a base variable through
+    /// `Binding::BaseVar`, corpus handlers/TestRequestPageControlErrorName.al).
+    fn base_page_member(&self, n: &SyntaxNode) -> Option<String> {
+        if self.ws.objects[self.oi].kind != ObjKind::PageExtension {
+            return None;
+        }
+        let base = self.ws.extension_target(self.oi)?;
+        let root = n
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))?;
+        let name = ast::ident_text(&root);
+        let obj = self.ws.object_ast(base);
+        let declared = obj
+            .var_decls()
+            .any(|v| v.names().iter().any(|x| x.eq_ignore_ascii_case(&name)))
+            || obj.routines().any(|r| r.name().eq_ignore_ascii_case(&name));
+        declared.then(|| {
+            format!("`{name}` is a variable or procedure of the page it extends: page extension code on base page members is not lowered yet")
+        })
     }
 
     fn constant(&self, n: &SyntaxNode) -> L<ir::Const> {
@@ -3955,6 +4040,18 @@ impl Lowerer<'_> {
                         }
                         _ => {}
                     }
+                    // `Page.FindFirstField(Name, v)` names the control bare. The corpus only
+                    // qualifies it (`ListPage."Integer Field"`, handlers/TestBCReportHandlerContracts.al:247);
+                    // what a bare name means (the receiver's controls first?) is not pinned.
+                    if p.ty == "TestField"
+                        && a.kind() != SyntaxKind::MemberExpr
+                        && !matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
+                    {
+                        return Err(format!(
+                            "the TestField argument `{}` is a bare control name: only the qualified form is pinned by a corpus test",
+                            a.text()
+                        ));
+                    }
                     // Generic parameters convert to the collection's element types.
                     let elem = match (p.ty.as_str(), receiver_node.as_ref().map(|r| self.ty_of(r))) {
                         ("T", Some(Ty::List(el))) => Some(*el),
@@ -4118,11 +4215,26 @@ mod tests {
     }
 
     /// Tests-ERM (Microsoft's BaseApp bucket): a page field whose source is a lone quoted name with
-    /// a hyphen reaches the synthetic source routine unquoted (`exit(Assign-to No.)`), which parses
-    /// as `Assign-` with no right operand. Lowering indexed `kids[1]` and panicked, which ended the
-    /// whole run. The routine is refused instead.
+    /// a hyphen used to reach the synthetic source routine unquoted (`exit(Assign-to No.)`), which
+    /// parses as `Assign-` with no right operand. Lowering indexed `kids[1]` and panicked, which
+    /// ended the whole run. The quotes now stay (the next test); an expression with a missing
+    /// operand is still refused, not a panic.
     #[test]
     fn a_binary_expression_with_a_missing_operand_is_refused_not_a_panic() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; \"Assign-to No.\"; Code[20]) { } } }
+page 50100 P { SourceTable = T; layout { area(Content) { field(X; Assign-to No.) { } } } }",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert!(reasons.iter().any(|r| r.contains("missing operand")), "{reasons:?}");
+    }
+
+    #[test]
+    fn a_page_field_with_a_lone_quoted_source_name_lowers() {
         let (_, l) = lower_files(
             &[(
                 "f.al",
@@ -4132,7 +4244,31 @@ page 50100 P { SourceTable = T; layout { area(Content) { field(\"Assign-to No.\"
             true,
         );
         let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
-        assert!(reasons.iter().any(|r| r.contains("missing operand")), "{reasons:?}");
+        assert!(reasons.is_empty(), "{reasons:?}");
+    }
+
+    /// Tests-SCM: a page extension's field `field(X; Item."Qty. on Component Lines")` names a
+    /// `protected var` of the page it extends. Extension code runs on its own object, which holds
+    /// none of the base page's variables (only a bare control name binds to one, `BaseVar`), so the
+    /// routine is refused, and the reason says why instead of "`Item.X` is not assignable".
+    #[test]
+    fn an_extension_naming_a_variable_of_its_base_page_is_refused_with_that_reason() {
+        let (_, l) = lower_files(
+            &[(
+                "f.al",
+                "table 50100 T { fields { field(1; \"Qty. A\"; Integer) { } } }
+page 50100 Base { SourceTable = T; layout { area(Content) { field(A; Rec.\"Qty. A\") { } } } protected var Item: Record T; }
+pageextension 50101 Ext extends Base { layout { addlast(Content) { field(\"X\"; Item.\"Qty. A\") { } } } }",
+            )],
+            true,
+        );
+        let reasons: Vec<&String> = l.unsupported.iter().flatten().flatten().collect();
+        assert!(
+            reasons
+                .iter()
+                .any(|r| r.contains("of the page it extends") && !r.contains("not assignable")),
+            "{reasons:?}"
+        );
     }
 
     const TWO_TESTS: &str = "codeunit 50100 \"Wanted\"

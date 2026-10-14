@@ -57,16 +57,25 @@ now get far enough to run (ERM: 2.12 s for 434 passing tests instead of 0.24 s).
 
 ### Failures with test data
 
-Every failure of the two buckets, ranked by `--top-failures`. Triage rule (the AL Runner v2 skill): a failure
-is a data-recipe difference when the runtime did the right thing for the company it was handed. None of these are.
+Triage rule (the AL Runner v2 skill): a failure is a data-recipe difference when the runtime did the right
+thing for the company it was handed. Of the first nine Tests-ERM failures none were; `fixes-8` (2026-10-14)
+dealt with them. Tests-ERM with test data went from 480 passed, 18 failed (main after `fixes-7`) to 484 passed,
+5 failed; Tests-SMB is unchanged (11 passed, 3 failed).
 
-| Count | Message (numbers and quoted values folded) | Bucket | Cause |
-|---:|---|---|---|
-| 3 | `The Office Add-in does not exist. ... Application ID=<name>` | SMB | Runtime gap. The test that creates the default add-ins (`CreateDefaultAddinsWhenPageRuns`) is not run (`Uri.Scheme` is a DotNet value used as an operand), and three later tests of the codeunit rely on its rows. The backup holds no Office Add-in row |
-| 4 | `An error was expected inside an ASSERTERROR statement.` | ERM | Runtime. `Validate` of `Price List Line."Amount Type"` raises nothing (2 tests); validating `Bank Account` with an export code of the wrong direction raises nothing (2 tests); not investigated further, probably a TableRelation filter that `Validate` does not enforce |
-| 3 | `The record in table <Positive Pay Entry / Purch. Comment Line Archive> already exists ...` | ERM | Runtime. `CreateGuid` is deterministic with a counter in the last 8 bytes, so `CopyStr(Format(CreateGuid()), 1, 20)` is `{00000000-0000-4000-` for every Guid. Both tables are empty in the backup |
-| 1 | `Assert.ExpectedError failed. Expected: Bal. Account Type must not be   in Payment Registration Setup. Actual: ... must have a value ...` | ERM | Runtime. The text of a TestField error on an Option whose blank member is a space |
-| 1 | `The User Personalization does not exist. ... User SID=<name>` | ERM | Runtime. The platform table has no row for the test user |
+| Was | Cause | Now |
+|---|---|---|
+| 3 tests: `The record in table <Positive Pay Entry / Purch. Comment Line Archive> already exists` | `CreateGuid` had a counter in the last 8 bytes, so `CopyStr(Format(CreateGuid()), 1, 20)` was `{00000000-0000-4000-` for every Guid | Fixed: Guids are version 4 in every byte, from a seeded generator (the host's `random_seed` and a counter) |
+| 2 tests: `An error was expected inside an ASSERTERROR statement` (Pos. Pay Test Unit) | Same Guid collision (the setup rows shared one key) | Fixed with the Guids |
+| 2 tests: same message (Price List Line UT and Price Worksheet Line UT `T029_ValidateAmountType`) | `fixes-7` and `fixes-8` both fixed it: an overload chosen by arity picked `CopyTo(var Price Asset)` for a `Price Source` argument. `fixes-8` extends the rule to every object a parameter names | Fixed |
+| 1 test: `Bal. Account Type must not be   in ...` vs `... must have a value ...`; 6 more once the overload fix ran them (`Product Type must not be (All)`) | `TestField` on an Option or Enum holding its zero member says `must not be <member>`; the corpus does not pin the text | Refused (Unsupported), probe in "Probe batch 5"; 7 tests not run |
+| 1 test: `The User Personalization does not exist ... User SID=<name>` | BC creates the row of the session user at sign-in; the corpus does not pin it | Refused, probe in "Probe batch 5" |
+| 198 not run: `Format of Record(RefCell { ... })` | A debug dump of the value in the refusal text | The text names the type: `Format of a Record (standard format 0) is not pinned yet`. 213 Tests-ERM tests and 1 more (`FieldRef`) stop there: Base Application compares `Format(Rec) = Format(xRec)` in its Global Triggers subscribers. Probe in "Probe batch 5" |
+| 3 (Tests-SMB): `The Office Add-in does not exist` | Unchanged. The test that creates the default add-ins is not run (`Uri.Scheme` is a DotNet value used as an operand), and three later tests of the codeunit rely on its rows. The backup holds no Office Add-in row | ADR-014 question |
+
+Still failing in Tests-ERM (5): `T043_AmountTypeMustBeDiscountForItemDiscGroup` (Price List Line UT and Price
+Worksheet Line UT) because variables of a table object do not persist per record variable (Probe batch 5, item 5);
+`GLAccountCategoryDelete`, `AddTextforLanguageInReminderLevelCommunication` (`The TestPage is not open`) and
+`AccountScheduleNoIndentationAnyValue` (`Commit` under AutoRollback) are not triaged.
 
 Without test data Tests-ERM failed 121 tests; the first 30 failures are missing setup data (`General Posting Setup`
 must contain records, `Sales & Receivables Setup`, `Tax Setup` and `Purchases & Payables Setup` do not exist, a date

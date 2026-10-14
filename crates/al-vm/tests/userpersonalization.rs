@@ -16,7 +16,7 @@ table 2000000120 "User" {
     keys { key(PK; "User Security ID") { } }
 }
 table 2000000073 "User Personalization" {
-    fields { field(1; "User SID"; Guid) { } field(2; "Profile ID"; Code[30]) { } }
+    fields { field(1; "User ID"; Code[50]) { } field(3; "User SID"; Guid) { } field(2; "Profile ID"; Code[30]) { } }
     keys { key(PK; "User SID") { } }
 }
 "#;

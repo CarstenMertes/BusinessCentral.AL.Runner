@@ -141,7 +141,7 @@ impl Session {
         // says it "depends on tenant data"). "Not found" there is not BC's answer: refuse.
         if !exists && self.engine.program.objects[t.object as usize].id == Some(USER_PERSONALIZATION) {
             let sid = self.host.identity.user_security_id();
-            if t.fields.iter().position(|f| f.id == 1).is_some_and(|p| matches!(fields[p], Value::Guid(g) if g == sid)) {
+            if t.fields.iter().position(|f| f.name.eq_ignore_ascii_case("User SID")).is_some_and(|p| matches!(fields[p], Value::Guid(g) if g == sid)) {
                 return unsupported(
                     "the User Personalization row of the session user: BC creates it when the user signs in to a client, and no corpus test pins what it holds (docs/probes-needed.md)",
                 );

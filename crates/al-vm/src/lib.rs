@@ -682,10 +682,10 @@ impl Session {
                         self.last_error = e;
                         Ok(())
                     }
-                    // The message is not pinned by the corpus yet (docs/probes-needed.md).
+                    // Text and code: types/TestFormatEvaluateTextContracts.al:Asserterror_NothingRaised_ReportsAssertError.
                     Ok(()) => Err(Signal::Error(AlError {
                         message: "An error was expected inside an ASSERTERROR statement.".into(),
-                        code: "Dialog".into(),
+                        code: "AssertError".into(),
                         call_stack: String::new(),
                     })),
                     Err(other) => Err(other),
@@ -761,10 +761,10 @@ impl Session {
                     B::Xor => Value::Boolean(ops::truthy(&l)? ^ ops::truthy(&r)?),
                     B::Eq => Value::Boolean(ops::compare(&l, &r)? == Ordering::Equal),
                     B::Ne => Value::Boolean(ops::compare(&l, &r)? != Ordering::Equal),
-                    B::Lt => Value::Boolean(ops::compare(&l, &r)? == Ordering::Less),
-                    B::Le => Value::Boolean(ops::compare(&l, &r)? != Ordering::Greater),
-                    B::Gt => Value::Boolean(ops::compare(&l, &r)? == Ordering::Greater),
-                    B::Ge => Value::Boolean(ops::compare(&l, &r)? != Ordering::Less),
+                    B::Lt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Less),
+                    B::Le => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Greater),
+                    B::Gt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Greater),
+                    B::Ge => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Less),
                 })
             }
             E::In(v, set) => {

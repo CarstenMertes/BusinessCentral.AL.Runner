@@ -37,36 +37,17 @@ impl Session {
     pub(super) fn seed_profiles(&mut self, t: &TableDef, _i: &Ident) -> bool {
         let engine = self.engine.clone();
         let mut wrote = false;
-        for o in engine.program.objects.iter() {
-            if o.kind.strip_prefix("uncompiled ").unwrap_or(&o.kind) != "profile" {
-                continue;
-            }
+        // Which profiles get a row, and the role center page each names, depend on the program
+        // only: found once per engine, not by every session scanning every object for each profile.
+        let seeds = engine.profile_seeds.get_or_init(|| profile_seeds(&engine.program));
+        for &(oi, role_center_id) in seeds {
+            let o = &engine.program.objects[oi];
             let prop = |n: &str| super::objects::prop(o, n);
             let app = engine.program.apps.get(o.app as usize);
             let owner = app
                 .and_then(|a| al_builtins::ops::parse_guid(&a.id))
                 .filter(|_| !app.is_some_and(|a| a.id.eq_ignore_ascii_case("8874ed3a-0643-4247-9ced-7a7002f7135d")))
                 .unwrap_or([0; 16]);
-            // The page the profile names as its role center.
-            let role_center = prop("RoleCenter").map(|v| {
-                let want = super::objects::ident(v);
-                engine
-                    .program
-                    .objects
-                    .iter()
-                    .filter(|p| {
-                        p.kind.strip_prefix("uncompiled ").unwrap_or(&p.kind) == "page"
-                            && p.name.eq_ignore_ascii_case(&want)
-                    })
-                    .filter_map(|p| p.id)
-                    .collect::<Vec<_>>()
-            });
-            let role_center_id = match role_center.as_deref() {
-                None => 0,
-                Some([id]) => *id as i32,
-                // A name that is not one page: the row would be wrong, so it is not written.
-                Some(_) => continue,
-            };
             let mut r = super::blank(t);
             r[pos(t, 1)] = super::option(t, 1, 1);
             r[pos(t, 2)] = Value::Guid(owner);
@@ -141,4 +122,33 @@ fn error(message: String) -> Signal {
         code: "Dialog".into(),
         call_stack: String::new(),
     })
+}
+
+/// The profile objects that get an All Profile row, as (object index, id of the page named as the
+/// role center; 0 for none). A profile whose role center name is not exactly one page gets no row:
+/// the row would be wrong.
+pub(crate) fn profile_seeds(program: &al_ir::Program) -> Vec<(usize, i32)> {
+    let kind = |o: &al_ir::Object| o.kind.strip_prefix("uncompiled ").unwrap_or(&o.kind).to_string();
+    let mut pages: std::collections::HashMap<String, Vec<u32>> = std::collections::HashMap::new();
+    for p in &program.objects {
+        if let (true, Some(id)) = (kind(p) == "page", p.id) {
+            pages.entry(p.name.to_ascii_lowercase()).or_default().push(id);
+        }
+    }
+    let mut out = Vec::new();
+    for (oi, o) in program.objects.iter().enumerate() {
+        if kind(o) != "profile" {
+            continue;
+        }
+        let role_center = super::objects::prop(o, "RoleCenter").map(|v| {
+            let want = super::objects::ident(v).to_ascii_lowercase();
+            pages.get(&want).cloned().unwrap_or_default()
+        });
+        match role_center.as_deref() {
+            None => out.push((oi, 0)),
+            Some([id]) => out.push((oi, *id as i32)),
+            Some(_) => {}
+        }
+    }
+    out
 }

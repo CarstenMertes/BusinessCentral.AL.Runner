@@ -1,15 +1,3 @@
    1 unresolved codeunit `Azure AD Plan Test Library`
    8 unresolved codeunit `Permissions Mock`
-  21 unresolved table `All Profile`
-   4 unresolved table `Code Coverage Test Lookup`
-   6 unresolved table `Code Coverage Tests Run`
-   9 unresolved table `Code Coverage`
-   7 unresolved table `Event Subscription`
    5 unresolved table `Feature Key`
-   9 unresolved table `Page Action`
-   8 unresolved table `Query Metadata`
-  10 unresolved table `Report Data Items`
-  13 unresolved table `Report Layout List`
-   5 unresolved table `Report Metadata`
-   7 unresolved table `Table Relations Metadata`
-  11 unresolved table `XmlPort Metadata`

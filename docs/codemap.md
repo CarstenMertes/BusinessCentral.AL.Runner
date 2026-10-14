@@ -114,7 +114,8 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-host
 
 - `dotnet.rs` (238): The `DotNet` provider seam (ADR-014 section 2). Entry: `DotNetType` 10, `DotNetHandle` 26, `DotNetValue` 30, `DotNetArg` 65.
-- `lib.rs` (341): The host seam: clock, identity, client type, file system (ADR-006). Entry: `Clock` 21, `Identity` 70, `ClientType` 54, `Host` 258.
+- `lib.rs` (350): The host seam: clock, identity, client type, file system (ADR-006). Entry: `Clock` 21, `Identity` 70, `ClientType` 54, `Host` 258.
+- `random.rs` (112): .NET's seeded `System.Random` for `Random` and `Randomize`. Entry: `NetRandom` 15.
 
 ### al-ir
 

@@ -20,6 +20,9 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     "tooltip",
     "tooltipml",
     "description",
+    // Feeds the client's Tell Me search only (docs/owner-review.md, 2026-10-14).
+    "additionalsearchterms",
+    "additionalsearchtermsml",
 ];
 
 /// Data item properties that change nothing a processing run can observe: they steer the request
@@ -404,7 +407,7 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                             out.modifies.push((target, s.clone()));
                         }
                         // Columns only feed the layout and the dataset a SaveAs writes.
-                        "add" if s.sections().all(|c| c.name().eq_ignore_ascii_case("column")) => {}
+                        "add" | "addafter" if s.sections().all(|c| c.name().eq_ignore_ascii_case("column")) => {}
                         "addlast" => {
                             if s.properties().next().is_some() || s.triggers().next().is_some() {
                                 out.reasons.push(format!(
@@ -763,6 +766,30 @@ mod tests {
         let output = l.output.join("; ");
         assert!(output.contains("defaultlayout"), "{output}");
         assert!(output.contains("section rendering"), "{output}");
+    }
+
+    #[test]
+    fn search_terms_are_inert_on_a_report() {
+        // AdditionalSearchTerms only feeds the client's Tell Me search; no AL code or test client
+        // reads it, like Caption and UsageCategory next to it (docs/owner-review.md).
+        let l = layout_of(
+            "report 1 R { ProcessingOnly = true; AdditionalSearchTerms = 'x'; AdditionalSearchTermsML = 'x'; dataset { dataitem(A; Cust) { } } }",
+        );
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        let l = ext_layout_of("reportextension 1 E extends R { AdditionalSearchTerms = 'x'; }");
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+    }
+
+    #[test]
+    fn columns_added_after_an_element_only_feed_the_layout() {
+        // Like `add` with columns only (the dataset a SaveAs writes is the only reader).
+        let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { column(X; No) { } } } }");
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert!(l.items.is_empty());
+        // A data item added after an element would change the order the items run in: no corpus
+        // test pins where it lands, so it stays refused.
+        let l = ext_layout_of("reportextension 1 E extends R { dataset { addafter(A) { dataitem(B; Ledger) { } } } }");
+        assert!(l.reasons.join(";").contains("addafter(A)"), "{:?}", l.reasons);
     }
 
     #[test]

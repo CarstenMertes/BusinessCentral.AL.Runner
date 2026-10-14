@@ -958,7 +958,9 @@ fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) -> Result<Vec
                     "filterpagehandler" => {
                         "no corpus test pins how FilterPageBuilder.RunModal reaches a filter page handler"
                     }
-                    "sendnotificationhandler" | "recallnotificationhandler" => "it needs the Notification type",
+                    "recallnotificationhandler" => {
+                        "no corpus test pins what Notification.Recall does with a recall handler"
+                    }
                     _ => "this handler kind",
                 };
                 return Err(format!(

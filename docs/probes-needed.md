@@ -230,7 +230,7 @@ comment as a corpus citation and is deleted here.
 | WebServiceActionContext | the error text of a duplicate entity key (`The WebServiceActionContext already has an entity key for field N.`; only the type name is pinned); the platform `ObjectType` ordinals (0 TableData, 1 Table, 3 Report, 5 Codeunit, 6 XmlPort, 7 MenuSuite, 8 Page, 9 Query) and the `WebServiceActionResultCode` members are from the C/AL option and the docs | session/TestWebServiceActionContext.al | `al-builtins/src/wsac.rs`, `sysenum.rs` |
 | SessionSettings | the default `LanguageId`, `LocaleId`, `TimeZone`, `ProfileId`, `ProfileAppId` of an instance nobody set are refused on read; `RequestSessionUpdate()` is refused (they need the running session and a handler); `Format` lists `Company=...;LanguageId=...` | session/TestSessionSettings.al pins only relative claims | `al-builtins/src/sessiontypes.rs` |
 | SessionSettings | `Init()` loads the host's language (the session's `GlobalLanguage`), locale (1033) and time zone (`UTC`), empties `Company` (as BC 27.5 does; 28.x fills it) and returns the profile properties to "nobody set" | session/TestSessionSettings.al:371-455 pins that it populates a positive language id and a non-empty time zone, replaces earlier values and is repeatable | `al-builtins/src/sessiontypes.rs` `init` |
-| Notification | reading `Message()`, `Scope()` of a notification nobody set, and `GetData` of a name nobody set, are refused; `Send`/`Recall` are refused; the `NotificationScope` ordinals | handlers/TestNotificationHandler.al, session/TestCalcDateNotificationContracts.al | `sessiontypes.rs` |
+| Notification | reading `Message()`, `Scope()` of a notification nobody set, and `GetData` of a name nobody set, are refused; the `NotificationScope` ordinals. `Send()` goes to the bound `[SendNotificationHandler]` with a copy of the notification and needs `true` back; `Recall()` of a notification a handler took does nothing (no recall handler bound). REFUSED: `Send` with no handler, a handler answering `false`, `Recall` of a notification nobody sent or with a `[RecallNotificationHandler]` declared | handlers/TestNotificationHandler.al:15-26,60-85, session/TestCalcDateNotificationContracts.al | `sessiontypes.rs`, `al-vm/src/ui.rs` |
 | ErrorInfo | `ErrorType()` before one was set is refused; `Error(ErrorInfo)` raises the message with no code for a client error and refuses `ErrorType::Internal`; the `Verbosity` order (Critical first) and `DataClassification` order are from the docs | errorinfo/TestErrorInfoType.al, TestErrorInfoErrorType.al | `al-builtins/src/errorinfo.rs`, `sysenum.rs` |
 | ErrorInfo | `ErrorInfo.Create` with 3 arguments (a record, no field number) and with 5 to 8 arguments (`PageNo`, `ControlName`, `Verbosity`, `DataClassification` in that order after `FieldNo`) is accepted, with the positions taken from the documented signature; the corpus pins only `Create()`, `Create(Message)`, `Create(Message, Collectible)` and `Create(Message, Collectible, Record, FieldNo)` (found by mutation testing: every comparison on the argument count survives) | errorinfo/TestErrorInfoType.al:405 pins the 4-argument form only | `al-builtins/src/errorinfo.rs` `create` |
 | Version | only `Evaluate(V, 'a.b.c.d')`, `Major`, `Minor`, `Build`, `Revision` and `Format` (`a.b.c.d`) exist; `Version.Create` and `ToText` are not implemented | session/TestMiscTypes.al:44-80, TestBCPlatformContracts.al:120-136 | `version.rs` |
@@ -288,6 +288,7 @@ comment as a corpus citation and is deleted here.
 | Text characters | `Text[i] := c` works for `i` up to one past the current length and within the declared length, `c` a character code below 65536 that is no surrogate; reading `Text[i]`, assigning into a Code, other positions are refused | handlers/TestPageFieldFormats_Tests.al:58-66 | `al-vm/src/lib.rs` `write_char` |
 | CurrFieldNo | `CurrFieldNo` is a property of the record a TestPage write validates: the field's number inside that field's OnValidate (and in what it calls on the same record), 0 for every other record and every other trigger; an OnValidate reached through `Rec.Validate` from code on a record nobody validates from a page reads 0; its use in code that has no implicit Rec is refused; the table-extension arm of the corpus needs Job (ADR-013) | handlers/TestPageCurrFieldNo_Tests.al | `records.rs` `CurrFieldNo`, `pages.rs` |
 
+| Random | `Random(N)` answers 1..N (the documented range) from one generator per session, `Randomize(seed)` replaces it with .NET's `new Random(seed)` (legacy Knuth generator), so a seeded sequence has the values .NET gives. Not pinned by any corpus test: `Random(0)` acts as 1, a negative bound as its absolute value, the number is `Next(bound) + 1` (all read from the service tier's `ALSystemNumeric`, not from a corpus test); `Random(-2147483648)` is REFUSED (BC overflows). Before any `Randomize` the generator is seeded with the host's `random_seed` (1), and `Randomize()` with no seed moves to the host's seed plus a per-session count: BC seeds from the clock, which AL sees only as the range (ADR-009, docs/owner-review.md). Probe wanted: see "Probe batch 4" | none (`corpus/scripts/al-surface.json` documents the range only) | `al-host/src/random.rs`, `al-vm/src/hostvalues.rs` |
 
 ### Registry members (ADR-014 section 1, owner decision 2026-10-14)
 
@@ -382,3 +383,53 @@ wanted on real BC.
 | TableFilter | `Format` of a TableFilter field nobody set is the empty text (assumed: Base App's Change Log Management formats it on every insert and 16 tests pass on BC; the text of a set filter is REFUSED) | permissions/TestMetadataExpandedPermission.al:219-235 | `al-builtins/src/format.rs` |
 | XmlPort | Declaring or holding an xmlport that has constructs no corpus test pins is fine; running it (Export, Import) is REFUSED: `FormatEvaluate`, a trigger on a container text element (one with child elements), `MinOccurs`, `MaxOccurs`, `Occurrence`, `SourceTableView` and other element properties, a request page. Probe wanted: `FormatEvaluate = Xml` on dates, decimals and booleans; `OnAfterAssignVariable` and `OnBeforePassVariable` on a container text element (Base App xmlport 1 has one); `Occurrence` and `MinOccurs` on import | handlers/TestReqPageBoundVisibility.al:172-188 reaches Base App xmlport 1 through a cancelled request page | `al-sema/src/xmlports.rs`, `al-vm/src/xmlports.rs` |
 | Query | A query's procedures run on the query they are called on, can call its methods unqualified and raise their own IntegrationEvents. REFUSED: query variables (persistence across calls), an OnBeforeOpen with statements (when it runs relative to the filters), several groups of an aggregated query with no OrderBy (a single group is fine). `DataAccessIntent` is taken as having no effect | query/TestQueryDataItemTableFilterDatabaseConst.al:96-136, handlers/TestManualObjectIntegrationEvent.al:69-89 | `al-sema/src/queries.rs`, `al-vm/src/queries.rs` |
+
+## Probe batch 4 (from Microsoft buckets)
+
+Gaps found by running Microsoft's BaseApp test buckets under `alrunner test` (2026-10-14, branch
+`bucket-misc`). Counts are tests refused over all 32 buckets before the change. Each stays refused until
+its probe is in the corpus. A probe is a corpus test that passes on real BC; the lines say what to
+measure.
+
+1. **`Random` and `Randomize`** (3027 tests; implemented on assumptions, see the `Random` row above).
+   Measure: `Randomize(1)` then `Random(100)`, `Random(1000)`, `Random(7)` (the implementation answers 25, 111, 4),
+   and `Randomize(42)` the same way (67, 141, 1);
+   `Random(0)`, `Random(-5)` (range), `Random(1)`; `Random(-2147483648)` (error text and code);
+   `Randomize(7)` twice with `Random(1000000)` between (equal); `Randomize()` twice (`Random(1000000)`
+   usually differs). Also `Randomize(-1)` against `Randomize(1)` and a seed of 0.
+2. **TestPage control kinds `cuegroup`, `fixed`, `grid`** (cuegroup 2419 over the buckets, 322 on
+   Tests-SMB; `fixed` and `grid` 2027 together). Nothing in the corpus declares one. Measure, on a
+   page with `cuegroup(CG) { field(F; Rec.X) { } actions { action(A) { } } }`: (a) does a TestPage
+   variable compile with `T.CG`, `T.F` and `T.A` (a group's fields are members, a cuegroup's may be
+   too); (b) `T.F.Value()`, `T.F.Visible()`, `T.F.Editable()`, `T.F.Caption()` with the cuegroup
+   `Visible = false` and with `Editable = false`; (c) the same on a part page whose part page holds
+   a cuegroup (`T.Part.F`), and a cuegroup holding an `actions` block with `Invoke`; (d) `CueGroupActions`;
+   (e) `fixed` and `grid` with a field inside: member names, `Visible`, and whether a `repeater`
+   inside `fixed` reads rows like a list.
+3. **`Notification`** (613 tests; `Send` and `Recall` implemented where pinned). Measure: `Send()` with
+   no `[SendNotificationHandler]` (error text and code); a handler returning `false`; `Recall()` of a
+   notification never sent; `Recall()` with a `[RecallNotificationHandler]` (signature, does it fire);
+   `Notification.Id` read before anyone set it (is it a non-empty Guid); `Message()` read before set;
+   the handler's changes to its `var Notification` (visible to the sender afterwards?).
+4. **`RecordRef.CurrentKeyIndex`** (892). Measure: default (primary key), after `SetCurrentKey` on the
+   first field of another declared key, on a field no key starts with, with `KeyIndex(n).FieldIndex(1)`
+   cross-checked; `Ascending(false)` effect. **`RecordRef.SetRecFilter`** (318): the same behaviour as
+   `Record.SetRecFilter` on the record the RecordRef holds (record/TestRecordFilter.al:373,
+   record/TestRecordViewCopyMarkContracts.al:41 pin the Record method)? Measure after `Get`, with other
+   filters on non-key fields kept, and with the primary key of two fields.
+5. **`Page.CancelBackgroundTask`** (750; a plain `Page` method, not reachable from a TestPage,
+   handlers/TestPageBgTask_Tests.al:294-304). Measure from a page trigger: `CurrPage.EnqueueBackgroundTask(id, ...)`
+   then `CurrPage.CancelBackgroundTask(id)` inside `OnOpenPage`, then open through a TestPage: does the
+   task's result trigger run; cancel of an id that does not exist or has finished (error?); cancel after
+   the completion trigger ran; return value (Boolean) of each.
+6. **Query `SqlJoinType = CrossJoin`** (524). Measure a query with a top-level item and a nested
+   `CrossJoin` item without `DataItemLink`: row count (product), order, with a static filter on either
+   side, a `CrossJoin` item with `DataItemLink` (compile error?), and with a Sum column.
+7. **`TableType = CRM`** (452). Stays refused: the table is served by a table connection
+   (session/TestDatabaseTableConnectionCrm.al:162-176 pins that, with the `@@test@@` connection string).
+   Measure what a record variable of such a table does that reads nothing: `Rec.Init`, `Rec.TableCaption`,
+   `Rec.IsEmpty` with no connection registered, and `RecordRef.Open` of it.
+8. **reportextension `addafter` / `addbefore` / `addfirst` of a data item** (304 refused; columns only are
+   now accepted as `add` is). Measure the order the data items run in (`OnAfterGetRecord` order)
+   when a data item is added after, before and first among siblings, and the order of columns in the
+   dataset a `SaveAs` writes.

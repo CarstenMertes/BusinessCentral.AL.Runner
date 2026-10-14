@@ -208,6 +208,12 @@ CRONUS company has none (`al-bcdb read ... --table "Service Hour"` lists no row)
 `CalcDate` leaves the date range in the year 9999. In Microsoft's pipeline the rows exist. The figures above
 leave the codeunit out by removing its file from a local copy of the bucket archive.
 
+A run no longer hangs on such a test: `alrunner test` stops a test that runs longer than `--test-timeout-secs`
+(default 20, 0 = no limit) at its next loop iteration and reports it as not run, with the limit as the reason.
+Measured here, the loop does about 7000 days per second (140 microseconds a day, `Calendar Management` builds
+temporary records each time), so the 2.7 million days to the year 9999 would take about 6 minutes per test and
+the codeunit has five such tests. Real BC would not be quick either (a database round trip per day).
+
 Causes of the failures that remain (68), by message:
 
 | Tests | Message | Cause |

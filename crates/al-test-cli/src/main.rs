@@ -427,6 +427,7 @@ fn run_version(
         // The corpus has no test data: its oracle is a database the cases fill themselves.
         test_data: None,
         compile_cache,
+        test_time_limit: None,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(

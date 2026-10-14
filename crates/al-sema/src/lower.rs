@@ -3444,6 +3444,14 @@ impl Lowerer<'_> {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
+        // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
+        // would answer the default value of the return type, which is not what the platform answers.
+        if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+            self.reasons.push(format!(
+                "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
+                r.name()
+            ));
+        }
         let field = r
             .syntax()
             .ancestors()
@@ -3773,7 +3781,10 @@ impl Lowerer<'_> {
                     // no receiver (as for the call form). A static member (`System.WorkDate`)
                     // has none.
                     let current_report = sig.receiver == "Report"
-                        && self.ws.objects[self.oi].kind == ObjKind::Report
+                        && matches!(
+                            self.ws.objects[self.oi].kind,
+                            ObjKind::Report | ObjKind::ReportExtension
+                        )
                         && recv.text().to_string().trim().eq_ignore_ascii_case("CurrReport");
                     if !sig.instance || current_report {
                         None
@@ -4723,7 +4734,10 @@ impl Lowerer<'_> {
                     Some(r)
                         if sig.instance
                             && sig.receiver == "Report"
-                            && self.ws.objects[self.oi].kind == ObjKind::Report
+                            && matches!(
+                                self.ws.objects[self.oi].kind,
+                                ObjKind::Report | ObjKind::ReportExtension
+                            )
                             && r.text().to_string().trim().eq_ignore_ascii_case("CurrReport") =>
                     {
                         None
@@ -4759,7 +4773,10 @@ impl Lowerer<'_> {
                         .get(i)
                         .or_else(|| sig.params.last().filter(|p| p.variadic))
                         .ok_or("too many arguments")?;
-                    if let Ty::DotNet(alias) = self.ty_of(a) {
+                    // `Clear(X)` of a declared DotNet variable goes by place like any other variable.
+                    let clears_dotnet =
+                        id == "System.Clear#1" && matches!(self.ty_of(a), Ty::DotNet(ref al) if !al.is_empty());
+                    if let (false, Ty::DotNet(alias)) = (clears_dotnet, self.ty_of(a)) {
                         // `IsNull(DotNet)` takes the value as it is. A `Variant` parameter takes a
                         // primitive, an object or an enum as it is (`Format` of an object is its
                         // `ToString()`). A scalar parameter takes a DotNet result (no static type)
@@ -5613,6 +5630,27 @@ codeunit 50101 C2
         assert_eq!(l.unsupported[oi][0], Vec::<String>::new());
         let dump = format!("{:?}", r.body);
         assert!(dump.contains("DotNetCoerce(Text(None)"), "{dump}");
+    }
+
+    // A `[Native]` procedure of a platform app has an empty AL body: the service tier implements it. Running
+    // the empty body would answer the default value (the corpus run showed `Agent Utilities.IsAgentSession`
+    // deciding every session is an agent session, because the native `GetCurrentSessionAgentMetadataProviderType`
+    // "returned" 0 instead of -1). Such a routine is refused when it runs.
+    #[test]
+    fn a_native_procedure_with_an_empty_body_is_refused() {
+        let (_, l) = lower_src(
+            "codeunit 50100 C { [Native] procedure Kind(): Integer begin end; procedure Other(): Integer begin exit(1); end; }",
+        );
+        let (ki, _) = routine(&l, "Kind");
+        assert!(
+            l.unsupported[0][ki]
+                .iter()
+                .any(|r| r.contains("Native") && r.contains("Kind")),
+            "{:?}",
+            l.unsupported[0][ki]
+        );
+        let (oi, _) = routine(&l, "Other");
+        assert!(l.unsupported[0][oi].is_empty());
     }
 
     // ADR-024: a DotNet result used as an operand is settled when the code runs. The comparison with

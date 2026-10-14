@@ -897,6 +897,12 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | Tenant License State | `DeleteAll` raises the pinned error; the single-record `Delete` is not pinned and runs as an ordinary delete | `Delete` of one row | `records.rs` |
 | User Personalization | The row's Profile ID is `BUSINESS MANAGER` (the probe pins only "not blank"); Company, Time Zone and the rest are blank | The row's Profile ID, Company and Time Zone in the test runner session | `platform/seed.rs` |
 
+## An array argument smaller than its parameter (issue 18)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `var Rows: array[9] of ...` called with an `array[2]` variable | The compiler accepts it (Tests-ERM codeunit 134831, `CreateDimensionsWithNineValues(DimensionValue)` with `DimensionValue: array[2] of Record "Dimension Value"`). The runtime shares the argument's cells, so an element beyond the argument has no storage. Refused when it is touched (`ArrayLen(Rows)` still answers the parameter's 9). What BC answers (an index error, or a copy of the declared size) is not pinned | REFUSED. Probe wanted: a procedure with `var A: array[3] of Integer` called with an `array[2] of Integer`, with `ArrayLen(A)`, a read and a write of `A[3]`, and a call by value |
+
 ## AutoFormatType of a decimal control (issue 17)
 
 | Area | Assumption | Probe wanted |
@@ -920,3 +926,8 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | InStream.Read(Text, Length) | Pinned only for a Windows-encoded stream and bytes outside 128 to 159 | Reading those bytes, and a UTF-8 stream | `stream.rs` |
 | SetFilter %1 | A text with `>` or `"`, or with a wildcard together with `& | ( ) < =` or `..`, is still refused | Those texts through `SetFilter` and `GetFilter` | `filter.rs`, `views.rs` |
 | Query ReadState | `ReadUncommitted` is accepted; other values refuse the query | Not needed on runtime 16 | `al-sema/queries.rs` |
+## Clear of a DotNet variable (ADR-024 follow-up)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `Clear(X)` with `X: DotNet T` | An unassigned variable stays unassigned (any reading agrees). A variable that holds an object is REFUSED when the line runs: whether BC calls `Dispose` on the object, and so whether a wrapped stream is flushed or closed, is not pinned. No corpus test and no probe covers it (the DotNet probe app, codeunit 61400, has none). | In the OnPrem DotNet probe app: `Writer := Writer.StreamWriter(OutStream)`, `Writer.Write('x')`, `Clear(Writer)`, then read the blob (flushed or empty); and `Memory := Memory.MemoryStream()`, keep a second variable `Other := Memory`, `Clear(Memory)`, then `Other.CanWrite` (disposed or not). |

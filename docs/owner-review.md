@@ -191,6 +191,17 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
+- 2026-10-14, ADR-019: a column of a platform table that no corpus test pins is refused where code names it
+  (at lowering), not filled with a default.
+- 2026-10-14, ADR-019: package ids are a function of the app id (not empty, one per app, different between apps);
+  objects of the platform app have none.
+- 2026-10-14, ADR-019: the default host lists five Windows time zones; Windows Language holds three rows (1031,
+  1033, 2057) and refuses a read that needs any other id up to 65535.
+- 2026-10-14, ADR-019: a `Get` whose result is used, in dependency code, on a table the install baseline could not seed, is refused like the raising form (the order in `records.rs` `fail`).
+- 2026-10-14, ADR-019: the session seeds the Company (`My Company`), the User (`TESTUSER`) and the SUPER Access
+  Control row when it starts, as ordinary stored rows. The install baseline branch must not seed them again.
+- 2026-10-14, ADR-019: Page Metadata and Page Control Field spellings the corpus does not pin (declared
+  `Visible`/`Enabled`/`Editable` in lower case, `SourceTableView` only for one `where(f = const(v))`).
 - 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
   `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
 - 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that

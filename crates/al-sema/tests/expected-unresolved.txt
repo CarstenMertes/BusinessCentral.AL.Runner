@@ -1,45 +1,15 @@
    1 unresolved codeunit `Azure AD Plan Test Library`
    8 unresolved codeunit `Permissions Mock`
-   1 unresolved enum `EventCategory`
-   1 unresolved table `Access Control`
-  11 unresolved table `Active Session`
-  15 unresolved table `Aggregate Permission Set`
   21 unresolved table `All Profile`
-  25 unresolved table `AllObjWithCaption`
-  20 unresolved table `AllObj`
    4 unresolved table `Code Coverage Test Lookup`
    6 unresolved table `Code Coverage Tests Run`
    9 unresolved table `Code Coverage`
-  34 unresolved table `CodeUnit Metadata`
-  13 unresolved table `Company`
-  28 unresolved table `Date`
    7 unresolved table `Event Subscription`
-  26 unresolved table `Expanded Permission`
    5 unresolved table `Feature Key`
-  23 unresolved table `Field`
-  10 unresolved table `Integer`
-   6 unresolved table `Key`
-  18 unresolved table `Metadata Permission Set`
-   6 unresolved table `Metadata Permission`
-   9 unresolved table `NAV App Installed App`
    9 unresolved table `Page Action`
-  22 unresolved table `Page Control Field`
-  12 unresolved table `Page Metadata`
-  11 unresolved table `Permission Set`
-   4 unresolved table `Permission`
    8 unresolved table `Query Metadata`
-  26 unresolved table `Record Link`
   10 unresolved table `Report Data Items`
   13 unresolved table `Report Layout List`
    5 unresolved table `Report Metadata`
-  12 unresolved table `Session`
-  12 unresolved table `Table Metadata`
    7 unresolved table `Table Relations Metadata`
-   1 unresolved table `Tenant Media`
-  10 unresolved table `Tenant Permission Set`
-   9 unresolved table `Tenant Permission`
-   7 unresolved table `Time Zone`
-   2 unresolved table `User Personalization`
-   5 unresolved table `User`
-   7 unresolved table `Windows Language`
   11 unresolved table `XmlPort Metadata`

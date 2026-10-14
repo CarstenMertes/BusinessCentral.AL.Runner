@@ -143,6 +143,13 @@ pub struct Object {
     /// For reportextensions that change what a run does: the triggers and data items they add.
     #[serde(default)]
     pub report_ext: Option<ReportExt>,
+    /// The namespace the object is declared in.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// For an extension object: the id of the object it extends, when that object is in the
+    /// workspace (the metadata tables report it).
+    #[serde(default)]
+    pub extends_id: Option<u32>,
 }
 
 /// A report as the runtime sees it: processing only, with no layout.
@@ -531,6 +538,10 @@ pub struct Table {
     pub keys: Vec<Vec<usize>>,
     /// `Unique = true` per key (parallel to `keys`).
     pub unique_keys: Vec<bool>,
+    /// The properties of each key as written (`Clustered`, `Enabled`, `SumIndexFields`, ...),
+    /// parallel to `keys`; empty for a key the compiler adds.
+    #[serde(default)]
+    pub key_props: Vec<Vec<(String, String)>>,
     pub per_company: bool,
     /// Object index of each table extension (their triggers are not run yet).
     pub extensions: Vec<usize>,
@@ -919,6 +930,8 @@ mod tests {
                 xmlport: None,
                 report: None,
                 report_ext: None,
+                namespace: None,
+                extends_id: None,
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

@@ -112,9 +112,6 @@ impl Session {
     /// Message texts: docs/probes-needed.md (the corpus pins 'already exists'
     /// and 'does not exist' fragments only).
     fn fail(&mut self, t: &TableDef, fields: &[Value], exists: bool) -> Result<Value, Signal> {
-        if self.ret_used {
-            return Ok(Value::Boolean(false));
-        }
         // A dependency app's code reads rows (setup records, mostly) that installing the app and
         // initialising a company create. Where the install baseline could not create them
         // (ADR-013 decision 5), a missing row there is not BC's answer: refuse rather than
@@ -124,6 +121,9 @@ impl Session {
                 "{} not found in code of a dependency app: the rows its install and Company-Initialize create could not be created (ADR-013 decision 5)",
                 t.name
             ));
+        }
+        if self.ret_used {
+            return Ok(Value::Boolean(false));
         }
         let identification = self.identification(t, fields)?;
         let (message, code) = if exists {
@@ -1509,6 +1509,7 @@ impl Session {
                     RenameOutcome::Renamed => {
                         if !same_key {
                             self.propagate_rename(&t, &refs, &old_fields, &row)?;
+                            self.move_record_links(&t, rec, &old_fields)?;
                         }
                         self.run_ext_trigger(&t, "OnAfterRename", rec, Some(&xrec))?;
                         self.table_event(&t, "onafterrenameevent", rec, Some(&xrec), true, None)?;

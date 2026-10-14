@@ -515,7 +515,8 @@ bump.
 7. **Event Subscription, "Subscriber Instance" (12), "Active Manual Instances" (13), "Number of Calls" (8),
    "Error Information" (9)**, 11. Measure for a static subscriber, a `Manual` one with and without `BindSubscription`.
 8. **Page Control Field, Sequence (11)**, 12. Measure the numbers of three fields in declaration order, and of a field in a group.
-9. **Permission, "Security Filter" (11)**, 3, and **All Profile, "Disable Personalization" (13)**, 1.
+9. **Permission, "Security Filter" (11)**, 3; **Metadata Permission, column 14**, 10; **All Profile, "Disable Personalization" (13)**, 1;
+    **Published Application, Description (15, a Blob)**, 1.
 10. **Tables with no provider** (reads and writes of their persistent rows are refused; a temporary record works):
     Object Options 43, Tenant License State 19 (also stops the install of Copilot, Entity Text and No. Series Copilot),
     Document Service 4, Tenant Report Layout Selection 2, and one test each for Media Resources, Privacy Notice,

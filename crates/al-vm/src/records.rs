@@ -255,8 +255,7 @@ impl Session {
         rec: &Rec,
         xrec: &Rec,
         field: &al_ir::Field,
-        pos: usize,
-        old_value: Value,
+        snapshot: Vec<Value>,
     ) -> Result<(), Signal> {
         // Before event (Rec holds the new value, xRec the old row), the field's OnValidate,
         // After event: record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable.
@@ -276,11 +275,13 @@ impl Session {
         }
         if let Some((object, routine)) = field.on_validate {
             if let Err(e) = self.run_trigger(object, routine, rec, Some(xrec)) {
-                // The field is back at its old value when its OnValidate raises
-                // (record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
-                // Only the validated field is pinned; other changes stay.
+                // The whole record is back at its values from before the Validate when the
+                // field's OnValidate raises, not only the validated field (corpus branch
+                // al-runtime-rs, pending push: record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
+                // Validate_ThatRaises_RestoresTheWholeRecord; the validated field alone:
+                // record/TestTriggerRollback.al:OnValidate_Throws_FieldValueRolledBack).
                 if matches!(e, Signal::Error(_)) {
-                    rec.borrow_mut().fields[pos] = old_value;
+                    rec.borrow_mut().fields = snapshot;
                 }
                 return Err(e);
             }
@@ -518,6 +519,11 @@ impl Session {
     /// Gives the row its SystemId: the one in the buffer when `keep` (`Insert(_, true)`) and it is
     /// set, otherwise a fresh one (corpus record/TestRecordInsert.al:84-110).
     fn assign_system_id(&mut self, t: &TableDef, rec: &Rec, keep: bool) {
+        // A temporary record has no SystemId: it stays the null Guid (corpus branch al-runtime-rs,
+        // pending push: record/TestSystemFieldStampsContracts.al:TemporaryRecord_HasNoStampsAndNoSystemId).
+        if rec.borrow().temporary {
+            return;
+        }
         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) {
             let mut r = rec.borrow_mut();
             let unset = matches!(r.fields[i], Value::Guid(g) if g == [0; 16]);
@@ -575,6 +581,27 @@ impl Session {
         }
     }
 
+    /// Whether `row` passes the record's filters (every group), its FlowField filters and
+    /// MarkedOnly.
+    fn row_passes(&mut self, rec: &Rec, t: &TableDef, row: &[Value]) -> Result<bool, Signal> {
+        let (filters, flow_field_filters) = self.split_filters(rec);
+        if filters.iter().any(|f| !f.expr.matches(&row[f.field])) {
+            return Ok(false);
+        }
+        if rec.borrow().marked_only && !Self::is_marked(rec, t, row) {
+            return Ok(false);
+        }
+        if flow_field_filters.is_empty() {
+            return Ok(true);
+        }
+        self.passes_flow_field_filters(rec, row, &flow_field_filters)
+    }
+
+    /// Whether the record last read the row with primary key `pk` (see `RecordState::position`).
+    fn on_own_row(rec: &Rec, pk: &[Value]) -> bool {
+        rec.borrow().position.as_deref().is_some_and(|p| ops::compare_keys(p, pk))
+    }
+
     fn is_marked(rec: &Rec, t: &TableDef, row: &[Value]) -> bool {
         let pk = t.primary_key(row);
         rec.borrow()
@@ -605,11 +632,11 @@ impl Session {
         }
         let shown = al_builtins::format::try_format(&id, 0, 0, self).map_err(Signal::Unsupported)?;
         Err(Signal::Error(AlError {
+            // corpus branch al-runtime-rs (pending push): record/TestSystemFieldStampsContracts.al:
+            // SystemId_Duplicate_And_ModifyAll_Texts (the caption of the field is "System ID").
             message: format!(
-                "There is already a record in table {} that has the same values in a unique index. \
-                 The conflict is in the following fields: {}='{}'.",
+                "There is already a record in table {} that has the same values in a unique index for the following fields: System ID='{}'",
                 self.caption(t),
-                self.field_caption(t, i),
                 shown
             ),
             code: "DB:RecordExists".into(),
@@ -643,7 +670,12 @@ impl Session {
             });
             r.load.partial = false;
         }
-        rec.borrow_mut().fields = row;
+        let pk = self.table(rec).map(|t| t.primary_key(&row))?;
+        {
+            let mut r = rec.borrow_mut();
+            r.position = Some(pk);
+            r.fields = row;
+        }
         self.auto_calculate(rec)
     }
 
@@ -939,8 +971,13 @@ impl Session {
                                     t.name
                                 ));
                             }
-                            if let Err(Signal::Error(e)) = self.fail(&t, &row, true) {
-                                self.deferred_insert.get_or_insert((t.object as usize, e));
+                            match self.fail(&t, &row, true) {
+                                Err(Signal::Error(e)) => {
+                                    self.deferred_insert.get_or_insert((t.object as usize, e));
+                                }
+                                // A key whose format is not pinned stays a refusal.
+                                Err(other) => return Err(other),
+                                Ok(_) => {}
                             }
                             return Ok(Value::Boolean(true));
                         }
@@ -1132,46 +1169,58 @@ impl Session {
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
                     "+" => self.scan(rec, &t, !asc, None)?,
-                    // How '=' combines the key with active filters is only partly pinned
-                    // (OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow vs
-                    // OwnFilter_SecondVarWithTheSameFilter_FindDoesNotFindTheRow): docs/probes-needed.md.
-                    "=" if !rec.borrow().filters.is_empty() => return unsupported("Find('=') with active filters"),
+                    // Every form honours the active filters (corpus branch al-runtime-rs, pending push:
+                    // record/TestFilterTextBooleanFindContracts.al:Find_AllForms_HonourTheActiveFilters).
+                    // The one exception: a record that moved its own row out of its filter still
+                    // finds the row by its key, while a second variable with the old filter does
+                    // not (record/TestFindSetSortKeyModify.al:OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow
+                    // against OwnFilter_SecondVarWithTheSameFilter_FindDoesNotFindTheRow). A record
+                    // remembers the key of the row it last read as its position.
                     "=" => {
                         let pk = t.primary_key(&rec.borrow().fields);
-                        self.store_for(rec)
+                        let row = self
+                            .store_for(rec)
                             .get(&cx, &t, &pk)
-                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                        match row {
+                            Some(row) if self.row_passes(rec, &t, &row)? || Self::on_own_row(rec, &pk) => Some(row),
+                            _ => None,
+                        }
                     }
-                    // `=>`, `=<` and `=><`: the row itself, else its neighbour. Pinned for a row that is gone
-                    // from a table nothing filters, by the page client asking an OnFindRecord trigger
-                    // (corpus pageupdate/TestPageUpdateGoneRow.al:423 List_DeletedByAction_PassThroughFind_*);
-                    // with filters, or another current key, how they combine is not pinned.
-                    w @ ("=>" | "=<" | "=><") => {
-                        if !rec.borrow().filters.is_empty() || rec.borrow().key != 0 {
-                            return unsupported(format!("Find('{w}') with active filters or another current key"));
+                    // `>` and `<`: the first row past the buffer's position in the current key.
+                    ">" | "<" => {
+                        let key = rec.borrow().key;
+                        let pos = position(&t, key, &rec.borrow().fields);
+                        self.scan(rec, &t, (which == ">") == asc, Some(pos))?
+                    }
+                    // `>=`, `<=` and `=><` (also written `=>`, `=<`): the row itself, else its
+                    // neighbour. Pinned for a row that is gone from a table nothing filters, by the page
+                    // client asking an OnFindRecord trigger (corpus pageupdate/TestPageUpdateGoneRow.al:423
+                    // List_DeletedByAction_PassThroughFind_*) and, with filters, by the probe above for
+                    // `>=`; another current key is not pinned.
+                    w @ (">=" | "<=" | "=>" | "=<" | "=><") => {
+                        if rec.borrow().key != 0 {
+                            return unsupported(format!("Find('{w}') with another current key"));
                         }
                         let pk = t.primary_key(&rec.borrow().fields);
                         let exact = self
                             .store_for(rec)
                             .get(&cx, &t, &pk)
                             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                        let exact = match exact {
+                            Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
+                            _ => None,
+                        };
                         match exact {
                             Some(row) => Some(row),
                             None => {
                                 let pos = position(&t, 0, &rec.borrow().fields);
-                                let next = if w == "=<" {
-                                    None
-                                } else {
-                                    self.scan(rec, &t, asc, Some(pos.clone()))?
-                                };
-                                let prev = if w == "=>" {
-                                    None
-                                } else {
-                                    self.scan(rec, &t, !asc, Some(pos))?
-                                };
+                                let up = matches!(w, ">=" | "=>" | "=><");
+                                let down = matches!(w, "<=" | "=<" | "=><");
+                                let next = if up { self.scan(rec, &t, asc, Some(pos.clone()))? } else { None };
+                                let prev = if down { self.scan(rec, &t, !asc, Some(pos))? } else { None };
                                 match (next, prev) {
-                                    (Some(n), Some(_)) if w == "=><" => {
-                                        let _ = n;
+                                    (Some(_), Some(_)) if w == "=><" => {
                                         return unsupported(
                                             "Find('=><') with a row on either side (which one BC picks is not pinned)",
                                         );
@@ -1268,8 +1317,25 @@ impl Session {
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                 let engine = self.engine.clone();
                 let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
-                let expr = al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
-                    .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?;
+                let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
+                    Ok(e) => e,
+                    // corpus branch al-runtime-rs (pending push): record/TestFilterTextBooleanFindContracts.al:
+                    // SetFilter_BooleanField_UnknownWord_Throws.
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
+                        let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
+                        return Err(Signal::Error(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{word}\" can't be evaluated into type Boolean.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                        }));
+                    }
+                    Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),
+                };
                 let mut r = rec.borrow_mut();
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
@@ -1321,6 +1387,7 @@ impl Session {
                     .map(|(_, b)| b.clone());
                 let before = outer.clone().unwrap_or_else(|| rec.borrow().fields.clone());
                 let old_value = rec.borrow().fields[pos].clone();
+                let snapshot = rec.borrow().fields.clone();
                 let new_value = match args.get(1) {
                     Some(v) => Some(ops::convert(v.clone(), &field.ty)?),
                     None => None,
@@ -1335,7 +1402,7 @@ impl Session {
                 if outer.is_none() {
                     self.validating.push((handle, before));
                 }
-                let r = self.validate_hooks(&t, rec, &xrec, &field, pos, old_value);
+                let r = self.validate_hooks(&t, rec, &xrec, &field, snapshot);
                 if outer.is_none() {
                     self.validating.pop();
                 }

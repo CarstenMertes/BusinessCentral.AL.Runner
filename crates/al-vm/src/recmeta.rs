@@ -162,7 +162,8 @@ impl Session {
                 let at = rec.borrow().marks.iter().position(|m| ops::compare_keys(m, &pk));
                 match args.first() {
                     None => Ok(Value::Boolean(at.is_some())),
-                    Some(_) if self.ret_used => unsupported("a used result of Mark(SetMark) (not pinned)"),
+                    // Mark(SetMark) returns the new state (corpus branch al-runtime-rs, pending push:
+                    // record/TestRecordViewCopyMarkContracts.al:Mark_ReturnsTheNewState).
                     Some(v) => {
                         let want = ops::truthy(v)?;
                         let mut r = rec.borrow_mut();
@@ -173,7 +174,7 @@ impl Session {
                             }
                             _ => {}
                         }
-                        Ok(Value::Null)
+                        Ok(Value::Boolean(want))
                     }
                 }
             }
@@ -362,18 +363,14 @@ impl Session {
                 }
                 Ok(Value::Integer(r.filter_group))
             }
-            // Doc (Record.SetRecFilter): filters the primary key fields to the current values. Whether
-            // filters on other fields are kept is not pinned, so they refuse.
+            // Doc (Record.SetRecFilter): filters the primary key fields to the current values; the
+            // filters on other fields stay (corpus branch al-runtime-rs, pending push:
+            // record/TestRecordViewCopyMarkContracts.al:SetRecFilter_KeepsFiltersOnOtherFields_...).
             "SetRecFilter" => {
                 let group = rec.borrow().filter_group;
                 let pk = &t.keys[0];
-                if rec.borrow().filters.iter().any(|f| !pk.contains(&f.field)) {
-                    return unsupported(
-                        "SetRecFilter with filters on other fields (whether they are kept is not pinned)",
-                    );
-                }
                 let mut r = rec.borrow_mut();
-                r.filters.retain(|f| !pk.contains(&f.field));
+                r.filters.retain(|f| !(pk.contains(&f.field) && f.group == group));
                 for &p in pk {
                     let v = r.fields[p].clone();
                     r.filters.push(al_builtins::filter::FieldFilter {
@@ -412,8 +409,14 @@ impl Session {
                     return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
                 }
                 let mut d = rec.borrow_mut();
-                if s.temporary && !d.temporary {
-                    return unsupported("Copy from a temporary record onto a normal one (not pinned)");
+                // shareTable needs both records temporary; a plain Copy of a temporary record onto
+                // a normal one copies values and filters only (corpus branch al-runtime-rs, pending
+                // push: record/TestRecordViewCopyMarkContracts.al:Copy_ShareTable_RequiresBothRecordsToBeTemporary).
+                if share && !(s.temporary && d.temporary) {
+                    return Err(error(
+                        "The COPY function can only be used with the shareTable argument set to true if both records are temporary.".into(),
+                        "Argument",
+                    ));
                 }
                 d.fields = s.fields;
                 d.filters = s.filters;
@@ -640,8 +643,15 @@ impl Session {
         let pos = arg_pos(args, 0)?;
         if t.fields[pos].id == 2_000_000_000 {
             // Wording after the pinned fragment: record/TestRecordSystemId.al:230-262, docs/probes-needed.md.
+            // corpus branch al-runtime-rs (pending push): record/TestSystemFieldStampsContracts.al:
+            // SystemId_Duplicate_And_ModifyAll_Texts.
             return Err(error(
-                "ModifyAll cannot change the value of the SystemId field.".into(),
+                format!(
+                    "You cannot change the value of the SystemId field.{}{}Table: {}",
+                    crate::records::BR,
+                    crate::records::BR,
+                    self.caption(t)
+                ),
                 "Dialog",
             ));
         }

@@ -322,9 +322,11 @@ fn getview_setview_round_trip_and_setrecfilter() {
         end;",
         "F",
     );
+    // GetView starts with VERSION(1); without names the filter kind is a number (corpus
+    // record/TestRecordRuntimeTextsAndViews.al:Record_GetView_And_GetFilters_Texts).
     assert_eq!(
         text(r),
-        "YesYes3SORTING(Field1) WHERE(Field3=FILTER(2..4))|1".to_string() + "5Yes"
+        "YesYes3VERSION(1) SORTING(Field1) WHERE(Field3=1(2..4))|1".to_string() + "5Yes"
     );
 }
 
@@ -376,16 +378,15 @@ fn filter_groups_combine_as_and_and_reset_clears_all() {
     assert_eq!(text(r), "02|1..3||3|22..5|5");
 }
 
+// SetRecFilter keeps the filters on other fields (corpus branch al-runtime-rs, pending push:
+// record/TestRecordViewCopyMarkContracts.al:SetRecFilter_KeepsFiltersOnOtherFields_...).
 #[test]
-fn setrecfilter_with_a_filter_on_another_field_is_refused_not_guessed() {
+fn setrecfilter_keeps_a_filter_on_another_field() {
     let r = run(
-        "procedure F() var R: Record \"ALT T\"; begin R.SetRange(Grp, 1); R.\"No.\" := 'A'; R.SetRecFilter(); end;",
+        "procedure F(): Text var R: Record \"ALT T\"; begin R.SetRange(Grp, 1); R.\"No.\" := 'A'; R.SetRecFilter(); exit(R.GetFilters()); end;",
         "F",
     );
-    assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("SetRecFilter")),
-        "{r:?}"
-    );
+    assert_eq!(text(r), "No.: A, Grp: 1");
 }
 
 #[test]
@@ -463,13 +464,15 @@ fn a_refused_write_hands_the_buffer_no_row_version() {
         "procedure F(): Text var R: Record \"ALT T\"; D: Record \"ALT T\"; begin
             R.\"No.\" := 'A'; R.Insert();
             D.\"No.\" := 'A';
-            D.Insert();
+            asserterror begin D.Insert(); R.Count(); end;
             exit(Format(D.SystemRowVersion));
         end;",
         "F",
     );
-    // Insert() without using the result raises on a duplicate; the buffer stays at 0.
-    assert!(matches!(r, Err(Signal::Error(_))), "{r:?}");
+    // Insert() without using the result fails at the next access of the table (the table has no
+    // Blob field: corpus record/TestRecordRuntimeTextsAndViews.al:Record_Insert_DuplicateKey_
+    // WithoutBlobField_IsDeferred_...); the buffer stays at 0.
+    assert_eq!(text(r), "0");
     let r = run(
         "procedure F(): BigInteger var R: Record \"ALT T\"; D: Record \"ALT T\"; begin
             R.\"No.\" := 'A'; R.Insert();
@@ -654,7 +657,7 @@ fn positions_round_trip_and_set_position_restores_the_key_fields() {
         end;",
         "F",
     );
-    assert_eq!(text(r), "No.=CONST(K1)|Field1=CONST(K1)|K16/5");
+    assert_eq!(text(r), "No.=CONST(K1)|Field1=0(K1)|K16/5");
 }
 
 #[test]

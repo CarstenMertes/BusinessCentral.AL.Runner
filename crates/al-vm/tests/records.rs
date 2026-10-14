@@ -92,9 +92,10 @@ fn init_applies_initvalue_and_keeps_the_primary_key() {
 #[test]
 fn duplicate_insert_raises_or_returns_false() {
     let r = run(
-        "procedure F(): Text var R: Record \"ALT T\"; begin R.\"No.\" := 'a'; R.Insert(); asserterror R.Insert(); exit(GetLastErrorText()); end;",
+        "procedure F(): Text var R: Record \"ALT T\"; begin R.\"No.\" := 'a'; R.Insert(); asserterror begin R.Insert(); R.Count(); end; exit(GetLastErrorText()); end;",
         "F",
     );
+    // The failure of an unguarded duplicate Insert comes out at the next access of the table.
     assert!(text(r).contains("already exists"));
     let r = run(
         "procedure F(): Boolean var R: Record \"ALT T\"; begin R.\"No.\" := 'a'; R.Insert(); exit(R.Insert()); end;",
@@ -327,13 +328,15 @@ fn find_without_argument_is_find_equal_by_primary_key() {
     assert_eq!(text(r), "Yes1");
 }
 
+// Find honours the active filters; a key typed by hand outside the filter is not found (corpus
+// branch al-runtime-rs, pending push: record/TestFilterTextBooleanFindContracts.al).
 #[test]
-fn find_equal_with_filters_is_not_guessed() {
+fn find_equal_honours_the_filters() {
     let r = run(
         "procedure F(): Boolean var R: Record \"ALT T\"; begin R.\"No.\" := 'A'; R.Insert(); R.SetRange(Grp, 1); exit(R.Find()); end;",
         "F",
     );
-    assert!(matches!(r, Err(Signal::Unsupported(_))));
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
 
 #[test]

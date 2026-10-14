@@ -482,7 +482,13 @@ mod tests {
             let e = parse(bad).unwrap_err();
             assert!(e.contains("take no field"), "{bad}: {e}");
         }
-        for bad in ["sum(T)", "lookup(T where(A = field(B)))", "min(T)", "max(T)", "average(T)"] {
+        for bad in [
+            "sum(T)",
+            "lookup(T where(A = field(B)))",
+            "min(T)",
+            "max(T)",
+            "average(T)",
+        ] {
             let e = parse(bad).unwrap_err();
             assert!(e.contains("needs a source field"), "{bad}: {e}");
         }
@@ -503,5 +509,4 @@ mod tests {
         // A quoted name is never the function, even with parentheses after it.
         assert!(parse("sum(T.F where(A = field(\"upperlimit\"(X))))").is_err());
     }
-
 }

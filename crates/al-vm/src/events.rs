@@ -385,11 +385,12 @@ mod tests {
             ("Tbl", "ont"),
             ("Cu", "onc"),
         ] {
-            let target = reg
-                .subscribers
-                .keys()
-                .find(|(_, e)| e == event)
-                .unwrap_or_else(|| panic!("no subscriber for {name}: {:?}", reg.subscribers.keys().collect::<Vec<_>>()));
+            let target = reg.subscribers.keys().find(|(_, e)| e == event).unwrap_or_else(|| {
+                panic!(
+                    "no subscriber for {name}: {:?}",
+                    reg.subscribers.keys().collect::<Vec<_>>()
+                )
+            });
             assert_eq!(reg.subscribers[target].len(), 1, "{name}");
         }
     }
@@ -413,5 +414,4 @@ mod tests {
         );
         assert!(!table.has_global_triggers);
     }
-
 }

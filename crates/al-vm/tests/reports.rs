@@ -1247,12 +1247,15 @@ fn an_empty_extension_changes_nothing() {
 // with a request page, and UseRequestPage(false) anywhere, it is accepted.
 #[test]
 fn use_request_page_true_is_refused_only_on_a_report_that_declares_false() {
-    let why = refusal(
-        "var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(true); exit('set'); end;",
+    let why = refusal("var R: Report \"TxRpt Plain Marker\"; begin R.UseRequestPage(true); exit('set'); end;");
+    assert!(
+        why.contains("UseRequestPage(true) on a report declaring UseRequestPage = false"),
+        "{why}"
     );
-    assert!(why.contains("UseRequestPage(true) on a report declaring UseRequestPage = false"), "{why}");
     assert_eq!(
-        f("var R: Report \"TxRpt ReqPage Marker\"; begin R.UseRequestPage(true); R.UseRequestPage(false); exit('set'); end;"),
+        f(
+            "var R: Report \"TxRpt ReqPage Marker\"; begin R.UseRequestPage(true); R.UseRequestPage(false); exit('set'); end;"
+        ),
         "set"
     );
     assert_eq!(
@@ -1264,17 +1267,12 @@ fn use_request_page_true_is_refused_only_on_a_report_that_declares_false() {
 // Execute takes only the empty parameter string and no RecordRef (record/TestTxModelReportExec.al:138-211).
 #[test]
 fn execute_with_parameters_or_a_record_ref_is_refused() {
-    let why = refusal(
-        "var R: Report \"TxRpt Plain Marker\"; begin R.Execute('<xml/>'); exit('ran'); end;",
-    );
+    let why = refusal("var R: Report \"TxRpt Plain Marker\"; begin R.Execute('<xml/>'); exit('ran'); end;");
     assert!(why.contains("only '' is pinned"), "{why}");
-    let why = refusal(
-        "var R: Report \"TxRpt Plain Marker\"; RR: RecordRef; begin R.Execute('', RR); exit('ran'); end;",
-    );
+    let why =
+        refusal("var R: Report \"TxRpt Plain Marker\"; RR: RecordRef; begin R.Execute('', RR); exit('ran'); end;");
     assert!(why.contains("RecordRef"), "{why}");
-    let why = refusal(
-        "begin Report.Execute(Report::\"TxRpt Plain Marker\", '<xml/>'); exit('ran'); end;",
-    );
+    let why = refusal("begin Report.Execute(Report::\"TxRpt Plain Marker\", '<xml/>'); exit('ran'); end;");
     assert!(why.contains("only '' is pinned"), "{why}");
 }
 
@@ -1297,9 +1295,8 @@ fn a_report_variable_is_cleared_after_run() {
 // Only the call straight from OnInitReport is pinned for CurrReport.Quit.
 #[test]
 fn quit_outside_oninitreport_is_refused() {
-    let why = refusal(
-        "var H: Codeunit Helpers; R: Report \"MX Quit In Pre\"; begin H.Seed(); R.Run(); exit('ran'); end;",
-    );
+    let why =
+        refusal("var H: Codeunit Helpers; R: Report \"MX Quit In Pre\"; begin H.Seed(); R.Run(); exit('ran'); end;");
     assert!(why.contains("outside the OnInitReport trigger"), "{why}");
 }
 

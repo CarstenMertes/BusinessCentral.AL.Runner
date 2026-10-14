@@ -349,17 +349,29 @@ mod tests {
         let day = day_from_civil(2024, 3, 7);
         let last = (i64::from(day) - 1) * 86_400_000 + 86_399_999 + 1;
         assert_eq!(
-            text(fmt(Value::DateTime(last), "<Year4>-<Month,2>-<Day,2> <Hours24,2>:<Minutes,2>:<Seconds,2>")),
+            text(fmt(
+                Value::DateTime(last),
+                "<Year4>-<Month,2>-<Day,2> <Hours24,2>:<Minutes,2>:<Seconds,2>"
+            )),
             "2024-03-07 23:59:59"
         );
         // The first millisecond of the day is 00:00:00.
         let first = (i64::from(day) - 1) * 86_400_000 + 1;
         assert_eq!(
-            text(fmt(Value::DateTime(first), "<Day,2> <Hours24,2>:<Minutes,2>:<Seconds,2>")),
+            text(fmt(
+                Value::DateTime(first),
+                "<Day,2> <Hours24,2>:<Minutes,2>:<Seconds,2>"
+            )),
             "07 00:00:00"
         );
-        assert_eq!(text(fmt(Value::Time(86_399_999 + 1), "<Hours24,2>:<Minutes,2>:<Seconds,2>")), "23:59:59");
-        assert_eq!(text(fmt(Value::Time(1), "<Hours24,2>:<Minutes,2>:<Seconds,2>")), "00:00:00");
+        assert_eq!(
+            text(fmt(Value::Time(86_399_999 + 1), "<Hours24,2>:<Minutes,2>:<Seconds,2>")),
+            "23:59:59"
+        );
+        assert_eq!(
+            text(fmt(Value::Time(1), "<Hours24,2>:<Minutes,2>:<Seconds,2>")),
+            "00:00:00"
+        );
     }
 
     #[test]
@@ -373,5 +385,4 @@ mod tests {
             assert!(matches!(fmt(v, f), Err(Signal::Unsupported(_))), "{f}");
         }
     }
-
 }

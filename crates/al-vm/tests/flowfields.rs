@@ -1384,7 +1384,10 @@ fn calcsums_refuses_stored_non_numbers_and_flow_fields() {
                 S.CalcSums({field});
             end;"
         ));
-        assert!(unsupported(r).contains("only stored number fields are implemented"), "{field}");
+        assert!(
+            unsupported(r).contains("only stored number fields are implemented"),
+            "{field}"
+        );
     }
     let r = run_ffx(
         "procedure F(): Text

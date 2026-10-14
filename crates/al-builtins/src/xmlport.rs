@@ -245,5 +245,4 @@ mod tests {
             assert_eq!(field_text(&v), Err(format!("a value of type {name}")), "{name}");
         }
     }
-
 }

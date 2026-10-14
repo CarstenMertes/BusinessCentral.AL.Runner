@@ -508,8 +508,12 @@ fn run(vars: &str, body: &str) -> Result<Value, Signal> {
 /// With `seed`, the codeunit's `Seed` runs first under the default model and commits, then F runs
 /// under `TransactionModel::None`.
 fn run_in(vars: &str, body: &str, extra: &str, seed: Option<&str>) -> Result<Value, Signal> {
-    let seed_proc = seed.map(|b| format!("procedure Seed() var {vars} begin {b} Commit(); end;")).unwrap_or_default();
-    let src = format!("{FIXTURES}\ncodeunit 50101 C {{ {seed_proc} {extra} procedure F(): Text var {vars} begin {body} end; }}");
+    let seed_proc = seed
+        .map(|b| format!("procedure Seed() var {vars} begin {b} Commit(); end;"))
+        .unwrap_or_default();
+    let src = format!(
+        "{FIXTURES}\ncodeunit 50101 C {{ {seed_proc} {extra} procedure F(): Text var {vars} begin {body} end; }}"
+    );
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),
@@ -949,7 +953,8 @@ fn the_last_error_of_a_failed_guarded_import_cannot_be_read() {
 // is refused (the corpus only ever passes the right one).
 #[test]
 fn set_source_and_set_destination_refuse_the_stream_of_the_other_direction() {
-    let vars = "B: Record \"ALT Blob\" temporary; InStr: InStream; OutStr: OutStream; P: XmlPort \"ALT Universal XmlPort\";";
+    let vars =
+        "B: Record \"ALT Blob\" temporary; InStr: InStream; OutStr: OutStream; P: XmlPort \"ALT Universal XmlPort\";";
     let r = refusal(vars, "P.SetSource(OutStr); exit('');");
     assert!(r.contains("Xmlport.SetSource"), "{r}");
     let r = refusal(vars, "P.SetDestination(InStr); exit('');");
@@ -1003,7 +1008,10 @@ fn set_table_view_refusals_name_what_is_wrong() {
         "V: Record \"ALT Universal\"; P: XmlPort \"ALT Empty Root XmlPort\";",
         "P.SetTableView(V); exit('');",
     );
-    assert!(r.contains("\"ALT Empty Root XmlPort\"") && r.contains("no table element"), "{r}");
+    assert!(
+        r.contains("\"ALT Empty Root XmlPort\"") && r.contains("no table element"),
+        "{r}"
+    );
 }
 
 // A refused direction names the xmlport and the direction it declares.
@@ -1013,12 +1021,18 @@ fn a_direction_mismatch_names_the_xmlport_and_its_direction() {
         "B: Record \"ALT Blob\" temporary; H: Codeunit Helpers; InStr: InStream; P: XmlPort \"ALT Export Only XmlPort\";",
         "H.Stage(B, InStr, '<Root/>'); P.SetSource(InStr); P.Import(); exit('');",
     );
-    assert!(r.contains("Import of XmlPort \"ALT Export Only XmlPort\", which declares Direction = Export"), "{r}");
+    assert!(
+        r.contains("Import of XmlPort \"ALT Export Only XmlPort\", which declares Direction = Export"),
+        "{r}"
+    );
     let r = refusal(
         "B: Record \"ALT Blob\"; OutStr: OutStream; P: XmlPort \"ALT Import Only XmlPort\";",
         "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('');",
     );
-    assert!(r.contains("Export of XmlPort \"ALT Import Only XmlPort\", which declares Direction = Import"), "{r}");
+    assert!(
+        r.contains("Export of XmlPort \"ALT Import Only XmlPort\", which declares Direction = Import"),
+        "{r}"
+    );
 }
 
 // The root of an importable document must be a text element with content.
@@ -1030,7 +1044,10 @@ fn an_import_whose_root_is_not_a_text_element_with_content_is_refused() {
         "H.Stage(B, InStr, '<Universal><EntryNo>1</EntryNo></Universal>'); P.SetSource(InStr); P.Import(); exit('');",
     );
     assert!(r.contains("root is not a text element with content"), "{r}");
-    let r = refusal(vars, "H.Stage(B, InStr, '<Root><X>1</X></Root>'); E.SetSource(InStr); E.Import(); exit('');");
+    let r = refusal(
+        vars,
+        "H.Stage(B, InStr, '<Root><X>1</X></Root>'); E.SetSource(InStr); E.Import(); exit('');",
+    );
     assert!(r.contains("root is not a text element with content"), "{r}");
 }
 
@@ -1142,7 +1159,10 @@ fn a_nested_text_group_exports_and_imports_its_variables() {
          XmlPort.Export(60044, OutStr); B.Modify();
          exit(H.ReadAll(B));",
     );
-    assert!(out.contains("<Root><Header><Title>Hello</Title></Header></Root>"), "{out}");
+    assert!(
+        out.contains("<Root><Header><Title>Hello</Title></Header></Root>"),
+        "{out}"
+    );
     let out = text(
         IMPORT_VARS,
         "H.Stage(B, InStr, '<Root><Header><Title>World</Title></Header></Root>');
@@ -1195,15 +1215,20 @@ fn an_export_whose_root_is_not_a_text_element_with_content_is_refused() {
     }
 }
 
-// An export to a stream that is not UTF-8 is refused (the encoding of the output is not pinned).
+// An export to a UTF-16 or MS-DOS stream is refused: only UTF-8 and Windows are implemented, and the
+// output encoding of the others is not pinned.
 #[test]
-fn an_export_to_a_non_utf8_stream_is_refused() {
-    let r = refusal(
-        "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream;",
-        "H.Row(1, 0, '', ''); B.Code := 'U'; B.Insert(); B.Data.CreateOutStream(OutStr, TextEncoding::Windows);
-         XmlPort.Export(60023, OutStr); exit('');",
-    );
-    assert!(r.contains("not UTF-8"), "{r}");
+fn an_export_to_a_utf16_or_msdos_stream_is_refused() {
+    for enc in ["UTF16", "MSDos"] {
+        let r = refusal(
+            "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream;",
+            &format!(
+                "H.Row(1, 0, '', ''); B.Code := 'U'; B.Insert(); B.Data.CreateOutStream(OutStr, TextEncoding::{enc});
+                 XmlPort.Export(60023, OutStr); exit('');"
+            ),
+        );
+        assert!(r.contains("not UTF-8"), "{enc}: {r}");
+    }
 }
 
 // An error raised while exporting: as a statement it reaches the caller with its text; with the
@@ -1212,12 +1237,18 @@ fn an_export_to_a_non_utf8_stream_is_refused() {
 fn an_error_raised_during_export_reaches_a_statement_and_refuses_a_guarded_call() {
     let vars = "H: Codeunit Helpers; B: Record \"ALT Blob\"; OutStr: OutStream; Ok: Boolean;";
     let setup = "H.Row(1, 0, 'x', ''); B.Code := 'E'; B.Insert(); B.Data.CreateOutStream(OutStr);";
-    let out = text(vars, &format!("{setup} asserterror XmlPort.Export(60047, OutStr); exit(GetLastErrorText());"));
+    let out = text(
+        vars,
+        &format!("{setup} asserterror XmlPort.Export(60047, OutStr); exit(GetLastErrorText());"),
+    );
     assert_eq!(out, "EXPORT-RAISED");
     let r = refusal(vars, &format!("{setup} Ok := XmlPort.Export(60047, OutStr); exit('');"));
     assert!(r.contains("an error inside an Export whose result is used"), "{r}");
     // A good export with the result used is true; as a statement it has no value.
-    let out = text(vars, &format!("{setup} Ok := XmlPort.Export(60023, OutStr); exit(Format(Ok));"));
+    let out = text(
+        vars,
+        &format!("{setup} Ok := XmlPort.Export(60023, OutStr); exit(Format(Ok));"),
+    );
     assert_eq!(out, "Yes");
 }
 

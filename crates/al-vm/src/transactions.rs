@@ -414,7 +414,10 @@ mod tests {
             Some(TxModel::AutoRollback)
         );
         // Anything else, or no member at all, is not a model.
-        assert_eq!(TxModel::from_attribute("[TransactionModel(TransactionModel::Other)]"), None);
+        assert_eq!(
+            TxModel::from_attribute("[TransactionModel(TransactionModel::Other)]"),
+            None
+        );
         assert_eq!(TxModel::from_attribute("[TransactionModel]"), None);
     }
 
@@ -428,7 +431,10 @@ mod tests {
             CommitBehavior::from_attribute("[CommitBehavior(CommitBehavior::Error)]"),
             Some(CommitBehavior::Error)
         );
-        assert_eq!(CommitBehavior::from_attribute("[CommitBehavior(CommitBehavior::Allow)]"), None);
+        assert_eq!(
+            CommitBehavior::from_attribute("[CommitBehavior(CommitBehavior::Allow)]"),
+            None
+        );
         assert_eq!(CommitBehavior::from_attribute("[CommitBehavior]"), None);
     }
 }

@@ -450,7 +450,9 @@ mod tests {
     #[test]
     fn only_utf8_is_an_accepted_text_encoding() {
         for ok in ["UTF8", "utf8", "UTF8 "] {
-            let l = layout_of(&format!("xmlport 1 X {{ TextEncoding = {ok}; schema {{ textelement(Root) {{ }} }} }}"));
+            let l = layout_of(&format!(
+                "xmlport 1 X {{ TextEncoding = {ok}; schema {{ textelement(Root) {{ }} }} }}"
+            ));
             assert!(l.reasons.is_empty(), "{ok}: {:?}", l.reasons);
         }
         let l = layout_of("xmlport 1 X { TextEncoding = UTF16; schema { textelement(Root) { } } }");
@@ -460,7 +462,9 @@ mod tests {
     #[test]
     fn inert_object_properties_are_accepted_and_others_are_reasons() {
         for name in INERT_OBJECT_PROPERTIES {
-            let l = layout_of(&format!("xmlport 1 X {{ {name} = 'x'; schema {{ textelement(Root) {{ }} }} }}"));
+            let l = layout_of(&format!(
+                "xmlport 1 X {{ {name} = 'x'; schema {{ textelement(Root) {{ }} }} }}"
+            ));
             assert!(l.reasons.is_empty(), "{name}: {:?}", l.reasons);
         }
         let l = layout_of("xmlport 1 X { Encoding = Windows; schema { textelement(Root) { } } }");
@@ -613,8 +617,14 @@ xmlport 50010 X
     fn a_field_must_sit_inside_a_table_element_of_the_name_it_binds() {
         // Root is a text element, Q is no element at all, and P is a table element of another name.
         for name in ["Root", "Q"] {
-            let why = reasons_of(SRC.replace("fieldelement(Number; P.No)", &format!("fieldelement(Number; {name}.No)")));
-            assert!(why.contains(&format!("is not inside a table element named {name}")), "{name}: {why}");
+            let why = reasons_of(SRC.replace(
+                "fieldelement(Number; P.No)",
+                &format!("fieldelement(Number; {name}.No)"),
+            ));
+            assert!(
+                why.contains(&format!("is not inside a table element named {name}")),
+                "{name}: {why}"
+            );
         }
         assert_eq!(reasons_of(SRC.to_string()), "");
     }
@@ -623,7 +633,10 @@ xmlport 50010 X
     fn link_table_must_name_a_table_element_above() {
         for name in ["Root", "Q", "C"] {
             let why = reasons_of(SRC.replace("LinkTable = P;", &format!("LinkTable = {name};")));
-            assert!(why.contains(&format!("LinkTable {name} is not a table element above it")), "{name}: {why}");
+            assert!(
+                why.contains(&format!("LinkTable {name} is not a table element above it")),
+                "{name}: {why}"
+            );
         }
         let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", ""));
         assert!(why.contains("LinkTable and LinkFields must be given together"), "{why}");
@@ -641,20 +654,31 @@ xmlport 50010 X
     #[test]
     fn a_table_outside_the_workspace_is_a_reason_even_with_its_variable_in_place() {
         let why = reasons_of(SRC.replace("tableelement(P; Parent)", "tableelement(P; Nowhere)"));
-        assert!(why.contains("table element P: table Nowhere is outside the workspace"), "{why}");
+        assert!(
+            why.contains("table element P: table Nowhere is outside the workspace"),
+            "{why}"
+        );
     }
 
     #[test]
     fn a_link_field_that_is_not_field_of_something_is_not_understood() {
         let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "LinkFields = ParentNo = No;"));
-        assert!(why.contains("LinkFields entry `ParentNo = No` is not understood"), "{why}");
+        assert!(
+            why.contains("LinkFields entry `ParentNo = No` is not understood"),
+            "{why}"
+        );
         // Only a FIELD( prefix makes the right-hand side a field reference; a name that merely
         // ends in a parenthesis and has a real field after six characters is not one.
-        let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "LinkFields = ParentNo = ABCDEFNo);"));
+        let why = reasons_of(SRC.replace(
+            "LinkFields = ParentNo = FIELD(No);",
+            "LinkFields = ParentNo = ABCDEFNo);",
+        ));
         assert!(why.contains("is not understood"), "{why}");
         // The same for a FIELD( that is never closed: its sixth character on is not a field name.
-        let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "LinkFields = ParentNo = FIELD(NoX;"));
+        let why = reasons_of(SRC.replace(
+            "LinkFields = ParentNo = FIELD(No);",
+            "LinkFields = ParentNo = FIELD(NoX;",
+        ));
         assert!(why.contains("is not understood"), "{why}");
     }
-
 }

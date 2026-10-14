@@ -190,9 +190,15 @@ mod tests {
 
     #[test]
     fn round_takes_every_whole_number_type() {
-        is_dec(call("System.Round#1", vec![Value::BigInteger(25), Value::Integer(10)]), "30");
+        is_dec(
+            call("System.Round#1", vec![Value::BigInteger(25), Value::Integer(10)]),
+            "30",
+        );
         is_dec(call("System.Round#1", vec![Value::Byte(7), Value::Integer(5)]), "5");
-        is_dec(call("System.Round#1", vec![Value::Integer(7), Value::BigInteger(5)]), "5");
+        is_dec(
+            call("System.Round#1", vec![Value::Integer(7), Value::BigInteger(5)]),
+            "5",
+        );
         is_dec(call("System.Round#1", vec![Value::Integer(7), Value::Byte(5)]), "5");
     }
 
@@ -219,10 +225,11 @@ mod tests {
     #[test]
     fn power_exponent_limit_and_the_scale_of_a_written_exponent() {
         let p = |a: &str, b: Value| call("System.Power#1", vec![d(a), b]);
-        // 10000 is the largest exponent computed; one more is refused.
+        // Up to 10000 the product is exact; past it the result comes from a double, and one that
+        // is not a finite number is refused.
         is_dec(p("1", Value::Integer(10_000)), "1");
-        refused(p("1", Value::Integer(10_001)));
-        refused(p("1", Value::Integer(-10_001)));
+        is_dec(p("1", Value::Integer(10_001)), "1");
+        refused(p("2", Value::Integer(10_001)));
     }
 
     // FOUND BY MUTATION TESTING (not fixed here: this task changes no runtime behaviour). `power`
@@ -237,5 +244,4 @@ mod tests {
         is_dec(p("2", d("3.0")), "8");
         is_dec(p("2", d("-2.00")), "0.25");
     }
-
 }

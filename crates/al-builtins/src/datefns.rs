@@ -466,7 +466,20 @@ mod tests {
                 vec![Value::Integer(a), Value::Integer(b), Value::Integer(c)],
             )
         };
-        for (month, days) in [(1, 31), (2, 28), (3, 31), (4, 30), (5, 31), (6, 30), (7, 31), (8, 31), (9, 30), (10, 31), (11, 30), (12, 31)] {
+        for (month, days) in [
+            (1, 31),
+            (2, 28),
+            (3, 31),
+            (4, 30),
+            (5, 31),
+            (6, 30),
+            (7, 31),
+            (8, 31),
+            (9, 30),
+            (10, 31),
+            (11, 30),
+            (12, 31),
+        ] {
             is_date(d(days, month, 2023), 2023, month as u32, days as u32);
             refused(d(days + 1, month, 2023));
         }

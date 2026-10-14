@@ -42,6 +42,16 @@ reviewed it.
   cannot be the BC 29 oracle. After the fix: run 29.0 on the pin, re-record `oracle/29/junit.xml`, drop
   `corpus_commit` from the 29 table in `oracle/oracle.toml`, and regenerate the 29 baseline.
 
+## Decided without owner review (2026-10-14), isolation branch
+
+- Extra oracles for the OnPrem app (all three majors) and the isolation probe (BC 28.4 only, from
+  the Windows nightly, XUnit): ADR-007 decision 4. There is no isolation oracle for 27 and 29.
+- `TestIsolation = Function` is implemented (restore to the state after `OnRun` after each
+  method). `Disabled`, a runner without the property, and a `Commit()` inside a Function-isolated
+  test are refused: `docs/probes-needed.md`.
+- A test codeunit is the unit of future parallel scheduling under every isolation mode, because
+  its methods share instance state (`al-test-cli/src/isolation.rs`).
+
 ## Decided by the owner (recorded)
 
 - 2026-10-14, performance phase: run tests in parallel at the test runner's

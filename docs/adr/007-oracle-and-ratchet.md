@@ -68,6 +68,25 @@ about 150 probe tests (223 cases) and changes no existing test file.
    (ADR-015 3.6) compares the cases every version's oracle has. A case one oracle lacks cannot
    show a version difference. The oracle table still lists such cases, so the gap stays visible.
 
+### Decided without owner review (2026-10-14): other test apps
+
+4. **More test apps, each with its own oracle and ratchet.** `oracle.toml` takes
+   `[[version.suite]]` tables: the OnPrem app (the small artifact of the same CI run) and the
+   isolation probe. Each suite has its own oracle file, `metrics/<major>/passing-<name>.txt` and
+   report line; none counts toward `overall`. `--update-baseline` writes all of them and refuses
+   while any regresses.
+   - The isolation probe has no Linux CI result. Its oracle is the Windows nightly's XUnit
+     (BC 28.4, corpus `master` at `cf6e546`, copied unchanged), accepted under the same rule as an
+     older oracle: the corpus diff since `cf6e546` adds files and changes none. Only BC 28 has one.
+   - A suite is a runner run: the runner codeunit's `TestIsolation` property selects how it is
+     run. The same test codeunit can be in two suites (the probe under both runners).
+   - A control case real BC fails on purpose (the probe's `T5` under Codeunit isolation) is
+     excluded from the pass count, and the report says whether the runtime fails it too.
+   - Options: (a) this; (b) put the extra cases into the main oracle (the codeunit id ranges do not
+     overlap, but one codeunit under two runners has two answers, and the main file is a CI
+     artifact that must stay byte for byte); (c) leave the apps out (their behaviour would stay
+     unmeasured).
+
 ## Conformance (added)
 `corpus_harness.rs`: an older recorded commit with changed tests is refused; an unknown one is a
 setup error; a failing case outside the baseline exits 0. `pin.rs` unit tests cover add, modify,

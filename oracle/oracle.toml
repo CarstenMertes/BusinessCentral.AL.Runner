@@ -15,6 +15,14 @@ artifact_id = 11856955675
 junit = "27/junit.xml"
 baseline = "metrics/27/passing.txt"
 
+[[version.suite]]
+name = "onprem"
+app = "corpus/tests/al-language-onprem"
+workflow_run = 38476427517
+artifact_id = 11854361700
+oracle = "27/junit-onprem.xml"
+baseline = "metrics/27/passing-onprem.txt"
+
 [[version]]
 major = 28
 bc_version = "28.5"
@@ -22,6 +30,44 @@ workflow_run = 38480686379
 artifact_id = 11858881269
 junit = "28/junit.xml"
 baseline = "metrics/28/passing.txt"
+
+[[version.suite]]
+name = "onprem"
+app = "corpus/tests/al-language-onprem"
+workflow_run = 38480686379
+artifact_id = 11855849294
+oracle = "28/junit-onprem.xml"
+baseline = "metrics/28/passing-onprem.txt"
+
+# The isolation probe runs only in the corpus's Windows nightly (workflow "Nightly Windows", never
+# in the Linux legs), under two custom test runners. The one nightly artifact that holds it is
+# run 38341042967 (2026-10-13, BC 28.4, corpus master cf6e546, whose probe app is identical to the
+# pin's). There is no oracle for BC 27 and 29.
+[[version.suite]]
+name = "isolation-function"
+app = "corpus/tests/al-language-isolation-probe"
+format = "xunit"
+runner = 61300
+bc_version = "28.4"
+corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
+workflow_run = 38341042967
+artifact_id = 11788517730
+oracle = "28/xunit-isolation-function.xml"
+baseline = "metrics/28/passing-isolation-function.txt"
+
+# The control: the identical runner with TestIsolation = Codeunit. Real BC fails the probe's T5
+# here, and the runtime must fail it too.
+[[version.suite]]
+name = "isolation-codeunit"
+app = "corpus/tests/al-language-isolation-probe"
+format = "xunit"
+runner = 61301
+bc_version = "28.4"
+corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
+workflow_run = 38341042967
+artifact_id = 11788517730
+oracle = "28/xunit-isolation-codeunit.xml"
+baseline = "metrics/28/passing-isolation-codeunit.txt"
 
 [[version]]
 major = 29
@@ -33,3 +79,12 @@ workflow_run = 38306086475
 artifact_id = 11773034371
 junit = "29/junit.xml"
 baseline = "metrics/29/passing.txt"
+
+[[version.suite]]
+name = "onprem"
+app = "corpus/tests/al-language-onprem"
+corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
+workflow_run = 38306086475
+artifact_id = 11772702220
+oracle = "29/junit-onprem.xml"
+baseline = "metrics/29/passing-onprem.txt"

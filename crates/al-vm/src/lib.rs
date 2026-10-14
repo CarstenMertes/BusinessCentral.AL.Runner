@@ -212,6 +212,10 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// How many times the session made its changes durable (`commit_transaction`). A runner reads
+    /// it around a test method to see whether the method committed (test isolation, `isolation.rs`
+    /// in al-test-cli).
+    pub commits: u64,
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
@@ -301,6 +305,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            commits: 0,
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
@@ -315,6 +320,7 @@ impl Session {
     /// Makes every change so far durable (and a Truncate of this transaction final).
     pub fn commit_transaction(&mut self) {
         al_data::Store::commit(&mut self.store);
+        self.commits += 1;
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.committed_row_version = self.next_row_version;

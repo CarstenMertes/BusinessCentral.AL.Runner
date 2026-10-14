@@ -2,6 +2,7 @@
 //! pins it: one instance per test codeunit, `OnRun` once before the tests
 //! (codeunit/TestCodeunitOnRun.al), tests in declaration order.
 
+use crate::isolation::{Checkpoint, TestIsolation, runner_isolation};
 use crate::report::Outcome;
 use al_builtins::native::Signal;
 use al_sema::lower::Lowered;
@@ -92,8 +93,35 @@ pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
 
 /// Every corpus test's outcome on this runtime, keyed by (codeunit id, procedure).
 pub struct CorpusRuntime {
-    outcomes: std::collections::HashMap<(u32, String), Outcome>,
+    /// Keyed by (suite, test codeunit id, lower-cased procedure). A suite is one test runner run
+    /// over some of the apps; the same codeunit can be in two (the isolation probe).
+    outcomes: std::collections::HashMap<(usize, u32, String), Outcome>,
+    suites: Vec<String>,
     pub panics: usize,
+}
+
+/// A test runner run over the test codeunits of some apps (the unit of an oracle file).
+#[derive(Debug, Clone)]
+pub struct SuiteRun {
+    /// The name the report uses; empty for the main corpus app.
+    pub name: String,
+    /// The test codeunits of the app at this index of the apps given to the compiler. `None`:
+    /// those of every app that is not a dependency.
+    pub app: Option<usize>,
+    /// The runner codeunit whose `TestIsolation` the run uses. `None`: Codeunit, which is what
+    /// Microsoft's `Test Runner - Isol. Codeunit` the main corpus is recorded under does.
+    pub runner: Option<u32>,
+}
+
+impl SuiteRun {
+    /// Every test codeunit of every non-dependency app, under Codeunit isolation.
+    pub fn everything() -> SuiteRun {
+        SuiteRun {
+            name: String::new(),
+            app: None,
+            runner: None,
+        }
+    }
 }
 
 impl CorpusRuntime {
@@ -144,6 +172,29 @@ impl CorpusRuntime {
         target: Option<&al_version::Target>,
         dotnet: al_vm::dotnet::DotNetConfig,
     ) -> CorpusRuntime {
+        Self::run_suites(
+            apps,
+            kinds,
+            manifests,
+            symbols,
+            target,
+            dotnet,
+            &[SuiteRun::everything()],
+        )
+    }
+
+    /// [`run_for_apps`](Self::run_for_apps) for several runs over the same compiled apps: they
+    /// share one compile and one install baseline, and each test codeunit of a run is an isolation
+    /// unit on a session of its own (`isolation.rs`).
+    pub fn run_suites(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+        suites: &[SuiteRun],
+    ) -> CorpusRuntime {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline = kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
         let (_ws, mut lowered) =
@@ -185,51 +236,86 @@ impl CorpusRuntime {
         let baseline = baseline.map(|b| b.baseline);
         let mut outcomes = std::collections::HashMap::new();
         let mut panics = 0;
-        for (oi, o) in lowered.program.objects.iter().enumerate() {
-            let is_test = o.kind == "codeunit"
-                && !lowered.dependency[oi]
-                && o.properties
-                    .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
-            let Some(id) = o.id.filter(|_| is_test) else { continue };
-            // A Rust panic is a runtime bug; contain it to this codeunit and report it.
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_codeunit_from(&engine, &lowered, oi, baseline.as_ref())
-            }));
-            match result {
-                Ok(list) => {
-                    for (name, outcome) in list {
-                        outcomes.insert((id, name.to_lowercase()), outcome);
-                    }
-                }
-                Err(p) => {
-                    panics += 1;
-                    let msg = p
-                        .downcast_ref::<String>()
-                        .cloned()
-                        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
-                        .unwrap_or_default();
-                    for r in o
-                        .routines
+        for (si, suite) in suites.iter().enumerate() {
+            let isolation = match suite.runner {
+                None => Ok(TestIsolation::default()),
+                Some(r) => runner_isolation(&lowered, r),
+            };
+            for (oi, o) in lowered.program.objects.iter().enumerate() {
+                let is_test = o.kind == "codeunit"
+                    && !lowered.dependency[oi]
+                    && suite.app.is_none_or(|a| o.app as usize == a)
+                    && o.properties
+                        .iter()
+                        .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"));
+                let Some(id) = o.id.filter(|_| is_test) else { continue };
+                let tests = || {
+                    o.routines
                         .iter()
                         .filter(|r| r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")))
-                    {
-                        outcomes.insert(
-                            (id, r.name.to_lowercase()),
-                            Outcome::NotRun(format!("runtime panic (bug): {msg}")),
-                        );
+                };
+                let isolation = match &isolation {
+                    Ok(i) => *i,
+                    Err(why) => {
+                        for r in tests() {
+                            outcomes.insert((si, id, r.name.to_lowercase()), Outcome::NotRun(why.clone()));
+                        }
+                        continue;
+                    }
+                };
+                // A Rust panic is a runtime bug; contain it to this codeunit and report it.
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_codeunit_isolated(&engine, &lowered, oi, baseline.as_ref(), isolation)
+                }));
+                match result {
+                    Ok(list) => {
+                        for (name, outcome) in list {
+                            outcomes.insert((si, id, name.to_lowercase()), outcome);
+                        }
+                    }
+                    Err(p) => {
+                        panics += 1;
+                        let msg = p
+                            .downcast_ref::<String>()
+                            .cloned()
+                            .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                            .unwrap_or_default();
+                        for r in tests() {
+                            outcomes.insert(
+                                (si, id, r.name.to_lowercase()),
+                                Outcome::NotRun(format!("runtime panic (bug): {msg}")),
+                            );
+                        }
                     }
                 }
             }
         }
-        CorpusRuntime { outcomes, panics }
+        let suites = suites.iter().map(|s| s.name.clone()).collect();
+        CorpusRuntime {
+            outcomes,
+            suites,
+            panics,
+        }
     }
 }
 
+impl CorpusRuntime {
+    /// The outcome of `case` in the run named `suite` (the first run has the empty name).
+    pub fn outcome_in(&self, suite: &str, case: &crate::oracle::CaseId) -> Outcome {
+        self.suites
+            .iter()
+            .position(|s| s == suite)
+            .and_then(|si| self.outcomes.get(&(si, case.codeunit, case.name.to_lowercase())))
+            .cloned()
+            .unwrap_or_else(|| Outcome::NotRun("test procedure not found in the compiled corpus".into()))
+    }
+}
+
+/// The outcomes of the first run (the main corpus app, or the only run).
 impl crate::runner::Runner for CorpusRuntime {
     fn outcome(&self, case: &crate::oracle::CaseId) -> Outcome {
         self.outcomes
-            .get(&(case.codeunit, case.name.to_lowercase()))
+            .get(&(0, case.codeunit, case.name.to_lowercase()))
             .cloned()
             .unwrap_or_else(|| Outcome::NotRun("test procedure not found in the compiled corpus".into()))
     }
@@ -298,12 +384,24 @@ pub fn run_codeunit(engine: &Arc<Engine>, lowered: &Lowered, object: usize) -> V
     run_codeunit_from(engine, lowered, object, None)
 }
 
-/// [`run_codeunit`] on a session that starts from the install baseline (ADR-013 decision 5).
+/// [`run_codeunit`] on a session that starts from the install baseline (ADR-013 decision 5), under
+/// `TestIsolation = Codeunit`: the isolation every corpus oracle was recorded under.
 pub fn run_codeunit_from(
     engine: &Arc<Engine>,
     lowered: &Lowered,
     object: usize,
     baseline: Option<&al_vm::Baseline>,
+) -> Vec<(String, Outcome)> {
+    run_codeunit_isolated(engine, lowered, object, baseline, TestIsolation::Codeunit)
+}
+
+/// One isolation unit (see `isolation.rs`): a test codeunit run to its end on a session of its own.
+pub fn run_codeunit_isolated(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    object: usize,
+    baseline: Option<&al_vm::Baseline>,
+    isolation: TestIsolation,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
@@ -325,6 +423,13 @@ pub fn run_codeunit_from(
             .map(|&r| (obj.routines[r].name.clone(), o.clone()))
             .collect::<Vec<_>>()
     };
+    // Nothing pins what a runner with TestIsolation = Disabled leaves behind, within a codeunit or
+    // for the next one (docs/probes-needed.md), so it is refused (hard rule 4).
+    if isolation == TestIsolation::Disabled {
+        return all(Outcome::NotRun(
+            "TestIsolation = Disabled: what the runner leaves between tests and test codeunits is not pinned".into(),
+        ));
+    }
     // A [TransactionModel] other than AutoCommit, AutoRollback or None is refused.
     let mut models = std::collections::HashMap::new();
     for &r in &tests {
@@ -366,10 +471,14 @@ pub fn run_codeunit_from(
             Err(_) => {}
         }
     }
+    // Function isolation returns the database to its state after OnRun when each test ends
+    // (corpus isolation probe T5 and T6; oracle/28/xunit-isolation-function.xml).
+    let checkpoint = (isolation == TestIsolation::Function).then(|| Checkpoint::take(&mut session));
     let mut out = Vec::new();
     for r in tests {
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
+        let mut committed = false;
         let outcome = if let Err(reason) = &handlers {
             Outcome::NotRun(reason.clone())
         } else if let Some(reason) = blocked_reason(lowered, object, r) {
@@ -398,7 +507,9 @@ pub fn run_codeunit_from(
                         session.commit_transaction();
                     }
                     session.tx_model = model;
+                    let commits_before = session.commits;
                     let result = session.call(object, r, instance.clone(), Vec::new());
+                    committed = session.commits != commits_before;
                     session.tx_model = al_vm::TxModel::AutoCommit;
                     let unexecuted = session.end_ui_scope();
                     match result {
@@ -434,6 +545,17 @@ pub fn run_codeunit_from(
                 }
             }
         };
+        // Whether a Commit() inside a test is kept or ignored under Function isolation is not
+        // pinned (docs/probes-needed.md): a test that passed through one is not reported as run.
+        let outcome = match outcome {
+            Outcome::Pass if committed && checkpoint.is_some() => Outcome::NotRun(
+                "Commit inside a test under TestIsolation = Function: what the runner keeps is not pinned".into(),
+            ),
+            o => o,
+        };
+        if let Some(cp) = &checkpoint {
+            cp.restore(&mut session);
+        }
         out.push((routine.name.clone(), outcome));
     }
     out
@@ -1993,5 +2115,143 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
         );
         assert_eq!(outcome("Kept"), Outcome::Pass);
         assert!(matches!(outcome("NotCreated"), Outcome::NotRun(_)));
+    }
+
+    fn outcomes_isolated(src: &str, isolation: TestIsolation) -> Vec<(String, Outcome)> {
+        let (ws, l) = al_sema::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let blocked = l
+            .unsupported
+            .iter()
+            .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+            .collect();
+        let engine = Engine::new(l.program.clone(), blocked);
+        let oi = l
+            .program
+            .objects
+            .iter()
+            .position(|o| {
+                o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.eq_ignore_ascii_case("Test"))
+            })
+            .unwrap();
+        run_codeunit_isolated(&engine, &l, oi, None, isolation)
+    }
+
+    // The isolation probe's fixture (corpus tests/al-language-isolation-probe/src/
+    // IsolProbeFixture.Codeunit.al:25-114), shortened. Real BC, nightly run on 28.4
+    // (oracle/28/xunit-isolation-function.xml): all seven pass under TestIsolation = Function;
+    // oracle/28/xunit-isolation-codeunit.xml: all but T5 pass under Codeunit.
+    const PROBE: &str = "table 61300 Row { fields { field(1; K; Code[20]) { } } keys { key(PK; K) { Clustered = true; } } }
+        codeunit 61303 Single { SingleInstance = true;
+            procedure SetMark(M: Integer) begin Mark := M; end;
+            procedure GetMark(): Integer begin exit(Mark); end;
+            var Mark: Integer; }
+        codeunit 61302 Fixture { Subtype = Test;
+            var GlobalMark: Integer; CallCount: Integer; OnRunCount: Integer;
+            trigger OnRun() var R: Record Row; begin
+                OnRunCount += 1;
+                if not R.Get('ONRUN') then begin R.K := 'ONRUN'; R.Insert(); end; end;
+            [Test] procedure T1() var R: Record Row; S: Codeunit Single; begin
+                CallCount += 1; GlobalMark := 4826; S.SetMark(4826);
+                R.K := 'MARK'; R.Insert();
+                Expect(1, CallCount, 'T1 first on its instance'); end;
+            [Test] procedure T2() begin CallCount += 1; Expect(4826, GlobalMark, 'global set by T1'); end;
+            [Test] procedure T3() begin CallCount += 1; Expect(3, CallCount, 'counter counts T1 to T3'); end;
+            [Test] procedure T4() var S: Codeunit Single; begin CallCount += 1; Expect(4826, S.GetMark(), 'single instance'); end;
+            [Test] procedure T5() var R: Record Row; begin
+                CallCount += 1;
+                if R.Get('MARK') then Error('The row T1 inserted is still there in T5'); end;
+            [Test] procedure T6() var R: Record Row; begin
+                CallCount += 1;
+                if not R.Get('ONRUN') then Error('The row OnRun inserted is gone in T6'); end;
+            [Test] procedure T7() begin CallCount += 1; Expect(1, OnRunCount, 'OnRun ran once'); end;
+            local procedure Expect(E: Integer; A: Integer; What: Text) begin
+                if A <> E then Error('%1: expected %2, observed %3', What, E, A); end; }";
+
+    // oracle/28/xunit-isolation-function.xml: T1 to T7 all Pass.
+    #[test]
+    fn function_isolation_rolls_the_database_back_per_test_and_keeps_the_instance() {
+        let o = outcomes_isolated(PROBE, TestIsolation::Function);
+        assert_eq!(
+            o.iter().map(|(_, x)| x.clone()).collect::<Vec<_>>(),
+            vec![Outcome::Pass; 7],
+            "{o:?}"
+        );
+    }
+
+    // oracle/28/xunit-isolation-codeunit.xml: T5 fails with the row still there, the rest pass.
+    #[test]
+    fn codeunit_isolation_keeps_the_database_between_tests() {
+        let o = outcomes_isolated(PROBE, TestIsolation::Codeunit);
+        let passes: Vec<_> = o.iter().map(|(n, x)| (n.as_str(), *x == Outcome::Pass)).collect();
+        assert_eq!(
+            passes,
+            vec![
+                ("T1", true),
+                ("T2", true),
+                ("T3", true),
+                ("T4", true),
+                ("T5", false),
+                ("T6", true),
+                ("T7", true)
+            ]
+        );
+        assert_eq!(o[4].1, Outcome::Fail("The row T1 inserted is still there in T5".into()));
+    }
+
+    #[test]
+    fn function_isolation_also_rolls_back_a_failed_test() {
+        let o = outcomes_isolated(
+            &with_rows(
+                "codeunit 60102 T { Subtype = Test;
+                    [Test] procedure A() var R: Record S; begin R.K := 'A'; R.Insert(); Error('boom'); end;
+                    [Test] procedure B() var R: Record S; begin if R.Count() <> 0 then Error('rows left: %1', R.Count()); end; }",
+            ),
+            TestIsolation::Function,
+        );
+        assert_eq!(o[0].1, Outcome::Fail("boom".into()));
+        assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
+    }
+
+    // Nothing pins what Disabled leaves behind, so every test of the codeunit is refused.
+    #[test]
+    fn disabled_isolation_is_refused_for_every_test() {
+        let o = outcomes_isolated(PROBE, TestIsolation::Disabled);
+        assert_eq!(o.len(), 7);
+        assert!(
+            o.iter()
+                .all(|(_, x)| matches!(x, Outcome::NotRun(w) if w.contains("Disabled"))),
+            "{o:?}"
+        );
+    }
+
+    // What a Commit() inside a test does under Function isolation is not pinned: the test that
+    // would depend on it is refused, and the next test still starts from the OnRun state.
+    #[test]
+    fn a_commit_inside_a_function_isolated_test_is_refused_and_still_rolled_back() {
+        let src = with_rows(
+            "codeunit 60102 T { Subtype = Test;
+                [Test] procedure Commits() var R: Record S; begin R.K := 'A'; R.Insert(); Commit(); end;
+                [Test] procedure Next() var R: Record S; begin if R.Count() <> 0 then Error('rows left: %1', R.Count()); end; }",
+        );
+        let o = outcomes_isolated(&src, TestIsolation::Function);
+        assert!(
+            matches!(&o[0].1, Outcome::NotRun(w) if w.contains("Commit") && w.contains("Function")),
+            "{o:?}"
+        );
+        assert_eq!(o[1].1, Outcome::Pass, "{o:?}");
+        // Under Codeunit isolation the same Commit is the pinned default behaviour.
+        let o = outcomes_isolated(&src, TestIsolation::Codeunit);
+        assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
     }
 }

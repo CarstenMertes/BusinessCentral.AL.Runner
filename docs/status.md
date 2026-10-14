@@ -19,6 +19,19 @@ One oracle and one ratchet per BC major. `al-test-cli --root .` runs the newest;
 The numbers in the rest of this file are from before the version work and are
 refreshed after merging.
 
+### Other test apps (2026-10-14)
+
+Each has its own oracle, ratchet and report line, and is not part of the overall count
+(`oracle/README.md`).
+
+| App | Oracle | Pass | Total | Why the rest does not run |
+|---|---|---:|---:|---|
+| OnPrem (27, 28, 29) | CI run, small artifact | 0 | 61 | Every test needs an OnPrem-only platform table (User, User Property, Object, Object Metadata, Published Application, All Profile): no row provider yet (`platform-tables`). No `DotNet` in the app |
+| Isolation probe under a Function runner (28) | Windows nightly, BC 28.4 | 7 | 7 | |
+| Isolation probe under a Codeunit runner (28) | same artifact | 6 | 6 | BC fails `T5` here on purpose; so does the runtime |
+
+There is no isolation oracle for BC 27 and 29 (`docs/probes-needed.md`).
+
 ## Overall
 
 **2412 / 4836 pass (49.9%), 0 fail, 2424 not run.** Compiling the corpus

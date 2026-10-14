@@ -40,7 +40,25 @@ reviewed it.
 - Probe batch 2 push: done (2026-10-14). Batches 2 and 2b are in the corpus at 348a744 (53 new cases). All three
   oracles come from that commit. The failing and not-run ones are the next fix round.
 
+## Decided without owner review (2026-10-14), isolation branch
+
+- Extra oracles for the OnPrem app (all three majors) and the isolation probe (BC 28.4 only, from
+  the Windows nightly, XUnit): ADR-007 decision 4. There is no isolation oracle for 27 and 29.
+- `TestIsolation = Function` is implemented (restore to the state after `OnRun` after each
+  method). `Disabled`, a runner without the property, and a `Commit()` inside a Function-isolated
+  test are refused: `docs/probes-needed.md`.
+- A test codeunit is the unit of future parallel scheduling under every isolation mode, because
+  its methods share instance state (`al-test-cli/src/isolation.rs`).
+
 ## Decided by the owner (recorded)
+
+- 2026-10-14, ADR-014: BC server classes that Microsoft's AL reaches through
+  DotNet (ALConfigSettings, NavTenantSettingsHelper, NavUserAccountHelper and
+  others) are provided in Rust through the registry.
+  - Their values mirror AL Runner v2 until a probe on real BC pins them.
+  - This is not a fake of an AL object, so hard rule 7 does not apply.
+  - The work is on branch `dotnet-registry`. Probe batch 3 reads the real
+    values.
 
 - 2026-10-14, performance phase: run tests in parallel at the test runner's
   isolation unit.
@@ -181,6 +199,17 @@ reviewed it.
 - 2026-10-13, ADR-012 (FilterPageBuilder): `RunModal` and `[FilterPageHandler]` are refused; the default page
   caption is `Filter`; `AddRecord` and `AddRecordRef` copy the record; two error sentences are filled in
   around the control name (the corpus pins only the name).
+- 2026-10-14, ADR-019: a column of a platform table that no corpus test pins is refused where code names it
+  (at lowering), not filled with a default.
+- 2026-10-14, ADR-019: package ids are a function of the app id (not empty, one per app, different between apps);
+  objects of the platform app have none.
+- 2026-10-14, ADR-019: the default host lists five Windows time zones; Windows Language holds three rows (1031,
+  1033, 2057) and refuses a read that needs any other id up to 65535.
+- 2026-10-14, ADR-019: a `Get` whose result is used, in dependency code, on a table the install baseline could not seed, is refused like the raising form (the order in `records.rs` `fail`).
+- 2026-10-14, ADR-019: the session seeds the Company (`My Company`), the User (`TESTUSER`) and the SUPER Access
+  Control row when it starts, as ordinary stored rows. The install baseline branch must not seed them again.
+- 2026-10-14, ADR-019: Page Metadata and Page Control Field spellings the corpus does not pin (declared
+  `Visible`/`Enabled`/`Editable` in lower case, `SourceTableView` only for one `where(f = const(v))`).
 - 2026-10-14, ADR-013 (baseline): the install baseline runs per app: every `OnInstallAppPerCompany`, then every
   `OnInstallAppPerDatabase` with no company, following the order measured on BC 27.5 and not AL Runner's per-codeunit order.
 - 2026-10-14, ADR-013 (baseline): `Company-Initialize` keeps the rows it wrote before it stopped; an install trigger that
@@ -209,3 +238,7 @@ reviewed it.
 - 2026-10-14, ADR-009, fix-records: a test refused midway rolls back what it wrote, so a later test of the codeunit cannot see the leftovers.
 - 2026-10-14, ADR-009, fix-records: the emit version in "object does not exist" errors is major*1000+25 for BC majors other than 27 (27025 is measured).
 - 2026-10-14, ADR-009, fix-records: baseline case 60013 `CalcFields_TableExtensionFlowFieldOnStockkeepingUnit_WithNoMatchingRows_IsZero` removed from all three baselines as a pass by accident (see the commit message).
+- 2026-10-14, ADR-009, fix-data: `Query.ColumnNo` is `4001 + 97 * position` (only "not the position" is pinned); the real numbers are a probe to run.
+- 2026-10-14, ADR-009, fix-data: `Query.GetFilters` puts the filter of a Text column last (the probe cannot tell "Text column" from "OrderBy column"; the Text reading keeps a baseline test running).
+- 2026-10-14, ADR-009, fix-data: an XmlPort import stores with `Insert(true)` / `Modify(true)` through the ordinary record path, so the record rule for duplicate keys applies to it (the earlier `immediate_errors` override for XmlPort import is dropped, as xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_DuplicateKey_... pins a deferral).
+- 2026-10-14, ADR-009, fix-data: `SaveAsXml` / `SaveAsJson` of a query write UTF-8 without a byte order mark and the XML in one line (the probe trims and joins the lines).

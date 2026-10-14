@@ -1010,9 +1010,9 @@ fn a_temporary_record_write_does_not_invalidate_the_result() {
     assert_eq!(text(r), "2");
 }
 
-// Unpinned shapes are refused, never guessed: a Read before Open has no pinned behaviour.
+// query/TestQueryRuntimeContracts.al:Query_StateMisuse_DoesNotThrow: a Read before Open is false.
 #[test]
-fn read_before_open_is_refused() {
+fn read_before_open_is_false() {
     let r = run(&with(
         "",
         "procedure F(): Boolean
@@ -1021,7 +1021,7 @@ fn read_before_open_is_refused() {
             exit(Q.Read());
         end;",
     ));
-    assert!(unsupported(r).contains("Read"));
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
 
 const SEED_ROWS: &str = "
@@ -1166,9 +1166,10 @@ fn flow_field_column_is_calculated_with_the_flow_filter_of_the_query() {
     assert_eq!(text(r), "15;14;");
 }
 
-// An unpinned corner stays a refusal, not a guess: rows that tie under a descending OrderBy.
+// query/TestQueryOuterJoinDescendingSaveAsContracts.al: rows that tie under a descending OrderBy
+// are read (their order, ascending by primary key, is pinned by the corpus test).
 #[test]
-fn ties_under_a_descending_order_by_are_refused() {
+fn ties_under_a_descending_order_by_are_read() {
     let r = run(&with(
         "",
         "procedure F(): Boolean
@@ -1180,7 +1181,7 @@ fn ties_under_a_descending_order_by_are_refused() {
             exit(Q.Read());
         end;",
     ));
-    assert!(unsupported(r).contains("tie"));
+    assert!(matches!(r, Ok(Value::Boolean(true))), "{r:?}");
 }
 
 // ---- mutation-testing additions (docs/status.md debt) ----

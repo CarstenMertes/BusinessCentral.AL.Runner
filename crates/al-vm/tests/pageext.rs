@@ -360,7 +360,8 @@ fn an_extension_trigger_runs_in_the_pages_context_for_each_row() {
         ),
         "F",
     );
-    assert_eq!(text(r), "ext-open;ext-agr:A;ext-agr:B;");
+    // A list reads its window and then the current row once more (handlers/TestPageRuntimeContracts.al:121-136).
+    assert_eq!(text(r), "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;");
 }
 
 // pageextensioncontrol/TestPageExtensionControlTrapped_Tests.al: TrappedPageRun_ExtExpressionControl_ReadsTheCurrentRow,
@@ -422,7 +423,10 @@ fn an_extension_action_runs_its_trigger_against_the_current_row() {
         ),
         "F",
     );
-    assert_eq!(text(r), "ext-open;ext-agr:A;ext-agr:B;stamp:B;|ext action refused");
+    assert_eq!(
+        text(r),
+        "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;stamp:B;|ext action refused"
+    );
 }
 
 // pageextensiontrigger/TestModifiedControlValidateTriggers_Tests.al:
@@ -758,7 +762,8 @@ fn actions_and_actionrefs_follow_the_areas_and_parts_are_removed() {
     let t = text(r);
     assert!(
         t.starts_with(
-            "The action ServiceAct is not found on the page.|The action ServiceRef is not found on the page.|"
+            // The ids are FNV-1a of the declaring object id and the control name (pages.rs `control_id`).
+            "The action with ID = 16714197 is not found on the page.|The action with ID = 681589962 is not found on the page.|"
         ),
         "{t}"
     );

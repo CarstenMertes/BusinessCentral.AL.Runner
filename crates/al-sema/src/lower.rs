@@ -263,7 +263,7 @@ pub fn lower_with_positions(
         if let Some(t) = prop("SourceTable") {
             match ws.resolve_ref(o.file, ObjKind::Table, &[t.trim().trim_matches('"').to_string()]) {
                 Resolution::Found(t) => table_of[oi] = Some(t),
-                _ => page_reasons[oi].push(format!("source table {t} is outside the workspace")),
+                _ => page_reasons[oi].push(format!("source table: {}", ws.outside_workspace(ObjKind::Table, &t))),
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
@@ -282,22 +282,6 @@ pub fn lower_with_positions(
     for _ in 0..3 {
         for oi in 0..ws.objects.len() {
             for &p in &page_parts[oi].clone() {
-                // What a part page's close triggers do when the host closes is not pinned.
-                let closes = std::iter::once(p)
-                    .chain(page_extensions.get(&p).cloned().unwrap_or_default())
-                    .any(|q| {
-                        ws.object_ast(q).triggers().any(|t| {
-                            let n = t.name();
-                            n.eq_ignore_ascii_case("OnClosePage") || n.eq_ignore_ascii_case("OnQueryClosePage")
-                        })
-                    });
-                let reason = format!(
-                    "part page `{}` declares a close trigger (what it does when the host closes is not pinned)",
-                    ws.objects[p].name
-                );
-                if closes && !page_reasons[oi].contains(&reason) {
-                    page_reasons[oi].push(reason);
-                }
                 if let Some(why) = page_reasons[p].first().cloned() {
                     let reason = format!("part page `{}`: {why}", ws.objects[p].name);
                     if !page_reasons[oi].contains(&reason) {
@@ -544,7 +528,9 @@ pub fn lower_with_positions(
                 name: o.name.clone(),
                 globals: Vec::new(),
                 routines: Vec::new(),
-                properties: Vec::new(),
+                // What the declaration scan read of the object body, so the metadata tables can
+                // answer for an object nothing compiled.
+                properties: o.scanned_properties.clone(),
                 enum_values: Vec::new(),
                 enum_captions: Vec::new(),
                 table: None,
@@ -556,6 +542,8 @@ pub fn lower_with_positions(
                 xmlport: None,
                 report: None,
                 report_ext: None,
+                namespace: o.namespace.clone(),
+                extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
             });
             out.unsupported.push(Vec::new());
             out.calls.push(Vec::new());
@@ -844,6 +832,8 @@ pub fn lower_with_positions(
             xmlport: xml_irs[oi].clone(),
             report: report_irs[oi].clone(),
             report_ext: ext_irs[oi].clone(),
+            namespace: o.namespace.clone(),
+            extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
             query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
         });
         out.program.positions = std::mem::take(&mut lw.positions);
@@ -1372,6 +1362,14 @@ impl Lowerer<'_> {
 
     /// The position of field `id`.
     fn readable_field_pos(&self, table: usize, id: u32) -> L<usize> {
+        // A column of a platform table that no corpus test pins is refused, not defaulted.
+        if let Some(why) = self.ws.objects[table]
+            .id
+            .filter(|_| self.ws.platform_table(table))
+            .and_then(|t| al_builtins::platform::unpinned_column(t, id))
+        {
+            return Err(why);
+        }
         self.field_pos(table, id).ok_or_else(|| "field position".to_string())
     }
 
@@ -1467,6 +1465,7 @@ impl Lowerer<'_> {
             .collect();
         let mut keys = Vec::new();
         let mut unique_keys = Vec::new();
+        let mut key_props: Vec<Vec<(String, String)>> = Vec::new();
         for o in std::iter::once(oi).chain(extensions.iter().copied()) {
             for sec in self
                 .ws
@@ -1494,6 +1493,7 @@ impl Lowerer<'_> {
                         .collect();
                     if pos.len() == names.len() && !pos.is_empty() {
                         keys.push(pos);
+                        key_props.push(k.properties().map(|p| (p.name(), p.value_text())).collect());
                         unique_keys.push(k.properties().any(|p| {
                             p.name().eq_ignore_ascii_case("Unique")
                                 && p.value_text().trim().eq_ignore_ascii_case("true")
@@ -1506,6 +1506,7 @@ impl Lowerer<'_> {
             // Without a keys section the first field is the primary key (doc: Table keys).
             keys.push(vec![0]);
             unique_keys.push(false);
+            key_props.push(Vec::new());
         }
         let per_company = !obj.properties().any(|p| {
             p.name().eq_ignore_ascii_case("DataPerCompany") && p.value_text().trim().eq_ignore_ascii_case("false")
@@ -1514,6 +1515,7 @@ impl Lowerer<'_> {
             fields,
             keys,
             unique_keys,
+            key_props,
             per_company,
             extensions,
         }
@@ -1726,20 +1728,9 @@ impl Lowerer<'_> {
             } else {
                 None
             };
-            let run_object = match self.run_object(oi, file, sec) {
-                Some(r) => {
-                    // Which of the two an action runs first is not pinned: no corpus action
-                    // declares both.
-                    if sec.triggers().any(|t| t.name().eq_ignore_ascii_case("OnAction")) {
-                        unsupported.push(format!(
-                            "action {} declares both RunObject and OnAction (their order is not pinned)",
-                            raw.name
-                        ));
-                    }
-                    Some(r)
-                }
-                None => None,
-            };
+            // An action that declares both RunObject and OnAction runs only the RunObject
+            // (handlers/TestPageRunObjectContracts.al:371-390).
+            let run_object = self.run_object(oi, file, sec);
             controls.push(ir::Control {
                 name: raw.name.clone(),
                 kind: raw.kind.clone(),
@@ -1980,8 +1971,8 @@ impl Lowerer<'_> {
             .resolve_ref(file, ObjKind::Table, std::slice::from_ref(&f.table))
         else {
             return Err(format!(
-                "CalcFormula source table `{}` is outside the workspace",
-                f.table
+                "CalcFormula source: {}",
+                self.ws.outside_workspace(ObjKind::Table, &f.table)
             ));
         };
         let src_fields = &self.members[src].fields;
@@ -2064,11 +2055,7 @@ impl Lowerer<'_> {
     fn resolve_obj_in(&self, file: usize, kind: ObjKind, name: &str) -> L<usize> {
         match self.ws.resolve_ref(file, kind, &crate::types::qualified_parts(name)) {
             Resolution::Found(i) => Ok(i),
-            _ => Err(format!(
-                "{} `{}` is outside the workspace",
-                kind.label(),
-                crate::types::display_name(name)
-            )),
+            _ => Err(self.ws.outside_workspace(kind, &crate::types::display_name(name))),
         }
     }
 
@@ -2724,6 +2711,9 @@ impl Lowerer<'_> {
                         // `CurrPage.Editable := true` is the setter form of `CurrPage.Editable(true)`
                         // (corpus handlers/TestPageModalNewRowLine_Objects.al:69).
                         || (s.receiver == "Page" && matches!(s.name.as_str(), "Editable" | "PromptMode"))
+                        // `Rec.ReadIsolation := IsolationLevel::UpdLock` is the setter form of
+                        // `Rec.ReadIsolation(...)`; the read form answers the level the record has.
+                        || (s.receiver == "Record" && matches!(s.name.as_str(), "ReadIsolation" | "SecurityFiltering" | "FilterGroup"))
             });
             if setter && kids[0].kind() == SyntaxKind::MemberExpr {
                 if al_builtins::native::lookup(&id).is_none() {
@@ -3275,6 +3265,16 @@ impl Lowerer<'_> {
                     .ok_or("procedure signature")?
                     .clone();
                 let instance = match &receiver_node {
+                    // `this.Proc()` runs on the current instance, like a bare call.
+                    Some(r)
+                        if r.kind() == SyntaxKind::NameRef
+                            && r.text().to_string().trim().eq_ignore_ascii_case("this") =>
+                    {
+                        if object != self.oi {
+                            return Err("`this` calls a procedure of another object".into());
+                        }
+                        None
+                    }
                     Some(r)
                         if matches!(
                             self.ty_of(r),

@@ -256,3 +256,93 @@ fn require_dotnet_turns_an_unusable_dotnet_into_a_setup_error() {
     let (code, _, err) = cli(&["--dotnet-sidecar", "/nonexistent/AlDotNetSidecar.dll"]);
     assert_eq!(code, 0, "{err}");
 }
+
+// BC 28 holds the main app and three more oracles (oracle/oracle.toml `[[version.suite]]`): the
+// OnPrem app and the isolation probe under its two runners. Their cases stay out of `overall`.
+#[test]
+fn the_other_test_apps_are_reported_apart_from_the_main_one() {
+    require_corpus();
+    let (code, r) = json(&["--bc-version", "28"]);
+    assert_eq!(code, 0);
+    assert_eq!(r["overall"]["total"], 5112);
+    let suites = r["suites"].as_array().unwrap();
+    let get = |n: &str| {
+        suites
+            .iter()
+            .find(|s| s["name"] == n)
+            .unwrap_or_else(|| panic!("no suite {n}"))
+    };
+    assert_eq!(get("onprem")["counts"]["total"], 61);
+    assert_eq!(get("isolation-function")["counts"]["total"], 7);
+    assert_eq!(get("isolation-function")["counts"]["pass"], 7);
+    // The control: real BC fails T5 under Codeunit isolation, and the runtime fails it too.
+    let control = get("isolation-codeunit");
+    assert_eq!(control["counts"]["pass"], 6);
+    assert_eq!(control["bc_failed"], 1);
+    assert_eq!(control["bc_failed_reproduced"], 1);
+}
+
+// BC 27 and 29 have no isolation oracle (the probe only ran in the BC 28.4 nightly).
+#[test]
+fn a_version_without_an_isolation_oracle_lists_only_the_onprem_app() {
+    require_corpus();
+    let (_, r) = json(&["--bc-version", "27"]);
+    let names: Vec<_> = r["suites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["onprem"]);
+}
+
+// `--baseline FILE` is the main app's ratchet alone. The extra apps keep their own files in
+// `oracle.toml`, which may need the dependency apps this `--no-deps` run does not load.
+#[test]
+fn an_explicit_baseline_does_not_ratchet_the_extra_apps() {
+    require_corpus();
+    // Not a regression: onprem's own baseline lists cases that need the dependency apps.
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("passing.txt");
+    std::fs::write(&base, "").unwrap();
+    let (code, _, err) = cli(&["--bc-version", "27", "--baseline", base.to_str().unwrap()]);
+    assert_eq!(code, 0, "{err}");
+}
+
+#[test]
+fn a_suite_baseline_ratchets_that_extra_app_and_no_ratchet_ignores_it() {
+    require_corpus();
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("passing.txt");
+    std::fs::write(&base, "").unwrap();
+    // A case the OnPrem app cannot pass without its platform tables and dependency apps.
+    let suite = dir.path().join("onprem.txt");
+    std::fs::write(
+        &suite,
+        "61200 ObjectMetadata_Find_ApplicationDatabaseTableId_ReturnsARow\n",
+    )
+    .unwrap();
+    let args = |extra: &[&str]| {
+        let mut a = vec!["--bc-version", "27", "--baseline", base.to_str().unwrap()];
+        a.extend_from_slice(&["--suite-baseline"]);
+        let named = format!("onprem={}", suite.display());
+        let mut v: Vec<String> = a.iter().map(|s| s.to_string()).collect();
+        v.push(named);
+        v.extend(extra.iter().map(|s| s.to_string()));
+        v
+    };
+    let run = |a: Vec<String>| cli(&a.iter().map(String::as_str).collect::<Vec<_>>());
+    let (code, _, err) = run(args(&[]));
+    assert_eq!(code, 1, "{err}");
+    assert!(
+        err.contains("27.5 onprem") && err.contains("ObjectMetadata_Find_ApplicationDatabaseTableId"),
+        "{err}"
+    );
+    // --no-ratchet reports only, for every app.
+    let mut a = args(&["--no-ratchet"]);
+    a.retain(|x| x != base.to_str().unwrap() && x != "--baseline");
+    let (code, _, err) = run(a);
+    assert_eq!(code, 0, "{err}");
+    let (_, _, err) = cli(&["--bc-version", "27", "--suite-baseline", "nope=x"]);
+    assert!(err.contains("no suite named `nope`"), "{err}");
+}

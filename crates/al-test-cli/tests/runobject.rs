@@ -150,7 +150,7 @@ page 61063 "RO Both Host"
 {
     PageType = Card; SourceTable = "RO Row";
     layout { area(Content) { field(NoCtl; Rec."No.") { } } }
-    actions { area(Processing) { action(Both) { RunObject = Page "RO Card"; trigger OnAction() begin end; } } }
+    actions { area(Processing) { action(Both) { RunObject = Page "RO Card"; trigger OnAction() begin Error('OnAction ran'); end; } } }
 }
 table 61003 "RO Head"
 {
@@ -521,26 +521,35 @@ fn not_run(tests: &str) -> Vec<(String, String)> {
 fn what_the_corpus_does_not_pin_is_refused_when_the_action_is_invoked() {
     let got = not_run(&format!(
         "{SEED}
-        [Test] procedure ClosingTrigger() var H: TestPage \"RO Refused Host\"; begin Seed(); H.OpenEdit(); H.First(); H.Closing.Invoke(); end;
         [Test] procedure OnRecWithSourceTableView() var H: TestPage \"RO Refused Host\"; begin Seed(); H.OpenEdit(); H.First(); H.OnRecWithView.Invoke(); end;
         [Test] procedure CreateOnRec() var H: TestPage \"RO Refused Host\"; begin Seed(); H.OpenEdit(); H.First(); H.CreateOnRec.Invoke(); end;
         [Test] procedure MissingTarget() var H: TestPage \"RO Refused Host\"; begin Seed(); H.OpenEdit(); H.First(); H.Missing.Invoke(); end;
         [Test] procedure UnknownMode() var H: TestPage \"RO Refused Host\"; begin Seed(); H.OpenEdit(); H.First(); H.Odd.Invoke(); end;"
     ));
     let why = |name: &str| got.iter().find(|(n, _)| n == name).unwrap().1.clone();
-    assert!(why("ClosingTrigger").contains("close trigger"), "{got:?}");
     assert!(why("OnRecWithSourceTableView").contains("SourceTableView"), "{got:?}");
     assert!(why("CreateOnRec").contains("RunPageMode = Create"), "{got:?}");
     assert!(why("MissingTarget").contains("outside the workspace"), "{got:?}");
     assert!(why("UnknownMode").contains("RunPageMode = strange"), "{got:?}");
 }
 
-// An action that declares both: which runs first is not pinned (no corpus action does).
+// An action that declares both runs only its RunObject
+// (handlers/TestPageRunObjectContracts.al:371-390 RunObject_ActionWithBothRunObjectAndOnAction_OnlyTheTargetRuns).
 #[test]
-fn an_action_with_run_object_and_on_action_refuses_its_page() {
-    let got = not_run(&format!(
+fn an_action_with_run_object_and_on_action_runs_only_the_target() {
+    passes(&format!(
         "{SEED}
-        [Test] procedure Both() var H: TestPage \"RO Both Host\"; begin Seed(); H.OpenEdit(); end;"
+        [Test] [HandlerFunctions('CardH')] procedure Both() var H: TestPage \"RO Both Host\"; begin Seed(); H.OpenEdit(); H.First(); H.Both.Invoke(); end;
+        [PageHandler] procedure CardH(var C: TestPage \"RO Card\") begin end;"
     ));
-    assert!(got[0].1.contains("declares both RunObject and OnAction"), "{got:?}");
+}
+
+// A target with no handler is dropped without its close triggers
+// (handlers/TestPageRunObjectContracts.al:RunObject_CardAndListTargets_NoHandler_OpenAndAreDroppedWithoutCloseTriggers).
+#[test]
+fn an_unattended_page_with_close_triggers_is_dropped_without_running_them() {
+    passes(&format!(
+        "{SEED}
+        [Test] procedure ClosingTrigger() var H: TestPage \"RO Refused Host\"; begin Seed(); H.OpenEdit(); H.First(); H.Closing.Invoke(); end;"
+    ));
 }

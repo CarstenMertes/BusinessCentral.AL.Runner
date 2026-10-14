@@ -39,6 +39,8 @@ pub struct MemStore {
     committed_versions: im::OrdMap<(String, u32), u64>,
     /// Handed out by writes; never goes back, so a stamp is never reused.
     counter: u64,
+    /// Tables that have no stored rows (ADR-019).
+    virtuals: Option<std::rc::Rc<dyn VirtualTables>>,
 }
 
 fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
@@ -57,6 +59,44 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 }
 
 impl MemStore {
+    /// A store whose virtual tables are answered by `v`.
+    pub fn with_virtual_tables(v: std::rc::Rc<dyn VirtualTables>) -> MemStore {
+        MemStore {
+            virtuals: Some(v),
+            ..Default::default()
+        }
+    }
+
+    /// The store without its provider: the data only. A captured snapshot (ADR-004) holds no
+    /// provider, so it cannot keep the session that made it alive.
+    pub fn detached(mut self) -> MemStore {
+        self.virtuals = None;
+        self
+    }
+
+    /// The provider of the computed tables.
+    pub fn virtual_tables(&self) -> Option<std::rc::Rc<dyn VirtualTables>> {
+        self.virtuals.clone()
+    }
+
+    /// This store's data with `v` as its provider.
+    pub fn attached(mut self, v: Option<std::rc::Rc<dyn VirtualTables>>) -> MemStore {
+        self.virtuals = v;
+        self
+    }
+
+    /// The provider of table `t`, if its rows are computed.
+    fn virtual_of(&self, t: &TableDef) -> Option<&dyn VirtualTables> {
+        self.virtuals.as_deref().filter(|v| v.serves(t))
+    }
+
+    fn read_only(t: &TableDef, what: &str) -> StoreError {
+        StoreError::Refused(format!(
+            "{what} on virtual table '{}': its rows are computed, not stored",
+            t.name
+        ))
+    }
+
     /// Whether any write since the last commit or rollback is pending.
     pub fn has_uncommitted(&self) -> bool {
         !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))
@@ -79,6 +119,9 @@ impl MemStore {
     /// A number that changes whenever the rows of table `t` change (a rollback included). Queries
     /// compare it to tell whether their result set is stale (corpus query/TestQueryReadAfterWrite.al).
     pub fn table_stamp(&self, cx: &AccessContext, t: &TableDef) -> u64 {
+        if self.virtual_of(t).is_some() {
+            return 0;
+        }
         self.versions.get(&slot(cx, t)).copied().unwrap_or(0)
     }
 
@@ -98,6 +141,9 @@ impl MemStore {
 
 impl Store for MemStore {
     fn insert(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<InsertOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Insert"));
+        }
         let k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if table.contains_key(&k) {
@@ -109,10 +155,16 @@ impl Store for MemStore {
     }
 
     fn get(&self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+        if let Some(v) = self.virtual_of(t) {
+            return v.get(self, cx, t, pk);
+        }
         Ok(self.table(cx, t).and_then(|m| m.get(&Key(pk.to_vec())).cloned()))
     }
 
     fn modify(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<WriteOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Modify"));
+        }
         let k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if !table.contains_key(&k) {
@@ -124,6 +176,9 @@ impl Store for MemStore {
     }
 
     fn delete(&mut self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<WriteOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Delete"));
+        }
         Ok(match self.table_mut(cx, t).remove(&Key(pk.to_vec())) {
             Some(_) => {
                 self.touch(cx, t);
@@ -140,6 +195,9 @@ impl Store for MemStore {
         old: &[Value],
         row: Row,
     ) -> Result<RenameOutcome, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "Rename"));
+        }
         let new_k = Key(t.primary_key(&row));
         let table = self.table_mut(cx, t);
         if !table.contains_key(&Key(old.to_vec())) {
@@ -155,6 +213,9 @@ impl Store for MemStore {
     }
 
     fn next(&self, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+        if let Some(v) = self.virtual_of(t) {
+            return v.next(self, cx, t, scan);
+        }
         let Some(table) = self.table(cx, t) else {
             return Ok(None);
         };
@@ -188,12 +249,18 @@ impl Store for MemStore {
     }
 
     fn count(&self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
+        if let Some(v) = self.virtual_of(t) {
+            return v.count(self, cx, t, f);
+        }
         Ok(self
             .table(cx, t)
             .map_or(0, |m| m.values().filter(|r| passes(r, f)).count()))
     }
 
     fn delete_all(&mut self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
+        if self.virtual_of(t).is_some() {
+            return Err(Self::read_only(t, "DeleteAll"));
+        }
         let table = self.table_mut(cx, t);
         let doomed: Vec<Key> = table
             .iter()
@@ -307,5 +374,70 @@ mod tests {
     #[test]
     fn passes_the_snapshot_contract() {
         crate::contract::snapshot_restores_everything(MemStore::default());
+    }
+}
+
+#[cfg(test)]
+mod virtual_tests {
+    use super::*;
+    use al_builtins::value::RtType;
+    use std::rc::Rc;
+
+    /// A table that has one row, 7, and is served by a provider.
+    struct One;
+    impl VirtualTables for One {
+        fn serves(&self, t: &TableDef) -> bool {
+            t.name == "V"
+        }
+        fn get(&self, _: &MemStore, _: &AccessContext, _: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+            Ok(matches!(pk, [Value::Integer(7)]).then(|| vec![Value::Integer(7)]))
+        }
+        fn next(&self, _: &MemStore, _: &AccessContext, _: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+            Ok(scan.after.is_none().then(|| vec![Value::Integer(7)]))
+        }
+        fn count(&self, _: &MemStore, _: &AccessContext, _: &TableDef, _: &[FieldFilter]) -> Result<usize, StoreError> {
+            Ok(1)
+        }
+    }
+
+    fn table(name: &str) -> TableDef {
+        TableDef {
+            object: 0,
+            name: name.into(),
+            fields: vec![FieldDef {
+                id: 1,
+                name: "K".into(),
+                ty: RtType::Integer,
+                stored: true,
+            }],
+            keys: vec![vec![0]],
+            per_company: false,
+        }
+    }
+
+    #[test]
+    fn a_served_table_is_read_from_the_provider_and_never_written() {
+        let cx = AccessContext {
+            company: "C".into(),
+            user: "U".into(),
+        };
+        let mut s = MemStore::with_virtual_tables(Rc::new(One));
+        let v = table("V");
+        assert_eq!(s.count(&cx, &v, &[]), Ok(1));
+        assert!(s.get(&cx, &v, &[Value::Integer(7)]).unwrap().is_some());
+        assert!(s.get(&cx, &v, &[Value::Integer(8)]).unwrap().is_none());
+        for r in [
+            s.insert(&cx, &v, vec![Value::Integer(8)]).map(|_| ()),
+            s.modify(&cx, &v, vec![Value::Integer(7)]).map(|_| ()),
+            s.delete(&cx, &v, &[Value::Integer(7)]).map(|_| ()),
+            s.delete_all(&cx, &v, &[]).map(|_| ()),
+        ] {
+            assert!(matches!(r, Err(StoreError::Refused(_))), "{r:?}");
+        }
+        assert!(!s.has_uncommitted(), "a refused write leaves nothing pending");
+        // A table the provider does not serve is an ordinary stored table.
+        let w = table("W");
+        s.insert(&cx, &w, vec![Value::Integer(1)]).unwrap();
+        assert_eq!(s.count(&cx, &w, &[]), Ok(1));
     }
 }

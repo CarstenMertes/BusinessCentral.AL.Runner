@@ -764,6 +764,16 @@ impl Checker<'_> {
     /// Runs the demand loop to its end and reports what it reached.
     pub(super) fn run_demand(&mut self) -> Option<Demand> {
         self.demand.borrow().as_ref()?;
+        // The stored platform tables are part of every tenant (the Company, the User, the links of
+        // a record): compile their shape so the platform can seed and write them.
+        for i in 0..self.ws.objects.len() {
+            let stored = self.ws.platform_table(i)
+                && self.ws.objects[i].id.and_then(al_builtins::platform::provider)
+                    == Some(al_builtins::platform::Provider::Stored);
+            if stored && self.ws.usable(i) {
+                self.raise(i, READ);
+            }
+        }
         loop {
             let fresh = self.demand.borrow_mut().as_mut().and_then(|s| s.fresh.pop());
             if let Some((i, level)) = fresh {

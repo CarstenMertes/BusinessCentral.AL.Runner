@@ -77,6 +77,12 @@ fn differences(name: &str, src: &str) -> Vec<String> {
             usize::from(o.syntax().text_range().start()).to_string(),
             so.offset.to_string(),
         );
+        let props: Vec<(String, String)> = o.properties().map(|p| (p.name(), p.value_text())).collect();
+        note(
+            &format!("{who} properties"),
+            format!("{props:?}"),
+            format!("{:?}", so.properties),
+        );
         let subs = ast::routines_in(o.syntax())
             .iter()
             .flat_map(|r| r.attributes())

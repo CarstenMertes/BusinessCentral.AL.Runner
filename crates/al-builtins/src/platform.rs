@@ -1,0 +1,258 @@
+//! The registry of platform tables that have a native row provider (ADR-013 decision 7, ADR-019).
+//!
+//! A platform table is a table of the platform app `System` (the system tables, ids from
+//! 2000000000). Its schema is the real declaration, taken as AL. Its rows are not AL: the platform
+//! computes them, or stores them under native triggers. A platform table with no entry here is
+//! refused wherever code reaches it, because a declared table with no behaviour would answer
+//! empty, and silently wrong.
+//!
+//! This is the second id namespace of the builtin registry (ADR-008). The providers themselves
+//! live in `al-vm` (`platform/`); this table is data so that `al-sema` can refuse at compile time.
+
+/// How the rows of a platform table are provided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    /// Rows computed on read; the table cannot be written.
+    Virtual(Virtual),
+    /// An ordinary stored table, with its real declaration (ADR-013 decision 7).
+    Stored,
+}
+
+/// The computed tables. One variant per table the runtime can answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Virtual {
+    Integer,
+    Date,
+    Session,
+    ActiveSession,
+    AllObj,
+    AllObjWithCaption,
+    CodeunitMetadata,
+    TableMetadata,
+    Field,
+    Key,
+    PageMetadata,
+    PageControlField,
+    TimeZone,
+    WindowsLanguage,
+    NavAppInstalledApp,
+    PublishedApplication,
+    /// Known to exist, not pinned: lowers, and every read is refused.
+    ApiWebhookEntity,
+    /// Media live in the session's media store (ADR-017); the table is not a view of it yet.
+    TenantMedia,
+    MetadataPermissionSet,
+    PermissionSet,
+    /// The assignable rows of Permission Set (the table is walked through this one); not a table.
+    PermissionSetAssignable,
+    AggregatePermissionSet,
+    MetadataPermission,
+    ExpandedPermission,
+    Permission,
+}
+
+/// (table id, table name, provider). Every entry is a table of the platform `System` app.
+pub const REGISTRY: &[(u32, &str, Provider)] = &[
+    (2_000_000_026, "Integer", Provider::Virtual(Virtual::Integer)),
+    (2_000_000_007, "Date", Provider::Virtual(Virtual::Date)),
+    (2_000_000_009, "Session", Provider::Virtual(Virtual::Session)),
+    (
+        2_000_000_110,
+        "Active Session",
+        Provider::Virtual(Virtual::ActiveSession),
+    ),
+    (2_000_000_038, "AllObj", Provider::Virtual(Virtual::AllObj)),
+    (
+        2_000_000_058,
+        "AllObjWithCaption",
+        Provider::Virtual(Virtual::AllObjWithCaption),
+    ),
+    (
+        2_000_000_137,
+        "CodeUnit Metadata",
+        Provider::Virtual(Virtual::CodeunitMetadata),
+    ),
+    (
+        2_000_000_136,
+        "Table Metadata",
+        Provider::Virtual(Virtual::TableMetadata),
+    ),
+    (2_000_000_041, "Field", Provider::Virtual(Virtual::Field)),
+    (2_000_000_063, "Key", Provider::Virtual(Virtual::Key)),
+    (2_000_000_138, "Page Metadata", Provider::Virtual(Virtual::PageMetadata)),
+    (
+        2_000_000_192,
+        "Page Control Field",
+        Provider::Virtual(Virtual::PageControlField),
+    ),
+    (2_000_000_164, "Time Zone", Provider::Virtual(Virtual::TimeZone)),
+    (
+        2_000_000_045,
+        "Windows Language",
+        Provider::Virtual(Virtual::WindowsLanguage),
+    ),
+    (
+        2_000_000_153,
+        "NAV App Installed App",
+        Provider::Virtual(Virtual::NavAppInstalledApp),
+    ),
+    (
+        2_000_000_206,
+        "Published Application",
+        Provider::Virtual(Virtual::PublishedApplication),
+    ),
+    (
+        2_000_000_097,
+        "API Webhook Entity",
+        Provider::Virtual(Virtual::ApiWebhookEntity),
+    ),
+    // Stored tables whose rows AL reads as facts about the session; the platform seeds them
+    // (al-vm `platform/seed.rs`).
+    (2_000_000_006, "Company", Provider::Stored),
+    (2_000_000_120, "User", Provider::Stored),
+    (2_000_000_053, "Access Control", Provider::Stored),
+    // Written by Record.AddLink and friends (al-vm `platform/links.rs`).
+    (2_000_000_068, "Record Link", Provider::Stored),
+    // Read by Base Application's API Webhook Notification Mgt. when a database write reaches the Global
+    // Triggers codeunit; a plain tenant table with no native behaviour.
+    (2_000_000_095, "API Webhook Subscription", Provider::Stored),
+    (2000000159, "Data Sensitivity", Provider::Stored),
+    (2000000073, "User Personalization", Provider::Stored),
+    (
+        2_000_000_250,
+        "Metadata Permission Set",
+        Provider::Virtual(Virtual::MetadataPermissionSet),
+    ),
+    (
+        2_000_000_004,
+        "Permission Set",
+        Provider::Virtual(Virtual::PermissionSet),
+    ),
+    (
+        2_000_000_167,
+        "Aggregate Permission Set",
+        Provider::Virtual(Virtual::AggregatePermissionSet),
+    ),
+    (2_000_000_165, "Tenant Permission Set", Provider::Stored),
+    (2_000_000_166, "Tenant Permission", Provider::Stored),
+    (
+        2_000_000_251,
+        "Metadata Permission",
+        Provider::Virtual(Virtual::MetadataPermission),
+    ),
+    (
+        2_000_000_254,
+        "Expanded Permission",
+        Provider::Virtual(Virtual::ExpandedPermission),
+    ),
+    (2_000_000_005, "Permission", Provider::Virtual(Virtual::Permission)),
+    (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
+    (2_000_000_121, "User Property", Provider::Stored),
+    (2_000_000_175, "Scheduled Task", Provider::Stored),
+    (2_000_000_096, "API Webhook Notification", Provider::Stored),
+    (2_000_000_098, "API Webhook Notification Aggr", Provider::Stored),
+];
+
+/// The provider of platform table `id`, if it has one.
+pub fn provider(id: u32) -> Option<Provider> {
+    REGISTRY.iter().find(|(i, _, _)| *i == id).map(|(_, _, p)| *p)
+}
+
+/// The computed-table provider of platform table `id`, if it is one.
+pub fn virtual_table(id: u32) -> Option<Virtual> {
+    match provider(id)? {
+        Provider::Virtual(v) => Some(v),
+        Provider::Stored => None,
+    }
+}
+
+/// The columns of a registered table that a provider fills with a value something pins, by table
+/// id. A table that is not listed has every column filled; for a table that is, a column outside
+/// the list (and below the system fields) is not known, and code that uses it is refused where it
+/// is lowered (`al-sema`), never given a default (ADR-013 decision 7; hard rule 3).
+pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
+    // AllObj: record/TestAllObjVirtualTable.al, TestAllObjOwningAppPerKind.al. "AL Namespace" (62) is not read.
+    (2_000_000_038, &[1, 3, 4, 60, 61]),
+    // AllObjWithCaption: same files. "AL Namespace" (63) is not read.
+    (2_000_000_058, &[1, 3, 4, 20, 30, 60, 61, 62]),
+    // CodeUnit Metadata: record/TestCodeunitMetadataVirtualTable.al, TestCodeunitInventoryOrder.al. "App ID" (6) is not read.
+    (2_000_000_137, &[1, 2, 3, 4, 5, 7, 8, 9, 10, 11]),
+    // Table Metadata: record/TestTableMetadataVirtualTable.al.
+    (2_000_000_136, &[1, 2, 3, 4, 5, 11, 12, 13, 15]),
+    // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al.
+    (2_000_000_041, &[1, 2, 4, 5, 21, 22, 24, 25, 26, 27]),
+    // Key: record/TestKeyVirtualTable.al.
+    (2_000_000_063, &[1, 2, 4, 7, 10, 13]),
+    // Page Metadata: record/TestPageMetadata*.al.
+    (
+        2_000_000_138,
+        &[
+            1, 2, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 19, 20, 21, 22, 23, 24, 26, 27, 28, 30, 31, 32,
+        ],
+    ),
+    // Page Control Field: record/TestPageControlField*.al. "ControlId" (2) and "Sequence" (11) are not read.
+    (2_000_000_192, &[1, 3, 4, 5, 6, 7, 8, 9, 10]),
+    // NAV App Installed App: record/TestNavAppInstalledAppSysTable.al. The compatibility, hash and extension columns are not read.
+    (2_000_000_153, &[1, 2, 3, 4, 5, 6, 7, 8]),
+    // Published Application: install/TestRetenPolAllowedTables_Tests.al reads the package ids through System Application code;
+    // the identity and version columns mirror NAV App Installed App.
+    (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9]),
+    // Metadata Permission Set: permissions/TestMetadataPermissionSet.al, TestPermissionSetUndeclaredAssignable.al.
+    (2_000_000_250, &[1, 2, 3, 4]),
+    // Permission Set: permissions/TestPermissionSetTable.al.
+    (2_000_000_004, &[1, 2, 3]),
+    // Aggregate Permission Set: access-control/TestAggregatePermissionSetTable.al, permissions/TestPermissionSetTable.al.
+    (2_000_000_167, &[1, 2, 3, 4, 5]),
+    // Metadata Permission, Expanded Permission: permissions/TestMetadataExpandedPermission.al. The role and object names and
+    // the security filter are not read.
+    (2_000_000_251, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 12]),
+    (2_000_000_254, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 14]),
+    // Permission: permissions/TestPermissionSetGrants.al.
+    (2_000_000_005, &[1, 3, 4, 6, 7, 8, 9, 10]),
+    // Windows Language: record/TestWindowsLanguageTable.al.
+    (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
+    // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.
+    (2_000_000_009, &[1, 2, 3, 5, 6, 16, 17, 19]),
+    // Active Session: session/TestActiveSessionTable.al, TestSessionVirtualTable.al. The server and client computer names are not read.
+    (2_000_000_110, &[1, 2, 3, 6, 7, 9, 10, 11]),
+];
+
+/// Why column `field` of platform table `table` cannot be read, if it cannot.
+pub fn unpinned_column(table: u32, field: u32) -> Option<String> {
+    if field >= SYSTEM_OBJECT_BASE {
+        return None;
+    }
+    let (_, pinned) = PINNED_COLUMNS.iter().find(|(t, _)| *t == table)?;
+    if pinned.contains(&field) {
+        return None;
+    }
+    let name = REGISTRY
+        .iter()
+        .find(|(i, _, _)| *i == table)
+        .map_or("?", |(_, n, _)| *n);
+    Some(format!(
+        "column {field} of platform table '{name}' ({table}) is not pinned: no corpus test fixes its value (docs/probes-needed.md)"
+    ))
+}
+
+/// The first id of the platform's system objects.
+pub const SYSTEM_OBJECT_BASE: u32 = 2_000_000_000;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_unique_system_ids() {
+        for (i, (id, name, _)) in REGISTRY.iter().enumerate() {
+            assert!(*id >= SYSTEM_OBJECT_BASE, "{name} is not a system object");
+            assert!(
+                REGISTRY
+                    .iter()
+                    .skip(i + 1)
+                    .all(|(j, n, _)| j != id && !n.eq_ignore_ascii_case(name)),
+                "{name} is registered twice"
+            );
+        }
+    }
+}

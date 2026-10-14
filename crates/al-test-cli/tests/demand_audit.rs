@@ -1096,10 +1096,13 @@ probe!(
              trigger OnOpenPage() var TaskId: Integer; begin CurrPage.EnqueueBackgroundTask(TaskId, 50120); end; }",
 );
 probe!(
-    a_task_scheduler_task_for_a_dependency_codeunit_runs_or_refuses,
-    RanOrRefused,
+    a_task_scheduler_task_for_a_dependency_codeunit_is_created_and_not_run_in_either_compile,
+    Ran,
     vars = "",
-    body = "asserterror TaskScheduler.CreateTask(50120, 0, true); Expect('ran:onrun');",
+    // A task starts in a session of its own after the creating transaction commits, which a test does
+    // not wait for (docs/probes-needed.md, `TaskScheduler.CreateTask`). So nothing runs, in the
+    // eager compile too: this is a decision about tasks, not a gap of the demand-driven compile.
+    body = "TaskScheduler.CreateTask(50120, 0, true);",
     dep = [("c.al", RUN_CU)],
 );
 probe!(

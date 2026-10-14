@@ -25,6 +25,7 @@ mod hostvalues;
 mod interfaces;
 mod pages;
 mod partial;
+mod platform;
 mod queries;
 mod recmeta;
 mod records;
@@ -220,6 +221,10 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// How many times the session made its changes durable (`commit_transaction`). A runner reads
+    /// it around a test method to see whether the method committed (test isolation, `isolation.rs`
+    /// in al-test-cli).
+    pub commits: u64,
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
@@ -250,6 +255,15 @@ pub struct Session {
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,
     pub(crate) report_quit: bool,
+    /// The call depth of the report trigger being run and what it may ask of the report
+    /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
+    pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
+    pub(crate) report_flow: Option<crate::reports::Flow>,
+    /// The report instances that `Execute` has run: a second `Execute` on one is refused.
+    /// A page opened for a `RunObject` action looks its handler up without failing when there is
+    /// none (al-vm pages/runobject.rs).
+    pub(crate) lenient_bind: bool,
+    pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
@@ -266,7 +280,10 @@ impl Session {
     /// A session whose clock and identity come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
-        Session {
+        let ident = platform::Ident::of(&host);
+        let store =
+            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+        let mut session = Session {
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
@@ -276,7 +293,7 @@ impl Session {
             last_error: AlError::default(),
             depth: 0,
             singletons: Default::default(),
-            store: Default::default(),
+            store,
             global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
@@ -311,6 +328,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            commits: 0,
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
@@ -319,13 +337,20 @@ impl Session {
             application_areas: String::new(),
             report_init_depth: None,
             report_quit: false,
-        }
+            report_trigger: None,
+            report_flow: None,
+            report_executed: Vec::new(),
+            lenient_bind: false,
+        };
+        session.seed_platform_rows(&ident);
+        session
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
     pub fn commit_transaction(&mut self) {
         self.deferred_insert = None;
         al_data::Store::commit(&mut self.store);
+        self.commits += 1;
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.committed_row_version = self.next_row_version;

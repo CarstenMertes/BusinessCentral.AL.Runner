@@ -29,6 +29,7 @@ pub mod native;
 pub mod ops;
 pub mod pagebuiltins;
 pub mod pagefmt;
+pub mod platform;
 pub mod querybuiltins;
 pub mod refs;
 pub mod sessionfns;

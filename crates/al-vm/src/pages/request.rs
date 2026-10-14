@@ -68,13 +68,10 @@ impl Session {
         if let Some(why) = page.unsupported.first() {
             return unsupported(format!("the request page of report \"{name}\": {why}"));
         }
-        // What BC answers a report that opens its request page where the test declares no handler
-        // is not pinned by the corpus.
+        // handlers/TestReportRuntimeContracts.al:425-429: with no [RequestPageHandler] the page
+        // opens and the run is refused with "Unhandled UI: RequestPage <report id>".
         if !self.has_page_handler(UiKind::RequestPage, object as u32) {
-            return unsupported(format!(
-                "report \"{name}\" opens its request page, but the test declares no [RequestPageHandler] for it \
-                 (what BC answers then is not pinned)"
-            ));
+            return Err(self.unhandled_page(UiKind::RequestPage, object as u32));
         }
         let st: St = Rc::new(RefCell::new(PageState::closed(object as u32)));
         {
@@ -560,5 +557,14 @@ mod tests {
         assert_eq!(action_id(60398, "StampText"), 727_081_671);
         assert_eq!(action_id(60398, "AppendText"), 622_821_794);
         assert_eq!(action_id(60398, "RefuseAction"), 1_188_892_507);
+    }
+
+    // testpart/TestTestPart.al:233 and pageapplicationarea/TestPageApplicationAreaPrecompiledControlRemoval.al:57,92,124
+    #[test]
+    fn control_ids_are_the_ones_the_corpus_pins() {
+        assert_eq!(action_id(60344, "Hidden"), 1_318_487_454);
+        assert_eq!(action_id(329, "Name"), 301_776_846);
+        assert_eq!(action_id(5361, "User Defined"), 104_384_132);
+        assert_eq!(action_id(6478, "Ignore Status on Service Docs."), 1_790_009_997);
     }
 }

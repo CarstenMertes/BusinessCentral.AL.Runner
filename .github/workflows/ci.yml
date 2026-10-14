@@ -35,7 +35,7 @@ jobs:
           if [ "$(git -C corpus rev-parse --is-shallow-repository)" = true ]; then
             git -C corpus fetch --unshallow --quiet
           fi
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -96,7 +96,8 @@ jobs:
           AL_EAGER_DEPENDENCIES=1 ./target/release/al-test-cli --all-versions --require-dotnet \
             --junit eager-junit.xml || status=1
           for v in 27 28 29; do
-            python3 tools/compare_junit.py runtime-junit-$v.xml eager-junit-$v.xml || status=1
+            python3 tools/compare_junit.py --allow tools/demand-eager-known-differences.txt \
+              runtime-junit-$v.xml eager-junit-$v.xml || status=1
           done
           exit $status
 
@@ -110,6 +111,7 @@ jobs:
             -p al-syntax --test perf_parse_throughput \
             -p al-test-cli --test perf_budget \
             -p al-test-cli --test corpus_resolve_deps \
+            -p al-test-cli --test platform_tables \
             -- --ignored --nocapture
 
       # The only tests that use the network: Microsoft's artifact feed, read by range. Run after

@@ -63,6 +63,13 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.ReadIsolation#1",
     "RecordRef.SecurityFiltering#1",
     "RecordRef.Get#1",
+    "RecordRef.AddLink#1",
+    "RecordRef.DeleteLink#1",
+    "RecordRef.DeleteLinks#1",
+    "RecordRef.HasLinks#1",
+    "RecordRef.CopyLinks#1",
+    "RecordRef.CopyLinks#2",
+    "RecordRef.CopyLinks#3",
     "RecordId.TableNo#1",
     "RecordRef.SystemIdNo#1",
     "RecordRef.SystemCreatedAtNo#1",
@@ -193,6 +200,12 @@ record_methods! {
     "Record.Copy#1" => "Copy",
     "Record.FieldError#1" => "FieldError",
     "Record.FieldError#2" => "FieldError",
+    "Record.AddLink#1" => "AddLink",
+    "Record.DeleteLink#1" => "DeleteLink",
+    "Record.DeleteLinks#1" => "DeleteLinks",
+    "Record.HasLinks#1" => "HasLinks",
+    "Record.CopyLinks#1" => "CopyLinks",
+    "Record.CopyLinks#2" => "CopyLinks",
 }
 
 #[cfg(test)]

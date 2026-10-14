@@ -138,6 +138,14 @@ impl Session {
         Ok(setup)
     }
 
+    /// The first write to `t` asks the subscribers for its setup even when no event follows.
+    pub(crate) fn global_setup_asked(&mut self, t: &TableDef) -> Result<(), Signal> {
+        if self.engine.events.has_global_triggers {
+            self.global_setup(t)?;
+        }
+        Ok(())
+    }
+
     /// Whether database events are on for `op` on table `t`.
     pub(crate) fn global_enabled(&mut self, t: &TableDef, op: GlobalOp) -> Result<bool, Signal> {
         if !self.engine.events.has_global_triggers {

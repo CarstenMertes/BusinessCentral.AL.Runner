@@ -1153,8 +1153,13 @@ impl Session {
                     .store_for(rec)
                     .count(&cx, &t, &filters)
                     .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
-                // No row, no trigger and no event.
+                // No row, no trigger and no event. The platform still asks for the table's Global
+                // Triggers setup, as the first write to the table (session/TestEnvironmentUserTenantContracts.al:289-290,
+                // `GtTable.DeleteAll()` on an empty table). A temporary record is not pinned and stays as it was.
                 if n == 0 {
+                    if !temporary {
+                        self.global_setup_asked(&t)?;
+                    }
                     return Ok(Value::Null);
                 }
                 let events =

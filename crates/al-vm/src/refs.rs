@@ -275,6 +275,9 @@ impl Session {
                 let mut a = key;
                 self.record_op("Get", &rec, &mut a)
             }
+            "AddLink" | "DeleteLink" | "DeleteLinks" | "HasLinks" | "CopyLinks" => {
+                self.record_links(method, &rec, &t, args)
+            }
             "Duplicate" => {
                 if rec.borrow().temporary {
                     return unsupported("Duplicate of a temporary RecordRef (shared table not pinned)");

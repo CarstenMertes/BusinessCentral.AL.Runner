@@ -37,6 +37,10 @@ pub struct ScannedObject {
     pub extends: Option<Vec<String>>,
     pub implements: Vec<Vec<String>>,
     pub subscribers: Vec<ScannedSubscriber>,
+    /// The properties written directly in the object body (`Caption = 'X';`), in source order:
+    /// name as written, value as the parser's `Property::value_text` gives it. Properties of
+    /// nested sections (fields, controls) are not scanned.
+    pub properties: Vec<(String, String)>,
     /// A codeunit that declares `Subtype = Install;` in its body.
     pub install: bool,
 }
@@ -79,6 +83,7 @@ const OBJECT_KINDS: &[&str] = &[
 struct Tok<'a> {
     kind: SyntaxKind,
     start: usize,
+    end: usize,
     text: &'a str,
 }
 
@@ -128,6 +133,7 @@ pub fn scan(src: &str, symbols: &BTreeSet<String>) -> FileScan {
             sig.push(Tok {
                 kind: t.kind,
                 start: pos,
+                end,
                 text: &src[pos..end],
             });
         }
@@ -163,7 +169,7 @@ pub fn scan(src: &str, symbols: &BTreeSet<String>) -> FileScan {
                 .get(i + 1)
                 .is_some_and(|n| matches!(n.kind, Integer | Ident | QuotedIdent))
         {
-            i = scan_object(&sig, i, &mut out);
+            i = scan_object(src, &sig, i, &mut out);
         } else {
             i += 1;
         }
@@ -172,7 +178,7 @@ pub fn scan(src: &str, symbols: &BTreeSet<String>) -> FileScan {
 }
 
 /// Scans the object starting at `sig[at]`; returns the index after its body.
-fn scan_object(sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
+fn scan_object(src: &str, sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
     // Header: everything up to the body's `{` (or the next object, if the brace is missing).
     let mut end = at + 1;
     while end < sig.len() && sig[end].kind != LBrace {
@@ -236,12 +242,30 @@ fn scan_object(sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
         extends,
         implements,
         subscribers: Vec::new(),
+        properties: Vec::new(),
         install: false,
     };
     // Body: braces nest; subscriber attributes sit directly in the object body.
     let mut i = end;
     let mut depth = 0usize;
+    // Depth of `begin` / `case` ... `end` in the code of the object's own routines.
+    let mut code = 0usize;
     while i < sig.len() {
+        if depth == 1 && sig[i].kind == Ident {
+            if sig[i].text.eq_ignore_ascii_case("begin") || sig[i].text.eq_ignore_ascii_case("case") {
+                code += 1;
+            } else if sig[i].text.eq_ignore_ascii_case("end") && code > 0 {
+                code -= 1;
+            }
+        }
+        if depth == 1
+            && sig[i].kind == Ident
+            && sig[i].text.eq_ignore_ascii_case("Subtype")
+            && sig.get(i + 1).is_some_and(|t| t.kind == Eq)
+            && sig.get(i + 2).is_some_and(|t| t.is_kw("Install"))
+        {
+            obj.install = true;
+        }
         match sig[i].kind {
             LBrace => depth += 1,
             RBrace => {
@@ -251,18 +275,31 @@ fn scan_object(sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
                     break;
                 }
             }
-            Ident
-                if depth == 1
-                    && sig[i].text.eq_ignore_ascii_case("Subtype")
-                    && sig.get(i + 1).is_some_and(|t| t.kind == Eq)
-                    && sig.get(i + 2).is_some_and(|t| t.is_kw("Install")) =>
-            {
-                obj.install = true;
-            }
             LBrack if depth == 1 => {
                 if let Some(s) = subscriber(sig, i) {
                     obj.subscribers.push(s);
                 }
+            }
+            Ident | QuotedIdent
+                if depth == 1
+                    && code == 0
+                    && sig.get(i + 1).is_some_and(|n| n.kind == Eq)
+                    && i > 0
+                    && matches!(sig[i - 1].kind, LBrace | Semicolon | RBrace | RBrack) =>
+            {
+                // `Name = value;` directly in the object body.
+                let mut j = i + 2;
+                while j < sig.len() && sig[j].kind != Semicolon && sig[j].kind != RBrace {
+                    j += 1;
+                }
+                let value = if j > i + 2 {
+                    src[sig[i + 2].start..sig[j - 1].end].to_string()
+                } else {
+                    String::new()
+                };
+                obj.properties.push((sig[i].ident_text(), value));
+                i = j;
+                continue;
             }
             _ => {}
         }

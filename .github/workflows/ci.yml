@@ -35,7 +35,7 @@ jobs:
           if [ "$(git -C corpus rev-parse --is-shallow-repository)" = true ]; then
             git -C corpus fetch --unshallow --quiet
           fi
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -93,6 +93,7 @@ jobs:
             -p al-syntax --test perf_parse_throughput \
             -p al-test-cli --test perf_budget \
             -p al-test-cli --test corpus_resolve_deps \
+            -p al-test-cli --test platform_tables \
             -- --ignored --nocapture
 
       # The only tests that use the network: Microsoft's artifact feed, read by range. Run after

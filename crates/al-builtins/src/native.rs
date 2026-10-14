@@ -205,6 +205,40 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Session.LogMessage#2", log_message),
     ("System.Variant2Date#1", variant_2_date),
     ("System.Variant2Time#1", variant_2_time),
+    // Whether the host can create tasks is not pinned (corpus session/TestTaskSchedulerCloudBehavior.al
+    // pins only that CreateTask returns a task id): a run that reaches the question is refused.
+    // The URL of the web client depends on the server's address, which a host has not been asked
+    // for: a run that builds one is refused (session/TestFinalCoverage.al:105-125 asks only that
+    // GetUrl does not throw).
+    ("System.GetUrl#1", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
+    ("System.GetUrl#2", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
+    ("System.GetUrl#3", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
+    ("System.GetUrl#4", |_, _, _| {
+        unsupported("GetUrl (the server address is not a host value)")
+    }),
+    ("TaskScheduler.CanCreateTask#1", |_, _, _| {
+        unsupported("TaskScheduler.CanCreateTask (not pinned)")
+    }),
+    // CreateTask hands back a new task id (session/TestTaskSchedulerCloudBehavior.al:9-20 pins that
+    // and nothing more). A task starts in a session of its own after the creating transaction
+    // commits, which a test does not wait for, so the task is not run (docs/probes-needed.md).
+    ("TaskScheduler.CreateTask#1", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    ("TaskScheduler.CreateTask#2", |c, _, _| Ok(Value::Guid(c.new_guid()))),
+    ("TaskScheduler.SetTaskReady#1", |_, _, _| {
+        unsupported("TaskScheduler.SetTaskReady (not pinned)")
+    }),
+    ("TaskScheduler.TaskExists#1", |_, _, _| {
+        unsupported("TaskScheduler.TaskExists (not pinned)")
+    }),
+    ("TaskScheduler.CancelTask#1", |_, _, _| {
+        unsupported("TaskScheduler.CancelTask (not pinned)")
+    }),
     ("Session.StartSession#1", start_session),
     ("Session.StartSession#2", start_session),
     ("Session.StartSession#3", start_session),
@@ -807,6 +841,18 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             Value::TestPage(std::rc::Rc::new(std::cell::RefCell::new(
                 crate::value::PageState::closed(object),
             )))
+        }
+        // A cleared Query is a fresh one: no filters, no row cap, not open
+        // (query/TestQueryRuntimeContracts.al:Query_GetFilters_ThreeFilters_OrderIsNotColumnOrder).
+        Value::Query(q) => {
+            let object = q.borrow().object;
+            Value::Query(Rc::new(std::cell::RefCell::new(crate::value::QueryState {
+                object,
+                filters: Vec::new(),
+                top: None,
+                security_filtering: None,
+                run: None,
+            })))
         }
         // A codeunit or report variable nothing has used yet has no instance to release, so
         // clearing it changes nothing (handlers/TestReportRunWithRequestPage.al: `Clear(Probe)`

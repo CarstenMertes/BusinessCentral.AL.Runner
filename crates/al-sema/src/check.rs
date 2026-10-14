@@ -1047,6 +1047,13 @@ impl<'a> Checker<'a> {
                         self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }
+                    // `Rec.ReadIsolation::ReadUncommitted`: the property name is also the way to name the
+                    // members of the option it takes (Base Application writes it).
+                    E::Callable(_) if system_option_of_property(&kids[0], &rhs).is_some() => {
+                        let (enum_name, i) = system_option_of_property(&kids[0], &rhs).expect("checked");
+                        self.record(sc, node, Res::OptionValue(i as i32));
+                        E::Val(Ty::Builtin(enum_name.to_string()))
+                    }
                     // `RecRef.SecurityFiltering::Ignored`: the member of the option a call answers
                     // (Base Application's "Find Record Management"). Its type is the option's.
                     E::Callable(c) => {
@@ -1154,6 +1161,13 @@ impl<'a> Checker<'a> {
                 self.record(sc, node, if depth == 0 { Res::Global(key) } else { Res::Local(key) });
                 return Some(E::Val(t));
             }
+        }
+        // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
+        if key == "this" && self.ws.objects[sc.oi].kind == ObjKind::Codeunit && sc.self_obj == sc.oi {
+            return Some(E::Val(Ty::Object(
+                ObjKind::Codeunit,
+                self.ws.objects[sc.oi].name.clone(),
+            )));
         }
         if sc.rec_unqualified {
             if let Some(rec) = sc.rec.clone() {
@@ -1662,6 +1676,22 @@ fn receiver_of(t: &Ty) -> Option<String> {
         }
         .to_string(),
     )
+}
+
+/// For `Rec.ReadIsolation` and `Rec.SecurityFiltering` written before `::`: the system option the
+/// property takes and the position of member `member` in it.
+fn system_option_of_property(base: &SyntaxNode, member: &str) -> Option<(&'static str, usize)> {
+    let text = base.text().to_string();
+    let last = text.rsplit('.').next()?.trim().trim_matches('"').to_ascii_lowercase();
+    let enum_name = match last.as_str() {
+        "readisolation" => "IsolationLevel",
+        "securityfiltering" => "SecurityFilter",
+        _ => return None,
+    };
+    let i = al_builtins::sysenum::members(enum_name)?
+        .iter()
+        .position(|m| m.eq_ignore_ascii_case(member))?;
+    Some((enum_name, i))
 }
 
 fn proc_cand(p: &ProcSig) -> Cand {

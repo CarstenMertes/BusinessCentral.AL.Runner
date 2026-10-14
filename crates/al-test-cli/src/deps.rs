@@ -3,7 +3,7 @@
 
 use al_deps::artifact::{ArtifactUse, Fetch, HttpCdn, load_with_artifacts};
 use al_deps::build::BuildQuery;
-use al_deps::load::{AppJson, Request, Role, WorkspaceApp, load_dependencies, parse_app_json};
+use al_deps::load::{AppJson, Request, WorkspaceApp, load_dependencies, parse_app_json};
 use al_deps::select::MissingPolicy;
 use al_sema::workspace::AppSource;
 use std::path::{Path, PathBuf};
@@ -98,15 +98,6 @@ pub fn load_with(
     let mut manifests = Vec::new();
     for d in loaded.apps {
         let files = d.app.files.len();
-        if d.role == Role::Platform {
-            // The platform's system tables have no row providers yet (ADR-013 step 4); a declared
-            // table without behaviour would answer silently wrong, so the app stays unloaded.
-            log.push(format!(
-                "dependency not loaded: {} {} ({files} files; system tables need providers)",
-                d.app.name, d.version
-            ));
-            continue;
-        }
         log.push(format!(
             "dependency: {} {} ({files} files) from {}",
             d.app.name,

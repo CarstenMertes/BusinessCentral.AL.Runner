@@ -313,6 +313,24 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         return unsupported("InStream.ReadText with a length (not pinned)");
     }
     let text = with_in(r, |s| {
+        // A byte order mark at the start decides the encoding, whatever the stream was created with,
+        // as .NET's StreamReader does: the XmlPort export is UTF-16 with a mark, and the corpus reads
+        // it back with the default encoding (xmlport/TestXmlPortObject.al:ReadBlobText).
+        if s.pos == 0 {
+            let bom = s.with_data(|d| {
+                if d.starts_with(&[0xFF, 0xFE]) {
+                    Some((Encoding::Utf16, 2))
+                } else if d.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                    Some((Encoding::Utf8, 3))
+                } else {
+                    None
+                }
+            });
+            if let Some((e, n)) = bom {
+                s.enc = e;
+                s.pos = n;
+            }
+        }
         let (enc, pos) = (s.enc, s.pos);
         let unit = enc.unit();
         let (text, consumed) = s.with_data(|data| {

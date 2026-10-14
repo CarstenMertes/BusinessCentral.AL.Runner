@@ -148,6 +148,9 @@ impl Session {
         args: &mut [Value],
     ) -> Result<Value, Signal> {
         match method {
+            "AddLink" | "DeleteLink" | "DeleteLinks" | "HasLinks" | "CopyLinks" => {
+                self.record_links(method, rec, t, args)
+            }
             "TableName" => Ok(Value::Text(t.name.clone())),
             "TableCaption" => Ok(Value::Text(self.caption(t))),
             "FieldName" => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone())),

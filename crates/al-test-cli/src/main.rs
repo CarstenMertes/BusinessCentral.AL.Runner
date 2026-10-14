@@ -16,6 +16,9 @@ struct Args {
     root: Option<PathBuf>,
     oracle: Option<PathBuf>,
     baseline: Option<PathBuf>,
+    /// `--suite-baseline NAME=FILE` (repeatable): the ratchet file of an extra test app. With
+    /// `--baseline` the extra apps are ratcheted only when named here.
+    suite_baselines: Vec<(String, PathBuf)>,
     json: Option<PathBuf>,
     markdown: Option<PathBuf>,
     junit: Option<PathBuf>,
@@ -73,6 +76,13 @@ fn parse_args() -> Result<Args, String> {
             "--root" => a.root = Some(val()?),
             "--oracle" => a.oracle = Some(val()?),
             "--baseline" => a.baseline = Some(val()?),
+            "--suite-baseline" => {
+                let v = val()?.to_string_lossy().into_owned();
+                let (name, file) = v
+                    .split_once('=')
+                    .ok_or_else(|| format!("{flag} needs NAME=FILE, got `{v}`"))?;
+                a.suite_baselines.push((name.to_string(), PathBuf::from(file)));
+            }
             "--json" => a.json = Some(val()?),
             "--markdown" => a.markdown = Some(val()?),
             "--junit" => a.junit = Some(val()?),
@@ -140,6 +150,16 @@ fn run() -> Result<ExitCode, String> {
     }
     let oracle_path = args.oracle.clone().unwrap_or_else(|| root.join("oracle/oracle.toml"));
     let cfg = config::OracleFile::parse(&read(&oracle_path)?).map_err(|e| format!("{}: {e}", oracle_path.display()))?;
+    if let Some((n, _)) = args
+        .suite_baselines
+        .iter()
+        .find(|(n, _)| !cfg.versions.iter().any(|v| v.suites.iter().any(|s| s.name == *n)))
+    {
+        return Err(format!(
+            "--suite-baseline: no suite named `{n}` in {}",
+            oracle_path.display()
+        ));
+    }
     if args.all_versions && (args.bc_version.is_some() || args.baseline.is_some()) {
         return Err("--all-versions cannot be combined with --bc-version or --baseline".into());
     }
@@ -480,9 +500,15 @@ fn run_version(
     }];
     for (suite, cases) in version.suites.iter().zip(&suite_cases) {
         let outcome = |c: &oracle::CaseId| rt.outcome_in(&suite.name, c);
+        // `--baseline FILE` is the main app's alone (a run without the dependency apps has its own
+        // file); an extra app is ratcheted then only against a file named with `--suite-baseline`.
+        let named = args.suite_baselines.iter().find(|(n, _)| *n == suite.name);
+        if args.baseline.is_some() && named.is_none() {
+            continue;
+        }
         targets.push(Target {
             label: format!("{} {}", version.bc_version, suite.name),
-            baseline_path: root.join(&suite.baseline),
+            baseline_path: named.map_or_else(|| root.join(&suite.baseline), |(_, f)| f.clone()),
             passing: cases
                 .iter()
                 .filter(|c| !c.bc_failed && outcome(&c.id) == report::Outcome::Pass)

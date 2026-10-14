@@ -32,7 +32,7 @@ impl Session {
     pub fn capture_baseline(&mut self) -> Baseline {
         self.commit_transaction();
         Baseline {
-            store: self.store.clone(),
+            store: self.store.clone().detached(),
             next_guid: self.next_guid,
             next_row_version: self.next_row_version,
             committed_row_version: self.committed_row_version,
@@ -52,7 +52,8 @@ impl Session {
 
     /// Replaces the session's data with the baseline's (a new session starts here).
     pub fn restore_baseline(&mut self, b: &Baseline) {
-        self.store = b.store.clone();
+        let provider = self.store.virtual_tables();
+        self.store = b.store.clone().attached(provider);
         self.next_guid = b.next_guid;
         self.next_row_version = b.next_row_version;
         self.committed_row_version = b.committed_row_version;

@@ -25,6 +25,7 @@ mod hostvalues;
 mod interfaces;
 mod pages;
 mod partial;
+mod platform;
 mod queries;
 mod recmeta;
 mod records;
@@ -288,7 +289,10 @@ impl Session {
     /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
         let (company, user) = (host.identity.company_name(), host.identity.user_id());
-        Session {
+        let ident = platform::Ident::of(&host);
+        let store =
+            al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(&engine, ident.clone())));
+        let mut session = Session {
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
@@ -299,7 +303,7 @@ impl Session {
             last_error: AlError::default(),
             depth: 0,
             singletons: Default::default(),
-            store: Default::default(),
+            store,
             global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
@@ -348,7 +352,9 @@ impl Session {
             report_flow: None,
             report_executed: Vec::new(),
             lenient_bind: false,
-        }
+        };
+        session.seed_platform_rows(&ident);
+        session
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).

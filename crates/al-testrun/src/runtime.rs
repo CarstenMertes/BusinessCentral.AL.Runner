@@ -1419,6 +1419,9 @@ pub struct Blocked {
 pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<Blocked> {
     let mut seen = BTreeSet::new();
     let mut stack = vec![(object, routine)];
+    // `AL_BLOCK_PATH=1` prints the chain of calls from the root to the routine with the reason.
+    let trace = std::env::var_os("AL_BLOCK_PATH").is_some();
+    let mut parent = std::collections::BTreeMap::new();
     while let Some((o, r)) = stack.pop() {
         if !seen.insert((o, r)) {
             continue;
@@ -1426,13 +1429,31 @@ pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<
         if let Some(reason) = lowered.unsupported[o][r].first() {
             let name = &lowered.program.objects[o].routines[r].name;
             let obj = &lowered.program.objects[o].name;
+            if trace {
+                let mut at = (o, r);
+                let mut chain = vec![at];
+                while let Some(&p) = parent.get(&at) {
+                    chain.push(p);
+                    at = p;
+                }
+                for (co, cr) in chain.iter().rev() {
+                    let ob = &lowered.program.objects[*co];
+                    eprintln!("  via {} {} .{}", ob.kind, ob.name, ob.routines[*cr].name);
+                }
+            }
             return Some(Blocked {
                 object: o,
                 routine: r,
                 text: format!("{obj}.{name}: {reason}"),
             });
         }
+        let before = stack.len();
         lowered.calls_into(o, r, &mut stack);
+        if trace {
+            for &next in &stack[before..] {
+                parent.entry(next).or_insert((o, r));
+            }
+        }
     }
     None
 }

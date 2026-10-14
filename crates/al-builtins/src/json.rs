@@ -1077,6 +1077,17 @@ fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Res
     Ok(Value::Boolean(true))
 }
 
+/// `WriteTo(OutStream)`: the compact text of `WriteTo(Text)` goes to the stream
+/// (json/TestJsonArray.al:90 pins the text; the bytes are an assumption, see
+/// [`crate::stream::write_serialised_text`]).
+fn write_to_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let mut out = String::new();
+    write(&h, &mut out)?;
+    crate::stream::write_serialised_text(&mut a[0], &out)?;
+    Ok(Value::Boolean(true))
+}
+
 // ------------------------------------------------------------------- YAML
 
 /// Only the flat form is read and written: a mapping of plain keys to numbers, booleans and
@@ -1356,6 +1367,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonObject.ReadFromYaml", ["Text"]) => read_from_yaml,
         ("JsonObject.WriteToYaml", ["Text"]) if first_by_var => write_to_yaml,
         ("JsonObject.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonObject.WriteTo", ["OutStream"]) => write_to_stream,
         ("JsonObject.AsToken" | "JsonArray.AsToken" | "JsonValue.AsToken", []) => as_token,
         ("JsonObject.Clone" | "JsonArray.Clone" | "JsonValue.Clone" | "JsonToken.Clone", []) => clone_token,
         ("JsonObject.Path" | "JsonArray.Path" | "JsonValue.Path" | "JsonToken.Path", []) => path,
@@ -1382,8 +1394,10 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonArray.GetArray", _) => arr_get_array,
         ("JsonArray.ReadFrom", ["Text"]) => array_read_from,
         ("JsonArray.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonArray.WriteTo", ["OutStream"]) => write_to_stream,
         ("JsonToken.ReadFrom" | "JsonValue.ReadFrom", ["Text"]) => any_read_from,
         ("JsonToken.WriteTo" | "JsonValue.WriteTo", ["Text"]) if first_by_var => write_to_text,
+        ("JsonToken.WriteTo" | "JsonValue.WriteTo", ["OutStream"]) => write_to_stream,
         ("JsonToken.AsObject", []) => token_as_object,
         ("JsonToken.AsArray", []) => token_as_array,
         ("JsonToken.AsValue", []) => token_as_value,

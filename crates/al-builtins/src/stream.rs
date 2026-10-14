@@ -410,6 +410,23 @@ fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
     }
 }
 
+/// Writes serialised JSON (or other text a builtin produces) to an `OutStream` argument at its
+/// write position. What real BC does with the stream's encoding for JSON is not pinned
+/// (docs/probes-needed.md, fixes-7), so the call is accepted only where every hypothesis gives
+/// the same bytes: ASCII text on a UTF-8, Windows or MS-DOS stream, and any text on a UTF-8 stream.
+/// UTF-16 streams and non-ASCII text on a code-page stream are refused.
+pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<(), Signal> {
+    let (b, enc) = out_buf(Some(stream))?;
+    match enc {
+        Encoding::Utf8 => {}
+        Encoding::Windows | Encoding::MsDos if text.is_ascii() => {}
+        Encoding::Utf16 => return unsupported("serialising to a UTF-16 OutStream (the bytes are not pinned)"),
+        _ => return unsupported("serialising non-ASCII text to a code-page OutStream (the bytes are not pinned)"),
+    }
+    write_bytes(&b, text.as_bytes());
+    Ok(())
+}
+
 /// `WriteText(Text)` writes the text in the stream's encoding and no terminator; `WriteText()` writes
 /// CR LF (:OutStream_WriteText_WithoutArgument_WritesCarriageReturnLineFeed).
 fn out_write_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {

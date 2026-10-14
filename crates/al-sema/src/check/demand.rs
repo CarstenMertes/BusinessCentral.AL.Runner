@@ -495,31 +495,34 @@ impl Checker<'_> {
         }
     }
 
-    /// Every codeunit that implements interface `iface` is a candidate for its calls.
+    /// Every codeunit that implements interface `iface`, or an interface that extends it, is a
+    /// candidate for its calls.
     fn activate_interface(&mut self, iface: usize) {
-        let name = self.ws.objects[iface].name.clone();
-        let candidates: Vec<usize> = self.ws.implementers_of(&name).to_vec();
-        for cu in candidates {
-            let o = &self.ws.objects[cu];
-            let implements_it = o.implements.iter().any(|parts| {
-                matches!(self.ws.resolve_ref(o.file, ObjKind::Interface, parts), Resolution::Found(i) if i == iface)
-            });
-            if implements_it && o.kind == ObjKind::Codeunit {
-                self.touch(cu);
-                self.reach_implementation(iface, cu);
+        for family in self.ws.interface_family(iface) {
+            let name = self.ws.objects[family].name.clone();
+            let candidates: Vec<usize> = self.ws.implementers_of(&name).to_vec();
+            for cu in candidates {
+                let o = &self.ws.objects[cu];
+                let implements_it = o.implements.iter().any(|parts| {
+                    matches!(self.ws.resolve_ref(o.file, ObjKind::Interface, parts), Resolution::Found(i) if i == family)
+                });
+                if implements_it && o.kind == ObjKind::Codeunit {
+                    self.touch(cu);
+                    self.reach_implementation(iface, cu);
+                }
             }
         }
     }
 
-    /// Reaches the procedures of `cu` that implement procedures of `iface`.
+    /// Reaches the procedures of `cu` that implement procedures of `iface` or of an interface it
+    /// extends.
     fn reach_implementation(&self, iface: usize, cu: usize) {
         if !self.ws.usable(cu) {
             return;
         }
-        let wanted: Vec<String> = self.members[iface]
-            .procedures
-            .iter()
-            .map(|p| p.name.to_lowercase())
+        let wanted: Vec<String> = std::iter::once(iface)
+            .chain(self.ws.interface_bases(iface))
+            .flat_map(|i| self.members[i].procedures.iter().map(|p| p.name.to_lowercase()))
             .collect();
         for r in self.routines_of(cu).iter() {
             if wanted.contains(&r.name().to_lowercase()) {

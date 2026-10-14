@@ -263,6 +263,7 @@ fn int_consts_expr(e: &ir::Expr, out: &mut Vec<i64>) {
         | E::Control { page: e, .. }
         | E::QueryColumn { query: e, .. }
         | E::DotNetCoerce(_, e)
+        | E::InterfaceTest { value: e, .. }
         | E::EnumImpl { value: e, .. } => int_consts_expr(e, out),
         E::DotNet { receiver, args, .. } => {
             receiver.iter().for_each(|e| int_consts_expr(e, out));

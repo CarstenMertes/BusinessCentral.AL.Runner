@@ -660,19 +660,12 @@ impl Session {
                 Ok(())
             }
             S::AssertError(body) => {
-                // Inside a UI handler, with writes pending from before the page opened, the extent
-                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
-                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
-                // Initialize() without a Commit, runs a modal page whose handler does
-                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
-                // real BC. Rolling back to the last commit would undo it.
-                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                // A caught error rolls the transaction back to the last commit, also inside a modal
+                // page handler: the write pending before the page opened and the handler's own
+                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
+                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
                 match self.exec_block(body, f) {
-                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
-                        "asserterror in a UI handler with writes pending from before it ran: the extent \
-                         of the rollback is not pinned"
-                            .into(),
-                    )),
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
@@ -821,6 +814,10 @@ impl Session {
             } => {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
                 self.finish_call(object, routine, inst, args, false, f)
+            }
+            E::InterfaceTest { value, objects, cast } => {
+                let v = self.eval(value, f)?;
+                self.interface_test(v, objects, *cast)
             }
             E::EnumImpl {
                 value,

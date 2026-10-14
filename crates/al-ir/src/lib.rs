@@ -782,6 +782,13 @@ pub enum Expr {
         targets: Vec<(usize, usize)>,
         args: Vec<Arg>,
     },
+    /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
+    /// value) on an interface value. `objects` are the codeunits that implement `I`.
+    InterfaceTest {
+        value: Box<Expr>,
+        objects: Vec<u32>,
+        cast: bool,
+    },
     /// An enum value cast to an interface: a fresh instance of the codeunit that
     /// implements the interface for the value's ordinal. `by_ordinal` has every declared
     /// ordinal of the enum (extensions included), already resolved through the value's own

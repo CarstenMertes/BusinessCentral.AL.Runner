@@ -144,3 +144,16 @@ fn what_needs_a_client_or_is_not_documented_plainly_is_refused() {
     // A write in binary mode: the binary form of a Text is not documented plainly.
     assert!(refused("F: File;", "F.Create('a'); F.Write('x');").contains("File.Write"));
 }
+
+#[test]
+fn the_static_file_methods_can_be_called_without_the_type_name() {
+    // Base Application's "File Management" calls `Download(...)`, `Exists(...)` and `Erase(...)`
+    // unqualified (reached by the report 91 tests, handlers/TestPrecompiledOptionCaption.al).
+    assert_eq!(
+        text(
+            "F: File;",
+            "F.Create('a'); F.Close(); exit(Format(Exists('a')) + Format(Exists('b')) + Format(Erase('a')) + Format(Exists('a')));",
+        ),
+        "YesNoYesNo"
+    );
+}

@@ -632,12 +632,20 @@ impl Workspace {
         self.resolve_in_scope(file, kind, parts, true, true)
     }
 
+    /// Whether Microsoft's Base Application is among the apps `app` sees. Then no app is absent that
+    /// could shadow a name, and the tiers resolve as the compiler resolves them.
+    fn sees_base_application(&self, app: usize) -> bool {
+        self.visible[app].iter().any(|&a| {
+            self.kinds[a] == AppKind::Dependency && self.apps[a].name.eq_ignore_ascii_case("Base Application")
+        })
+    }
+
     /// A `TableRelation` target. The file of a dependency app resolves it among the apps that app
     /// saw (`visible`), as BC fixed it when the app compiled: a same-named table of a dependent app
     /// is not a candidate (corpus fieldref/TestRelationTargetNameCollision.al). The file of the
-    /// workspace resolves it as `resolve_ref_certain` does.
+    /// workspace resolves it as `resolve_ref_certain` does, unless it sees Base Application.
     pub fn resolve_relation_target(&self, file: usize, kind: ObjKind, parts: &[String]) -> Resolution {
-        if self.kinds[self.files[file].app] == AppKind::Dependency {
+        if self.kinds[self.files[file].app] == AppKind::Dependency || self.sees_base_application(self.files[file].app) {
             self.resolve_ref(file, kind, parts)
         } else {
             self.resolve_ref_certain(file, kind, parts)
@@ -1008,6 +1016,65 @@ mod tests {
             ObjKind::Table,
             &["Imported".to_string(), "Agent".to_string()]
         )));
+    }
+
+    #[test]
+    fn with_base_application_loaded_a_using_resolves_a_relation_target() {
+        // corpus fieldref/TestRelationTargetNamespaceScope.al RelationScope_Usings_*: a table in a
+        // file with a namespace, naming "Shipping Agent" with `using Microsoft.Foundation.Shipping`,
+        // relates to Base Application's table 291. Base Application is here, so the tiers above the
+        // using can be told to hold nothing (the same holds for the name written in Base
+        // Application's own files, which resolve among the apps they saw).
+        let base = app(
+            "Base Application",
+            &[],
+            &[(
+                "sa.al",
+                "namespace Microsoft.Foundation.Shipping; table 291 \"Shipping Agent\" { }",
+            )],
+        );
+        let mine = app(
+            "mine",
+            &["Base Application"],
+            &[(
+                "c.al",
+                "namespace Mine.Scope; using Microsoft.Foundation.Shipping; codeunit 60100 C1 { }",
+            )],
+        );
+        let ws = Workspace::load_apps(
+            vec![base, mine],
+            vec![AppKind::Dependency, AppKind::Workspace],
+            &al_version::corpus_symbols(27),
+        );
+        let file = ws.objects.iter().find(|o| o.name == "C1").unwrap().file;
+        let name = vec!["Shipping Agent".to_string()];
+        assert!(matches!(
+            ws.resolve_relation_target(file, ObjKind::Table, &name),
+            Resolution::Found(_)
+        ));
+        // Without Base Application a hit under a using stays uncertain (the test above).
+        let alone = Workspace::load(
+            vec![app(
+                "mine",
+                &[],
+                &[
+                    (
+                        "t.al",
+                        "namespace Microsoft.Foundation.Shipping; table 291 \"Shipping Agent\" { }",
+                    ),
+                    (
+                        "c.al",
+                        "namespace Mine.Scope; using Microsoft.Foundation.Shipping; codeunit 60100 C1 { }",
+                    ),
+                ],
+            )],
+            &al_version::corpus_symbols(27),
+        );
+        let file = alone.objects.iter().find(|o| o.name == "C1").unwrap().file;
+        assert!(!matches!(
+            alone.resolve_relation_target(file, ObjKind::Table, &name),
+            Resolution::Found(_)
+        ));
     }
 
     #[test]

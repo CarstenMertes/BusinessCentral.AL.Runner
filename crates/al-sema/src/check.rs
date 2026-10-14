@@ -1044,40 +1044,51 @@ impl<'a> Checker<'a> {
                         }
                     },
                     E::TypeName(t) | E::Val(t) => {
-                        match &t {
-                            Ty::Enum(name) => {
-                                if let Some(ei) = self.resolve(sc, ObjKind::Enum, name) {
-                                    if let Some((v, _)) = self.members[ei]
-                                        .enum_values
-                                        .iter()
-                                        .find(|(_, n)| n.eq_ignore_ascii_case(&rhs))
-                                    {
-                                        let value = *v as i32;
-                                        self.record(sc, node, Res::EnumValue { object: ei, value });
-                                    }
-                                }
-                            }
-                            Ty::Option(members) => {
-                                if let Some(i) = members.iter().position(|m| m.eq_ignore_ascii_case(&rhs)) {
-                                    self.record(sc, node, Res::OptionValue(i as i32));
-                                }
-                            }
-                            // `FieldClass::Normal`: platform option types.
-                            Ty::Builtin(n) => {
-                                if let Some(i) = al_builtins::sysenum::members(n)
-                                    .and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(&rhs)))
-                                {
-                                    self.record(sc, node, Res::OptionValue(i as i32));
-                                }
-                            }
-                            _ => {}
-                        }
+                        self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }
-                    E::Callable(c) => E::Val(self.pick(sc, &kids[0], &c, &[], &rhs)),
+                    // `RecRef.SecurityFiltering::Ignored`: the member of the option a call answers
+                    // (Base Application's "Find Record Management"). Its type is the option's.
+                    E::Callable(c) => {
+                        let t = self.pick(sc, &kids[0], &c, &[], &rhs);
+                        self.scope_member(sc, node, &t, &rhs);
+                        E::Val(t)
+                    }
                 }
             }
             _ => E::Val(Ty::Unknown),
+        }
+    }
+
+    /// `T::Member` where `T` is the type of the left side: records the enum value or option member.
+    fn scope_member(&mut self, sc: &mut Scope, node: &SyntaxNode, t: &Ty, rhs: &str) {
+        match t {
+            Ty::Enum(name) => {
+                if let Some(ei) = self.resolve(sc, ObjKind::Enum, name) {
+                    if let Some((v, _)) = self.members[ei]
+                        .enum_values
+                        .iter()
+                        .find(|(_, n)| n.eq_ignore_ascii_case(rhs))
+                    {
+                        let value = *v as i32;
+                        self.record(sc, node, Res::EnumValue { object: ei, value });
+                    }
+                }
+            }
+            Ty::Option(members) => {
+                if let Some(i) = members.iter().position(|m| m.eq_ignore_ascii_case(rhs)) {
+                    self.record(sc, node, Res::OptionValue(i as i32));
+                }
+            }
+            // `FieldClass::Normal`: platform option types.
+            Ty::Builtin(n) => {
+                if let Some(i) =
+                    al_builtins::sysenum::members(n).and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(rhs)))
+                {
+                    self.record(sc, node, Res::OptionValue(i as i32));
+                }
+            }
+            _ => {}
         }
     }
 

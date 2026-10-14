@@ -296,7 +296,9 @@ fn convert(cell: &Cell, kind: &Kind, default: &Value) -> Result<Value, String> {
             // The blank of a type is what an empty cell means in every case.
             let empty = match cell {
                 Cell::Text(s) => s.is_empty(),
-                Cell::Binary(b) => b.is_empty(),
+                // A binary column BC reads into a zero-padded buffer (RecordId, TableFilter) holds
+                // the blank value as zeros: its parser stops at the first zero.
+                Cell::Binary(b) => b.iter().all(|&x| x == 0),
                 _ => false,
             };
             if empty {
@@ -784,6 +786,14 @@ mod tests {
     fn a_value_of_a_type_the_runtime_does_not_rebuild_is_refused_unless_it_is_empty() {
         let ty = RtType::Library("RecordId".into());
         assert!(conv(Cell::Binary(Vec::new()), &ty).is_ok());
+        // BC reads such a column into a zero-padded buffer, and its parser stops at the first
+        // zero, so a cell of zeros is the blank value (the demo database holds six zero bytes)
+        assert!(conv(Cell::Binary(vec![0; 6]), &ty).is_ok());
+        assert!(
+            conv(Cell::Binary(vec![0, 0, 1, 0]), &ty)
+                .unwrap_err()
+                .contains("not rebuilt")
+        );
         assert!(conv(Cell::Binary(vec![1, 2]), &ty).unwrap_err().contains("not rebuilt"));
     }
 }

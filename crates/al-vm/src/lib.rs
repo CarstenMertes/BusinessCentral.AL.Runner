@@ -15,6 +15,7 @@ mod baseline;
 pub use baseline::Baseline;
 pub use faultsite::FaultFrame;
 mod callstack;
+mod dataset;
 mod dispatch;
 pub mod dotnet;
 mod errorcollect;
@@ -289,6 +290,8 @@ pub struct Session {
     /// none (al-vm pages/runobject.rs).
     pub(crate) lenient_bind: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
+    pub(crate) dataset: Option<crate::dataset::Dataset>,
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
@@ -375,6 +378,7 @@ impl Session {
             report_trigger: None,
             report_flow: None,
             report_executed: Vec::new(),
+            dataset: None,
             lenient_bind: false,
         };
         session.seed_platform_rows(&ident);

@@ -185,10 +185,23 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
         if !text.is_empty() {
             inserts.push((close, text));
         }
+        // The source of a dataset column is an expression of the data item's record: its routine
+        // goes right after the column, inside the data item, so that the record is in scope.
+        if kind.starts_with("report") {
+            for (ordinal, sec) in column_sections(&obj).iter().enumerate() {
+                let Some(expr) = sec.args_raw().get(1).cloned() else { continue };
+                let at = usize::from(sec.syntax().text_range().end());
+                inserts.push((
+                    at,
+                    format!("\nprocedure {}(): Variant begin exit({expr}); end;", column_name(ordinal)),
+                ));
+            }
+        }
     }
     if inserts.is_empty() {
         return None;
     }
+    inserts.sort_by_key(|(at, _)| *at);
     let mut out = src.to_string();
     for (at, text) in inserts.iter().rev() {
         out.insert_str(*at, text);
@@ -204,6 +217,20 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
         })
         .collect();
     Some((out, ranges))
+}
+
+/// The `column` sections of a report or reportextension dataset, in source order.
+pub fn column_sections(obj: &ast::Object) -> Vec<ast::Section> {
+    ast::sections_in(obj.syntax())
+        .into_iter()
+        .filter(|s| s.name().eq_ignore_ascii_case("column"))
+        .collect()
+}
+
+/// Name of the synthetic routine that evaluates the `ordinal`-th column of a report (counted in
+/// source order over the whole object, so inserting routines does not rename it).
+pub fn column_name(ordinal: usize) -> String {
+    format!("__column_{ordinal}")
 }
 
 /// A control found in the page's source, before bindings and routines are resolved.

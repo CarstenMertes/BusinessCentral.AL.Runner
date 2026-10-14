@@ -1122,7 +1122,7 @@ fn lower_object<'a>(
                 .syntax()
                 .ancestors()
                 .filter_map(ast::Section::cast)
-                .find(|s| ["dataitem", "modify"].iter().any(|k| s.name().eq_ignore_ascii_case(k)))
+                .find(|s| ["dataitem", "modify", "add"].iter().any(|k| s.name().eq_ignore_ascii_case(k)))
                 .and_then(|s| s.args().into_iter().next())
                 .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
         }

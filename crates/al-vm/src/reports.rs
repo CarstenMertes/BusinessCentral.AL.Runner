@@ -5,6 +5,7 @@
 //! (`Signal::Unsupported`) and listed in docs/probes-needed.md. In particular a run whose request
 //! page would open is refused: request pages arrive with the page work.
 
+use crate::dataset::{self, Column, Dataset};
 use crate::pages::RequestClosed;
 use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
 use crate::{Session, Signal};
@@ -191,6 +192,7 @@ impl Session {
                     schema.name()
                 ))
             }
+            "Report.SaveAs#1" | "Report.SaveAs#2" => self.report_save_as(id, receiver, args),
             "Report.RunRequestPage#1" | "Report.RunRequestPage#2" => {
                 let (inst, schema, seed) = if id == "Report.RunRequestPage#1" {
                     let inst = self.report_instance(receiver, false)?.0;
@@ -433,8 +435,15 @@ impl Session {
     /// go to the one data item over its table
     /// (handlers/TestReportSetTableView.al:72-86, handlers/TestReportGetFilterInTriggers.al:58-89).
     fn report_set_view(&mut self, inst: &Inst, schema: &Schema, view: Option<&Value>) -> Result<(), Signal> {
-        let Some(Value::Record(view)) = view else {
-            return unsupported(format!("a table view of {view:?}"));
+        // A RecordRef handed to `SaveAs` filters the data item over its table the way a view does
+        // (handlers/TestReportSaveAsRecordRefFilter.al:TestReport_SaveAs_FilteredRecordRef_LimitsDatasetToThatRecord).
+        let view = match view {
+            Some(Value::Record(view)) => view.clone(),
+            Some(Value::Library(_, h)) => match &*h.borrow() {
+                al_builtins::value::LibraryValue::RecordRef(rec) => rec.clone(),
+                _ => return unsupported(format!("a table view of {:?}", h.borrow())),
+            },
+            other => return unsupported(format!("a table view of {other:?}")),
         };
         let table = view.borrow().table;
         let items: Vec<&ir::ReportItem> = schema
@@ -536,7 +545,8 @@ impl Session {
         // requestpage section opens its page as well (handlers/TestReportRuntimeContracts.al:416-440).
         let shows_page = entry == Entry::Run && window;
         let enters = self.report_enter_world(schema, shows_page)?;
-        self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page))
+        self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None))
+            .map(|_| ())
     }
 
     /// Runs `body` as the platform runs a report: a run that enters no world still begins a
@@ -625,6 +635,7 @@ impl Session {
             object: schema.object,
             base: inst.clone(),
             ext,
+            dataset: false,
         };
         for r in run.all_items() {
             let Some(view) = run.item(r).view.clone() else { continue };
@@ -646,9 +657,22 @@ impl Session {
     /// by reportextension/TestReportExtensionTriggers.al:244-250 (base pre, extension pre, base
     /// post, extension post); the rest is the order the BC documentation gives
     /// (docs/probes-needed.md).
-    fn report_body(&mut self, inst: &Inst, schema: &Schema, shows_page: bool) -> Result<(), Signal> {
+    ///
+    /// `save_as` is the parameters string of a `Report.SaveAs(.., Xml, ..)` run: the run writes the
+    /// dataset into `self.dataset` and renders nothing. Returns false when the report was quit.
+    fn report_body(
+        &mut self,
+        inst: &Inst,
+        schema: &Schema,
+        shows_page: bool,
+        save_as: Option<&str>,
+    ) -> Result<bool, Signal> {
         let report = schema.report();
-        let run = self.report_prepare(inst, schema)?;
+        let mut run = self.report_prepare(inst, schema)?;
+        run.dataset = save_as.is_some();
+        if let Some(xml) = save_as.filter(|x| !x.is_empty()) {
+            self.apply_run_parameters(inst, schema, &run, xml)?;
+        }
         // The request page opens once the items' views are in force; what the handler filters is
         // what the run reads, so the views are not applied again afterwards. A cancelled page ends
         // the run without an error (handlers/TestReportRunWithRequestPage.al:
@@ -656,12 +680,12 @@ impl Session {
         if shows_page {
             let ext = run.ext.as_ref().map(|(i, e)| (*e, i.clone()));
             if self.run_request_page(inst, schema.object, None, ext, false)?.0 == RequestClosed::Cancel {
-                return Ok(());
+                return Ok(false);
             }
         }
         // A report that renders output runs up to its request page and no further: there is no
-        // renderer (docs/probes-needed.md).
-        if let Some(why) = report.output.first() {
+        // renderer (docs/probes-needed.md). The dataset a `SaveAs` writes is not rendered output.
+        if let Some(why) = report.output.first().filter(|_| !run.dataset) {
             return unsupported(format!(
                 "report \"{}\" renders output, which the runtime does not produce: {why}",
                 schema.name()
@@ -696,13 +720,13 @@ impl Session {
         }
         if let Some(r) = report.on_pre {
             if self.report_trigger_call(run.object, r, run.base.clone(), TrigKind::Pre)? == Some(Flow::Quit) {
-                return Ok(());
+                return Ok(false);
             }
         }
         if let Some((ext_inst, e)) = &run.ext {
             if let Some(r) = run.ext_ir().and_then(|x| x.on_pre) {
                 if self.report_trigger_call(*e, r, ext_inst.clone(), TrigKind::Pre)? == Some(Flow::Quit) {
-                    return Ok(());
+                    return Ok(false);
                 }
             }
         }
@@ -711,7 +735,7 @@ impl Session {
         }
         for i in 0..report.items.len() {
             if report.items[i].parent.is_none() && self.report_item(&run, ItemRef::Base(i), None)? {
-                return Ok(());
+                return Ok(false);
             }
         }
         if let Some(r) = report.on_post {
@@ -722,7 +746,7 @@ impl Session {
                 self.call(*e, r, ext_inst.clone(), Vec::new())?;
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     fn report_item_record(&self, run: &Run, r: ItemRef) -> Result<Rec, Signal> {
@@ -775,6 +799,9 @@ impl Session {
         self.ret_used = true;
         let mut more = matches!(self.record_op("FindSet", &rec, &mut [])?, Value::Boolean(true));
         'rows: while more {
+            if run.dataset {
+                self.dataset_autocalc(run, r, &rec)?;
+            }
             if let (Some(t), Some((ext_inst, e))) = (modify.and_then(|m| m.before), &run.ext) {
                 self.call(*e, t, ext_inst.clone(), Vec::new())?;
             }
@@ -791,10 +818,16 @@ impl Session {
                 if let (Some(t), Some((ext_inst, e))) = (modify.and_then(|m| m.after), &run.ext) {
                     self.call(*e, t, ext_inst.clone(), Vec::new())?;
                 }
+                if run.dataset {
+                    self.dataset_begin(run, r, &rec)?;
+                }
                 for child in run.children(r) {
                     if self.report_item(run, child, Some(rec.clone()))? {
                         return Ok(true);
                     }
+                }
+                if run.dataset {
+                    self.dataset.as_mut().expect("a SaveAs run has a dataset").end();
                 }
             }
             self.ret_used = true;
@@ -822,6 +855,8 @@ struct Run {
     base: Inst,
     /// The extension's instance and object index.
     ext: Option<(Inst, usize)>,
+    /// The run writes the dataset of a `SaveAs` (into `Session::dataset`).
+    dataset: bool,
 }
 
 impl Run {
@@ -883,5 +918,299 @@ impl Run {
             );
         }
         out
+    }
+}
+
+// ---------------------------------------------------------------------- Report.SaveAs
+
+/// The text BC raises when the default layout cannot produce the format asked for
+/// (handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Html_WithAnRdlcLayout_IsRefused).
+const FORMAT_NOT_SUPPORTED_BY_LAYOUT: &str = "The Html output format is not supported by the current report layout format.";
+
+impl Session {
+    /// `Report.SaveAs(Parameters, Format, OutStream[, RecordRef])` and the static form with the
+    /// report number first. Only `ReportFormat::Xml` is implemented: it runs the report with no
+    /// request page and writes the dataset the run produces. `Html` of a report with an RDLC layout
+    /// is the one refusal BC answers with `false` that a test pins; Pdf, Word and Excel render a
+    /// layout, which this runtime does not do (docs/probes-needed.md).
+    fn report_save_as(&mut self, id: &str, receiver: Option<Value>, args: &[Value]) -> Result<Value, Signal> {
+        let at = usize::from(id == "Report.SaveAs#2");
+        let parameters = match args.get(at) {
+            Some(Value::Text(s)) => s.clone(),
+            other => return unsupported(format!("{id} with the parameters {other:?}")),
+        };
+        let format = match args.get(at + 1) {
+            Some(Value::Option(n, names)) => names.get(*n as usize).cloned().unwrap_or_default(),
+            other => return unsupported(format!("{id} with the format {other:?}")),
+        };
+        let blob = match args.get(at + 2) {
+            Some(Value::Library(_, h)) => match &*h.borrow() {
+                al_builtins::value::LibraryValue::OutStream(blob, _) => blob.clone(),
+                other => return unsupported(format!("{id} to {other:?}, which is not an OutStream")),
+            },
+            other => return unsupported(format!("{id} to {other:?}")),
+        };
+        let record_ref = args.get(at + 3);
+        let (inst, schema, quit) = if at == 0 {
+            let (inst, quit) = self.report_instance(receiver, true)?;
+            let schema = self.report_schema(&inst)?;
+            (inst, schema, quit)
+        } else {
+            let (inst, schema) = self.report_by_number(id, args.first())?;
+            (inst, schema, false)
+        };
+        match format.as_str() {
+            "Xml" => {}
+            // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Html_WithAnRdlcLayout_IsRefused: false, the
+            // text in GetLastErrorText, nothing written. Whether the report's triggers run first is not pinned,
+            // so none does.
+            "Html" if schema.report().layout == ir::ReportLayout::Rdlc => {
+                self.last_error = al_builtins::native::AlError {
+                    message: FORMAT_NOT_SUPPORTED_BY_LAYOUT.into(),
+                    code: "Dialog".into(),
+                    call_stack: String::new(),
+                };
+                return Ok(Value::Boolean(false));
+            }
+            other => {
+                return unsupported(format!(
+                    "Report.SaveAs of \"{}\" as {other}: only the Xml dataset is produced (a rendered format needs a layout \
+                     renderer, and the Linux tier the corpus was measured on does not render them either)",
+                    schema.name()
+                ));
+            }
+        }
+        if let Some(why) = schema.report().dataset_unsupported.first() {
+            return unsupported(format!("Report.SaveAs of \"{}\": {why}", schema.name()));
+        }
+        if schema.report().transaction_type.is_some() {
+            return unsupported(format!(
+                "Report.SaveAs of \"{}\", which declares a TransactionType (what SaveAs does with it is not pinned)",
+                schema.name()
+            ));
+        }
+        if self.global_language != 1033 {
+            return unsupported("Report.SaveAs with a session language other than en-US (only en-US is pinned)");
+        }
+        let quit = if at == 0 { quit } else { self.report_init(&inst)? };
+        if quit {
+            return unsupported("CurrReport.Quit in OnInitReport of a SaveAs (what the dataset holds is not pinned)");
+        }
+        if at == 0 {
+            // `Execute` refuses a second run on one variable with an error of its own; that this holds
+            // for `SaveAs` is not pinned.
+            self.report_executed.retain(|w| w.strong_count() > 0);
+            if self
+                .report_executed
+                .iter()
+                .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)))
+            {
+                return unsupported("a second SaveAs on one report variable (not pinned)");
+            }
+            self.report_executed.push(Rc::downgrade(&inst));
+        }
+        if let Some(rr) = record_ref {
+            self.report_set_view(&inst, &schema, Some(rr))?;
+        }
+        let enters = self.report_enter_world(&schema, false)?;
+        let outer = self.dataset.replace(Dataset::default());
+        let ran = self.report_in_world(enters, |s| s.report_body(&inst, &schema, false, Some(&parameters)));
+        let written = std::mem::replace(&mut self.dataset, outer);
+        match ran {
+            Ok(true) => {
+                let header = self.dataset_header(&schema)?;
+                let bytes = written.expect("a SaveAs run has a dataset").finish(&header)?;
+                al_builtins::stream::write_bytes(&blob, &bytes);
+                Ok(Value::Boolean(true))
+            }
+            Ok(false) => unsupported("CurrReport.Quit during a SaveAs (what the dataset holds is not pinned)"),
+            // An error a trigger raises: with no layout it reaches the caller
+            // (reportextension/TestReportExtensionTriggers.al:SaveAsXml_ExtPreReportError_FailsTheSave); in a
+            // report with an RDLC layout SaveAs answers false and leaves the stream alone
+            // (handlers/TestReportSaveAsRecordRefFilter.al:TestReport_SaveAs_NoRecordRef_LeavesDataItemUnfiltered).
+            // That GetLastErrorText then holds the error is not pinned.
+            Err(Signal::Error(e)) => {
+                let layout = schema.report().layout;
+                let extended = schema.report().extension.is_some();
+                match (layout, extended) {
+                    (ir::ReportLayout::None, _) => Err(Signal::Error(e)),
+                    (ir::ReportLayout::Rdlc, false) => {
+                        self.last_error = e;
+                        Ok(Value::Boolean(false))
+                    }
+                    _ => unsupported(format!(
+                        "an error in a SaveAs of report \"{}\", which has a layout of this kind or an extension \
+                         (whether SaveAs raises it or answers false is not pinned): {}",
+                        schema.name(),
+                        e.message
+                    )),
+                }
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Loads the parameters string of a `SaveAs` into the data items' records, the way a request
+    /// page does before the run (handlers/TestReportRunRequestPage.al:TestReport_CapturedParameters_
+    /// ReplayThroughSaveAs_FilterTheDataset). Only the text this runtime's `RunRequestPage` hands out
+    /// is understood (`apply_request_parameters`).
+    fn apply_run_parameters(&mut self, inst: &Inst, schema: &Schema, run: &Run, xml: &str) -> Result<(), Signal> {
+        let engine = self.engine.clone();
+        let Some(page) = engine.program.objects[schema.object].page.as_ref() else {
+            return unsupported(format!(
+                "parameters for report \"{}\", which has no request page",
+                schema.name()
+            ));
+        };
+        if let Some(why) = page.unsupported.first() {
+            return unsupported(format!("the request page of report \"{}\": {why}", schema.name()));
+        }
+        let mut exts = Vec::new();
+        for &e in &page.extensions {
+            let ext = match &run.ext {
+                Some((i, re)) if *re == e => i.clone(),
+                _ => self.instance(e),
+            };
+            exts.push((e, ext));
+        }
+        self.apply_request_parameters(inst, &exts, schema.object, xml)
+    }
+
+    /// The table of the record of data item `r`.
+    fn dataset_table(&self, rec: &Rec) -> usize {
+        rec.borrow().table as usize
+    }
+
+    /// A column bound to a FlowField of the data item's table is calculated for every row before
+    /// `OnAfterGetRecord`, because a column's AutoCalcField property defaults to true
+    /// (handlers/TestReportFlowFieldColumnAutoCalc.al).
+    fn dataset_autocalc(&mut self, run: &Run, r: ItemRef, rec: &Rec) -> Result<(), Signal> {
+        let table = self.dataset_table(rec);
+        let engine = self.engine.clone();
+        let Some(def) = engine.program.objects[table].table.as_ref() else {
+            return Ok(());
+        };
+        let mut calc: Vec<usize> = Vec::new();
+        let mut columns: Vec<&ir::ReportColumn> = run.item(r).columns.iter().collect();
+        if let (ItemRef::Base(i), Some(x)) = (r, run.ext_ir()) {
+            columns.extend(x.adds.iter().filter(|a| a.item == i).flat_map(|a| a.columns.iter()));
+        }
+        for c in columns {
+            if let Some(p) = c.field {
+                let f = &def.fields[p];
+                if !f.stored && !f.flow_filter && !calc.contains(&p) {
+                    calc.push(p);
+                }
+            }
+        }
+        if calc.is_empty() {
+            return Ok(());
+        }
+        self.calc_fields(rec, &calc)
+    }
+
+    /// Opens the `DataItem` element of the row `rec` of item `r` with its columns, evaluated now:
+    /// after `OnAfterGetRecord` and before the nested items.
+    fn dataset_begin(&mut self, run: &Run, r: ItemRef, rec: &Rec) -> Result<(), Signal> {
+        let item = run.item(r);
+        let name = dataset::dataset_name(&item.name)?;
+        let (owner, object) = run.owner(r);
+        let owner = owner.clone();
+        let table = self.dataset_table(rec);
+        let mut columns = Vec::new();
+        for c in &item.columns {
+            columns.push(self.dataset_column(c, &owner, object, table)?);
+        }
+        if let (ItemRef::Base(i), Some((ext_inst, e)), Some(x)) = (r, &run.ext, run.ext_ir()) {
+            for add in x.adds.iter().filter(|a| a.item == i) {
+                for c in &add.columns {
+                    columns.push(self.dataset_column(c, ext_inst, *e, table)?);
+                }
+            }
+        }
+        self.dataset
+            .as_mut()
+            .expect("a SaveAs run has a dataset")
+            .begin(&name, &columns);
+        Ok(())
+    }
+
+    /// One column of a row: the value of its source, as the dataset writes it. The types the probe
+    /// pins are Integer, Text, Code, Date, Boolean and Decimal
+    /// (handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText); an Option is
+    /// written as its ordinal, which docs/probes-needed.md lists as an assumption. Every other type is
+    /// refused.
+    fn dataset_column(
+        &mut self,
+        c: &ir::ReportColumn,
+        owner: &Inst,
+        object: usize,
+        _table: usize,
+    ) -> Result<Column, Signal> {
+        let name = dataset::dataset_name(&c.name)?;
+        if let Some(why) = &c.unsupported {
+            return unsupported(format!("report column {}: {why}", c.name));
+        }
+        let routine = c.routine.expect("a column without a routine is unsupported");
+        let (value, _) = self.call(object, routine, owner.clone(), Vec::new())?;
+        let mut attribute = None;
+        let text = match &value {
+            Value::Integer(n) => n.to_string(),
+            Value::Text(s) | Value::Code(s) => dataset::escape(s)?,
+            Value::Boolean(b) => if *b { "True" } else { "False" }.to_string(),
+            Value::Date(0, false) => String::new(),
+            Value::Date(d, false) => {
+                let (y, m, day) = al_builtins::format::civil_from_day(*d);
+                format!("{m}/{day}/{y}")
+            }
+            Value::Decimal(_) => {
+                attribute = Some(("decimalformatter", dataset::DECIMAL_FORMATTER));
+                al_builtins::format::try_format(&value, 0, 9, self).map_err(Signal::Unsupported)?
+            }
+            Value::Option(n, _) => n.to_string(),
+            other => {
+                return unsupported(format!(
+                    "report column {} holds {other:?}, a type the dataset has no pinned text for",
+                    c.name
+                ));
+            }
+        };
+        Ok(Column { name, attribute, text })
+    }
+
+    /// The header of the dataset: what the report, its app, the session and the clock say.
+    fn dataset_header(&self, schema: &Schema) -> Result<dataset::Header, Signal> {
+        let engine = &schema.engine;
+        let object = &engine.program.objects[schema.object];
+        let report = schema.report();
+        let app = engine.program.apps.get(object.app as usize);
+        let ms = self.now_millis();
+        let day = ms.div_euclid(86_400_000) + i64::from(al_builtins::format::day_from_civil(1970, 1, 1));
+        let (y, mo, d) = al_builtins::format::civil_from_day(day as i32);
+        let in_day = ms.rem_euclid(86_400_000);
+        let id: String = {
+            let g = self.host.identity.company_id();
+            let h: String = g.iter().map(|b| format!("{b:02x}")).collect();
+            format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+        };
+        Ok(dataset::Header {
+            extension_id: app.map(|a| a.id.clone()).unwrap_or_default(),
+            extension_name: app.map(|a| a.name.clone()).unwrap_or_default(),
+            extension_publisher: app.map(|a| a.publisher.clone()).unwrap_or_default(),
+            extension_version: app.map(|a| a.version.clone()).unwrap_or_default(),
+            report_id: object.id.map_or(String::new(), |i| i.to_string()),
+            report_name: object.name.clone(),
+            report_caption: report.caption.clone().unwrap_or_else(|| object.name.clone()),
+            about_title: report.about_title.clone().unwrap_or_default(),
+            about_text: report.about_text.clone().unwrap_or_default(),
+            // The manifest of both apps the corpus measured states no contextSensitiveHelpUrl, and the
+            // page then states none either (handlers/TestReportDatasetHelpLink.al).
+            help_link: String::new(),
+            company_name: self.cx.company.clone(),
+            company_id: id,
+            user_name: self.host.identity.user_id(),
+            now: (y, mo, d, (in_day / 3_600_000) as u32, (in_day / 60_000 % 60) as u32),
+            company_block: self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock),
+        })
     }
 }

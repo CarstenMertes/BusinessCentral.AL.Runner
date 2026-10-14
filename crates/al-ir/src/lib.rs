@@ -235,6 +235,46 @@ pub struct Report {
     pub output: Vec<String>,
     /// Why the runtime cannot run this report yet; empty = it can.
     pub unsupported: Vec<String>,
+    /// The `Caption` property when it is a plain text literal.
+    #[serde(default)]
+    pub caption: Option<String>,
+    /// The request page's `AboutTitle` and `AboutText` when they are plain text literals.
+    #[serde(default)]
+    pub about_title: Option<String>,
+    #[serde(default)]
+    pub about_text: Option<String>,
+    /// The kind of the layout the report renders with by default.
+    #[serde(default)]
+    pub layout: ReportLayout,
+    /// Why `Report.SaveAs(.., Xml, ..)` cannot write this report's dataset (a section or property
+    /// whose effect on the dataset no test pins); empty = it can.
+    #[serde(default)]
+    pub dataset_unsupported: Vec<String>,
+}
+
+/// The layout a report renders with by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ReportLayout {
+    /// The report declares no layout.
+    #[default]
+    None,
+    /// `DefaultLayout = RDLC`, or `DefaultRenderingLayout` naming a layout of `Type = RDLC`.
+    Rdlc,
+    /// Any other layout, or one the runtime cannot tell the kind of.
+    Other,
+}
+
+/// A `column(Name; Source)` of a data item. The source is an expression of the item's record, or
+/// of the report: `routine` evaluates it, as a routine of the object that declares the column.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReportColumn {
+    pub name: String,
+    pub routine: Option<usize>,
+    /// Why the dataset cannot carry this column; set when it states a property no test pins.
+    pub unsupported: Option<String>,
+    /// The position of the table field the source names, when the source is just that field.
+    #[serde(default)]
+    pub field: Option<usize>,
 }
 
 /// What a reportextension adds to a run of the report it extends.
@@ -251,6 +291,18 @@ pub struct ReportExt {
     pub modifies: Vec<ReportExtModify>,
     /// Data items the extension adds with `addlast`.
     pub added: Vec<AddedItem>,
+    /// Columns the extension adds to base items with `add(Item)`.
+    #[serde(default)]
+    pub adds: Vec<ReportExtAdd>,
+}
+
+/// The columns an `add(Item)` block of a reportextension gives a base item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReportExtAdd {
+    /// Index of the base item.
+    pub item: usize,
+    /// Routines of the extension.
+    pub columns: Vec<ReportColumn>,
 }
 
 /// The triggers of a `modify(Item)` block of a reportextension.
@@ -291,6 +343,9 @@ pub struct ReportItem {
     /// `RequestFilterFields` as written (`"No.", Status`).
     #[serde(default)]
     pub request_filter_fields: Option<String>,
+    /// The columns the dataset writes for each row, in source order.
+    #[serde(default)]
+    pub columns: Vec<ReportColumn>,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).

@@ -827,7 +827,7 @@ impl<'a> Checker<'a> {
                 let a = s.args();
                 match s.name().to_ascii_lowercase().as_str() {
                     "dataitem" => a.get(1).cloned(),
-                    "modify" => a.first().and_then(|n| base_items.get(&n.to_lowercase()).cloned()),
+                    "modify" | "add" => a.first().and_then(|n| base_items.get(&n.to_lowercase()).cloned()),
                     _ => None,
                 }
             });

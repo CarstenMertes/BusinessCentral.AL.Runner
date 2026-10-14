@@ -27,6 +27,7 @@ use crate::Engine;
 use al_builtins::filter::FieldFilter;
 use al_builtins::platform::Virtual;
 use al_builtins::value::Value;
+use al_data::memory::MemStore;
 use al_data::{AccessContext, Row, Scan, StoreError, TableDef, VirtualTables};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -162,7 +163,7 @@ impl VirtualTables for Providers {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
     }
 
-    fn get(&self, _cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+    fn get(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
@@ -171,7 +172,7 @@ impl VirtualTables for Providers {
         }
     }
 
-    fn next(&self, _cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+    fn next(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::next(t, scan),
             Virtual::Date => date::next(t, scan),
@@ -180,7 +181,7 @@ impl VirtualTables for Providers {
         }
     }
 
-    fn count(&self, _cx: &AccessContext, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
+    fn count(&self, store: &MemStore, cx: &AccessContext, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
         match self.kind(t) {
             Virtual::Integer => integer::count(t, filters),
             Virtual::Date => date::count(t, filters),

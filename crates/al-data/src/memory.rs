@@ -121,7 +121,7 @@ impl Store for MemStore {
 
     fn get(&self, cx: &AccessContext, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
         if let Some(v) = self.virtual_of(t) {
-            return v.get(cx, t, pk);
+            return v.get(self, cx, t, pk);
         }
         Ok(self.table(cx, t).and_then(|m| m.get(&Key(pk.to_vec())).cloned()))
     }
@@ -179,7 +179,7 @@ impl Store for MemStore {
 
     fn next(&self, cx: &AccessContext, t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
         if let Some(v) = self.virtual_of(t) {
-            return v.next(cx, t, scan);
+            return v.next(self, cx, t, scan);
         }
         let Some(table) = self.table(cx, t) else {
             return Ok(None);
@@ -215,7 +215,7 @@ impl Store for MemStore {
 
     fn count(&self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
         if let Some(v) = self.virtual_of(t) {
-            return v.count(cx, t, f);
+            return v.count(self, cx, t, f);
         }
         Ok(self
             .table(cx, t)
@@ -354,13 +354,13 @@ mod virtual_tests {
         fn serves(&self, t: &TableDef) -> bool {
             t.name == "V"
         }
-        fn get(&self, _: &AccessContext, _: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+        fn get(&self, _: &MemStore, _: &AccessContext, _: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
             Ok(matches!(pk, [Value::Integer(7)]).then(|| vec![Value::Integer(7)]))
         }
-        fn next(&self, _: &AccessContext, _: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+        fn next(&self, _: &MemStore, _: &AccessContext, _: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
             Ok(scan.after.is_none().then(|| vec![Value::Integer(7)]))
         }
-        fn count(&self, _: &AccessContext, _: &TableDef, _: &[FieldFilter]) -> Result<usize, StoreError> {
+        fn count(&self, _: &MemStore, _: &AccessContext, _: &TableDef, _: &[FieldFilter]) -> Result<usize, StoreError> {
             Ok(1)
         }
     }

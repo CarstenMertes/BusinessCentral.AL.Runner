@@ -559,6 +559,27 @@ impl Workspace {
         *self.usable_cache[i].get_or_init(|| self.file_problem(o.file).is_none() && self.object_node(o).is_some())
     }
 
+    /// Whether object `i` is the left-behind declaration of an object that moved to another app
+    /// (`ObsoleteState = Moved`): Base Application 27.5 keeps `table 230 "Source Code"` that way
+    /// while Business Foundation declares the live one. Known for objects of scanned files only.
+    fn moved_away(&self, i: usize) -> bool {
+        self.objects[i]
+            .scanned_properties
+            .iter()
+            .any(|(n, v)| n.eq_ignore_ascii_case("ObsoleteState") && v.trim().eq_ignore_ascii_case("Moved"))
+    }
+
+    /// `cands` without the moved-away declarations when a live one of the same name is among them.
+    fn without_moved(&self, cands: Vec<usize>) -> Vec<usize> {
+        if cands.len() > 1 && cands.iter().any(|&i| self.moved_away(i)) {
+            let live: Vec<usize> = cands.iter().copied().filter(|&i| !self.moved_away(i)).collect();
+            if !live.is_empty() {
+                return live;
+            }
+        }
+        cands
+    }
+
     /// Whether object `i` is a table of the platform app `System`.
     pub fn platform_table(&self, i: usize) -> bool {
         let o = &self.objects[i];
@@ -748,24 +769,27 @@ impl Workspace {
         if parts.len() == 1 {
             if let Ok(id) = name.parse::<u32>() {
                 return pick(
-                    self.by_id
-                        .get(&(kind, id))
-                        .into_iter()
-                        .flatten()
-                        .copied()
-                        .filter(visible)
-                        .collect(),
+                    self.without_moved(
+                        self.by_id
+                            .get(&(kind, id))
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .filter(visible)
+                            .collect(),
+                    ),
                 );
             }
         }
-        let cands: Vec<usize> = self
-            .by_name
-            .get(&(kind, name.to_lowercase()))
-            .into_iter()
-            .flatten()
-            .copied()
-            .filter(visible)
-            .collect();
+        let cands: Vec<usize> = self.without_moved(
+            self.by_name
+                .get(&(kind, name.to_lowercase()))
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(visible)
+                .collect(),
+        );
         if parts.len() > 1 {
             let ns = Some(parts[..parts.len() - 1].join("."));
             return pick(
@@ -1047,6 +1071,43 @@ mod tests {
 
     fn codes(ws: &Workspace) -> Vec<(&'static str, String)> {
         ws.diagnostics.iter().map(|d| (d.code, d.message.clone())).collect()
+    }
+
+    #[test]
+    fn a_table_moved_to_another_app_does_not_make_its_name_ambiguous() {
+        // Base Application 27.5 keeps `table 230 "Source Code"` with `ObsoleteState = Moved` while
+        // Business Foundation declares the live one; `Record "Source Code"` in Company-Initialize
+        // names the live table.
+        let live = app(
+            "foundation",
+            &[],
+            &[("sc.al", "namespace Microsoft.Foundation.AuditCodes; table 230 \"Source Code\" { fields { field(1; Code; Code[10]) { } } }")],
+        );
+        let old = app(
+            "base",
+            &["foundation"],
+            &[
+                (
+                    "sc.al",
+                    "namespace Microsoft.Foundation.AuditCodes; table 230 \"Source Code\" { ObsoleteState = Moved; MovedTo = 'f3552374'; fields { field(1; Code; Code[10]) { } } }",
+                ),
+                (
+                    "ci.al",
+                    "namespace Microsoft.Foundation.Company; using Microsoft.Foundation.AuditCodes; codeunit 2 CI { var S: Record \"Source Code\"; }",
+                ),
+            ],
+        );
+        let ws = Workspace::load_apps(
+            vec![live, old],
+            vec![AppKind::Dependency, AppKind::Dependency],
+            &al_version::corpus_symbols(27),
+        );
+        let file = ws.objects.iter().find(|o| o.name == "CI").unwrap().file;
+        let found = ws.resolve_ref(file, ObjKind::Table, &["Source Code".to_string()]);
+        match found {
+            Resolution::Found(i) => assert_eq!(ws.apps[ws.objects[i].app].id, "foundation"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@
 //! The result type of each member is declared in `al_builtins::dotnet_sigs`; a test in
 //! `tests/dotnet.rs` checks that both lists name the same members.
 
-use super::registry::{MemberFn, MemberKind, Pin, RegistryMember, RegistryType};
+use super::registry::{MemberFn, MemberKind, MemberRefFn, Pin, RegistryMember, RegistryType};
 use crate::Session;
 use al_builtins::dotnet_sigs::{AL_CONFIG_SETTINGS, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER};
 use al_builtins::native::Signal;
@@ -150,6 +150,38 @@ fn environment_name(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -
     text("NavTenantSettingsHelper.GetEnvironmentName", args, 0, "")
 }
 
+/// `TryGetStringTenantSetting(name, out value)`: the three settings System Application reads, with
+/// the values the oracle tenant answers through the wrappers `Tenant Information.GetTenantId` and
+/// `GetTenantDisplayName` and `Azure AD Tenant.GetAadTenantId`
+/// (session/TestEnvironmentUserTenantContracts.al:TenantAndAzureAd_Answers, :209-212). The
+/// wrappers return the out value as it is; `GetAadTenantId` returns it when it is not a Guid, so
+/// the setting itself is `common`. Any other name is refused: nothing pins its value or whether
+/// the call succeeds.
+fn try_get_string_tenant_setting(
+    s: &mut Session,
+    _: Option<&Rc<DotNetObject>>,
+    args: &mut [Value],
+) -> Result<Value, Signal> {
+    let [Value::Text(name) | Value::Code(name), out] = args else {
+        return Err(Signal::Unsupported(
+            "DotNet NavTenantSettingsHelper.TryGetStringTenantSetting takes (Text, var Text)".into(),
+        ));
+    };
+    let value = match name.to_ascii_uppercase().as_str() {
+        "TENANTID" => s.host.identity.tenant_id(),
+        "DISPLAYNAME" => String::new(),
+        "AADTENANTID" => "common".to_string(),
+        _ => {
+            return Err(Signal::Unsupported(format!(
+                "DotNet NavTenantSettingsHelper.TryGetStringTenantSetting('{name}'): the setting is not pinned \
+                 (docs/probes-needed.md)"
+            )));
+        }
+    };
+    *out = Value::Text(value);
+    Ok(Value::Boolean(true))
+}
+
 fn application_family(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     text("NavTenantSettingsHelper.GetApplicationFamily", args, 0, "W1")
 }
@@ -231,6 +263,18 @@ fn member(name: &str, pin: Pin, f: MemberFn) -> RegistryMember {
         kind: MemberKind::Call,
         pin,
         call: f,
+        call_ref: None,
+    }
+}
+
+/// A member with `var`/`out` arguments (see [`MemberRefFn`]).
+fn member_ref(name: &str, pin: Pin, f: MemberRefFn) -> RegistryMember {
+    fn unused(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {
+        Err(Signal::Unsupported("a member with var arguments called without them".into()))
+    }
+    RegistryMember {
+        call_ref: Some(f),
+        ..member(name, pin, unused)
     }
 }
 
@@ -281,6 +325,11 @@ pub fn types() -> Vec<RegistryType> {
                     environment_name,
                 ),
                 member("GetApplicationFamily", probe("181 ('W1')"), application_family),
+                member_ref(
+                    "TryGetStringTenantSetting",
+                    probe("209-212 (TENANTID 'default', DISPLAYNAME '', AADTENANTID 'common')"),
+                    try_get_string_tenant_setting,
+                ),
                 member(
                     "GetLinkedPowerPlatformEnvironmentId",
                     probe("190 ('')"),

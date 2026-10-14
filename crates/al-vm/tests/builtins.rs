@@ -1113,6 +1113,23 @@ fn an_enum_field_starts_at_its_init_value_blank_or_named() {
     }
 }
 #[test]
+fn a_date_formula_field_starts_at_its_init_value() {
+    // The InitValue goes through the evaluator of Evaluate (types/TestBlankEnumInitTests.Codeunit.al:88-95
+    // says so), and a calculable formula is stored as written (types/TestDateFormulaContracts.al:21-139).
+    // "Filed Service Contract Header"."Price Update Period" is `InitValue = '1Y'`.
+    let src = "table 50912 \"DF Row\" { fields {
+            field(1; K; Code[10]) { }
+            field(2; Period; DateFormula) { InitValue = '1Y'; }
+        } keys { key(PK; K) { } } }
+        codeunit 50100 C { procedure F(): Text var r: Record \"DF Row\"; begin
+            r.Init(); r.K := 'M1'; r.Insert(false); r.Get('M1'); exit(Format(r.Period) + '|' + Format(CalcDate(r.Period, DMY2Date(1, 1, 2024)))); end; }";
+    match run(src, "F") {
+        Ok(Value::Text(t)) => assert_eq!(t, "1Y|01/01/25"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn table_connections_are_registered_found_by_any_case_and_unregistered() {
     // session/TestDatabaseTableConnectionCrm.al:34-117.
     let r = text_of(

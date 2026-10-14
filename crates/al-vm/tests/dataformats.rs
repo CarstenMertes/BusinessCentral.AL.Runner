@@ -1088,3 +1088,58 @@ fn xml_parser_edge_cases() {
     );
     assert_eq!(t, "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\">\n  <child />\n</root>");
 }
+
+// Evaluate into an enum: Format(Enum, 0, 9) gives the ordinal in this runtime, and System
+// Application's "Reten. Pol. Allowed Tbl. Impl." reads it back with Evaluate(Enum, Text, 9). The
+// member names are pinned by types/TestBlankEnumInitTests.Codeunit.al:92 (a named InitValue is read
+// by the same evaluator); the text of a failed statement form is not pinned and stays refused.
+fn enum_text_of(vars: &str, body: &str) -> Result<Value, Signal> {
+    let src = format!(
+        "enum 50101 \"Ev Enum\" {{ Extensible = true; value(0; A) {{ }} value(1; Bee) {{ }} value(5; Zed) {{ }} }}\n{}",
+        cu(&format!("procedure F(): Text var {vars} begin {body} end;"))
+    );
+    run(&src, "F")
+}
+
+#[test]
+fn evaluate_into_an_enum_reads_the_xml_ordinal_and_member_names() {
+    let t = |body: &str| match enum_text_of("E: Enum \"Ev Enum\"; R: Boolean;", body) {
+        Ok(Value::Text(s)) => s,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(t("R := Evaluate(E, Format(E::Zed, 0, 9), 9); exit(Format(R) + Format(E));"), "YesZed");
+    assert_eq!(t("R := Evaluate(E, '1', 9); exit(Format(R) + Format(E));"), "YesBee");
+    assert_eq!(t("R := Evaluate(E, 'Zed'); exit(Format(R) + Format(E));"), "YesZed");
+    // A number that is no member, and a name that is none, make Evaluate return false.
+    assert_eq!(t("E := E::Bee; R := Evaluate(E, '2', 9); exit(Format(R) + Format(E));"), "NoBee");
+    assert_eq!(t("E := E::Bee; R := Evaluate(E, 'Nope'); exit(Format(R) + Format(E));"), "NoBee");
+    // The statement form of a failure is refused: its text is not pinned.
+    assert!(matches!(
+        enum_text_of("E: Enum \"Ev Enum\";", "Evaluate(E, 'Nope'); exit('');"),
+        Err(Signal::Unsupported(_))
+    ));
+}
+
+#[test]
+fn evaluate_a_date_formula_with_format_number_2() {
+    // System Application stores `Format(DateFormula, 0, 2)` and reads it back with `Evaluate(.., 2)`
+    // ("Reten. Pol. Allowed Tbl. Impl."). The formula text is the same as in format 0, which
+    // types/TestDateFormulaContracts.al:21-139 pins; the runtime has the English formula letters only.
+    let t = text_of(
+        "F: DateFormula; G: DateFormula; R: Boolean;",
+        "Evaluate(F, '<-1Y>', 2); R := Evaluate(G, Format(F, 0, 2), 2); exit(Format(R) + Format(G, 0, 2) + Format(F, 0, 2));",
+    );
+    assert_eq!(t, "Yes-1Y-1Y");
+}
+
+#[test]
+fn clearing_a_json_variable_gives_a_fresh_empty_one() {
+    // Clear resets a variable to its default, which for JsonArray and JsonObject is the empty one
+    // (the fresh variable of json/TestJsonArray.al:90 and TestJsonObject.al:114 writes `[]` / `{}`).
+    // System Application's `Clear(TableFilters)` relies on it.
+    let t = text_of(
+        "A: JsonArray; J: JsonObject; S: Text; U: Text; V: Text;",
+        "A.Add(1); Clear(A); A.WriteTo(S); A.Add(2); A.WriteTo(U); J.Add('k', 1); Clear(J); J.WriteTo(V); exit(S + U + V);",
+    );
+    assert_eq!(t, "[][2]{}");
+}

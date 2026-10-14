@@ -518,3 +518,66 @@ fn json_write_to_an_out_stream_appends_at_the_stream_position() {
     );
     assert_eq!(t, "x[1]y");
 }
+
+#[test]
+fn json_read_from_an_in_stream_parses_what_the_stream_holds() {
+    // The same parse as ReadFrom(Text) (json/TestJsonObject.al, TestJsonArray.al); the stream's
+    // rest is read and the position moves to its end. The bytes are taken as UTF-8 only where that
+    // equals the stream's own reading (docs/probes-needed.md).
+    let vars = base!("A: JsonArray; J: JsonObject; Ok: Boolean;");
+    assert_eq!(
+        text(
+            vars,
+            "B.Data.CreateOutStream(O, TextEncoding::UTF8); O.WriteText('[1,{\"k\":\"v\"}]'); B.Data.CreateInStream(I, TextEncoding::UTF8);
+             Ok := A.ReadFrom(I); exit(Format(Ok) + Format(A.Count()) + Format(I.EOS()));"
+        ),
+        "Yes2Yes"
+    );
+    assert_eq!(
+        text(
+            vars,
+            "B.Data.CreateOutStream(O); O.WriteText('{\"k\":5}'); B.Data.CreateInStream(I);
+             Ok := J.ReadFrom(I); exit(Format(Ok) + Format(J.Contains('k')));"
+        ),
+        "YesYes"
+    );
+    // The default (Windows) stream with a non-ASCII byte, and a UTF-16 stream, are refused.
+    assert!(refused(
+        vars,
+        "B.Data.CreateOutStream(O); O.WriteText('[\"\u{e9}\"]'); B.Data.CreateInStream(I); Ok := A.ReadFrom(I); exit('');"
+    ));
+    assert!(refused(
+        vars,
+        "B.Data.CreateOutStream(O, TextEncoding::UTF16); O.WriteText('[1]'); B.Data.CreateInStream(I, TextEncoding::UTF16); Ok := A.ReadFrom(I); exit('');"
+    ));
+}
+
+#[test]
+fn json_write_to_then_read_from_a_stream_round_trips() {
+    // The install path of System Application's "Reten. Pol. Allowed Tbl. Impl." and "Upgrade Tag
+    // Impl.": WriteTo(OutStream) into a Blob, then ReadFrom(InStream) of it.
+    let t = text(
+        base!("A: JsonArray; A2: JsonArray;"),
+        "A.Add(1); A.Add('x'); B.Code := 'R'; B.Data.CreateOutStream(O, TextEncoding::UTF8); A.WriteTo(O); B.Insert();
+         B.Get('R'); B.CalcFields(Data); B.Data.CreateInStream(I, TextEncoding::UTF8);
+         if not A2.ReadFrom(I) then exit('fail'); A2.WriteTo(T); exit(T);",
+    );
+    assert_eq!(t, "[1,\"x\"]");
+}
+
+#[test]
+fn read_into_a_text_reads_back_what_write_of_a_text_wrote() {
+    // streams/TestStreamsRuntimeContracts.al:OutStream_Write_BinaryFormsOfEachType pins Write(Text)
+    // as the characters and a zero byte. Read(Text) takes the characters up to that zero byte; a
+    // stream without one is refused (what BC reads then is not pinned).
+    let t = text(
+        base!("A: Text; C: Text; E: Text;"),
+        "B.Data.CreateOutStream(O, TextEncoding::UTF8); O.Write('abc'); O.Write('de'); B.Data.CreateInStream(I, TextEncoding::UTF8);
+         I.Read(A); I.Read(C); exit(A + '|' + C + '|' + Format(I.EOS()));",
+    );
+    assert_eq!(t, "abc|de|Yes");
+    assert!(refused(
+        base!("A: Text;"),
+        "B.Data.CreateOutStream(O); O.WriteText('abc'); B.Data.CreateInStream(I); I.Read(A); exit(A);"
+    ));
+}

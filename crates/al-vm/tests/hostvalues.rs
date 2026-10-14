@@ -186,6 +186,20 @@ fn global_language_can_be_set() {
 }
 
 #[test]
+fn global_language_can_be_assigned_like_a_property() {
+    // `GlobalLanguage := Id` is the other spelling of `GlobalLanguage(Id)`; System Application's
+    // "Reten. Pol. Telemetry Impl." sets and restores it that way. The setter itself is pinned by
+    // session/TestSessionSettings.al:534.
+    assert_eq!(
+        text(
+            "Saved: Integer;",
+            "Saved := GlobalLanguage(); GlobalLanguage := 1031; exit(Format(Saved) + '>' + Format(GlobalLanguage));"
+        ),
+        "1033>1031"
+    );
+}
+
+#[test]
 fn client_types_are_callable() {
     // session/TestSessionExtended.al:21,31.
     assert!(truth(

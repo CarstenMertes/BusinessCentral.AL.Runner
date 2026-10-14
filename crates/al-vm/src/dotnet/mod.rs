@@ -202,6 +202,16 @@ impl Session {
                 Target::Internal(o, _) => Some(o),
                 _ => None,
             };
+            if let Some(call_ref) = m.call_ref {
+                let result = call_ref(self, this, &mut values)?;
+                for (i, place) in places.iter().enumerate() {
+                    let Some(place) = place else { continue };
+                    let ty = self.place_type(place, f);
+                    let v = fit(values[i].clone(), &ty).map_err(|e| prefix(e, &shown))?;
+                    self.write(place, v, f)?;
+                }
+                return Ok(result);
+            }
             return (m.call)(self, this, &values);
         }
 

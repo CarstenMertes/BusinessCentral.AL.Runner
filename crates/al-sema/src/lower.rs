@@ -1324,6 +1324,19 @@ pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
         }
         Ty::Date => ir::Const::Date(date_literal(t)?),
         Ty::Time => ir::Const::Time(time_literal(t)?),
+        // The same reading as `Evaluate` into a DateFormula (types/TestBlankEnumInitTests.Codeunit.al:88-95
+        // says InitValue and Evaluate share one evaluator): a calculable formula is kept as written.
+        // Blank, garbled and not-yet-supported formulas stay refused (the field is not initialised).
+        Ty::DateFormula => {
+            let f = t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).unwrap_or(t);
+            if al_builtins::datefns::is_blank_formula(f)
+                || al_builtins::datefns::is_garbage_formula(f)
+                || al_builtins::datefns::check_formula(f).is_err()
+            {
+                return None;
+            }
+            ir::Const::DateFormula(f.to_string())
+        }
         _ => return None,
     })
 }
@@ -3268,6 +3281,26 @@ impl Lowerer<'_> {
                 return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
                     id,
                     receiver: Some(Box::new(receiver)),
+                    args: vec![ir::Arg::Value(rhs)],
+                    ret_used: false,
+                }));
+            }
+        }
+        // `GlobalLanguage := Id` is the other spelling of `GlobalLanguage(Id)` (System Application's
+        // "Reten. Pol. Telemetry Impl." writes it so; the setter is pinned by
+        // session/TestSessionSettings.al:534): a builtin call, not a place.
+        if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
+            if id == "System.GlobalLanguage#1" && kids[0].kind() != SyntaxKind::MemberExpr {
+                if sig_tokens(n).iter().any(|t| t.kind() != SyntaxKind::Assign && matches!(
+                    t.kind(),
+                    SyntaxKind::PlusAssign | SyntaxKind::MinusAssign | SyntaxKind::StarAssign | SyntaxKind::SlashAssign
+                )) {
+                    return Err("compound assignment to GlobalLanguage is not lowered yet".into());
+                }
+                let rhs = self.expr(&kids[1])?;
+                return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
+                    id,
+                    receiver: None,
                     args: vec![ir::Arg::Value(rhs)],
                     ret_used: false,
                 }));

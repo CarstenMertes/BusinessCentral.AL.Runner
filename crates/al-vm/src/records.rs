@@ -895,8 +895,19 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
+                // Whether Clear also empties the table of a temporary record is not pinned
+                // (docs/probes-needed.md). Where the table holds no row both readings give the same
+                // state, so only that case runs.
                 if rec.borrow().temporary {
-                    return unsupported("Clear of a temporary record (table reset not pinned yet)");
+                    let rows = self
+                        .store_for(rec)
+                        .count(&cx, &t, &[])
+                        .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+                    if rows > 0 {
+                        return unsupported(
+                            "Clear of a temporary record that holds rows (whether the table is emptied is not pinned)",
+                        );
+                    }
                 }
                 let fresh = self.initial_fields(t.object as usize);
                 let mut r = rec.borrow_mut();

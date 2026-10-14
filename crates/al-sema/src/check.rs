@@ -2007,6 +2007,13 @@ fn proc_cand(p: &ProcSig) -> Cand {
 /// Whether an argument of type `arg` fits a parameter declared as `param`
 /// (catalog spelling or `Ty` display). Only used to break arity ties.
 fn fits(arg: &Ty, param: &str) -> bool {
+    // A record fits a parameter declared on a table only when it is that table
+    // (System Application overloads `ValidateRetentionPeriod` on two record types).
+    if let Ty::Record { .. } = arg {
+        if param.to_ascii_lowercase().starts_with("record \"") {
+            return arg.to_string().eq_ignore_ascii_case(param);
+        }
+    }
     let p = param.to_ascii_lowercase();
     let p = p.split(['[', ' ']).next().unwrap_or("");
     match arg {

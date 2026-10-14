@@ -49,6 +49,14 @@ pub enum Virtual {
     MetadataPermission,
     ExpandedPermission,
     Permission,
+    ReportLayoutList,
+    ReportMetadata,
+    ReportDataItems,
+    XmlPortMetadata,
+    QueryMetadata,
+    EventSubscription,
+    PageAction,
+    TableRelations,
 }
 
 /// (table id, table name, provider). Every entry is a table of the platform `System` app.
@@ -147,6 +155,46 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
         Provider::Virtual(Virtual::ExpandedPermission),
     ),
     (2_000_000_005, "Permission", Provider::Virtual(Virtual::Permission)),
+    (2_000_000_178, "All Profile", Provider::Stored),
+    (
+        2_000_000_234,
+        "Report Layout List",
+        Provider::Virtual(Virtual::ReportLayoutList),
+    ),
+    (
+        2_000_000_139,
+        "Report Metadata",
+        Provider::Virtual(Virtual::ReportMetadata),
+    ),
+    (
+        2_000_000_203,
+        "Report Data Items",
+        Provider::Virtual(Virtual::ReportDataItems),
+    ),
+    (
+        2_000_000_280,
+        "XmlPort Metadata",
+        Provider::Virtual(Virtual::XmlPortMetadata),
+    ),
+    (
+        2_000_000_142,
+        "Query Metadata",
+        Provider::Virtual(Virtual::QueryMetadata),
+    ),
+    (
+        2_000_000_140,
+        "Event Subscription",
+        Provider::Virtual(Virtual::EventSubscription),
+    ),
+    (2_000_000_143, "Page Action", Provider::Virtual(Virtual::PageAction)),
+    (
+        2_000_000_141,
+        "Table Relations Metadata",
+        Provider::Virtual(Virtual::TableRelations),
+    ),
+    (2_000_000_049, "Code Coverage", Provider::Stored),
+    (2_000_000_288, "Code Coverage Test Lookup", Provider::Stored),
+    (2_000_000_289, "Code Coverage Tests Run", Provider::Stored),
     (2_000_000_184, "Tenant Media", Provider::Virtual(Virtual::TenantMedia)),
     (2_000_000_121, "User Property", Provider::Stored),
     (2_000_000_175, "Scheduled Task", Provider::Stored),
@@ -210,6 +258,27 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_254, &[1, 2, 4, 5, 7, 8, 9, 10, 11, 14]),
     // Permission: permissions/TestPermissionSetGrants.al.
     (2_000_000_005, &[1, 3, 4, 6, 7, 8, 9, 10]),
+    // All Profile: profile/TestAllProfileTable.al, TestCopyProfile.al. The obsolete columns and "Disable Personalization" are not read.
+    (2_000_000_178, &[1, 2, 3, 4, 5, 6, 14, 15, 16, 17]),
+    // Report Layout List: handlers/TestSourceReportLayoutFlags.al, TestPrecompiledReportLayouts.al.
+    (2_000_000_234, &[1, 2, 7, 16, 17]),
+    // Report Metadata, Report Data Items: handlers/TestReportMetadataColumns.al.
+    (2_000_000_139, &[1, 4, 9, 17, 18]),
+    (2_000_000_203, &[1, 2, 3, 4, 5, 6, 7, 8]),
+    // XmlPort Metadata: xmlport/TestXmlPortMetadataVirtualTable.al. Encoding (7) and the Inherent* columns are not read.
+    (2_000_000_280, &[1, 2, 3, 4, 5, 6, 8, 9, 10]),
+    // Query Metadata: query/TestQueryMetadataVirtualTable.al. Category (9) is not read.
+    (2_000_000_142, &[1, 2, 3, 4, 5, 6, 7, 8, 10]),
+    // Event Subscription: record/TestEventSubscriptionVirtualTable.al. "Number of Calls" and later columns are not read.
+    (2_000_000_140, &[1, 2, 3, 4, 5, 6, 7]),
+    // Page Action: record/TestPageActionVirtualTable.al. Captions, tool tips, Promoted and the Run* columns but RunObjectID are not read.
+    (2_000_000_143, &[1, 2, 3, 4, 5, 6, 8, 16]),
+    // Table Relations Metadata: record/TestTableRelationsMetadataVirtualTable.al. The condition type and value and the names are not read.
+    (2_000_000_141, &[1, 2, 3, 4, 5, 6, 8]),
+    // Code Coverage tables: codeunit/TestCodeCoverageTable.al, TestCodeCoveragePerTest.al. "Line" and the status and method id of a line are not read.
+    (2_000_000_049, &[1, 2, 3, 4, 6]),
+    (2_000_000_288, &[1, 2, 3, 4]),
+    (2_000_000_289, &[1, 2, 3, 4, 5]),
     // Windows Language: record/TestWindowsLanguageTable.al.
     (2_000_000_045, &[1, 2, 10, 11, 30, 35]),
     // Session: session/TestSessionVirtualTable.al. "Login Type" (18) is not read.

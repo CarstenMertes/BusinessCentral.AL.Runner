@@ -549,6 +549,7 @@ fn item_ir(
         slot,
         table,
         view: prop("DataItemTableView"),
+        request_filter_fields: prop("RequestFilterFields"),
         link,
         on_pre: trigger("OnPreDataItem"),
         on_after_get: trigger("OnAfterGetRecord"),
@@ -703,6 +704,19 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
         },
         reasons,
     )
+}
+
+/// The layouts the `rendering` section of a report declares.
+pub fn layouts_of(obj: &ast::Object) -> Vec<ir::LayoutDecl> {
+    obj.sections()
+        .filter(|s| s.name().eq_ignore_ascii_case("rendering"))
+        .flat_map(|r| r.sections().collect::<Vec<_>>())
+        .filter(|l| l.name().eq_ignore_ascii_case("layout"))
+        .map(|l| ir::LayoutDecl {
+            name: l.args().first().cloned().unwrap_or_default(),
+            properties: l.properties().map(|p| (p.name(), p.value_text())).collect(),
+        })
+        .collect()
 }
 
 #[cfg(test)]

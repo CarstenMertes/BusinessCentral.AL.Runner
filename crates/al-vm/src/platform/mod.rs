@@ -10,6 +10,7 @@
 //! the corpus line that pins it; a column or a shape nothing pins is refused, not guessed.
 
 mod apps;
+pub(crate) mod coverage;
 mod date;
 mod fields;
 mod host_tables;
@@ -18,10 +19,13 @@ mod ids;
 mod integer;
 mod links;
 mod mat;
+mod metadata;
 mod objects;
 mod pages;
 mod permissions;
+pub(crate) mod profiles;
 pub(crate) mod ranges;
+mod reports;
 mod seed;
 
 use crate::Engine;
@@ -199,6 +203,14 @@ impl Providers {
                     "Tenant Media: media live in the session's media store, which this table does not read yet (ADR-017)",
                 ));
             }
+            Virtual::XmlPortMetadata => metadata::xmlport_metadata_rows(self, t),
+            Virtual::EventSubscription => metadata::event_subscription_rows(self, t),
+            Virtual::PageAction => metadata::page_action_rows(self, t),
+            Virtual::TableRelations => metadata::table_relations_rows(self, t),
+            Virtual::QueryMetadata => metadata::query_metadata_rows(self, t),
+            Virtual::ReportLayoutList => reports::layout_list_rows(self, t),
+            Virtual::ReportMetadata => reports::report_metadata_rows(self, t),
+            Virtual::ReportDataItems => reports::report_data_item_rows(self, t),
             Virtual::MetadataPermissionSet => permissions::metadata_permission_set_rows(self, t),
             Virtual::PermissionSet => permissions::permission_set_rows(self, t, false),
             Virtual::PermissionSetAssignable => permissions::permission_set_rows(self, t, true),

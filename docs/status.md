@@ -65,14 +65,17 @@ takes about 0.5 s cold, and the whole run, compile plus every test, about 1 s.
 | xmlport | 40 | 25 | 15 | 62.5% |
 | other areas (17) | 257 | 17 | 240 | |
 
-## Platform tables (ADR-019, branch `platform-tables`)
+## Platform tables (ADR-019)
 
 The platform `System` app loads with every app. Providers answer Integer, Date, Session, Active Session, AllObj,
-AllObjWithCaption, CodeUnit Metadata, Table Metadata, Page Metadata, Page Control Field, Field, Key, Time Zone,
-Windows Language, NAV App Installed App and Published Application; Company, User, Access Control, Record Link and
-a few tenant tables are stored (the session seeds the first three). Everything else in the System app is refused
-with `platform table 'X' (id) has no provider`. Still open: the permission tables, All Profile, the report, query
-and xmlport metadata tables, Event Subscription, Table Relations Metadata, Code Coverage, Feature Key, Page Action.
+AllObjWithCaption, CodeUnit Metadata, Table Metadata, Page Metadata, Page Control Field, Page Action, Field, Key,
+Time Zone, Windows Language, NAV App Installed App, Published Application, the permission tables, Report Layout
+List, Report Metadata, Report Data Items, XmlPort Metadata, Query Metadata, Event Subscription (compiled
+subscribers) and Table Relations Metadata. Company, User, Access Control, All Profile, Record Link, the code
+coverage tables and a few tenant tables are stored (the session seeds the first four). Everything else in the
+System app is refused with `platform table 'X' (id) has no provider`. Still open: Feature Key and Tenant License
+State, a coverage recorder (the coverage tables are refused after a recording), and Event Subscription rows for
+uncompiled codeunits.
 
 ## What is implemented
 

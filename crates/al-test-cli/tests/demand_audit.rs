@@ -1118,8 +1118,9 @@ probe!(
 // ---------------------------------------------------------------------------------------------
 // A dependency query the runtime refuses is refused the same way in both compiles
 
-/// A query of a dependency app with a property the runtime refuses (corpus
-/// query/TestQueryRoleCenterFromPlans.al uses Base Application's query 777, which has one). The
+/// A query of a dependency app with a property the runtime refuses (`ReadState`; Base Application's
+/// query 777, which corpus query/TestQueryRoleCenterFromPlans.al uses, once had `InherentEntitlements`,
+/// which the runtime now accepts as harmless). The
 /// eager compile must refuse the test that opens it, as the demand-driven compile does, and must
 /// not lower the query without a layout (a runtime panic).
 #[test]
@@ -1135,13 +1136,13 @@ fn a_dependency_query_with_an_unsupported_property_is_refused_in_both_compiles()
         dep: &[(
             "q.al",
             "table 50500 DepRow { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { Clustered = true; } } }\n\
-             query 50501 DepQ { QueryType = Normal; InherentEntitlements = X;\n\
+             query 50501 DepQ { QueryType = Normal; ReadState = ReadUncommitted;\n\
                elements { dataitem(Row; DepRow) { column(K; K) { } } } }",
         )],
     };
     let (demand, eager) = (short(&go(&p, false)), short(&go(&p, true)));
     eprintln!("demand: {demand}\neager:  {eager}");
-    assert!(demand.contains("InherentEntitlements"), "{demand}");
+    assert!(demand.contains("ReadState"), "{demand}");
     assert!(!eager.contains("panic"), "{eager}");
     assert_eq!(demand, eager);
 }

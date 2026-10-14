@@ -83,6 +83,30 @@ fn differences(name: &str, src: &str) -> Vec<String> {
             format!("{props:?}"),
             format!("{:?}", so.properties),
         );
+        let layouts: Vec<(String, Vec<(String, String)>)> = o
+            .sections()
+            .filter(|s| s.name().eq_ignore_ascii_case("rendering"))
+            .flat_map(|r| r.sections().collect::<Vec<_>>())
+            .filter(|l| l.name().eq_ignore_ascii_case("layout"))
+            .map(|l| {
+                (
+                    l.args().first().cloned().unwrap_or_default(),
+                    l.properties().map(|p| (p.name(), p.value_text())).collect(),
+                )
+            })
+            .collect();
+        let scanned: Vec<(String, Vec<(String, String)>)> = so
+            .layouts
+            .iter()
+            .map(|l| (l.name.clone(), l.properties.clone()))
+            .collect();
+        if o.kind().eq_ignore_ascii_case("report") {
+            note(
+                &format!("{who} layouts"),
+                format!("{layouts:?}"),
+                format!("{scanned:?}"),
+            );
+        }
         let subs = ast::routines_in(o.syntax())
             .iter()
             .flat_map(|r| r.attributes())

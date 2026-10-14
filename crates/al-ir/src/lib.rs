@@ -193,6 +193,17 @@ pub struct Object {
     /// workspace (the metadata tables report it).
     #[serde(default)]
     pub extends_id: Option<u32>,
+    /// For a report: the layouts its `rendering` section declares.
+    #[serde(default)]
+    pub layouts: Vec<LayoutDecl>,
+}
+
+/// `layout(Name) { Type = Word; ... }` of a report.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutDecl {
+    pub name: String,
+    /// The properties as written (`Type`, `LayoutFile`, `ObsoleteState`, ...).
+    pub properties: Vec<(String, String)>,
 }
 
 /// A report as the runtime sees it: processing only, with no layout.
@@ -277,6 +288,9 @@ pub struct ReportItem {
     pub on_pre: Option<usize>,
     pub on_after_get: Option<usize>,
     pub on_post: Option<usize>,
+    /// `RequestFilterFields` as written (`"No.", Status`).
+    #[serde(default)]
+    pub request_filter_fields: Option<String>,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).
@@ -455,6 +469,17 @@ pub struct Page {
     /// They run after the page's own trigger of that name.
     #[serde(default)]
     pub ext_triggers: Vec<(String, usize, usize)>,
+    /// The `area(...)` sections of `actions` (what the Page Action table lists as action containers).
+    #[serde(default)]
+    pub action_areas: Vec<ActionArea>,
+}
+
+/// An `area(Name)` of a page's `actions` section.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActionArea {
+    pub name: String,
+    /// The controls written directly in the area, as indices into [`Page::controls`].
+    pub roots: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -651,6 +676,11 @@ pub struct Field {
     /// The `TableRelation` arms in written order; empty when the field has none or its shape is
     /// not understood (`relation` tells the two apart).
     pub relation_arms: Vec<RelationArm>,
+    /// For a relation the runtime does not understand (`relation` set, `relation_arms` empty):
+    /// the tables, fields and condition fields it names, for the Table Relations Metadata table
+    /// only. Empty when the relation is understood or not even that is clear.
+    #[serde(default)]
+    pub relation_meta: Vec<MetaRelationArm>,
     /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
     pub flow_filter: bool,
     /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither
@@ -673,6 +703,17 @@ pub struct RelationArm {
     pub field: Option<usize>,
     /// Which related rows are valid; `None` when a where() clause is there but not understood.
     pub wheres: Option<Vec<RelationWhere>>,
+}
+
+/// An arm of a relation as the Table Relations Metadata table lists it (see [`Field::relation_meta`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetaRelationArm {
+    /// Positions of the own fields the arm's conditions name.
+    pub conditions: Vec<usize>,
+    /// Object index of the related table.
+    pub table: usize,
+    /// Position of the related field; `None`: the first primary key field.
+    pub field: Option<usize>,
 }
 
 /// `Field = const(x)` on the referencing table: `field` is a position in its own field list.
@@ -1012,6 +1053,7 @@ mod tests {
                 report_ext: None,
                 namespace: None,
                 extends_id: None,
+                layouts: Vec::new(),
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,

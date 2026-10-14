@@ -2,7 +2,7 @@
 //! JUnit in the same shape the corpus CI emits, so the two diff line for line.
 
 use crate::oracle::{CaseId, OracleCase};
-use crate::report::{Counts, Outcome, Report};
+use crate::report::{Counts, Outcome, Report, Timings};
 
 pub fn markdown(r: &Report) -> String {
     let mut s = String::from(
@@ -38,6 +38,23 @@ pub fn markdown(r: &Report) -> String {
             ));
         }
     }
+    if let Some(t) = &r.timings {
+        s.push_str("\n### How long it took\n\n");
+        s.push_str(&timings_table(std::slice::from_ref(t)));
+        s.push_str(
+            "\nLoad reads the apps and the dependency apps. Compile turns them into what the runtime runs. \
+             Install baseline runs the install code of the Microsoft apps once. Tests runs every test.\n",
+        );
+        let by_app: Vec<String> = t
+            .suites
+            .iter()
+            .map(|x| format!("{} {}", x.name, secs(x.tests_s)))
+            .collect();
+        s.push_str(&format!("\nTests by test app: {}.\n", by_app.join(", ")));
+        if t.eager {
+            s.push_str("\nThis run compiled every dependency routine, not only the ones the tests reach.\n");
+        }
+    }
     if !r.dependencies.is_empty() {
         s.push_str(&format!("\nDependency apps: {}.\n", r.dependencies.join(", ")));
     }
@@ -48,6 +65,30 @@ pub fn markdown(r: &Report) -> String {
         s.push_str(&format!(
             "\n{} case(s) real BC did not pass are excluded.\n",
             r.excluded_bc_failed
+        ));
+    }
+    s
+}
+
+fn secs(x: f64) -> String {
+    format!("{x:.2} s")
+}
+
+/// One small table of run times: a row per run, the phases in order, then the total.
+pub fn timings_table(ts: &[Timings]) -> String {
+    let mut s = String::from(
+        "| Version | Load | Compile | Install baseline | Tests | Total |\n|---|---:|---:|---:|---:|---:|\n",
+    );
+    for t in ts {
+        let eager = if t.eager { ", all dependencies compiled" } else { "" };
+        s.push_str(&format!(
+            "| BC {}{eager} | {} | {} | {} | {} | {} |\n",
+            t.bc_version,
+            secs(t.load_s),
+            secs(t.compile_s),
+            secs(t.baseline_s),
+            secs(t.tests_s),
+            secs(t.total_s)
         ));
     }
     s
@@ -200,6 +241,79 @@ mod tests {
                 .unwrap()
                 .contains(r#""bc_build":"27.5.46862.56249""#)
         );
+    }
+
+    fn timings() -> crate::report::Timings {
+        crate::report::Timings {
+            bc_version: "29.0".into(),
+            eager: false,
+            load_s: 1.0,
+            compile_s: 2.5,
+            baseline_s: 3.0,
+            tests_s: 12.25,
+            total_s: 18.75,
+            suites: vec![
+                crate::report::SuiteTime {
+                    name: "corpus".into(),
+                    tests_s: 11.0,
+                },
+                crate::report::SuiteTime {
+                    name: "OnPrem".into(),
+                    tests_s: 1.25,
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn markdown_has_a_timing_table_with_the_phases_and_the_total() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        assert!(!markdown(&r).contains("How long it took"), "no timings, no section");
+        r.timings = Some(timings());
+        let md = markdown(&r);
+        assert!(md.contains("### How long it took"), "{md}");
+        assert!(
+            md.contains("| Version | Load | Compile | Install baseline | Tests | Total |"),
+            "{md}"
+        );
+        assert!(
+            md.contains("| BC 29.0 | 1.00 s | 2.50 s | 3.00 s | 12.25 s | 18.75 s |"),
+            "{md}"
+        );
+        assert!(md.contains("corpus 11.00 s"), "{md}");
+        assert!(md.contains("OnPrem 1.25 s"), "{md}");
+    }
+
+    #[test]
+    fn the_json_report_carries_the_timings() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        r.timings = Some(timings());
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        let t = &v["timings"];
+        for key in ["load_s", "compile_s", "baseline_s", "tests_s", "total_s"] {
+            assert!(t[key].is_number(), "{key} in {t}");
+        }
+        assert_eq!(t["bc_version"], "29.0");
+        assert_eq!(t["suites"][1]["name"], "OnPrem");
+    }
+
+    #[test]
+    fn a_timing_table_is_read_back_from_report_files() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        r.timings = Some(timings());
+        let json = serde_json::to_string_pretty(&r).unwrap();
+        let t = crate::report::Timings::from_report_json(&json).unwrap();
+        let mut eager = t.clone();
+        eager.eager = true;
+        eager.bc_version = "28.0".into();
+        let table = timings_table(&[t, eager]);
+        assert!(
+            table.contains("| Version | Load | Compile | Install baseline | Tests | Total |"),
+            "{table}"
+        );
+        assert!(table.contains("| BC 29.0 |"), "{table}");
+        assert!(table.contains("| BC 28.0, all dependencies compiled |"), "{table}");
+        assert!(crate::report::Timings::from_report_json("{}").is_err());
     }
 
     #[test]

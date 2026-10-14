@@ -1,8 +1,22 @@
 name: CI
 
-# Every push and PR: lint, unit + contract tests, then the corpus pass-rate
-# report. The daily schedule produces one report per day even without pushes,
-# which gives the pass-rate curve (one `pass-rate-<date>` artifact per day).
+# Every push and PR: lint, unit + contract tests, then the corpus pass-rate report. The daily
+# schedule produces one report per day even without pushes, which gives the pass-rate curve (one
+# `pass-rate-<date>` artifact per day).
+#
+# Three jobs run in parallel, each on its own runner, so the wall time is that of the slowest one:
+#
+#   test           format, clippy, and every test that runs in a plain debug `cargo test`
+#   corpus         release build, the corpus pass rate for every BC version, and the demand-driven
+#                  compile against the eager compile (the normal run first and alone, then the three eager runs side by side)
+#   release-tests  everything that needs an optimised build: the perf budgets, the tests that run
+#                  the finished `al-test-cli` over the whole corpus, and the network tests
+#
+# Nothing is dropped by the split. The two test files that run the `al-test-cli` binary over the
+# whole pinned corpus (`corpus_harness`, `dev_tooling`) are gated behind the `cli-e2e` feature of
+# al-test-cli, which is on by default (so `cargo test` and `check.sh` still run them). The `test` job
+# builds with `--no-default-features`, because the unoptimised binary needs minutes for them, and the
+# `release-tests` job runs them with the release binary.
 
 on:
   push:
@@ -24,37 +38,32 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # Line tables are enough for a panic's location; full debug info made the debug test build
+      # about a third slower and the dependency cache four times larger.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      # ADR-007: an oracle recorded for an older corpus commit is checked against the pin with
-      # `git diff` over the corpus history, and the submodule checkout is shallow.
-      - name: Fetch the corpus history
-        run: |
-          if [ "$(git -C corpus rev-parse --is-shallow-repository)" = true ]; then
-            git -C corpus fetch --unshallow --quiet
-          fi
-      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: ./.github/actions/setup
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-
-      # ADR-014: DotNet calls run in a .NET 8 sidecar process. The SDK builds it and the runtime
-      # runs it. ICU is on the ubuntu image. CI must never skip a .NET test silently.
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 8.0.x
-      - name: Build the .NET sidecar
-        run: dotnet publish tools/dotnet-sidecar -c Release -o target/dotnet-sidecar
       - run: cargo fmt --all --check
+      # Default features: clippy also lints the two corpus-wide test files.
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --workspace
+      # Without the cli-e2e feature: `corpus_harness` and `dev_tooling` run in the release-tests job.
+      - run: cargo test --workspace --no-default-features
 
-      # One release build serves the corpus run and the perf budgets below;
-      # rust-cache keeps dependencies only, so building release twice (as
-      # `cargo run --release` after a debug `cargo test` used to) paid for the
-      # workspace crates twice. The corpus step now just runs the binary.
+  corpus:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup
+
+      # One release build serves the corpus runs below. rust-cache keeps dependencies only.
       - name: Build release binary
         run: cargo build --release -p al-test-cli
 
@@ -75,53 +84,78 @@ jobs:
       - name: Fetch dependency apps (warms the cache)
         run: ./target/release/al-test-cli --all-versions --fetch-deps
 
-      # Fails the job on any regression against metrics/<major>/passing.txt of every version in oracle/oracle.toml (exit 1),
-      # or when the oracle and the corpus pin disagree (exit 2).
-      - name: Corpus pass rate
-        run: |
-          ./target/release/al-test-cli --all-versions --require-dotnet \
-            --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml
-          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
-
+      # The corpus pass rate fails the job on any regression against metrics/<major>/passing.txt of
+      # every version in oracle/oracle.toml (exit 1), or when the oracle and the corpus pin disagree
+      # (exit 2).
+      #
       # ADR-013 decision 6: the demand-driven compile of the dependency apps must never change an
       # outcome. The corpus runs a second time with every dependency routine compiled
       # (`AL_EAGER_DEPENDENCIES=1`), and no test may come out differently (pass, fail or not run).
       # A test the demand-driven compile refuses and the eager one runs shows up here as well:
-      # that is a path BC runs and the demand-driven compile did not reach. Cost: a second corpus
-      # run, about twice the first (measured 8 s against 15 s of CPU for one BC version), so it
-      # runs on every push. `tools/compare_junit.py` prints each difference with both reasons.
-      - name: Demand-driven compile against the eager compile
+      # that is a path BC runs and the demand-driven compile did not reach. `tools/demand_vs_eager.sh`
+      # compares the main app and every extra suite and prints each difference with both reasons;
+      # locally, `tools/demand_vs_eager.sh run` makes the runs and the comparison.
+      #
+      # The normal run (all versions, one process: it prints the comparison across versions) goes
+      # first and alone, so the times in its "How long it took" tables are the runtime's own, not
+      # slowed by other runs. Then one eager run per version goes side by side (a corpus run uses
+      # one core, the runner has four). The runs share no files (the dependency cache is only read
+      # after the step above) and each stays well under 3 GB.
+      - name: Corpus pass rate, and the demand-driven compile against the eager compile
         run: |
+          step_start=$(date +%s)
           status=0
-          AL_EAGER_DEPENDENCIES=1 ./target/release/al-test-cli --all-versions --require-dotnet --no-ratchet \
-            --junit eager-junit.xml || status=1   # --no-ratchet: the allow-listed differences fail the ratchet; compare_junit is the check
+          ./target/release/al-test-cli --all-versions --require-dotnet \
+            --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml || status=1
+          normal_end=$(date +%s)
+          # Each version's file has its own "How long it took" table: the runtime's own cost.
+          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
+
+          # --no-ratchet: the allow-listed differences fail the ratchet; compare_junit is the check.
+          # --json keeps each eager run's phase times (every report has them).
+          eager_pids=()
           for v in 27 28 29; do
-            python3 tools/compare_junit.py --allow tools/demand-eager-known-differences.txt \
-              runtime-junit-$v.xml eager-junit-$v.xml || status=1
+            AL_EAGER_DEPENDENCIES=1 ./target/release/al-test-cli --bc-version $v --require-dotnet --no-ratchet \
+              --junit eager-junit-$v.xml --json eager-report-$v.json > eager-$v.log 2>&1 &
+            eager_pids+=($!)
           done
+          i=0
+          eager_reports=()
+          for v in 27 28 29; do
+            wait "${eager_pids[$i]}" || { echo "::error::the eager run for BC $v failed"; status=1; }
+            i=$((i + 1))
+            echo "::group::Eager run output, BC $v"
+            cat eager-$v.log
+            echo "::endgroup::"
+            if [ -f eager-report-$v.json ]; then
+              eager_reports+=(--timings-table eager-report-$v.json)
+            fi
+          done
+          eager_end=$(date +%s)
+          # The main app of each version and every extra suite (OnPrem, the isolation probes).
+          tools/demand_vs_eager.sh compare . || status=1
+          step_end=$(date +%s)
+
+          {
+            echo
+            echo "## How the time of this step adds up"
+            echo
+            echo "- The normal run of all versions, alone on the runner: $((normal_end - step_start)) s."
+            echo "- The three runs that compile every dependency, side by side: $((eager_end - normal_end)) s."
+            echo "- The comparison of the two: $((step_end - eager_end)) s."
+            echo "- The step in total: $((step_end - step_start)) s."
+            echo
+            echo "The \"How long it took\" tables above are from the normal run, which had the runner to"
+            echo "itself. The runs that compile every dependency exist only to check that the normal run"
+            echo "skips nothing a test needs. They are not part of the runtime's time."
+            if [ ${#eager_reports[@]} -gt 0 ]; then
+              echo
+              echo "Runs that compile every dependency, for comparison (three at a time on 4 vCPUs):"
+              echo
+              ./target/release/al-test-cli "${eager_reports[@]}"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
           exit $status
-
-      # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s,
-      # parser throughput at least 50 MB/s. #[ignore]d in plain `cargo test`
-      # because they only mean something in release. After the corpus step so a
-      # budget failure never costs the day's pass-rate artifact.
-      - name: Perf budgets
-        run: |
-          cargo test --release --no-fail-fast \
-            -p al-syntax --test perf_parse_throughput \
-            -p al-test-cli --test perf_budget \
-            -p al-test-cli --test corpus_resolve_deps \
-            -p al-test-cli --test platform_tables \
-            -- --ignored --nocapture
-
-      # The only tests that use the network: Microsoft's artifact feed, read by range. Run after
-      # the cache step, so they check the protocol and the real archives, not the cache.
-      - name: Artifact feed (network)
-        run: |
-          cargo test --release --no-fail-fast \
-            -p al-deps --test network \
-            -p al-test-cli --test network_deps \
-            -- --ignored --nocapture
 
       - name: Date stamp
         if: always()
@@ -136,4 +170,42 @@ jobs:
             pass-rate-*.md
             runtime-junit-*.xml
             eager-junit-*.xml
+            eager-report-*.json
           retention-days: 90
+
+  release-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: ./.github/actions/setup
+
+      # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s, parser throughput at
+      # least 50 MB/s. #[ignore]d in plain `cargo test` because they only mean something in release.
+      # This job runs nothing else at the same time, so the numbers are not disturbed.
+      - name: Perf budgets
+        run: |
+          cargo test --release --no-fail-fast \
+            -p al-syntax --test perf_parse_throughput \
+            -p al-test-cli --test perf_budget \
+            -p al-test-cli --test corpus_resolve_deps \
+            -p al-test-cli --test platform_tables \
+            -- --ignored --nocapture
+
+      # The tests that run `al-test-cli` over the whole pinned corpus and its oracle (`--no-deps`),
+      # against the release binary. The `test` job leaves them out (see the header).
+      - name: CLI end-to-end tests (corpus_harness, dev_tooling)
+        run: |
+          cargo test --release --no-fail-fast \
+            -p al-test-cli --test corpus_harness \
+            -p al-test-cli --test dev_tooling
+
+      # The only tests that use the network: Microsoft's artifact feed, read by range. They use
+      # fresh cache directories, so they check the protocol and the real archives, not a cache.
+      - name: Artifact feed (network)
+        run: |
+          cargo test --release --no-fail-fast \
+            -p al-deps --test network \
+            -p al-test-cli --test network_deps \
+            -- --ignored --nocapture

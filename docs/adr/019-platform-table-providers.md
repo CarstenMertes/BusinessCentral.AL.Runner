@@ -88,6 +88,35 @@ Each is also a line in `docs/owner-review.md`.
    (`false`); only the undeclared defaults are pinned (`true`, `true`, `True`).
 9. **Date: "Period Invariant Name" equals "Period Name"**, because the culture is en-US and the declaration calls it
    the language-independent name. Listed in `docs/probes-needed.md`.
+10. **All Profile is a stored table.** A session seeds one row per `profile` object of every loaded app (Scope
+    Tenant, the app's id), and two native rules guard those rows (`platform/profiles.rs`): they cannot be deleted
+    or renamed away, with the texts the corpus pins. Options: a virtual table over the profile objects (rejected:
+    AL inserts, renames and deletes tenant rows, `profile/TestAllProfileTable.al`).
+11. **Report Layout List, Report Metadata and Report Data Items** come from the program. The scanner now keeps
+    the layouts of a report's `rendering` section (also for shells), the IR keeps `RequestFilterFields`. "Data
+    Item ID" is the item's position times ten: the corpus only needs the ids of two items to differ. An
+    `ObsoleteState` of `Removed`, a layout `Type` other than RDLC, Word, Excel or Custom, and a view the provider
+    cannot spell (more than sorting, order and one `field = const(v)`) poison the row.
+12. **XmlPort Metadata and Query Metadata:** a property an object does not declare reads the documented AL default
+    (Direction Both, Format Xml, UseRequestPage true, TransactionType UpdateNoLocks, TextEncoding UTF8). An API
+    query without `APIVersion` is poisoned (the default is not documented).
+13. **Event Subscription lists the subscribers of compiled codeunits only.** An uncompiled codeunit might declare
+    subscribers, so each is one poisoned row standing for all rows of that codeunit: a read that a filter on the
+    subscriber codeunit excludes is answered, an unfiltered walk or a publisher filter is refused. A database
+    trigger event of a table (`OnAfterInsertEvent` and the like) has the event type Trigger; a subscriber of a
+    manual-instance codeunit is poisoned (Active is not pinned).
+14. **Page Action lists the compiled pages' actions.** Each `area` of `actions` is a container row (type 0, parent
+    0), then actions (1) and groups (3) depth first; "Action Index" and "Action ID" both count from 1. An action
+    reference, a system action or an action outside an area poisons the page. The IR page keeps `action_areas`.
+15. **Table Relations Metadata lists one row per arm, and per condition of an arm that has some.** A condition
+    written `Field = filter(...)` is not understood by the runtime's relation check, so the compile keeps the
+    tables and fields such a relation names (`Field::relation_meta`), for this table only.
+16. **A poisoned row may stand for a key prefix** (`Entry::poisoned_prefix`): where a provider cannot list the
+    rows of an uncompiled object, one row with only the object's id known is refused by every read that no
+    filter on that id excludes. Filters on the unknown columns never rule it out.
+17. **Code Coverage, Code Coverage Test Lookup and Code Coverage Tests Run are stored and start empty.** The
+    runtime records no coverage. After `CodeCoverageLog(true, ...)` every read of them is refused until an
+    unfiltered `DeleteAll` empties that table (`platform/coverage.rs`). A recording engine would replace this.
 
 ## Consequences
 

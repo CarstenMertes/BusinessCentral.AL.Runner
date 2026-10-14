@@ -312,6 +312,9 @@ impl Session {
         if user_row {
             self.user_before_delete(t, rec)?;
         }
+        if self.is_profile_row(t, rec.borrow().temporary) {
+            self.profile_before_delete(t, &rec.borrow().fields)?;
+        }
         let row = rec.borrow().fields.clone();
         let pk = t.primary_key(&row);
         match self
@@ -563,6 +566,7 @@ impl Session {
     ) -> Result<Option<Vec<Value>>, Signal> {
         let temporary = rec.borrow().temporary;
         self.unseeded_read(t, temporary, "reading rows")?;
+        self.coverage_read(t, temporary)?;
         let key = rec.borrow().key;
         // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
         let (filters, flow_field_filters) = self.split_filters(rec);
@@ -750,6 +754,11 @@ impl Session {
         ) {
             let temporary = rec.borrow().temporary;
             self.unseeded_read(&t, temporary, method)?;
+            self.coverage_read(&t, temporary)?;
+        }
+        if matches!(method, "Get" | "GetBySystemId" | "CalcFields") {
+            let temporary = rec.borrow().temporary;
+            self.coverage_read(&t, temporary)?;
         }
         let cx = self.cx.clone();
         // The next access of the table raises a deferred duplicate-key Insert.
@@ -1138,6 +1147,8 @@ impl Session {
                 if !flow_field_filters.is_empty() {
                     return unsupported("DeleteAll with a filter on a FlowField");
                 }
+                let temporary = rec.borrow().temporary;
+                self.coverage_cleared(&t, temporary, &filters);
                 let n = self
                     .store_for(rec)
                     .count(&cx, &t, &filters)
@@ -1493,6 +1504,9 @@ impl Session {
                     }
                 }
                 self.check_rename_auto_increment(&t, &old, &new)?;
+                if self.is_profile_row(&t, rec.borrow().temporary) {
+                    self.profile_before_rename(&t, &old, &new)?;
+                }
                 let old_pk = t.primary_key(&old);
                 // Rec carries the new key and xRec the old row in the events and the trigger
                 // (record/TestTableEventDispatch.al:TableEvent_OnAfterRename_Subscriber_FiresWithOldAndNewKeys).

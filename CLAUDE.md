@@ -72,6 +72,8 @@ before you open a source file.
   CI runs them. `cargo run --release -p al-test-cli --example phases` prints
   timings per phase. `--example compile_dump` dumps every compile output, to
   diff before and after a performance change.
+- Demand-driven against eager compile of the Microsoft apps (ADR-013, CI runs it): `tools/demand_vs_eager.sh run`
+  (about 3 min, release binary needed) compares the main app and the OnPrem and isolation suites for BC 27, 28, 29.
 - Core crates do no OS access (ADR-006).
 - Parallel work: one `git worktree` and branch per area
   (`git worktree add ../wt-<area> -b <area> main`). Merge `main` into the branch

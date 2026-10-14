@@ -111,6 +111,8 @@ pub struct Phases {
     pub compile: std::time::Duration,
     pub baseline: std::time::Duration,
     pub tests: std::time::Duration,
+    /// The tests phase by run, in the order of the `SuiteRun`s (name, wall time).
+    pub suites: Vec<(String, std::time::Duration)>,
     /// The parts of the compile.
     pub compile_parts: al_sema::lower::CompileTimings,
     /// Building the engine from the lowered program.
@@ -501,7 +503,9 @@ impl CorpusRuntime {
                 done
             })
         };
+        let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();
         for r in results {
+            suite_work.push((r.si, r.took));
             codeunit_times.push((r.id, lowered.program.objects[r.oi].name.clone(), r.took));
             match r.result {
                 Ok(list) => {
@@ -521,6 +525,17 @@ impl CorpusRuntime {
             }
         }
         let tests_time = tests_started.elapsed();
+        // Test codeunits of different runs may overlap in time: a run's time is what its codeunits took.
+        let suite_times: Vec<(String, std::time::Duration)> = suites
+            .iter()
+            .enumerate()
+            .map(|(si, suite)| {
+                (
+                    suite.name.clone(),
+                    suite_work.iter().filter(|(i, _)| *i == si).map(|(_, d)| *d).sum(),
+                )
+            })
+            .collect();
         codeunit_times.sort_by(|a, b| b.2.cmp(&a.2));
         codeunit_times.truncate(SLOWEST);
         let suites = suites.iter().map(|s| s.name.clone()).collect();
@@ -536,6 +551,7 @@ impl CorpusRuntime {
                 compile: compile_time,
                 baseline: baseline_time,
                 tests: tests_time,
+                suites: suite_times,
                 compile_parts,
                 engine: engine_time,
                 slowest: codeunit_times,

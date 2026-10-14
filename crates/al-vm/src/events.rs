@@ -353,7 +353,7 @@ pub fn split_args(attribute: &str) -> Vec<String> {
 /// The object name written after `Kind::`: the last part of a name that carries its namespace
 /// (`Microsoft.Foundation.Company."Company-Initialize"` is `Company-Initialize`), and whether
 /// there was a namespace. Dots inside quotes belong to the name.
-fn publisher_name(written: &str) -> (String, bool) {
+pub(crate) fn publisher_name(written: &str) -> (String, bool) {
     let mut parts = Vec::new();
     let mut cur = String::new();
     let mut quoted = false;

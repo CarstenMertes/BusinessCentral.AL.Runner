@@ -46,6 +46,17 @@ pub struct ScannedObject {
     /// An object that declares `EventSubscriberInstance = Manual;`: its subscribers fire only while
     /// an instance is bound.
     pub manual_subscribers: bool,
+    /// For a report: the layouts its `rendering` section declares, in source order.
+    pub layouts: Vec<ScannedLayout>,
+}
+
+/// `layout(Name) { Type = RDLC; ... }` in the `rendering` section of a report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedLayout {
+    /// The name as the parser's `Section::args` gives it (a lone quoted name loses its quotes).
+    pub name: String,
+    /// The properties of the layout, as for an object body.
+    pub properties: Vec<(String, String)>,
 }
 
 /// `[EventSubscriber(ObjectType::Codeunit, Codeunit::"Sales-Post", 'OnBeforePost', ...)]`
@@ -250,6 +261,7 @@ fn scan_object(src: &str, sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
         subscribers: Vec::new(),
         properties: Vec::new(),
         install: false,
+        layouts: Vec::new(),
         manual_subscribers: false,
     };
     // Body: braces nest; subscriber attributes sit directly in the object body.
@@ -320,8 +332,79 @@ fn scan_object(src: &str, sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
         }
         i += 1;
     }
+    if obj.kind == "report" {
+        obj.layouts = scan_layouts(src, &sig[end..i.min(sig.len())]);
+    }
     out.objects.push(obj);
     i.max(at + 1)
+}
+
+/// The layouts of the `rendering` section in a report body (`body` starts at the body's `{`).
+fn scan_layouts(src: &str, body: &[Tok]) -> Vec<ScannedLayout> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut j = 0;
+    while j < body.len() {
+        match body[j].kind {
+            LBrace => depth += 1,
+            RBrace => depth = depth.saturating_sub(1),
+            Ident if depth == 1 && body[j].is_kw("rendering") && body.get(j + 1).is_some_and(|t| t.kind == LBrace) => {
+                // Inside the section: `layout(Name) { Prop = value; }` blocks.
+                let mut k = j + 2;
+                let mut d = 1usize;
+                while k < body.len() && d > 0 {
+                    match body[k].kind {
+                        LBrace => d += 1,
+                        RBrace => d -= 1,
+                        Ident
+                            if d == 1
+                                && body[k].is_kw("layout")
+                                && body.get(k + 1).is_some_and(|t| t.kind == LParen) =>
+                        {
+                            let mut m = k + 2;
+                            let mut name = String::new();
+                            while m < body.len() && body[m].kind != RParen {
+                                name.push_str(&body[m].ident_text());
+                                m += 1;
+                            }
+                            let mut properties = Vec::new();
+                            if body.get(m + 1).is_some_and(|t| t.kind == LBrace) {
+                                m += 2;
+                                while m < body.len() && body[m].kind != RBrace {
+                                    if matches!(body[m].kind, Ident | QuotedIdent)
+                                        && body.get(m + 1).is_some_and(|n| n.kind == Eq)
+                                    {
+                                        let mut e = m + 2;
+                                        while e < body.len() && body[e].kind != Semicolon && body[e].kind != RBrace {
+                                            e += 1;
+                                        }
+                                        let value = if e > m + 2 {
+                                            src[body[m + 2].start..body[e - 1].end].to_string()
+                                        } else {
+                                            String::new()
+                                        };
+                                        properties.push((body[m].ident_text(), value));
+                                        m = e;
+                                    } else {
+                                        m += 1;
+                                    }
+                                }
+                            }
+                            out.push(ScannedLayout { name, properties });
+                            k = m;
+                        }
+                        _ => {}
+                    }
+                    k += 1;
+                }
+                j = k;
+                continue;
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    out
 }
 
 /// `[EventSubscriber(ObjectType::K, K::Name, 'Event', ...)]` at `sig[at]`.

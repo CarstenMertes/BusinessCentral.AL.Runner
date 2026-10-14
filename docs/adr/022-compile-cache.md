@@ -1,6 +1,6 @@
 # ADR-022: Compile cache: one entry per dependency app version
 
-- Status: Proposed
+- Status: Proposed (owner answered the open questions on 2026-10-14; building waits for the measurement below)
 - Date: 2026-10-14
 - Amends: ADR-013 (decision 6: its "persistent cache only if the warm start needs it" becomes a design; its
   "lowered IR is not cached" is lifted for dependency apps), ADR-016 (the deferral of persistent dependency
@@ -163,6 +163,15 @@ Each is one decision. The recommendation comes first.
      the host has no agreed storage. WebAssembly keeps the demand-driven compile.
    - Alternative: the host hands the format code a byte source (`ByteSource`, as in `al-bcdb`), with a pure Rust
      decoder (`ruzstd`, slower, or LZ4). The format code is already core and OS-free, so this stays possible.
+
+## Owner decisions (2026-10-14)
+
+The owner accepted every recommendation above:
+
+1. Blocks are serialized with serde + postcard (or bincode) and compressed per object with zstd.
+2. The install-baseline snapshot is not in version 1.
+3. The cache lives in `<cache root>/compile/`, under the root the download cache already uses.
+4. WebAssembly has no compile cache in version 1.
 
 ## Consequences
 

@@ -134,7 +134,12 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
     session.set_install_scope(false);
     let baseline = session.capture_baseline();
     let filled = baseline.nonempty_tables();
-    let unseeded = touched.difference(&filled).copied().collect();
+    // A table the restored company holds rows for is seeded, whether or not a root could write it.
+    let unseeded = touched
+        .difference(&filled)
+        .copied()
+        .filter(|&t| !session.backs_rows(t))
+        .collect();
     Some(BaselineRun {
         baseline,
         unseeded,

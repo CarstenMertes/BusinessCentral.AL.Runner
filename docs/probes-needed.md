@@ -591,12 +591,14 @@ refused (or assumed, where the row says so) until its probe is in the corpus.
    wanted: `Get(UserSecurityId())` in a test on the cloud and on-prem images (does the row exist, which
    `Profile ID`, `Language ID`, `Locale ID`, `Time Zone`, `Company`), and whether
    `SessionSettings.RequestSessionUpdate(true)` creates it. 1 test of Tests-ERM (Reminder Automation Tests).
-4. **`Format(Record)`.** REFUSED (the text of a record variable as a whole). Base Application's Global
-   Triggers subscribers compare `Format(Rec) = Format(xRec)`, which made 213 Tests-ERM tests not run
-   (plus 1 for `Format(FieldRef)`). Probe wanted: `Format(Rec)` of a record with a Code, a Text, an
-   Integer, a Decimal, a Boolean, a Date, an Option and an Enum field, a FlowField and a Blob: the exact
-   text (separator, which fields, FlowFields calculated or not), and whether two records that differ in
-   only one field format differently.
+4. **`Format(Record)`.** DONE (probe round 6, corpus `record/TestFormatRecordContracts.al`, branch `al-runtime-rs`
+   d0f5d52). The text is the fields' own `Format` joined by TAB: normal fields in field-number order, then the
+   FlowFields with the value they hold, an empty Blob is one space and a filled one `*`. `Format(RecordRef)` is
+   the same text and `Format(FieldRef)` the field's. Assumptions the probe does not pin: a FlowFilter field is
+   left out of the text (probe wanted: `Format(Rec)` of a record with a FlowFilter field, before and after
+   `SetRange` on it); a Blob that was read from the table and not loaded (no `CalcFields`) shows `*` when the
+   store holds bytes (probe wanted: `Format(Rec)` after `Get` on a row with a filled Blob); `Rec := Other` copies
+   a Blob's bytes (the probe formats the copy but never changes it afterwards).
 5. **Variables of a table object persist per record variable.** DONE (ADR-021). Probed on BC 27.5
    (corpus `tests/al-language/tableglobals/`, 58 tests, in the submodule since `eb46da5`) and
    modelled; the two `T043` tests of Tests-ERM pass. What the probes did not pin is in "Table globals

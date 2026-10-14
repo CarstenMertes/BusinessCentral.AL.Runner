@@ -195,9 +195,14 @@ pub fn scan_path(path: &Path, hint: Option<&str>) -> (Vec<Found>, Vec<String>) {
     let reads: Vec<Result<(Manifest, bool), String>> = paths
         .par_iter()
         .map(|path| {
-            std::fs::read(path).map_err(|e| e.to_string()).and_then(|bytes| {
-                read_info_with(&bytes, &vars_for(path, hint)).map_err(|e: PackageError| e.to_string())
-            })
+            let vars = vars_for(path, hint);
+            // The manifest and the zip directory are enough, and a big package is not read whole.
+            if let Some(l) = crate::lazy::read_lazy(path, &vars) {
+                return Ok((l.manifest, !l.names.is_empty()));
+            }
+            std::fs::read(path)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| read_info_with(&bytes, &vars).map_err(|e: PackageError| e.to_string()))
         })
         .collect();
     for (path, read) in paths.into_iter().zip(reads) {
@@ -238,6 +243,9 @@ pub struct DependencyApp {
     pub version: Version,
     pub path: PathBuf,
     pub role: Role,
+    /// With `Request::lazy_sources`, a package read lazily: `app.files` holds the paths and empty
+    /// texts, and this reads a file and hashes the package (ADR-022, "pure tests").
+    pub lazy: Option<al_sema::LazySource>,
 }
 
 #[derive(Debug, Default)]
@@ -284,6 +292,10 @@ pub struct Request<'a> {
     /// System Application, Business Foundation), as AL's `app.json` rules say. With this on, the
     /// loaded apps see them without declaring them. Off for the corpus, which declares its own.
     pub application_implies_dependencies: bool,
+    /// Leave the text of a package's files unread: the loaded app has the paths and empty texts, and
+    /// `Loaded::lazy` says how to read a file later and holds a hash of the package's zip directory
+    /// (ADR-022, "pure tests"). A package that cannot be read lazily (a folder, a wrapper) is read as usual.
+    pub lazy_sources: bool,
 }
 
 /// Chooses the packages that satisfy the project's dependencies and reads their source.
@@ -394,9 +406,21 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
         .iter()
         .filter_map(|&i| paths[i].as_ref().filter(|_| pool[i].has_source))
         .collect();
-    let mut reads: std::collections::VecDeque<Result<(Manifest, Sources), String>> = to_read
+    // A package read lazily has no sources; its files are named and read later.
+    enum Read {
+        Eager(Manifest, Sources),
+        Lazy(Box<crate::lazy::LazyPackage>),
+    }
+    let mut reads: std::collections::VecDeque<Result<Read, String>> = to_read
         .par_iter()
-        .map(|path| read_package_at_with(path, req.source_build))
+        .map(|path| {
+            if req.lazy_sources && path.is_file() {
+                if let Some(l) = crate::lazy::read_lazy(path, &vars_for(path, req.source_build)) {
+                    return Ok(Read::Lazy(Box::new(l)));
+                }
+            }
+            read_package_at_with(path, req.source_build).map(|(m, s)| Read::Eager(m, s))
+        })
         .collect();
     let mut loaded = Loaded {
         application_aggregate,
@@ -421,7 +445,11 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
             ));
             continue;
         }
-        let (manifest, sources): (Manifest, Sources) = reads.pop_front().expect("one read per package")?;
+        let (manifest, sources, lazy): (Manifest, Option<Sources>, Option<crate::lazy::LazyPackage>) =
+            match reads.pop_front().expect("one read per package")? {
+                Read::Eager(m, s) => (m, Some(s), None),
+                Read::Lazy(l) => (l.manifest.clone(), None, Some(*l)),
+            };
         let role = if manifest.id.eq_ignore_ascii_case(SYSTEM_APP_ID) {
             Role::Platform
         } else {
@@ -440,15 +468,24 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
                 id: manifest.id.clone(),
                 name: manifest.name.clone(),
                 dependencies,
-                files: sources
-                    .into_iter()
-                    .map(|(p, text)| (format!("{}/{p}", manifest.name), text))
-                    .collect(),
+                files: match (&lazy, sources) {
+                    (Some(l), _) => l
+                        .names
+                        .iter()
+                        .map(|p| (format!("{}/{p}", manifest.name), String::new()))
+                        .collect(),
+                    (None, sources) => sources
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(p, text)| (format!("{}/{p}", manifest.name), text))
+                        .collect(),
+                },
             },
             publisher: manifest.publisher.clone(),
             version: manifest.version,
             path,
             role,
+            lazy: lazy.map(|l| l.source),
         });
     }
     loaded.notes = notes;
@@ -563,6 +600,7 @@ mod tests {
             missing: MissingPolicy::Error,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         })
         .unwrap();
         let names: Vec<_> = loaded.apps.iter().map(|a| a.app.name.as_str()).collect();
@@ -606,6 +644,7 @@ mod tests {
             missing: MissingPolicy::Error,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         })
         .unwrap();
         let names: Vec<_> = loaded.apps.iter().map(|a| a.app.name.as_str()).collect();
@@ -631,6 +670,7 @@ mod tests {
             missing: MissingPolicy::Skip,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         };
         let mut scans = ScanCache::new();
         let first = plan_dependencies(&req, &mut scans).unwrap();
@@ -664,6 +704,7 @@ mod tests {
             missing: MissingPolicy::Error,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         })
         .unwrap_err();
         assert!(
@@ -691,6 +732,7 @@ mod tests {
             missing: MissingPolicy::Skip,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         })
         .unwrap();
         assert_eq!(loaded.apps.len(), 1);
@@ -717,6 +759,7 @@ mod tests {
             missing: MissingPolicy::Error,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         })
         .unwrap();
         assert_eq!(loaded.apps.len(), 1);
@@ -738,6 +781,7 @@ mod tests {
             missing: MissingPolicy::Error,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         })
         .unwrap();
         assert!(loaded.apps.is_empty());
@@ -768,6 +812,7 @@ mod tests {
             missing: MissingPolicy::Error,
             source_build: None,
             application_implies_dependencies: false,
+            lazy_sources: false,
         })
         .unwrap();
         assert_eq!(loaded.apps.len(), 1);
@@ -926,6 +971,7 @@ mod tests {
                 missing: MissingPolicy::Skip,
                 source_build: None,
                 application_implies_dependencies: implies,
+                lazy_sources: false,
             })
             .unwrap()
         };

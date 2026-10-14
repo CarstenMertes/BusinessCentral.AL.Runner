@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 /// The format integer of the entry file. Bump it when the layout of the file or of a type it
 /// stores changes. (Any change to the compiler already changes `Key::runtime_build`.)
-pub const FORMAT: u32 = 3;
+pub const FORMAT: u32 = 4;
 
 /// One dependency app, as the compile saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +14,8 @@ pub struct AppKey {
     pub dependencies: Vec<String>,
     pub publisher: String,
     pub version: String,
-    /// A hash of the app's source, made by the caller.
+    /// A hash of the app's source, made by the caller: of every path and byte, or, for a zip package,
+    /// of the name, size and CRC-32 of every entry (the zip directory), which needs no read of the data.
     pub source: [u8; 32],
 }
 

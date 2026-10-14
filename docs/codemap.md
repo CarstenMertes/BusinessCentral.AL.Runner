@@ -64,6 +64,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-cache
 
 - `format.rs` (330): The cache entry file: header, dictionary, per-object blocks, index; open checks the header, the index and the dictionary, a block is checked when read. Entry: `build` 82, `Entry::open` 205, `Entry::verify` 263, `CacheError` 39.
+- `index.rs` (140): The index entry (ADR-022, pure tests): the scan of the dependency sources, keyed, for a run that reads none of them. Entry: `build_index`, `open_index`, `index_file_name`.
 - `key.rs` (170): The key of an entry: every input of the compile of the dependency set, hashed without `..`. Entry: `Key` 41, `Key::digest` 80, `AppKey` 21, `FORMAT` 10.
 - `lib.rs` (14): Crate root of the compile cache format (ADR-022). Core crate: no OS access.
 
@@ -120,6 +121,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `demo.rs` (200): The demo database backup of a build: streamed from the country artifact into the artifact cache (ADR-020). Entry: `ensure_demo_backup`, `cached_backup`, `DemoBackup`.
 - `cache.rs` (349): The artifact cache (ADR-013 decision 3). Entry: `cache_root` 21, `cache_root_from_env` 44, `Store` 48, `BuildDir` 86.
 - `lib.rs` (17): Dependency apps for the runtime (ADR-013).
+- `lazy.rs` (200): A package whose files are not read yet: zip directory and manifest only, files read by position on demand, a hash of the directory (ADR-022, pure tests). Entry: `read_lazy`, `LazyPackage`.
 - `load.rs` (577): Finding, choosing and reading the dependency apps of a project (ADR-013). Entry: `parse_app_json` 26, `read_package_at` 96, `scan_dir` 103.
 - `package.rs` (531): Reading an .app package: manifest, sources, resources. Entry: `Manifest` 9, `parse_manifest` 51, `Sources` 48.
 - `remote.rs` (517): A ZIP archive read by byte ranges. Entry: `RemoteError` 14, `RangeSource` 65, `FileSource` 73, `HttpSource` 114.

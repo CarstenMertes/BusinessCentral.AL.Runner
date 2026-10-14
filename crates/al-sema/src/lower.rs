@@ -2013,10 +2013,7 @@ struct FileLines {
 
 impl FileLines {
     fn new(ws: &Workspace, file: usize) -> FileLines {
-        let f = &ws.files[file];
-        // Files of an app are loaded in order, so the n-th file of the app is `apps[app].files[n]`.
-        let first = ws.files.iter().position(|g| g.app == f.app).unwrap_or(file);
-        let text = ws.apps[f.app].files[file - first].1.as_bytes();
+        let text = ws.text(file).as_bytes();
         let mut starts = vec![0u32];
         starts.extend(
             text.iter()

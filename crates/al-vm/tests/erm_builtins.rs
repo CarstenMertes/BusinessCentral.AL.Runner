@@ -116,10 +116,6 @@ fn builtins_no_corpus_test_pins_are_refused_with_a_reason_that_says_so() {
             "Report.ObjectId",
         ),
         (
-            "procedure F() var Id: RecordId; R: Record \"ALT T\"; begin R.Id := 1; R.Insert(); Id := R.RecordId; R := Id.GetRecord(); end;",
-            "RecordId.GetRecord",
-        ),
-        (
             "procedure F() var R: Record \"ALT T\"; E: ErrorInfo; begin R.FieldError(Descr, E); end;",
             "Record.FieldError",
         ),

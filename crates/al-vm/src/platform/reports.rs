@@ -12,7 +12,7 @@
 //! The data items exist only for a report that compiled; the rows of another are poisoned.
 
 use super::mat::Entry;
-use super::objects::{Catalog, base_kind, ident, prop, truthy};
+use super::objects::{Catalog, base_kind, ident, prop, string_lit, truthy};
 use super::{Providers, blank, ids, option, pos};
 use al_builtins::describe::Describe;
 use al_builtins::value::{RtType, Value};
@@ -34,8 +34,15 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
-    for o in c.objects.iter().filter(|o| base_kind(o) == "report") {
-        let Some(id) = o.id else { continue };
+    // A reportextension's layouts are rows of the report it extends, owned by the extension's app
+    // (record/TestEventSubscriptionColumnsReportLayoutListContracts.al:131-165).
+    for o in c
+        .objects
+        .iter()
+        .filter(|o| matches!(base_kind(o), "report" | "reportextension"))
+    {
+        let id = if base_kind(o) == "report" { o.id } else { o.extends_id };
+        let Some(id) = id else { continue };
         let pkg = ids::package_id(c.owner(o));
         for l in &o.layouts {
             let mut r = blank(t);
@@ -67,6 +74,21 @@ fn layout_row(o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &mut al_data::
         .position(|f| f.eq_ignore_ascii_case(&ident(format)))
         .ok_or_else(|| format!("{}: Type `{format}` is not pinned", what()))?;
     r[pos(t, 7)] = option(t, 7, format as i32);
+    // Caption is the Caption literal; Description the Summary literal, else the layout's name.
+    let literal = |name: &str| -> Result<Option<String>, String> {
+        lprop(l, name)
+            .map(|v| string_lit(v).ok_or_else(|| format!("{}: {name} `{v}` is not a literal", what())))
+            .transpose()
+    };
+    // A layout without a Caption reads blank here (assumed: docs/probes-needed.md).
+    r[pos(t, 3)] = Value::Text(literal("Caption")?.unwrap_or_default().chars().take(250).collect());
+    r[pos(t, 10)] = Value::Text(
+        literal("Summary")?
+            .unwrap_or_else(|| l.name.clone())
+            .chars()
+            .take(250)
+            .collect(),
+    );
     // Pending is obsolete (TestPrecompiledReportLayouts.al:63-72); Removed is not pinned.
     r[pos(t, 16)] = Value::Boolean(match lprop(l, "ObsoleteState").map(ident) {
         None => false,

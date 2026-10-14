@@ -225,7 +225,11 @@ pub(super) fn declared_caption(caption: Option<&str>, caption_ml: Option<&str>, 
     if let Some(ml) = caption_ml {
         let enu = split_outside_quotes(ml)
             .iter()
-            .find_map(|part| part.trim().strip_prefix("ENU=").map(str::trim))
+            .find_map(|part| {
+                let part = part.trim();
+                let (lang, text) = part.split_once('=')?;
+                lang.trim().eq_ignore_ascii_case("ENU").then(|| text.trim())
+            })
             .and_then(string_lit);
         return enu.ok_or_else(|| format!("CaptionML `{ml}` has no ENU literal"));
     }

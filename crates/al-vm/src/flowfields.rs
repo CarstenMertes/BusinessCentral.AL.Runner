@@ -285,6 +285,7 @@ impl Session {
         let calc = f.calc.as_ref().expect("checked by check_calc_field");
         let filters = self.calc_filters(rec, calc, stack)?;
         let src_t = self.engine.tables[calc.table].clone().expect("table");
+        self.unseeded_read(&src_t, rec.borrow().temporary, "a FlowField")?;
         let cx = self.cx.clone();
         let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e:?}"));
         use ir::CalcMethod as M;

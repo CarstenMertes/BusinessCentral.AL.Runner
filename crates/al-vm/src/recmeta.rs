@@ -421,6 +421,8 @@ impl Session {
                 d.key = s.key;
                 d.ascending = s.ascending;
                 d.position = s.position;
+                d.load.buffer = s.load.buffer;
+                d.load.partial = s.load.partial;
                 if share && s.temporary {
                     d.temp_id = s.temp_id;
                 }

@@ -1,8 +1,8 @@
 # ADR-013: Dependency apps and platform objects (objects outside the workspace)
 
-- Status: Proposed (the project owner accepts it after reading this revision)
+- Status: Accepted (2026-10-13)
 - Date: 2026-10-13
-- Revised: 2026-10-13, to record the owner's answers to the five open questions
+- Revised: 2026-10-13, to record the owner's answers to the five open questions and the acceptance
 
 ## Context
 
@@ -330,7 +330,7 @@ Two findings drive the decision:
    `blocked_reason` call-graph check (`al-test-cli/src/runtime.rs`) already does
    for execution; the compile cost needs the same treatment.
 
-## Decision (proposed, revised 2026-10-13 after the owner's answers)
+## Decision (revised 2026-10-13 after the owner's answers; accepted)
 
 1. **Dependency apps are Microsoft's source, downloaded into a cache and
    compiled by our front end.** Licensing is settled by the owner's answer: the
@@ -450,7 +450,7 @@ Two findings drive the decision:
 
 3. **Never in the repository.** Microsoft source and the downloaded zips live in
    a cache directory outside the repo (default
-   `~/.cache/al-runtime/artifacts/<build>/`, `AL_RUNTIME_CACHE` to move it) and in
+   `~/.cache/al-runtime/artifacts/<build>/`; `ALRUNNER_CACHE` or `--cache-dir` moves it, see "Layer A as built") and in
    a CI cache keyed by build. A test (`no_microsoft_source_in_repo`) fails if any
    tracked file carries the Microsoft copyright header. The corpus submodule's
    own `.alpackages` is the corpus repository's content, not ours; the test
@@ -630,6 +630,126 @@ no `DotNet` shim yet.
    code reads exist. Until then an app whose install code needs a missing
    provider refuses its dependent tests.
 
+## First increment as built (2026-10-13)
+
+Built, in the order of the list above:
+
+- **`al-deps`** (a crate that may touch the OS). `version` and `select` are pure
+  functions: Layer B as decision 2 describes it, with the owner's lookup order
+  added. A candidate carries a *tier*: 0 is the project's `.alpackages`, then each
+  `--deps` directory, then (later) the artifact cache. A package with source beats
+  one without, then the nearest tier wins, then the highest version. An app built
+  from source in this run (the internals fixture) beats every package. The platform
+  and application floors are optional implicit roots. A Microsoft platform app below
+  its minimum is used with a note. `zip` and `package` read the NAVX `.app`
+  container: central directory, CRC-32 and size of every entry checked, nested
+  wrapper `.app` unwrapped, `NavxManifest.xml` parsed. `load` scans the pool,
+  resolves, and reads the chosen packages. There is no `DependencySource` trait in
+  `al-host` yet: `al-test-cli` calls `al-deps` directly. The trait comes with the
+  download.
+- **Not built in the first increment** (Layer A and the download came after, see "Layer A as
+  built"): loading the platform `System.app` (found and selected, then left out: its tables
+  have no row providers, and a declared table without behaviour answers wrong), the install
+  baseline.
+- **Workspace.** `AppKind` (per app, in `Workspace::kinds`; `AppSource` is
+  unchanged so existing constructors still compile). The files of a dependency
+  app are *scanned* at load (`al_syntax::scan`: lexer plus preprocessor, objects,
+  namespace, `using`s, `extends`, `implements`, event subscribers; a test compares
+  it with the parser on every corpus file and every Microsoft file) and parsed
+  the first time something needs them (`Workspace::green`). An object whose file
+  does not parse cleanly is not resolvable (`usable`). `MemberTable` computes the
+  members of an object, extensions merged, when first asked.
+- **Demand-driven compile** (`al-sema/src/check/demand.rs`, decision 6). The checker
+  checks all of the workspace's own code and follows what it uses in the dependency
+  apps: calls, record variables and their writes, event subscribers, interface
+  implementers, the pages a TestPage drives. A table is *read* (variable, `Get`,
+  fields: lowered with the tables it relates to, nothing runs), or *written*
+  (`Insert`, `Modify`, `Delete`, `Rename`, `Validate`): then the trigger and the
+  subscribers of that operation are reached. An object only named (`Page::"X"`,
+  `Database::"X"`) is lowered with its routines stubbed. After the check,
+  `Workspace::restrict_to` makes everything not reached stop resolving, so what
+  needs it anyway is refused as outside the workspace. A routine nothing reached
+  is a stub whose reason says "not compiled". An object nothing reached is a shell
+  of kind `uncompiled table` and so on, so lookups by id do not find it and run it
+  as empty; the two lookups that would answer BC's "no such object" refuse
+  instead. `AL_EAGER_DEPENDENCIES=1` compiles every dependency routine, for
+  comparison: on the corpus it gives the same outcome for all 4836 tests.
+- **Parser gaps found in Microsoft's source** (540 of 9572 files did not parse):
+  attributes on variable declarations (`[SecurityFiltering(...)] Rec: Record X;`)
+  now parse. 71 files remain: control add-ins, `trigger Name::Event()`, `event`.
+- **Behaviour the new tests exposed**, each pinned by a corpus test and fixed or
+  refused: `Format` of an option field answers its `OptionCaption`; a page's
+  `SourceTableView` applies in filter group 2; the error text for a control of a
+  page from a dependency app names an internal ID that is not understood, so it
+  is refused (`docs/probes-needed.md`).
+
+## Layer A as built (2026-10-14)
+
+Built in `al-deps` (a crate that may touch the OS) and the `al-test-cli` flags. Core crates are
+unchanged (ADR-006).
+
+- **Build selection** (`build.rs`, pure). `BuildQuery` carries the prefix (`--bc-version`, else the
+  major of the target that `al_version::choose_target` chose), whether it was explicit, and the
+  app.json floor. `select_build` follows decision 2, Layer A: the newest cached match, else the newest
+  published match; the default never selects below the floor; an explicit request below it
+  warns; no match is an error naming the request, the builds available and the cache
+  directory. `target::build_query` in `al-test-cli` is the one place that joins `choose_target`
+  and the query, so the target and the build always agree on the major.
+- **Ranged ZIP** (`remote.rs`). `RemoteZip` reads the last 64 KiB of the artifact (the end record),
+  then the rest of the central directory if it is larger (1.1 MB for the platform artifact), then
+  one request per wanted entry. Every entry is checked against the CRC-32 and size in the
+  directory. The source is a `RangeSource`: `HttpSource` (ureq, retries on network errors and
+  5xx; a server that answers 200 to a range request is refused, never downloaded whole) or
+  `FileSource` (the unit tests' fixture file).
+- **Cache** (`cache.rs`). `<root>/artifacts/<build>/platform.tail` (the saved central directory, so
+  a warm run asks for nothing), `apps/<entry file name>` and `apps/<entry file name>.json` (build,
+  entry path, URL, size, CRC-32). A file whose record is missing or no longer matches is removed and
+  fetched again. Writes are rename-atomic, so parallel runs share the cache. Root, first match:
+  `--cache-dir`, `ALRUNNER_CACHE` (ADR-016), `AL_RUNTIME_CACHE` (this ADR's first draft),
+  `AL_RUNNER_CACHE_ROOT` plus `/v3`, `~/.cache/al-runtime`. This is the download cache that
+  decision 1 and 3 require. It is not one of the persistent compile caches that ADR-016 defers.
+- **Fallback** (`artifact.rs`, `load_with_artifacts`). Resolve with `.alpackages` and `--deps`
+  (Layer B, unchanged). For each dependency nobody supplies and that Microsoft could supply:
+  pick the build (cache first), read the central directory, find `<App name>.Source.zip` (or
+  `Microsoft_<App name>.app`) under any folder, fetch it, accept it only if the `app.json` inside
+  has the dependency's app id, save it, and resolve again. A second round picks up what the
+  fetched apps need (System Application Test Library needs Any). With nothing missing no build
+  is chosen and nothing is requested. A third-party dependency never reaches the feed.
+- **Source archives are packages** (`package.rs`). A `*.Source.zip` has no `NavxManifest.xml`; its
+  root `app.json` describes the whole app and every `.al` under any folder belongs to it. The
+  module folders inside System Application Test Library carry their own `app.json`
+  (`Azure AD Plan` and 55 others); they are not separate apps. So "Azure AD Plan Test Library"
+  is a module of System Application Test Library, not a fourth app. `scan_dir` reads `*.zip`
+  next to `*.app`.
+- **Build variables.** Base Application's and Application's `app.json` hold
+  `$(app_currentVersion)`, `$(app_minimumVersion)` and `$(app_platformVersion)`. They are filled from
+  the build the archive came from: the build, `major.minor.0.0`, `major.0.0.0`. Evidence: the
+  compiled Base Application 27.5.46862.48827 in the corpus `.alpackages` has exactly those
+  values in `NavxManifest.xml`. The build comes from the record beside the cached file. A
+  variable with no build is an error naming it, never a guess.
+- **Where the test libraries are.** All three are in the **platform** artifact, not the country
+  one: `Applications/System Application/Test/System Application Test Library.Source.zip`
+  (278 KB, 169 `.al` files), `Applications/TestFramework/TestLibraries/permissions mock/Permissions
+  Mock.Source.zip` (10 KB, 3 files) and, as a dependency of the first,
+  `.../TestLibraries/Any/Any.Source.zip` (10 KB). About 300 KB of a 1.3 GB artifact.
+- **CLI.** `--no-download`, `--cache-dir DIR`, `--bc-version` (existing: in corpus mode it picks
+  the oracle leg, and now also the Microsoft build), `--fetch-deps` (resolve, download, stop),
+  `--print-builds` (newest published build per version, from the index alone) and `--project DIR`
+  (with `--fetch-deps`: any AL project; the target comes from `choose_target`). The feed is
+  `ALRUNNER_ARTIFACT_URL` or the CDN of this ADR. Every run prints `bc build: ...`; the build is
+  in `pass-rate.json` (`bc_build`), the Markdown summary and as a JUnit `<property>`.
+- **CI.** The release job keys an `actions/cache` entry by the output of `--print-builds`,
+  then runs `--fetch-deps` to warm it, and ends with the two `#[ignore]`d network tests.
+- **Measured** (this machine, 2026-10-14, build 27.5.46862.56249): cold fetch of the three test
+  libraries for the corpus 0.5 s (index 0.16 s, central directory 0.1 s, three entries 20 to
+  30 ms each), warm 0.14 s with no request. A cold fetch of System Application, Business
+  Foundation and Base Application for a project that has no `.alpackages` (40 MB) is 1.0 s,
+  warm 0.08 s.
+- **Effect on the corpus.** Eight tests move past "outside the workspace" (six on Permissions Mock,
+  two on the Azure AD Plan test library). None passes yet: they stop at the platform table
+  `Permission Set`, at `DotNet` `PermissionTestHelper` (refused by policy) and at a query over
+  Plans. Pass counts are unchanged: 3903 for each of BC 27, 28 and 29.
+
 ## Rejected options
 
 - **(b) Bundled hand-written AL shims for selected platform objects.** Rejected
@@ -732,9 +852,32 @@ through the same path.
    speak for themselves". (Decision 6.)
 5. **Install triggers.** Mirror AL Runner. (Decision 5.)
 
+## Acceptance and further answers (2026-10-13)
+
+The project owner accepted this ADR and gave three further answers.
+
+1. **Status.** The ADR is Accepted. Building on it is allowed.
+2. **Where dependency apps are looked up first.** "The project's own
+   `.alpackages` folder is the first place dependency apps are looked up, the way
+   the AL compiler does it." The corpus ships System Application, Base
+   Application, Business Foundation and Application 27.5.46862.48827, with full
+   source, in `corpus/tests/al-language/.alpackages`. Downloading from the
+   artifact feed (decision 1) comes later, as a fallback behind `.alpackages`
+   and `--deps`. In the pool order of decision 2, Layer B, the project's
+   `.alpackages` stays first.
+3. **`DotNet`.** Still open. The owner asked for a generic approach, not
+   per-class Rust stand-ins, because on-prem apps can declare any .NET class.
+   A separate investigation is researching it. Until it is decided, decision 8
+   applies: every `DotNet` use is refused, with `Signal::Unsupported` or a static
+   reason that names the type.
+4. **Hard rule 7 stands.** Microsoft source is never committed to this
+   repository.
+
 ## Open question for the project owner
 
-1. **`DotNet` types in Microsoft's AL.** May the runtime contain Rust code that
+1. **`DotNet` types in Microsoft's AL.** The owner asked for a generic approach
+   instead of per-class stand-ins (see above). The list below is the earlier
+   framing. May the runtime contain Rust code that
    stands in for a .NET class declared in Microsoft's AL, and for which classes?
    The options, with real cases, are in `docs/dotnet-examples.md`:
    - No. Refuse every `DotNet` use. At most 20 to 28 corpus tests stay not run.
@@ -777,3 +920,132 @@ AL Runner v2. Decision 9 above is unchanged except for the `SessionId()` row, wh
 7. **Temporary records are not stamped** with `SystemCreatedAt/By` and `SystemModifiedAt/By`.
    Evidence is AL Runner's reading of the platform: the stamps come from the SQL layer, which a
    temporary record never reaches. No corpus test reads one. Probe wanted (docs/probes-needed.md).
+8. **The dependency golden test is `#[ignore]`d in a debug build and CI runs it in the release
+   step.** `al-test-cli/tests/corpus_resolve_deps.rs` loads Base Application and checks it, which
+   takes about 45 s unoptimised. Options: keep it in `cargo test` (slow gate for every agent);
+   ignore it and run it with the perf budgets in release (chosen).
+9. **The test-library apps come from the artifact feed through the download fallback (Layer A).**
+   The corpus names System Application Test Library, Permissions Mock and (through them)
+   Azure AD Plan Test Library; no `.alpackages` holds them. Until Layer A exists a developer can
+   put them in a local `--deps` folder; CI keeps refusing the tests that need them. None of them
+   is committed (hard rule 7).
+
+## Install baseline and Global Triggers as built (branch `baseline`, 2026-10-14)
+
+**Global Triggers.** The platform codeunit `Global Triggers` (2000000002, in the platform `System.app`) has only
+body-less business events. The runtime raises them itself (`al-vm/src/globaltriggers.rs`), whether or not
+`System.app` is loaded; its subscribers are registered under the codeunit when a loaded app declares it, else under
+a pseudo object key. The order and the cases are in `docs/probes-needed.md`. In the demand-driven check
+(`check/demand.rs`) a write to any table, of any app, reaches the subscribers in dependency apps: the setup events
+always, the database events of the operations used (Base Application's codeunit 49 `GlobalTriggerManagement` among
+them). Base Application's subscribers reach platform tables that have no provider (`API Webhook Subscription`,
+`User`), so five of them cannot run yet. `al-test-cli` tells the engine which (`global_triggers_find_unavailable`) and
+`dispatch.rs` refuses, with `Signal::Unsupported` naming the subscriber and what it lacks, to raise an event one of them
+would receive. The two setup events are the one exception: while no table the subscriber's decision reads (the record
+variables of the routines it calls within two levels: change log setup, Dataverse and CDS connection setup, API webhook
+subscriptions) holds a row, nothing is configured and the subscriber would have answered "no" for every table, so it is
+skipped; with a row in one of them the setup event is refused too. Without that exception every write in a run with
+Base Application would be refused (measured: 1724 of 4836 pass). With it, a test is refused only when a database event is
+enabled for a table (by a workspace subscriber, as `ALT Triggered` does) and so reaches `GlobalTriggerManagement`
+`OnDatabaseInsert` and its siblings: all 73 tests that wait on Global Triggers events, because every one of them uses
+`ALT Triggered`. What unblocks them: the platform table `API Webhook Subscription` (and `Database::User`, which
+`Change Log Management.IsAlwaysLoggedTable` names) from the `platform-tables` work.
+
+**Install baseline** (`al-test-cli/src/baseline.rs`, `al-vm/src/baseline.rs`). Roots of the check: the install
+codeunits of every dependency app (`Subtype = Install`, found by the scan) and Base Application's `Company-Initialize`.
+`AL_NO_BASELINE=1` leaves them out (to measure). The run, once per process, on a fresh session: per dependency app, in
+dependency order, every `OnInstallAppPerCompany`, then every `OnInstallAppPerDatabase` with `CompanyName()` empty (a
+per-company table is refused there, a `DataPerCompany = false` table works); then `Company-Initialize`; then
+`Session::capture_baseline` (rows, system id, row version and AutoIncrement counters, isolated storage, number
+sequences). Every test codeunit's session starts with `restore_baseline` (the persistent store makes both O(1));
+the project's own install codeunits still run per test codeunit, as before. A root that stops (Unsupported or an AL
+error) is reported on stderr: `Company-Initialize` keeps the rows it wrote before, an install trigger is rolled back.
+The tables such a root writes rows to (a record variable's `Insert`, `Modify`, `Rename` or `ModifyAll` in its static
+closure; rows that event subscribers add and `RecordRef` writes are not found), minus the tables that hold a row in the
+baseline, are `Engine::unseeded`. For them every read whose answer depends on the rows is refused, from dependency code
+and from the corpus's own: `Find*`, `Next`, `Count`, `IsEmpty`, `CalcSums`, a FlowField over them, the miss of a
+`TableRelation` check, a `Get` that finds nothing. A `Get` that finds the row is answered, and so is a temporary record.
+Rows the session wrote itself are not an exception (BC may hold more). For every other table a read is BC's real answer.
+The project's own install codeunits follow the measured order too (all per-company, then per-database with no company). Not built: seeding the platform rows (Published Application, User, Company, Access Control:
+they wait for the providers), the second snapshot after the project's own installs, a persistent copy.
+
+What stops it today on the corpus (Base Application 27.5): `Company-Initialize` stops in its `OnBeforeOnRun`
+subscriber (the retention policy install, which evaluates an empty `DateFormula`: "date formula ``: this form is not
+pinned by the corpus"), so no setup row is created yet; 3 of the 16 roots run to their end. The others wait for
+platform tables (`Company`, `Field`, `Table Metadata`, `AllObjWithCaption`, ...), the `Copilot Capability` enum,
+`Session.ApplicationIdentifier`, `System.GetUrl`, `TaskScheduler.CanCreateTask`. The mechanism is tested with
+synthetic dependency apps (`al-test-cli/src/runtime.rs` tests).
+
+### Decided without owner review (2026-10-13/14), baseline
+
+1. **Install order.** Options: AL Runner's and this ADR's text (per codeunit: per-company, then per-database, with a
+   company); the order the probe agent measured on real BC 27.5 (a fresh install with two companies: every
+   `OnInstallAppPerCompany` for each company first, `OnInstallAppPerDatabase` last, with `CompanyName()` empty).
+   Chosen: the measurement, per app. It differs from AL Runner, which runs per codeunit with a company set. One
+   company here, so "for each company" is one run.
+2. **A root that stops.** `Company-Initialize` keeps its earlier rows (AL Runner's partial company initialization);
+   an install trigger is rolled back (the existing handling of the project's own installers). Options: keep both,
+   roll back both. Chosen as stated; the rows before a stop are exactly a prefix of BC's own.
+3. **Which reads of install-seeded tables are refused.** Options: only a missing `Get` in dependency code (the old
+   rule); none; every read whose answer depends on the rows, anywhere, for tables a failed root writes and that hold
+   no row. Chosen: the last (reviewer's instruction). The 3 baseline cases it turned into "not run" read an empty
+   Cost Accounting Setup and passed by accident; they were removed from the baselines in a
+   dedicated commit (hard rule 2).
+4. **Base Application's `Global Triggers` subscribers that cannot run.** Options: refuse every write in a run with
+   Base Application (loses about 2300 passes); skip them silently (main's behaviour; hard rule 4); refuse the tests
+   that touch the tables they read (hundreds, it removed 43 passing tests); refuse when an event reaches one,
+   with the setup events skipped while the configuration tables they read are empty (chosen, after the reviewer's
+   instruction to refuse dynamically). Cost: the 73 tests behind `ALT Triggered` stay not run until the platform
+   tables exist.
+5. **`Session.LogMessage` is a no-op** and `TelemetryScope` has the members `ExtensionPublisher` and `All`
+   (Microsoft docs; ordinals not pinned). Telemetry is not observable from AL.
+6. **`DeleteAll(false)` and the database events.** Per row, with the table events and the database event, following
+   the probe 68212 on real BC 27.5 (corpus citation pending). This also lifts the old refusal of `DeleteAll(false)` on a
+   table with delete event subscribers.
+
+   The corpus names System Application Test Library and Permissions Mock; no `.alpackages` holds
+   them. Layer A is built (see "Layer A as built"); a developer can still put them in a local
+   `--deps` folder. None of them is committed (hard rule 7).
+
+### Layer A (2026-10-14)
+
+10. **`--no-download` skips and prints; a feed that does not answer is an error.** Decision 1 says
+    `--no-download` makes a missing app an error. In corpus mode that would fail every offline
+    run of the harness, while the corpus can still be measured without the test libraries (their
+    tests are then reported not run, hard rule 4). Options: error as written; skip with a
+    printed line (chosen for the corpus harness; the message names the app, the build or prefix and the
+    feed URL, and the library keeps `MissingPolicy::Error` for a project mode); skip
+    silently (rejected). When downloading is on and the feed does not answer, the run exits 2
+    with the URL, so a CI run that expected the libraries can never lose them quietly. The
+    ratchet would also catch it.
+11. **A cached build wins over a newer published one; the project's `.alpackages` still wins over
+    both.** The first is AL Runner's rule and decision 2, Layer A. The second is the owner's
+    answer 2 of 2026-10-13. A consequence: the corpus's `.alpackages` has System Application
+    27.5.46862.48827 but the test libraries come from the newest 27.5 build (56249), because
+    48827 is no longer published (HTTP 404; the index still lists it). Same-minor skew, as the ADR
+    already accepts. The build is printed and recorded.
+12. **An exact build the feed has dropped is an error, not a walk down to an older build.** The
+    index lists builds whose artifacts were removed. `--bc-version 27.5.46862.48827` therefore
+    fails with the URL. A prefix always picks the newest, which exists. Options: walk down to the
+    newest build that answers (hides the skew); error (chosen).
+13. **The cache keeps each entry as Microsoft ships it (inflated out of the artifact's ZIP), with a
+    record beside it, not the deflate stream.** Decision 1 says "bytes as downloaded". The
+    downloaded bytes are a deflate stream of a ZIP that is itself a ZIP; keeping the inner ZIP
+    lets the cached file be read like any `--deps` file. Its CRC-32 and size are in the record
+    and are checked again on every run.
+14. **The artifact is chosen only when something is missing.** With every dependency on disk no
+    build is chosen, no request is made and the run prints `bc build: none needed`. AL Runner always
+    selects a build because it needs the DLLs. We need only the apps. Option: always resolve a
+    build (a network call per run, for nothing).
+15. **Names: `ALRUNNER_CACHE`, `ALRUNNER_ARTIFACT_URL`, `--cache-dir`.** ADR-016 (Proposed) renames the
+    environment variables. `AL_RUNTIME_CACHE` and AL Runner v2's `AL_RUNNER_CACHE_ROOT` (plus a `v3`
+    subfolder) are read as fallbacks. If ADR-016 is rejected the names are two lines in `cache.rs`.
+16. **`--project DIR --fetch-deps` is the only project mode so far.** The harness is corpus-only; running a
+    project's tests belongs to ADR-016. The flag exercises `choose_target`, Layer A and the
+    download for any app.json, and it is how the floor-derived default is checked end to end.
+17. **Two network tests, not one.** `al-deps/tests/network.rs` checks the CDN protocol and the real
+    archives; `al-test-cli/tests/network_deps.rs` checks the corpus flow, cold and warm. Both
+    are `#[ignore]`d and take under a second; CI runs them.
+7. **Table extension field triggers.** `modify(Field) { trigger OnBeforeValidate/OnAfterValidate }` run around the field's
+   own OnValidate (corpus order); they are needed by the 31 Global Triggers tests that were next in line, and the old refusal
+   is gone. Dependency extensions' such triggers are reached by the demand-driven check when the field is validated.

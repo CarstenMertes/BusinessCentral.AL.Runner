@@ -390,3 +390,78 @@ entry in `docs/probes-needed.md` ("Page extensions") and a line in
    `DrillDown` raises the pinned platform error; the other two are refused.
 7. **An actionref is a control.** Invoking it invokes its target. Its
    `Visible`, `Enabled` and `Caption` are refused.
+
+Remaining TestPage-client gaps (branch `pages-misc`). Each has rows in `docs/probes-needed.md` and a line in
+`docs/owner-review.md`.
+
+8. **A `Page` variable is constructed at its first use, which runs OnInit once.** Options: leave procedure
+   calls on a `Page` variable refused, or construct the page then. Chosen: construct, because
+   `handlers/TestPageOnInit_Tests.al:188` pins "I, then the setter, then OnOpenPage". The open does not run OnInit again.
+9. **A list that serves its rows from OnFindRecord/OnNextRecord is walked through the triggers.**
+   First, Last, Next, Previous and GoToKey ask the triggers (`-`, `+`, +1, -1); a `CurrPage.Update` leaves the row
+   unread until the next move. Options: keep refusing such pages (10 tests), or model the walk. Chosen: model it
+   for the shapes the corpus asserts, and refuse reads the corpus does not pin.
+10. **The row an action deleted on such a list** is replaced by the four-call sequence the corpus measured.
+    The rule "the client knows other rows when its populated window holds more than the gone row" is an
+    inference from four tests; a shape outside them is refused.
+11. **`TestField.Lookup`** runs the control trigger, else the table field's OnLookup, else the TableRelation's lookup
+    page. A value written back by a `true` OnLookup goes through the same path as `SetValue`.
+12. **Page background tasks run synchronously, all of them, before the TestPage call returns**, in a read-only
+    worker session. Options: refuse, or model. Chosen: model; the transaction behaviour pinned by
+    `TestPageBgTaskTx_Tests.al` is not modelled and ends the run as unsupported.
+13. **`asserterror` around a failing TestPage call** keeps its rollback-to-last-commit rule; a case where BC
+    obviously keeps earlier uncommitted rows (a failed lookup) is refused when writes are pending, not
+    changed (the transaction area is not this branch's).
+### Request pages and FilterPageBuilder (branch `requestpages`)
+
+Decided without owner review (2026-10-13/14). Each decision has an entry in
+`docs/probes-needed.md` ("Request page", "FilterPageBuilder") and a line in
+`docs/owner-review.md`.
+
+Answer to open question 6 of this ADR: a request page is **the same client over
+the report's own instance**, not a second model. `Object.page` of a report holds
+the request page's control tree; its controls bind to the report's global
+variables, and each data item is a control of kind `DataItem` bound to the
+item's record. `TestRequestPage "R"` lowers to `RtType::TestPage(R)`;
+`[RequestPageHandler]` is a `UiKind` of its own, bound by the report. The
+reportextensions that extend a request page merge in like page extensions
+(`Page.extensions`, `Control.owner`).
+
+1. **A report with no `requestpage` section opens a request page of its data
+   items' filters**, unless `UseRequestPage` is false, the caller passes
+   `RequestWindow = false` or the instance called `UseRequestPage(false)`. The
+   reports agent left this open (`record/TestTxModelReportRun.al:11, :60-61` say
+   a report with a request page defaults to using it; no corpus report without
+   a section is run with the page on). Options: refuse such a run, or open the
+   page. Chosen: open it, because BC shows the data item filters for any report
+   that is not `UseRequestPage = false`. Without a handler in the test the run
+   is refused either way (decision 2), so no corpus test changes.
+2. **A run that opens a request page with no `[RequestPageHandler]` for the
+   report in the test is refused** (`Signal::Unsupported`). Options: raise
+   `Unhandled UI: RequestPage` as page runs do, or refuse. Chosen: refuse,
+   because no corpus test pins what the platform says.
+3. **The data items' own views are in force before the request page opens and are
+   not applied again after it.** The handler's filter would otherwise be wiped
+   by the item's `DataItemTableView`. Pinned in a comment of
+   `handlers/TestReportMultiLineDataItemView.al`, not asserted.
+4. **`RunRequestPage` returns an XML text of this runtime's own layout**
+   (`ReportParameters`, `Options`, `DataItems`), documented in
+   `docs/probes-needed.md` with what the corpus pins. It takes the same text
+   back as a seed and refuses any other text.
+5. **`Invoke` on an action of a request page raises "The action with ID = N is
+   not found on the page." with N derived by FNV-1a over the report id and the
+   action name.** The formula is fitted to three corpus ids
+   (`handlers/TestReportRequestPageAction.al:31-33`) and gives no other
+   pinned id. If a probe contradicts it, replace `action_id` in
+   `pages/request.rs`.
+6. **A report that renders output (not `ProcessingOnly`, or a layout) is
+   refused when its run reaches the point where output would be produced**,
+   not when its variable is declared. This lets the corpus test that pins its
+   request page (no plain OK) run. Every run of such a report is still refused
+   unless the handler cancels or raises.
+7. **`RunRequestPage` commits the transaction world it entered, as `Run`
+   does.** No corpus test reads the data afterwards.
+8. **FilterPageBuilder**: `RunModal` and `[FilterPageHandler]` are refused (no
+   corpus test calls them); the default `PageCaption` is `Filter`; `AddRecord`
+   and `AddRecordRef` copy the record; error sentences other than the two the
+   corpus pins in full are filled in around the control name.

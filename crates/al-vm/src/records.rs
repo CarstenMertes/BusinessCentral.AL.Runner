@@ -4,6 +4,7 @@
 //! raises `Signal::Unsupported` instead of guessing.
 
 use crate::Session;
+use crate::globaltriggers::GlobalOp;
 use al_builtins::filter::{FieldFilter, FilterExpr, key_cmp};
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
@@ -82,11 +83,44 @@ impl Session {
     }
 
     /// Raises (or, when the result is used, returns false for) a failed write.
+    /// Whether the routine running now belongs to a dependency app.
+    pub(crate) fn in_dependency_code(&self) -> bool {
+        let program = &self.engine.program;
+        self.frames
+            .last()
+            .and_then(|&o| program.apps.get(program.objects[o].app as usize))
+            .is_some_and(|a| a.dependency)
+    }
+
+    /// Refuses a read whose answer depends on the rows of table `t` when the install baseline could
+    /// not create the rows BC has there (`Engine::unseeded`, ADR-013 decision 5): the answer would
+    /// be "empty" or "fewer rows", which is not BC's. Rows this session wrote itself do not make
+    /// the answer BC's, so they are not an exception. Temporary records are private to the session.
+    pub(crate) fn unseeded_read(&self, t: &TableDef, temporary: bool, what: &str) -> Result<(), Signal> {
+        if !temporary && self.engine.unseeded.contains(&(t.object as usize)) {
+            return unsupported(format!(
+                "{what} on {}: BC holds rows here that an install trigger or Company-Initialize creates, and the install baseline could not create them (ADR-013 decision 5)",
+                t.name
+            ));
+        }
+        Ok(())
+    }
+
     /// Message texts: docs/probes-needed.md (the corpus pins 'already exists'
     /// and 'does not exist' fragments only).
     fn fail(&mut self, t: &TableDef, fields: &[Value], exists: bool) -> Result<Value, Signal> {
         if self.ret_used {
             return Ok(Value::Boolean(false));
+        }
+        // A dependency app's code reads rows (setup records, mostly) that installing the app and
+        // initialising a company create. Where the install baseline could not create them
+        // (ADR-013 decision 5), a missing row there is not BC's answer: refuse rather than
+        // report it as one.
+        if !exists && self.in_dependency_code() && self.engine.unseeded.contains(&(t.object as usize)) {
+            return unsupported(format!(
+                "{} not found in code of a dependency app: the rows its install and Company-Initialize create could not be created (ADR-013 decision 5)",
+                t.name
+            ));
         }
         let identification = self.identification(t, fields)?;
         let (message, code) = if exists {
@@ -113,42 +147,6 @@ impl Session {
             code: code.into(),
             call_stack: String::new(),
         }))
-    }
-
-    /// Hooks around `op` that this runtime cannot run are refused rather than
-    /// silently skipped (hard rule 4): the triggers a table extension attaches to a
-    /// field (`modify(Field) { trigger OnBeforeValidate }`), and the platform events
-    /// of the Base App's `Global Triggers` codeunit.
-    fn check_hooks(&self, t: &TableDef, op: &str) -> Result<(), Signal> {
-        if op == "Validate" {
-            if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
-                for &e in &schema.extensions {
-                    let hit = self.engine.program.objects[e].routines.iter().any(|r| {
-                        r.is_trigger
-                            && r.field.is_none()
-                            && ["OnBeforeValidate", "OnAfterValidate"]
-                                .iter()
-                                .any(|n| r.name.eq_ignore_ascii_case(n))
-                    });
-                    if hit {
-                        return unsupported(format!(
-                            "{op} on {}: table extension triggers on fields are not implemented yet",
-                            t.name
-                        ));
-                    }
-                }
-            }
-        }
-        // The workspace subscribes to the platform's Global Triggers events for this
-        // table (record/TestTriggerDispatchOrder.al: OnDatabaseInsert/OnGlobalRename ...).
-        // That codeunit is Base App, so those subscribers can never run here.
-        if op != "Validate" && self.engine.events.global_triggers_apply(t.object as usize) {
-            return unsupported(format!(
-                "{op} on {}: events of the Global Triggers codeunit (Base App) are not available",
-                t.name
-            ));
-        }
-        Ok(())
     }
 
     /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) a table extension
@@ -265,6 +263,18 @@ impl Session {
         // After event: record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable.
         // That the Before event sees the new value is docs/probes-needed.md.
         self.table_event(t, "onbeforevalidateevent", rec, Some(xrec), false, Some(&field.name))?;
+        // The triggers table extensions attach to the field bracket its own OnValidate
+        // (record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable). The
+        // order of two extensions' triggers on one field is not pinned.
+        if field.ext_before_validate.len() > 1 || field.ext_after_validate.len() > 1 {
+            return unsupported(format!(
+                "Validate of {}.{}: more than one table extension declares OnBeforeValidate or OnAfterValidate for it (their order is not pinned)",
+                t.name, field.name
+            ));
+        }
+        for &(object, routine) in &field.ext_before_validate {
+            self.run_trigger(object, routine, rec, Some(xrec))?;
+        }
         if let Some((object, routine)) = field.on_validate {
             if let Err(e) = self.run_trigger(object, routine, rec, Some(xrec)) {
                 // The field is back at its old value when its OnValidate raises
@@ -275,6 +285,9 @@ impl Session {
                 }
                 return Err(e);
             }
+        }
+        for &(object, routine) in &field.ext_after_validate {
+            self.run_trigger(object, routine, rec, Some(xrec))?;
         }
         self.table_event(t, "onaftervalidateevent", rec, Some(xrec), false, Some(&field.name))
     }
@@ -306,6 +319,7 @@ impl Session {
             }
             self.run_ext_trigger(t, "OnDelete", rec, Some(&x))?;
         }
+        self.global_trigger(t, GlobalOp::Delete, rec, None)?;
         let row = rec.borrow().fields.clone();
         let pk = t.primary_key(&row);
         match self
@@ -525,6 +539,8 @@ impl Session {
         ascending: bool,
         after: Option<Vec<Value>>,
     ) -> Result<Option<Vec<Value>>, Signal> {
+        let temporary = rec.borrow().temporary;
+        self.unseeded_read(t, temporary, "reading rows")?;
         let key = rec.borrow().key;
         // Filters on FlowFilter fields drop out; those on FlowFields are checked per row.
         let (filters, flow_field_filters) = self.split_filters(rec);
@@ -614,6 +630,19 @@ impl Session {
                 }
             }
         }
+        // A full load (the default) needs no bookkeeping beyond the flag; a partial one is worked
+        // out in partial.rs.
+        if rec.borrow().load.request.is_some() {
+            self.note_partial_fetch(rec, &row)?;
+        } else {
+            let mut r = rec.borrow_mut();
+            r.load.buffer = Some(al_builtins::value::Buffer {
+                have: al_builtins::value::FieldSet::All,
+                unsure: al_builtins::value::FieldSet::Of(Vec::new()),
+                row: None,
+            });
+            r.load.partial = false;
+        }
         rec.borrow_mut().fields = row;
         self.auto_calculate(rec)
     }
@@ -664,9 +693,38 @@ impl Session {
 
     pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         let t = self.table(rec)?;
+        if matches!(
+            method,
+            "Find" | "FindFirst" | "FindLast" | "FindSet" | "Next" | "Count" | "IsEmpty" | "CalcSums"
+        ) {
+            let temporary = rec.borrow().temporary;
+            self.unseeded_read(&t, temporary, method)?;
+        }
         let cx = self.cx.clone();
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             if let Some(f) = schema.fields.iter().find(|f| f.init_text.is_some() && f.init.is_none()) {
+                // An InitValue BC accepts at compile time and cannot evaluate when it builds the
+                // buffer: Init() on a written record raises, on an untouched one does nothing
+                // (record/TestDateTimeInitValue.Codeunit.al:29-77). Nothing else is pinned.
+                let messages: std::collections::BTreeSet<&String> = (0..schema.fields.len())
+                    .filter_map(|pos| self.engine.unevaluable_init.get(&(t.object, pos)))
+                    .collect();
+                let only_unevaluable = schema
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| f.init_text.is_some() && f.init.is_none())
+                    .all(|(pos, _)| self.engine.unevaluable_init.contains_key(&(t.object, pos)));
+                if method == "Init" && only_unevaluable && messages.len() == 1 {
+                    if !rec.borrow().touched {
+                        return Ok(Value::Null);
+                    }
+                    return Err(Signal::Error(AlError {
+                        message: (*messages.iter().next().expect("one message")).clone(),
+                        code: String::new(),
+                        call_stack: String::new(),
+                    }));
+                }
                 return unsupported(format!(
                     "{}.{}: InitValue `{}` is not implemented yet",
                     t.name,
@@ -675,11 +733,44 @@ impl Session {
                 ));
             }
         }
+        // OnInstallAppPerDatabase runs with CompanyName() empty; a per-company table fails there
+        // with "You must choose a company before you can access the ..." (measured on BC 27.5,
+        // docs/probes-needed.md; the rest of the text is not known, so this is refused).
+        if self.cx.company.is_empty()
+            && t.per_company
+            && !rec.borrow().temporary
+            && matches!(
+                method,
+                "Insert"
+                    | "Modify"
+                    | "Delete"
+                    | "DeleteAll"
+                    | "ModifyAll"
+                    | "Rename"
+                    | "Truncate"
+                    | "Get"
+                    | "Find"
+                    | "FindFirst"
+                    | "FindLast"
+                    | "FindSet"
+                    | "Next"
+                    | "Count"
+                    | "IsEmpty"
+                    | "CalcFields"
+                    | "CalcSums"
+            )
+        {
+            return unsupported(format!(
+                "{method} on the per-company table {} with no company chosen (BC: \"You must choose a company before you can access the ...\")",
+                t.name
+            ));
+        }
         if matches!(
             method,
             "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate"
         ) && !rec.borrow().temporary
         {
+            self.bg_refuse_write(t.object as usize, method)?;
             self.gate_write(method)?;
         }
         match method {
@@ -712,10 +803,10 @@ impl Session {
                 r.ascending = true;
                 r.field_descending = false;
                 r.position = None;
+                r.load = Default::default();
                 Ok(Value::Null)
             }
             "Insert" => {
-                self.check_hooks(&t, "Insert")?;
                 // A temporary record has no sequence: the key stays as it is (corpus
                 // record/TestTempTableContracts.al:52).
                 let auto = if rec.borrow().temporary {
@@ -766,6 +857,9 @@ impl Session {
                     }
                     self.run_ext_trigger(&t, "OnInsert", rec, insert_xrec.as_ref())?;
                 }
+                // The database event follows the table's triggers and precedes the write
+                // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
+                self.global_trigger(&t, GlobalOp::Insert, rec, None)?;
                 // Only Insert(_, true) takes a SystemId the code put in the buffer; a trigger
                 // that sets one on any other insert changes nothing about the stored id.
                 if let (false, Some(i), Some(id)) = (keep_id, id_slot, assigned) {
@@ -828,7 +922,6 @@ impl Session {
                 }
             }
             "Modify" => {
-                self.check_hooks(&t, "Modify")?;
                 self.check_unique_keys(&t)?;
                 let run = arg_bool(args, 0)?;
                 let pk = t.primary_key(&rec.borrow().fields);
@@ -880,15 +973,22 @@ impl Session {
                 // xRec is the stored row (the page's own xRec for a row a page saves), one handle
                 // for the events and the trigger.
                 let stored_row = stored.clone();
+                let from_page = self.page_xrec.is_some();
                 let xrec = self.page_xrec.take().or(stored).map(|f| Self::xrec_handle(rec, f));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {
                     self.run_ext_trigger(&t, "OnBeforeModify", rec, xrec.as_ref())?;
                     if let Some(tr) = self.table_trigger(&t, "OnModify") {
-                        self.run_trigger(t.object as usize, tr, rec, xrec.as_ref())?;
+                        // The table's own OnModify sees xRec equal to Rec when code drove the
+                        // Modify, and the previous row when a page did
+                        // (record/TestXRecContracts.al:69-87 OnModify_xRec_MirrorsRecValues_WhenCalledFromCode,
+                        // record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
+                        let code_xrec = (!from_page).then(|| Self::xrec_handle(rec, rec.borrow().fields.clone()));
+                        self.run_trigger(t.object as usize, tr, rec, code_xrec.as_ref().or(xrec.as_ref()))?;
                     }
                     self.run_ext_trigger(&t, "OnModify", rec, xrec.as_ref())?;
                 }
+                self.global_trigger(&t, GlobalOp::Modify, rec, xrec.as_ref())?;
                 let old_version = self.bump_row_version(&t, rec);
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
                 let mut row = rec.borrow().fields.clone();
@@ -916,7 +1016,6 @@ impl Session {
                 }
             }
             "Delete" => {
-                self.check_hooks(&t, "Delete")?;
                 let run = arg_bool(args, 0)?;
                 self.delete_row(&t, rec, run)
             }
@@ -934,24 +1033,20 @@ impl Session {
                 if n == 0 {
                     return Ok(Value::Null);
                 }
-                self.check_hooks(&t, "DeleteAll")?;
                 let events =
                     self.listened(&t, "onbeforedeleteevent", None)? || self.listened(&t, "onafterdeleteevent", None)?;
                 let mut trigger = self.table_trigger(&t, "OnDelete").is_some();
                 for n in ["OnBeforeDelete", "OnDelete", "OnAfterDelete"] {
                     trigger |= self.ext_trigger(&t, n)?.is_some();
                 }
-                if !run && events {
-                    // Whether DeleteAll(false) raises the delete events per row (as BC must when
-                    // Truncate is refused for subscribed tables, record/TestRecordTruncateEventAndFilterGuards.al)
-                    // is not pinned: docs/probes-needed.md.
-                    return unsupported(format!(
-                        "DeleteAll(false) on {}, which has delete event subscribers",
-                        t.name
-                    ));
-                }
-                if run && (events || trigger) {
-                    // One Delete(true) per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
+                let global = self.global_enabled(&t, GlobalOp::Delete)?;
+                // With delete events or database triggers a DeleteAll deletes row by row: the events
+                // and the database trigger per row, the table's and extensions' triggers only for
+                // DeleteAll(true). Pinned on real BC 27.5 by the probe codeunit 68212
+                // (record/TestTableExtensionTriggerOrderContracts.al:Delete_And_DeleteAll_...,
+                // corpus branch `al-runtime-rs`; the citation is pending until the corpus bump).
+                if events || global || (run && trigger) {
+                    // One Delete per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
                     let key = rec.borrow().key;
                     let mut rows = Vec::new();
                     let mut after = None;
@@ -963,7 +1058,7 @@ impl Session {
                         let mut st = rec.borrow().clone();
                         st.fields = row;
                         st.filters.clear();
-                        self.delete_row(&t, &Rc::new(RefCell::new(st)), true)?;
+                        self.delete_row(&t, &Rc::new(RefCell::new(st)), run)?;
                     }
                     return Ok(Value::Null);
                 }
@@ -1023,6 +1118,45 @@ impl Session {
                         self.store_for(rec)
                             .get(&cx, &t, &pk)
                             .map_err(|e| Signal::Unsupported(format!("{e:?}")))?
+                    }
+                    // `=>`, `=<` and `=><`: the row itself, else its neighbour. Pinned for a row that is gone
+                    // from a table nothing filters, by the page client asking an OnFindRecord trigger
+                    // (corpus pageupdate/TestPageUpdateGoneRow.al:423 List_DeletedByAction_PassThroughFind_*);
+                    // with filters, or another current key, how they combine is not pinned.
+                    w @ ("=>" | "=<" | "=><") => {
+                        if !rec.borrow().filters.is_empty() || rec.borrow().key != 0 {
+                            return unsupported(format!("Find('{w}') with active filters or another current key"));
+                        }
+                        let pk = t.primary_key(&rec.borrow().fields);
+                        let exact = self
+                            .store_for(rec)
+                            .get(&cx, &t, &pk)
+                            .map_err(|e| Signal::Unsupported(format!("{e:?}")))?;
+                        match exact {
+                            Some(row) => Some(row),
+                            None => {
+                                let pos = position(&t, 0, &rec.borrow().fields);
+                                let next = if w == "=<" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, asc, Some(pos.clone()))?
+                                };
+                                let prev = if w == "=>" {
+                                    None
+                                } else {
+                                    self.scan(rec, &t, !asc, Some(pos))?
+                                };
+                                match (next, prev) {
+                                    (Some(n), Some(_)) if w == "=><" => {
+                                        let _ = n;
+                                        return unsupported(
+                                            "Find('=><') with a row on either side (which one BC picks is not pinned)",
+                                        );
+                                    }
+                                    (n, p) => n.or(p),
+                                }
+                            }
+                        }
                     }
                     other => return unsupported(format!("Find('{other}')")),
                 };
@@ -1155,7 +1289,6 @@ impl Session {
                     .clone()
                     .expect("table");
                 let field = schema.fields[pos].clone();
-                self.check_hooks(&t, "Validate")?;
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
                 let handle = Rc::as_ptr(rec) as usize;
@@ -1188,7 +1321,6 @@ impl Session {
                 Ok(Value::Null)
             }
             "Rename" => {
-                self.check_hooks(&t, "Rename")?;
                 if rec.borrow().temp_id.is_some() && rec.borrow().fields.iter().any(|f| matches!(f, Value::Blob(_))) {
                     // streams/TestBlobRenameIsolation.al: BC keeps an unpersisted Blob write across a
                     // temporary Rename but loses one persisted with Modify; no model here does both.
@@ -1240,6 +1372,7 @@ impl Session {
                     self.run_trigger(t.object as usize, tr, rec, Some(&xrec))?;
                 }
                 self.run_ext_trigger(&t, "OnRename", rec, Some(&xrec))?;
+                self.global_trigger(&t, GlobalOp::Rename, rec, Some(&xrec))?;
                 let _ = self.bump_row_version(&t, rec);
                 let _ = self.stamp_rename(&t, rec);
                 let row = rec.borrow().fields.clone();
@@ -1282,6 +1415,9 @@ impl Session {
             }
             "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
             "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
+            "SetLoadFields" | "AddLoadFields" | "AreFieldsLoaded" | "SetBaseLoadFields" => {
+                self.load_fields_op(method, rec, &t, args)
+            }
             other => self.record_meta_op(other, rec, &t, args),
         }
     }
@@ -1290,4 +1426,26 @@ impl Session {
 #[allow(dead_code)]
 fn _uses(_: RtType, a: &[Value], b: &[Value]) -> std::cmp::Ordering {
     key_cmp(a, b)
+}
+
+/// The error BC raises when it evaluates the `InitValue` of `f`, for the two forms the corpus pins as
+/// unevaluable (record/TestDateTimeInitValue.Codeunit.al): `0DT` on a DateTime, and a closing-date
+/// literal (`C20260101D`) on a Date. Every other form is `None`.
+pub(crate) fn unevaluable_init_value(f: &al_ir::Field) -> Option<String> {
+    use al_builtins::value::RtType;
+    let text = f.init_text.as_deref()?.trim();
+    if f.init.is_some() {
+        return None;
+    }
+    match &f.ty {
+        RtType::DateTime if text.eq_ignore_ascii_case("0DT") => {
+            Some("The value \"01/01/0001 00:00:00\" can't be evaluated into type DateTime.".into())
+        }
+        RtType::Date => {
+            let inner = text.strip_prefix(['C', 'c'])?.strip_suffix(['D', 'd'])?;
+            (inner.len() == 8 && inner.chars().all(|c| c.is_ascii_digit()))
+                .then(|| format!("The format of the Date '{text}' does not match your device's date settings."))
+        }
+        _ => None,
+    }
 }

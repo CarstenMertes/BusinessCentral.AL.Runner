@@ -5,7 +5,6 @@
 //! trigger or section it does not understand becomes a reason on the report, so a variable of
 //! that report is refused statically (hard rule 4) instead of running with a guessed behaviour.
 
-use crate::members::Members;
 use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_ir as ir;
 use al_syntax::ast;
@@ -54,6 +53,9 @@ pub struct Layout {
     pub has_request_page: bool,
     pub transaction_type: Option<String>,
     pub reasons: Vec<String>,
+    /// Why running the report renders output: the layouts it declares, and `ProcessingOnly` not
+    /// being true. A run refuses these after its request page, not before.
+    pub output: Vec<String>,
 }
 
 fn bool_prop(value: &str) -> Option<bool> {
@@ -81,6 +83,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         has_request_page: false,
         transaction_type: None,
         reasons: Vec::new(),
+        output: Vec::new(),
     };
     for p in obj.properties() {
         let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
@@ -100,7 +103,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "transactiontype" => out.transaction_type = Some(value.trim().to_ascii_lowercase()),
             n if INERT_OBJECT_PROPERTIES.contains(&n) => {}
             "defaultlayout" | "defaultrenderinglayout" | "rdlclayout" | "wordlayout" | "excellayout" => out
-                .reasons
+                .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
             other => out
                 .reasons
@@ -118,16 +121,156 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "dataset" => visit(&top, None, None, &mut out.items, &mut out.reasons),
             "requestpage" => out.has_request_page = true,
             n if LAYOUT_SECTIONS.contains(&n) => out
-                .reasons
+                .output
                 .push(format!("report section {n} (a layout) is not supported yet")),
             other => out.reasons.push(format!("report section {other} is not supported yet")),
         }
     }
     if !out.processing_only {
-        out.reasons
+        out.output
             .push("the report is not ProcessingOnly, so running it renders output".into());
     }
     out
+}
+
+/// Request page properties that change nothing a test client can observe.
+const INERT_REQUEST_PAGE_PROPERTIES: &[&str] = &[
+    "captionml",
+    "abouttitle",
+    "abouttitleml",
+    "abouttext",
+    "abouttextml",
+    "contextsensitivehelppage",
+];
+
+/// Request page triggers the test client runs: it opens the page (`OnInit`, `OnOpenPage`) and
+/// closes it (`OnQueryClosePage`, `OnClosePage`).
+const REQUEST_PAGE_TRIGGERS: &[&str] = &["oninit", "onopenpage", "onqueryclosepage", "onclosepage"];
+
+/// What a reportextension can add to a request page that the client runs: the void page triggers
+/// after the report's own, and the triggers of a `modify` block that a page extension has
+/// (docs/probes-needed.md, "Reportextension request pages").
+fn request_extension_reasons(exts: &[(usize, ast::Object)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, e) in exts {
+        let ename = e.name();
+        for sec in e.sections().filter(|s| s.name().eq_ignore_ascii_case("requestpage")) {
+            for t in sec.triggers() {
+                let n = t.name().to_ascii_lowercase();
+                if !["onopenpage", "onclosepage"].contains(&n.as_str()) {
+                    out.push(format!(
+                        "reportextension `{ename}`: request page trigger {} is not supported yet",
+                        t.name()
+                    ));
+                }
+            }
+            for p in sec.properties() {
+                out.push(format!(
+                    "reportextension `{ename}`: request page property {} is not supported yet",
+                    p.name().to_ascii_lowercase()
+                ));
+            }
+            for m in ast::sections_in(sec.syntax()) {
+                if !m.name().eq_ignore_ascii_case("modify") {
+                    continue;
+                }
+                for t in m.triggers() {
+                    if !crate::lower::MODIFY_TRIGGERS.contains(&t.name().to_ascii_lowercase().as_str()) {
+                        out.push(format!(
+                            "reportextension `{ename}`: trigger {} in modify({}) is not supported yet",
+                            t.name(),
+                            m.args().first().cloned().unwrap_or_default()
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The request page of report `obj`: the controls its `requestpage` section declares, then one
+/// `DataItem` control per data item of `items` (the filters a handler sets on the page), and the
+/// `requestpage` section itself when the report declares one. A report without one still has a
+/// request page showing its data items' filters.
+pub fn request_layout(
+    obj: &ast::Object,
+    items: &[RawItem],
+    exts: &[(usize, ast::Object)],
+) -> (crate::pages::Layout, Option<ast::Section>) {
+    let section = obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage"));
+    // The `layout` and `actions` sections of each extension's `requestpage`.
+    let ext_sections: Vec<(usize, Vec<ast::Section>)> = exts
+        .iter()
+        .map(|(e, o)| {
+            let sections = o
+                .sections()
+                .filter(|s| s.name().eq_ignore_ascii_case("requestpage"))
+                .flat_map(|s| s.sections().collect::<Vec<_>>())
+                .collect();
+            (*e, sections)
+        })
+        .collect();
+    let mut layout = match &section {
+        Some(s) => crate::pages::layout_from(s.sections(), &ext_sections),
+        None => crate::pages::layout_from(std::iter::empty(), &ext_sections),
+    };
+    layout.reasons.extend(request_extension_reasons(exts));
+    if let Some(s) = &section {
+        for p in s.properties() {
+            let name = p.name().to_ascii_lowercase();
+            if !["caption", "savevalues"].contains(&name.as_str())
+                && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
+            {
+                layout
+                    .reasons
+                    .push(format!("request page property {name} is not supported yet"));
+            }
+        }
+        for t in s.triggers() {
+            let name = t.name().to_ascii_lowercase();
+            if !REQUEST_PAGE_TRIGGERS.contains(&name.as_str()) {
+                layout
+                    .reasons
+                    .push(format!("request page trigger {name} is not supported yet"));
+            }
+        }
+        for sub in s.sections() {
+            let name = sub.name().to_ascii_lowercase();
+            if name != "layout" && name != "actions" {
+                layout
+                    .reasons
+                    .push(format!("request page section {name} is not supported yet"));
+            }
+        }
+    }
+    let mut kinds = Vec::new();
+    for c in &layout.controls {
+        match c.kind {
+            ir::ControlKind::Part | ir::ControlKind::Repeater => kinds.push(format!(
+                "request page control {} is a {} (not supported yet)",
+                c.name,
+                if c.kind == ir::ControlKind::Part {
+                    "part"
+                } else {
+                    "repeater"
+                }
+            )),
+            _ => {}
+        }
+    }
+    layout.reasons.extend(kinds);
+    for i in items {
+        layout.controls.push(crate::pages::RawControl {
+            name: i.name.clone(),
+            kind: ir::ControlKind::DataItem,
+            parent: None,
+            section: i.section.clone(),
+            owner: None,
+            modifies: Vec::new(),
+        });
+    }
+    (layout, section)
 }
 
 /// The data items under `section` (a `dataset`, a `dataitem` or an extension's `addlast`), nested
@@ -211,11 +354,14 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                 .push(format!("reportextension property {name} is not supported yet"));
         }
     }
-    // A procedure could be called through a variable of the base report, which the checker
-    // does not resolve (the extension's procedures are not merged into the report's members).
-    if obj.routines().next().is_some() {
+    // A procedure is called through a variable of the base report, on an instance of the
+    // extension that variable keeps (extensionevents/TestExtensionDeclaredEvents.al:105-117 pins a
+    // procedure that raises an event of its own). What state that instance keeps is not pinned,
+    // so a procedure next to a global variable or an added data item is refused.
+    let has_procedures = obj.routines().next().is_some();
+    if has_procedures && obj.var_decls().next().is_some() {
         out.reasons
-            .push("a reportextension that declares procedures is not supported yet".into());
+            .push("a reportextension that declares procedures and global variables is not supported yet".into());
     }
     for t in obj.triggers() {
         let n = t.name().to_ascii_lowercase();
@@ -269,6 +415,10 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                 .push(format!("reportextension section {other} is not supported yet")),
         }
     }
+    if has_procedures && !out.items.is_empty() {
+        out.reasons
+            .push("a reportextension that declares procedures and adds data items is not supported yet".into());
+    }
     out
 }
 
@@ -294,7 +444,7 @@ fn split_top(text: &str, sep: char) -> Vec<String> {
 /// Everything `build` needs to know about the report being lowered.
 pub struct Context<'a> {
     pub ws: &'a Workspace,
-    pub members: &'a [Members],
+    pub members: &'a crate::members::MemberTable<'a>,
     pub file: usize,
     pub oi: usize,
     pub layout: &'a Layout,
@@ -319,7 +469,7 @@ fn table_object(ws: &Workspace, file: usize, name: &str) -> Option<usize> {
 /// What lowering needs to know about the object that declares the data items.
 struct Owner<'a> {
     ws: &'a Workspace,
-    members: &'a [Members],
+    members: &'a crate::members::MemberTable<'a>,
     file: usize,
     oi: usize,
     routine_at: &'a HashMap<(usize, usize), usize>,
@@ -442,6 +592,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         on_post: object_trigger(&o, obj, "OnPostReport"),
         extension: cx.extension,
         request_flag_slot: cx.request_flag_slot,
+        output: layout.output.clone(),
         unsupported: reasons,
     }
 }
@@ -449,7 +600,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
 /// Everything `build_ext` needs to know about the reportextension being lowered.
 pub struct ExtContext<'a> {
     pub ws: &'a Workspace,
-    pub members: &'a [Members],
+    pub members: &'a crate::members::MemberTable<'a>,
     pub file: usize,
     pub oi: usize,
     pub base: usize,
@@ -581,16 +732,19 @@ mod tests {
             "report 1 R { ProcessingOnly = true; DefaultLayout = Word; dataset { dataitem(A; Cust) { CalcFields = Amount; trigger OnFoo() begin end; } } rendering { } }",
         );
         let all = l.reasons.join("; ");
-        assert!(all.contains("defaultlayout"), "{all}");
         assert!(all.contains("property calcfields"), "{all}");
         assert!(all.contains("trigger onfoo"), "{all}");
-        assert!(all.contains("section rendering"), "{all}");
+        // A layout means the run renders: it is refused when it gets that far, not at declaration.
+        let output = l.output.join("; ");
+        assert!(output.contains("defaultlayout"), "{output}");
+        assert!(output.contains("section rendering"), "{output}");
     }
 
     #[test]
     fn a_report_that_is_not_processing_only_renders_output() {
         let l = layout_of("report 1 R { dataset { dataitem(A; Cust) { } } }");
-        assert!(l.reasons.join(";").contains("ProcessingOnly"), "{:?}", l.reasons);
+        assert!(l.output.join(";").contains("ProcessingOnly"), "{:?}", l.output);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
     }
 
     #[test]
@@ -624,7 +778,7 @@ mod tests {
     #[test]
     fn what_an_extension_may_not_do_becomes_a_reason() {
         let l = ext_layout_of(
-            "reportextension 1 E extends R { dataset { addfirst(A) { dataitem(B; Ledger) { } } modify(A) { Caption = 'x'; trigger OnFoo() begin end; } } procedure P() begin end; trigger OnInitReport() begin end; }",
+            "reportextension 1 E extends R { dataset { addfirst(A) { dataitem(B; Ledger) { } } modify(A) { Caption = 'x'; trigger OnFoo() begin end; } } procedure P() begin end; var G: Integer; trigger OnInitReport() begin end; }",
         );
         let all = l.reasons.join("; ");
         assert!(all.contains("addfirst(A)"), "{all}");

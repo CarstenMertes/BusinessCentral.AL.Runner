@@ -94,7 +94,7 @@ impl Session {
     /// error for an ordinary page, while a dialog is refused afterwards (corpus
     /// handlers/TestPageActionRunObjectNoHandler_Tests.al: arms 1 and 7-9;
     /// handlers/TestPageCreateModeNewRecordArgs.al:ActionCreate_NoHandler_*, DialogCreate_NoHandler_*).
-    fn run_object_page(&mut self, st: &St, ro: &ir::RunObject) -> Result<(), Signal> {
+    pub(super) fn run_object_page(&mut self, st: &St, ro: &ir::RunObject) -> Result<(), Signal> {
         let engine = self.engine();
         let target = ro.object.expect("a page target");
         let obj = &engine.program.objects[target];

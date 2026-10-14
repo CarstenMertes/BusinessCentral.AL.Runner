@@ -28,6 +28,15 @@ table 50900 "ALT T"
     }
     keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } }
 }
+table 50902 "ALT Counter"
+{
+    fields
+    {
+        field(1; Id; Code[20]) { }
+        field(3; Cnt; Integer) { FieldClass = FlowField; CalcFormula = count("ALT T"); }
+    }
+    keys { key(PK; Id) { } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -226,6 +235,22 @@ fn keyref_counts_and_names_key_fields() {
         "F",
     );
     assert_eq!(text(r), "22Grp1Yes");
+}
+
+#[test]
+fn keyref_field_index_past_the_key_raises_index_out_of_bounds() {
+    // types/TestTypeSystemContracts.al:240-262 pins the fragment (both operands of `and` run, so
+    // FieldIndex(2) on a one-field key raises); recordref/TestBCSumIndexFieldContracts.al:188-198.
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; KR: KeyRef; m: Boolean; begin
+            RR.Open(50900);
+            KR := RR.KeyIndex(1);
+            asserterror m := (KR.FieldCount() = 2) and (KR.FieldIndex(2).Name() = 'x');
+            exit(GetLastErrorText() + Format(m));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Index out of boundsNo");
 }
 
 #[test]
@@ -477,4 +502,33 @@ fn gettable_works_on_a_ref_that_was_never_opened_even_through_a_variant() {
         "F",
     );
     assert_eq!(text(r), "50900YesYesGrp: 5");
+}
+
+#[test]
+fn field_ref_calc_field_calculates_a_flow_field() {
+    // fieldref/TestRelationTargetNamespaceScope.al:63-75: `RecRef.Field(3).CalcField()` makes the
+    // FlowField read its count.
+    let r = run(
+        "procedure F(): Text var T: Record \"ALT T\"; RR: RecordRef; a: Text; begin
+            T.\"No.\" := 'A'; T.Insert(); T.\"No.\" := 'B'; T.Insert();
+            RR.Open(50902); RR.Init(); RR.Field(1).Value := 'X';
+            a := Format(RR.Field(3).Value);
+            RR.Field(3).CalcField();
+            exit(a + '|' + Format(RR.Field(3).Value));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "0|2");
+}
+
+#[test]
+fn field_ref_calc_field_of_a_stored_field_is_refused() {
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; begin RR.Open(50900); RR.Field(2).CalcField(); exit(''); end;",
+        "F",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not a FlowField")),
+        "{r:?}"
+    );
 }

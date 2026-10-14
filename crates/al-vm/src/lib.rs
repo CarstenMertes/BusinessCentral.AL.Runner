@@ -11,13 +11,20 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod autoinc;
+mod baseline;
+pub use baseline::Baseline;
+mod callstack;
 mod dispatch;
 pub mod dotnet;
+mod errorcollect;
 pub mod events;
+mod filterpage;
 mod flowfields;
+mod globaltriggers;
 mod hostvalues;
 mod interfaces;
 mod pages;
+mod partial;
 mod queries;
 mod recmeta;
 mod records;
@@ -45,6 +52,12 @@ pub struct Engine {
     pub target: Option<al_version::Target>,
     /// The .NET host, the registry of runtime-provided classes and the policy (ADR-014).
     pub dotnet: dotnet::DotNetConfig,
+    /// Table objects whose rows the install baseline should have created and did not (ADR-013
+    /// decision 5): a `Get` that finds nothing in dependency code is not BC's answer for them.
+    pub unseeded: std::collections::HashSet<usize>,
+    /// (table object, field position) -> the error BC raises when it evaluates the field's
+    /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
+    pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
 }
 
 impl Engine {
@@ -101,6 +114,14 @@ impl Engine {
             })
             .collect();
         let events = events::Registry::build(&program);
+        let mut unevaluable_init = std::collections::HashMap::new();
+        for (i, o) in program.objects.iter().enumerate() {
+            for (pos, f) in o.table.iter().flat_map(|t| t.fields.iter().enumerate()) {
+                if let Some(message) = records::unevaluable_init_value(f) {
+                    unevaluable_init.insert((i as u32, pos), message);
+                }
+            }
+        }
         Arc::new(Engine {
             program,
             blocked,
@@ -108,6 +129,8 @@ impl Engine {
             events,
             target,
             dotnet,
+            unseeded: Default::default(),
+            unevaluable_init,
         })
     }
 }
@@ -123,15 +146,23 @@ pub struct Session {
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
+    /// The routine and current statement position of every frame, parallel to `frames`
+    /// (`callstack.rs`).
+    pub(crate) call_stack: Vec<CallFrame>,
     /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
+    /// Registered table connections by (type member, lower-case name), and the default name per type.
+    pub(crate) table_connections: std::collections::HashSet<(i32, String)>,
+    pub(crate) default_table_connection: std::collections::HashMap<i32, String>,
     /// Number sequences by (company, name); a global sequence has an empty company.
     pub(crate) sequences: std::collections::HashMap<(String, String), sessionops::Sequence>,
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
+    /// What the subscribers of `Global Triggers` answered, per table object (globaltriggers.rs).
+    pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
     /// Private tables of temporary records, by temp id.
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
@@ -166,6 +197,8 @@ pub struct Session {
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
     pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
+    /// A page background task worker is running: its parameters and the result it set.
+    pub(crate) bg_worker: Option<pages::BgWorker>,
     /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a
     /// page saving a row passes its own xRec (corpus
     /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
@@ -179,6 +212,16 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
+    /// (see `errorcollect.rs`).
+    pub(crate) error_scopes: errorcollect::Scopes,
+    /// Records (by handle) whose field a TestPage write is validating, with the field's number:
+    /// what `CurrFieldNo` reads in the field's OnValidate.
+    pub(crate) curr_field_no: Vec<(usize, i32)>,
+    /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
+    pub(crate) lock_timeout: bool,
+    /// Imported media objects and media sets (the platform tables behind Media fields).
+    pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
     pub(crate) dotnet: dotnet::DotNetState,
     /// The session's application areas as `ApplicationArea()` reads them: `#Basic,#Suite`, or the
@@ -201,9 +244,10 @@ pub struct Session {
     pub(crate) report_quit: bool,
 }
 
-/// Nested AL calls allowed before the session gives up. BC's own limit and
-/// its error are not pinned by the corpus, so exceeding it is Unsupported.
-pub const MAX_CALL_DEPTH: usize = 400;
+/// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
+/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al); BC's exact limit
+/// and the text of its error are not pinned, so exceeding this is Unsupported.
+pub const MAX_CALL_DEPTH: usize = 1000;
 
 impl Session {
     /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
@@ -225,6 +269,7 @@ impl Session {
             depth: 0,
             singletons: Default::default(),
             store: Default::default(),
+            global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
             next_guid: 0,
@@ -241,17 +286,25 @@ impl Session {
             page_handler_depth: 0,
             code_coverage: false,
             frames: Vec::new(),
+            call_stack: Vec::new(),
             isolated_storage: Default::default(),
             install_scope: false,
             sequences: Default::default(),
+            table_connections: Default::default(),
+            default_table_connection: Default::default(),
             ui: None,
             saved_values: std::collections::HashMap::new(),
             trap: None,
+            bg_worker: None,
             page_xrec: None,
             tx_model: TxModel::default(),
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            error_scopes: Default::default(),
+            curr_field_no: Vec::new(),
+            lock_timeout: true,
+            media: Default::default(),
             dotnet: Default::default(),
             application_areas: String::new(),
             report_init_depth: None,
@@ -316,6 +369,8 @@ impl Session {
                     field_descending: false,
                     position: None,
                     auto_calc: Vec::new(),
+                    load: Default::default(),
+                    touched: false,
                 })))
             }
             other => Value::default_for(other),
@@ -399,7 +454,7 @@ impl Session {
         }
         if self.depth >= MAX_CALL_DEPTH {
             return Err(Signal::Unsupported(format!(
-                "call depth over {MAX_CALL_DEPTH} (BC's limit not pinned)"
+                "call depth over {MAX_CALL_DEPTH} (BC's limit and error text are not pinned)"
             )));
         }
         self.depth += 1;
@@ -457,10 +512,26 @@ impl Session {
                 }
             }
         }
+        let collecting = errorcollect::declares_collect(&r.attributes)?;
+        if collecting {
+            self.error_scopes.open();
+        }
         self.try_depth += usize::from(is_try);
         self.frames.push(object);
-        let outcome = self.exec_block(&r.body, &mut frame);
+        self.call_stack.push(CallFrame {
+            routine,
+            pos: ir::NO_POS,
+        });
+        let mut outcome = self.exec_block(&r.body, &mut frame);
+        // An error that leaves the routine takes the routine's frame into its call stack.
+        if let (Err(Signal::Error(e)), Some(&top)) = (&mut outcome, self.call_stack.last()) {
+            self.add_frame(e, object, top);
+        }
+        self.call_stack.pop();
         self.frames.pop();
+        if collecting {
+            outcome = self.close_error_scope(outcome);
+        }
         self.try_depth -= usize::from(is_try);
         self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
@@ -510,20 +581,25 @@ impl Session {
                 }
             }
             S::While(c, body) => {
+                let here = self.call_stack.last().map(|t| t.pos);
                 while ops::truthy(&self.eval(c, f)?)? {
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         r => r?,
                     }
+                    // The condition belongs to the loop's line, not to the body's last statement.
+                    self.restore_pos(here);
                 }
                 Ok(())
             }
             S::Repeat(body, until) => {
+                let here = self.call_stack.last().map(|t| t.pos);
                 loop {
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         r => r?,
                     }
+                    self.restore_pos(here);
                     if ops::truthy(&self.eval(until, f)?)? {
                         break;
                     }
@@ -587,24 +663,25 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
+            S::Pos(p) => {
+                if let Some(top) = self.call_stack.last_mut() {
+                    top.pos = *p;
+                }
+                Ok(())
+            }
             S::AssertError(body) => {
-                // Inside a UI handler, with writes pending from before the page opened, the extent
-                // of the rollback is not pinned: handlers/TestPageEnumVariableControl_Tests.al
-                // RunModal_EnumGlobalControl_SetValueRejectsTheBareMemberName deletes in
-                // Initialize() without a Commit, runs a modal page whose handler does
-                // `asserterror` on a rejected SetValue, and still sees the delete afterwards on
-                // real BC. Rolling back to the last commit would undo it.
-                let pending_in_handler = self.in_ui_handler() && self.store.has_uncommitted();
+                // A caught error rolls the transaction back to the last commit, also inside a modal
+                // page handler: the write pending before the page opened and the handler's own
+                // earlier writes are lost with it (corpus branch al-runtime-rs, pending push:
+                // record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
+                // Asserterror_InAModalHandler_RollsBackToTheLastCommit, probe on BC 27.5).
                 match self.exec_block(body, f) {
-                    Err(Signal::Error(_)) if pending_in_handler => Err(Signal::Unsupported(
-                        "asserterror in a UI handler with writes pending from before it ran: the extent \
-                         of the rollback is not pinned"
-                            .into(),
-                    )),
-                    Err(Signal::Error(e)) => {
+                    Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
                         self.rollback_transaction();
+                        // The routine that catches it is the last frame of its call stack.
+                        self.add_top_frame(&mut e);
                         self.last_error = e;
                         Ok(())
                     }
@@ -617,6 +694,12 @@ impl Session {
                     Err(other) => Err(other),
                 }
             }
+        }
+    }
+
+    fn restore_pos(&mut self, pos: Option<u32>) {
+        if let (Some(p), Some(top)) = (pos, self.call_stack.last_mut()) {
+            top.pos = p;
         }
     }
 
@@ -711,10 +794,10 @@ impl Session {
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec.
                         Value::Record(rc) => self.record_instance(*object, rc, None)?,
-                        // The page a part shows (`CurrPage.<Part>.Page`).
-                        // A `Page` variable's procedures (OnInit at first use) are not modelled.
-                        Value::TestPage(st) if st.borrow().host.is_some() => {
-                            let i = self.page_instance(&st)?;
+                        // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
+                        // is constructed at first use.
+                        Value::TestPage(st) => {
+                            let i = self.construct_page(&st)?;
                             // A procedure a page extension declares runs on the extension's instance.
                             let ext = st
                                 .borrow()
@@ -724,7 +807,12 @@ impl Session {
                                 .map(|(_, i)| i.clone());
                             self.shared_instance(ext.unwrap_or(i))
                         }
-                        other => return Err(Signal::Unsupported(format!("call on {other:?}"))),
+                        other => {
+                            return Err(Signal::Unsupported(format!(
+                                "a procedure call on a {} value",
+                                value_kind(&other)
+                            )));
+                        }
                     },
                 };
                 self.finish_call(*object, *routine, inst, args, *try_call, f)
@@ -736,6 +824,10 @@ impl Session {
             } => {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
                 self.finish_call(object, routine, inst, args, false, f)
+            }
+            E::InterfaceTest { value, objects, cast } => {
+                let v = self.eval(value, f)?;
+                self.interface_test(v, objects, *cast)
             }
             E::EnumImpl {
                 value,
@@ -772,6 +864,17 @@ impl Session {
                     let cu = self.eval(e, f)?;
                     return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
                 }
+                // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
+                // emits this id with the Rec as receiver.
+                if id == "Record.CurrFieldNo#1" {
+                    let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
+                        return Err(Signal::Unsupported("CurrFieldNo without a record".into()));
+                    };
+                    let Value::Record(rec) = self.read(p, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+                    };
+                    return Ok(Value::Integer(self.curr_field_of(&rec)));
+                }
                 if id == "Session.ApplicationArea#1" {
                     // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
                     // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
@@ -790,6 +893,7 @@ impl Session {
                 if id.starts_with("Codeunit.Run#")
                     || id.starts_with("Xmlport.")
                     || id.starts_with("Report.")
+                    || id.starts_with("FilterPageBuilder.")
                     || id == "Database.IsInWriteTransaction#1"
                 {
                     let recv = match receiver.as_deref() {
@@ -812,6 +916,9 @@ impl Session {
                     }
                     if id.starts_with("Report.") {
                         return self.report_builtin(id, recv, &values, f.instance.clone());
+                    }
+                    if id.starts_with("FilterPageBuilder.") {
+                        return self.filter_page_builder_op(id, recv, &values, *ret_used);
                     }
                     return self.codeunit_run(id, recv, &values, *ret_used);
                 }
@@ -844,6 +951,17 @@ impl Session {
         }
     }
 
+    /// What `CurrFieldNo` reads on `rec`: the field number a TestPage write is validating on this
+    /// record, 0 anywhere else (handlers/TestPageCurrFieldNo_Tests.al:36-123).
+    fn curr_field_of(&self, rec: &Rc<RefCell<RecordState>>) -> i32 {
+        let handle = Rc::as_ptr(rec) as usize;
+        self.curr_field_no
+            .iter()
+            .rev()
+            .find(|(h, _)| *h == handle)
+            .map_or(0, |(_, n)| *n)
+    }
+
     /// Evaluates the arguments of a resolved call and runs it on `inst`, writing back the
     /// by-reference arguments.
     fn finish_call(
@@ -873,7 +991,8 @@ impl Session {
             }
         }
         let (ret, finals) = match (result, try_call) {
-            (Err(Signal::Error(e)), true) => {
+            (Err(Signal::Error(mut e)), true) => {
+                self.add_top_frame(&mut e);
                 self.last_error = e;
                 return Ok(Value::Boolean(false));
             }
@@ -937,13 +1056,52 @@ impl Session {
                 Ok(v)
             }
             ir::Place::Field(base, pos) => match self.read(base, f)? {
-                Value::Record(rc) => Ok(rc.borrow().fields[*pos].clone()),
+                Value::Record(rc) => {
+                    let r = rc.borrow();
+                    if !self.engine.unevaluable_init.is_empty() && !r.touched {
+                        // The buffer of a record nothing has written is built by this read, which
+                        // evaluates the InitValues (record/TestDateTimeInitValue.Codeunit.al:
+                        // DateTimeInitValue_Table_UntouchedRecordRaisesOnReadNotOnInit).
+                        if let Some(message) = self.engine.unevaluable_init.get(&(r.table, *pos)) {
+                            return Err(Signal::Error(AlError {
+                                message: message.clone(),
+                                code: String::new(),
+                                call_stack: String::new(),
+                            }));
+                        }
+                    }
+                    if !self.engine.unevaluable_init.is_empty() && r.touched {
+                        let engine = self.engine.clone();
+                        if let Some(message) = engine.unevaluable_init.get(&(r.table, *pos)) {
+                            let pristine = self.initial_fields(r.table as usize);
+                            if ops::compare(&r.fields[*pos], &pristine[*pos]).ok() == Some(std::cmp::Ordering::Equal) {
+                                return Err(Signal::Unsupported(format!(
+                                    "a read of the field whose InitValue BC cannot evaluate (`{message}`), in a record where another field was written (not pinned)"
+                                )));
+                            }
+                        }
+                    }
+                    let v = r.fields[*pos].clone();
+                    if r.load.partial {
+                        drop(r);
+                        rc.borrow_mut().load.touch(*pos);
+                    }
+                    Ok(v)
+                }
                 other => Err(Signal::Unsupported(format!("field of {other:?}"))),
             },
         }
     }
 
     fn write(&mut self, p: &ir::Place, v: Value, f: &mut Frame) -> Result<(), Signal> {
+        // `:=` between FilterPageBuilders copies the control collection and shares the records
+        // (corpus filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Assignment_*).
+        let v = match v {
+            Value::Library(n, cell) if n == "FilterPageBuilder" => {
+                Value::Library(n, filterpage::copy_for_assignment(&cell))
+            }
+            v => v,
+        };
         // `:=` between records copies the fields into the target record (ADR-010).
         if let Value::Record(src) = &v {
             if !matches!(p, ir::Place::Field(..)) {
@@ -954,7 +1112,12 @@ impl Session {
                             // Whether a copied record shares or copies its Blob is not pinned.
                             return Err(Signal::Unsupported("record assignment with a Blob field".into()));
                         }
-                        dst.borrow_mut().fields = fields;
+                        let load = src.borrow().load.clone();
+                        let mut d = dst.borrow_mut();
+                        d.fields = fields;
+                        // The copy holds what the source's buffer held, if that is known.
+                        d.load.buffer = load.buffer;
+                        d.load.partial = load.partial;
                     }
                     return Ok(());
                 }
@@ -965,7 +1128,12 @@ impl Session {
             let v = ops::convert(v, &ty)?;
             return match self.read(base, f)? {
                 Value::Record(rc) => {
-                    rc.borrow_mut().fields[*pos] = v;
+                    let mut r = rc.borrow_mut();
+                    r.fields[*pos] = v;
+                    r.touched = true;
+                    if r.load.partial {
+                        r.load.written(*pos);
+                    }
                     Ok(())
                 }
                 other => Err(Signal::Unsupported(format!("field of {other:?}"))),
@@ -974,6 +1142,9 @@ impl Session {
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
+            ir::Place::Index(base, idx) if matches!(self.place_type(base, f), RtType::Text(_)) => {
+                return self.write_char(base, idx, v, f);
+            }
             ir::Place::Index(base, idx) => {
                 let el_ty = self.place_type(p, f);
                 let (arr, flat) = self.element(base, idx, f)?;
@@ -982,6 +1153,45 @@ impl Session {
             ir::Place::Field(..) => unreachable!("handled above"),
         }
         Ok(())
+    }
+
+    /// `Text[i] := c`: sets one character of a text. Pinned only for an empty or growing text at
+    /// the next position within the declared length (handlers/TestPageFieldFormats_Tests.al:58-66);
+    /// a position outside that, a value that is not one UTF-16 character, and a Code are refused.
+    fn write_char(&mut self, base: &ir::Place, idx: &[ir::Expr], v: Value, f: &mut Frame) -> Result<(), Signal> {
+        let max = match self.place_type(base, f) {
+            RtType::Text(m) => m,
+            _ => None,
+        };
+        let [e] = idx else {
+            return Err(Signal::Unsupported("a text indexed with several positions".into()));
+        };
+        let i = int(&self.eval(e, f)?)?;
+        let unit = match int(&v) {
+            Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
+            Err(_) => None,
+        };
+        let Value::Text(s) = self.read(base, f)? else {
+            return Err(Signal::Unsupported(
+                "assigning a character into a value that is no text".into(),
+            ));
+        };
+        let mut units: Vec<u16> = s.encode_utf16().collect();
+        let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
+        let (Some(unit), true) = (unit, in_range) else {
+            return Err(Signal::Unsupported(format!(
+                "assigning {v:?} to character {i} of a text (only the next position within the length is pinned)"
+            )));
+        };
+        let i = i as usize - 1;
+        if i == units.len() {
+            units.push(unit);
+        } else {
+            units[i] = unit;
+        }
+        let text = String::from_utf16(&units)
+            .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
+        self.write(base, Value::Text(text), f)
     }
 
     /// The array behind `base` and the flat position of `idx` (1-based, row-major).
@@ -1010,6 +1220,14 @@ impl Session {
 /// The shared storage of an array value.
 type Cells = Rc<RefCell<Vec<Value>>>;
 
+/// A routine on the call stack and the position of the statement it is running.
+#[derive(Clone, Copy)]
+pub(crate) struct CallFrame {
+    pub(crate) routine: usize,
+    /// `Program::positions` id of the current statement; `NO_POS` before the first one.
+    pub(crate) pos: u32,
+}
+
 struct Frame {
     object: usize,
     routine: usize,
@@ -1025,6 +1243,12 @@ fn int(v: &Value) -> Result<i64, Signal> {
         Value::Char(c) => Ok(i64::from(*c)),
         other => Err(Signal::Unsupported(format!("{other:?} used as an integer"))),
     }
+}
+
+/// The kind of a value for a refusal reason: the variant name, never its contents.
+pub(crate) fn value_kind(v: &Value) -> String {
+    let d = format!("{v:?}");
+    d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
 fn constant(c: &ir::Const) -> Value {
@@ -1088,6 +1312,12 @@ impl al_builtins::native::Ctx for Session {
     fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
     }
+    fn media_store(&mut self) -> Option<&mut al_builtins::media::MediaStore> {
+        Some(&mut self.media)
+    }
+    fn collect_error(&mut self, info: &Value) -> bool {
+        Session::collect_error(self, info)
+    }
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         Some((
             self.global_language,
@@ -1147,6 +1377,9 @@ impl al_builtins::native::Ctx for Session {
     fn install_scope(&self) -> bool {
         self.install_scope
     }
+    fn in_test_run(&self) -> bool {
+        self.in_test_codeunit
+    }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
@@ -1164,6 +1397,9 @@ impl al_builtins::native::Ctx for Session {
     }
     fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
         Session::ui_str_menu(self, options, default, instruction)
+    }
+    fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+        Session::ui_session_settings(self, settings)
     }
     fn new_guid(&mut self) -> [u8; 16] {
         // Deterministic ids (ADR-006: no OS randomness in the core).

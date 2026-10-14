@@ -556,6 +556,13 @@ impl Routine {
             .position(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"));
         kw.and_then(|i| toks.get(i + 1)).map(ident_text).unwrap_or_default()
     }
+    /// Offset of the `procedure` or `trigger` keyword (after any attributes and modifiers).
+    pub fn keyword_offset(&self) -> Option<usize> {
+        self.keyword_pos()
+            .iter()
+            .find(|t| t.text().eq_ignore_ascii_case("procedure") || t.text().eq_ignore_ascii_case("trigger"))
+            .map(|t| usize::from(t.text_range().start()))
+    }
     fn has_modifier(&self, m: &str) -> bool {
         self.keyword_pos()
             .iter()
@@ -758,6 +765,36 @@ tableextension 50100 Ext extends "Sales Header" { fields { field(50100; F; Integ
         assert_eq!(t.object_name().as_deref(), Some("ALT Universal"));
         assert!(t.is_temporary());
         assert_eq!(t.object_name_parts(), vec!["ALT Universal"]);
+    }
+
+    #[test]
+    fn variable_declarations_may_carry_attributes() {
+        // Microsoft's source: ItemVendor.Table.al, `[SecurityFiltering(SecurityFilter::Ignored)]`.
+        let f = file(
+            "codeunit 1 C { var [NonDebuggable] G: Text; procedure P() var [SecurityFiltering(SecurityFilter::Ignored)] R: Record Item; L: Integer; begin end; }",
+        );
+        let o = f.objects().next().unwrap();
+        assert_eq!(
+            o.var_decls().map(|v| v.names()).collect::<Vec<_>>(),
+            vec![vec!["G".to_string()]]
+        );
+        let r = o.routines().next().unwrap();
+        assert_eq!(
+            r.local_var_decls().map(|v| v.names()).collect::<Vec<_>>(),
+            vec![vec!["R".to_string()], vec!["L".to_string()]]
+        );
+    }
+
+    #[test]
+    fn dotnet_typed_variables_and_parameters_parse() {
+        // Microsoft's source declares .NET types as `DotNet Name` (System Application, 134 files).
+        let f = file(
+            "codeunit 1 C { var Conv: DotNet Convert; Plain: DotNet \"Dotted.Name\"; procedure P(X: DotNet String): DotNet Array begin end; }",
+        );
+        let o = f.objects().next().unwrap();
+        let types: Vec<_> = o.var_decls().map(|v| v.type_ref().unwrap().text()).collect();
+        assert_eq!(types, ["DotNet Convert", "DotNet \"Dotted.Name\""]);
+        assert_eq!(o.var_decls().next().unwrap().type_ref().unwrap().type_name(), "DotNet");
     }
 
     #[test]

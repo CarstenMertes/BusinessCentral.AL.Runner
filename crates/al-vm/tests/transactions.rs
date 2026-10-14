@@ -69,6 +69,19 @@ codeunit 50917 Single
     procedure GetBumps(): Integer begin exit(Bumps); end;
 }
 
+// corpus handlers/TestPageActionRunObjectKinds_Objects.al:254-268: TableNo gives OnRun a Rec.
+codeunit 50919 RecReader
+{
+    TableNo = "TX T";
+    trigger OnRun() var L: Record "TX T"; begin L.K := 'LOG'; L.V := Rec.V; L.Insert(); end;
+}
+
+codeunit 50920 RecWriter
+{
+    TableNo = "TX T";
+    trigger OnRun() begin Rec.V := 'changed'; end;
+}
+
 codeunit 50918 Outer
 {
     trigger OnRun() var Ok: Boolean; R: Record "TX T"; begin
@@ -210,7 +223,7 @@ fn a_guarded_run_is_refused_while_the_caller_has_an_uncommitted_write() {
             R.Reset();
             exit(GetLastErrorText() + '|' + Format(Ok) + Format(R.Get('M')));
         end;"),
-        "An error occurred and the transaction is stopped. Contact your administrator for further assistance.|NoNo"
+        "An error occurred and the transaction is stopped. Contact your administrator or partner for further assistance.|NoNo"
     );
 }
 
@@ -330,12 +343,28 @@ fn a_nested_guarded_run_that_fails_leaves_the_outer_run_working() {
     );
 }
 
-// codeunit/TestCodeunitRunMissing.al: the text is only pinned in two fragments, so a run of an
-// id no object declares is refused rather than given a made-up text.
+// codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196 (corpus branch al-runtime-rs, probe on
+// BC 27.5): text and code of a run of an id no object declares. The emit version is a number.
 #[test]
-fn running_a_codeunit_id_that_does_not_exist_is_unsupported() {
+fn running_a_codeunit_id_that_does_not_exist_raises_the_metadata_error() {
     let r = run("procedure F(): Text begin Codeunit.Run(99990); exit(''); end;");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    let Err(Signal::Error(e)) = r else { panic!("{r:?}") };
+    assert!(
+        e.message.starts_with("You tried to invoke the CodeUnit object with the ID 99990 from the object C. An object with that ID does not exist in the current application compiled with emit version "),
+        "{}",
+        e.message
+    );
+    assert!(
+        e.message.ends_with('.')
+            && e.message
+                .trim_end_matches('.')
+                .rsplit(' ')
+                .next()
+                .unwrap()
+                .parse::<u32>()
+                .is_ok()
+    );
+    assert_eq!(e.code, "AL:MetadataNotFound");
 }
 
 // ---- [CommitBehavior] (error-handling/TestCommitBehaviorAttribute.al) ----
@@ -403,7 +432,7 @@ fn an_error_scope_makes_commit_raise() {
         g(
             "var R: Record \"TX T\"; begin asserterror InsertThenCommitUnderError('4'); exit(Format(R.Get('4')) + GetLastErrorText()); end;"
         ),
-        "NoCommit is prohibited in the current scope"
+        "NoCommit is prohibited in the current scope. The operation cannot continue. Contact your system administrator."
     );
 }
 
@@ -495,4 +524,45 @@ fn only_the_on_run_trigger_is_run() {
         |_| {},
     );
     assert_eq!(text(r), "YesYes");
+}
+
+// handlers/TestPageActionRunObjectKinds_Tests.al:ProbeControlEachTargetRecordsItsOwnExecution
+// (:143-150): the record handed to Codeunit.Run is the Rec OnRun reads.
+#[test]
+fn codeunit_run_hands_the_record_to_a_tableno_codeunit_as_rec() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; L: Record \"TX T\"; begin
+            R.K := 'B'; R.V := 'Bravo'; R.Insert();
+            Codeunit.Run(Codeunit::RecReader, R);
+            L.Get('LOG');
+            exit(L.V);
+        end;"),
+        "Bravo"
+    );
+    // The instance form passes it the same way.
+    assert_eq!(
+        f(
+            "var R: Record \"TX T\"; L: Record \"TX T\"; Reader: Codeunit RecReader; begin
+            R.K := 'B'; R.V := 'Bravo'; R.Insert();
+            Reader.Run(R);
+            L.Get('LOG');
+            exit(L.V);
+        end;"
+        ),
+        "Bravo"
+    );
+}
+
+// codeunit/TestCodeunitRunErrorTextsAndModels.al:198-220 (corpus branch al-runtime-rs, probe on
+// BC 27.5): the record is passed by reference, so a change OnRun makes to Rec reaches the caller.
+#[test]
+fn a_tableno_codeunit_that_changes_rec_changes_the_callers_record() {
+    assert_eq!(
+        f("var R: Record \"TX T\"; begin
+        R.K := 'B'; R.V := 'Bravo'; R.Insert();
+        Codeunit.Run(Codeunit::RecWriter, R);
+        exit(R.V);
+    end;"),
+        "changed"
+    );
 }

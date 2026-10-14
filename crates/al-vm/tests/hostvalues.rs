@@ -362,3 +362,13 @@ fn global_language_accepts_only_positive_ids() {
         }
     }
 }
+
+// session/TestSessionComplete.al:45-52: an id no session has is not active. The running session's
+// own id is not pinned: refused.
+#[test]
+fn is_session_active_is_false_for_an_unknown_id_and_refused_for_the_running_session() {
+    let r = run("procedure F(): Boolean begin exit(Session.IsSessionActive(99999)); end;");
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
+    let r = run("procedure F(): Boolean begin exit(Session.IsSessionActive(Database.SessionId())); end;");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}

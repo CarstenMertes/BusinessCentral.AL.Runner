@@ -41,6 +41,9 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // Declaration order of the platform's Verbosity: Critical first, so Error is not the zero
         // value (errorinfo/TestErrorInfoType.al:30-34).
         "verbosity" => Some(&["Critical", "Error", "Warning", "Normal", "Verbose"]),
+        // Microsoft docs, TelemetryScope: ExtensionPublisher, then All. Only passed to
+        // Session.LogMessage, which changes nothing AL can see, so the ordinals are not pinned.
+        "telemetryscope" => Some(&["ExtensionPublisher", "All"]),
         "dataclassification" => Some(&[
             "CustomerContent",
             "ToBeClassified",
@@ -51,6 +54,9 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "SystemMetadata",
             "AnonymousData",
         ]),
+        // Only CRM and ExternalSQL are named by the corpus (session/TestDatabaseTableConnectionCrm.al,
+        // session/TestMiscComplete.al:192); the ordinals are not pinned.
+        "tableconnectiontype" => Some(&["CRM", "ExternalSQL"]),
         "errortype" => Some(&["Client", "Internal"]),
         // The ordinals are not pinned: the corpus only calls `Session.CurrentClientType()` and
         // `DefaultClientType()` (session/TestSessionExtended.al:21,31) and names Default and Web

@@ -19,13 +19,17 @@ fn require_corpus() {
     );
 }
 
+/// Runs the CLI over the corpus on its own: without the Microsoft apps, which would make
+/// each run in this unoptimised test build take minutes (the release CI step runs with
+/// them). No ratchet unless the test brings a baseline: the real one lists cases that need
+/// those apps.
 fn cli(args: &[&str]) -> (i32, String, String) {
-    let out = Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
-        .arg("--root")
-        .arg(root())
-        .args(args)
-        .output()
-        .unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_al-test-cli"));
+    cmd.arg("--root").arg(root()).arg("--no-deps");
+    if !args.contains(&"--baseline") {
+        cmd.arg("--no-ratchet");
+    }
+    let out = cmd.args(args).output().unwrap();
     (
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).into(),
@@ -65,7 +69,7 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     std::fs::write(
         &bad,
         t.replace(
-            "cf6e546793a92c482499ce86eadf0a0b13d2a742",
+            "cdf315abd1e7115fcbfbcc88c720371e75989b8e",
             "0000000000000000000000000000000000000000",
         ),
     )
@@ -77,6 +81,49 @@ fn oracle_pinned_to_a_different_corpus_commit_is_refused() {
     assert!(err.contains("corpus pin"), "{err}");
 }
 
+/// The real oracle with BC 29's recorded corpus commit replaced.
+fn oracle_with_29_recorded_for(commit: &str) -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let t = std::fs::read_to_string(root().join("oracle/oracle.toml")).unwrap();
+    assert!(
+        t.contains("corpus_commit = \"cf6e546"),
+        "BC 29's oracle is recorded for the older commit"
+    );
+    let bad = dir.path().join("oracle.toml");
+    std::fs::write(&bad, t.replace("cf6e546793a92c482499ce86eadf0a0b13d2a742", commit)).unwrap();
+    for v in ["27", "28", "29"] {
+        std::fs::create_dir(dir.path().join(v)).unwrap();
+        std::fs::copy(
+            root().join(format!("oracle/{v}/junit.xml")),
+            dir.path().join(format!("{v}/junit.xml")),
+        )
+        .unwrap();
+    }
+    (dir, bad)
+}
+
+#[test]
+fn an_oracle_recorded_for_a_corpus_commit_that_changed_existing_tests_is_refused() {
+    require_corpus();
+    // 9df7c23 .. pin changes tests/al-language/record/TestAutoIncrementExplicitKey.al (ADR-007).
+    let (_dir, bad) = oracle_with_29_recorded_for("9df7c23c91095f6747ace1cefaebec7dd882410a");
+    let (code, _, err) = cli(&["--bc-version", "29", "--oracle", bad.to_str().unwrap()]);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("TestAutoIncrementExplicitKey.al") && err.contains("29"),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_oracle_recorded_for_a_commit_missing_from_the_checkout_is_a_setup_error() {
+    require_corpus();
+    let (_dir, bad) = oracle_with_29_recorded_for("0123456789012345678901234567890123456789");
+    let (code, _, err) = cli(&["--bc-version", "29", "--oracle", bad.to_str().unwrap()]);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("fetch"), "{err}");
+}
+
 #[test]
 fn a_baseline_case_that_does_not_pass_fails_the_run() {
     require_corpus();
@@ -86,6 +133,19 @@ fn a_baseline_case_that_does_not_pass_fails_the_run() {
     let (code, _, err) = cli(&["--baseline", base.to_str().unwrap()]);
     assert_eq!(code, 1, "{err}");
     assert!(err.contains("60002 NoSuchProcedure_UsedByTheRegressionTest"), "{err}");
+}
+
+#[test]
+fn a_failing_case_outside_the_baseline_is_reported_but_does_not_fail_the_run() {
+    require_corpus();
+    // ADR-007: only a baseline case that stops passing exits 1. The probe tests the corpus adds
+    // for behaviour the runtime does not have yet are failures in the report, not in the gate.
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().join("passing.txt");
+    std::fs::write(&base, "").unwrap();
+    let (code, r) = json(&["--bc-version", "27", "--baseline", base.to_str().unwrap()]);
+    assert_eq!(code, 0);
+    assert!(r["overall"]["fail"].as_u64().unwrap() > 0, "{}", r["overall"]);
 }
 
 #[test]
@@ -130,10 +190,13 @@ fn every_bc_major_has_an_oracle_with_the_same_cases() {
     require_corpus();
     // 28 and 29 come from the hybrid runner: its OnRun pseudo-cases must be skipped, or the
     // run stops with exit 2 (ADR-015 1.6).
-    for v in ["27", "28", "29"] {
+    // BC 27 and 28 are recorded for the pinned corpus commit (223 probe tests more). BC 29 is
+    // recorded for the older commit, which the pin only adds files to (ADR-007), so its cases are
+    // the 4836 it had.
+    for (v, total) in [("27", 5059), ("28", 5059), ("29", 4836)] {
         let (code, r) = json(&["--bc-version", v]);
         assert_eq!(code, 0, "BC {v}");
-        assert_eq!(r["overall"]["total"], 4836, "BC {v}");
+        assert_eq!(r["overall"]["total"], total, "BC {v}");
         assert_eq!(r["unmapped"].as_array().unwrap().len(), 0, "BC {v}");
     }
 }
@@ -159,9 +222,12 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     }
     assert!(!json.exists(), "all-versions writes only per-version files");
     assert!(out.contains("Version comparison"), "{out}");
-    assert!(out.contains("oracle: same cases in every version"), "{out}");
+    // BC 29's oracle lacks the 223 cases that the pinned corpus added. Re-recording it for the
+    // pin makes this line say "same cases in every version" again.
+    assert!(out.contains("oracle: 223 case(s) differ"), "{out}");
     // The three known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same
-    // cases on every version. A new difference would be listed here.
+    // cases on every version, among the cases every oracle has. A new difference would be
+    // listed here.
     assert!(out.contains("runtime: same cases in every version"), "{out}");
 }
 

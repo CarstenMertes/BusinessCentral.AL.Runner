@@ -22,6 +22,26 @@ pub fn differences(sets: &[(String, BTreeSet<CaseId>)]) -> Vec<(CaseId, Vec<Stri
         .collect()
 }
 
+/// The cases every set has.
+pub fn common(sets: &[(String, BTreeSet<CaseId>)]) -> BTreeSet<CaseId> {
+    let Some((_, first)) = sets.first() else {
+        return BTreeSet::new();
+    };
+    first
+        .iter()
+        .filter(|c| sets.iter().all(|(_, s)| s.contains(c)))
+        .cloned()
+        .collect()
+}
+
+/// The sets cut down to `keep`. A case that one version's oracle lacks (its oracle is from an
+/// older corpus commit, ADR-007) cannot show a version difference in the runtime either.
+pub fn restrict(sets: &[(String, BTreeSet<CaseId>)], keep: &BTreeSet<CaseId>) -> Vec<(String, BTreeSet<CaseId>)> {
+    sets.iter()
+        .map(|(v, s)| (v.clone(), s.intersection(keep).cloned().collect()))
+        .collect()
+}
+
 /// A short text table: the first lines of the differences, or `none`.
 pub fn table(what: &str, sets: &[(String, BTreeSet<CaseId>)]) -> String {
     const SHOWN: usize = 20;
@@ -64,6 +84,21 @@ mod tests {
         ];
         assert!(differences(&s).is_empty());
         assert!(table("oracle", &s).contains("same cases"));
+    }
+
+    #[test]
+    fn the_runtime_comparison_ignores_cases_an_oracle_lacks() {
+        let oracle = [
+            ("27".to_string(), set(&[(1, "a"), (2, "new")])),
+            ("29".to_string(), set(&[(1, "a")])),
+        ];
+        let runtime = [
+            ("27".to_string(), set(&[(1, "a"), (2, "new")])),
+            ("29".to_string(), set(&[(1, "a")])),
+        ];
+        assert_eq!(common(&oracle), set(&[(1, "a")]));
+        assert!(differences(&restrict(&runtime, &common(&oracle))).is_empty());
+        assert_eq!(differences(&runtime).len(), 1, "unrestricted it would be reported");
     }
 
     #[test]

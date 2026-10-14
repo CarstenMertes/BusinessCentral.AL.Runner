@@ -61,6 +61,9 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
             ),
             _ => "Company=;LanguageId=;LocaleId=;TimeZone=;ProfileId=;ProfileAppId=".to_string(),
         },
+        // The text form of a FilterPageBuilder is only known to be non-empty
+        // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Format_ReturnsANonEmptyRendering).
+        Value::Library(name, _) if name == "FilterPageBuilder" => "FilterPageBuilder".to_string(),
         // A WebServiceActionContext has no text form (session/TestWebServiceActionContext.al:615-650).
         Value::Library(name, _) if name == "WebServiceActionContext" => String::new(),
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs

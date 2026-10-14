@@ -26,6 +26,11 @@ fn corpus_files() -> Vec<PathBuf> {
     out
 }
 
+/// Corpus files the parser does not handle yet. Each is a red corpus test waiting for a fix, not a
+/// pass: the runtime reports every case in such a file as not run (the file does not compile).
+/// An entry whose file now parses fails the test below, so the list only shrinks (ADR-007).
+const KNOWN_UNPARSED: &[(&str, &str)] = &[];
+
 #[test]
 fn every_corpus_file_parses_without_errors_and_round_trips() {
     let syms = al_version::corpus_symbols(27);
@@ -47,6 +52,22 @@ fn every_corpus_file_parses_without_errors_and_round_trips() {
             ));
         }
     }
+    let known = |f: &String| {
+        KNOWN_UNPARSED
+            .iter()
+            .any(|(k, _)| f.split(':').next().unwrap_or("").ends_with(k))
+    };
+    let stale: Vec<_> = KNOWN_UNPARSED
+        .iter()
+        .filter(|(k, _)| !failures.iter().any(|f| f.split(':').next().unwrap_or("").ends_with(k)))
+        .map(|(k, why)| format!("{k} ({why})"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "these files parse now: remove them from KNOWN_UNPARSED:\n{}",
+        stale.join("\n")
+    );
+    failures.retain(|f| !known(f));
     assert!(
         failures.is_empty(),
         "{} of {} files failed:\n{}",

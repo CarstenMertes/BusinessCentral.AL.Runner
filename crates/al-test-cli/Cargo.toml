@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 al-data.workspace = true
+al-deps.workspace = true
 al-sema.workspace = true
 al-vm.workspace = true
 al-builtins.workspace = true

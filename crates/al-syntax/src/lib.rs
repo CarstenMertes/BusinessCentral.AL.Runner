@@ -6,6 +6,7 @@ mod grammar;
 pub mod lexer;
 mod parser;
 pub mod preprocessor;
+pub mod scan;
 pub mod syntax_kind;
 
 pub use builder::TreeCache;

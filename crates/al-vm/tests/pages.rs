@@ -220,6 +220,27 @@ page 50002 "PG List"
         }
     }
 }
+
+// corpus handlers/TestPageCurrFieldNo_Row.al and _Card.al
+table 50020 "PG CFN"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(10; Amount; Decimal) { trigger OnValidate() begin Rec.ValidateFieldNo := CurrFieldNo; end; }
+        field(11; ValidateFieldNo; Integer) { }
+        field(12; ModifyFieldNo; Integer) { }
+    }
+    keys { key(PK; "No.") { } }
+    trigger OnModify() begin Rec.ModifyFieldNo := CurrFieldNo; end;
+}
+
+page 50021 "PG CFN Card"
+{
+    PageType = Card;
+    SourceTable = "PG CFN";
+    layout { area(Content) { field("No."; Rec."No.") { } field(Amount; Rec.Amount) { } field(ValidateFieldNo; Rec.ValidateFieldNo) { } } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -937,4 +958,25 @@ fn under_transaction_model_none_a_page_operation_may_write_and_ends_its_transact
         text(r),
         "No|5|A transaction must be started before changes can be made to the database."
     );
+}
+
+// handlers/TestPageCurrFieldNo_Tests.al:36-60 (SetValue_OwnTableField_OnValidateSeesCurrFieldNo),
+// :65-76 (Validate_FromCode_OnValidateSeesZero), :105-123 (SetValue_ThenClose_OnModifySeesZero).
+#[test]
+fn a_page_write_validates_with_the_field_number_and_code_with_zero() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG CFN\"; C: Record \"PG CFN\"; TP: TestPage \"PG CFN Card\"; a: Text; begin
+            R.\"No.\" := 'A'; R.Insert();
+            TP.OpenEdit(); TP.GoToRecord(R);
+            TP.Amount.SetValue(50);
+            a := TP.ValidateFieldNo.Value();
+            TP.Close();
+            R.Get('A');
+            a += '|' + Format(R.ValidateFieldNo) + '|' + Format(R.ModifyFieldNo);
+            C.\"No.\" := 'B'; C.Insert(); C.Validate(Amount, 50);
+            exit(a + '|' + Format(C.ValidateFieldNo));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "10|10|0|0");
 }

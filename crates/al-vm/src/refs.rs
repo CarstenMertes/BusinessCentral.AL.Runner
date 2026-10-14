@@ -38,6 +38,12 @@ fn handle(name: &str, v: LibraryValue) -> Value {
     Value::Library(name.into(), Rc::new(RefCell::new(v)))
 }
 
+/// A `RecordRef` handle on a copy of the record `rec` (what an event hands its subscriber).
+pub(crate) fn record_ref_value(rec: &crate::records::Rec) -> Value {
+    let copy = rec.borrow().clone();
+    handle("RecordRef", LibraryValue::RecordRef(Rc::new(RefCell::new(copy))))
+}
+
 fn al_error(message: String) -> Signal {
     Signal::Error(AlError {
         message,
@@ -99,7 +105,7 @@ impl Session {
         }
     }
 
-    fn table_object(&self, no: i64) -> Option<usize> {
+    pub(crate) fn table_object(&self, no: i64) -> Option<usize> {
         let no = u32::try_from(no).ok()?;
         self.engine
             .program
@@ -135,12 +141,22 @@ impl Session {
                 n if n >= i64::from(SYSTEM_FIELD_BASE) => unsupported(format!(
                     "RecordRef.Open on system table {n} (whether a Cloud target may open it is not pinned)"
                 )),
-                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; how
-                // BC names the calling object is not pinned (docs/probes-needed.md).
-                n => Err(al_error(format!(
-                    "You tried to invoke the Table object with the ID {n} from the object (caller not recorded). \
-                     An object with that ID does not exist in the current application."
-                ))),
+                // A table of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
+                n if self
+                    .engine
+                    .program
+                    .objects
+                    .iter()
+                    .any(|o| o.kind == "uncompiled table" && i64::from(o.id.unwrap_or(0)) == n) =>
+                {
+                    unsupported(format!(
+                        "RecordRef.Open on table {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                    ))
+                }
+                // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; the full
+                // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30
+                // (corpus branch al-runtime-rs, probe on BC 27.5).
+                n => Err(self.missing_object("Table", n)),
             };
         };
         let Value::Record(rec) = self.default_value(&RtType::Record(table as u32, temp)) else {
@@ -306,6 +322,8 @@ impl Session {
                     d.key = s.key;
                     d.ascending = s.ascending;
                     d.position = s.position.clone();
+                    d.load.buffer = s.load.buffer.clone();
+                    d.load.partial = s.load.partial;
                 }
                 Ok(Value::Null)
             }
@@ -329,12 +347,13 @@ impl Session {
                 let i = int_arg(args, 0)?;
                 match usize::try_from(i - 1).ok().and_then(|i| t.keys[k].get(i).copied()) {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
-                    // corpus recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws;
-                    // the text ("Index out of bounds" per tableextension/TestTableExtKeysAndInitValue.al:326)
-                    // is only described in a comment.
-                    None => unsupported(format!(
-                        "KeyRef.FieldIndex({i}) out of range (error text not pinned yet)"
-                    )),
+                    // types/TestTypeSystemContracts.al:261 pins the fragment "Index out of bounds"
+                    // (recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws).
+                    None => Err(Signal::Error(AlError {
+                        message: "Index out of bounds".into(),
+                        code: String::new(),
+                        call_stack: String::new(),
+                    })),
                 }
             }
             other => unsupported(format!("KeyRef.{other}")),
@@ -380,6 +399,19 @@ impl Session {
             "Relation" => self.field_relation(&rec, &t, pos).map(Value::Integer),
             "GetFilter" => self.field_filter_text(&rec, pos).map(Value::Text),
             "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
+            // fieldref/TestRelationTargetNamespaceScope.al:63-75. Record.CalcFields raises a pinned
+            // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);
+            // whether FieldRef.CalcField says the same is not pinned, so it is refused.
+            "CalcField" => {
+                let stored = self.engine.program.objects[t.object as usize]
+                    .table
+                    .as_ref()
+                    .is_some_and(|s| s.fields[pos].stored || s.fields[pos].flow_filter);
+                if stored {
+                    return unsupported("FieldRef.CalcField of a field that is not a FlowField (not pinned)");
+                }
+                self.flow_op("CalcFields", &rec, &[Value::Integer(pos as i32)])
+            }
             "Validate" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());

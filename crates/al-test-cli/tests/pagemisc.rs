@@ -1,0 +1,482 @@
+//! Smaller gaps of the headless test client (ADR-012 follow-up): procedures on a `Page`
+//! variable, `Clear` of a TestPage, and further. AL source → compile → run as a test codeunit.
+//! Each test names the corpus test it mirrors.
+
+use al_sema::workspace::AppSource;
+use al_test_cli::report::Outcome;
+use al_test_cli::runtime::run_codeunit;
+use al_vm::Engine;
+
+const OBJECTS: &str = r#"
+table 62000 "PM Row"
+{
+    fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } field(3; Rank; Integer) { } }
+    keys { key(PK; "No.") { } }
+}
+codeunit 62002 "PM Probe"
+{
+    SingleInstance = true;
+    var Trail: Text;
+    procedure Reset() begin Trail := ''; end;
+    procedure Note(T: Text) begin Trail += T; end;
+    procedure Trace(): Text begin exit(Trail); end;
+}
+page 62010 "PM Wizard"
+{
+    PageType = Card;
+    layout { area(Content) { field(StepCtl; Step) { } } }
+    var Step: Integer;
+    trigger OnInit() var P: Codeunit "PM Probe"; begin P.Note('I'); Step := 0; end;
+    trigger OnOpenPage() var P: Codeunit "PM Probe"; begin P.Note('O'); end;
+    procedure SetStep(S: Integer) var P: Codeunit "PM Probe"; begin P.Note('S'); Step := S; end;
+    procedure GetStep(): Integer begin exit(Step); end;
+}
+page 62011 "PM Persist"
+{
+    PageType = Worksheet;
+    layout { area(Content) { field(Dummy; Dummy) { } } }
+    var Target: Record "PM Row"; Dummy: Text[10];
+    trigger OnQueryClosePage(CloseAction: Action): Boolean
+    begin
+        if (CloseAction <> CloseAction::OK) and (CloseAction <> CloseAction::LookupOK) then exit(true);
+        Target.Rank := 0; Target.Modify(); exit(true);
+    end;
+    procedure SetTarget(var Row: Record "PM Row") begin Target := Row; end;
+}
+page 62012 "PM Card"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } }
+}
+
+table 62001 "PM Look"
+{
+    fields {
+        field(1; "No."; Code[20]) { }
+        field(2; "Table Only"; Code[20]) { trigger OnLookup() begin "Table Only" := 'FROM-TABLE'; end; }
+        field(3; Both; Code[20]) { trigger OnLookup() begin Both := 'FROM-TABLE'; end; }
+        field(4; Related; Code[20]) { TableRelation = "PM Related"; }
+        field(5; Plain; Code[20]) { }
+        field(6; Pageless; Code[20]) { TableRelation = "PM Pageless"; }
+    }
+    keys { key(PK; "No.") { } }
+}
+table 62003 "PM Related" { LookupPageId = "PM Related List"; fields { field(1; "Code"; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "Code") { } } }
+table 62004 "PM Pageless" { fields { field(1; "Code"; Code[20]) { } } keys { key(PK; "Code") { } } }
+page 62014 "PM Related List"
+{
+    PageType = List; SourceTable = "PM Related";
+    layout { area(Content) { repeater(Rows) { field("Code"; Rec."Code") { } field(Descr; Rec.Descr) { } } } }
+}
+page 62015 "PM Look Card"
+{
+    PageType = Card; SourceTable = "PM Look";
+    layout { area(Content) {
+        field("No."; Rec."No.") { }
+        field("Table Only"; Rec."Table Only") { }
+        field(Both; Rec.Both) { trigger OnLookup(var Text: Text): Boolean begin Text := 'FROM-CONTROL'; exit(true); end; }
+        field(Related; Rec.Related) { }
+        field(Plain; Rec.Plain) { }
+        field(Pageless; Rec.Pageless) { }
+    } }
+}
+
+codeunit 62020 "PM Worker"
+{
+    trigger OnRun() var P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; N: Text; Row: Record "PM Row"; begin
+        P := Page.GetBackgroundParameters(); P.Get('No', N);
+        if N.StartsWith('FAIL') then Error('worker failed for %1', N);
+        if N = 'WRITE' then begin Row."No." := 'W'; Row.Insert(); end;
+        if N = 'COMMIT' then Commit();
+        R.Add('Out', 'BG:' + N); Page.SetBackgroundTaskResult(R);
+    end;
+}
+page 62021 "PM Bg Card"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout { area(Content) { field("No."; Rec."No.") { } field(OutCtl; OutText) { } field(ErrCtl; ErrText) { } } }
+    trigger OnAfterGetCurrRecord() var A: Dictionary of [Text, Text]; begin A.Add('No', Rec."No."); CurrPage.EnqueueBackgroundTask(TaskId, Codeunit::"PM Worker", A); end;
+    trigger OnPageBackgroundTaskCompleted(TaskId: Integer; Results: Dictionary of [Text, Text]) begin Results.Get('Out', OutText); end;
+    trigger OnPageBackgroundTaskError(TaskId: Integer; ErrorCode: Text; ErrorText: Text; ErrorCallStack: Text; var IsHandled: Boolean) begin ErrText := ErrorText; IsHandled := Rec.Descr = 'handled'; end;
+    var TaskId: Integer; OutText: Text; ErrText: Text;
+}
+
+page 62013 "PM Rowset"
+{
+    PageType = List; SourceTable = "PM Row"; SourceTableView = sorting("No.") order(descending); Editable = false;
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+    actions { area(Processing) {
+        action(FillEveryOther) { trigger OnAction() var Src: Record "PM Row"; Take: Boolean; begin
+            TempBuf.Reset(); TempBuf.DeleteAll(); Src.SetCurrentKey("No."); Src.Ascending(true); Take := true;
+            if Src.FindSet() then repeat if Take then begin TempBuf := Src; TempBuf.Insert(); end; Take := not Take; until Src.Next() = 0;
+            Activate(); end; }
+        action(FillAll) { trigger OnAction() var Src: Record "PM Row"; begin
+            TempBuf.Reset(); TempBuf.DeleteAll();
+            if Src.FindSet() then repeat TempBuf := Src; TempBuf.Insert(); until Src.Next() = 0;
+            Activate(); end; }
+    } }
+    var TempBuf: Record "PM Row" temporary; RunOnTemp: Boolean;
+    local procedure Activate() begin RunOnTemp := true; Rec.FilterGroup(0); Rec.SetRange("No."); CurrPage.Update(false); end;
+    trigger OnFindRecord(Which: Text): Boolean
+    var P: Codeunit "PM Probe"; Found: Boolean;
+    begin
+        P.Note('F');
+        if not RunOnTemp then exit(Rec.Find(Which));
+        TempBuf.Copy(Rec); Found := TempBuf.Find(Which); if Found then Rec := TempBuf; exit(Found);
+    end;
+    trigger OnNextRecord(Steps: Integer): Integer
+    var P: Codeunit "PM Probe"; Moved: Integer;
+    begin
+        P.Note('N');
+        if not RunOnTemp then exit(Rec.Next(Steps));
+        TempBuf.Copy(Rec); Moved := TempBuf.Next(Steps); if Moved <> 0 then Rec := TempBuf; exit(Moved);
+    end;
+}
+page 62090 "PM Dialog" { PageType = StandardDialog; }
+"#;
+
+fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
+    let src = format!("{OBJECTS}\ncodeunit 62100 T {{ Subtype = Test; {tests} }}");
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
+    run_codeunit(&engine, &l, oi)
+}
+
+fn passes(tests: &str) {
+    let o = outcomes(tests);
+    assert!(!o.is_empty());
+    for (n, r) in &o {
+        assert_eq!(r, &Outcome::Pass, "{n}");
+    }
+}
+
+const HELPERS: &str = "procedure Check(Expected: Text; Actual: Text) begin if Expected <> Actual then Error('expected <%1> got <%2>', Expected, Actual); end;";
+
+// handlers/TestPageOnInit_Tests.al:188 POI_SetterBeforeRunModal_RunsAfterOnInitAndSurvives
+#[test]
+fn a_procedure_on_a_page_variable_runs_after_on_init_and_before_the_open() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('WizardHandler')]
+        procedure SetterBeforeRunModal() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin
+            P.Reset(); W.SetStep(2); W.RunModal();
+            Check('ISO', P.Trace()); end;
+        [ModalPageHandler] procedure WizardHandler(var T: TestPage \"PM Wizard\") begin Check('2', T.StepCtl.Value()); end;"
+    ));
+}
+
+// handlers/TestPageOnInit_Tests.al:206 POI_SetterBeforeRun_RunsAfterOnInitAndSurvives
+#[test]
+fn the_non_modal_run_of_a_page_variable_keeps_what_the_setter_chose() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('WizardHandler')]
+        procedure SetterBeforeRun() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin
+            P.Reset(); W.SetStep(1); W.Run();
+            Check('ISO', P.Trace()); end;
+        [PageHandler] procedure WizardHandler(var T: TestPage \"PM Wizard\") begin Check('1', T.StepCtl.Value()); end;"
+    ));
+}
+
+// handlers/TestPageOnInit_Tests.al:223 POI_SetterBeforeTrappedRun_RunsAfterOnInitAndSurvives
+#[test]
+fn a_trapped_run_receives_the_page_variables_instance() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure SetterBeforeTrappedRun() var W: Page \"PM Wizard\"; T: TestPage \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin
+            P.Reset(); T.Trap(); W.SetStep(1); W.Run();
+            Check('ISO', P.Trace()); Check('1', T.StepCtl.Value()); T.Close(); end;"
+    ));
+}
+
+// handlers/TestPageOnInit_Tests.al GetSelectedKindOrdinal_WithoutRunModal_ReadsTheDeclaredDefault (handlers/TestPageEnumGlobal*)
+#[test]
+fn a_getter_on_a_page_variable_that_never_ran_reads_the_declared_default() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure GetterWithoutRun() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin
+            P.Reset(); if W.GetStep() <> 0 then Error('step'); Check('I', P.Trace()); end;"
+    ));
+}
+
+// handlers/TestPageModalQueryClose_Tests.al:186 PersistInQueryClosePage_HandlerOk_WriteReachesTheTable
+#[test]
+fn a_page_variable_handed_a_record_writes_it_back_in_on_query_close_page() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('OkHandler')]
+        procedure PersistOk() var R: Record \"PM Row\"; M: Page \"PM Persist\"; begin
+            R.DeleteAll(); R.\"No.\" := 'F'; R.Rank := 999; R.Insert();
+            M.SetTarget(R); M.LookupMode(true); M.RunModal();
+            R.Get('F'); if R.Rank <> 0 then Error('rank %1', R.Rank); end;
+        [ModalPageHandler] procedure OkHandler(var T: TestPage \"PM Persist\") begin T.OK().Invoke(); end;"
+    ));
+}
+
+// handlers/TestPageEditable_Tests.al:93 EditableBoundToPageVariable_FollowsTheRow
+#[test]
+fn clear_of_a_closed_test_page_gives_a_fresh_variable() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure ClearClosed() var R: Record \"PM Row\"; C: TestPage \"PM Card\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Descr := 'x'; R.Insert();
+            C.OpenView(); Check('A', C.NoCtl.Value()); C.Close();
+            Clear(C);
+            C.OpenView(); Check('A', C.NoCtl.Value()); C.Close(); end;"
+    ));
+}
+
+const EIGHT: &str = "procedure Seed(Alternate: Boolean) var R: Record \"PM Row\"; I: Integer; begin
+    R.DeleteAll();
+    for I := 1 to 8 do begin R.Init(); R.\"No.\" := 'L000' + Format(I); R.Descr := 'Row'; if Alternate then if I mod 2 = 1 then R.Descr := 'Included' else R.Descr := 'Excluded'; R.Insert(); end;
+end;";
+
+// pagefindrecord/TestPageFindRecord.al:112 OnFindRecord_FirstAnswersTheFirstRowOfTheTriggerRowset,
+// :129 OnNextRecord_NextWalksTheTriggerRowsetAndStopsAtItsEnd
+#[test]
+fn first_and_next_walk_the_rows_the_triggers_serve() {
+    passes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure Walk() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            if not L.First() then Error('first'); Check('L0007', L.\"No.\".Value);
+            if not L.Next() then Error('n2'); Check('L0005', L.\"No.\".Value);
+            if not L.Next() then Error('n3'); Check('L0003', L.\"No.\".Value);
+            if not L.Next() then Error('n4'); Check('L0001', L.\"No.\".Value);
+            if L.Next() then Error('past the end');
+            L.Close(); end;"
+    ));
+}
+
+// :160 OnFindRecord_LastAndPreviousWalkTheTriggerRowset, :186 OnFindRecord_GoToKeyRefusesARowTheTriggerRowsetDoesNotServe
+#[test]
+fn last_previous_and_go_to_key_use_the_trigger_rowset() {
+    passes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure LastPrev() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            if not L.Last() then Error('last'); Check('L0001', L.\"No.\".Value);
+            if not L.Previous() then Error('prev'); Check('L0003', L.\"No.\".Value);
+            L.Close(); end;
+        [Test]
+        procedure GoTo() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            if not L.GoToKey('L0003') then Error('served'); Check('L0003', L.\"No.\".Value);
+            if L.GoToKey('L0004') then Error('not served');
+            L.Close(); end;"
+    ));
+}
+
+// :205 PlainPage_WithoutTheTriggers..., :222 OnFindRecord_AManualFilterStillNarrowsTheTriggerRowset
+#[test]
+fn a_manual_filter_narrows_the_trigger_rowset_and_both_triggers_are_reached() {
+    passes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure Filtered() var L: TestPage \"PM Rowset\"; P: Codeunit \"PM Probe\"; begin
+            Seed(true); L.OpenView(); L.Filter.SetFilter(Descr, 'Included'); L.FillAll.Invoke();
+            Check('', L.Filter.GetFilter(\"No.\")); Check('Included', L.Filter.GetFilter(Descr));
+            P.Reset();
+            if not L.First() then Error('first'); Check('L0007', L.\"No.\".Value);
+            if not L.Next() then Error('n2'); Check('L0005', L.\"No.\".Value);
+            if not L.Next() then Error('n3'); Check('L0003', L.\"No.\".Value);
+            if not L.Next() then Error('n4'); Check('L0001', L.\"No.\".Value);
+            if L.Next() then Error('past');
+            if StrPos(P.Trace(), 'F') = 0 then Error('find'); if StrPos(P.Trace(), 'N') = 0 then Error('next');
+            L.Close(); end;"
+    ));
+}
+
+// A control read straight after a refresh of a rowset page shows a row the re-anchoring picks, which
+// the corpus does not pin beyond the Which strings of a deleted row (pageupdate/TestPageUpdateGoneRow.al).
+#[test]
+fn reading_a_rec_bound_control_after_a_refresh_of_a_rowset_page_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS} {EIGHT}
+        [Test]
+        procedure Stale() var L: TestPage \"PM Rowset\"; begin
+            Seed(false); L.OpenView(); L.FillEveryOther.Invoke();
+            Check('L0008', L.\"No.\".Value); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("after CurrPage.Update")),
+        "{o:?}"
+    );
+}
+
+const LOOK: &str = "procedure OpenOn(var C: TestPage \"PM Look Card\") var L: Record \"PM Look\"; R: Record \"PM Related\"; X: Record \"PM Pageless\"; begin
+    L.DeleteAll(); L.\"No.\" := 'R1'; L.Insert();
+    R.DeleteAll(); R.Code := 'REL-A'; R.Descr := 'Alpha'; R.Insert(); R.Code := 'REL-B'; R.Descr := 'Beta'; R.Insert();
+    X.DeleteAll(); X.Code := 'PL-A'; X.Insert();
+    C.OpenEdit(); C.GoToRecord(L); end;";
+
+// handlers/TestPageFieldTableLookup.al:55 Lookup_ControlWithoutTrigger_RunsTheTableFieldsOnLookup,
+// :72 Lookup_ControlWithTrigger_WinsOverTheTableFieldsOnLookup
+#[test]
+fn lookup_runs_the_controls_trigger_else_the_table_fields() {
+    passes(&format!(
+        "{HELPERS} {LOOK}
+        [Test]
+        procedure TableOnly() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.\"Table Only\".Lookup(); Check('FROM-TABLE', C.\"Table Only\".Value); C.Close(); end;
+        [Test]
+        procedure ControlWins() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Both.Lookup(); Check('FROM-CONTROL', C.Both.Value); C.Close(); end;"
+    ));
+}
+
+// handlers/TestPageFieldRelationLookup_Tests.al:104 ...OpensTheRelatedTablesLookupPage, :122 ...WritesTheSelectedRowBack,
+// :142 ...CancelLeavesTheFieldUnchanged, :168 Lookup_NoTriggerAndNoTableRelation_DoesNothing
+#[test]
+fn lookup_over_a_table_relation_opens_the_related_lookup_page_and_writes_the_pick_back() {
+    passes(&format!(
+        "{HELPERS} {LOOK}
+        [Test] [HandlerFunctions('PicksB')]
+        procedure Picks() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Related.Lookup(); Check('REL-B', C.Related.Value); C.Close(); end;
+        [Test] [HandlerFunctions('Cancels')]
+        procedure Cancel() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Related.Lookup(); Check('', C.Related.Value); C.Close(); end;
+        [Test]
+        procedure NothingToResolve() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Plain.SetValue('KEEP'); C.Plain.Lookup(); Check('KEEP', C.Plain.Value); C.Close(); end;
+        [ModalPageHandler] procedure PicksB(var M: TestPage \"PM Related List\") begin M.GoToKey('REL-B'); M.OK().Invoke(); end;
+        [ModalPageHandler] procedure Cancels(var M: TestPage \"PM Related List\") begin M.GoToKey('REL-B'); M.Cancel().Invoke(); end;"
+    ));
+}
+
+// handlers/TestPageFieldRelationLookup_Tests.al:253 Lookup_RelationToTableWithNoLookupPage_RaisesTheUnhandledUiSignal,
+// :273 ..._LeavesTheFieldUnchanged
+#[test]
+fn lookup_over_a_relation_to_a_table_without_a_lookup_page_raises_unhandled_ui() {
+    passes(&format!(
+        "{HELPERS} {LOOK}
+        [Test]
+        procedure Pageless() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); Commit(); C.Pageless.SetValue('PL-A');
+            asserterror C.Pageless.Lookup();
+            if StrPos(GetLastErrorText(), 'Unhandled UI: ModalPage') = 0 then Error('got %1', GetLastErrorText());
+            Check('PL-A', C.Pageless.Value); C.Close(); end;"
+    ));
+}
+
+// With the host row still uncommitted, how far the asserterror rolls back is not pinned: refused.
+#[test]
+fn an_unhandled_lookup_with_writes_pending_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS} {LOOK}
+        [Test]
+        procedure Pending() var C: TestPage \"PM Look Card\"; begin
+            OpenOn(C); C.Pageless.SetValue('PL-A'); asserterror C.Pageless.Lookup(); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("writes pending")),
+        "{o:?}"
+    );
+}
+
+const BG: &str = "procedure SeedBg() var R: Record \"PM Row\"; begin R.DeleteAll();
+    R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'FAIL-H'; R.Descr := 'handled'; R.Insert(); R.\"No.\" := 'FAIL-U'; R.Descr := ''; R.Insert(); end;";
+
+// handlers/TestPageBgTask_Tests.al:61 EnqueueBackgroundTask_CompletesBeforeOpenViewReturns, :146 ..._HandledErrorDoesNotPropagate
+#[test]
+fn an_enqueued_task_has_completed_when_the_call_returns_and_a_handled_error_is_swallowed() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Completes() var C: TestPage \"PM Bg Card\"; begin
+            SeedBg(); C.OpenView(); Check('BG:A', C.OutCtl.Value); C.Close(); end;
+        [Test]
+        procedure Handled() var C: TestPage \"PM Bg Card\"; R: Record \"PM Row\"; begin
+            SeedBg(); R.Get('FAIL-H'); C.OpenView(); if not C.GoToRecord(R) then Error('goto');
+            Check('worker failed for FAIL-H', C.ErrCtl.Value); C.Close(); end;"
+    ));
+}
+
+// handlers/TestPageBgTask_Tests.al:170 EnqueueBackgroundTask_UnhandledErrorPropagates
+#[test]
+fn an_unhandled_task_error_tears_the_page_down() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Unhandled() var C: TestPage \"PM Bg Card\"; R: Record \"PM Row\"; begin
+            SeedBg(); R.Get('FAIL-U'); C.OpenView();
+            asserterror C.GoToRecord(R);
+            if StrPos(GetLastErrorText(), 'The TestPage is not open') = 0 then Error('got %1', GetLastErrorText()); end;"
+    ));
+}
+
+// handlers/TestPageBgTask_Tests.al:104 RunPageBackgroundTask_ReturnsWorkerResult, :210 ..._WorkerInsert_RefusedByReadOnlySession
+#[test]
+fn run_page_background_task_returns_the_result_and_the_worker_cannot_write() {
+    passes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Result() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; V: Text; begin
+            SeedBg(); C.OpenView(); P.Add('No', 'RPT'); R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false);
+            R.Get('Out', V); Check('BG:RPT', V); C.Close(); end;
+        [Test]
+        procedure NoWrite() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; Row: Record \"PM Row\"; begin
+            SeedBg(); C.OpenView(); P.Add('No', 'WRITE');
+            if TryRun(C, P) then Error('must fail');
+            if StrPos(GetLastErrorText(), 'Sorry, the current permissions prevented the action. (TableData 62000 PM Row Insert: ') = 0 then Error('got %1', GetLastErrorText());
+            if Row.Get('W') then Error('landed'); C.Close(); end;
+        [TryFunction] local procedure TryRun(var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]) var R: Dictionary of [Text, Text]; begin R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
+    ));
+}
+
+// A worker's transaction is not modelled: Commit in it is refused.
+#[test]
+fn a_commit_in_a_worker_is_refused() {
+    let o = outcomes(&format!(
+        "{HELPERS} {BG}
+        [Test]
+        procedure Commits() var C: TestPage \"PM Bg Card\"; P: Dictionary of [Text, Text]; R: Dictionary of [Text, Text]; begin
+            SeedBg(); C.OpenView(); P.Add('No', 'COMMIT'); R := C.RunPageBackgroundTask(Codeunit::\"PM Worker\", P, false); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("Commit in a page background task")),
+        "{o:?}"
+    );
+}
+
+// corpus branch al-runtime-rs (pending push): record/TestValidateRaisesAndHandlerAsserterrorContracts.al:
+// Asserterror_InAModalHandler_RollsBackToTheLastCommit (probe on BC 27.5). An asserterror inside a
+// modal handler rolls back everything since the last Commit: the write pending before the page
+// opened, the handler's own earlier write and the write inside the asserterror.
+#[test]
+fn an_asserterror_in_a_modal_handler_rolls_back_to_the_last_commit() {
+    passes(&format!(
+        "{HELPERS}
+        local procedure Has(No: Code[20]): Text var R: Record \"PM Row\"; begin exit(Format(R.Get(No))); end;
+        local procedure Put(No: Code[20]) var R: Record \"PM Row\"; begin R.Init(); R.\"No.\" := No; R.Insert(); end;
+        [Test] [HandlerFunctions('Dialog')]
+        procedure InHandler() var R: Record \"PM Row\"; Result: Action; begin
+            R.DeleteAll(); Put('1'); Commit(); Put('2');
+            Result := Page.RunModal(Page::\"PM Dialog\");
+            Check('Yes', Has('1')); Check('No', Has('2')); Check('No', Has('3')); Check('No', Has('4'));
+            Check('No', Format(Database.IsInWriteTransaction())); end;
+        [ModalPageHandler] procedure Dialog(var D: TestPage \"PM Dialog\") begin
+            Put('3'); asserterror begin Put('4'); Error('in handler'); end; end;"
+    ));
+}

@@ -15,6 +15,48 @@ pub struct Program {
     /// `DotNet` variable's `RtType::DotNet(i)` and `Expr::DotNet::ty` index this list.
     #[serde(default)]
     pub dotnet_types: Vec<DotNetDecl>,
+    /// The source files the positions refer to (`SrcPos::file` indexes this).
+    #[serde(default)]
+    pub sources: Vec<SourceFile>,
+    /// Source positions of statements and routine declarations. A [`Stmt::Pos`] marker and
+    /// [`Routine::pos`] hold an index into this table (`docs/architecture.md`, "Source positions").
+    #[serde(default)]
+    pub positions: Vec<SrcPos>,
+}
+
+/// A source file of the program: the app it belongs to and its path inside the app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceFile {
+    /// Index into `Program::apps`.
+    pub app: u32,
+    pub path: String,
+}
+
+/// "No position": a routine the compiler made up (a page expression), which has no source.
+pub const NO_POS: u32 = u32::MAX;
+
+/// Where a statement or a routine declaration sits in the source. Lines and columns count from 1.
+/// The column is a byte column. Page files that declare computed properties are numbered as
+/// the author wrote them, not as the compiler's expanded text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SrcPos {
+    /// Index into `Program::sources`.
+    pub file: u32,
+    pub line: u32,
+    pub col: u32,
+    /// The line the statement ends on (equal to `line` for a one-line statement).
+    pub end_line: u32,
+    /// The object (index into `Program::objects`) and routine (index into `Object::routines`)
+    /// the position is in, so a position alone names the code it belongs to.
+    pub object: u32,
+    pub routine: u32,
+}
+
+impl Program {
+    /// The position `id` names; `None` for [`NO_POS`] or an id outside the table.
+    pub fn pos(&self, id: u32) -> Option<&SrcPos> {
+        self.positions.get(id as usize)
+    }
 }
 
 /// What `NavApp.GetCurrentModuleInfo` reports about an app.
@@ -30,6 +72,10 @@ pub struct AppInfo {
     /// The packaged resources (`resourceFolders` of the manifest): name relative to its folder, content.
     #[serde(default)]
     pub resources: Vec<(String, Vec<u8>)>,
+    /// A dependency app, compiled from its package (ADR-013): its pages are precompiled ones as
+    /// far as BC's behaviour goes. The app under test is not.
+    #[serde(default)]
+    pub dependency: bool,
 }
 
 /// A `.NET` type declared by a `dotnet { }` block.
@@ -121,6 +167,11 @@ pub struct Report {
     pub extension: Option<usize>,
     /// Global slot of the hidden flag `Report.UseRequestPage(x)` sets: 0 = not set, 1 = true, 2 = false.
     pub request_flag_slot: usize,
+    /// Why running the report would render output (it is not `ProcessingOnly`, or it declares a
+    /// layout): the runtime renders nothing, so a run that gets that far is refused. Its request
+    /// page still opens first.
+    #[serde(default)]
+    pub output: Vec<String>,
     /// Why the runtime cannot run this report yet; empty = it can.
     pub unsupported: Vec<String>,
 }
@@ -339,6 +390,9 @@ pub enum ControlKind {
     SystemAction,
     ActionGroup,
     Part,
+    /// A data item of a report's request page: its `binding` is the global slot of the item's
+    /// record, and the test client reads and writes that record's filters.
+    DataItem,
 }
 
 /// Where a field control reads and writes its value.
@@ -502,6 +556,15 @@ pub struct Field {
     pub relation: bool,
     /// (object, routine) of the field's OnValidate trigger, if any.
     pub on_validate: Option<(usize, usize)>,
+    /// The `OnBeforeValidate` triggers table extensions attach with `modify(Field)`, as
+    /// (object, routine), in extension order.
+    #[serde(default)]
+    pub ext_before_validate: Vec<(usize, usize)>,
+    /// The `OnAfterValidate` triggers table extensions attach with `modify(Field)`.
+    #[serde(default)]
+    pub ext_after_validate: Vec<(usize, usize)>,
+    /// (object, routine) of the field's table-side OnLookup trigger, if any.
+    pub on_lookup: Option<(usize, usize)>,
     /// Every property of the field as written (`Caption`, `OptionCaption`, ...).
     pub properties: Vec<(String, String)>,
     /// The `TableRelation` arms in written order; empty when the field has none or its shape is
@@ -615,6 +678,14 @@ pub struct Routine {
     /// Local index of a named return value.
     pub ret_local: Option<usize>,
     pub body: Vec<Stmt>,
+    /// Position of the `procedure` or `trigger` keyword ([`NO_POS`] for a routine without source).
+    /// BC counts the line of a call stack frame from this line.
+    #[serde(default = "no_pos")]
+    pub pos: u32,
+}
+
+fn no_pos() -> u32 {
+    NO_POS
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -718,6 +789,13 @@ pub enum Expr {
         targets: Vec<(usize, usize)>,
         args: Vec<Arg>,
     },
+    /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
+    /// value) on an interface value. `objects` are the codeunits that implement `I`.
+    InterfaceTest {
+        value: Box<Expr>,
+        objects: Vec<u32>,
+        cast: bool,
+    },
     /// An enum value cast to an interface: a fresh instance of the codeunit that
     /// implements the interface for the value's ordinal. `by_ordinal` has every declared
     /// ordinal of the enum (extensions included), already resolved through the value's own
@@ -798,6 +876,9 @@ pub enum Stmt {
     Exit(Option<Expr>),
     Break,
     AssertError(Vec<Stmt>),
+    /// Marks the statement that follows it in the same list: the VM records the position as the
+    /// routine's current one (`Program::positions[id]`). It does nothing else.
+    Pos(u32),
 }
 
 #[cfg(test)]
@@ -816,6 +897,8 @@ mod tests {
                 type_name: "System.Convert".into(),
             }],
             apps: vec![],
+            sources: vec![],
+            positions: vec![],
             objects: vec![Object {
                 kind: "codeunit".into(),
                 id: Some(50100),
@@ -853,7 +936,9 @@ mod tests {
                     }],
                     ret: None,
                     ret_local: None,
+                    pos: NO_POS,
                     body: vec![
+                        Stmt::Pos(0),
                         Stmt::Assign(
                             Place::Global(0),
                             Expr::Binary(

@@ -1,4 +1,6 @@
-//! The corpus as a workspace: the test app plus the internals fixture it depends on.
+//! The corpus as a workspace: the test app plus the internals fixture it depends on, without
+//! the Microsoft apps. The references that resolve only with them are checked in
+//! `al-test-cli/tests/corpus_resolve_deps.rs`.
 
 use al_sema::{AppSource, Workspace};
 use std::collections::BTreeMap;
@@ -54,38 +56,6 @@ pub fn corpus() -> Workspace {
 }
 
 #[test]
-fn unresolved_references_are_exactly_the_known_external_set() {
-    let ws = corpus();
-    let members = al_sema::members::build(&ws);
-    let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
-    let mut unresolved: BTreeMap<String, usize> = BTreeMap::new();
-    let mut other = Vec::new();
-    for d in ws
-        .diagnostics
-        .iter()
-        .chain(&checked.diagnostics)
-        .filter(|d| !d.code.starts_with("AR1"))
-    {
-        if d.code == "AR0002" {
-            *unresolved.entry(d.message.clone()).or_default() += 1;
-        } else {
-            other.push(format!("{} {}: {}", d.code, d.file, d.message));
-        }
-    }
-    assert!(other.is_empty(), "{}", other.join("\n"));
-    let actual: String = unresolved.iter().map(|(m, n)| format!("{n:4} {m}\n")).collect();
-    let golden_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/expected-unresolved.txt");
-    if std::env::var_os("UPDATE_GOLDEN").is_some() {
-        std::fs::write(&golden_path, &actual).unwrap();
-    }
-    let golden = std::fs::read_to_string(&golden_path).unwrap_or_default();
-    assert_eq!(
-        actual, golden,
-        "unresolved references changed; review and rerun with UPDATE_GOLDEN=1"
-    );
-}
-
-#[test]
 fn every_corpus_table_field_has_a_known_type() {
     let ws = corpus();
     let members = al_sema::members::build(&ws);
@@ -108,6 +78,10 @@ fn every_corpus_table_field_has_a_known_type() {
     );
 }
 
+/// Corpus files with model gaps that wait for a parser or resolver fix. Each is a red corpus test,
+/// not a pass. A file with no gap left fails the test below, so the list only shrinks (ADR-007).
+const KNOWN_GAP_FILES: &[(&str, &str)] = &[];
+
 /// Milestone 1: every name, member and call in every corpus body resolves,
 /// except references into apps outside the workspace (golden list above).
 #[test]
@@ -115,10 +89,20 @@ fn corpus_bodies_resolve_with_no_model_gaps() {
     let ws = corpus();
     let members = al_sema::members::build(&ws);
     let r = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
-    let gaps: Vec<String> = r
-        .diagnostics
+    let all: Vec<_> = r.diagnostics.iter().filter(|d| d.code.starts_with("AR1")).collect();
+    let stale: Vec<_> = KNOWN_GAP_FILES
         .iter()
-        .filter(|d| d.code.starts_with("AR1"))
+        .filter(|(k, _)| !all.iter().any(|d| d.file.ends_with(k)))
+        .map(|(k, why)| format!("{k} ({why})"))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "these files have no gap now: remove them from KNOWN_GAP_FILES:\n{}",
+        stale.join("\n")
+    );
+    let gaps: Vec<String> = all
+        .iter()
+        .filter(|d| !KNOWN_GAP_FILES.iter().any(|(k, _)| d.file.ends_with(k)))
         .map(|d| format!("{} {}: {}", d.code, d.file, d.message))
         .collect();
     assert!(
@@ -151,7 +135,10 @@ fn explore_body_resolution() {
     if let Ok(pat) = std::env::var("SHOW") {
         for d in r.diagnostics.iter().filter(|d| d.message.contains(&pat)).take(6) {
             let f = ws.files.iter().find(|f| f.path == d.file).unwrap();
-            let src = al_syntax::SyntaxNode::new_root(f.green.clone()).text().to_string();
+            let src =
+                al_syntax::SyntaxNode::new_root(ws.green(ws.files.iter().position(|g| g.path == f.path).unwrap()))
+                    .text()
+                    .to_string();
             let line = src[..d.offset].matches('\n').count() + 1;
             let text = src.lines().nth(line - 1).unwrap_or("").trim();
             println!("  {}:{line}: {text}", d.file);

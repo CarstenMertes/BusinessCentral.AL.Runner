@@ -141,8 +141,8 @@ jobs:
             echo "## Why this step takes longer than the runtime"
             echo
             echo "- This step took $((step_end - step_start)) s in total."
-            echo "- The normal run of all versions finished after $((normal_end - step_start)) s."
-            echo "- The three runs that compile every dependency finished after $((eager_end - step_start)) s."
+            echo "- The normal run of all versions took $((normal_end - step_start)) s."
+            echo "- Waiting for the three runs that compile every dependency took $((eager_end - normal_end)) s more."
             echo "- The comparison of the two took $((step_end - eager_end)) s."
             echo
             echo "On this 4-vCPU runner the normal run and three runs that compile every dependency"

@@ -165,6 +165,21 @@ fn a_platform_table_with_no_provider_is_refused_where_code_uses_it_and_names_tab
     );
 }
 
+// A name that ends in a dot (`Metadata Permission Set Rel.`, 23 of Microsoft's permission tests) is a
+// platform table with no provider, not an object outside the workspace.
+#[test]
+fn a_platform_table_whose_name_ends_in_a_dot_names_the_missing_provider() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure UsesIt() var P: Record "Metadata Permission Set Rel."; begin if P.IsEmpty() then; end; }"#,
+    );
+    let why = not_run(&o, "UsesIt");
+    assert!(
+        why.contains("platform table 'Metadata Permission Set Rel.' (") && why.contains("has no provider"),
+        "{why}"
+    );
+}
+
 #[test]
 fn a_virtual_platform_table_is_read_but_cannot_be_written() {
     let o = outcomes(

@@ -160,9 +160,33 @@ pub struct CheckResult {
     pub demand: Option<demand::Demand>,
     /// Per object: a test codeunit a selection left out (`Roots::only_tests`). Empty without one.
     pub skipped: Vec<bool>,
+    /// Checks that panicked, by (object, routine offset) -- `ANY_ROUTINE` for the whole object --
+    /// with the panic message. A panic is a bug in the compiler; the routine (or object) is lowered
+    /// as a refusal, so the run goes on and the tests that reach it are not run.
+    pub panicked: HashMap<(usize, usize), String>,
+}
+
+/// The routine offset of a [`CheckResult::panicked`] entry that covers every routine of the object.
+pub const ANY_ROUTINE: usize = usize::MAX;
+
+/// The text of a panic payload.
+pub(crate) fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
+    p.downcast_ref::<String>()
+        .cloned()
+        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_else(|| "a panic without a message".into())
 }
 
 impl CheckResult {
+    /// Why checking routine `offset` of object `oi` panicked, if it did (the routine's own panic,
+    /// or one that took the whole object).
+    pub fn panic_of(&self, oi: usize, offset: usize) -> Option<&str> {
+        self.panicked
+            .get(&(oi, offset))
+            .or_else(|| self.panicked.get(&(oi, ANY_ROUTINE)))
+            .map(String::as_str)
+    }
+
     /// Whether object `oi` was left out of the check by a test selection.
     pub fn is_skipped(&self, oi: usize) -> bool {
         self.skipped.get(oi).copied().unwrap_or(false)
@@ -284,7 +308,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         let started = std::time::Instant::now();
         for oi in 0..ws.objects.len() {
             if !skip(oi) {
-                c.check_object(oi);
+                c.guard((oi, ANY_ROUTINE), |c| c.check_object(oi));
             }
             c.take_calls();
         }
@@ -318,6 +342,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         queries,
         demand,
         skipped,
+        panicked: c.panicked,
     }
 }
 
@@ -457,6 +482,8 @@ struct Checker<'a> {
     demand: std::cell::RefCell<Option<demand::State>>,
     /// Files to parse ahead on other threads: those of the dependency objects just reached.
     prefetch: Option<std::sync::mpsc::Sender<usize>>,
+    /// Checks that panicked (see [`CheckResult::panicked`]).
+    panicked: HashMap<(usize, usize), String>,
 }
 
 /// What every routine of an object sees.
@@ -533,6 +560,16 @@ impl<'a> Checker<'a> {
             calls: Vec::new(),
             demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
             prefetch: None,
+            panicked: HashMap::new(),
+        }
+    }
+
+    /// Runs `f`; if it panics, the panic is recorded against `key` (object, routine offset) and the
+    /// check goes on with the next piece of work. The checker's state after a panic only ever holds
+    /// more than the routine reached (types, calls, reached objects), never less.
+    fn guard(&mut self, key: (usize, usize), f: impl FnOnce(&mut Self)) {
+        if let Err(p) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self))) {
+            self.panicked.insert(key, panic_message(&*p));
         }
     }
 
@@ -639,11 +676,11 @@ impl<'a> Checker<'a> {
             let n = sec.name().to_ascii_lowercase();
             if n == "dataitem" || n == "tableelement" {
                 let args = sec.args();
-                if let (Some(name), Some(table)) = (args.first(), args.get(1)) {
+                if let (Some(name), Some(table)) = (args.first(), crate::types::section_object_name(sec, 1)) {
                     globals.insert(
                         name.to_lowercase(),
                         Ty::Record {
-                            table: table.clone(),
+                            table,
                             temporary: false,
                         },
                     );
@@ -761,12 +798,12 @@ impl<'a> Checker<'a> {
                     for sec in ast::sections_in(self.ws.object_ast(r).syntax()) {
                         if sec.name().eq_ignore_ascii_case("dataitem") {
                             let a = sec.args();
-                            if let (Some(n), Some(t)) = (a.first(), a.get(1)) {
+                            if let (Some(n), Some(t)) = (a.first(), crate::types::section_object_name(&sec, 1)) {
                                 base_items.insert(n.to_lowercase(), t.clone());
                                 globals.insert(
                                     n.to_lowercase(),
                                     Ty::Record {
-                                        table: t.clone(),
+                                        table: t,
                                         temporary: false,
                                     },
                                 );
@@ -797,7 +834,8 @@ impl<'a> Checker<'a> {
         let ctx = self.object_ctx(oi);
         let obj = self.ws.object_ast(oi);
         for r in ast::routines_in(obj.syntax()) {
-            self.check_routine_in(&ctx, &r);
+            let offset = usize::from(r.syntax().text_range().start());
+            self.guard((oi, offset), |c| c.check_routine_in(&ctx, &r));
         }
         // What the test client does when it opens a workspace page or report, and what its actions
         // run, reaches into the dependency apps.
@@ -819,6 +857,10 @@ impl<'a> Checker<'a> {
 
     /// Checks one routine of the object `ctx` describes.
     fn check_routine_in(&mut self, ctx: &ObjCtx, r: &ast::Routine) {
+        #[cfg(test)]
+        if r.name() == "InjectedCheckPanic" {
+            panic!("injected check panic");
+        }
         let ObjCtx {
             oi,
             file,
@@ -1647,12 +1689,12 @@ impl<'a> Checker<'a> {
     fn control_of_section(&self, oi: usize, name: &str) -> Option<E> {
         let sec = self.named_section(oi, name)?;
         Some(E::Val(match sec.name().to_ascii_lowercase().as_str() {
-            "dataitem" => match sec.args().get(1) {
-                Some(table) => Ty::TestFilter(table.clone()),
+            "dataitem" => match crate::types::section_object_name(&sec, 1) {
+                Some(table) => Ty::TestFilter(table),
                 None => Ty::Unknown,
             },
-            "part" => match sec.args().get(1) {
-                Some(page) => Ty::TestPart(page.clone()),
+            "part" => match crate::types::section_object_name(&sec, 1) {
+                Some(page) => Ty::TestPart(page),
                 None => Ty::Unknown,
             },
             "systempart" => Ty::Builtin("TestPart".into()),
@@ -1770,8 +1812,8 @@ impl<'a> Checker<'a> {
                 if *kind == ObjKind::Page {
                     if let Some(sec) = self.named_section(oi, name) {
                         if sec.name().eq_ignore_ascii_case("part") {
-                            if let Some(page) = sec.args().get(1) {
-                                return Some(E::Val(Ty::TestPart(page.clone())));
+                            if let Some(page) = crate::types::section_object_name(&sec, 1) {
+                                return Some(E::Val(Ty::TestPart(page)));
                             }
                         }
                     }

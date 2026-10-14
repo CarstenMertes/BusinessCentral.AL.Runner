@@ -85,7 +85,7 @@ fn type_name(t: &RtType) -> String {
         RtType::Code(_) => "Code".into(),
         RtType::Option(_) => "Option".into(),
         RtType::Enum(_) => "Enum".into(),
-        other => format!("{}", other.describe()),
+        other => other.describe(),
     }
 }
 

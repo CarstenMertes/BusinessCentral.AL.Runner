@@ -240,7 +240,7 @@ impl Parser<'_> {
     fn typed(&self, t: Tok) -> Result<Value, String> {
         use crate::value::RtType as T;
         let text = match t {
-            Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| format!("{e}", e = e.describe())),
+            Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| e.describe()),
             Tok::Raw(s) | Tok::Quoted(s) => s,
             Tok::Op(o) => return Err(format!("operator `{o}` where a value was expected")),
         };

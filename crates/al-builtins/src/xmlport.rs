@@ -174,8 +174,9 @@ pub fn field_value(text: &str, ty: &RtType) -> Result<Value, FieldFailure> {
             .parse::<Decimal>()
             .map(Value::Decimal)
             .map_err(|_| FieldFailure::Invalid(format!("'{text}' is not a Decimal"))),
-        RtType::Text(_) | RtType::Code(_) => crate::ops::convert(Value::Text(text.to_string()), ty)
-            .map_err(|e| FieldFailure::Unsupported(format!("{e}", e = e.describe()))),
+        RtType::Text(_) | RtType::Code(_) => {
+            crate::ops::convert(Value::Text(text.to_string()), ty).map_err(|e| FieldFailure::Unsupported(e.describe()))
+        }
         other => Err(FieldFailure::Unsupported(format!(
             "a field of type {}",
             other.describe()

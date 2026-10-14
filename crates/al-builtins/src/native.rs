@@ -1039,7 +1039,7 @@ fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
 
 /// The kind of a value for a refusal reason: the variant name, never its contents.
 fn value_kind(v: &Value) -> String {
-    let d = format!("{}", v.describe());
+    let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 

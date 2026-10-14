@@ -2561,7 +2561,7 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
         Ok(Ok(d)) => d,
         Ok(Err(f)) => return Ok(Err(f.map(|f| f.message))),
         Err(Signal::Unsupported(why)) => return Err(why),
-        Err(other) => return Err(format!("{}", other.describe())),
+        Err(other) => return Err(other.describe()),
     };
     let root = children_of(&doc)
         .into_iter()

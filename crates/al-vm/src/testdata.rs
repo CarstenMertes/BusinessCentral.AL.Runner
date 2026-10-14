@@ -114,7 +114,7 @@ fn kind_of_field(ty: &RtType, compressed: bool) -> Kind {
         RtType::Duration => Kind::Duration,
         RtType::Guid => Kind::Guid,
         RtType::Library(n) if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet") => Kind::Guid,
-        other => Kind::Unsupported(format!("{}", other.describe())),
+        other => Kind::Unsupported(other.describe()),
     }
 }
 

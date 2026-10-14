@@ -242,7 +242,7 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
         Value::DateFormula(s) => crate::datefns::formula_text(s),
         other => {
             let _ = Ordering::Equal;
-            format!("{}", other.describe())
+            other.describe()
         }
     }
 }

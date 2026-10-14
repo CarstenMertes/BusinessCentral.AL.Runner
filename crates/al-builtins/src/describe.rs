@@ -334,7 +334,7 @@ mod tests {
         let none: Option<&Value> = None;
         assert_eq!(none.describe(), "no value");
         assert_eq!(Some(&Value::Integer(1)).describe(), "Integer 1");
-        let args = vec![Value::Integer(1), Value::Text("a".into())];
+        let args = [Value::Integer(1), Value::Text("a".into())];
         assert_eq!(args.describe(), "(Integer 1, Text 'a')");
         assert_eq!(args.first().describe(), "Integer 1");
     }

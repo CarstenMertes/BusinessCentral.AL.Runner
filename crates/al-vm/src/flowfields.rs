@@ -25,14 +25,21 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
-/// A runtime error with a message the corpus pins (error codes are not pinned).
+/// A runtime error with a message the corpus pins and, where it is pinned, a code.
 fn error<T>(message: String) -> Result<T, Signal> {
+    error_code(message, "")
+}
+
+fn error_code<T>(message: String, code: &str) -> Result<T, Signal> {
     Err(Signal::Error(AlError {
         message,
-        code: String::new(),
+        code: code.into(),
         call_stack: String::new(),
     }))
 }
+
+/// BC's line break inside error texts: a carriage return and a backslash.
+const BR: &str = "\r\\";
 
 /// How BC names a field type in the "must have the same type" message.
 fn type_name(t: &RtType) -> String {
@@ -60,7 +67,6 @@ fn same_kind(a: &RtType, b: &RtType) -> bool {
     use RtType as T;
     match (a, b) {
         (T::Text(_) | T::Code(_), T::Text(_) | T::Code(_)) => true,
-        (T::Option(_), T::Option(_)) => true,
         (T::Enum(x), T::Enum(y)) => x == y,
         _ => std::mem::discriminant(a) == std::mem::discriminant(b),
     }
@@ -77,15 +83,11 @@ fn number(v: &Value) -> Option<Decimal> {
 }
 
 /// A decimal result as a value of `ty`; whole numbers only for integral
-/// types. `drop_small_fraction` (averages): a fraction below one half is dropped.
-fn to_number(d: Decimal, ty: &RtType, drop_small_fraction: bool) -> Result<Value, Signal> {
-    let d = if drop_small_fraction && !matches!(ty, RtType::Decimal) && d.fract() != Decimal::ZERO {
-        if d.fract().abs() >= Decimal::new(5, 1) {
-            return unsupported(format!(
-                "average {d} into {} (truncation and rounding differ; not pinned by the corpus)",
-                type_name(ty)
-            ));
-        }
+/// types. `truncate_average` (averages): an average stored in an integral FlowField is cut
+/// toward zero (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+/// CalcFields_AverageIntoIntegerFlowField_TruncatesTowardZero, 1.5 -> 1, -1.67 -> -1).
+fn to_number(d: Decimal, ty: &RtType, truncate_average: bool) -> Result<Value, Signal> {
+    let d = if truncate_average && !matches!(ty, RtType::Decimal) {
         d.trunc()
     } else {
         d
@@ -123,7 +125,13 @@ impl Session {
                     "CalcFields on a {n} field (streams and media are not implemented yet)"
                 ));
             }
-            return error(format!("The {} field in the {tcap} table must be a FlowField.", f.name));
+            // Captions, not names, and code DB:Ok (corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+            // CalcFields_OnANormalField_UsesTheFieldAndTableCaptions_CodeDbOk).
+            let fcap = self.field_caption(&self.engine.tables[table].clone().expect("table"), pos);
+            return error_code(
+                format!("The {fcap} field in the {tcap} table must be a FlowField."),
+                "DB:Ok",
+            );
         }
         if let Some(reason) = &f.calc_refusal {
             return unsupported(reason.clone());
@@ -174,13 +182,18 @@ impl Session {
                         && s.ty == RtType::Integer)
                 {
                     let stcap = self.table_caption(calc.table);
-                    return error(format!(
-                        "The following fields must have the same type:\n\nField: {} <-- {}\nTable: {tcap} <-- {stcap}\nType: {} <-- {}",
-                        f.name,
-                        s.name,
-                        type_name(&f.ty),
-                        type_name(&s.ty)
-                    ));
+                    // Layout and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:
+                    // CalcFields_TypeMismatch_FullTextAndCode.
+                    return error_code(
+                        format!(
+                            "The following fields must have the same type:{BR}{BR}Field: {} <-- {}{BR}Table: {tcap} <-- {stcap}{BR}Type: {} <-- {}",
+                            f.name,
+                            s.name,
+                            type_name(&f.ty),
+                            type_name(&s.ty)
+                        ),
+                        "DB:TypeMisMatch",
+                    );
                 }
             }
             ir::CalcMethod::Min | ir::CalcMethod::Max | ir::CalcMethod::Lookup => {
@@ -244,19 +257,8 @@ impl Session {
         for &p in positions {
             out.push((p, self.calc_value(rec, p, &mut Vec::new())?));
         }
-        if rec.borrow().temporary {
-            // Whether a FlowField on a temporary record reads the persistent source
-            // table or stays uncalculated is not pinned (the corpus only has a source
-            // without rows, record/TestFlowFieldContracts.al:152): refuse unless both
-            // readings agree.
-            for (p, v) in &out {
-                let same = matches!(ops::compare(v, &rec.borrow().fields[*p]), Ok(Ordering::Equal));
-                if !same {
-                    return unsupported("a FlowField calculated on a temporary record (not pinned yet)");
-                }
-            }
-            return Ok(());
-        }
+        // A FlowField on a temporary record reads the persistent source table (corpus
+        // record/TestCalcFieldsTruncateUniqueContracts.al:CalcFields_OnATemporaryRecord_ReadsThePersistentSourceTable).
         let mut r = rec.borrow_mut();
         for (p, v) in out {
             r.fields[p] = v;
@@ -269,8 +271,11 @@ impl Session {
         // Corpus record/TestCalcFormulaFlowFieldValueTests.Codeunit.al:176-221: a formula
         // that needs itself, directly or through another FlowField, is a recursion error.
         if stack.contains(&pos) {
-            return error(
-                "A FlowField formula depends on its own value. This can be caused by recursive function calls.".into(),
+            // Real BC runs out of stack: record/TestCalcFieldsTruncateUniqueContracts.al:
+            // CalcFields_SelfReferencingFormula_FullTextAndCode.
+            return error_code(
+                "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator.".into(),
+                "StackOverflow",
             );
         }
         stack.push(pos);
@@ -349,12 +354,10 @@ impl Session {
                         None => Some(v.clone()),
                         Some(b) => match (calc.method, ops::compare(v, &b)?) {
                             (M::Min, Ordering::Less) | (M::Max, Ordering::Greater) => Some(v.clone()),
-                            (M::Lookup, o) if o != Ordering::Equal => {
-                                // Which of several different rows lookup() reads depends on the
-                                // key BC picks; not pinned (every corpus lookup has one match or
-                                // matches that agree).
-                                return unsupported("lookup over matching rows that disagree");
-                            }
+                            // The first matching row in primary key order wins (corpus
+                            // record/TestCalcFieldsTruncateUniqueContracts.al:
+                            // CalcFields_Lookup_OverSeveralRows_ReadsTheFirstInPrimaryKeyOrder).
+                            (M::Lookup, _) => Some(b),
                             (_, _) => Some(b),
                         },
                     };

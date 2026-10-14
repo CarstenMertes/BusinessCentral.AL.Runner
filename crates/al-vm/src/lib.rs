@@ -203,6 +203,14 @@ pub struct Session {
     /// page saving a row passes its own xRec (corpus
     /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
     pub(crate) page_xrec: Option<Vec<Value>>,
+    /// A duplicate-key Insert into a table without a Blob field does not fail where it is
+    /// called: the table (object index) and the error come out at the next access to the table
+    /// or at Commit (corpus record/TestRecordRuntimeTextsAndViews.al:
+    /// Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_AndSurfacesAtTheNextAccess).
+    pub(crate) deferred_insert: Option<(usize, AlError)>,
+    /// Set while the page client or an XmlPort import writes a record: their duplicate-key
+    /// errors are raised at once (their own tests pin it), not deferred like an AL `Insert`.
+    pub(crate) immediate_errors: bool,
     /// The transaction model of the running test method (set by the test runner).
     pub tx_model: TxModel,
     /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
@@ -306,6 +314,8 @@ impl Session {
             trap: None,
             bg_worker: None,
             page_xrec: None,
+            deferred_insert: None,
+            immediate_errors: false,
             tx_model: TxModel::default(),
             tx_world: 0,
             commit_behavior: Default::default(),
@@ -327,6 +337,7 @@ impl Session {
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
     pub fn commit_transaction(&mut self) {
+        self.deferred_insert = None;
         al_data::Store::commit(&mut self.store);
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
@@ -337,6 +348,7 @@ impl Session {
     /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
     /// those a Truncate of this transaction changed.
     pub fn rollback_transaction(&mut self) {
+        self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
@@ -471,11 +483,15 @@ impl Session {
             )));
         }
         self.depth += 1;
+        // The builtin being run (a record write that runs triggers and events) keeps its own
+        // `ret_used`: the callee's builtins must not change it.
+        let ret_used = self.ret_used;
         let r = if self.engine.events.publishers.contains_key(&(object, routine)) {
             self.publish(object, routine, instance, args)
         } else {
             self.call_inner(object, routine, instance, args)
         };
+        self.ret_used = ret_used;
         self.depth -= 1;
         r
     }

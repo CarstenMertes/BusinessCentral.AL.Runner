@@ -1109,7 +1109,10 @@ impl Session {
             let rec = self.page_rec(st);
             rec.borrow_mut().fields = fields;
             self.ret_used = false;
-            self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
+            self.immediate_errors = true;
+            let inserted = self.record_op("Insert", &rec, &mut [Value::Boolean(true)]);
+            self.immediate_errors = false;
+            inserted?;
         }
         match self.save_row(st) {
             Err(Signal::Error(e)) if swallow_save_errors => {
@@ -2374,7 +2377,10 @@ impl Session {
         }
         self.auto_split_key(st)?;
         self.ret_used = false;
-        self.record_op("Insert", &rec, &mut [Value::Boolean(true)])?;
+        self.immediate_errors = true;
+        let inserted = self.record_op("Insert", &rec, &mut [Value::Boolean(true)]);
+        self.immediate_errors = false;
+        inserted?;
         {
             let mut s = st.borrow_mut();
             s.draft = false;

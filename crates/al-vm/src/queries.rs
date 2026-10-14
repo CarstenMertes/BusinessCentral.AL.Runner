@@ -640,7 +640,8 @@ impl Session {
         }
         let mut rows: Vec<Vec<Value>> = Vec::new();
         if !parent_missing {
-            self.each_row(&t, &filters, |row| {
+            let cx = self.cx.clone();
+            self.each_row(&cx, &t, &filters, |row| {
                 rows.push(row.to_vec());
                 Ok(())
             })?;

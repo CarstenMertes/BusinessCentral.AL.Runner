@@ -153,7 +153,7 @@ impl Session {
                 },
             });
         }
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, &related)?;
         let found = self
             .store
             .count(&cx, &related, &filters)

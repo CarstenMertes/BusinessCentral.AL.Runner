@@ -292,7 +292,7 @@ impl Session {
         let filters = self.calc_filters(rec, calc, stack)?;
         let src_t = self.engine.tables[calc.table].clone().expect("table");
         self.unseeded_read(&src_t, rec.borrow().temporary, "a FlowField")?;
-        let cx = self.cx.clone();
+        let cx = self.cx_for(rec, &src_t)?;
         let store_err = |e: al_data::StoreError| Signal::Unsupported(format!("store error {e:?}"));
         use ir::CalcMethod as M;
         let value = match calc.method {
@@ -322,7 +322,7 @@ impl Session {
             M::Sum | M::Average => {
                 let at = calc.field.expect("field");
                 let (mut sum, mut n) = (Decimal::ZERO, 0i64);
-                self.each_row(&src_t, &filters, |row| {
+                self.each_row(&cx, &src_t, &filters, |row| {
                     sum += number(&row[at]).ok_or_else(|| Signal::Unsupported("sum over a non-number".into()))?;
                     n += 1;
                     Ok(())
@@ -348,7 +348,7 @@ impl Session {
                     return unsupported("a sign on min, max or lookup");
                 }
                 let mut best: Option<Value> = None;
-                self.each_row(&src_t, &filters, |row| {
+                self.each_row(&cx, &src_t, &filters, |row| {
                     let v = &row[at];
                     best = match best.take() {
                         None => Some(v.clone()),
@@ -468,17 +468,17 @@ impl Session {
     /// Calls `f` on every row of `t` passing `filters`, in primary key order.
     pub(crate) fn each_row(
         &mut self,
+        cx: &al_data::AccessContext,
         t: &TableDef,
         filters: &[FieldFilter],
         mut f: impl FnMut(&[Value]) -> Result<(), Signal>,
     ) -> Result<(), Signal> {
-        let cx = self.cx.clone();
         let mut after: Option<Vec<Value>> = None;
         loop {
             let next = self
                 .store
                 .next(
-                    &cx,
+                    cx,
                     t,
                     &Scan {
                         key: 0,
@@ -515,7 +515,8 @@ impl Session {
             return unsupported("CalcSums with a filter on a FlowField");
         }
         let mut sums = vec![Decimal::ZERO; positions.len()];
-        self.each_row(&t, &filters, |row| {
+        let cx = self.cx_for(rec, &t)?;
+        self.each_row(&cx, &t, &filters, |row| {
             for (s, &p) in sums.iter_mut().zip(positions) {
                 *s += number(&row[p]).ok_or_else(|| Signal::Unsupported("sum over a non-number".into()))?;
             }

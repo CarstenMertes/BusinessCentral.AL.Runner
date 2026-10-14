@@ -116,6 +116,38 @@ impl MemStore {
             .collect()
     }
 
+    /// Whether `company` holds a row in any per-company table, committed or not.
+    pub fn has_company_rows(&self, company: &str) -> bool {
+        self.tables
+            .iter()
+            .any(|((c, _), t)| !c.is_empty() && c.eq_ignore_ascii_case(company) && !t.is_empty())
+    }
+
+    /// The companies that hold a row in per-company table `object`, committed or not.
+    pub fn companies_with_rows(&self, object: u32) -> Vec<String> {
+        self.tables
+            .iter()
+            .filter(|((c, o), t)| *o == object && !c.is_empty() && !t.is_empty())
+            .map(|((c, _), _)| c.clone())
+            .collect()
+    }
+
+    /// Removes every row of `company`'s tables, as deleting the company does. Part of the open
+    /// transaction: a rollback puts the rows back.
+    pub fn drop_company(&mut self, company: &str) {
+        let doomed: Vec<(String, u32)> = self
+            .tables
+            .keys()
+            .filter(|(c, _)| !c.is_empty() && c.eq_ignore_ascii_case(company))
+            .cloned()
+            .collect();
+        for slot in doomed {
+            self.tables.remove(&slot);
+            self.counter += 1;
+            self.versions.insert(slot, self.counter);
+        }
+    }
+
     /// A number that changes whenever the rows of table `t` change (a rollback included). Queries
     /// compare it to tell whether their result set is stale (corpus query/TestQueryReadAfterWrite.al).
     pub fn table_stamp(&self, cx: &AccessContext, t: &TableDef) -> u64 {
@@ -306,6 +338,40 @@ mod tests {
     #[test]
     fn passes_the_store_contract() {
         crate::contract::run_all(MemStore::default);
+    }
+
+    #[test]
+    fn dropping_a_company_removes_its_rows_and_a_rollback_restores_them() {
+        let cx = |c: &str| AccessContext {
+            company: c.into(),
+            user: "U".into(),
+        };
+        let t = TableDef {
+            object: 7,
+            name: "T".into(),
+            fields: vec![FieldDef {
+                id: 1,
+                name: "K".into(),
+                ty: al_builtins::value::RtType::Integer,
+                stored: true,
+            }],
+            keys: vec![vec![0]],
+            per_company: true,
+        };
+        let mut s = MemStore::default();
+        s.insert(&cx("A"), &t, vec![Value::Integer(1)]).unwrap();
+        s.insert(&cx("B"), &t, vec![Value::Integer(1)]).unwrap();
+        s.commit();
+        assert!(s.has_company_rows("a"));
+        assert_eq!(s.companies_with_rows(7).len(), 2);
+        let before = s.table_stamp(&cx("B"), &t);
+        s.drop_company("B");
+        assert!(!s.has_company_rows("B") && s.has_company_rows("A"));
+        assert_eq!(s.count(&cx("B"), &t, &[]).unwrap(), 0);
+        assert_eq!(s.count(&cx("A"), &t, &[]).unwrap(), 1);
+        assert_ne!(s.table_stamp(&cx("B"), &t), before, "queries see the change");
+        s.rollback();
+        assert_eq!(s.count(&cx("B"), &t, &[]).unwrap(), 1);
     }
 
     #[test]

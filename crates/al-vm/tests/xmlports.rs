@@ -929,7 +929,15 @@ fn a_failing_statement_import_raises_the_evaluate_error() {
 
 #[test]
 fn xmlports_the_runtime_cannot_run_are_refused_before_they_start() {
-    let r = refusal("P: XmlPort \"ALT Request Page XmlPort\";", "exit('');");
+    // Declaring the port is fine; running it is refused before anything of it starts.
+    assert_eq!(
+        text("P: XmlPort \"ALT Request Page XmlPort\";", "exit('declared');"),
+        "declared"
+    );
+    let r = refusal(
+        "P: XmlPort \"ALT Request Page XmlPort\"; B: Record \"ALT Blob\"; OutStr: OutStream;",
+        "B.Code := 'X'; B.Insert(); B.Data.CreateOutStream(OutStr); P.SetDestination(OutStr); P.Export(); exit('ran');",
+    );
     assert!(r.contains("request page"), "{r}");
 }
 

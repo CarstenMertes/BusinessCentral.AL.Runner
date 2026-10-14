@@ -233,7 +233,7 @@ impl Session {
             "RecordLevelLocking" => Ok(Value::Boolean(true)),
             "ReadPermission" | "WritePermission" => Ok(Value::Boolean(true)),
             "CountApprox" => self.record_op("Count", rec, &mut []),
-            "CurrentCompany" => Ok(Value::Text(self.cx.company.clone())),
+            "CurrentCompany" => Ok(Value::Text(self.current_company_of(rec))),
             "ReadIsolation" | "SecurityFiltering" => {
                 let (enum_name, is_iso) = if method == "ReadIsolation" {
                     ("IsolationLevel", true)
@@ -292,17 +292,9 @@ impl Session {
             // (SetAscending(Amount, false) makes FindFirst return the largest), :158-181
             // (GetAscending). A field of a longer key, or outside the key, has a direction of its
             // own that is not pinned.
-            // The session company is the one company this runtime has; any other needs the Company
-            // table, which is outside the workspace (ADR-013). A record on the session company
-            // keeps its rows (record/TestSecurityFilteringContracts.al:108-138,
-            // TestRecordChangeCompanyRows.al:115).
-            "ChangeCompany" => match args.first().and_then(al_builtins::native::text_of) {
-                Some(name) if name == self.cx.company => Ok(Value::Boolean(true)),
-                Some(name) => unsupported(format!(
-                    "ChangeCompany to `{name}`: a company other than the session company needs the Company table"
-                )),
-                None => unsupported("ChangeCompany without a company name (not pinned)"),
-            },
+            // The companies are the session company and the rows of the Company table; a record in
+            // another company reads and writes that company's rows (record/TestRecordChangeCompanyRows.al).
+            "ChangeCompany" => self.change_company(rec, args),
             "SetAscending" | "GetAscending" => {
                 let pos = arg_pos(args, 0)?;
                 if t.keys[rec.borrow().key] != [pos] {
@@ -410,6 +402,9 @@ impl Session {
                 let s = src.borrow().clone();
                 if s.field_descending {
                     return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
+                }
+                if s.company != rec.borrow().company {
+                    return unsupported("Copy between records of different companies (not pinned)");
                 }
                 let mut d = rec.borrow_mut();
                 // shareTable needs both records temporary; a plain Copy of a temporary record onto

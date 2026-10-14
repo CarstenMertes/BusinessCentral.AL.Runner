@@ -15,6 +15,7 @@ mod baseline;
 pub use baseline::Baseline;
 pub use faultsite::FaultFrame;
 mod callstack;
+mod companies;
 mod dispatch;
 pub mod dotnet;
 mod errorcollect;
@@ -191,6 +192,8 @@ pub struct Session {
     /// Try functions on the call stack (Truncate is refused inside them).
     pub(crate) try_depth: usize,
     pub(crate) cx: al_data::AccessContext,
+    /// The tables that held a row when the install baseline was captured (none without one).
+    pub(crate) baseline_rows: std::collections::BTreeSet<u32>,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
     /// Manual event subscriptions made by `BindSubscription`.
@@ -322,6 +325,7 @@ impl Session {
             validating: Vec::new(),
             try_depth: 0,
             cx: al_data::AccessContext { company, user },
+            baseline_rows: Default::default(),
             ret_used: true,
             bindings: Vec::new(),
             error_finals: None,
@@ -415,6 +419,7 @@ impl Session {
                     table: *table,
                     temporary: *temporary,
                     temp_id,
+                    company: None,
                     fields: self.initial_fields(*table as usize),
                     filters: Vec::new(),
                     filter_group: 0,

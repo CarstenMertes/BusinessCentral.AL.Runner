@@ -406,6 +406,9 @@ pub struct RecordState {
     pub temporary: bool,
     /// Identity of the private table behind a temporary record (shared by `Copy(x, true)`).
     pub temp_id: Option<u64>,
+    /// The company set by `ChangeCompany` or `RecordRef.Open(.., Company)`, as the Company table
+    /// names it; `None` is the session company.
+    pub company: Option<String>,
     /// Field values in the table's field order.
     pub fields: Vec<Value>,
     pub filters: Vec<crate::filter::FieldFilter>,

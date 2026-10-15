@@ -1,5 +1,5 @@
 //! Tests-ERM refusals of issue 27: `FindFirst` on an empty set without using the result, a text filter
-//! on a DateFormula field, a Boolean as a `for` bound and `TestField` of a Blob field. No corpus test
+//! on a DateFormula field and `TestField` of a Blob field. No corpus test
 //! pins any of them (the corpus has no `asserterror` on `FindFirst`, no filter on a DateFormula field,
 //! no `for ... := false to true` and no `TestField` of a Blob), so each is refused with a reason that
 //! names the open question and `docs/probes-needed.md`.
@@ -61,11 +61,7 @@ fn a_text_filter_on_a_date_formula_field_is_refused_with_its_reason() {
     names_the_open_question(&why, &["SetFilter", "DateFormula"]);
 }
 
-#[test]
-fn a_for_loop_over_a_boolean_is_refused_with_its_reason() {
-    let why = why_not_run("[Test] procedure T3() var B: Boolean; begin for B := false to true do; end;");
-    names_the_open_question(&why, &["for", "Boolean"]);
-}
+// A Boolean `for` loop was refused here; it runs now (registry entry for-boolean, blocked_set_3.rs).
 
 #[test]
 fn test_field_of_a_blob_field_is_refused_with_its_reason() {

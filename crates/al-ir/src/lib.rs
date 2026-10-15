@@ -4,6 +4,9 @@
 use al_builtins::value::RtType;
 use serde::{Deserialize, Serialize};
 
+mod objkind;
+pub use objkind::{ObjKind, UnknownKind};
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Program {
     pub objects: Vec<Object>,

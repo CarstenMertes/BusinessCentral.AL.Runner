@@ -16,7 +16,7 @@
 use super::registry::{MemberFn, MemberKind, MemberRefFn, Pin, RegistryMember, RegistryType};
 use crate::Session;
 use al_builtins::dotnet_sigs::{
-    AL_CONFIG_SETTINGS, GRAPH_QUERY, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER,
+    AL_CONFIG_SETTINGS, GRAPH_QUERY, TENANT_INFO, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER,
 };
 use al_builtins::native::Signal;
 use al_builtins::value::{DotNetKind, DotNetObject, Value};
@@ -340,6 +340,32 @@ fn graph_first_group(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> 
     graph_null_reference("FindFirstGroupInfoForDisplayName")
 }
 
+/// `GetCurrentUser()` on a tier without Entra ID returns without an error and leaves the UserInfo null (probe agent,
+/// BC 29.0.54011.55816, OnPrem codeunit 61296, tests/al-language-onprem/session/PZAzureAdUser.al): Microsoft's
+/// `InitializeGraphUser` then asks for the authentication object id of the session user.
+fn graph_current_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "GraphQuery.GetCurrentUser")?;
+    Ok(Value::Null)
+}
+
+/// `GetTenantDetail()` answers a TenantInfo whose three strings are empty (see `TENANT_INFO_PIN`).
+fn graph_tenant_detail(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "GraphQuery.GetTenantDetail")?;
+    Ok(Value::DotNet(Rc::new(DotNetObject::new(DotNetKind::Internal {
+        type_name: TENANT_INFO.into(),
+        state: RefCell::new(Vec::new()),
+    }))))
+}
+
+/// Microsoft's Azure AD Tenant Impl. raises "Failed to retrieve ..." for a null TenantInfo, and the corpus test
+/// expects '' from `GetAadTenantDomainName`, `GetCountryLetterCode` and `GetPreferredLanguage`.
+const TENANT_INFO_PIN: &str = "session/TestEnvironmentUserTenantContracts.al:213-232 (GetAadTenantDomainName, GetCountryLetterCode and GetPreferredLanguage answer '' without an error)";
+
+fn tenant_info_empty_text(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "TenantInfo member")?;
+    Ok(Value::Text(String::new()))
+}
+
 fn graph_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
     graph_null_reference("GetUser")
 }
@@ -448,8 +474,28 @@ pub fn types() -> Vec<RegistryType> {
                     g("GetGroupInfo", graph_group_info),
                     g("FindFirstGroupInfoForDisplayName", graph_first_group),
                     g("GetUser", graph_user),
+                    member(
+                        "GetTenantDetail",
+                        Pin::Corpus(TENANT_INFO_PIN.into()),
+                        graph_tenant_detail,
+                    ),
+                    member(
+                        "GetCurrentUser",
+                        Pin::Probe(
+                            "probe tests/al-language-onprem/session/PZAzureAdUser.al (corpus branch al-runtime-rs-staging; BC 29.0.54011.55816)"
+                                .into(),
+                        ),
+                        graph_current_user,
+                    ),
                 ]
             },
+        },
+        RegistryType {
+            clr_name: TENANT_INFO.into(),
+            members: ["InitialDomain", "CountryLetterCode", "PreferredLanguage"]
+                .into_iter()
+                .map(|n| member(n, Pin::Corpus(TENANT_INFO_PIN.into()), tenant_info_empty_text))
+                .collect(),
         },
         RegistryType {
             clr_name: TEST_EXECUTION.into(),

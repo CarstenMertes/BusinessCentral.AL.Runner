@@ -1043,21 +1043,6 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
             place,
         });
     }
-    // Items added at one place (the same position under the same parent) run in declaration order
-    // for `addfirst` and `addbefore` (corpus reportextensiontrigger/TestReportExtensionSamePlaceContracts.al:251,
-    // X1 X2 ChildA and G1 F1 F2). After the anchor, and last under a parent, no test pins it.
-    for (i, a) in added.iter().enumerate() {
-        if matches!(a.place, ir::AddedPlace::After(_))
-            && added[..i]
-                .iter()
-                .any(|b| b.place == a.place && b.base_parent == a.base_parent && b.item.parent == a.item.parent)
-        {
-            reasons.push(format!(
-                "two data items added at the same place ({}): their order is not pinned",
-                a.item.name
-            ));
-        }
-    }
     let aliases = (0..n)
         .filter(|&i| cx.base_items[i].slot.is_some())
         .map(|i| (i, alias_slot(i)))

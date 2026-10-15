@@ -1051,7 +1051,21 @@ impl Run {
                     };
                     match at(&out, anchor) {
                         Some(p) => {
-                            out.insert(p + usize::from(after), ItemRef::Added(k, c));
+                            // Items one extension adds after the same anchor keep their declaration
+                            // order (ChildA, Z1, Z1b), so a later one goes behind those already
+                            // placed there; the later extension's items still stand nearest the
+                            // anchor (corpus reportextensiontrigger/TestReportExtensionSamePlaceContracts.al:251).
+                            let mut q = p + usize::from(after);
+                            if after {
+                                while let Some(ItemRef::Added(kk, cc)) = out.get(q) {
+                                    if *kk == k && x.added[*cc].place == x.added[c].place {
+                                        q += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            out.insert(q, ItemRef::Added(k, c));
                             false
                         }
                         None => true,

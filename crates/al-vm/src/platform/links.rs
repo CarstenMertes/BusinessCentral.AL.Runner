@@ -84,6 +84,21 @@ impl Session {
         t: &TableDef,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        // The record operations below are the runtime's own: each answers its result, whether or not the caller
+        // used the result of the link method (an unused FindSet of no row would raise an error).
+        let used = std::mem::replace(&mut self.ret_used, true);
+        let r = self.record_links_inner(method, rec, t, args);
+        self.ret_used = used;
+        r
+    }
+
+    fn record_links_inner(
+        &mut self,
+        method: &str,
+        rec: &Rec,
+        t: &TableDef,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
         if rec.borrow().company.is_some() {
             return unsupported(format!("{method} on a record in another company (not pinned)"));
         }

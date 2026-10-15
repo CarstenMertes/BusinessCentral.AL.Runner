@@ -283,6 +283,26 @@ codeunit 50000 "T" { Subtype = Test;
     passes(&o, "AddHasDelete");
 }
 
+// Gen. Jnl.-Post Line PostBankAcc does `BankAccLedgEntry.CopyLinks(GenJnlLine)` for a journal line without links, in
+// about 330 Microsoft tests: the copy of nothing is nothing, not the "There is no Record Link within the filter" error
+// an unused FindSet would raise.
+#[test]
+fn copying_the_links_of_a_record_without_links_copies_nothing() {
+    let o = outcomes(
+        r#"table 50001 "Host" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure CopyNothing() var A: Record "Host"; B: Record "Host"; begin
+    A."No." := 1; A.Insert(); B."No." := 2; B.Insert();
+    B.CopyLinks(A);
+    if B.HasLinks() then Error('links appeared');
+    A.AddLink('https://example.com', 'D');
+    B.CopyLinks(A);
+    if not B.HasLinks() then Error('links not copied');
+  end; }"#,
+    );
+    passes(&o, "CopyNothing");
+}
+
 #[test]
 fn date_and_time_zone_and_windows_language_answer_from_their_pins() {
     let o = outcomes(
@@ -673,6 +693,19 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Present");
     passes(&o, "TenantRow");
+}
+
+/// Base Application's `profile "ORDER PROCESSOR"` names its role center by page id (`RoleCenter = 9006;`): the row
+/// exists with that id (about 320 Microsoft tests start with `AllProfile.SetRange("Profile ID", 'ORDER PROCESSOR')`).
+#[test]
+fn a_profile_that_names_its_role_center_by_page_id_is_a_row() {
+    let o = outcomes(
+        r#"page 50001 "Center" { PageType = RoleCenter; }
+profile "BY ID" { RoleCenter = 50001; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ById() var P: Record "All Profile"; begin P.SetRange("Profile ID", 'BY ID'); P.FindFirst(); if P."Role Center ID" <> 50001 then Error('role center %1', P."Role Center ID"); end; }"#,
+    );
+    passes(&o, "ById");
 }
 
 /// A platform table nothing provides rows for is still a table: a temporary record of it holds what

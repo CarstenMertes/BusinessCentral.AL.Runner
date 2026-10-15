@@ -5114,7 +5114,9 @@ impl Lowerer<'_> {
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
                         continue;
                     }
-                    let field_param = p.name.to_ascii_lowercase().starts_with("field")
+                    // A parameter named Field... that is an Integer takes the number as a VALUE (`RecRef.Field(Buf."Field No.")`,
+                    // `RecRef.FieldExist(R.Number)`); a field reference is passed for a parameter that names a field.
+                    let field_param = (p.name.to_ascii_lowercase().starts_with("field") && p.ty != "Integer")
                         || p.name.eq_ignore_ascii_case("FromField")
                         || p.name.to_ascii_lowercase().starts_with("column");
                     match (field_param, self.res(a).cloned()) {

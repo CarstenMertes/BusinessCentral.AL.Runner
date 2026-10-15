@@ -1002,7 +1002,7 @@ impl Session {
                 // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; documented
                 // assumption, docs/probes-needed.md).
                 let bound = |v: Value| match v {
-                    Value::Option(o, _) => Value::Integer(o),
+                    Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(o),
                     v => v,
                 };
                 let (from, to) = (bound(from), bound(to));
@@ -1017,7 +1017,9 @@ impl Session {
                         Err(Signal::Continue) => {}
                         r => r?,
                     }
-                    i = int(&self.read(var, f)?)?;
+                    // The counter is read back from the variable, which may be an Option (an Option field as the
+                    // loop variable, Sales Price Calc. Mgt.): its ordinal.
+                    i = int(&bound(self.read(var, f)?))?;
                     i += if *down { -1 } else { 1 };
                 }
                 Ok(())

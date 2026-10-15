@@ -187,6 +187,11 @@ impl Session {
             | Value::Guid(_)
             | Value::Date(..)
             | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
+            // A RecordId reads as Format gives it (`Table: key`, record/TestProbeRecordRefContracts.al:472-502); that an
+            // error message shows it the same way is assumed (docs/probes-needed.md).
+            Value::Library(name, _) if name == "RecordId" => {
+                al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported)
+            }
             other => unsupported(format!("a {} value in an error message", other.describe())),
         }
     }

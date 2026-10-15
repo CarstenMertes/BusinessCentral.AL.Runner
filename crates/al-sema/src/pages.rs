@@ -31,7 +31,16 @@ impl PropType {
 }
 
 /// Section names whose properties belong to a page control.
-const CONTROL_SECTIONS: &[&str] = &["field", "group", "repeater", "part", "action", "systemaction", "modify"];
+const CONTROL_SECTIONS: &[&str] = &[
+    "field",
+    "group",
+    "repeater",
+    "part",
+    "action",
+    "systemaction",
+    "modify",
+    "label",
+];
 
 /// The type a property evaluates to, when it is one the client evaluates.
 pub fn dynamic_type(prop: &str) -> Option<PropType> {
@@ -929,6 +938,16 @@ mod tests {
         // Names count from the start of the object (here: 0).
         assert_eq!(names, vec![synthetic_name("visible", vis), synthetic_name("source", c)]);
         assert!(out.starts_with(&src[..src.len() - 1]), "original text is only added to");
+    }
+
+    // Microsoft's page "Check Credit Limit" has `label(Control2) { CaptionClass = Format(StrSubstNo(Text000, Heading)); }`,
+    // reached by Cust-Check Cr. Limit in ~850 Microsoft tests: a label is a control with expression properties.
+    #[test]
+    fn a_label_with_an_expression_caption_class_gets_a_routine() {
+        let src = "page 50100 P { layout { area(Content) { label(Control2) { CaptionClass = Format(StrSubstNo(Text000, Heading)); } } } var Heading: Text; Text000: Label 'x %1'; }";
+        let out = expand(src, &Default::default()).expect("a label with an expression");
+        let at = src.find("CaptionClass").unwrap();
+        assert_eq!(routines(&out), vec![synthetic_name("captionclass", at)]);
     }
 
     #[test]

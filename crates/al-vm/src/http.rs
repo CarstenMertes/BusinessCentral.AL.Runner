@@ -6,6 +6,7 @@
 
 use crate::Session;
 use al_builtins::assumptions::{Assumption, assume};
+use al_builtins::describe::Describe;
 use al_builtins::http::{fresh_test_response, split_url};
 use al_builtins::native::{HttpOutgoing, Signal, raise};
 use al_builtins::value::{LibraryValue, TestHttpRequestState, TestHttpResponseState, Value};
@@ -108,7 +109,7 @@ impl Session {
                     "an [HttpClientHandler] answered true: BC then sends the request for real; the runtime never opens a connection (ADR-027)",
                 );
             }
-            other => return unsupported(format!("an [HttpClientHandler] that answers {other:?}")),
+            other => return unsupported(format!("an [HttpClientHandler] that answers {}", other.describe())),
         }
         match resp {
             Value::Library(_, cell) => match &*cell.borrow() {

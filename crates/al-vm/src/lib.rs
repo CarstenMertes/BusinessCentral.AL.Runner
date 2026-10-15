@@ -796,6 +796,19 @@ impl Session {
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
+                // An array passed by value is a copy: the callee's writes and Clear do not reach the caller
+                // (misc/W5Clear.al:Clear_ArrayPassedByValue).
+                (Value::Array(a), false) => {
+                    let items: Vec<Value> = a
+                        .borrow()
+                        .iter()
+                        .map(|v| match v {
+                            Value::Record(rc) => self.record_by_value(rc),
+                            other => other.clone(),
+                        })
+                        .collect();
+                    Value::Array(Rc::new(RefCell::new(items)))
+                }
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }
@@ -2097,6 +2110,9 @@ impl al_builtins::native::Ctx for Session {
         self.temp_files += 1;
         format!("{}{}.tmp", al_builtins::file::TEMP_DIR, self.temp_files)
     }
+    fn session_profile(&self) -> Option<(String, [u8; 16], String)> {
+        self.personalization_of_session_user()
+    }
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         Some((
             self.global_language,
@@ -2115,7 +2131,11 @@ impl al_builtins::native::Ctx for Session {
             .program
             .apps
             .get(self.engine.program.objects[obj].app as usize)?;
-        Some((app.name.clone(), app.resources.clone()))
+        // BC names the app `<name> by <publisher> <version>` (session/W5NavAppResources.al:GetResourceAsText_NameMatching).
+        Some((
+            format!("{} by {} {}", app.name, app.publisher, app.version),
+            app.resources.clone(),
+        ))
     }
     fn runner_call_stack(&self) -> String {
         self.runner_frames.clone()
@@ -2135,13 +2155,22 @@ impl al_builtins::native::Ctx for Session {
     fn application_module(&self) -> al_builtins::value::ModuleInfoState {
         let bc = self.engine.target.as_ref().map(|t| &t.bc);
         let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
+        // Build and revision of the base application are not zero (session/W5ModuleInfo.al:
+        // ModuleInfo_NullId_Properties); the artifact's own numbers when the run knows them, else 1.
+        let (build, revision) = bc
+            .and_then(|b| b.build.as_deref())
+            .and_then(|s| {
+                let n: Vec<i32> = s.split('.').filter_map(|p| p.parse().ok()).collect();
+                (n.len() >= 2).then(|| (n[n.len() - 2], n[n.len() - 1]))
+            })
+            .unwrap_or((1, 1));
         al_builtins::value::ModuleInfoState {
             // The module BC answers for the null app id: the base application W1 (session/
             // TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
             id: [0; 16],
             name: "W1".into(),
             publisher: "Microsoft".into(),
-            version: Some([major, minor, 0, 0]),
+            version: Some([major, minor, build, revision]),
             dependencies: Vec::new(),
             synthesized: true,
         }
@@ -2197,7 +2226,7 @@ impl al_builtins::native::Ctx for Session {
     fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
         Session::ui_str_menu(self, options, default, instruction)
     }
-    fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+    fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
         Session::ui_session_settings(self, settings)
     }
     fn ui_send_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<Option<Value>, Signal> {

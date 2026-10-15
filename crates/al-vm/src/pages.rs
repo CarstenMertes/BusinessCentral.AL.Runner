@@ -1143,7 +1143,9 @@ impl Session {
         let result = (|| {
             // A `Page` variable whose procedure ran before this open was constructed then, and its
             // OnInit has run (handlers/TestPageOnInit_Tests.al:188).
-            if !std::mem::take(&mut st.borrow_mut().inited) {
+            // A second run of the same variable does not run OnInit again (controls/W2PageVariableInit.al:
+            // PageVariable_RunModalTwice, BC 27.5 and 29.0); a reopened TestPage is a fresh page (`page_open`).
+            if !std::mem::replace(&mut st.borrow_mut().inited, true) {
                 self.page_trigger(st, "oninit", vec![])?;
             }
             // `Editable(false)` on the variable before it runs applies after OnInit: OnInit still
@@ -2538,10 +2540,10 @@ impl Session {
         }
         let mut key = origin;
         self.page_go_to_key(st, &mut key)?;
-        // A FindFirstField whose result is not used raises when no row carries the value
-        // (handlers/TestPagePlatformPageSourceTable_Tests.al:125-131, the whole message). The same
-        // for FindNextField and FindPreviousField is not pinned: they keep answering false.
-        if how == "FindFirstField" && !result_used {
+        // A Find...Field whose result is not used raises when no row carries the value
+        // (handlers/TestPagePlatformPageSourceTable_Tests.al:125-131, the whole message; controls/W2FindFieldAssign.al:
+        // FindNextField_MissWithResultUnused and FindPreviousField_MissWithResultUnused, BC 27.5 and 29.0).
+        if !result_used {
             return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
         }
         Ok(Value::Boolean(false))
@@ -3175,6 +3177,7 @@ impl Session {
         let caption = self.control_caption(st, idx)?;
         let fmt = al_builtins::pagefmt::ControlFormat {
             work_date: self.work_date_day(),
+            today: Some(self.today_day_number()),
             ..self.control_format(st, idx)?
         };
         let arg = args.first().cloned().unwrap_or(Value::Null);
@@ -3199,7 +3202,9 @@ impl Session {
                 })
                 .map(|(v, _)| *v)
         };
-        let suffix = if rec_bound {
+        // Without a row on the page there is nothing to refresh (controls/W2ValueControls.al:Enum_RecordFieldControl_*).
+        let no_row = self.shows_no_row(st, idx);
+        let suffix = if rec_bound && !no_row {
             " (Select Refresh to discard errors)"
         } else {
             ""
@@ -3222,8 +3227,26 @@ impl Session {
         let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
-                let msg = format!("Your entry of '{text}' is not an acceptable value for '{caption}'.");
-                return Err(refuse(self, msg));
+                let mut msg = format!("Your entry of '{text}' is not an acceptable value for '{caption}'.");
+                // A Date adds how the client reads one (controls/W2ValueControls.al:Date_IsoSpellings and
+                // session/W5WorkDateShorthand.al, BC 27.5 and 29.0); the text holds a CR, a backslash, a CR and
+                // a backslash where one would expect line breaks.
+                // An Integer variable adds why (controls/W2FindFieldAssign.al:ValueAssign_IntegerControl_TextAndNonNumber).
+                if !rec_bound && matches!(ty, RtType::Integer) {
+                    msg.push_str(&format!(" The value \"{text}\" can't be evaluated into type Integer."));
+                }
+                if matches!(ty, RtType::Date) {
+                    msg.push_str(&format!(
+                        " The format of the Date '{text}' does not match your device's date settings.\r\\\r\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+                    ));
+                }
+                // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
+                // Enum_VariableControl_*); one bound to a table field keeps the empty code.
+                return Err(if rec_bound && !no_row {
+                    refuse(self, msg)
+                } else {
+                    refuse_bound(msg)
+                });
             }
             Err(al_builtins::pagefmt::ParseError::Unsupported) => {
                 return unsupported(format!(
@@ -3232,6 +3255,11 @@ impl Session {
                 ));
             }
         };
+        // The entry is read before the row is looked for: a refused entry is a validation error, an acceptable one on
+        // a page without a row is TestRowNotFound (controls/W2ValueControls.al:Enum_RecordFieldControl_CaptionAndNames).
+        if self.shows_no_row(st, idx) {
+            return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+        }
         // A Text variable given too many characters (handlers/TestPageVariableMinMaxContracts.al:119).
         // A table field's overlong text is not pinned.
         if let (RtType::Text(Some(max)), Value::Text(t), false) = (&ty, &parsed, rec_bound) {
@@ -3401,9 +3429,16 @@ impl Session {
                     // ListWithAnEditableCardPageIdEnablesBothActions).
                     let edit = name == "Edit";
                     let card = self.list_card_page(st)?;
+                    // A list without a card switches the mode of its own page, as a card does: opened for view,
+                    // Edit is enabled and View is not; opened for edit, the other way round. A list that names a
+                    // card with no row to open it for has both disabled (misc/W2ListActions.al:NoCard_WithRows,
+                    // List_NoRows, BC 27.5 and 29.0).
+                    let no_rows = st.borrow().cursor == Cursor::None;
+                    let editable = st.borrow().mode != PageMode::View;
                     let enabled = match (edit, card) {
+                        (_, None) => edit == !editable,
+                        (_, Some(_)) if no_rows => false,
                         (false, _) => true,
-                        (true, None) => false,
                         (true, Some(target)) => self.card_allows_edit(target)?,
                     };
                     return match m {
@@ -3537,6 +3572,13 @@ impl Session {
                     return Ok(Value::Text(String::new().into()));
                 }
                 let v = self.control_value(st, idx)?;
+                // An Enum control that refused an entry shows the ordinal, not the caption (controls/W2ValueControls.al:
+                // Enum_VariableControl_*, `value` 0 after a refused `Alpha`, BC 27.5 and 29.0).
+                if let Value::Enum(_, ordinal) = &v {
+                    if st.borrow().errors.iter().any(|(i, _)| *i == idx) {
+                        return Ok(Value::Text(ordinal.to_string().into()));
+                    }
+                }
                 let text = self.control_text(st, idx, &v)?;
                 Ok(Value::Text(text.into()))
             }
@@ -3727,8 +3769,20 @@ impl Session {
             self.call(object, routine, inst, vec![Value::Text(shown.into())])
                 .and_then(|(v, finals)| match (v, finals.first()) {
                     (Value::Boolean(true), Some(Value::Text(t))) => {
-                        // Written back as the client would type it.
-                        self.control_set_value(st, idx, &mut [Value::Text(t.clone())])
+                        // Written back as the client would type it. The OnLookup of a page extension's modify block
+                        // leaves a Code field in the case it wrote (`Text := 'FromExt'` reads back FromExt), the page's
+                        // own trigger does not (FROMCTL) (lookups/W2Lookups.al:
+                        // ModifyBlockOnLookup_ReturnsTrue, BC 27.5 and 29.0).
+                        let r = self.control_set_value(st, idx, &mut [Value::Text(t.clone())]);
+                        let binding = page_of(&self.engine(), st).controls[idx].binding.clone();
+                        if let ir::Binding::Field(pos) = binding {
+                            let rec = self.page_rec(st);
+                            let is_code = matches!(rec.borrow().fields[pos], Value::Code(_));
+                            if is_code && owner.is_some() && r.is_ok() {
+                                rec.borrow_mut().fields[pos] = Value::Code(t.clone());
+                            }
+                        }
+                        r
                     }
                     (Value::Boolean(true), other) => {
                         unsupported(format!("an OnLookup trigger whose Text is {}", other.describe()))
@@ -4016,7 +4070,12 @@ impl Session {
                 before.filter(|_| st.borrow().cursor == Cursor::Row && !st.borrow().draft && !st.borrow().refresh)
             {
                 let rec = self.page_rec(st);
-                if !Self::same_values(&rec.borrow().fields, &before) {
+                // A change the action saved itself (`Rec.Modify()` in the action) is not saved again: the
+                // page runs no OnModify for it (misc/W2TableGlobals.al:Modify_ActionCallsModifyItself).
+                let saved_by_action = self
+                    .stored_row(&rec)?
+                    .is_some_and(|stored| Self::same_values(&rec.borrow().fields, &stored));
+                if !Self::same_values(&rec.borrow().fields, &before) && !saved_by_action {
                     st.borrow_mut().dirty = true;
                     self.save_row(st)?;
                 }

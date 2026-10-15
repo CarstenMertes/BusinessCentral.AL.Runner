@@ -80,7 +80,7 @@ pub(super) fn xmlport_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
 
 /// Query Metadata: ID (1), Name (2), Caption (3), APIPublisher (4), APIGroup (5), APIVersion (6),
 /// EntitySetName (7), EntityName (8), "App ID" (10). A query that is not an API query leaves the
-/// API columns blank (TestQueryMetadataVirtualTable.al:107-115). An API query that declares no
+/// API columns blank, but for APIVersion, which reads `beta` (TestQueryMetadataVirtualTable.al:107-115, query/W7QueryFilters.al). An API query that declares no
 /// version is not pinned and is refused.
 pub(super) fn query_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
@@ -104,7 +104,15 @@ pub(super) fn query_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80).into());
             r[pos(t, 4)] = Value::Text(text(o, "APIPublisher", 40).into());
             r[pos(t, 5)] = Value::Text(text(o, "APIGroup", 40).into());
-            r[pos(t, 6)] = Value::Text(text(o, "APIVersion", 250).into());
+            // A query that declares no APIVersion reads `beta` (query/W7QueryFilters.al:
+            // QueryMetadata_NormalQuery_ApiColumnsAreBlank; pages read the same, TestPageMetadataProperties.al:94-97).
+            r[pos(t, 6)] = Value::Text(
+                match prop(o, "APIVersion") {
+                    None => "beta".to_string(),
+                    Some(_) => text(o, "APIVersion", 250),
+                }
+                .into(),
+            );
             r[pos(t, 7)] = Value::Text(text(o, "EntitySetName", 250).into());
             r[pos(t, 8)] = Value::Text(text(o, "EntityName", 250).into());
             r[pos(t, 10)] = Value::Guid(c.owner(o));

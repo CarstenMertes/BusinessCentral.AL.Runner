@@ -130,12 +130,17 @@ fn init(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
             "SessionSettings.Init reads the language, locale and time zone of the running session, which this context does not have (host value, ADR-013)",
         );
     };
+    // The profile and the company are those of the session user's User Personalization row (session/
+    // W6UserPersonalization.al:SessionSettings_Init_ComparedWithTheRow, BC 27.5 and 29.0).
+    let profile = c.session_profile();
     with_settings(r, |s| {
         *s = SessionSettingsState {
             language_id: Some(language),
             locale_id: Some(locale),
             time_zone: Some(zone),
-            ..SessionSettingsState::default()
+            profile_id: profile.as_ref().map(|p| p.0.clone()),
+            profile_app_id: profile.as_ref().map(|p| p.1),
+            company: profile.map(|p| p.2).unwrap_or_default(),
         }
     })
     .map(|()| Value::Null)
@@ -160,12 +165,30 @@ fn request_update(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
             ));
         }
     }
+    let sender = match &r {
+        Some(Value::Library(_, cell)) => cell.clone(),
+        _ => return unsupported("SessionSettings.RequestSessionUpdate without a receiver"),
+    };
     let state = with_settings(r, |s| s.clone())?;
     let copy = Value::Library(
         "SessionSettings".into(),
         std::rc::Rc::new(std::cell::RefCell::new(LibraryValue::SessionSettings(state))),
     );
-    c.ui_session_settings(copy).map(|()| Value::Null)
+    let copy = c.ui_session_settings(copy.clone())?.unwrap_or(copy);
+    // The handler's `var` parameter is the sender's variable: what it changed is there afterwards, whatever it
+    // answers (session/W5SessionSettings.al:SessionSettings_Update_*, BC 27.5 and 29.0: the handler sets the language
+    // to 1031 and the sender reads 1031; a second call sees 1031).
+    let after = match &copy {
+        Value::Library(_, cell) => match &*cell.borrow() {
+            LibraryValue::SessionSettings(s) => Some(s.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    if let Some(after) = after {
+        *sender.borrow_mut() = LibraryValue::SessionSettings(after);
+    }
+    Ok(Value::Null)
 }
 
 // ---- Notification ------------------------------------------------------------------------

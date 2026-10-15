@@ -45,12 +45,15 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         | (v @ Value::Dictionary(_), T::Dictionary(..))
         | (v @ Value::Array(_), T::Array(..)) => v,
         // A SessionSettings is a value: assignment copies it (session/TestSessionSettings.al:222-262).
-        (Value::Library(n, cell), T::Library(_)) if n == "SessionSettings" => {
+        (Value::Library(crate::library_kind::LibraryKind::SessionSettings, cell), T::Library(_)) => {
             let copy = match &*cell.borrow() {
                 LibraryValue::SessionSettings(s) => LibraryValue::SessionSettings(s.clone()),
                 _ => LibraryValue::Empty,
             };
-            Value::Library(n, Rc::new(RefCell::new(copy)))
+            Value::Library(
+                crate::library_kind::LibraryKind::SessionSettings,
+                Rc::new(RefCell::new(copy)),
+            )
         }
         // An HttpContent is a value: assignment and a by-value parameter copy its body and headers
         // (misc/W4XmlJsonHttp.al:RequestContent_IsCopyOrReference).
@@ -677,7 +680,10 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Enum(_, a), V::Enum(_, b)) => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => crate::datefns::formula_text(a).cmp(&crate::datefns::formula_text(b)),
         // SessionSettings compare by value (session/TestSessionSettings.al:513-545).
-        (V::Library(na, a), V::Library(nb, b)) if na == "SessionSettings" && nb == "SessionSettings" => {
+        (
+            V::Library(crate::library_kind::LibraryKind::SessionSettings, a),
+            V::Library(crate::library_kind::LibraryKind::SessionSettings, b),
+        ) => {
             use crate::value::LibraryValue as L;
             let state = |l: &L| match l {
                 L::SessionSettings(s) => s.clone(),

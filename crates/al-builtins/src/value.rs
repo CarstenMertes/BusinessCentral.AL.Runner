@@ -60,7 +60,7 @@ pub enum RtType {
     /// codeunit instance it was assigned (or `Null` while unassigned).
     Interface(u32),
     /// Library types whose values are opaque handles (`JsonObject`, `TextBuilder`, ...).
-    Library(String),
+    Library(crate::library_kind::LibraryKind),
     /// A `DotNet` variable declared through the alias at this index of `Program::dotnet_types`
     /// (ADR-014). Unassigned, it holds `Value::Null`.
     DotNet(u32),
@@ -95,7 +95,7 @@ pub enum Value {
     Dictionary(Rc<RefCell<Vec<(Value, Value)>>>),
     Array(Rc<RefCell<Vec<Value>>>),
     Codeunit(Rc<RefCell<Instance>>),
-    Library(String, Rc<RefCell<LibraryValue>>),
+    Library(crate::library_kind::LibraryKind, Rc<RefCell<LibraryValue>>),
     /// A record variable (ADR-010: a handle; `:=` copies fields, see the VM).
     Record(Rc<RefCell<RecordState>>),
     /// A Blob field's content: a shared buffer that streams write to (see `stream`).
@@ -1079,9 +1079,9 @@ impl Value {
             }))),
             // Records need the table's field types: the VM builds them.
             RtType::Record(..) => Value::Null,
-            RtType::Library(name) if name.eq_ignore_ascii_case("Blob") => Value::Blob(crate::stream::new_blob()),
+            RtType::Library(crate::library_kind::LibraryKind::Blob) => Value::Blob(crate::stream::new_blob()),
             // A Media or MediaSet holds the id of its media (or set): a Guid, null while empty.
-            RtType::Library(name) if name.eq_ignore_ascii_case("Media") || name.eq_ignore_ascii_case("MediaSet") => {
+            RtType::Library(crate::library_kind::LibraryKind::Media | crate::library_kind::LibraryKind::MediaSet) => {
                 Value::Guid([0; 16])
             }
             RtType::Library(name) => Value::Library(name.clone(), Rc::default()),

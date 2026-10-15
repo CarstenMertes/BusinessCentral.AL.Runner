@@ -84,17 +84,17 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::DateFormula(f) => crate::datefns::formula_text(f),
         // A Version reads `major.minor.build.revision` (session/TestBCPlatformContracts.al:120-136
         // compares the formatted AppVersion with the manifest's `1.0.0.0`).
-        Value::Library(name, _) if name == "Version" && standard == 9 => {
+        Value::Library(crate::library_kind::LibraryKind::Version, _) if standard == 9 => {
             // session/TestProbeSessionMiscContracts.al:Version_Forms.
             return Err(no_such_format(9, "Version"));
         }
-        Value::Library(name, l) if name == "Version" => match &*l.borrow() {
+        Value::Library(crate::library_kind::LibraryKind::Version, l) => match &*l.borrow() {
             crate::value::LibraryValue::Version(v) => format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]),
             _ => return Err("Format of a Version nobody set".to_string().into()),
         },
         // A SessionSettings renders its contents; the layout is not pinned, only that it shows the
         // time zone and differs when a property differs (session/TestSessionSettings.al:457-493).
-        Value::Library(name, l) if name == "SessionSettings" => match &*l.borrow() {
+        Value::Library(crate::library_kind::LibraryKind::SessionSettings, l) => match &*l.borrow() {
             crate::value::LibraryValue::SessionSettings(s) => format!(
                 "Company={};LanguageId={};LocaleId={};TimeZone={};ProfileId={};ProfileAppId={}",
                 s.company,
@@ -110,7 +110,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Format_ReturnsANonEmptyRendering).
         // A builder nobody added a control to formats as an empty text (filterpage/W3FilterPageBuilder.al:
         // PageCaption_DefaultOfAFreshBuilder, BC 27.5 and 29.0).
-        Value::Library(name, l) if name == "FilterPageBuilder" => match &*l.borrow() {
+        Value::Library(crate::library_kind::LibraryKind::FilterPageBuilder, l) => match &*l.borrow() {
             crate::value::LibraryValue::FilterPageBuilder(s) if !s.controls.is_empty() => {
                 "FilterPageBuilder".to_string()
             }
@@ -164,10 +164,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             }
         }
         // A WebServiceActionContext has no text form (session/TestWebServiceActionContext.al:615-650).
-        Value::Library(name, _) if name == "WebServiceActionContext" => String::new(),
+        Value::Library(crate::library_kind::LibraryKind::WebServiceActionContext, _) => String::new(),
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs
         // the key values in it; the layout is docs/probes-needed.md).
-        Value::Library(name, l) if name == "RecordId" => match &*l.borrow() {
+        Value::Library(crate::library_kind::LibraryKind::RecordId, l) => match &*l.borrow() {
             crate::value::LibraryValue::RecordId { name, key, .. } => {
                 // A text key that is empty or holds a comma is quoted (record/TestProbeRecordRefContracts.al:RecordId_FormatForms).
                 let key = key

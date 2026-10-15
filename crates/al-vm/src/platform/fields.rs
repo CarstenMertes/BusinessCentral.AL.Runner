@@ -212,7 +212,7 @@ fn field_row(
     r[pos(t, 26)] = Value::Text(fprop("ObsoleteReason").and_then(string_lit).unwrap_or_default().into());
     // DataClassification: the field's own; else the table's; a FlowField is SystemMetadata and a
     // silent Blob is CustomerContent (TestFieldDataClassificationInheritance.al:17-50).
-    let is_blob = matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("blob"));
+    let is_blob = matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob));
     let dc = match (fprop("DataClassification"), is_flow_field, is_blob) {
         (_, true, _) => 6,
         (Some(v), _, _) => ordinal_of(DATA_CLASSIFICATIONS, v)

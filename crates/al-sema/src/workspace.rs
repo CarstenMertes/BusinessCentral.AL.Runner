@@ -476,6 +476,84 @@ impl Workspace {
         ws
     }
 
+    /// The incremental compile's way in: replaces the text of file `fi` of a workspace app with `text` when
+    /// the new text differs from the old one only inside the bodies of procedures and triggers (the
+    /// declarations, in tokens, are the same: `skeleton`). Then no other object can tell the files apart
+    /// except through the offsets of this file's routines. The objects of the file keep their numbers; their
+    /// offsets, the tree, and the diagnostics of the file are renewed, and the result is what a load of
+    /// the new text gives. The objects of the file, in order, are returned.
+    ///
+    /// An error says why the text cannot be taken that way (the file is a dependency's, it does not
+    /// parse cleanly, or a declaration changed); nothing has changed then.
+    pub fn replace_file(&mut self, fi: usize, text: String) -> Result<Vec<usize>, String> {
+        let file = self.files.get(fi).ok_or("no such file")?;
+        if file.lazy {
+            return Err("a file of a dependency app".into());
+        }
+        let (ai, file_in_app, path) = (file.app, file.file_in_app, file.path.clone());
+        let old_green = file.green.get().cloned().ok_or("the file was never parsed")?;
+        let symbols = &self.symbols[ai];
+        let (src, added): (String, Vec<ByteRange>) = match crate::pages::expand_ranges(&text, symbols) {
+            Some((expanded, added)) => (expanded, added),
+            None => (text.clone(), Vec::new()),
+        };
+        let parsed = with_tree_cache(|cache| parse_file(&src, symbols, cache));
+        if !parsed.errors.is_empty() {
+            return Err("the new text does not parse cleanly".into());
+        }
+        let green = parsed.green.clone().ok_or("no tree")?;
+        if crate::incremental::skeleton(&old_green) != crate::incremental::skeleton(&green) {
+            return Err("a declaration changed".into());
+        }
+        let in_file: Vec<usize> = (0..self.objects.len())
+            .filter(|&i| self.objects[i].file == fi)
+            .collect();
+        let same = in_file.len() == parsed.objects.len()
+            && in_file.iter().zip(&parsed.objects).all(|(&i, n)| {
+                let o = &self.objects[i];
+                (o.kind, o.id, &o.name, &o.extends, &o.implements) == (n.kind, n.id, &n.name, &n.extends, &n.implements)
+            })
+            && parsed.namespace == self.files[fi].namespace
+            && parsed.usings == self.files[fi].usings;
+        if !same {
+            return Err("the objects of the file changed".into());
+        }
+        let dotnet_now: Vec<&DotNetSym> = self.dotnet.iter().filter(|d| d.file == fi).collect();
+        if dotnet_now.len() != parsed.dotnet.len() {
+            return Err("the dotnet declarations changed".into());
+        }
+        // Everything holds: take it.
+        for (&i, n) in in_file.iter().zip(&parsed.objects) {
+            self.objects[i].offset = n.offset;
+        }
+        self.apps[ai].files[file_in_app].1 = text;
+        let f = &mut self.files[fi];
+        f.green = OnceLock::from(green);
+        f.problem = OnceLock::new();
+        f.synthetic = OnceLock::from(added);
+        for (d, new) in self.dotnet.iter_mut().filter(|d| d.file == fi).zip(&parsed.dotnet) {
+            d.decl = new.clone();
+        }
+        // The diagnostics of the file: its reference errors are renewed (the parse errors are none).
+        let renewed: Vec<Diagnostic> = in_file
+            .iter()
+            .flat_map(|&i| self.unresolved_references_of(&self.objects[i]))
+            .collect();
+        self.diagnostics.retain(|d| d.file != path);
+        self.diagnostics.extend(renewed);
+        let positions: HashMap<&str, usize> = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.path.as_str(), i))
+            .collect();
+        let key = |d: &Diagnostic| (positions.get(d.file.as_str()).copied().unwrap_or(usize::MAX), d.offset);
+        let mut diagnostics = std::mem::take(&mut self.diagnostics);
+        diagnostics.sort_by_key(key);
+        self.diagnostics = diagnostics;
+        Ok(in_file)
+    }
+
     /// Extension targets and event subscribers, found from the object index alone.
     fn index_extensions_and_subscribers(&mut self) {
         self.ext_target = vec![None; self.objects.len()];

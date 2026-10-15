@@ -42,25 +42,24 @@ The owner chose the warm design.
    `perTestCoverage`, `test`, `excludeTests`, `testIsolation`. Deferred fields (`affectedOnly`, `includeFailing`,
    `strictEnvironment`, `tdd`) answer an error; fields of other v2 commands (`code`, `captureValues`,
    `iterationTracking`) earn a `warnings` entry; others answer `unknown field`.
-9. **Not in this step:** `execute` (step 4), value capture, incremental compile.
+9. **Not in this step:** `execute` (step 4), value capture. Incremental compile: ADR-029.
 
 ## Measurements (release, 4 threads, 2026-10-15)
 
 | Input | one-shot `alrunner test` (compile cache hot) | serve, first request | serve, repeat (unchanged) |
 |---|---|---|---|
-| corpus app, 2 tests (Pageworks-sized app) | 1.3 s, peak 0.9 GB | 7.6 s (no compile cache) | 0.17 s; changed source 0.67 s |
-| Tests-ERM, codeunit 134000, 32 tests | 4.9 s, peak 1.3 GB (17.7 s without cache) | 18.8 s | 2.1 s (first test line after 0.3 s) |
+| corpus app, 2 tests (Pageworks-sized app) | 1.3 s, peak 0.9 GB | 1.36 s (cache hit; 7.6 s on a miss) | 0.17 s; changed source 0.37 s with ADR-029 (0.67 s without) |
+| Tests-ERM, codeunit 134000, 32 tests | 4.9 s, peak 1.3 GB (17.7 s without cache) | 4.25 s (cache hit; 18.8 s on a miss) | 2.1 s (first test line after 0.3 s) |
 
-The first request pays the full compile and holds about 3 GB afterwards (the compiled dependency apps stay in
-memory). Fifty requests with a changed source each grow resident memory by less than 60 MB (tested).
+The compile cache is on disk and keyed by the build of the executable, so the first request after a new build pays
+the miss (the same as a one-shot run). After a first request the server holds the compiled dependency apps in memory.
+Fifty requests with a changed source each grow resident memory by less than 60 MB (tested).
 
 ## Limits (honest)
 
-- The first request does not use the on-disk compile cache; it is slower than a hot one-shot run.
-- A changed source recompiles the workspace but the dependency apps are still reloaded (about 0.5 s on ERM);
-  the baseline reruns per request (0.4 to 0.8 s); `Engine` is rebuilt per request.
-- Incremental workspace compile is the next step (ADR-026 advised against per-file incremental compile; the
-  warm slot is the base for it).
+- The baseline reruns per request (0.1 to 0.8 s); `Engine` is rebuilt per request.
+- A changed source compiles only the changed objects when the change is in the code of codeunits and tables
+  (ADR-029); any other change compiles the workspace again. The dependency apps are never compiled or read again.
 
 ## Consequences
 

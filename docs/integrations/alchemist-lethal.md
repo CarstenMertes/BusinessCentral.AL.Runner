@@ -243,3 +243,23 @@ text should say "run with small edits".
 | ALchemist sends `captureValues` and `iterationTracking` on `runTests`. v2 reads them only on `execute`, so each run returns a `warnings` entry. | `serverExecutionEngine.ts:28-30` |
 | ALchemist sends `testFilter` and `cobertura` if a caller sets them. v2 refuses unknown fields. No caller sets them today. | `serverExecutionEngine.ts:32-33` |
 | LethAL source comments say v2 has no per-test selection on `--server`. v2 added `test` and `excludeTests` after 2.11.0. | `al-runner-server.ts:10-14` |
+
+## Later step: mutants applied inside v3 (owner discussion 2026-10-15)
+
+LethAL already compiles all mutants into one program behind switches (mutant schemata) and
+runs them through AL Runner. That keeps working with v3 unchanged: the switched code is plain AL.
+
+The step beyond is to let v3 apply the mutation to its compiled program instead of LethAL
+rewriting source:
+
+1. LethAL keeps its mutation catalog and reports. It sends v3 a list of mutants as source
+   positions plus a change, for example `{id, file, line, column, kind: "relational", from: "<",
+   to: "<="}`, or `{kind: "remove-statement", file, line}`.
+2. v3 compiles the app once. It maps each position to the node in its compiled program (it keeps
+   source positions) and patches that node in memory per mutant. No source rewrite, no recompile.
+3. v3 runs only the tests whose coverage reaches the mutated node, and answers per mutant:
+   killed (which test), survived, not covered, or unknown (a covering test does not run on v3).
+4. A mutation v3 cannot express in its compiled program falls back to LethAL's switched source.
+
+Protocol: a `runMutants` request on `alrunner serve`, after the serve basics. Gain to measure with
+a prototype: no per-mutant compile, and only covering tests run.

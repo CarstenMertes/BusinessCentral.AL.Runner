@@ -223,7 +223,8 @@ pub trait Ctx: FormatCtx {
     }
     /// `SessionSettings.RequestSessionUpdate(false)`: hands a copy of the settings to the bound
     /// `[SessionSettingsHandler]`.
-    fn ui_session_settings(&mut self, _settings: Value) -> Result<(), Signal> {
+    /// Answers the settings as the handler left them.
+    fn ui_session_settings(&mut self, _settings: Value) -> Result<Option<Value>, Signal> {
         Err(Signal::Unsupported(
             "SessionSettings.RequestSessionUpdate: this context has no UI".into(),
         ))

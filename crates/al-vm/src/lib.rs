@@ -2248,7 +2248,7 @@ impl al_builtins::native::Ctx for Session {
     fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
         Session::ui_str_menu(self, options, default, instruction)
     }
-    fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+    fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
         Session::ui_session_settings(self, settings)
     }
     fn ui_send_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<Option<Value>, Signal> {

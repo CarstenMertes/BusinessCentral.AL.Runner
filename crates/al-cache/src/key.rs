@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 /// The format integer of the entry file. Bump it when the layout of the file or of a type it
 /// stores changes. (Any change to the compiler already changes `Key::runtime_build`.)
-pub const FORMAT: u32 = 4;
+pub const FORMAT: u32 = 5;
 
 /// One dependency app, as the compile saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,8 +31,12 @@ pub struct Key {
     pub target: String,
     /// The preprocessor symbols the sources were parsed with, sorted.
     pub symbols: Vec<String>,
-    /// The dependency apps in program order (dependencies first).
+    /// The apps of this layer, in program order (dependencies first). The first layer holds the
+    /// platform and Microsoft's apps; every other layer holds the apps above it (ADR-022, layers).
     pub apps: Vec<AppKey>,
+    /// The digest of the key of the layer below, all zeros for the first layer. A layer was
+    /// compiled with the layers below it present, so a change anywhere below changes this.
+    pub below: [u8; 32],
 }
 
 fn put(h: &mut Sha256, bytes: &[u8]) {
@@ -49,7 +53,18 @@ fn put_list<S: AsRef<[u8]>>(h: &mut Sha256, items: &[S]) {
 
 impl Key {
     /// A key with the current [`FORMAT`].
-    pub fn new(runtime_build: [u8; 32], target: String, mut symbols: Vec<String>, apps: Vec<AppKey>) -> Key {
+    pub fn new(runtime_build: [u8; 32], target: String, symbols: Vec<String>, apps: Vec<AppKey>) -> Key {
+        Key::layered(runtime_build, target, symbols, apps, [0; 32])
+    }
+
+    /// A key for a layer above another: `below` is the digest of the key of the layer below.
+    pub fn layered(
+        runtime_build: [u8; 32],
+        target: String,
+        mut symbols: Vec<String>,
+        apps: Vec<AppKey>,
+        below: [u8; 32],
+    ) -> Key {
         symbols.sort();
         Key {
             format: FORMAT,
@@ -57,11 +72,12 @@ impl Key {
             target,
             symbols,
             apps,
+            below,
         }
     }
 
     /// The names of the fields, for the test that every field has a miss test.
-    pub const FIELDS: [&'static str; 5] = ["format", "runtime_build", "target", "symbols", "apps"];
+    pub const FIELDS: [&'static str; 6] = ["format", "runtime_build", "target", "symbols", "apps", "below"];
 
     /// The digest of the key. Equal keys give equal digests; a key that differs in any field
     /// gives a different one.
@@ -72,6 +88,7 @@ impl Key {
             target,
             symbols,
             apps,
+            below,
         } = self;
         let mut h = Sha256::new();
         h.update(b"al-runtime compile cache key");
@@ -79,6 +96,7 @@ impl Key {
         put(&mut h, runtime_build);
         put(&mut h, target.as_bytes());
         put_list(&mut h, symbols);
+        put(&mut h, below);
         h.update((apps.len() as u64).to_le_bytes());
         for a in apps {
             let AppKey {
@@ -151,6 +169,7 @@ mod tests {
             ("target", |k| k.target = "BC 28.0 runtime 17.0".into()),
             ("symbols", |k| k.symbols.push("EXTRA".into())),
             ("apps", |k| k.apps.reverse()),
+            ("below", |k| k.below[5] ^= 1),
         ];
         let names: Vec<&str> = changes.iter().map(|(n, _)| *n).collect();
         assert_eq!(names, Key::FIELDS, "one miss test per field of the key");

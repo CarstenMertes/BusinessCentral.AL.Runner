@@ -5,6 +5,7 @@
 
 pub mod baseline;
 pub mod compile_cache;
+mod cpuclock;
 pub mod deps;
 pub mod discover;
 pub mod dotnet;

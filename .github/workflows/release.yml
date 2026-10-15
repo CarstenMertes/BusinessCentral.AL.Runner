@@ -1,0 +1,100 @@
+name: Release
+
+# A numbered alpha: push a tag v3.* on a commit of the `release` branch (docs/releasing.md).
+# The workflow checks the tag, runs the CI checks, builds and smoke tests the three targets and
+# creates a DRAFT pre-release. A person publishes it. workflow_dispatch is a dry run: it builds
+# and packages but creates no release.
+
+on:
+  push:
+    tags: ["v3.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        run: |
+          version="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p}' Cargo.toml)"
+          [ -n "$version" ] || { echo "::error::no workspace version in Cargo.toml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "Dry run: no release will be created."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not equal the crate version v$version"
+            exit 1
+          fi
+          git fetch origin release
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/release; then
+            echo "::error::the commit of tag $GITHUB_REF_NAME is not on the release branch"
+            exit 1
+          fi
+
+  # The same checks as every push: ci.yml, reused.
+  test:
+    needs: plan
+    uses: ./.github/workflows/ci.yml
+
+  package:
+    needs: [plan, test]
+    uses: ./.github/workflows/build-packages.yml
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    with:
+      label: ${{ needs.plan.outputs.version }}
+      sha: ${{ github.sha }}
+
+  release:
+    needs: [plan, package]
+    if: needs.plan.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: dist
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+        run: |
+          cat > notes.md <<NOTES
+          alrunner $VERSION. An alpha: no AL Runner v2 parity, some tests are refused ("not run")
+          with a reason, and results may change.
+
+          The binaries are not signed. See "Try the alpha" in the README for the macOS and
+          Windows steps. Install:
+
+          - Linux and macOS: \`curl -fsSL https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/install.sh | sh -s -- $GITHUB_REF_NAME\`
+          - Windows: download \`install.ps1\` from this release and run \`./install.ps1 -Version $GITHUB_REF_NAME\`
+
+          Check a download with \`SHA256SUMS\`, or with \`gh attestation verify FILE --repo $GH_REPO\`.
+          Report problems, especially wrong results, as GitHub issues.
+          NOTES
+          sed -i 's/^          //' notes.md
+          flags=""
+          [ "$PRERELEASE" = true ] && flags="--prerelease"
+          gh release create "$GITHUB_REF_NAME" dist/* --draft $flags --verify-tag \
+            --title "alrunner $VERSION" --notes-file notes.md

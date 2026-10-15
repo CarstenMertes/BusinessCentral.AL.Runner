@@ -1227,3 +1227,27 @@ Not decided here: one timing flake. A full run of Tests-ERM on a machine under h
 and the extra refusals read "IsEmpty on Workflow: BC holds rows here ..." (Price List Line UT). The compile is the
 same in every run (`AL_DUMP_REACH` files are identical), the thread counts do not matter, and it does not happen on
 a quiet machine. Cause not found.
+
+### A pure test beside data code, and Library Assert (2026-10-15, branch `filter-speed`, issue 39)
+
+Measured on a demo app with a test app on Base Application and Library Assert, `--filter` on one pure test: compile 4.2
+to 9 s and 2.1 GB, against 0.3 s and 684 MB for the whole suite, and the install baseline ran. Three causes, three changes
+(outcomes unchanged: baseline 27/28/29, demand/eager, cache/uncached, baseline rule: 0 differences):
+
+1. **The speculative compile reached the workspace's data code.** The pure-first compile (above) checks every workspace
+   routine, so a codeunit of the app under test with a `Record "Sales Line"` procedure pulled 94,000 dependency routines in,
+   and the result was thrown away when the rule said "may observe". New `Roots::reach_only` (used for that compile only):
+   a procedure of a workspace *normal codeunit* (no Subtype) that no selected test names, directly or through the
+   procedures it names, is not checked and compiles to a stub that refuses. Names are matched by spelling (a superset of
+   what can be called). Triggers, event subscribers, publishers, objects that are not normal codeunits and codeunits with
+   a Subtype stay roots. `Workspace::set_unreached`, `unreached_routines` in `check.rs`.
+2. **The rule (`observe.rs`) was too coarse for a record variable.** A local record variable that is only used through
+   its fields (`R.Field := x`, `Format(R.Field)`) is a buffer in memory: no row, counter or storage is touched. It no
+   longer makes a test "may observe". Any other use (a method, passing it on, assigning it whole, returning it) still does.
+   Library Assert's `TypeNameOf` is the case.
+3. **A catalog table used as a buffer compiled every table.** Using the platform table `Field` (and `Key`, ...) as a table
+   answers for every table of the installed apps, so all their shapes were compiled (93,000 routines). A record variable of
+   such a table that is named in the routine only as `Name.<field>` no longer does that (`field_only_records` in `check.rs`).
+
+Result on the demo app, one pure test, load average about 19: compile 4.2 s -> 0.17 s, total 4.6 s -> 0.22 to 0.36 s,
+peak memory 2.1 GB -> 135 MB; the baseline is skipped (0.30 s saved).

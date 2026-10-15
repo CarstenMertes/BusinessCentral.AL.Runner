@@ -618,9 +618,11 @@ fn ms(version: &str) -> Manifest {
     }
 }
 
-const ASSERT_LIB: &str = "codeunit 50400 \"Assert\" { procedure IsTrue(B: Boolean) begin if not B then Error('assert'); end; }";
+const ASSERT_LIB: &str =
+    "codeunit 50400 \"Assert\" { procedure IsTrue(B: Boolean) begin if not B then Error('assert'); end; }";
 const ANY_LIB: &str = "codeunit 50410 \"Any\" { procedure Int(): Integer begin exit(7); end; }";
-const SHOPIFY: &str = "codeunit 50420 \"Shopify Thing\" { procedure N(): Integer var C: Record Cust; begin exit(C.Count()); end; }";
+const SHOPIFY: &str =
+    "codeunit 50420 \"Shopify Thing\" { procedure N(): Integer var C: Record Cust; begin exit(C.Count()); end; }";
 
 const BASE_TEST: &str = r#"
 codeunit 60300 SharedTests
@@ -638,7 +640,10 @@ fn shared_run(which: &[&str], cc: Option<CompileCache>) -> Result<CorpusRuntime,
             "base" => (named("base", "Base Application", &[], BASE), ms("27.5.0.0")),
             "assert" => (named("assert", "Library Assert", &["base"], ASSERT_LIB), ms("27.5.0.0")),
             "any" => (named("any", "Any", &["base"], ANY_LIB), ms("27.5.0.0")),
-            "shopify" => (named("shopify", "Shopify Connector", &["base"], SHOPIFY), ms("27.5.0.0")),
+            "shopify" => (
+                named("shopify", "Shopify Connector", &["base"], SHOPIFY),
+                ms("27.5.0.0"),
+            ),
             _ => unreachable!(),
         }
     };
@@ -693,7 +698,11 @@ fn two_projects_with_different_microsoft_test_libraries_share_the_base_layer() {
 fn the_layers_do_not_depend_on_the_order_the_apps_come_in() {
     let dir = tempfile::tempdir().unwrap();
     shared_run(&["base", "assert", "any"], cache(dir.path(), false)).unwrap();
-    for order in [["any", "assert", "base"], ["assert", "base", "any"], ["any", "base", "assert"]] {
+    for order in [
+        ["any", "assert", "base"],
+        ["assert", "base", "any"],
+        ["any", "base", "assert"],
+    ] {
         let rt = shared_run(&order, cache(dir.path(), true)).unwrap();
         assert_eq!(layer_hits(&rt), vec![true, true, true], "{order:?}");
     }

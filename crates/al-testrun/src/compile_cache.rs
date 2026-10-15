@@ -220,7 +220,12 @@ pub const MICROSOFT: &str = "Microsoft";
 /// The Microsoft apps every Business Central app stands on. They and what they need in the set
 /// are the base layer, which projects on one BC build share whatever test libraries or other
 /// Microsoft apps they add.
-const CORE: [&str; 4] = ["System", "System Application", "Business Foundation", "Base Application"];
+const CORE: [&str; 4] = [
+    "System",
+    "System Application",
+    "Business Foundation",
+    "Base Application",
+];
 
 /// The indexes of the apps in the base layer: the [`CORE`] apps of Microsoft in the set and, by
 /// their `dependencies` (app ids), every app of the set they need. Empty when the set has none

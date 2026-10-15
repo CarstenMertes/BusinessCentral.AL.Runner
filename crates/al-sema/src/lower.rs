@@ -5166,6 +5166,7 @@ fn provided_blocks(
     ws: &Workspace,
     n_prov: usize,
     src: &dyn crate::provided::DepSource,
+    decode: bool,
 ) -> Result<Vec<Option<crate::provided::DepBlock>>, String> {
     use rayon::prelude::*;
     crate::provided::check_identity(ws, n_prov, src)?;
@@ -5174,7 +5175,11 @@ fn provided_blocks(
         .into_par_iter()
         .map(|oi| {
             if oi < n_prov && !relower[oi] {
-                src.block(oi).map(Some)
+                if decode {
+                    src.block(oi).map(Some)
+                } else {
+                    Ok(Some(crate::provided::DepBlock::placeholder()))
+                }
             } else {
                 Ok(None)
             }
@@ -5209,7 +5214,8 @@ pub fn lower_layer(
             ws.objects.len()
         ));
     }
-    let blocks = provided_blocks(&ws, n_prov, below)?;
+    // A layer's result holds only the objects lowered here, so the blocks below are not decoded.
+    let blocks = provided_blocks(&ws, n_prov, below, false)?;
     let provided = Provided { src: below, blocks };
     let members = crate::members::build(&ws);
     let mut roots = crate::check::Roots {
@@ -5274,7 +5280,7 @@ pub fn compile_loaded_cached(
     let blocks_started = std::time::Instant::now();
     let prepared = (|| {
         let n_dep = crate::provided::dependency_prefix(&ws).ok_or("a dependency app follows a workspace app")?;
-        provided_blocks(&ws, n_dep, src)
+        provided_blocks(&ws, n_dep, src, true)
     })();
     let blocks = match prepared {
         Ok(b) => b,

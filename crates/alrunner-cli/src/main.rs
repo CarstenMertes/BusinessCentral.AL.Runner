@@ -47,6 +47,11 @@ fn real_main() -> ExitCode {
             println!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
             ExitCode::SUCCESS
         }
+        Command::ListAssumptions(dir) => {
+            let root = al_deps::cache::cache_root_from_env(dir.as_deref());
+            print!("{}", al_testrun::flagged::list(&root));
+            ExitCode::SUCCESS
+        }
         Command::Warm(a) => match run::warm(&a) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {

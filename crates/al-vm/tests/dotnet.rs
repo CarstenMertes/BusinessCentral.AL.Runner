@@ -371,6 +371,23 @@ fn an_unregistered_member_of_a_registered_type_is_refused_by_name_not_forwarded(
     assert_eq!(host.log(), vec![]);
 }
 
+/// The test library's setter reaches `SetTestTenantEnvironmentType`; it changes nothing a test can see
+/// (corpus tests/al-language-onprem/session/PVEnvironmentTestability.al, staging 8217373).
+#[test]
+fn set_test_tenant_environment_type_is_accepted_and_changes_nothing() {
+    let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
+    let mut c = cfg(&host);
+    c.registry = Arc::new(Registry::builtin());
+    let r = run_with(
+        c,
+        "H: DotNet NavTenantSettingsHelper; Before: Boolean; After: Boolean;",
+        "Before := H.IsSandbox(); H.SetTestTenantEnvironmentType(not Before); After := H.IsSandbox(); exit(Format(Before = After));",
+        ": Text",
+    );
+    assert_eq!(text(r), "Yes");
+    assert_eq!(host.log(), vec![]);
+}
+
 /// `--environment` (owner decision 2026-10-15): the tenant helper answers what the chosen server
 /// answers. SaaS is the probed oracle tier (IsSandbox Yes, IsProduction No, name ''); on-prem is
 /// IsSandbox No and IsProduction Yes (an unprobed assumption required by Microsoft's codeunit
@@ -1320,6 +1337,9 @@ fn the_declared_result_types_match_the_registry() {
         let args: Vec<Value> = match *member {
             "GetEnvironmentApplicationSetting" => vec![Value::Text("x".into())],
             "GetEffectivePermissionForObject" => continue, // needs a Guid; the AL test above runs it
+            // Need streams; tests/gzip.rs runs them.
+            "GZipStream" | "CopyTo" | "Dispose" => continue,
+            "SetTestTenantEnvironmentType" => vec![Value::Boolean(false)],
             // These raise by design on a tier without a directory; graph_query_without_a_directory_answers_as_probed runs them.
             "GetGroupPage" | "GetGroupInfo" | "FindFirstGroupInfoForDisplayName" | "GetUser" => continue,
             // Answers a null reference by design; graph_get_current_user_returns_null_without_an_error runs it.
@@ -1341,6 +1361,7 @@ fn the_declared_result_types_match_the_registry() {
             Ret::Integer => matches!(v, Value::Integer(_)),
             Ret::Text => matches!(v, Value::Text(_)),
             Ret::Object => matches!(v, Value::DotNet(_)),
+            Ret::Void => matches!(v, Value::Null),
         };
         assert!(ok, "{clr}.{member} declares {ret:?} but returns {v:?}");
     }

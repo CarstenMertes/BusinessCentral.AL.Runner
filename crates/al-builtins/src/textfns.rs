@@ -47,7 +47,10 @@ fn int(a: &[Value], i: usize) -> Result<i64, Signal> {
         Some(Value::Byte(n)) => Ok(i64::from(*n)),
         // An Option converts to its ordinal (`SelectStr(Target, Text)` with an Option parameter in Base Application's
         // Calculate Standard Cost); the same conversion as `I := OptionValue` (ops::convert).
-        Some(Value::Option(o, _)) => Ok(i64::from(*o)),
+        Some(Value::Option(o, _)) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::OptionAsIntegerArgument);
+            Ok(i64::from(*o))
+        }
         other => unsupported(format!("integer argument {i} of type {}", other.describe())),
     }
 }
@@ -768,7 +771,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("Text", "Substring", _) => substring,
         ("Text", "PadLeft", _) => pad_left,
         ("Text", "PadRight", _) => pad_right,
-        ("Text", "Split", _) => split,
+        // A Label has Split like a Text (corpus types/PVLabelSplitForeach.al, staging 8217373).
+        ("Text" | "Label", "Split", _) => split,
         ("Text", "ConvertStr", [_, _, _]) => convert_str,
         ("Text", "DelChr", _) => del_chr,
         ("Text", "IncStr", _) => inc_str,

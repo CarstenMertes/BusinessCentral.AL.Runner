@@ -310,18 +310,52 @@ impl Session {
         Ok(())
     }
 
-    /// Before a Delete stores. Nothing is refused: the rows the platform's cascade also empties are
-    /// the User Property row (pinned, TestUserDeleteCascadeOrder.al:26-84) and the Access Control rows
-    /// ([`Session::user_after_delete`], an assumption Microsoft's tests need).
-    pub(crate) fn user_before_delete(&mut self, _t: &TableDef, _rec: &crate::records::Rec) -> Result<(), Signal> {
-        Ok(())
+    /// Before a Delete stores. With IsSaaS true (the default environment) the only enabled user holding
+    /// the SUPER role cannot go (staging tests/al-language-onprem/session/PZUserDelete.al:
+    /// DeleteAllUsers_AsTheOnlySuperUser_IsRefused, BC 29.0: the text and the code Dialog). The IsSaaS false
+    /// side is not reachable on that tier, so on-prem it stays allowed (unprobed, docs/probes-needed.md).
+    pub(crate) fn user_before_delete(&mut self, t: &TableDef, rec: &crate::records::Rec) -> Result<(), Signal> {
+        if self.host.identity.environment() != al_host::Environment::Saas {
+            return Ok(());
+        }
+        let Some(ac) = self.table_def(ACCESS_CONTROL) else {
+            return Ok(());
+        };
+        let sid = rec.borrow().fields[pos(t, F_SID)].clone();
+        let cx = self.cx.clone();
+        let supers: Vec<Value> = self
+            .all_rows(&cx, &ac)?
+            .into_iter()
+            .filter(|r| matches!(&r[pos(&ac, 2)], Value::Text(s) | Value::Code(s) if s.eq_ignore_ascii_case("SUPER")))
+            .map(|r| r[pos(&ac, P_SID)].clone())
+            .collect();
+        if !supers.iter().any(|g| guid(g) == guid(&sid)) {
+            return Ok(());
+        }
+        let mut other_enabled = false;
+        for u in self.all_rows(&cx, t)? {
+            let other = &u[pos(t, F_SID)];
+            if guid(other) != guid(&sid)
+                && supers.iter().any(|g| guid(g) == guid(other))
+                && matches!(u[pos(t, F_STATE)], Value::Option(ENABLED, _))
+            {
+                other_enabled = true;
+                break;
+            }
+        }
+        if other_enabled {
+            return Ok(());
+        }
+        Err(Signal::Error(AlError {
+            message: "There should be at least one enabled 'SUPER' user.".into(),
+            code: "Dialog".into(),
+            call_stack: String::new(),
+        }))
     }
 
     /// After the User row is deleted: its User Property row goes (TestUserDeleteCascadeOrder.al:26-84),
-    /// and so do its Access Control rows. The second is an UNPROBED ASSUMPTION required by Microsoft's own
-    /// test (rule 3 exception, owner 2026-10-15): codeunit 134614 "Test App Permissions" deletes all users in
-    /// `InitializeData`, creates a super user and three more, and passes in Microsoft's CI only if the
-    /// deleted users' roles are gone. Probe: docs/probes-needed.md "User delete cascade to Access Control".
+    /// and so do its Access Control rows (staging tests/al-language-onprem/session/PZUserDelete.al, BC 29.0, with and
+    /// without RunTrigger).
     pub(crate) fn user_after_delete(&mut self, t: &TableDef, rec: &crate::records::Rec) -> Result<(), Signal> {
         let sid = rec.borrow().fields[pos(t, F_SID)].clone();
         let cx = self.cx.clone();

@@ -187,6 +187,12 @@ impl Session {
             | Value::Guid(_)
             | Value::Date(..)
             | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
+            // A RecordId reads as Format gives it (`Table: key`, record/TestProbeRecordRefContracts.al:472-502); that an
+            // error message shows it the same way is assumed (docs/probes-needed.md).
+            Value::Library(name, _) if name == "RecordId" => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordIdInMessage);
+                al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported)
+            }
             other => unsupported(format!("a {} value in an error message", other.describe())),
         }
     }
@@ -592,6 +598,10 @@ impl Session {
             && kind.as_str() == "ErrorInfo"
         {
             return match self.test_field(rec, t, plain) {
+                Ok(v) => {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestFieldErrorInfoPasses);
+                    Ok(v)
+                }
                 Err(Signal::Error(_)) => unsupported(
                     "TestField with an ErrorInfo whose check fails: the error BC raises from the ErrorInfo is not pinned (docs/probes-needed.md)",
                 ),
@@ -783,6 +793,7 @@ impl Session {
                     }
                     _ => unreachable!("enum_option"),
                 };
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TransferFieldsEnumOption);
                 updates.push((dp, moved));
                 continue;
             }

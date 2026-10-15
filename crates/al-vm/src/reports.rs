@@ -266,6 +266,7 @@ impl Session {
                 ))
             }
             "Report.SaveAs#1" | "Report.SaveAs#2" => self.report_save_as(id, receiver, args),
+            "Report.WordXmlPart#1" | "Report.WordXmlPart#2" => self.report_word_xml_part(id, receiver, args),
             "Report.RunRequestPage#1" | "Report.RunRequestPage#2" => {
                 let (inst, schema, seed) = if id == "Report.RunRequestPage#1" {
                     let inst = self.report_instance(receiver, false)?.0;
@@ -342,6 +343,84 @@ impl Session {
     }
 
     /// A fresh instance of the report with the id in `arg`.
+    /// `Report.WordXmlPart([Number,] [ExtendedFormat])`: the XML of the data set as text, from the report's
+    /// data items and columns alone (nothing runs). Pinned by the corpus staging branch (types/PZMisc.al:
+    /// WordXmlPart_BothOverloads_ReportWithoutWordLayout and WordXmlPart_Content_IncludesTheColumns, BC 29.0):
+    /// a report with only an RDLC layout answers a text that starts with `<` and holds the data item and
+    /// column names and `urn:microsoft-dynamics-nav`, with either flag; an unknown report id fails with the code
+    /// AL:MetadataNotFound (its text is not pinned). The rest follows what the owner's Pageworks code reads
+    /// (a `NavWordReportXmlPart` root, a `Labels` block, nested data items, `ElementType` DataItem / Column
+    /// with the flag): unprobed, docs/probes-needed.md "Report.WordXmlPart".
+    fn report_word_xml_part(&mut self, id: &str, receiver: Option<Value>, args: &[Value]) -> Result<Value, Signal> {
+        let static_form = id == "Report.WordXmlPart#2";
+        let (flag_at, schema) = if static_form {
+            let known =
+                match args.first() {
+                    Some(Value::Integer(n)) => self.engine.program.objects.iter().any(|o| {
+                        (o.kind == "report" || o.kind == "uncompiled report") && o.id == u32::try_from(*n).ok()
+                    }),
+                    _ => true,
+                };
+            if !known {
+                return Err(crate::transactions::al_error_code("", "AL:MetadataNotFound"));
+            }
+            (1, self.report_by_number(id, args.first())?.1)
+        } else {
+            let inst = self.report_instance(receiver, false)?.0;
+            (0, self.report_schema(&inst)?)
+        };
+        let extended = match args.get(flag_at) {
+            None => false,
+            Some(Value::Boolean(b)) => *b,
+            Some(other) => return unsupported(format!("{id} with the flag {}", other.describe())),
+        };
+        let report = schema.report();
+        if !report.extensions.is_empty() {
+            return unsupported("Report.WordXmlPart of a report that reportextensions change (not pinned)");
+        }
+        let tag = |name: &str| -> Result<String, Signal> {
+            if name
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-'))
+                && !name.is_empty()
+            {
+                Ok(name.replace(' ', "_"))
+            } else {
+                unsupported(format!(
+                    "Report.WordXmlPart of the name `{name}`: how BC legalizes it as an XML tag is not pinned"
+                ))
+            }
+        };
+        fn items(
+            report: &ir::Report,
+            parent: Option<usize>,
+            extended: bool,
+            tag: &dyn Fn(&str) -> Result<String, Signal>,
+            out: &mut String,
+        ) -> Result<(), Signal> {
+            for (i, item) in report.items.iter().enumerate().filter(|(_, it)| it.parent == parent) {
+                let name = tag(&item.name)?;
+                let kind = if extended { " ElementType=\"DataItem\"" } else { "" };
+                out.push_str(&format!("<{name}{kind}>"));
+                for c in &item.columns {
+                    let cn = tag(&c.name)?;
+                    let kind = if extended { " ElementType=\"Column\"" } else { "" };
+                    out.push_str(&format!("<{cn}{kind} />"));
+                }
+                items(report, Some(i), extended, tag, out)?;
+                out.push_str(&format!("</{name}>"));
+            }
+            Ok(())
+        }
+        let mut body = String::new();
+        items(report, None, extended, &tag, &mut body)?;
+        let number = self.object_id_of(schema.object as u32);
+        Ok(Value::Text(format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><NavWordReportXmlPart xmlns=\"urn:microsoft-dynamics-nav/reports/{}/{number}/\"><Labels />{body}</NavWordReportXmlPart>",
+            tag(schema.name())?
+        )))
+    }
+
     fn report_by_number(&mut self, id: &str, arg: Option<&Value>) -> Result<(Inst, Schema), Signal> {
         let Some(Value::Integer(n)) = arg else {
             return unsupported(format!("{id} with an id that is not an integer"));
@@ -1449,10 +1528,17 @@ impl Session {
         } else {
             None
         };
+        // An item that declares nested items writes its `DataItems` element even when no row reaches them
+        // (report/W3ReportDataset.al:Rows_ParentsWithoutChildRows, Rows_ParentsWithChildRowsAndSiblingItem).
+        let declares_children = match r {
+            ItemRef::Base(i) => run.report().items.iter().any(|it| it.parent == Some(i)),
+            ItemRef::Added(..) => false,
+        };
         self.dataset.as_mut().expect("a SaveAs run has a dataset").begin(
             &name,
             identity.as_ref().map(|(t, g)| (*t, g.as_str())),
             &columns,
+            declares_children,
         );
         Ok(())
     }

@@ -1302,6 +1302,7 @@ fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a Seq<'a>, oi:
         lines: None,
         emit_pos: false,
         routine_idx: 0,
+        assumed: Vec::new(),
     }
 }
 
@@ -2027,6 +2028,8 @@ struct Lowerer<'a> {
     emit_pos: bool,
     /// Index of the routine being lowered in its object.
     routine_idx: usize,
+    /// The assumptions the lowering of each statement being lowered rests on (innermost last).
+    assumed: Vec<Vec<al_builtins::assumptions::Assumption>>,
 }
 
 /// What lowering asks about an object again and again. Each answer is computed on first use and
@@ -2101,7 +2104,7 @@ fn key(file: usize, n: &SyntaxNode) -> (usize, usize, usize) {
     (file, r.start().into(), r.end().into())
 }
 
-fn is_stmt(k: SyntaxKind) -> bool {
+pub(crate) fn is_stmt(k: SyntaxKind) -> bool {
     use SyntaxKind::*;
     matches!(
         k,
@@ -2300,12 +2303,27 @@ impl Lowerer<'_> {
                 (Some(ws), None) if ws.is_empty() => Some(Vec::new()),
                 _ => None,
             };
+            // A filter text with an AL-quoted identifier read as a filter text: only the CalcFormula and
+            // DataItemTableView forms are pinned.
+            let quoted = a.wheres.iter().flatten().any(|w| {
+                matches!(w, crate::relation::ParsedWhere::Value { text, .. }
+                    if !text.starts_with('\'') && !text.contains("::") && text.contains('"'))
+            }) || a
+                .condition_raw
+                .iter()
+                .zip(&a.filter_conditions)
+                .any(|(raw, filter)| *filter && raw.contains('"'));
             arms.push(ir::RelationArm {
                 conditions,
                 table,
                 table_name: a.path.join("."),
                 field,
                 wheres,
+                assumes: if quoted {
+                    vec![al_builtins::assumptions::Assumption::TableRelationQuotes]
+                } else {
+                    Vec::new()
+                },
             });
         }
         arms
@@ -2865,6 +2883,7 @@ impl Lowerer<'_> {
             extensions,
             ext_triggers,
             action_areas: layout.action_areas.clone(),
+            assumes: layout.assumes.clone(),
         }
     }
 
@@ -3541,15 +3560,37 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
-        let body = match r.body() {
+        let mut body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
-        // The platform's Base64Convert codeunit is the one the runtime implements (al-vm platformnative.rs).
-        let implemented = self.ws.objects[self.oi].name == "Base64Convert";
-        if body.is_empty() && !implemented && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+        // A few have an implementation here (`platform_native`, pinned by the corpus); the others are refused.
+        let native = (body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")))
+            .then(|| {
+                let types: Vec<String> = r
+                    .params()
+                    .map(|p| p.type_ref().map(|t| t.type_name().to_lowercase()).unwrap_or_default())
+                    .collect();
+                al_builtins::platform_native::find(&self.ws.objects[self.oi].name, &r.name(), &types)
+            })
+            .flatten();
+        if let Some(entry) = native {
+            let call = ir::Expr::Builtin {
+                id: entry.id.to_string(),
+                receiver: None,
+                args: (0..params)
+                    .map(|i| ir::Arg::Value(ir::Expr::Load(ir::Place::Local(i))))
+                    .collect(),
+                ret_used: ret_ty.is_some(),
+            };
+            body = vec![if ret_ty.is_some() {
+                ir::Stmt::Exit(Some(call))
+            } else {
+                ir::Stmt::Expr(call)
+            }];
+        } else if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
             self.reasons.push(format!(
                 "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
                 r.name()
@@ -3710,7 +3751,31 @@ impl Lowerer<'_> {
         n.map(|n| self.stmt(n)).unwrap_or_default()
     }
 
+    /// Notes that the lowering of the statement being lowered rests on assumption `a`: the statement is
+    /// preceded by `Stmt::Assume(a)`, so a test that runs it is reported as flagged.
+    fn assume(&mut self, a: al_builtins::assumptions::Assumption) {
+        if let Some(frame) = self.assumed.last_mut() {
+            if !frame.contains(&a) {
+                frame.push(a);
+            }
+        }
+    }
+
     fn stmt(&mut self, n: &SyntaxNode) -> Vec<ir::Stmt> {
+        self.assumed.push(Vec::new());
+        let mut out = self.stmt_plain(n);
+        let marks = self.assumed.pop().unwrap_or_default();
+        if !marks.is_empty() && !out.is_empty() {
+            // After the position marker, which belongs to the statement that follows it.
+            let at = usize::from(matches!(out.first(), Some(ir::Stmt::Pos(_))));
+            for (i, a) in marks.into_iter().enumerate() {
+                out.insert(at + i, ir::Stmt::Assume(a));
+            }
+        }
+        out
+    }
+
+    fn stmt_plain(&mut self, n: &SyntaxNode) -> Vec<ir::Stmt> {
         use SyntaxKind::*;
         let kids: Vec<SyntaxNode> = n.children().collect();
         let r = match n.kind() {
@@ -4097,6 +4162,7 @@ impl Lowerer<'_> {
                 // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
                 if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_of(&kids[0]), Ty::Array(..)) {
                     if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
+                        self.assume(al_builtins::assumptions::Assumption::ChainedArrayIndex);
                         for k in &kids[1..] {
                             idx.push(self.expr(k)?);
                         }
@@ -4540,6 +4606,21 @@ impl Lowerer<'_> {
                 self.call(n, &kids[0], &args)
             }
             ScopeExpr => match self.res(n).cloned() {
+                // `Mode::Decompress` with `Mode: DotNet CompressionMode`: the type's static member.
+                Some(Res::DotNetMember(name)) => {
+                    let Ty::DotNet(alias) = self.ty_of(n) else {
+                        return Err(format!("`{name}` is not a member of a DotNet value"));
+                    };
+                    let ty = self.ws.resolve_dotnet(self.file, &alias).ok_or_else(|| {
+                        format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies")
+                    })?;
+                    Ok(ir::Expr::DotNet {
+                        ty: Some(ty),
+                        receiver: Some(Box::new(self.expr(&kids[0])?)),
+                        op: ir::DotNetOp::Get(name),
+                        args: Vec::new(),
+                    })
+                }
                 Some(Res::EnumValue { object, value }) => Ok(ir::Expr::Const(ir::Const::Enum(object as u32, value))),
                 Some(Res::OptionValue(i)) => match self.ty_of(n) {
                     Ty::Option(m) => Ok(ir::Expr::Const(ir::Const::Option(i, m))),
@@ -5008,6 +5089,8 @@ impl Lowerer<'_> {
                             0,
                         )))))
                     }
+                    // A Label is its text: the variable holds none (reads lower to the constant).
+                    Some(r) if sig.instance && sig.receiver == "Label" => Some(Box::new(ir::Arg::Value(self.expr(r)?))),
                     Some(r) if sig.instance => Some(Box::new(match self.place(r) {
                         Ok(p) => ir::Arg::Ref(p),
                         Err(_) => ir::Arg::Value(self.expr(r)?),
@@ -5114,7 +5197,9 @@ impl Lowerer<'_> {
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
                         continue;
                     }
-                    let field_param = p.name.to_ascii_lowercase().starts_with("field")
+                    // A parameter named Field... that is an Integer takes the number as a VALUE (`RecRef.Field(Buf."Field No.")`,
+                    // `RecRef.FieldExist(R.Number)`); a field reference is passed for a parameter that names a field.
+                    let field_param = (p.name.to_ascii_lowercase().starts_with("field") && p.ty != "Integer")
                         || p.name.eq_ignore_ascii_case("FromField")
                         || p.name.to_ascii_lowercase().starts_with("column");
                     match (field_param, self.res(a).cloned()) {

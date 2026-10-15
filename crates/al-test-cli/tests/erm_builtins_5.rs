@@ -69,9 +69,9 @@ fn the_about_properties_of_a_query_do_not_stop_it() {
     assert_eq!(refusal("Open"), "");
 }
 
+// A link to an outer data item joins on that item's row since the probe pinned it (issue 38: corpus branch
+// al-runtime-rs-staging, query/PXQueryOuterLink.al); it no longer stops the query.
 #[test]
-fn a_link_to_an_outer_data_item_is_refused_as_not_pinned() {
-    let why = refusal("OpenOuter");
-    assert!(why.contains("Head") && why.contains("not the enclosing"), "{why}");
-    assert!(why.contains("not pinned"), "{why}");
+fn a_link_to_an_outer_data_item_lowers() {
+    assert_eq!(refusal("OpenOuter"), "");
 }

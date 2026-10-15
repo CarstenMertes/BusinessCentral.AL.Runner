@@ -153,6 +153,54 @@ pub fn scans_follow_key_order_and_direction<S: Store>(mut s: S) {
     assert_eq!(scan_all(&s, &c, &t, 1, &[], true), ["B", "C", "A", "D"]);
 }
 
+/// A scan that continues after a position keeps going when the row at that position is gone (the code
+/// deleted it, or changed the key it is positioned by), in both directions and in both keys, and rows with
+/// equal secondary keys come in primary key order.
+pub fn scans_continue_after_a_position_whose_row_is_gone<S: Store>(mut s: S) {
+    let (t, c) = (table(), cx("A"));
+    for (n, g) in [("A", 2), ("B", 1), ("C", 2), ("D", 1), ("E", 2)] {
+        s.insert(&c, &t, row(n, 0, g)).unwrap();
+    }
+    for (key, ascending) in [(0usize, true), (0, false), (1, true), (1, false)] {
+        let mut t_rows = Vec::new();
+        // Position on "B", delete it, then continue.
+        let b = s.get(&c, &t, &[Value::Code("B".into())]).unwrap();
+        if let Some(b) = b {
+            let at = position(&t, key, &b);
+            s.delete(&c, &t, &[Value::Code("B".into())]).unwrap();
+            let mut after = Some(at);
+            while let Some(r) = s
+                .next(
+                    &c,
+                    &t,
+                    &Scan {
+                        key,
+                        filters: &[],
+                        ascending,
+                        after: after.as_deref(),
+                    },
+                )
+                .unwrap()
+            {
+                after = Some(position(&t, key, &r));
+                t_rows.push(no(&r));
+            }
+            s.insert(&c, &t, row("B", 0, 1)).unwrap();
+        }
+        let want: Vec<&str> = match (key, ascending) {
+            (0, true) => vec!["C", "D", "E"],
+            (0, false) => vec!["A"],
+            (1, true) => vec!["D", "A", "C", "E"],
+            (1, false) => vec![],
+            _ => unreachable!(),
+        };
+        assert_eq!(t_rows, want, "key {key}, ascending {ascending}");
+    }
+    // Equal secondary keys: primary key order, and scanning from the middle of them.
+    assert_eq!(scan_all(&s, &c, &t, 1, &[], true), ["B", "D", "A", "C", "E"]);
+    assert_eq!(scan_all(&s, &c, &t, 1, &[], false), ["E", "C", "A", "D", "B"]);
+}
+
 pub fn filters_count_and_delete_all<S: Store>(mut s: S) {
     let (t, c) = (table(), cx("A"));
     for (n, a) in [("A", 5), ("B", 15), ("C", 25)] {
@@ -202,6 +250,7 @@ pub fn run_all<S: Store>(new: impl Fn() -> S) {
     modify_and_delete(new());
     rename(new());
     scans_follow_key_order_and_direction(new());
+    scans_continue_after_a_position_whose_row_is_gone(new());
     filters_count_and_delete_all(new());
     companies_are_separate(new());
     rollback_discards_uncommitted_changes(new());

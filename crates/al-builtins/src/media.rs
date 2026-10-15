@@ -22,6 +22,10 @@ pub struct MediaObject {
     pub bytes: Vec<u8>,
     pub mime: String,
     pub description: String,
+    /// The file name of the four argument import (`ImportStream(Stream, Description, MimeType, FileName)`).
+    /// Kept for the Tenant Media row, whose `File Name` and the description and MIME type the platform
+    /// derives from it are not pinned: a four argument import's Tenant Media row is refused.
+    pub file_name: String,
     /// Width and height of a PNG picture; 0 for content that is no PNG (not pinned).
     pub width: i32,
     pub height: i32,
@@ -85,7 +89,7 @@ fn drain(v: &Value) -> Result<Vec<u8>, Signal> {
 }
 
 fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
-    // ImportStream(Stream, Description[, MimeType]).
+    // ImportStream(Stream, Description[, MimeType[, FileName]]).
     let bytes = drain(
         a.first()
             .ok_or_else(|| Signal::Unsupported("ImportStream without a stream".into()))?,
@@ -94,6 +98,10 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
     let mime = match a.get(2) {
         None | Some(Value::Null) => String::new(),
         Some(_) => text_arg(a, 2)?,
+    };
+    let file_name = match a.get(3) {
+        None | Some(Value::Null) => String::new(),
+        Some(_) => text_arg(a, 3)?,
     };
     let id = c.new_guid();
     // A PNG without a MIME type is `image/png`, and its Tenant Media row has its size (corpus
@@ -111,6 +119,7 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
             bytes,
             mime,
             description,
+            file_name,
             width,
             height,
         },
@@ -219,6 +228,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("Media.HasValue#1", has_value),
     ("Media.MediaId#1", media_id),
     ("Media.ImportStream#1", media_import),
+    ("Media.ImportStream#2", media_import),
     ("Media.ExportStream#1", media_export),
     ("MediaSet.MediaId#1", media_id),
     ("MediaSet.Count#1", set_count),

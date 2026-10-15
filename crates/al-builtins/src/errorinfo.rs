@@ -45,7 +45,7 @@ fn with_state<R>(r: Option<&mut Value>, f: impl FnOnce(&mut ErrorInfoState) -> R
 
 fn text(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }
@@ -135,7 +135,7 @@ macro_rules! text_prop {
     ($name:ident, $field:ident) => {
         fn $name(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             if a.is_empty() {
-                return with_state(r, |s| Value::Text(s.$field.clone()));
+                return with_state(r, |s| Value::Text(s.$field.clone().into()));
             }
             let t = text(a, 0)?;
             with_state(r, |s| s.$field = t).map(|()| Value::Null)
@@ -291,6 +291,20 @@ pub fn set_message_of(v: &Value, message: &str) -> bool {
     }
 }
 
+/// Sets the table and field an `ErrorInfo` value names (what `TestField` records on a collected error) and
+/// answers whether it is collectible.
+pub fn set_origin_of(v: &Value, table_id: i32, field_no: i32) -> bool {
+    let Value::Library(_, cell) = v else { return false };
+    match &mut *cell.borrow_mut() {
+        LibraryValue::ErrorInfo(s) => {
+            s.table_id = table_id;
+            s.field_no = field_no;
+            s.collectible
+        }
+        _ => false,
+    }
+}
+
 /// The message of an `ErrorInfo` value.
 pub fn message_of(v: &Value) -> Option<String> {
     let Value::Library(_, cell) = v else { return None };
@@ -322,7 +336,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         "AddAction" => add_action,
         "AddNavigationAction" => add_navigation_action,
         // Empty until the error is raised (session/TestProbeSessionMiscContracts.al:ErrorInfo_Callstack_IsAvailable).
-        "Callstack" => |_, r, _| with_state(r, |_| ()).map(|()| Value::Text(String::new())),
+        "Callstack" => |_, r, _| with_state(r, |_| ()).map(|()| Value::Text(String::new().into())),
         _ => return None,
     })
 }

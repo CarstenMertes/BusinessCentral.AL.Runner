@@ -50,7 +50,7 @@ pub fn row(no: &str, amount: i32, group: i32) -> Row {
 
 fn no(r: &Row) -> String {
     match &r[0] {
-        Value::Code(s) => s.clone(),
+        Value::Code(s) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

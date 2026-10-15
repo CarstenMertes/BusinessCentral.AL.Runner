@@ -48,8 +48,8 @@ pub(super) fn xmlport_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             _ => None,
         },
         |o, r| {
-            r[pos(t, 2)] = Value::Text(truncate(&o.name, 30));
-            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80));
+            r[pos(t, 2)] = Value::Text(truncate(&o.name, 30).into());
+            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80).into());
             r[pos(t, 4)] = Value::Boolean(prop(o, "UseRequestPage").is_none_or(truthy));
             r[pos(t, 5)] = option(t, 5, ordinal(o, "TransactionType", TRANSACTION_TYPES, 0)?);
             r[pos(t, 6)] = option(t, 6, ordinal(o, "Direction", DIRECTIONS, 2)?);
@@ -100,13 +100,13 @@ pub(super) fn query_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                     o.name
                 ));
             }
-            r[pos(t, 2)] = Value::Text(truncate(&o.name, 30));
-            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80));
-            r[pos(t, 4)] = Value::Text(text(o, "APIPublisher", 40));
-            r[pos(t, 5)] = Value::Text(text(o, "APIGroup", 40));
-            r[pos(t, 6)] = Value::Text(text(o, "APIVersion", 250));
-            r[pos(t, 7)] = Value::Text(text(o, "EntitySetName", 250));
-            r[pos(t, 8)] = Value::Text(text(o, "EntityName", 250));
+            r[pos(t, 2)] = Value::Text(truncate(&o.name, 30).into());
+            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80).into());
+            r[pos(t, 4)] = Value::Text(text(o, "APIPublisher", 40).into());
+            r[pos(t, 5)] = Value::Text(text(o, "APIGroup", 40).into());
+            r[pos(t, 6)] = Value::Text(text(o, "APIVersion", 250).into());
+            r[pos(t, 7)] = Value::Text(text(o, "EntitySetName", 250).into());
+            r[pos(t, 8)] = Value::Text(text(o, "EntityName", 250).into());
             r[pos(t, 10)] = Value::Guid(c.owner(o));
             Ok(())
         },
@@ -154,7 +154,7 @@ pub(super) fn event_subscription_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             };
             let mut key = blank(t);
             key[pos(t, 1)] = Value::Integer(id as i32);
-            key[pos(t, 2)] = Value::Text(truncate(&r.name, 250));
+            key[pos(t, 2)] = Value::Text(truncate(&r.name, 250).into());
             match subscription_row(&c, o, &r.name, a, t, key.clone()) {
                 Ok(row) => out.push(Entry::ok(row)),
                 Err(why) => out.push(Entry::poisoned(key, why)),
@@ -239,7 +239,7 @@ fn subscription_row(
     r[pos(t, 3)] = option(t, 3, event_type);
     r[pos(t, 4)] = option(t, 4, object_type);
     r[pos(t, 5)] = Value::Integer(publisher_id as i32);
-    r[pos(t, 6)] = Value::Text(truncate(&published, 250));
+    r[pos(t, 6)] = Value::Text(truncate(&published, 250).into());
     // A statically bound subscriber that resolved is active (TestEventSubscriptionVirtualTable.al:`_Row_DescribesTheSubscription`).
     r[pos(t, 7)] = Value::Boolean(true);
     Ok(r)
@@ -317,7 +317,7 @@ fn page_actions(
         r[pos(t, 4)] = Value::Integer(0);
         r[pos(t, 5)] = Value::Integer(0);
         r[pos(t, 6)] = option(t, 6, 0);
-        r[pos(t, 8)] = Value::Text(truncate(&area.name, 120));
+        r[pos(t, 8)] = Value::Text(truncate(&area.name, 120).into());
         rows.push(r);
         next += 1;
         // Depth first below the container.
@@ -343,7 +343,7 @@ fn page_actions(
             r[pos(t, 4)] = Value::Integer(depth);
             r[pos(t, 5)] = Value::Integer(parent);
             r[pos(t, 6)] = option(t, 6, kind);
-            r[pos(t, 8)] = Value::Text(truncate(&ctl.name, 120));
+            r[pos(t, 8)] = Value::Text(truncate(&ctl.name, 120).into());
             let run_id = match &ctl.run_object {
                 None => 0,
                 Some(ro) => match ro.object.and_then(|i| c.objects.get(i)).and_then(|x| x.id) {
@@ -583,7 +583,7 @@ fn field_relations(
             // A filter whose members are not all named options reads a blank value: its text form is not
             // pinned (docs/probes-needed.md, "Probe fixes (corpus 345627d)").
             if let Some(Some(v)) = arm.values.get(k) {
-                r[pos(t, 9)] = Value::Text(v.clone());
+                r[pos(t, 9)] = Value::Text(v.clone().into());
             }
             if filter {
                 // Condition Type: CONST is the first member, FILTER the second (session/PWPlatformTables.al:109-123).

@@ -206,7 +206,7 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
     // A page with no source table has no source object: its flags are all false and its texts empty
     // (AL Runner, measured on BC: docs of RecordPatches.PageMetadataSourceObject).
     let has_source = src_id != 0;
-    r[pos(t, 2)] = Value::Text(o.name.clone());
+    r[pos(t, 2)] = Value::Text(o.name.clone().into());
     // Caption and CardPageID come from the declaration (docs/probes-needed.md, probe batch 5): the
     // `Caption` (else the English `CaptionML`, else the name), and the id of the page `CardPageID`
     // names, 0 when none. Page Management reads the card page off the lookup page of a table.
@@ -234,26 +234,26 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
         .into(),
     );
     r[pos(t, 8)] = Value::Boolean(lit_bool(o, "RefreshOnActivate", false));
-    r[pos(t, 9)] = Value::Text(text_prop(o, "APIPublisher", 40));
-    r[pos(t, 10)] = Value::Text(text_prop(o, "APIGroup", 40));
+    r[pos(t, 9)] = Value::Text(text_prop(o, "APIPublisher", 40).into());
+    r[pos(t, 10)] = Value::Text(text_prop(o, "APIGroup", 40).into());
     // APIVersion reads BC's own default `beta` when undeclared (TestPageMetadataProperties.al:94-97).
     r[pos(t, 11)] = Value::Text(match prop(o, "APIVersion") {
         None => "beta".into(),
         Some(v) => string_lit(v).unwrap_or_default().chars().take(250).collect(),
     });
-    r[pos(t, 12)] = Value::Text(text_prop(o, "EntitySetName", 250));
-    r[pos(t, 13)] = Value::Text(text_prop(o, "EntityName", 250));
+    r[pos(t, 12)] = Value::Text(text_prop(o, "EntitySetName", 250).into());
+    r[pos(t, 13)] = Value::Text(text_prop(o, "EntityName", 250).into());
     r[pos(t, 14)] = Value::Integer(src_id as i32);
-    r[pos(t, 15)] = Value::Text(view_text(o, src, c.objects)?);
+    r[pos(t, 15)] = Value::Text(view_text(o, src, c.objects)?.into());
     r[pos(t, 19)] = Value::Boolean(has_source && lit_bool(o, "DelayedInsert", false));
     r[pos(t, 20)] = Value::Boolean(has_source && lit_bool(o, "ShowFilter", true));
     r[pos(t, 21)] = Value::Boolean(has_source && lit_bool(o, "MultipleNewLines", false));
     r[pos(t, 22)] = Value::Boolean(has_source && lit_bool(o, "SaveValues", false));
     r[pos(t, 23)] = Value::Boolean(has_source && lit_bool(o, "AutoSplitKey", false));
     r[pos(t, 24)] = Value::Text(if has_source {
-        caption_fields(o, src)?
+        caption_fields(o, src)?.into()
     } else {
-        String::new()
+        String::new().into()
     });
     r[pos(t, 26)] = Value::Boolean(has_source && lit_bool(o, "LinksAllowed", true));
     r[pos(t, 27)] = Value::Boolean(lit_bool(o, "ChangeTrackingAllowed", false));
@@ -270,7 +270,7 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
             .take(5)
             .collect(),
     );
-    r[pos(t, 32)] = Value::Text(o.namespace.clone().unwrap_or_default());
+    r[pos(t, 32)] = Value::Text(o.namespace.clone().unwrap_or_default().into());
     Ok(r)
 }
 
@@ -354,15 +354,15 @@ fn control_row(
     t: &TableDef,
     r: &mut Row,
 ) -> Result<(), String> {
-    r[pos(t, 3)] = Value::Text(ctl.name.clone());
+    r[pos(t, 3)] = Value::Text(ctl.name.clone().into());
     // TableNo is the page's source table, stated even for a control with no source field
     // (TestPageControlFieldControlTree.al:59-61).
     r[pos(t, 4)] = Value::Integer(src.and_then(|s| s.id).unwrap_or(0) as i32);
     // Enabled and Visible report a lower-case `true` when undeclared, Editable a capitalised `True`
     // (TestPageControlFieldDefaults.al:15-50).
-    r[pos(t, 6)] = Value::Text(bool_prop(o, ctl, "enabled", "true")?);
-    r[pos(t, 7)] = Value::Text(bool_prop(o, ctl, "editable", "True")?);
-    r[pos(t, 8)] = Value::Text(bool_prop(o, ctl, "visible", "true")?);
+    r[pos(t, 6)] = Value::Text(bool_prop(o, ctl, "enabled", "true")?.into());
+    r[pos(t, 7)] = Value::Text(bool_prop(o, ctl, "editable", "True")?.into());
+    r[pos(t, 8)] = Value::Text(bool_prop(o, ctl, "visible", "true")?.into());
     // The variables a control can name are the globals of the object that declares it.
     let owner = ctl.owner.map_or(o, |e| &c.objects[e]);
     match &ctl.binding {
@@ -378,17 +378,18 @@ fn control_row(
                 .get(*fp)
                 .ok_or_else(|| format!("page '{}' control '{}': no such source field", o.name, ctl.name))?;
             r[pos(t, 5)] = Value::Integer(f.id as i32);
-            r[pos(t, 9)] = Value::Text(f.name.clone());
+            r[pos(t, 9)] = Value::Text(f.name.clone().into());
             // The members of an option or enum field (TestPageControlFieldDefaults.al:60-72).
             r[pos(t, 10)] = Value::Text(match &f.ty {
-                RtType::Option(m) => m.join(","),
+                RtType::Option(m) => m.join(",").into(),
                 RtType::Enum(e) => c.objects[*e as usize]
                     .enum_values
                     .iter()
                     .map(|(_, n)| n.as_str())
                     .collect::<Vec<_>>()
-                    .join(","),
-                _ => String::new(),
+                    .join(",")
+                    .into(),
+                _ => String::new().into(),
             });
         }
         // A control bound to a page variable names the variable and has no source field
@@ -398,7 +399,7 @@ fn control_row(
                 .globals
                 .get(*slot)
                 .ok_or_else(|| format!("page '{}' control '{}': no such variable", o.name, ctl.name))?;
-            r[pos(t, 9)] = Value::Text(g.name.clone());
+            r[pos(t, 9)] = Value::Text(g.name.clone().into());
         }
         _ => {
             return Err(format!(

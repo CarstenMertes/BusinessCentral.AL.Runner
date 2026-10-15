@@ -242,7 +242,7 @@ fn unsupported(r: &Ran) -> String {
 
 fn text(r: Ran) -> String {
     match r.result {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -1349,7 +1349,7 @@ fn the_declared_result_types_match_the_registry() {
         let mut s = Session::new(Engine::new(al_ir::Program::default(), vec![]));
         let mut args = args;
         if *member == "TryGetStringTenantSetting" {
-            args = vec![Value::Text("TENANTID".into()), Value::Text(String::new())];
+            args = vec![Value::Text("TENANTID".into()), Value::Text(String::new().into())];
         }
         let v = match m.call_ref {
             Some(f) => f(&mut s, None, &mut args),

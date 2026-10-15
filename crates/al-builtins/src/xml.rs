@@ -1192,7 +1192,7 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
             // Text is accepted as content and becomes a text node
             // (xml/TestXmlRuntimeContracts.al:XmlElement_Add_Text_IsAccepted_AndAdjacentTextsMerge).
             Value::Text(t) | Value::Code(t) => {
-                out.push(new_node(XData::Text(t.clone())));
+                out.push(new_node(XData::Text(t.to_string())));
                 continue;
             }
             other => {
@@ -2197,6 +2197,7 @@ fn list_of(items: Vec<Handle>) -> Value {
 fn arg_text(a: &[Value], i: usize) -> Result<String, Signal> {
     a.get(i)
         .and_then(crate::native::text_of)
+        .map(String::from)
         .ok_or_else(|| Signal::Unsupported(format!("XML argument {i} is not text")))
 }
 
@@ -2204,38 +2205,23 @@ fn read_from_text(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
     read_text_into(c, r, a, 1)
 }
 
-/// Whether `text` has white space that is not part of an element's text: before the first or after the
-/// last markup, or a run of white space alone between two tags. `XmlReadOptions.PreserveWhitespace`
-/// decides about those, and what the default options do is not pinned (issue 22).
-fn has_ignorable_white_space(text: &str) -> bool {
-    let t = text.trim_start_matches('\u{feff}');
-    if t.starts_with(char::is_whitespace) || t.ends_with(char::is_whitespace) {
-        return true;
-    }
-    let mut rest = t;
-    while let Some(i) = rest.find('>') {
-        let after = &rest[i + 1..];
-        let end = after.find('<').unwrap_or(after.len());
-        if end > 0 && after[..end].chars().all(char::is_whitespace) && end < after.len() {
-            return true;
-        }
-        rest = after;
-    }
-    false
+/// `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)`: the document reads as the form without options
+/// does, whether the options are the default or `PreserveWhitespace` is true or false, for white space inside the
+/// text, around the root and between tags (misc/W4XmlJsonHttp.al: W4 Xml Options Tests.ReadFrom_*, BC 27.5 and 29.0).
+fn read_from_text_options(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    read_text_into(c, r, a, 2)
 }
 
-/// `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)`: the text form, for a document whose
-/// white space the options cannot change. The form without options keeps white space
-/// (xml/TestXmlRuntimeContracts.al:99); the default options are not pinned, so a document with
-/// white space between tags or around the root is refused.
-fn read_from_text_options(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let text = arg_text(a, 0)?;
-    if has_ignorable_white_space(&text) {
-        return unsupported(
-            "XmlDocument.ReadFrom with XmlReadOptions of a document with white space between tags or around the root: what the default XmlReadOptions do with it is not pinned (docs/probes-needed.md)",
-        );
+/// `XmlReadOptions.PreserveWhitespace(Value)`: the probes see no difference in what is read, so the setting changes
+/// nothing here.
+fn read_options_preserve_whitespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    if !matches!(r, Some(Value::Library(..))) {
+        return unsupported("PreserveWhitespace on something that is not an XmlReadOptions");
     }
-    read_text_into(c, r, a, 2)
+    let Some(Value::Boolean(_)) = a.first() else {
+        return unsupported("PreserveWhitespace with something that is not a Boolean");
+    };
+    Ok(Value::Null)
 }
 
 fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: usize) -> NResult {
@@ -2311,7 +2297,7 @@ fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
             )
         };
     };
-    let mut args = [Value::Text(text), a[1].clone()];
+    let mut args = [Value::Text(text.into()), a[1].clone()];
     let result = read_from_text(c, None, &mut args)?;
     a[1] = args[1].clone();
     Ok(result)
@@ -2461,15 +2447,18 @@ macro_rules! decl_prop {
                     .ok_or_else(|| Signal::Unsupported("non-text declaration value".into()))?;
                 with(&h, |d| {
                     if let XData::Declaration { $field, .. } = d {
-                        *$field = t;
+                        *$field = t.to_string();
                     }
                 });
                 return Ok(Value::Null);
             }
-            Ok(Value::Text(with(&h, |d| match d {
-                XData::Declaration { $field, .. } => $field.clone(),
-                _ => String::new(),
-            })))
+            Ok(Value::Text(
+                with(&h, |d| match d {
+                    XData::Declaration { $field, .. } => $field.clone(),
+                    _ => String::new(),
+                })
+                .into(),
+            ))
         }
     };
 }
@@ -2482,34 +2471,43 @@ fn value_prop(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
     if let Some(v) = a.first() {
         let t = crate::native::text_of(v).ok_or_else(|| Signal::Unsupported("non-text XML value".into()))?;
         with(&h, |d| match d {
-            XData::Attribute { value, .. } => *value = t,
-            XData::Text(s) | XData::CData(s) | XData::Comment(s) => *s = t,
+            XData::Attribute { value, .. } => *value = t.to_string(),
+            XData::Text(s) | XData::CData(s) | XData::Comment(s) => *s = t.to_string(),
             _ => {}
         });
         return Ok(Value::Null);
     }
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Attribute { value, .. } => value.clone(),
-        XData::Text(s) | XData::CData(s) | XData::Comment(s) => s.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Attribute { value, .. } => value.clone(),
+            XData::Text(s) | XData::CData(s) | XData::Comment(s) => s.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn pi_get_target(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[0] = Value::Text(with(&h, |d| match d {
-        XData::Pi { target, .. } => target.clone(),
-        _ => String::new(),
-    }));
+    a[0] = Value::Text(
+        with(&h, |d| match d {
+            XData::Pi { target, .. } => target.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    );
     Ok(Value::Boolean(true))
 }
 
 fn pi_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[0] = Value::Text(with(&h, |d| match d {
-        XData::Pi { data, .. } => data.clone(),
-        _ => String::new(),
-    }));
+    a[0] = Value::Text(
+        with(&h, |d| match d {
+            XData::Pi { data, .. } => data.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    );
     Ok(Value::Boolean(true))
 }
 
@@ -2517,34 +2515,46 @@ fn pi_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResu
 
 fn element_name(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Element { prefix, local, .. } | XData::Attribute { prefix, local, .. } => qname(prefix, local),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Element { prefix, local, .. } | XData::Attribute { prefix, local, .. } => qname(prefix, local),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn local_name(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Element { local, .. } | XData::Attribute { local, .. } => local.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Element { local, .. } | XData::Attribute { local, .. } => local.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn namespace_uri(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Element { ns, .. } | XData::Attribute { ns, .. } => ns.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Element { ns, .. } | XData::Attribute { ns, .. } => ns.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn namespace_prefix(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Attribute { prefix, .. } => prefix.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Attribute { prefix, .. } => prefix.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn is_namespace_declaration(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
@@ -2570,13 +2580,13 @@ fn get_prefix_of_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
             });
             match hit {
                 Some(Some(p)) => {
-                    a[1] = Value::Text(p);
+                    a[1] = Value::Text(p.into());
                     return Ok(Value::Boolean(true));
                 }
                 // xml/TestXmlRuntimeContracts.al:XmlElement_NamespaceLookups: the default namespace
                 // has an empty prefix.
                 Some(None) => {
-                    a[1] = Value::Text(String::new());
+                    a[1] = Value::Text(String::new().into());
                     return Ok(Value::Boolean(true));
                 }
                 None => {}
@@ -2605,7 +2615,7 @@ fn get_namespace_of_prefix(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
     }
     match lookup_namespace(&h, &prefix) {
         Some(u) => {
-            a[1] = Value::Text(u);
+            a[1] = Value::Text(u.into());
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
@@ -2873,12 +2883,12 @@ fn is_empty(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult 
 fn inner_text_fn(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let mut s = String::new();
     inner_text(&recv(r)?, &mut s);
-    Ok(Value::Text(s))
+    Ok(Value::Text(s.into()))
 }
 
 fn inner_xml(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(serialize_inner(&h)?))
+    Ok(Value::Text(serialize_inner(&h)?.into()))
 }
 
 fn child_elements(h: &Handle, name: Option<(&str, Option<&str>)>) -> Vec<Handle> {
@@ -3064,7 +3074,7 @@ fn manager_lookup_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Val
     };
     match found {
         Some(u) => {
-            a[1] = Value::Text(u);
+            a[1] = Value::Text(u.into());
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
@@ -3083,7 +3093,7 @@ fn manager_has_namespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]
 
 fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[0] = Value::Text(serialize(&h)?);
+    a[0] = Value::Text(serialize(&h)?.into());
     Ok(Value::Boolean(true))
 }
 
@@ -3516,6 +3526,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
             write_to_outstream
         }
         ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,
+        ("XmlReadOptions", "PreserveWhitespace", ["Boolean"]) => read_options_preserve_whitespace,
         ("XmlElement", "SetAttribute", ["Text", "Text"]) => set_attribute,
         ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"]) => remove_attribute,
         ("XmlElement", "RemoveAllAttributes", []) => remove_all_attributes,

@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn long_text_is_cut() {
-        let d = Value::Text("x".repeat(100)).describe();
+        let d = Value::Text("x".repeat(100).into()).describe();
         assert!(d.starts_with("Text 'xxxx"), "{d}");
         assert!(d.len() < 60, "{d}");
         assert!(d.ends_with("...'"), "{d}");

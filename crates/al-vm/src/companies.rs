@@ -48,7 +48,7 @@ impl Session {
         let Some(t) = self.company_table() else {
             return Ok(None);
         };
-        let Ok(key) = ops::convert(Value::Text(name.to_string()), &t.fields[0].ty) else {
+        let Ok(key) = ops::convert(Value::Text(name.to_string().into()), &t.fields[0].ty) else {
             // A name longer than the key field cannot be a company's.
             return Ok(None);
         };
@@ -59,6 +59,7 @@ impl Session {
         // The store matches a text key without regard to case; the company's own spelling must match.
         Ok(row
             .and_then(|r| al_builtins::native::text_of(&r[0]))
+            .map(String::from)
             .filter(|stored| stored == name))
     }
 
@@ -119,7 +120,8 @@ impl Session {
             Some(v) => match al_builtins::native::text_of(v) {
                 Some(n) => n,
                 None => return unsupported(format!("ChangeCompany with {}", v.describe())),
-            },
+            }
+            .to_string(),
         };
         let Some(target) = self.resolve_company(&name)? else {
             // `Boolean?`: false when the answer is used (also on a temporary record), the error when

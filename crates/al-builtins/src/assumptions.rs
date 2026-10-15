@@ -133,36 +133,35 @@ registry! {
         tests: "Config. Package Management.SendTelemetryOnDeleteConfigPackage (Dimensions.Add('PackageCode', Rec.SystemId)); 15 Rapid Start tests.",
         probe: "T := G with Text[40], Text[10], Code[40]; Dict.Add('k', G); Evaluate(T, G).",
     },
-    RecordRefFilterGroup => {
-        id: "recordref-filter-group",
-        assumed: "RecordRef.FilterGroup as a getter, and as a setter for a group other than -1, behaves as Record.FilterGroup. (The setter with -1 is pinned by record/PWFilterGroupOr.al:OrGroup_RecordRef.)",
-        tests: "Find Record Management.FindRecordByDescriptionAndView; 12 Tests-SCM tests.",
-        probe: "The Record.FilterGroup test through RecordRef.Open, FieldRef.SetRange and RecordRef.GetFilters.",
+    GuidAsTextArgument => {
+        id: "guid-as-text-argument",
+        assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment.",
+        tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
+        probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
     },
-    ReportExtLocalProcedure => {
-        id: "reportext-local-procedure",
-        assumed: "A local procedure of a reportextension runs on the instance that runs the calling trigger, which holds the extension's variables and added data items.",
-        tests: "Serv. Get Source Documents (local IntegrationEvent publishers), Serv. Suggest Worksheet Lines; about 2000 bucket tests.",
-        probe: "A reportextension with an added data item, a global variable and local procedures that read both, run with Run and SaveAs.",
+    PageRowDeleteEventNotRaised => {
+        id: "page-row-delete-event-not-raised",
+        assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",
+        tests: "Base Application subscribes on the General Journal and other journals; 88 Tests-General Journal tests.",
+        probe: "Invoke the standard Delete action on a page row of a table with such a subscriber: is the subscriber run.",
     },
-    FindDirectionSet => {
-        id: "find-direction-set",
-        assumed: "The characters of Find's Which argument are a set: '=<>' and '<>=' are the pinned '=><'.",
-        tests: "Tests-Job (Find('=<>')).",
-        probe: "Find('=<>'), Find('<>=') and Find('=><') on the same position, with a row only on one side.",
+    NewRowEqualFiltersSeveralGroups => {
+        id: "new-row-equal-filters-several-groups",
+        assumed: "A new page row takes the value of a field that has equality filters in several filter groups when they all name the same value; different values are not stamped.",
+        tests: "Payment Journal and Incom. Doc. Attach. FactBox tests of Tests-General Journal (Cash Receipt Journal).",
+        probe: "Open a page on a record with SetRange(F, 'A') in group 0 and group 2, insert a row, read F.",
     },
-    LoadFieldsReadsRow => {
-        id: "load-fields-reads-row",
-        assumed: "Record.LoadFields on a record that was never fetched reads the row of the buffer's primary key and answers true.",
-        tests: "Service Document Archive Mgmt. (ServiceMgtSetup.LoadFields(...) before Get()).",
-        probe: "Already probed: the probe of the next corpus bump says LoadFields does NOT read the row and Ok := LoadFields(..) is false.",
-        note: "CONTRADICTED by a probe (corpus bump 9): fix the implementation and delete this entry.",
+    GetRangeAcrossFilterGroups => {
+        id: "get-range-across-filter-groups",
+        assumed: "GetRangeMin/Max see a filter on the field set in another filter group when the current group has none. With no filter at all it stays refused.",
+        tests: "GenJnlManagement.OpenJnl after TemplateSelection (Purchase Journal OnOpenPage); 34 Tests-General Journal tests.",
+        probe: "FilterGroup(2); SetRange(F,'T'); FilterGroup(0); GetRangeMax(F).",
     },
-    TestFieldErrorInfoPasses => {
-        id: "testfield-errorinfo-pass",
-        assumed: "TestField(Field [, Value], ErrorInfo) whose check holds raises nothing and is the check of the overload without the ErrorInfo; a failing check is refused.",
-        tests: "Gen. Jnl.-Check Line (176 calls); 478 Tests-SCM-Manufacturing tests.",
-        probe: "TestField(F, ErrorInfo.Create()) on a blank and a filled field, with and without ErrorBehavior::Collect (the owner's probe is pending).",
+    InvisiblePartForPageCode => {
+        id: "invisible-part-for-page-code",
+        assumed: "CurrPage.<Part>.Page in the page's own code reaches a part whose Visible came out false (and its page is opened).",
+        tests: "Cash Receipt Journal OnAfterGetCurrRecord (WorkflowStatusBatch, Visible = variable); 7 Tests-General Journal tests.",
+        probe: "A page with part(P; ...) { Visible = Flag } where Flag is false at open and OnAfterGetCurrRecord calls CurrPage.P.Page.Method().",
     },
     DatabaseSidNumbers => {
         id: "database-sid-numbers",
@@ -201,12 +200,6 @@ registry! {
         probe: "Confirmed by a corpus bump 9 probe (empty DataItems); delete when the bump is merged.",
         note: "Probably pinned by corpus bump 9 (\"Empty DataItems <DataItems /> confirmed\"): check and delete.",
     },
-    SetCurrentKeyFlowField => {
-        id: "setcurrentkey-flowfield",
-        assumed: "A walk over a key that holds a FlowField orders by the primary key. (That SetCurrentKey accepts a FlowField is pinned by record/ProbeClearAllSetKeyHyperlink.al:SetCurrentKey_OnFlowFieldFlowFilterBlob_Outcome, which does not read the order.)",
-        tests: "Library code that sets a key containing a FlowField in the buckets.",
-        probe: "SetCurrentKey(FlowField) then FindSet over rows whose primary key order differs from their flowed values.",
-    },
     EnumOptionIntegerOrdinal => {
         id: "enum-option-integer-ordinal",
         assumed: "An Enum value converts into an Option or an Integer, and a BigInteger into an Option, by ordinal; an ordinal beyond the members is kept. (Integer into Option, Option into Integer and Option into Enum are pinned by types/PROptionInteger.al and types/PEOptionEnumBigText.al.)",
@@ -224,6 +217,24 @@ registry! {
         assumed: "A RecordId as a %1 of an error, or in TestField and FieldError text, reads as Format(RecordId) does (Table: key1,key2). (Format(RecordId) is pinned by record/TestProbeRecordRefContracts.al:472-502.)",
         tests: "Gen. Jnl.-Post Line PostVend (ERM Gen. Lines for Vendor, over 1,000 Tests-ERM and Tests-General Journal tests).",
         probe: "Error('%1', Rec.RecordId), StrSubstNo and TestField on a RecordId field, with a text key that needs quotes.",
+    },
+    DateTimeDateTimeMethods => {
+        id: "datetime-date-time-methods",
+        assumed: "The instance methods DateTime.Date() and DateTime.Time() give what DT2Date and DT2Time give, the undefined DateTime included. (DT2Date and DT2Time are pinned by text/TestProbeTextDateFormatContracts.al:Dates_DateTime_DT2DateTime.)",
+        tests: "About 975 Tests-ERM, Tests-SCM and Tests-General Journal tests (Library - Random and Library - Utility date and time helpers).",
+        probe: "Dt.Date() and Dt.Time() for a set DateTime and for 0DT, next to DT2Date(Dt) and DT2Time(Dt).",
+    },
+    LoadFieldsNonStored => {
+        id: "load-fields-non-stored",
+        assumed: "SetLoadFields and AddLoadFields accept a field that is not stored (a FlowField) and add nothing to the load request for it. (The documentation says a runtime error or a false result; Microsoft's own code passes a FlowField and runs on real BC.)",
+        tests: "Sales Line SetLoadFieldsForInvDiscoundCalculation (\"Reserved Quantity\"): about 2,350 Tests-ERM and Tests-SCM tests.",
+        probe: "SetLoadFields(FlowField) and SetLoadFields(Normal, FlowField) then FindFirst and AreFieldsLoaded of the normal field; AddLoadFields the same; the result of SetLoadFields used as a value.",
+    },
+    SetTableTemporaryIntoPermanent => {
+        id: "settable-temporary-into-permanent",
+        assumed: "RecordRef.SetTable of a RecordRef on a temporary record into a record variable that is not declared temporary makes that variable temporary and share the temporary rows. (Permanent into permanent and temporary into temporary are pinned by recordref/TestRecordRefGetSetTableContracts.al.)",
+        tests: "Mfg. Dimension Management OnCheckDimValuePostingOnAfterCreateDimTableIDs: SetTable(PurchaseLine) of the temporary Purchase Line of a posting check; about 1,450 Tests-ERM and Tests-SCM tests.",
+        probe: "Tmp.Insert; RR.GetTable(Tmp); RR.SetTable(Perm); Perm.IsTemporary, Perm.Get, Perm.Insert and Perm.Count afterwards; the same for a permanent RecordRef into a temporary variable.",
     },
 }
 

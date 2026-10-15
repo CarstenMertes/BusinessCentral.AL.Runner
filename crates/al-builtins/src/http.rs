@@ -28,7 +28,7 @@ fn with_request<R>(r: Option<&mut Value>, f: impl FnOnce(&mut HttpRequestState) 
 
 fn text(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }
@@ -39,7 +39,9 @@ fn text(a: &[Value], i: usize) -> Result<String, Signal> {
 fn method(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
         return Ok(Value::Text(
-            with_request(r, |s| s.method.clone())?.unwrap_or_else(|| "GET".to_string()),
+            with_request(r, |s| s.method.clone())?
+                .unwrap_or_else(|| "GET".to_string())
+                .into(),
         ));
     }
     let m = text(a, 0)?;
@@ -90,7 +92,9 @@ fn set_request_uri(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
 
 /// An empty uri before one is set (types/TestHttpRequestFileUploadFieldErrorContracts.al:HttpRequestMessage_Defaults_AndSetRequestUri).
 fn get_request_uri(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    Ok(Value::Text(with_request(r, |s| s.uri.clone())?.unwrap_or_default()))
+    Ok(Value::Text(
+        with_request(r, |s| s.uri.clone())?.unwrap_or_default().into(),
+    ))
 }
 
 /// A `FileUpload` no client filled: `FileName()` is a null string (assigned to a Text it is empty) and
@@ -156,7 +160,7 @@ fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 fn read_as(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     match with_content(r, |s| (s.body.clone(), s.bytes.is_some()))? {
         (Some(b), _) => {
-            a[0] = Value::Text(b);
+            a[0] = Value::Text(b.into());
             Ok(Value::Boolean(true))
         }
         (None, true) => unsupported(

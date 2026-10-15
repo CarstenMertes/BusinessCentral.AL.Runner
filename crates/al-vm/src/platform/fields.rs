@@ -122,6 +122,14 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             if f.id == 2_000_000_005 {
                 continue;
             }
+            // A field with ObsoleteState = Moved has no row (Pending and Removed have one): the lookup finds nothing
+            // (types/PWMisc.al:FieldTable_MovedAndPendingField, BC 27.5 and 29.0).
+            if f.properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("ObsoleteState") && ident(v.trim()).eq_ignore_ascii_case("Moved"))
+            {
+                continue;
+            }
             let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(tid as i32);
             r[pos(t, 2)] = Value::Integer(f.id as i32);
@@ -159,7 +167,7 @@ fn field_row(
     r[pos(t, 4)] = Value::Text(if f.id == 2_000_000_000 {
         "$systemId".into()
     } else {
-        f.name.clone()
+        f.name.clone().into()
     });
     r[pos(t, 5)] = blank.option(
         t,
@@ -193,23 +201,15 @@ fn field_row(
             .join(","),
         _ => String::new(),
     };
-    r[pos(t, 24)] = Value::Text(option_string);
+    r[pos(t, 24)] = Value::Text(option_string.into());
     // ObsoleteState and ObsoleteReason (TestFieldObsoleteStateVirtualTable.al:18-45).
     let state = match fprop("ObsoleteState") {
         None => 0,
-        Some(v) if ident(v).eq_ignore_ascii_case("Moved") => {
-            // A field a table extension moved to another app (Business Foundation's "Source Code"
-            // extension fields, for example). No corpus test reads the Field table for one.
-            return Err(format!(
-                "{}: ObsoleteState = Moved: whether the Field table lists a moved field, and with which ObsoleteState, is not pinned (docs/probes-needed.md)",
-                what()
-            ));
-        }
         Some(v) => ordinal_of(OBSOLETE_STATES, v)
             .ok_or_else(|| format!("{}: ObsoleteState `{v}` is not understood", what()))?,
     };
     r[pos(t, 25)] = blank.option(t, 25, state);
-    r[pos(t, 26)] = Value::Text(fprop("ObsoleteReason").and_then(string_lit).unwrap_or_default());
+    r[pos(t, 26)] = Value::Text(fprop("ObsoleteReason").and_then(string_lit).unwrap_or_default().into());
     // DataClassification: the field's own; else the table's; a FlowField is SystemMetadata and a
     // silent Blob is CustomerContent (TestFieldDataClassificationInheritance.al:17-50).
     let is_blob = matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("blob"));
@@ -303,7 +303,8 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 key.iter()
                     .map(|&f| schema.fields[f].name.as_str())
                     .collect::<Vec<_>>()
-                    .join(","),
+                    .join(",")
+                    .into(),
             );
             r[pos(t, 7)] = Value::Boolean(kprop("Enabled").is_none_or(truthy));
             r[pos(t, 10)] = Value::Boolean(n == 0 || kprop("Clustered").is_some_and(truthy));

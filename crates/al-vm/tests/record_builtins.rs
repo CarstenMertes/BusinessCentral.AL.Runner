@@ -70,7 +70,7 @@ fn run(body: &str, routine: &str) -> Result<Value, Signal> {
 
 fn text(r: Result<Value, Signal>) -> String {
     match r {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -1037,11 +1037,11 @@ fn record_ref_get_by_system_id_ignores_the_filters_and_a_never_opened_ref_answer
     assert_eq!(text(r), "Yes|Descr: other|No0");
 }
 
-// `Find('=<>')` names the same three directions as the pinned `Find('=><')` (pageupdate/TestPageUpdateGoneRow.al:423):
-// the characters of Which are a set, so their order does not matter (Microsoft's tests write `'=<>'`; documented
-// assumption, docs/probes-needed.md). Issue 43.
+// The direction characters of Find are tried in the order written, and the first that finds a row wins
+// (types/PYLoadFindThis.al:Find_DirectionCharacters_Orders, all eleven orders on BC 27.5 and 29.0): `=<>` takes the
+// row itself, `<>=` the row before it even when the key exists.
 #[test]
-fn find_with_the_directions_in_another_order_is_the_same_find() {
+fn find_tries_the_directions_in_the_order_written() {
     let r = run(
         "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin
             R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'C'; R.Insert();
@@ -1051,5 +1051,5 @@ fn find_with_the_directions_in_another_order_is_the_same_find() {
         end;",
         "F",
     );
-    assert_eq!(text(r), "YesAYesC");
+    assert_eq!(text(r), "YesAYesA");
 }

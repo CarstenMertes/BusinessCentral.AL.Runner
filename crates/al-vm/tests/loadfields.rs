@@ -56,7 +56,7 @@ fn text(vars: &str, body: &str) -> Result<String, Signal> {
     let mut s = Session::new(engine);
     let inst = s.instance(oi);
     match s.call(oi, ri, inst, vec![])?.0 {
-        Value::Text(t) => Ok(t),
+        Value::Text(t) => Ok(t.to_string()),
         other => panic!("{other:?}"),
     }
 }
@@ -287,18 +287,17 @@ fn a_member_of_the_option_a_call_answers_names_its_value() {
 // ---------------------------------------------------------------- Record.LoadFields
 
 #[test]
-fn load_fields_on_a_record_never_fetched_reads_the_row_of_its_blank_key() {
-    // Base Application "Service Document Archive Mgmt.".AutoArchiveServiceDocument:
-    // `ServiceMgtSetup.LoadFields("Archive Quotes", ...); ServiceMgtSetup.Get();` on a fresh setup
-    // record. The statement form raises no error in BC when the row exists (Microsoft's service
-    // tests pass through it); the values it loads are documentation only (docs/probes-needed.md).
+fn load_fields_on_a_record_never_fetched_does_not_read_the_row_and_answers_false() {
+    // types/PYLoadFindThis.al (BC 27.5 and 29.0): the call does not read the row, even when the blank key has one;
+    // the function form answers false. Base Application's "Service Document Archive Mgmt." calls it as a statement
+    // before Get().
     let r = text(
         "",
         "Rec.Init(); Rec.\"Entry No.\" := 0; Rec.Name := 'zero'; Rec.Note := 'n0'; Rec.Insert(); Clear(Rec);
          Rec.LoadFields(Rec.Name); a := Rec.Name + '/' + Rec.Note + '/'; Clear(Rec); b := Rec.LoadFields(Rec.Name);
          exit(a + Format(b) + '/' + Format(Rec.AreFieldsLoaded(Rec.Name)));",
     );
-    assert_eq!(r.unwrap(), "zero/n0/Yes/Yes");
+    assert_eq!(r.unwrap(), "//No/No");
 }
 
 #[test]
@@ -317,14 +316,19 @@ fn load_fields_as_a_statement_without_a_row_raises_nothing() {
 }
 
 #[test]
-fn load_fields_without_a_row_or_after_a_fetch_is_refused() {
-    // Neither is pinned (docs/probes-needed.md): what BC answers for a missing row when the result is
-    // used, and whether a fetched buffer is read again (overwriting values assigned since).
-    let missing = text("", "b := Rec.LoadFields(Rec.Name); exit('ran');");
-    assert!(matches!(missing, Err(Signal::Unsupported(_))), "{missing:?}");
+fn load_fields_with_its_result_used_on_a_fetched_record_is_refused() {
+    // Pinned for a record never fetched (false); what BC answers for a fetched one is not
+    // (docs/probes-needed.md). The statement form on a fetched record changes nothing.
+    let missing = text("", "b := Rec.LoadFields(Rec.Name); exit(Format(b));");
+    assert_eq!(missing.unwrap(), "No");
     let fetched = text(
         "",
-        &format!("{SEED} Rec.Get(1); Rec.LoadFields(Rec.Name); exit('ran');"),
+        &format!("{SEED} Rec.Get(1); b := Rec.LoadFields(Rec.Name); exit('ran');"),
     );
     assert!(matches!(fetched, Err(Signal::Unsupported(_))), "{fetched:?}");
+    let statement = text(
+        "",
+        &format!("{SEED} Rec.Get(1); Rec.LoadFields(Rec.Name); exit(Rec.Name);"),
+    );
+    assert_eq!(statement.unwrap(), "alpha");
 }

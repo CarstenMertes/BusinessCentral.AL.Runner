@@ -28,8 +28,8 @@ pub(super) fn nav_app_installed_app_rows(p: &Providers, t: &TableDef) -> Vec<Ent
             let mut r = blank(t);
             r[pos(t, 1)] = Value::Guid(id);
             r[pos(t, 2)] = Value::Guid(ids::package_id(id));
-            r[pos(t, 3)] = Value::Text(a.name.clone());
-            r[pos(t, 4)] = Value::Text(a.publisher.clone());
+            r[pos(t, 3)] = Value::Text(a.name.clone().into());
+            r[pos(t, 4)] = Value::Text(a.publisher.clone().into());
             let v = version(&a.version)?;
             for (n, part) in v.iter().enumerate() {
                 r[pos(t, 5 + n as u32)] = Value::Integer(*part);
@@ -56,8 +56,8 @@ pub(super) fn published_application_rows(p: &Providers, t: &TableDef) -> Vec<Ent
             r[pos(t, 1)] = Value::Guid(pkg);
             r[pos(t, 2)] = Value::Guid(pkg);
             r[pos(t, 3)] = Value::Guid(id);
-            r[pos(t, 4)] = Value::Text(a.name.clone());
-            r[pos(t, 5)] = Value::Text(a.publisher.clone());
+            r[pos(t, 4)] = Value::Text(a.name.clone().into());
+            r[pos(t, 5)] = Value::Text(a.publisher.clone().into());
             let v = version(&a.version)?;
             for (n, part) in v.iter().enumerate() {
                 r[pos(t, 6 + n as u32)] = Value::Integer(*part);

@@ -94,7 +94,7 @@ fn run_with(tables: &str, vars: &str, body: &str) -> Result<Value, Signal> {
 
 fn text(vars: &str, body: &str) -> String {
     match run_with(TABLES, vars, body) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -553,7 +553,7 @@ codeunit 50931 "TS List"
 
 fn text_in(tables: &str, vars: &str, body: &str) -> String {
     match run_with(tables, vars, body) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

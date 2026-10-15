@@ -55,7 +55,7 @@ impl Session {
         };
         self.record_op("SetRange", &link, &mut [Value::Integer(pos(2) as i32), old_rid])?;
         if t.per_company {
-            let company = Value::Text(self.cx.company.clone());
+            let company = Value::Text(self.cx.company.clone().into());
             self.record_op("SetRange", &link, &mut [Value::Integer(pos(12) as i32), company])?;
         }
         if !al_builtins::ops::truthy(&self.record_op("IsEmpty", &link, &mut [])?)? {
@@ -78,6 +78,21 @@ impl Session {
     }
 
     pub(crate) fn record_links(
+        &mut self,
+        method: &str,
+        rec: &Rec,
+        t: &TableDef,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
+        // The Record Link reads below are the platform's own: they use their results, whether or not the statement
+        // `CopyLinks(..)` uses its (none) (Bank Account Ledger Entry.CopyLinks in every journal posting).
+        let used = std::mem::replace(&mut self.ret_used, true);
+        let r = self.record_links_inner(method, rec, t, args);
+        self.ret_used = used;
+        r
+    }
+
+    fn record_links_inner(
         &mut self,
         method: &str,
         rec: &Rec,
@@ -112,7 +127,7 @@ impl Session {
                 s.record_op(
                     "SetRange",
                     &link,
-                    &mut [Value::Integer(pos(12) as i32), Value::Text(c.to_string())],
+                    &mut [Value::Integer(pos(12) as i32), Value::Text(c.to_string().into())],
                 )?;
             }
             Ok(link)
@@ -159,14 +174,14 @@ impl Session {
                 {
                     let mut l = link.borrow_mut();
                     l.fields[pos(2)] = rid;
-                    l.fields[pos(3)] = Value::Text(url);
-                    l.fields[pos(7)] = Value::Text(description);
+                    l.fields[pos(3)] = Value::Text(url.into());
+                    l.fields[pos(7)] = Value::Text(description.into());
                     l.fields[pos(10)] = created;
-                    l.fields[pos(11)] = Value::Text(user);
+                    l.fields[pos(11)] = Value::Text(user.into());
                     l.fields[pos(12)] = Value::Text(if t.per_company {
-                        own_company.clone()
+                        own_company.clone().into()
                     } else {
-                        String::new()
+                        String::new().into()
                     });
                 }
                 self.record_op("Insert", &link, &mut [Value::Boolean(false)])?;
@@ -216,9 +231,9 @@ impl Session {
                         // The copy belongs to the company of the target (same file,
                         // `CopyLinks_OntoAPerCompanyTable_WritesTheCompany`, `..._LeavesCompanyEmpty`).
                         l.fields[pos(12)] = Value::Text(if t.per_company {
-                            own_company.clone()
+                            own_company.clone().into()
                         } else {
-                            String::new()
+                            String::new().into()
                         });
                     }
                     self.record_op("Insert", &link, &mut [Value::Boolean(false)])?;

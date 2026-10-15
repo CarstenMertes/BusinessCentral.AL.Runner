@@ -284,7 +284,7 @@ fn b64_decode(text: &str) -> Result<Vec<u8>, Signal> {
 
 fn text_arg(v: &Value) -> Result<String, Signal> {
     match v {
-        Value::Text(t) | Value::Code(t) => Ok(t.clone()),
+        Value::Text(t) | Value::Code(t) => Ok(t.to_string()),
         other => unsupported(format!("a Text argument given as {}", other.describe())),
     }
 }
@@ -298,7 +298,7 @@ fn flag(v: &Value) -> Result<bool, Signal> {
 
 fn to_base64_text(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let bytes = encode_text(&text_arg(&a[0])?, encoding(&a[2], &a[3])?)?;
-    Ok(Value::Text(b64_encode(&bytes, flag(&a[1])?)))
+    Ok(Value::Text(b64_encode(&bytes, flag(&a[1])?).into()))
 }
 
 fn to_base64_text_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
@@ -312,7 +312,7 @@ fn to_base64_stream(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &m
     // The line breaks flag changes nothing for a stream (corpus types/PVBase64.al: a 100 byte stream).
     flag(&a[1])?;
     let bytes = drain_in(&mut a[0])?;
-    Ok(Value::Text(b64_encode(&bytes, false)))
+    Ok(Value::Text(b64_encode(&bytes, false).into()))
 }
 
 fn to_base64_stream_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
@@ -324,7 +324,7 @@ fn to_base64_stream_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a
 
 fn from_base64_text(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let enc = encoding(&a[1], &a[2])?;
-    Ok(Value::Text(decode_bytes(&b64_decode(&text_arg(&a[0])?)?, enc)?))
+    Ok(Value::Text(decode_bytes(&b64_decode(&text_arg(&a[0])?)?, enc)?.into()))
 }
 
 fn from_base64_text_enc_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
@@ -343,7 +343,7 @@ fn from_base64_text_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a
 
 fn from_base64_stream(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let text = String::from_utf8_lossy(&drain_in(&mut a[0])?).into_owned();
-    Ok(Value::Text(decode_bytes(&b64_decode(&text)?, Enc::Utf8)?))
+    Ok(Value::Text(decode_bytes(&b64_decode(&text)?, Enc::Utf8)?.into()))
 }
 
 fn from_base64_stream_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {

@@ -76,8 +76,8 @@ pub enum Value {
     Decimal(Decimal),
     Byte(u8),
     Char(u16),
-    Text(String),
-    Code(String),
+    Text(crate::text::Txt),
+    Code(crate::text::Txt),
     /// Day number (0 = undefined `0D`), closing-date flag.
     Date(i32, bool),
     /// Milliseconds since midnight plus one (0 = undefined `0T`).
@@ -313,6 +313,9 @@ pub struct PageState {
     /// The pages shown by the part controls of this page: (control index, child page). Only parts
     /// that are in the control tree at open have one.
     pub parts: Vec<(usize, Rc<RefCell<PageState>>)>,
+    /// Parts dropped at open because their `Visible` came out false: the page's own code still reaches them
+    /// (`CurrPage.<Part>.Page`), the test client does not.
+    pub hidden_parts: Vec<(usize, Rc<RefCell<PageState>>)>,
     /// Primary key of the stored row the cursor stood on when the current new row was started:
     /// the lower neighbour AutoSplitKey numbers it from (`None`: no such row).
     pub lower_key: Option<Vec<Value>>,
@@ -393,6 +396,7 @@ impl PageState {
             editable_preset: None,
             caption: None,
             parts: Vec::new(),
+            hidden_parts: Vec::new(),
             lower_key: None,
             set_record: None,
             typed_handler: false,
@@ -805,6 +809,10 @@ pub struct Instance {
     /// extends (ADR-023). `Weak`, so the link adds no reference cycle. `None` for every other
     /// instance.
     pub base: Option<std::rc::Weak<RefCell<Instance>>>,
+    /// For the instance of a report variable: the instances of the reportextensions that change it, by object
+    /// index, made at the first call of an extension procedure or run of the variable and kept with the variable's
+    /// state (a `Run` and `Clear` drop them). Empty for every other instance.
+    pub exts: Vec<(u32, Rc<RefCell<Instance>>)>,
 }
 
 /// State behind a library-type handle; grows with the builtins that need it.
@@ -915,8 +923,8 @@ impl Value {
             RtType::Decimal => Value::Decimal(Decimal::ZERO),
             RtType::Byte => Value::Byte(0),
             RtType::Char => Value::Char(0),
-            RtType::Text(_) => Value::Text(String::new()),
-            RtType::Code(_) => Value::Code(String::new()),
+            RtType::Text(_) => Value::Text(String::new().into()),
+            RtType::Code(_) => Value::Code(String::new().into()),
             RtType::Date => Value::Date(0, false),
             RtType::Time => Value::Time(0),
             RtType::DateTime => Value::DateTime(0),

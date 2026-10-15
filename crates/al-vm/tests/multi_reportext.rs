@@ -76,7 +76,7 @@ fn reasons(src: &str, apps: usize) -> Vec<String> {
 
 fn text(r: Result<Value, Signal>) -> String {
     match r {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -254,10 +254,11 @@ codeunit 69106 "MR Sub"
     assert_eq!(text(run(src, body)), "Parent;event7;bump1;");
 }
 
-// A public procedure next to added data items stays refused: which instance a caller outside the extension reaches, and
-// whether the procedure sees the added records, is not pinned (docs/probes-needed.md).
+// A public procedure of an extension that has global variables and added data items runs on the extension's instance of
+// the report variable it is called through: the global keeps its value from one call to the next, a second variable has
+// a state of its own, and Clear starts again (reportext/W3RpExtProcedures.al:ExtensionProcedure_StateOnOneVariableAndOnANewVariable).
 #[test]
-fn a_public_procedure_next_to_added_data_items_or_variables_is_refused() {
+fn a_public_procedure_keeps_the_extensions_globals_on_one_report_variable() {
     let src = r#"
 report 69100 "MR Base"
 {
@@ -267,19 +268,11 @@ report 69100 "MR Base"
 reportextension 69105 "MR Ext" extends "MR Base"
 {
     dataset { addlast(Parent) { dataitem(ExtItem; "MR Child") { DataItemLink = ParentId = field(Id); } } }
-    procedure Public() begin end;
+    var Seen: Integer;
+    procedure Public(): Integer begin Seen += 1; exit(Seen); end;
 }"#;
-    let r = reasons(src, 1);
-    assert!(
-        r.iter().any(|x| x.contains("public procedures and adds data items")),
-        "{r:?}"
-    );
-    let globals = r#"
-report 69100 "MR Base" { ProcessingOnly = true; UseRequestPage = false; dataset { dataitem(Parent; "MR Parent") { } } }
-reportextension 69105 "MR Ext" extends "MR Base" { var Seen: Integer; procedure Public() begin end; }"#;
-    let r = reasons(globals, 1);
-    assert!(
-        r.iter().any(|x| x.contains("public procedures and global variables")),
-        "{r:?}"
-    );
+    let body = "procedure F(): Text var R: Report \"MR Base\"; O: Report \"MR Base\"; T: Text; begin
+        T := Format(R.Public()) + Format(R.Public()) + Format(O.Public()) + Format(R.Public());
+        Clear(R); T += Format(R.Public()); exit(T); end;";
+    assert_eq!(text(run(src, body)), "12131");
 }

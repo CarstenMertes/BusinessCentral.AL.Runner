@@ -9,6 +9,13 @@ check at the end of the section. Every difference below is real in the code that
 repository. Where a row says "not yet", the step number is the step of the plan in ADR-016 (this
 page grows with each step).
 
+## Why move to v3
+
+v3 reproduces the observable behavior of the AL language, which Microsoft keeps stable for
+partners. v2 depends on BC's internals, which can change with any hotfix or release, so a tool
+built on v2 can break without a change on its own side. See the README section "Why it is
+built on the language, not on BC's internals".
+
 ## Status by step
 
 | Step | What | State |

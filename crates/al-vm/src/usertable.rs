@@ -238,7 +238,7 @@ impl Session {
             }
         }
         if email != raw {
-            row[pos(t, F_EMAIL)] = Value::Text(email);
+            row[pos(t, F_EMAIL)] = Value::Text(email.into());
         }
         Ok(())
     }
@@ -292,7 +292,7 @@ impl Session {
                 let object_id = pos(&up, P_OBJECT_ID);
                 if changed {
                     if !text_of(&prop[object_id]).is_empty() {
-                        prop[object_id] = Value::Text(String::new());
+                        prop[object_id] = Value::Text(String::new().into());
                         let _ = self.store.modify(&cx, &up, prop);
                     }
                 } else if email.is_empty()

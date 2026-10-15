@@ -337,6 +337,11 @@ pub struct ReportExtModify {
     pub before_pre: Option<usize>,
     #[serde(default)]
     pub after_pre: Option<usize>,
+    /// `OnBeforePostDataItem` and `OnAfterPostDataItem` around the base item's `OnPostDataItem`.
+    #[serde(default)]
+    pub before_post: Option<usize>,
+    #[serde(default)]
+    pub after_post: Option<usize>,
 }
 
 /// A data item added by `addlast`: under a base item, or (`item.parent`) under another added item.
@@ -1167,6 +1172,12 @@ pub enum Expr {
     /// Code that lowers but refuses when it runs, with the reason (a call of a control add-in procedure:
     /// control add-ins are not modelled).
     Refused(String),
+    /// Code that lowers and raises an AL error with this text and code when it runs (`this.<protected variable of the
+    /// base report>` in a reportextension: BC compiles it and raises when it runs).
+    Fail {
+        message: String,
+        code: String,
+    },
     /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
     /// value) on an interface value. `objects` are the codeunits that implement `I`.
     InterfaceTest {
@@ -1189,6 +1200,10 @@ pub enum Expr {
     Control {
         page: Box<Expr>,
         control: usize,
+        /// `CurrPage.<Control>` in the page's own code, not a test page variable: a part that is not visible
+        /// is still there for the page's code.
+        #[serde(default)]
+        runtime: bool,
     },
     /// Field `pos` of the record `base` evaluates to (`GetLocation(Code)."Bin Mandatory"`: a field of a
     /// procedure's result, which is not a place).

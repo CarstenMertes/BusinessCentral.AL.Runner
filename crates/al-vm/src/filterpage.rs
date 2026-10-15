@@ -33,7 +33,7 @@ const DEFAULT_CAPTION: &str = "Filter";
 
 fn text(args: &[Value], i: usize) -> Result<String, Signal> {
     match args.get(i).and_then(al_builtins::native::text_of) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => unsupported(format!("FilterPageBuilder argument {i}: {}", args.get(i).describe())),
     }
 }
@@ -91,7 +91,7 @@ impl Session {
                 let n = s.controls.len() as i32;
                 // :FilterPageBuilder_Name_IndexZero_Throws, :Name_IndexPastEnd_Throws
                 match usize::try_from(i - 1).ok().and_then(|k| s.controls.get(k)) {
-                    Some(c) => Ok(Value::Text(c.name.clone())),
+                    Some(c) => Ok(Value::Text(c.name.clone().into())),
                     None => Err(al_error(format!(
                         "The filter control index value {i} is out of range. The value must be greater than or equal to 1 and less than or equal to {n}."
                     ))),
@@ -106,7 +106,8 @@ impl Session {
                     state_of(&cell)?
                         .caption
                         .clone()
-                        .unwrap_or_else(|| DEFAULT_CAPTION.to_string()),
+                        .unwrap_or_else(|| DEFAULT_CAPTION.to_string())
+                        .into(),
                 )),
             },
             "AddTable" | "AddRecord" | "AddRecordRef" => {
@@ -120,7 +121,7 @@ impl Session {
                             // :FilterPageBuilder_AddTable_ZeroTableId_Throws
                             return fail(
                                 "The filter page table ID must be a positive number greater than zero.".into(),
-                                Value::Text(String::new()),
+                                Value::Text(String::new().into()),
                             );
                         }
                         let Some(table) = self.table_object(i64::from(*no)) else {
@@ -155,14 +156,14 @@ impl Session {
                 let mut s = state_of(&cell)?;
                 match s.controls.iter().find(|c| c.name == name) {
                     // :AddTable_SameNameSameTable_IsIdempotent
-                    Some(c) if c.table == table => Ok(Value::Text(name)),
+                    Some(c) if c.table == table => Ok(Value::Text(name.into())),
                     // :AddTable_SameNameDifferentTable_Throws pins only that the text names the
                     // control; the rest of the sentence is docs/probes-needed.md.
                     Some(_) => {
                         drop(s);
                         fail(
                             format!("The filter control '{name}' is already defined for another table."),
-                            Value::Text(String::new()),
+                            Value::Text(String::new().into()),
                         )
                     }
                     None => {
@@ -171,7 +172,7 @@ impl Session {
                             table,
                             record,
                         });
-                        Ok(Value::Text(name))
+                        Ok(Value::Text(name.into()))
                     }
                 }
             }
@@ -224,12 +225,12 @@ impl Session {
                 };
                 match self.filter_control(&cell, &name)? {
                     // :GetView_UnknownControl_ReturnsEmpty
-                    None => Ok(Value::Text(String::new())),
+                    None => Ok(Value::Text(String::new().into())),
                     Some(c) => {
                         let t = self.table(&c.record)?;
                         // :GetView_CaptionsFlag_RendersAnOptionFilterDifferently
                         self.get_view_with(&c.record, &t, use_names, !use_names, false)
-                            .map(Value::Text)
+                            .map(|s| Value::Text(s.into()))
                     }
                 }
             }

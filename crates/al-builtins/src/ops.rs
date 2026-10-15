@@ -67,9 +67,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             v
         }
         // A Text (not a literal) assigns into a SecretText (types/TestSecretText.al).
-        (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => {
-            Value::Library("SecretText".into(), Rc::new(RefCell::new(LibraryValue::Text(s))))
-        }
+        (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => Value::Library(
+            "SecretText".into(),
+            Rc::new(RefCell::new(LibraryValue::Text(s.to_string()))),
+        ),
         (v @ Value::Enum(from, _), T::Enum(to)) if from == *to => v,
         // An enum of another type converts by its ordinal; an ordinal the target lacks is kept (Format shows
         // the number, AsInteger gives it). The same in a field, a Get key and a SetRange value (corpus
@@ -159,12 +160,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Text(s), T::Text(_)) if s.contains(crate::native::UNTRACKED_CALL_STACK) => Value::Text(s),
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
-            Value::Text(fit(crate::native::text_of(&v).expect("text"), *max)?)
+            Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max)?)
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
             let s = upper_code(crate::native::text_of(&v).expect("text").trim());
-            Value::Code(fit(s, *max)?)
+            Value::Code(fit(s, *max)?.into())
         }
         (Value::Text(s) | Value::Code(s), T::Char) => {
             let u: Vec<u16> = s.encode_utf16().collect();
@@ -199,10 +200,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // Application's Config. Package Management). No corpus test assigns a Guid to a Text
         // (docs/probes-needed.md).
         (Value::Guid(g), T::Text(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Text(fit(crate::format::format_guid(&g), *max)?)
+            Value::Text(fit(crate::format::format_guid(&g), *max)?.into())
         }
         (Value::Guid(g), T::Code(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Code(fit(crate::format::format_guid(&g), *max)?)
+            Value::Code(fit(crate::format::format_guid(&g), *max)?.into())
         }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
@@ -243,6 +244,14 @@ pub fn upper_code(s: &str) -> String {
             if u.len() == 1 { vec![u.next().unwrap()] } else { vec![c] }
         })
         .collect()
+}
+
+/// [`fit`] for a shared text: no copy when it fits.
+fn fit_txt(s: crate::text::Txt, max: Option<u32>) -> Result<crate::text::Txt, Signal> {
+    match max {
+        Some(m) if s.utf16_len() > m as usize => fit(s.into_string(), max).map(Into::into),
+        _ => Ok(s),
+    }
 }
 
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
@@ -294,7 +303,14 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     // Text concatenation.
     if op == Arith::Add {
         if let (Some(a), Some(b)) = (text_like(l), text_like(r)) {
-            return Ok(V::Text(a + &b));
+            // An empty side leaves the other as it is (shared, no copy).
+            if b.is_empty() {
+                return Ok(V::Text(a.clone()));
+            }
+            let mut out = String::with_capacity(a.len() + b.len());
+            out.push_str(a);
+            out.push_str(b);
+            return Ok(V::Text(out.into()));
         }
         // A null string (a FileUpload's file name before a client filled it) joins as nothing (types/PRFileUpload.al:
         // Unfilled_AssignClearAndPass).
@@ -318,7 +334,7 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                     out.push_str(t);
                     out.push(ch);
                 }
-                return Ok(V::Text(out));
+                return Ok(V::Text(out.into()));
             }
             _ => {}
         }
@@ -380,14 +396,51 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::DateTime)
                 .ok_or_else(|| Signal::Unsupported("DateTime out of range (error text not pinned yet)".into()));
         }
-        // Time + an Integer adds milliseconds (json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime
-        // `100000T + 123`; text/TestProbeTextDateFormatContracts.al:387 `120000T + 7`). Past midnight is not pinned.
-        (V::Time(a), n) | (n, V::Time(a)) if op == Arith::Add && *a > 0 && int_of(n).is_some() => {
-            return int_of(n)
-                .and_then(|n| a.checked_add(n))
-                .filter(|t| (1..=86_400_000).contains(t))
-                .map(V::Time)
-                .ok_or_else(|| Signal::Unsupported("Time moved outside the day (not pinned)".into()));
+        // Time +/- an Integer or a Duration moves by that many milliseconds and wraps around midnight; Time - Time is
+        // a Duration; the undefined time (0T) cannot be moved ("Adding to an undefined (0T) time." for both
+        // directions of a Time and a number, "Subtracting from an undefined (0T) time." for 0T - Time, code
+        // InvalidTime); a Decimal with a fraction raises the conversion error (types/PUTimeArithmetic.al, BC 27.5
+        // and 29.0; json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime `100000T + 123`).
+        (V::Time(a), n) | (n, V::Time(a))
+            if matches!(op, Arith::Add | Arith::Sub)
+                && (op == Arith::Add || matches!(l, V::Time(_)))
+                && (int_of(n).is_some() || matches!(n, V::Duration(_))) =>
+        {
+            if *a == 0 {
+                return raise("Adding to an undefined (0T) time.", "InvalidTime");
+            }
+            let ms = match n {
+                V::Duration(d) => *d,
+                other => int_of(other).expect("an integer"),
+            };
+            let moved = if op == Arith::Add {
+                (a - 1).checked_add(ms)
+            } else {
+                (a - 1).checked_sub(ms)
+            };
+            return moved
+                .map(|m| V::Time(m.rem_euclid(86_400_000) + 1))
+                .ok_or_else(|| Signal::Unsupported("Time moved by an amount that overflows (not pinned)".into()));
+        }
+        (V::Time(a), V::Decimal(d)) | (V::Decimal(d), V::Time(a))
+            if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() =>
+        {
+            return raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int32.",
+                    d.normalize()
+                ),
+                "ConversionCast",
+            );
+        }
+        (V::Time(a), V::Time(b)) if op == Arith::Sub => {
+            if *a == 0 {
+                return raise("Subtracting from an undefined (0T) time.", "InvalidTime");
+            }
+            if *b == 0 {
+                return unsupported("subtraction of an undefined Time from a Time (not pinned)".to_string());
+            }
+            return Ok(V::Duration(a - b));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
@@ -453,9 +506,9 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     Ok(V::Decimal(res))
 }
 
-fn text_like(v: &Value) -> Option<String> {
+fn text_like(v: &Value) -> Option<&crate::text::Txt> {
     match v {
-        Value::Text(s) | Value::Code(s) => Some(s.clone()),
+        Value::Text(s) | Value::Code(s) => Some(s),
         _ => None,
     }
 }
@@ -594,6 +647,52 @@ mod tests {
 
     fn d(s: &str) -> Value {
         Value::Decimal(Decimal::from_str(s).unwrap())
+    }
+
+    // types/PUTimeArithmetic.al: a Time moves by milliseconds and wraps around midnight; 0T cannot be moved.
+    #[test]
+    fn time_arithmetic_wraps_and_refuses_the_undefined_time() {
+        let noon = Value::Time(43_200_001);
+        assert!(matches!(
+            arith(Arith::Sub, &noon, &Value::Integer(1000)),
+            Ok(Value::Time(43_199_001))
+        ));
+        // 23:59:59.999 + 1 ms is 00:00:00.
+        assert!(matches!(
+            arith(Arith::Add, &Value::Time(86_400_000), &Value::Integer(1)),
+            Ok(Value::Time(1))
+        ));
+        assert!(matches!(
+            arith(Arith::Sub, &noon, &Value::Duration(3_600_000)),
+            Ok(Value::Time(39_600_001))
+        ));
+        assert!(matches!(
+            arith(Arith::Sub, &Value::Time(46_800_001), &noon),
+            Ok(Value::Duration(3_600_000))
+        ));
+        for (op, l, r, text) in [
+            (
+                Arith::Sub,
+                Value::Time(0),
+                Value::Integer(1),
+                "Adding to an undefined (0T) time.",
+            ),
+            (
+                Arith::Sub,
+                Value::Time(0),
+                noon.clone(),
+                "Subtracting from an undefined (0T) time.",
+            ),
+        ] {
+            let Err(Signal::Error(e)) = arith(op, &l, &r) else {
+                panic!("expected an error")
+            };
+            assert_eq!((e.message.as_str(), e.code.as_str()), (text, "InvalidTime"));
+        }
+        let Err(Signal::Error(e)) = arith(Arith::Add, &noon, &d("1500.5")) else {
+            panic!("expected an error")
+        };
+        assert_eq!(e.code, "ConversionCast");
     }
 
     // corpus types/PXEnumRecordRef.al:74-108, :137-196: an Enum of another

@@ -307,6 +307,41 @@ impl Session {
                 return Ok(Value::Null);
             }
 
+            // RecordRef.Copy(FromRecordRef [, ShareTable]): the opened target takes the source's buffer, filters, key,
+            // direction and current row as Record.Copy does; a target that was never opened raises "The record is
+            // not open." (RecordNotOpened); ShareTable is accepted only for two temporary records, which then share
+            // the table (types/PWMisc.al:RecordRef_Copy_*, records/W4SortKeys.al:RecordRef_Ascending, BC 27.5 and
+            // 29.0). A Record as the source is not pinned.
+            "Copy" => {
+                let dst = match &*lib.borrow() {
+                    LibraryValue::RecordRef(r) => r.clone(),
+                    LibraryValue::Empty => {
+                        return Err(Signal::Error(AlError {
+                            message: "The record is not open.".into(),
+                            code: "RecordNotOpened".into(),
+                            call_stack: String::new(),
+                        }));
+                    }
+                    _ => return unsupported("RecordRef.Copy on a RecordRef opened on a system table"),
+                };
+                let src = match args.first() {
+                    Some(Value::Library(_, l)) => match &*l.borrow() {
+                        LibraryValue::RecordRef(r) => r.clone(),
+                        _ => return unsupported("RecordRef.Copy from a RecordRef that is not open (not pinned)"),
+                    },
+                    other => {
+                        return unsupported(format!("RecordRef.Copy from {} (not pinned)", other.describe()));
+                    }
+                };
+                if src.borrow().table != dst.borrow().table {
+                    return unsupported("RecordRef.Copy between two tables (not pinned)");
+                }
+                let t = self.table(&dst)?;
+                let mut forwarded = vec![Value::Record(src)];
+                forwarded.extend(args.get(1).cloned());
+                return self.record_meta_op("Copy", &dst, &t, &mut forwarded);
+            }
+
             "Number" => match &*lib.borrow() {
                 LibraryValue::SystemTable(n) => return Ok(Value::Integer(*n as i32)),
                 // A RecordRef never opened is table 0 (corpus branch al-runtime-rs-staging, ae3fe88,
@@ -333,28 +368,25 @@ impl Session {
             "Number" => Ok(Value::Integer(
                 self.engine.program.objects[t.object as usize].id.unwrap_or(0) as i32,
             )),
-            "Name" => Ok(Value::Text(t.name.clone())),
-            "Caption" => Ok(Value::Text(self.caption(&t))),
+            "Name" => Ok(Value::Text(t.name.clone().into())),
+            "Caption" => Ok(Value::Text(self.caption(&t).into())),
             // corpus recordref/TestRecordRefGetSet.al:16-30 pins only that it is not empty.
-            "CurrentCompany" => Ok(Value::Text(self.current_company_of(&rec))),
+            "CurrentCompany" => Ok(Value::Text(self.current_company_of(&rec).into())),
             "ChangeCompany" => self.change_company(&rec, args),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
             "FilterGroup" => {
-                // The setter with -1 (the OR group) is pinned (record/PWFilterGroupOr.al:OrGroup_RecordRef);
-                // the getter form and the other groups are not.
-                if !matches!(args, [Value::Integer(al_builtins::filter::OR_GROUP)]) {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefFilterGroup);
-                }
+                // The getter and the setter for any group are pinned (filters/W4Filters.al:RecordRef_FilterGroup_*,
+                // record/PWFilterGroupOr.al:OrGroup_RecordRef).
                 Self::filter_group(&rec, args)
             }
-            "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
+            "GetFilters" => self.get_filters(&rec, &t).map(|s| Value::Text(s.into())),
             "GetView" => {
                 let use_names = match args.first() {
                     Some(v) => ops::truthy(v)?,
                     None => true,
                 };
-                self.get_view(&rec, &t, use_names).map(Value::Text)
+                self.get_view(&rec, &t, use_names).map(|s| Value::Text(s.into()))
             }
             "SetView" => {
                 let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
@@ -544,12 +576,30 @@ impl Session {
                 let Some(Value::Record(dst)) = args.first() else {
                     return unsupported(format!("RecordRef.SetTable of {}", args.first().describe()));
                 };
-                let (same_table, same_kind) = {
+                let (same_table, same_kind, temp_into_permanent) = {
                     let (s, d) = (rec.borrow(), dst.borrow());
-                    (s.table == d.table, s.temporary == d.temporary)
+                    (
+                        s.table == d.table,
+                        s.temporary == d.temporary,
+                        s.temporary && !d.temporary,
+                    )
                 };
-                if !same_table || !same_kind {
-                    return unsupported("RecordRef.SetTable into a record of another table or temporary-ness");
+                if !same_table || !(same_kind || temp_into_permanent) {
+                    return unsupported(
+                        "RecordRef.SetTable into a record of another table or into a temporary record from a permanent table",
+                    );
+                }
+                // A temporary RecordRef set into a record that is not declared temporary: the record then reads and
+                // writes the temporary rows (Mfg. Dimension Management, the temporary Purchase Line of a posting
+                // check). Not pinned by the corpus (assumption settable-temporary-into-permanent).
+                if temp_into_permanent && !Rc::ptr_eq(&rec, dst) {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::SetTableTemporaryIntoPermanent,
+                    );
+                    let s = rec.borrow();
+                    let mut d = dst.borrow_mut();
+                    d.temporary = true;
+                    d.temp_id = s.temp_id.clone();
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
@@ -640,8 +690,8 @@ impl Session {
             // TestRowVersionFieldNumberFieldActiveContracts.al:70-72, 82-84).
             "Name" if field.id == SYSTEM_FIELD_BASE => Ok(Value::Text("$systemId".into())),
             "Name" if field.id == SYSTEM_ROW_VERSION_ID => Ok(Value::Text("timestamp".into())),
-            "Name" => Ok(Value::Text(field.name.clone())),
-            "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
+            "Name" => Ok(Value::Text(field.name.clone().into())),
+            "Caption" => self.field_caption_checked(&t, pos).map(|s| Value::Text(s.into())),
             "Type" => self.field_type(&t, pos),
             "Class" => {
                 let class = self
@@ -659,7 +709,7 @@ impl Session {
                 Ok(Value::Option(ord, m.into()))
             }
             "Relation" => self.field_relation(&rec, &t, pos).map(Value::Integer),
-            "GetFilter" => self.field_filter_text(&rec, pos).map(Value::Text),
+            "GetFilter" => self.field_filter_text(&rec, pos).map(|s| Value::Text(s.into())),
             "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
             // fieldref/TestRelationTargetNamespaceScope.al:63-75. Record.CalcFields raises a pinned
             // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);
@@ -816,7 +866,7 @@ impl Session {
                 "EnumValueCount" => Ok(Value::Integer(0)),
                 // An empty text, not an error (corpus recordref/TestRecordRefRuntimeContracts.al:
                 // FieldRef_EnumMetadata_OnEnumOptionAndOtherFields).
-                "OptionCaption" | "OptionMembers" | "OptionString" => Ok(Value::Text(String::new())),
+                "OptionCaption" | "OptionMembers" | "OptionString" => Ok(Value::Text(String::new().into())),
                 other => unsupported(format!("FieldRef.{other} on a field that is neither Option nor Enum")),
             };
         };
@@ -835,17 +885,27 @@ impl Session {
             "IsEnum" => Ok(Value::Boolean(is_enum)),
             "EnumValueCount" => Ok(Value::Integer(members.len() as i32)),
             "GetEnumValueOrdinal" => Ok(Value::Integer(at(args)?.map_or(-1, |m| m.0))),
-            "GetEnumValueName" => Ok(Value::Text(at(args)?.map(|m| m.1.clone()).unwrap_or_default())),
-            "GetEnumValueCaption" => Ok(Value::Text(at(args)?.map(|m| m.2.clone()).unwrap_or_default())),
-            "GetEnumValueNameFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.1.clone())),
-            "GetEnumValueCaptionFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.2.clone())),
+            "GetEnumValueName" => Ok(Value::Text(at(args)?.map(|m| m.1.clone()).unwrap_or_default().into())),
+            "GetEnumValueCaption" => Ok(Value::Text(at(args)?.map(|m| m.2.clone()).unwrap_or_default().into())),
+            "GetEnumValueNameFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.1.clone().into())),
+            "GetEnumValueCaptionFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.2.clone().into())),
             // An Enum field answers the names and the captions of its members like an Option (record/
             // TestProbeRecordRefContracts.al:FieldRef_EnumAndOptionInfo).
             "OptionMembers" | "OptionString" => Ok(Value::Text(
-                members.iter().map(|m| m.1.as_str()).collect::<Vec<_>>().join(","),
+                members
+                    .iter()
+                    .map(|m| m.1.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .into(),
             )),
             "OptionCaption" => Ok(Value::Text(
-                members.iter().map(|m| m.2.as_str()).collect::<Vec<_>>().join(","),
+                members
+                    .iter()
+                    .map(|m| m.2.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .into(),
             )),
             other => unsupported(format!("FieldRef.{other}")),
         }

@@ -63,7 +63,8 @@ pub(crate) fn is_blank(v: &Value) -> Result<bool, Signal> {
         Value::Integer(0) | Value::BigInteger(0) | Value::Byte(0) | Value::Char(0) => true,
         Value::Decimal(d) => d.is_zero(),
         Value::Boolean(b) => !b,
-        Value::Text(s) | Value::Code(s) | Value::DateFormula(s) => s.is_empty(),
+        Value::Text(s) | Value::Code(s) => s.is_empty(),
+        Value::DateFormula(s) => s.is_empty(),
         Value::Date(d, _) => *d == 0,
         Value::Time(t) | Value::DateTime(t) | Value::Duration(t) => *t == 0,
         Value::Guid(g) => *g == [0; 16],
@@ -223,10 +224,12 @@ impl Session {
             "AddLink" | "DeleteLink" | "DeleteLinks" | "HasLinks" | "CopyLinks" => {
                 self.record_links(method, rec, t, args)
             }
-            "TableName" => Ok(Value::Text(t.name.clone())),
-            "TableCaption" => Ok(Value::Text(self.caption(t))),
-            "FieldName" => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone())),
-            "FieldCaption" => self.field_caption_checked(t, arg_pos(args, 0)?).map(Value::Text),
+            "TableName" => Ok(Value::Text(t.name.clone().into())),
+            "TableCaption" => Ok(Value::Text(self.caption(t).into())),
+            "FieldName" => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone().into())),
+            "FieldCaption" => self
+                .field_caption_checked(t, arg_pos(args, 0)?)
+                .map(|s| Value::Text(s.into())),
             "FieldNo" => Ok(Value::Integer(crate::refs::al_field_no(t.fields[arg_pos(args, 0)?].id))),
             // True for an enabled field (corpus record/TestRecordTriggers.al:223-231). What a field
             // with `Enabled = false` answers is not pinned: refused (docs/probes-needed.md).
@@ -278,7 +281,21 @@ impl Session {
                 use al_builtins::filter::FilterExpr as F;
                 let pos = arg_pos(args, 0)?;
                 let r = rec.borrow();
-                let Some(f) = r.filters.iter().find(|f| f.field == pos && f.group == r.filter_group) else {
+                // A filter set in another group counts too (Microsoft's GenJnlManagement.OpenJnl reads the template
+                // that TemplateSelection set in group 2, Tests-General Journal; unprobed, docs/probes-needed.md
+                // "GetRangeMax across filter groups"; hard rule 3 exception).
+                let Some(f) = r
+                    .filters
+                    .iter()
+                    .find(|f| f.field == pos && f.group == r.filter_group)
+                    .or_else(|| {
+                        r.filters.iter().find(|f| f.field == pos).inspect(|_| {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::GetRangeAcrossFilterGroups,
+                            )
+                        })
+                    })
+                else {
                     return unsupported(format!("{method} without a filter (error text not pinned)"));
                 };
                 match (&f.expr, method) {
@@ -313,7 +330,7 @@ impl Session {
             "RecordLevelLocking" => Ok(Value::Boolean(true)),
             "ReadPermission" | "WritePermission" => Ok(Value::Boolean(true)),
             "CountApprox" => self.record_op("Count", rec, &mut []),
-            "CurrentCompany" => Ok(Value::Text(self.current_company_of(rec))),
+            "CurrentCompany" => Ok(Value::Text(self.current_company_of(rec).into())),
             "ReadIsolation" | "SecurityFiltering" => {
                 let (enum_name, is_iso) = if method == "ReadIsolation" {
                     ("IsolationLevel", true)
@@ -344,7 +361,7 @@ impl Session {
                     Some(v) => ops::truthy(v)?,
                     None => true,
                 };
-                self.get_position(rec, t, use_names).map(Value::Text)
+                self.get_position(rec, t, use_names).map(|s| Value::Text(s.into()))
             }
             "SetPosition" => {
                 let text = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
@@ -420,18 +437,21 @@ impl Session {
                             }
                         })
                         .collect::<Vec<_>>()
-                        .join(","),
+                        .join(",")
+                        .into(),
                 ))
             }
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(rec))),
-            "GetFilters" => self.get_filters(rec, t).map(Value::Text),
-            "GetFilter" => self.field_filter_text(rec, arg_pos(args, 0)?).map(Value::Text),
+            "GetFilters" => self.get_filters(rec, t).map(|s| Value::Text(s.into())),
+            "GetFilter" => self
+                .field_filter_text(rec, arg_pos(args, 0)?)
+                .map(|s| Value::Text(s.into())),
             "GetView" => {
                 let use_names = match args.first() {
                     Some(v) => ops::truthy(v)?,
                     None => true,
                 };
-                self.get_view(rec, t, use_names).map(Value::Text)
+                self.get_view(rec, t, use_names).map(|s| Value::Text(s.into()))
             }
             "SetView" => {
                 let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
@@ -443,9 +463,21 @@ impl Session {
             // Doc (Record.SetRecFilter): filters the primary key fields to the current values; the
             // filters on other fields stay (record/TestRecordViewCopyMarkContracts.al:41,
             // SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey).
+            // With another current key it also filters that key's fields, after the primary key's
+            // (records/W4SortKeys.al:RecordRef_SetRecFilter_AndRecordSetRecFilter: current key Txt gives
+            // `Id: 3, Txt: b`, on a Record and on a RecordRef, BC 27.5 and 29.0).
             "SetRecFilter" => {
                 let group = rec.borrow().filter_group;
-                let pk = &t.keys[0];
+                let mut pk: Vec<usize> = t.keys[0].clone();
+                let current = rec.borrow().key;
+                if let Some(k) = t.keys.get(current) {
+                    for &p in k {
+                        if !pk.contains(&p) {
+                            pk.push(p);
+                        }
+                    }
+                }
+                let pk = &pk;
                 let mut r = rec.borrow_mut();
                 r.filters.retain(|f| !(pk.contains(&f.field) && f.group == group));
                 for &p in pk {
@@ -590,21 +622,29 @@ impl Session {
     }
 
     pub(crate) fn test_field(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
-        // `TestField(Field [, Value], ErrorInfo)`: the check is the one without the ErrorInfo, and one
-        // that holds raises nothing (documentation only, docs/probes-needed.md, issue 41; Base
-        // Application's "Gen. Jnl.-Check Line" calls it 176 times over). What a failing one raises
-        // from the ErrorInfo is not pinned: refused.
-        if let Some((Value::Library(kind, _), plain)) = args.split_last()
+        // `TestField(Field [, Value], ErrorInfo)`: a check that holds raises nothing and leaves the ErrorInfo as it
+        // was. A failing one raises the same text and code as the form without an ErrorInfo, whatever Message the
+        // ErrorInfo carries; in a collecting scope a collectible ErrorInfo is collected instead (a copy with its own
+        // Message, the tested FieldNo and the TableId), and a call that is not collectible keeps FieldNo and TableId
+        // 0 on the caller's variable (types/PUTestFieldErrorInfo.al, BC 27.5 and 29.0).
+        if let Some((info @ Value::Library(kind, _), plain)) = args.split_last()
             && kind.as_str() == "ErrorInfo"
         {
             return match self.test_field(rec, t, plain) {
-                Ok(v) => {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestFieldErrorInfoPasses);
-                    Ok(v)
+                Err(Signal::Error(e)) => {
+                    if let Some(copy) = al_builtins::errorinfo::copy_of(info) {
+                        let pos = arg_pos(plain, 0)?;
+                        let collectible = al_builtins::errorinfo::set_origin_of(
+                            &copy,
+                            self.engine.program.objects[t.object as usize].id.unwrap_or(0) as i32,
+                            t.fields[pos].id as i32,
+                        );
+                        if collectible && self.collect_error(&copy) {
+                            return Ok(Value::Null);
+                        }
+                    }
+                    Err(Signal::Error(e))
                 }
-                Err(Signal::Error(_)) => unsupported(
-                    "TestField with an ErrorInfo whose check fails: the error BC raises from the ErrorInfo is not pinned (docs/probes-needed.md)",
-                ),
                 other => other,
             };
         }
@@ -983,7 +1023,7 @@ impl Session {
         let mut info = None;
         let what = match args.get(1) {
             Some(v) => match (al_builtins::native::text_of(v), al_builtins::errorinfo::message_of(v)) {
-                (Some(text), _) => text,
+                (Some(text), _) => text.into_string(),
                 (None, Some(message)) => {
                     info = Some(v.clone());
                     message

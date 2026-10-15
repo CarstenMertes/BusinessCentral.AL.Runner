@@ -675,7 +675,7 @@ fn run_model(body: &str, model: TxModel) -> Result<Value, Signal> {
 
 fn text_model(vars_and_body: &str, model: TxModel) -> String {
     match run_model(&format!("procedure F(): Text {vars_and_body}"), model) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -685,7 +685,7 @@ fn text_after_setup(vars_and_body: &str, model: TxModel) -> String {
     let body =
         format!("procedure Setup() var H: Codeunit Helpers; begin H.Seed(); end; procedure F(): Text {vars_and_body}");
     match run_model(&body, model) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -1316,9 +1316,12 @@ fn an_extension_procedure_is_called_through_the_base_report_and_raises_its_event
 }
 
 #[test]
-fn an_extension_with_a_procedure_and_a_global_variable_is_refused() {
-    let why = refusal("var R: Report \"Ext State Base\"; begin R.UseRequestPage(false); exit('x'); end;");
-    assert!(why.contains("Ext State Ext"), "{why}");
+fn an_extension_with_a_procedure_and_a_global_variable_runs() {
+    // Pinned by reportext/W3RpExtProcedures.al: it used to be refused.
+    assert_eq!(
+        f("var R: Report \"Ext State Base\"; begin R.UseRequestPage(false); exit('x'); end;"),
+        "x"
+    );
 }
 
 #[test]

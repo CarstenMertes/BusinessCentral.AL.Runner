@@ -72,7 +72,7 @@ fn store(c: &mut dyn Ctx) -> Result<&mut MediaStore, Signal> {
 
 fn text_arg(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }
@@ -224,7 +224,27 @@ fn set_remove(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     Ok(Value::Boolean(members.len() != before))
 }
 
+/// `Media.ImportFile` and `MediaSet.ImportFile` (OnPrem): a file name that is empty raises "The specified path is
+/// invalid.", one that names no file "Could not find a part of the path '<path>'.", both with the code InvalidPath
+/// and nothing imported (onprem session/PZMediaImportFile.al, BC 29.0). Importing a file that exists is not pinned:
+/// which MIME type and description the Tenant Media row keeps for it is unknown, so it is refused.
+fn import_file(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    id_of(&r)?;
+    let name = text_arg(a, 0)?;
+    if name.is_empty() {
+        return crate::native::raise("The specified path is invalid.", "InvalidPath");
+    }
+    if c.fs_read(&name)?.is_none() {
+        return crate::native::raise(format!("Could not find a part of the path '{name}'."), "InvalidPath");
+    }
+    unsupported(
+        "Media.ImportFile of a file that exists: what the Tenant Media row keeps (MIME type, description, file name) is not pinned",
+    )
+}
+
 pub const REGISTRY: &[(&str, NativeFn)] = &[
+    ("Media.ImportFile#1", import_file),
+    ("MediaSet.ImportFile#1", import_file),
     ("Media.HasValue#1", has_value),
     ("Media.MediaId#1", media_id),
     ("Media.ImportStream#1", media_import),

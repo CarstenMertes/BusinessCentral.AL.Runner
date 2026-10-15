@@ -4871,6 +4871,18 @@ impl Lowerer<'_> {
                 }
                 // `Database::A.B."Name"`: a namespace-qualified object id.
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
+                // `this.BaseVar` in a reportextension compiles and raises when it runs (types/PYThisExtensions.al:
+                // ReportExtension_ThisBaseVariable_ReadInATrigger, BC 27.5 and 29.0). For a page extension BC aborts the
+                // page with a text this corpus does not pin.
+                Some(Res::ThisBaseGlobal(_)) => match (self.ws.objects[self.oi].kind, self.ws.objects[self.oi].id) {
+                    (ObjKind::ReportExtension, Some(id)) => Ok(ir::Expr::Fail {
+                        message: format!(
+                            "The another object refers to a global variable on ReportExtension with ID {id} that no longer seems to exists. Try to recompile dependent extensions."
+                        ),
+                        code: "GlobalVariableNotFound".into(),
+                    }),
+                    _ => Err("`this.<variable of the base>` in this extension (what BC raises is not pinned)".into()),
+                },
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {
                     Ok(ir::Expr::Const(ir::Const::Text(self.local_labels[&name].clone())))
                 }
@@ -4978,9 +4990,11 @@ impl Lowerer<'_> {
             .iter()
             .position(|c| c.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("control `{name}` is not in the page layout"))?;
+        let runtime = matches!(self.ty_of(recv), Ty::Object(ObjKind::Page, _));
         Ok(ir::Expr::Control {
             page: Box::new(self.expr(recv)?),
             control,
+            runtime,
         })
     }
 

@@ -1166,6 +1166,17 @@ fn value_kind(v: &Value) -> String {
 pub(crate) mod tests {
     use super::*;
 
+    // TestField with an ErrorInfo is implemented (issue 41): a check that holds raises nothing, a failing one
+    // is refused at run time (al-vm recmeta.rs `test_field`, al-vm/tests/scm_service_41.rs). Issue 42 refused
+    // it at lowering; that entry is gone because `lookup` now finds the ids.
+    #[test]
+    fn test_field_with_an_error_info_is_implemented_not_refused_at_lowering() {
+        for id in ["Record.TestField#2", "Record.TestField#4"] {
+            assert!(refusal(id).is_none(), "{id}");
+            assert!(lookup(id).is_some(), "{id}");
+        }
+    }
+
     // Base Application's Web Request Helper casts a caught .NET exception with `GetDotNetType(WebException)`
     // after a web request failed; no corpus test calls GetDotNetType (issue 34).
     #[test]

@@ -613,6 +613,30 @@ impl Session {
                     target: ControlTarget::BuiltIn(m.to_string()),
                 })))
             }
+            // `ObjectId(UseNames)`: `Page <id>`, or with names (the default) `Page <Caption>`, the object name when
+            // the page has no Caption. Taken from the probed report form (handlers/PWRefusedBuiltins.al:78-107,
+            // BC 27.5); for a page it is a documented assumption (docs/probes-needed.md). It reads the object, so
+            // a page that has not run answers too.
+            "ObjectId" if method.starts_with("Page.") => {
+                let names = match args.first() {
+                    None => true,
+                    Some(Value::Boolean(b)) => *b,
+                    Some(other) => return unsupported(format!("Page.ObjectId with {}", other.describe())),
+                };
+                let engine = self.engine();
+                let o = &engine.program.objects[st.borrow().object as usize];
+                if !names {
+                    return Ok(Value::Text(format!("Page {}", o.id.unwrap_or(0))));
+                }
+                let caption = match o.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("Caption")) {
+                    Some((_, v)) => match crate::recmeta::string_literal(v) {
+                        Some(c) => c,
+                        None => return unsupported("Page.ObjectId of a page whose Caption is not a literal"),
+                    },
+                    None => o.name.clone(),
+                };
+                Ok(Value::Text(format!("Page {caption}")))
+            }
             // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
             // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
             "Caption" if method.starts_with("Page.") => {

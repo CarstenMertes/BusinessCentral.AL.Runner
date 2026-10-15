@@ -79,13 +79,13 @@ mod tests {
         Key::new(
             [1; 32],
             String::new(),
-            vec![],
             vec![AppKey {
                 id: "a".into(),
                 name: "A".into(),
                 dependencies: vec![],
                 publisher: "P".into(),
                 version: "1".into(),
+                symbols: vec![],
                 source: [source; 32],
             }],
         )

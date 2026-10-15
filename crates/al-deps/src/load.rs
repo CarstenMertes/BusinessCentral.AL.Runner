@@ -246,6 +246,9 @@ pub struct DependencyApp {
     /// With `Request::lazy_sources`, a package read lazily: `app.files` holds the paths and empty
     /// texts, and this reads a file and hashes the package (ADR-022, "pure tests").
     pub lazy: Option<al_sema::LazySource>,
+    /// The `preprocessorSymbols` of the app's own `app.json` (none for a compiled package). The
+    /// app's sources are preprocessed with these and not with the project's.
+    pub preprocessor_symbols: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -408,7 +411,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
         .collect();
     // A package read lazily has no sources; its files are named and read later.
     enum Read {
-        Eager(Manifest, Sources),
+        Eager(Box<Manifest>, Sources),
         Lazy(Box<crate::lazy::LazyPackage>),
     }
     let mut reads: std::collections::VecDeque<Result<Read, String>> = to_read
@@ -419,7 +422,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
                     return Ok(Read::Lazy(Box::new(l)));
                 }
             }
-            read_package_at_with(path, req.source_build).map(|(m, s)| Read::Eager(m, s))
+            read_package_at_with(path, req.source_build).map(|(m, s)| Read::Eager(Box::new(m), s))
         })
         .collect();
     let mut loaded = Loaded {
@@ -447,7 +450,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
         }
         let (manifest, sources, lazy): (Manifest, Option<Sources>, Option<crate::lazy::LazyPackage>) =
             match reads.pop_front().expect("one read per package")? {
-                Read::Eager(m, s) => (m, Some(s), None),
+                Read::Eager(m, s) => (*m, Some(s), None),
                 Read::Lazy(l) => (l.manifest.clone(), None, Some(*l)),
             };
         let role = if manifest.id.eq_ignore_ascii_case(SYSTEM_APP_ID) {
@@ -486,6 +489,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
             path,
             role,
             lazy: lazy.map(|l| l.source),
+            preprocessor_symbols: manifest.preprocessor_symbols.clone(),
         });
     }
     loaded.notes = notes;

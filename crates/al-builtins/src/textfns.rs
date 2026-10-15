@@ -45,6 +45,9 @@ fn int(a: &[Value], i: usize) -> Result<i64, Signal> {
         Some(Value::Integer(n)) => Ok(i64::from(*n)),
         Some(Value::BigInteger(n)) => Ok(*n),
         Some(Value::Byte(n)) => Ok(i64::from(*n)),
+        // An Option converts to its ordinal (`SelectStr(Target, Text)` with an Option parameter in Base Application's
+        // Calculate Standard Cost); the same conversion as `I := OptionValue` (ops::convert).
+        Some(Value::Option(o, _)) => Ok(i64::from(*o)),
         other => unsupported(format!("integer argument {i} of type {}", other.describe())),
     }
 }
@@ -80,24 +83,62 @@ fn ends_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(s.ends_with(&sub)))
 }
 
+/// The .NET argument errors of the string methods (text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds,
+/// Text_IndexOfAndTextBuilderEdges).
+fn out_of_range(msg: &str) -> Signal {
+    crate::native::raise::<()>(msg.to_string(), "ArgumentOutOfRange").unwrap_err()
+}
+
+fn start_error(name: &str, v: i64) -> Signal {
+    out_of_range(&format!(
+        "{name} ('{v}') must be a non-negative value. (Parameter '{name}')\\Actual value was {v}."
+    ))
+}
+
+/// An AL range error (`OutsidePermittedRange`), numbers grouped like the platform does.
+fn permitted(name: &str, n: usize, cur: i64, lo: &str, hi: &str) -> Signal {
+    let g = |v: i64| {
+        let d = v.unsigned_abs().to_string();
+        let mut o = String::new();
+        for (i, c) in d.chars().enumerate() {
+            if i > 0 && (d.len() - i) % 3 == 0 {
+                o.push(',');
+            }
+            o.push(c);
+        }
+        if v < 0 { format!("-{o}") } else { o }
+    };
+    raise::<()>(
+        format!(
+            "The value of {name} parameter {n} is outside of the permitted range. The current value is: {}. The permitted range is: from {lo} to {hi}.",
+            g(cur)
+        ),
+        "OutsidePermittedRange",
+    )
+    .unwrap_err()
+}
+
+const INT_MAX: &str = "2,147,483,647";
+
 /// 1-based, 0 when absent (TestTextExtended.al TextIndexOf_*).
 fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (u16s(&recv_text(&r)?), u16s(&text(a, 0)?));
     let from = if a.len() > 1 {
         let n = int(a, 1)?;
-        if n < 1 {
-            return unsupported("IndexOf with a start index below 1 (not pinned)");
+        // A start outside 1 to the length plus one raises (text/TestProbeTextDateFormatContracts.al:Text_IndexOfAndTextBuilderEdges).
+        if n < 1 || n as usize > s.len() + 1 {
+            return Err(out_of_range(
+                "Index was out of range. Must be non-negative and less than or equal to the size of the collection. (Parameter 'startIndex')",
+            ));
         }
         n as usize - 1
     } else {
         0
     };
-    // The empty text is found at the start (types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne: IndexOf('') = 1).
+    // The empty text is found at the start (types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne: IndexOf('') = 1),
+    // at the start index with one (Text_IndexOfAndTextBuilderEdges).
     if sub.is_empty() {
-        if a.len() > 1 {
-            return unsupported("IndexOf of an empty text with a start index (not pinned)");
-        }
-        return Ok(Value::Integer(1));
+        return Ok(Value::Integer(from as i32 + 1));
     }
     Ok(Value::Integer(find(&s, &sub, from).map_or(0, |p| p as i32 + 1)))
 }
@@ -111,16 +152,15 @@ fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
     let limit = if a.len() > 1 {
         let n = int(a, 1)?;
         if n < 1 || n as usize > s.len() {
-            return unsupported("LastIndexOf with a start index outside the text (not pinned)");
+            return Err(out_of_range(
+                "Index was out of range. Must be non-negative and less than the size of the collection. (Parameter 'startIndex')",
+            ));
         }
         n as usize
     } else {
         s.len()
     };
     if sub.is_empty() {
-        if a.len() > 1 {
-            return unsupported("LastIndexOf of an empty text with a start index (not pinned)");
-        }
         return Ok(Value::Integer(s.len() as i32 + 1));
     }
     let pos = s[..limit].windows(sub.len()).rposition(|w| w == sub.as_slice());
@@ -173,7 +213,12 @@ fn trim_with(r: &Option<&mut Value>, a: &[Value], start: bool, end: bool) -> NRe
         ),
         None => None,
     };
-    let strip = |c: char| set.as_ref().map_or(c.is_whitespace(), |cs| cs.contains(&c));
+    // An empty set trims white space like no set (text/TestProbeTextDateFormatContracts.al:Text_TrimWithCharacterSet).
+    let strip = |c: char| {
+        set.as_ref()
+            .filter(|cs| !cs.is_empty())
+            .map_or(c.is_whitespace(), |cs| cs.contains(&c))
+    };
     let mut out: &str = &s;
     if start {
         out = out.trim_start_matches(strip);
@@ -219,13 +264,11 @@ fn substring(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         );
     }
     if start < 1 {
-        return unsupported("Substring with a start index below 1 (error text not pinned)");
+        return Err(start_error("startIndex", start - 1));
     }
     let from = start as usize - 1;
     let to = match count {
-        Some(c) if c < 0 => {
-            return unsupported("Substring with a negative count (error text not pinned)");
-        }
+        Some(c) if c < 0 => return Err(start_error("length", c)),
         // A count past the end is clamped (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments:
         // 'hello'.Substring(2, 10) = 'ello').
         Some(c) => s.len().min(from + c as usize),
@@ -363,9 +406,7 @@ fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 /// the end: types/TestFormatEvaluateTextContracts.al:IncStr_IncrementsTheLastDigitBlock,
 /// `IncStr('A1B') = 'A2B'`).
 fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("IncStr with an increment (not pinned)");
-    }
+    let by: i128 = if a.len() > 1 { i128::from(int(a, 1)?) } else { 1 };
     let s = text(a, 0)?;
     let chars: Vec<char> = s.chars().collect();
     let Some(last) = chars.iter().rposition(char::is_ascii_digit) else {
@@ -377,23 +418,18 @@ fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
         .map_or(0, |p| p + 1);
     let (head, rest) = chars.split_at(first);
     let (num, tail) = rest.split_at(last + 1 - first);
-    let mut digs: Vec<u8> = num.iter().map(|c| *c as u8 - b'0').collect();
-    let mut carry = true;
-    for d in digs.iter_mut().rev() {
-        if carry {
-            if *d == 9 {
-                *d = 0;
-            } else {
-                *d += 1;
-                carry = false;
-            }
-        }
+    // The digit block plus the increment, keeping the width of the block (`A099` gives `A100`, `A9` gives `A10`);
+    // a negative increment subtracts (text/TestProbeTextDateFormatContracts.al:Text_IncStrAndConvertStr).
+    let digits: String = num.iter().collect();
+    let Ok(value) = digits.parse::<i128>() else {
+        return unsupported("IncStr of a digit block beyond 38 digits (not pinned)");
+    };
+    let sum = value + by;
+    if sum < 0 {
+        return unsupported("IncStr below zero (not pinned)");
     }
     let mut out: String = head.iter().collect();
-    if carry {
-        out.push('1');
-    }
-    out.extend(digs.iter().map(|d| char::from(b'0' + d)));
+    out.push_str(&format!("{sum:0width$}", width = num.len()));
     out.extend(tail.iter());
     Ok(Value::Text(out))
 }
@@ -420,8 +456,22 @@ fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = u16s(&text(a, 0)?);
     let pos = int(a, 1)?;
+    // text/TestProbeTextDateFormatContracts.al:Text_DelStrInsStr: the position must be 1 or more (the upper bound the
+    // message names is 2048 without a length and the largest Integer with one); a length must be 0 or more.
     if pos < 1 {
-        return unsupported("DelStr with a position below 1 (not pinned)");
+        return Err(permitted(
+            "DELSTR",
+            2,
+            pos,
+            "1",
+            if a.len() > 2 { INT_MAX } else { "2048" },
+        ));
+    }
+    if a.len() > 2 {
+        let n = int(a, 2)?;
+        if n < 0 {
+            return Err(permitted("DELSTR", 3, n, "0", INT_MAX));
+        }
     }
     // A position past the end deletes nothing (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments).
     if pos as usize > s.len() {
@@ -429,11 +479,7 @@ fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     }
     let from = pos as usize - 1;
     let to = if a.len() > 2 {
-        let n = int(a, 2)?;
-        if n < 0 || from + n as usize > s.len() {
-            return unsupported("DelStr with a length outside the text (not pinned)");
-        }
-        from + n as usize
+        s.len().min(from + int(a, 2)? as usize)
     } else {
         s.len()
     };
@@ -447,7 +493,7 @@ fn ins_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let sub = u16s(&text(a, 1)?);
     let pos = int(a, 2)?;
     if pos < 1 {
-        return unsupported("InsStr with a position below 1 (not pinned)");
+        return Err(permitted("INSSTR", 3, pos, "1", INT_MAX));
     }
     // A position past the end appends (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments).
     let at = (pos as usize - 1).min(s.len());
@@ -602,7 +648,10 @@ fn tb_insert(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     let (pos, t) = (int(a, 0)?, text(a, 1)?);
     let u = with_string(&h, |s| u16s(s));
     if pos < 1 || pos as usize > u.len() + 1 {
-        return unsupported("TextBuilder.Insert outside the text (error text not pinned)");
+        return crate::native::raise::<Value>(
+            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+            "ArgumentOutOfRange",
+        );
     }
     let at = pos as usize - 1;
     let mut out = u[..at].to_vec();
@@ -618,7 +667,10 @@ fn tb_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     let (start, count) = (int(a, 0)?, int(a, 1)?);
     let u = with_string(&h, |s| u16s(s));
     if start < 1 || count < 0 || (start as usize - 1) + count as usize > u.len() {
-        return unsupported("TextBuilder.Remove outside the text (error text not pinned)");
+        return crate::native::raise::<Value>(
+            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+            "ArgumentOutOfRange",
+        );
     }
     let from = start as usize - 1;
     let mut out = u[..from].to_vec();
@@ -636,7 +688,10 @@ fn tb_replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
     let h = string_of(r)?;
     let (old, new) = (text(a, 0)?, text(a, 1)?);
     if old.is_empty() {
-        return unsupported("TextBuilder.Replace of an empty text (not pinned)");
+        return crate::native::raise::<Value>(
+            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+            "Argument",
+        );
     }
     with_string(&h, |s| *s = s.replace(&old, &new));
     Ok(Value::Boolean(true))

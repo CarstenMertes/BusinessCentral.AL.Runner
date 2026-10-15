@@ -484,6 +484,7 @@ impl Walk<'_> {
             Expr::EnumImpl { .. } => Err("creates the codeunit an enum value implements".into()),
             Expr::Control { .. } => Err("reads a control of a test page".into()),
             Expr::QueryColumn { .. } => Err("reads a query column".into()),
+            Expr::FieldOf(base, _) => self.expr(base),
             Expr::DotNet { .. } | Expr::DotNetCoerce(..) | Expr::DotNetOperand(..) => Err("calls into .NET".into()),
         }
     }

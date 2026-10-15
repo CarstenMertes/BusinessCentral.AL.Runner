@@ -420,13 +420,21 @@ codeunit 68304 Helpers
         A: Byte;
         B: Byte;
         C: Byte;
+        N: Integer;
+        Out: Text;
     begin
         Buf.CalcFields(Data);
         Buf.Data.CreateInStream(InStr);
         InStr.Read(A);
         InStr.Read(B);
         InStr.Read(C);
-        exit(Format(A) + '.' + Format(B) + '.' + Format(C));
+        // A Byte formats as the character of its code (streams/TestProbeStreamContracts.al:Read_IntoTypes).
+        N := A;
+        Out := Format(N);
+        N := B;
+        Out += '.' + Format(N);
+        N := C;
+        exit(Out + '.' + Format(N));
     end;
 
     // The dataset the probe report writes, from its DataItems element on, with the tableId/systemId pairs kept.

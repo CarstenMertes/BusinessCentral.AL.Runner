@@ -118,21 +118,26 @@ config_flag!(
 );
 config_flag!(membership_entitlement, "ALConfigSettings.IsSaaS", Value::Boolean(false));
 
-/// Whether the tenant is a sandbox. The oracle tenant is one (probe: `IsSandbox` true,
-/// `IsProduction` false, `IsSaaS` true, no testability flag set). AL Runner's skeleton tenant is
-/// Production; the probe wins. Fixed here until the identity configuration carries the
-/// environment type (ADR-013).
-const TENANT_IS_SANDBOX: bool = true;
+/// Whether the tenant is a sandbox. The SaaS environment is the oracle tier (probe: `IsSandbox`
+/// true, `IsProduction` false, `IsSaaS` true, no testability flag set). AL Runner's skeleton tenant
+/// is Production; the probe wins. The on-prem environment (`--environment onprem`, owner decision
+/// 2026-10-15) is not a sandbox: Microsoft's codeunit 134614 "Test App Permissions" deletes all
+/// users before it sets `SetTestabilitySoftwareAsAService(true)`, which passes only when `IsSaaS`
+/// is false until then. UNPROBED ASSUMPTION (docs/probes-needed.md "Environment Information on an
+/// on-prem server"); the OnPrem suite probe, when it lands, wins.
+fn tenant_is_sandbox(s: &Session) -> bool {
+    s.host.identity.environment() == al_host::Environment::Saas
+}
 
-fn is_sandbox(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+fn is_sandbox(s: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "NavTenantSettingsHelper.IsSandbox")?;
-    Ok(Value::Boolean(TENANT_IS_SANDBOX))
+    Ok(Value::Boolean(tenant_is_sandbox(s)))
 }
 
 /// BC's body is `!IsSandbox()`.
-fn is_production(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+fn is_production(s: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "NavTenantSettingsHelper.IsProduction")?;
-    Ok(Value::Boolean(!TENANT_IS_SANDBOX))
+    Ok(Value::Boolean(!tenant_is_sandbox(s)))
 }
 
 fn text(what: &str, args: Args, want: usize, v: &str) -> Result<Value, Signal> {

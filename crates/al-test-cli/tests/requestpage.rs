@@ -719,7 +719,8 @@ fn a_foreign_seed_is_refused() {
 
 // handlers/TestRequestPageControlErrorName.al:SourceReportExtension_Control_AssertEquals_*,
 // pageapplicationarea/TestReqPageApplicationAreaReportExtension.al:ExtField_SetValue_RunsItsOnValidate,
-// handlers/TestPageExtensionModifyCaption_Tests.al:SameAppReport_ModifiedRequestPageCaptions
+// handlers/TestPageExtensionModifyCaption_Tests.al:SameAppReport_ModifiedRequestPageCaptions;
+// the parameters name a field by its variable, not by its control (report/TestProbeReportContracts.al)
 #[test]
 fn a_reportextension_adds_controls_and_modifies_captions_of_the_request_page() {
     passes(&format!(
@@ -730,8 +731,8 @@ fn a_reportextension_adds_controls_and_modifies_captions_of_the_request_page() {
             Param := Report.RunRequestPage(Report::\"RQ Ext Base\");
             Check('AssertEquals for Field: RpnExtCtl Expected = ''Wrong'', Actual = ''''', Seen);
             Check('base-open,ext-open,', T.Text());
-            if StrPos(Param, '<Field name=\"RpnExtCtl\">Eps</Field>') = 0 then Error(Param);
-            if StrPos(Param, '<Field name=\"ExtDerivedCtl\">D-X</Field>') = 0 then Error(Param); end;
+            if StrPos(Param, '<Field name=\"RpnExtVar\">Eps</Field>') = 0 then Error(Param);
+            if StrPos(Param, '<Field name=\"ExtDerivedValue\">D-X</Field>') = 0 then Error(Param); end;
         [RequestPageHandler] procedure ExtHandler(var RP: TestRequestPage \"RQ Ext Base\") begin
             asserterror RP.RpnExtCtl.AssertEquals('Wrong'); Seen := GetLastErrorText();
             RP.RpnExtCtl.SetValue('Eps'); RP.RpnExtCtl.AssertEquals('Eps');

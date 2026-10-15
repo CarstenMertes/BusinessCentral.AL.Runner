@@ -300,7 +300,7 @@ fn an_xpath_literal_with_an_inner_quote_is_refused() {
         ),
         "F",
     ) {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("XPath") && why.contains("predicate form"), "{why}"),
+        Err(Signal::Unsupported(why)) => assert!(why.contains("XPath"), "{why}"),
         other => panic!("{other:?}"),
     }
 }

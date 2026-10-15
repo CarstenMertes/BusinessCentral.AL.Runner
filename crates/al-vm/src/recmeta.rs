@@ -350,13 +350,17 @@ impl Session {
             // Doc (Record.Ascending): with an argument sets the sort direction of the current key,
             // without one reads it (corpus record/TestRecordSort.al:111, TestCopyOntoTemporaryRecord.al).
             "Ascending" => {
-                if rec.borrow().field_descending {
-                    return unsupported("Ascending after a per-field SetAscending (not pinned)");
-                }
+                // After a per-field SetAscending(Field, false) the record reads as descending (record/TestProbeRecordRefContracts.al:
+                // GetTable_CopiesBufferFiltersKeyDirection, `rr_ascending` No).
                 match args.first() {
-                    None => Ok(Value::Boolean(rec.borrow().ascending)),
+                    None => Ok(Value::Boolean({
+                        let r = rec.borrow();
+                        r.ascending && !r.field_descending
+                    })),
                     Some(v) => {
-                        rec.borrow_mut().ascending = ops::truthy(v)?;
+                        let mut r = rec.borrow_mut();
+                        r.ascending = ops::truthy(v)?;
+                        r.field_descending = false;
                         Ok(Value::Null)
                     }
                 }
@@ -527,9 +531,6 @@ impl Session {
                     return Ok(Value::Null);
                 }
                 let s = src.borrow().clone();
-                if s.field_descending {
-                    return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
-                }
                 // Copy takes the fields, filters and key but does not move the target to the source's company
                 // (record/TestChangeCompanyFiltersCopyDeleteContracts.al:117-121).
                 let mut d = rec.borrow_mut();
@@ -548,6 +549,7 @@ impl Session {
                 d.key = s.key;
                 d.adhoc = s.adhoc;
                 d.ascending = s.ascending;
+                d.field_descending = s.field_descending;
                 d.position = s.position;
                 d.load.buffer = s.load.buffer;
                 d.load.partial = s.load.partial;
@@ -744,11 +746,54 @@ impl Session {
             let Some(sp) = from.fields.iter().position(|f| f.id == df.id && f.stored) else {
                 continue;
             };
+            // An Enum field and an Option field with the same field number are the same kind of field to
+            // TransferFields: Base Application's "Sales Order Entity Buffer" holds `Shipping Advice` as an
+            // Option and `Sales Header` as an Enum, and its TransferFields from the header works in BC
+            // (assumed from Microsoft's passing tests; no corpus test, docs/probes-needed.md). The ordinal moves.
+            let enum_option = |a: &al_builtins::value::RtType, b: &al_builtins::value::RtType| {
+                use al_builtins::value::RtType as T;
+                matches!((a, b), (T::Enum(_), T::Option(_)) | (T::Option(_), T::Enum(_)))
+            };
+            if enum_option(&from.fields[sp].ty, &df.ty) {
+                let ordinal = match &src_fields[sp] {
+                    Value::Enum(_, o) | Value::Option(o, _) => *o,
+                    other => {
+                        return unsupported(format!(
+                            "TransferFields of {} between an Enum and an Option",
+                            other.describe()
+                        ));
+                    }
+                };
+                let moved = match &df.ty {
+                    al_builtins::value::RtType::Option(m) => Value::Option(ordinal, std::sync::Arc::from(m.as_slice())),
+                    al_builtins::value::RtType::Enum(id) => {
+                        if !self
+                            .engine
+                            .program
+                            .objects
+                            .get(*id as usize)
+                            .is_some_and(|o| o.enum_values.iter().any(|(v, _)| *v == ordinal))
+                        {
+                            return unsupported(format!(
+                                "TransferFields of the Option ordinal {ordinal} into the Enum field {}, which has no such value (not pinned)",
+                                df.name
+                            ));
+                        }
+                        Value::Enum(*id, ordinal)
+                    }
+                    _ => unreachable!("enum_option"),
+                };
+                updates.push((dp, moved));
+                continue;
+            }
             if !same_kind(&from.fields[sp].ty, &df.ty) {
                 if skip_mismatch {
                     continue;
                 }
-                return unsupported("TransferFields across fields of different types (error text not pinned)");
+                return unsupported(format!(
+                    "TransferFields across fields of different types (error text not pinned): field {} of {} and field {} of {}",
+                    from.fields[sp].name, from.name, df.name, t.name
+                ));
             }
             updates.push((dp, ops::convert(src_fields[sp].clone(), &df.ty)?));
         }

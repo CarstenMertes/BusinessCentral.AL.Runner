@@ -451,18 +451,15 @@ fn session_settings_clear_returns_to_a_pristine_instance() {
 }
 
 #[test]
-fn session_settings_forms_that_need_the_running_session_are_refused() {
-    // Init() reads the host's language, locale and time zone and works (tests/hostvalues.rs);
-    // RequestSessionUpdate goes to a handler; an unset language id is 0 or 1033 and the corpus
-    // does not say which.
-    for body in [
-        "s.RequestSessionUpdate(false);",
-        "if s.LanguageId() = 0 then;",
-        "if s.TimeZone() = '' then;",
-    ] {
-        let r = settings(&format!("{body} exit('');"));
-        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
-    }
+fn session_settings_defaults_of_an_instance_nobody_set() {
+    // session/TestProbeSessionMiscContracts.al:SessionSettings_PristineProperties. RequestSessionUpdate(false) goes to a
+    // handler (SessionSettings_RequestUpdateFalse_Handler); without one it is refused.
+    let r = settings(
+        "exit(Format(s.LanguageId()) + '|' + Format(s.LocaleId()) + '|' + s.TimeZone() + '|' + s.ProfileId() + '|' + s.Company());",
+    );
+    assert_eq!(r.unwrap(), "0|0|||");
+    let r = settings("s.RequestSessionUpdate(false); exit('');");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
 
 // ---------------------------------------------------------------- Notification
@@ -811,11 +808,12 @@ fn isolated_storage_scopes_are_apart_and_encrypted_entries_read_back_as_text() {
 }
 
 #[test]
-fn isolated_storage_takes_secret_text_and_refuses_the_user_scopes() {
+fn isolated_storage_takes_secret_text_and_the_user_scopes() {
     let r = storage("s := 'hidden'; IsolatedStorage.Set('k', s); ok := IsolatedStorage.Get('k', s); exit(Format(ok));");
     assert_eq!(r.unwrap(), "Yes");
+    // The user scopes are stores of their own (session/TestProbeSessionMiscContracts.al:IsolatedStorage_Behaviour).
     let r = storage("IsolatedStorage.Set('k', 'x', DataScope::User); exit('');");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    assert!(r.is_ok(), "{r:?}");
 }
 
 // ---------------------------------------------------------------- NavApp module info
@@ -906,7 +904,9 @@ fn module_info_reports_the_manifest_of_the_running_app() {
               + Format(v.Major()) + Format(v.Minor()) + Format(v) + '|' + Format(IsNullGuid(i.PackageId())) + Format(i.PackageId() = i.Id())
               + '|' + Format(i.Dependencies().Count()));",
     );
-    assert_eq!(r.unwrap(), "Main|Main Publisher|Yes|101.0.0.0|NoNo|2");
+    // The dependencies include the platform's Application when the manifest names an application version
+    // (session/TestProbeSessionMiscContracts.al:ModuleInfo_CurrentModule, `dependency_Application`).
+    assert_eq!(r.unwrap(), "Main|Main Publisher|Yes|101.0.0.0|NoNo|3");
 }
 
 #[test]
@@ -1007,9 +1007,14 @@ fn error_with_an_error_info_raises_its_message() {
         "e := ErrorInfo.Create('the client visible text'); e.ErrorType(ErrorType::Client);
          asserterror Error(e); a := GetLastErrorText();
          e.ErrorType(ErrorType::Internal); asserterror Error(e);
-         exit(a);",
+         exit(a + '|' + CopyStr(GetLastErrorText(), 1, 87));",
     );
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    // session/TestProbeSessionMiscContracts.al:ErrorInfo_ErrorClientAndInternal: an internal error says only that an error
+    // occurred, with a correlation id.
+    assert_eq!(
+        r.unwrap(),
+        "the client visible text|An error has occurred. If the error persists, please contact your system administrator."
+    );
     let r = text_of(
         "e: ErrorInfo;",
         "e := ErrorInfo.Create('the client visible text'); e.ErrorType(ErrorType::Client);
@@ -1063,11 +1068,21 @@ fn dictionary_get_of_a_missing_key_raises_the_key_not_found_error() {
 }
 
 #[test]
-fn other_list_index_errors_are_still_refused() {
-    // Only Get is pinned: RemoveAt, Set, Insert and GetRange outside the list stay refused.
+fn list_index_errors_raise_the_pinned_error() {
+    // session/TestProbeSessionMiscContracts.al:Dictionary_List_ErrorTexts: Get, RemoveAt, Set and Insert outside the list.
     for body in ["l.RemoveAt(3);", "l.Set(3, 1);", "l.Insert(4, 1);", "l.Get(0);"] {
         let r = text_of("l: List of [Integer];", &format!("{body} exit('');"));
-        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
+        let Err(Signal::Error(e)) = r else {
+            panic!("{body}: {r:?}");
+        };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            (
+                "An invalid argument was passed to a 'List' data type method.",
+                "ArgumentOutOfRange"
+            ),
+            "{body}"
+        );
     }
 }
 
@@ -1261,7 +1276,7 @@ fn a_cleared_date_formula_is_the_empty_formula() {
 
 // session/TestEnvironmentUserTenantContracts.al:195-201 and session/TestNavAppExtended.al:116-117:
 // GetModuleInfo of the null app id is true and answers a module whose data version is the installed
-// application's, at least 27. Its name and the rest are not pinned: refused.
+// application's, at least 27. Its name is W1 and its publisher Microsoft (session/TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
 #[test]
 fn get_module_info_of_the_null_id_answers_the_application_version() {
     let r = text_of(
@@ -1269,8 +1284,11 @@ fn get_module_info_of_the_null_id_answers_the_application_version() {
         "exit(Format(NavApp.GetModuleInfo(G, M)) + Format(M.DataVersion().Major() >= 27));",
     );
     assert_eq!(r.unwrap(), "YesYes");
-    let r = text_of("G: Guid; M: ModuleInfo;", "NavApp.GetModuleInfo(G, M); exit(M.Name());");
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    let r = text_of(
+        "G: Guid; M: ModuleInfo;",
+        "NavApp.GetModuleInfo(G, M); exit(M.Name() + '|' + M.Publisher());",
+    );
+    assert_eq!(r.unwrap(), "W1|Microsoft");
 }
 
 // A table with a DateFormula field inserts with the field blank. Base Application's setup tables

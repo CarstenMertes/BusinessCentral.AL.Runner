@@ -40,6 +40,8 @@ pub struct Args {
     /// `--files-dir DIR`: the `File` data type reads and writes real files under DIR. Without it
     /// files live in memory and are gone when the test ends.
     pub files_dir: Option<PathBuf>,
+    /// `--environment saas|onprem`: what Environment Information answers (default saas, as probed).
+    pub environment: Option<al_host::Environment>,
     /// `--no-download`: never fetch a dependency app from Microsoft's artifact feed (ADR-013).
     pub no_download: bool,
     /// `--cache-dir DIR`: where downloaded artifacts are kept (else `ALRUNNER_CACHE`, else
@@ -65,6 +67,9 @@ pub struct Args {
     /// `--must-not-compile [DIR]`: check the must-not-compile corpus (`mnc.rs`) and stop. DIR is the
     /// folder of the cases or the one that holds `cases/`; without it `corpus/tests/must-not-compile`.
     pub must_not_compile: Option<Option<PathBuf>>,
+    /// `--coverage-map [DIR]`: write `corpus-coverage.md` and `corpus-coverage.json` (which builtin
+    /// overloads some corpus test calls) to DIR, else `docs/`, and stop.
+    pub coverage_map: Option<Option<PathBuf>>,
     /// `--explain TEST`: run one test and say why it ended as it did.
     pub explain: Option<String>,
     /// `--top-refusals [N]`: rank the refusal reasons; N entries (default 10).
@@ -103,6 +108,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 _ => None,
             };
             a.must_not_compile = Some(dir);
+            continue;
+        }
+        if flag == "--coverage-map" {
+            let dir = match it.peek() {
+                Some(v) if !v.starts_with("--") => it.next().map(PathBuf::from),
+                _ => None,
+            };
+            a.coverage_map = Some(dir);
             continue;
         }
         if flag == "--top-refusals" {
@@ -150,6 +163,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
             "--require-dotnet" => a.require_dotnet = true,
             "--files-dir" => a.files_dir = Some(text()?.into()),
+            "--environment" => a.environment = Some(text()?.parse().map_err(|e| format!("--environment: {e}"))?),
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--fetch-deps" => a.fetch_deps = true,
@@ -223,6 +237,9 @@ INPUT
   --deps DIR                  extra directory of .app packages for the dependencies (repeatable)
   --no-deps                   run the corpus alone, without Microsoft's apps
   --no-download               never fetch a dependency app from the artifact feed
+  --environment ENV           the server Environment Information describes: saas (default, as probed) or
+                              onprem (IsSaaS and IsSandbox No until a test library changes them;
+                              an unprobed assumption Microsoft's suites need)
   --files-dir DIR             let the File data type read and write real files under DIR (default: in memory)
   --cache-dir DIR             where downloaded artifacts are kept (default: ~/.cache/al-runtime)
 
@@ -236,6 +253,8 @@ SELECTION (each flag repeats; the selection is their union; without one, everyth
   cases. --update-baseline refuses to run with a selection.
 
 DIAGNOSE
+  --coverage-map [DIR]        write corpus-coverage.md and .json to DIR (default docs/): which builtin
+                              methods and overloads of the catalog some corpus test calls, per type
   --must-not-compile [DIR]    check the corpus of AL files the real compiler rejects (DIR, else
                               corpus/tests/must-not-compile): the same ALnnnn codes, per BC major
                               (--bc-version, default 29); exit 1 on a mismatch, then stop

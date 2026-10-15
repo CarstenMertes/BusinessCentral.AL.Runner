@@ -32,6 +32,8 @@ table 50902 "ALT Blank"
     }
     keys { key(PK; Id) { } }
 }
+table 50903 "ALT EO Enum" { fields { field(1; Id; Code[10]) { } field(2; Kind; Enum "ALT Blank Kind") { } } keys { key(PK; Id) { } } }
+table 50904 "ALT EO Option" { fields { field(1; Id; Code[10]) { } field(2; Kind; Option) { OptionMembers = " ",A,B; } } keys { key(PK; Id) { } } }
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -694,6 +696,48 @@ fn transfer_fields_copies_by_field_number_and_honours_the_key_flag() {
     assert_eq!(text(r), "SRC42hello|KEEP42|SRC");
 }
 
+// A field of what a procedure returns: Base Application's `exit(GetLocation("Location Code")."Bin Mandatory")` (Warehouse
+// Receipt Header.BinCodeMandatory, 50 Tests-SCM tests). The result is a copy of the record.
+#[test]
+fn a_field_of_a_procedure_result_is_read() {
+    let r = run(
+        "procedure Get(Code: Code[20]): Record \"ALT T\" var R: Record \"ALT T\"; begin R.\"No.\" := Code; R.Grp := 7; R.Descr := 'x'; exit(R); end;
+         procedure F(): Text begin exit(Get('K').\"No.\" + '|' + Format(Get('Z').Grp) + '|' + Get('Q').Descr); end;",
+        "F",
+    );
+    assert_eq!(text(r), "K|7|x");
+}
+
+// An Enum field and an Option field with the same field number transfer by ordinal (Base Application's Sales Order
+// Entity Buffer next to Sales Header: assumed, docs/probes-needed.md). An ordinal the enum lacks is refused.
+#[test]
+fn transfer_fields_moves_the_ordinal_between_an_enum_and_an_option_field() {
+    let r = run(
+        "procedure F(): Text var E: Record \"ALT EO Enum\"; O: Record \"ALT EO Option\"; res: Text; begin
+            E.Id := 'E'; E.Kind := E.Kind::Item;
+            O.TransferFields(E);
+            res := Format(O.Kind) + '|' + Format(O.Kind, 0, 2);
+            Clear(E);
+            O.Kind := O.Kind::A;
+            E.TransferFields(O);
+            exit(res + '|' + Format(E.Kind, 0, 2));
+        end;",
+        "F",
+    );
+    // The Option holds ordinal 1 (member `A`); moving it back to the Enum has the ordinal 1, `Item`.
+    assert_eq!(text(r), "A|1|1");
+    let r = run(
+        "procedure F() var E: Record \"ALT EO Enum\"; O: Record \"ALT EO Option\"; begin
+            O.Kind := O.Kind::B; E.TransferFields(O);
+        end;",
+        "F",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("no such value")),
+        "{r:?}"
+    );
+}
+
 // record/TestRecordSort.al:184-203 (SetAscending(false) makes FindFirst return the largest) and :205-.
 #[test]
 fn set_ascending_on_a_single_field_key_reverses_the_order() {
@@ -736,7 +780,8 @@ fn get_ascending_reads_the_direction_of_a_key_field() {
         end;",
         "F",
     );
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    // record/TestProbeRecordRefContracts.al:GetTable_CopiesBufferFiltersKeyDirection (`rr_ascending`): the property reads the direction set.
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
 
 // A per-field direction on a multi-field key, or on a field outside the key, is not pinned.

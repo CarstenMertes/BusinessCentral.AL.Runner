@@ -3524,10 +3524,20 @@ impl Session {
         let engine = self.engine();
         // A client sends the row it stands on to the server before it runs an action (corpus
         // handlers/TestPageAutoSplitKey_Tests.al:TestPage_ActionInvoke_OnANewSubpageRow_*).
+        let was_dirty = st.borrow().dirty;
         if st.borrow().host.is_some() {
             self.save_row(st)?;
         }
         st.borrow_mut().refresh = false;
+        // An edit the client sends before the action (a control SetValue left the page dirty) is
+        // saved, and the saved row is read again: OnAfterGetRecord of the base runs before the
+        // action (corpus handlers/TestPageExtensionBaseAccessContracts.al:338-342, where the base
+        // copies a variable an extension control set into a variable the action logs).
+        if was_dirty && !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+            st.borrow_mut().refresh = true;
+            self.run_refresh(st)?;
+            st.borrow_mut().refresh = false;
+        }
         // RunObject wins over OnAction when an action declares both (handlers/TestPageRunObjectContracts.al:371-390).
         if page_of(&engine, st).controls[idx].run_object.is_some() {
             return self.run_object_action(st, idx);

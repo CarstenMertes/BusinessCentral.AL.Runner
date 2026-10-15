@@ -76,14 +76,18 @@ impl Session {
             // them for ExternalSQL and expects them not to throw
             // (session/TestDatabaseExtended.al:75-92, TestSystemExtended.al:664-672).
             ("Has", "ExternalSQL") => return Ok(Value::Boolean(false)),
-            ("GetDefault", "ExternalSQL") => return Ok(Value::Text(String::new())),
+            ("GetDefault", "ExternalSQL") => return Ok(Value::Text(String::new().into())),
             (_, "CRM") => {}
             (m, k) => return unsupported(format!("{m}TableConnection of type {k} (not pinned)")),
         }
         let ord = kind.0;
         match method {
             "GetDefault" => Ok(Value::Text(
-                self.default_table_connection.get(&ord).cloned().unwrap_or_default(),
+                self.default_table_connection
+                    .get(&ord)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into(),
             )),
             "Has" | "Register" | "Unregister" | "SetDefault" => {
                 let Some(name) = name else {
@@ -136,7 +140,7 @@ impl Session {
                                 "SetDefaultTableConnection of a connection that is not registered (not pinned)",
                             );
                         }
-                        self.default_table_connection.insert(ord, name);
+                        self.default_table_connection.insert(ord, name.to_string());
                         Ok(Value::Null)
                     }
                 }
@@ -161,7 +165,7 @@ impl Session {
         } else {
             String::new()
         };
-        Ok((company, name))
+        Ok((company, name.to_string()))
     }
 
     pub(crate) fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
@@ -175,7 +179,7 @@ impl Session {
             // Frames innermost first, a backslash after each, the runner's below
             // (session/TestSessionInformationCallstackContracts.al:130-143).
             return match self.live_call_stack() {
-                Some(text) => Ok(Value::Text(text)),
+                Some(text) => Ok(Value::Text(text.into())),
                 None => unsupported(
                     "SessionInformation.Callstack with a frame whose format is not pinned (an event of a table, page or the platform, or an object type not measured)",
                 ),
@@ -191,7 +195,7 @@ impl Session {
             // Non-empty (session/TestBCPlatformContracts.al:CompanyProperty_DisplayName_NonEmpty). That it is
             // the company's name when no display name is set is an assumption (docs/probes-needed.md); a
             // company that states a display name is not modelled.
-            return Ok(Value::Text(self.cx.company.clone()));
+            return Ok(Value::Text(self.cx.company.clone().into()));
         }
         if id == "CompanyProperty.ID#1" {
             // A Guid that identifies the company; stable for a name (the Company table's SystemId is not modelled).
@@ -217,12 +221,12 @@ impl Session {
                     out.push_str(&format!("%{b:02X}"));
                 }
             }
-            return Ok(Value::Text(out));
+            return Ok(Value::Text(out.into()));
         }
         if id == "Database.CompanyName#1" {
             // The company of the session, the same name `Record.CurrentCompany` answers
             // (session/TestDatabase.al:69-75, session/TestSessionFunctions.al:25).
-            return Ok(Value::Text(self.cx.company.clone()));
+            return Ok(Value::Text(self.cx.company.clone().into()));
         }
         match id {
             // The counter has handed out `next_row_version` so far; the database never reports
@@ -464,7 +468,7 @@ impl Session {
     /// `IsolatedStorage.<rest>` (`Get#4`, `SetEncrypted#2`, ...): a text store per scope, outside
     /// the transaction (not pinned either way). Corpus: session/TestIsolatedStorage.al:30-125.
     fn isolated_storage_op(&mut self, rest: &str, args: &mut [Value]) -> Result<Value, Signal> {
-        let Some(key) = args.first().and_then(al_builtins::native::text_of) else {
+        let Some(key) = args.first().and_then(al_builtins::native::text_of).map(String::from) else {
             return unsupported("an IsolatedStorage key that is not text");
         };
         let (method, n) = rest.split_once('#').unwrap_or((rest, "1"));
@@ -482,7 +486,7 @@ impl Session {
         match method {
             "Set" | "SetEncrypted" => {
                 let value = match args.get(1) {
-                    Some(v) => al_builtins::textfns::secret_or_text(v)?,
+                    Some(v) => al_builtins::textfns::secret_or_text(v)?.to_string(),
                     None => return unsupported("IsolatedStorage.Set without a value"),
                 };
                 self.isolated_storage.insert(slot, (value, method == "SetEncrypted"));
@@ -507,7 +511,7 @@ impl Session {
                         args[target] = if n == 1 || n == 3 {
                             secret_text(value.clone())
                         } else {
-                            Value::Text(value.clone())
+                            Value::Text(value.clone().into())
                         };
                         Ok(Value::Boolean(true))
                     }
@@ -517,7 +521,7 @@ impl Session {
                         args[target] = if n == 1 || n == 3 {
                             secret_text(String::new())
                         } else {
-                            Value::Text(String::new())
+                            Value::Text(String::new().into())
                         };
                         Ok(Value::Boolean(false))
                     }
@@ -563,22 +567,22 @@ impl Session {
                     return Some(unsupported("Encrypt of something that is not text"));
                 };
                 if plain.is_empty() {
-                    return Some(Ok(Value::Text(String::new())));
+                    return Some(Ok(Value::Text(String::new().into())));
                 }
                 let mut bytes = Vec::with_capacity(256);
                 for _ in 0..16 {
                     bytes.extend_from_slice(&self.fresh_guid());
                 }
                 let cipher = base64(&bytes);
-                self.encrypted.insert(cipher.clone(), plain);
-                Ok(Value::Text(cipher))
+                self.encrypted.insert(cipher.clone(), plain.to_string());
+                Ok(Value::Text(cipher.into()))
             }
             "System.Decrypt#1" => {
                 let Some(cipher) = args.first().and_then(al_builtins::native::text_of) else {
                     return Some(unsupported("Decrypt of something that is not text"));
                 };
-                if let Some(plain) = self.encrypted.get(&cipher) {
-                    return Some(Ok(Value::Text(plain.clone())));
+                if let Some(plain) = self.encrypted.get(cipher.as_str()) {
+                    return Some(Ok(Value::Text(plain.clone().into())));
                 }
                 let looks_encrypted = cipher.len() == 344
                     && cipher

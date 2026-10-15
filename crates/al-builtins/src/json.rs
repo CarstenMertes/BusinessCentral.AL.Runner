@@ -212,7 +212,9 @@ fn node_for(v: &Value) -> Result<Handle, Signal> {
         | Value::Option(..) => Ok(new_handle(JsonNode::Scalar(Scalar::Val(v.clone())))),
         // A Guid is stored as its text, braced and in upper case
         // (json/TestJsonRuntimeContracts.al:JsonObject_WriteTo_GuidIsBracedUpperCase).
-        Value::Guid(g) => Ok(new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(guid_text(g)))))),
+        Value::Guid(g) => Ok(new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(
+            guid_text(g).into(),
+        ))))),
         other => unsupported(format!("{} as a JSON value", other.describe())),
     }
 }
@@ -297,7 +299,7 @@ impl Parser<'_> {
             Some(b'[') => self.array()?,
             Some(b'"') => {
                 let t = self.string()?;
-                new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(t))))
+                new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(t.into()))))
             }
             Some(b't') if self.lit("true") => new_handle(JsonNode::Scalar(Scalar::Val(Value::Boolean(true)))),
             Some(b'f') if self.lit("false") => new_handle(JsonNode::Scalar(Scalar::Val(Value::Boolean(false)))),
@@ -758,15 +760,18 @@ fn as_text(s: &Scalar) -> Result<Value, Signal> {
     match s {
         Scalar::Val(Value::Text(t) | Value::Code(t)) => Ok(Value::Text(t.clone())),
         Scalar::Val(Value::Char(c)) => Ok(Value::Text(
-            char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
+            char::from_u32(u32::from(*c))
+                .map(String::from)
+                .unwrap_or_default()
+                .into(),
         )),
         Scalar::Null => Err(conversion(NAV_JSON_VALUE, "Microsoft.Dynamics.Nav.Runtime.NavText")),
         // json/TestProbeJsonContracts.al:TypedGetters_WrongKinds: a number and a Boolean read as text (`True`).
-        Scalar::Val(Value::Integer(n)) => Ok(Value::Text(n.to_string())),
-        Scalar::Val(Value::BigInteger(n)) => Ok(Value::Text(n.to_string())),
-        Scalar::Val(Value::Decimal(d)) => Ok(Value::Text(d.to_string())),
+        Scalar::Val(Value::Integer(n)) => Ok(Value::Text(n.to_string().into())),
+        Scalar::Val(Value::BigInteger(n)) => Ok(Value::Text(n.to_string().into())),
+        Scalar::Val(Value::Decimal(d)) => Ok(Value::Text(d.to_string().into())),
         Scalar::Val(Value::Boolean(b)) => Ok(Value::Text(if *b { "True" } else { "False" }.into())),
-        Scalar::Raw(t) => Ok(Value::Text(t.clone())),
+        Scalar::Raw(t) => Ok(Value::Text(t.clone().into())),
         other => unsupported(format!(
             "reading {} as Text (conversion not pinned yet)",
             other.describe()
@@ -856,7 +861,9 @@ type Coerce = fn(&Scalar) -> Result<Value, Signal>;
 // ---------------------------------------------------------------- natives
 
 fn key_text(v: &Value) -> Result<String, Signal> {
-    crate::native::text_of(v).ok_or_else(|| Signal::Unsupported("JSON key that is not text".into()))
+    crate::native::text_of(v)
+        .map(String::from)
+        .ok_or_else(|| Signal::Unsupported("JSON key that is not text".into()))
 }
 
 fn object_get_child(h: &Handle, key: &Value) -> Result<Option<Handle>, Signal> {
@@ -930,7 +937,10 @@ fn object_replace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Re
 fn object_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let h = recv(r)?;
     let keys = with_node(&h, |n| match n {
-        JsonNode::Object(kids) => Ok(kids.iter().map(|(k, _)| Value::Text(k.clone())).collect::<Vec<_>>()),
+        JsonNode::Object(kids) => Ok(kids
+            .iter()
+            .map(|(k, _)| Value::Text(k.clone().into()))
+            .collect::<Vec<_>>()),
         _ => unsupported("JsonObject.Keys on a JSON value that is not an object"),
     })?;
     Ok(Value::List(Rc::new(std::cell::RefCell::new(keys))))
@@ -986,11 +996,11 @@ fn object_typed(r: Option<&mut Value>, a: &mut [Value], coerce: Coerce) -> Resul
                     JsonNode::Scalar(_) => None,
                     _ => Some(Some(())),
                 }) {
-                    Some(None) => return Ok(Value::Text(String::new())),
+                    Some(None) => return Ok(Value::Text(String::new().into())),
                     Some(Some(())) => {
                         let mut out = String::new();
                         write(&child, &mut out)?;
-                        return Ok(Value::Text(out));
+                        return Ok(Value::Text(out.into()));
                     }
                     None => {}
                 }
@@ -1221,6 +1231,7 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
             Some(t) => t,
             None => return unsupported("ReadFrom with an argument that is not text"),
         }
+        .to_string()
     };
     let syntax = parse(&text)?;
     let parsed = syntax.clone().filter(|p| {
@@ -1286,7 +1297,7 @@ fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Res
     let h = recv(r)?;
     let mut out = String::new();
     write(&h, &mut out)?;
-    a[0] = Value::Text(out);
+    a[0] = Value::Text(out.into());
     Ok(Value::Boolean(true))
 }
 
@@ -1382,7 +1393,7 @@ fn write_to_yaml(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Res
     })?;
     let mut out = String::new();
     yaml_members(&kids, 0, &mut out)?;
-    a[0] = Value::Text(out);
+    a[0] = Value::Text(out.into());
     Ok(Value::Boolean(true))
 }
 
@@ -1411,7 +1422,7 @@ fn read_from_yaml(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Re
         members.push(format!("{key}:{value}"));
     }
     let json = format!("{{{}}}", members.join(","));
-    read_from(c, r, &mut [Value::Text(json)], Some("object"))
+    read_from(c, r, &mut [Value::Text(json.into())], Some("object"))
 }
 
 fn as_token(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -1472,7 +1483,7 @@ fn clone_token(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Resul
 }
 
 fn path(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(path_of(&recv(r)?)))
+    Ok(Value::Text(path_of(&recv(r)?).into()))
 }
 
 fn value_is_null(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

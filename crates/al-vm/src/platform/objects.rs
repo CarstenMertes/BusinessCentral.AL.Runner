@@ -348,10 +348,10 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         },
         |o, r| {
             let pkg = ids::package_id(c.owner(o));
-            r[pos(t, 4)] = Value::Text(o.name.clone());
+            r[pos(t, 4)] = Value::Text(o.name.clone().into());
             r[pos(t, 60)] = Value::Guid(pkg);
             r[pos(t, 61)] = Value::Guid(pkg);
-            r[pos(t, 62)] = Value::Text(namespace(o));
+            r[pos(t, 62)] = Value::Text(namespace(o).into());
             Ok(())
         },
     )
@@ -372,13 +372,13 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
         |o, r| {
             let owner = c.owner(o);
             let pkg = ids::package_id(owner);
-            r[pos(t, 4)] = Value::Text(o.name.clone());
-            r[pos(t, 20)] = Value::Text(truncate(&caption(o), 249));
-            r[pos(t, 30)] = Value::Text(subtype_text(&c, o)?);
+            r[pos(t, 4)] = Value::Text(o.name.clone().into());
+            r[pos(t, 20)] = Value::Text(truncate(&caption(o), 249).into());
+            r[pos(t, 30)] = Value::Text(subtype_text(&c, o)?.into());
             r[pos(t, 60)] = Value::Guid(pkg);
             r[pos(t, 61)] = Value::Guid(pkg);
             r[pos(t, 62)] = Value::Guid(if carries_app_id(base_kind(o)) { owner } else { [0; 16] });
-            r[pos(t, 63)] = Value::Text(namespace(o));
+            r[pos(t, 63)] = Value::Text(namespace(o).into());
             Ok(())
         },
     )
@@ -410,20 +410,20 @@ pub(super) fn codeunit_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> 
                 "Upgrade" => 3,
                 _ => 0,
             };
-            r[pos(t, 2)] = Value::Text(o.name.clone());
+            r[pos(t, 2)] = Value::Text(o.name.clone().into());
             r[pos(t, 3)] = Value::Integer(table_no(&c, o)? as i32);
             r[pos(t, 4)] = Value::Boolean(prop(o, "SingleInstance").is_some_and(truthy));
             r[pos(t, 5)] = option(t, 5, ordinal);
             r[pos(t, 6)] = Value::Guid(c.owner(o));
-            r[pos(t, 7)] = Value::Text(truncate(&ident(prop(o, "InherentPermissions").unwrap_or("")), 5));
-            r[pos(t, 8)] = Value::Text(truncate(&ident(prop(o, "InherentEntitlements").unwrap_or("")), 5));
+            r[pos(t, 7)] = Value::Text(truncate(&ident(prop(o, "InherentPermissions").unwrap_or("")), 5).into());
+            r[pos(t, 8)] = Value::Text(truncate(&ident(prop(o, "InherentEntitlements").unwrap_or("")), 5).into());
             // A test codeunit is a unit test; nothing else the corpus pins is anything but None
             // (TestCodeunitMetadataVirtualTable.al, `TestCodeunit_ReportsTestTypeUnitTest`).
             r[pos(t, 9)] = option(t, 9, i32::from(subtype == "Test"));
             // RequiredTestIsolation reads None for every codeunit (same file,
             // `RequiredTestIsolation_ReportsNoneForEveryCodeunit`).
             r[pos(t, 10)] = option(t, 10, 0);
-            r[pos(t, 11)] = Value::Text(namespace(o));
+            r[pos(t, 11)] = Value::Text(namespace(o).into());
             Ok(())
         },
     )
@@ -495,8 +495,8 @@ pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                         .map_err(|why| format!("table '{}': {name} {why}", o.name)),
                 }
             };
-            r[pos(t, 2)] = Value::Text(o.name.clone());
-            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80));
+            r[pos(t, 2)] = Value::Text(o.name.clone().into());
+            r[pos(t, 3)] = Value::Text(truncate(&caption(o), 80).into());
             // DataPerCompany defaults to true (TestTableMetadataVirtualTable.al, `DeclaredTable_ReturnsMatchingRow`).
             r[pos(t, 4)] = Value::Boolean(prop(o, "DataPerCompany").is_none_or(truthy));
             r[pos(t, 5)] = Value::Integer(page("LookupPageId")?);
@@ -504,25 +504,21 @@ pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             // PasteIsValid defaults to true in AL; no corpus test reads it.
             r[pos(t, 8)] = Value::Boolean(prop(o, "PasteIsValid").is_none_or(truthy));
             r[pos(t, 11)] = option(t, 11, opt("TableType", TABLE_TYPES, 0)?);
-            r[pos(t, 12)] = Value::Text(truncate(
-                &prop(o, "ExternalName").and_then(string_lit).unwrap_or_default(),
-                248,
-            ));
+            r[pos(t, 12)] =
+                Value::Text(truncate(&prop(o, "ExternalName").and_then(string_lit).unwrap_or_default(), 248).into());
             r[pos(t, 13)] = option(t, 13, opt("ObsoleteState", OBSOLETE_STATES, 0)?);
-            r[pos(t, 14)] = Value::Text(truncate(
-                &prop(o, "ObsoleteReason").and_then(string_lit).unwrap_or_default(),
-                248,
-            ));
+            r[pos(t, 14)] =
+                Value::Text(truncate(&prop(o, "ObsoleteReason").and_then(string_lit).unwrap_or_default(), 248).into());
             // No DataClassification reads CustomerContent (same file, `TableDeclaringNoDataClassification_ReportsTheDefault`).
             r[pos(t, 15)] = option(t, 15, opt("DataClassification", DATA_CLASSIFICATIONS, 0)?);
             r[pos(t, 16)] = Value::Boolean(prop(o, "ReplicateData").is_none_or(truthy));
             r[pos(t, 17)] = option(t, 17, opt("CompressionType", COMPRESSION_TYPES, 0)?);
             r[pos(t, 18)] = Value::Guid(c.owner(o));
-            r[pos(t, 19)] = Value::Text(truncate(&ident(prop(o, "InherentPermissions").unwrap_or("")), 5));
-            r[pos(t, 20)] = Value::Text(truncate(&ident(prop(o, "InherentEntitlements").unwrap_or("")), 5));
+            r[pos(t, 19)] = Value::Text(truncate(&ident(prop(o, "InherentPermissions").unwrap_or("")), 5).into());
+            r[pos(t, 20)] = Value::Text(truncate(&ident(prop(o, "InherentEntitlements").unwrap_or("")), 5).into());
             r[pos(t, 21)] = option(t, 21, opt("Scope", SCOPES, 0)?);
             r[pos(t, 22)] = option(t, 22, opt("Access", ACCESS, 0)?);
-            r[pos(t, 23)] = Value::Text(namespace(o));
+            r[pos(t, 23)] = Value::Text(namespace(o).into());
             Ok(())
         },
     )

@@ -46,6 +46,13 @@ pub struct Lowered {
     /// The diagnostics with the AL compiler's own codes (`alcodes.rs`) that the check found in the
     /// workspace's apps. Code that BC rejects; the compile goes on.
     pub al_diagnostics: Vec<crate::workspace::Diagnostic>,
+    /// Per object: where its source positions are in `Program::positions` (start, count). What the
+    /// incremental compile (`incremental.rs`) needs to renew the lowering of some objects.
+    pub(crate) pos_ranges: Vec<(u32, u32)>,
+    /// What the checker raised about the objects (not the workspace-wide codes), for the same.
+    pub(crate) checker_diags: Vec<crate::workspace::Diagnostic>,
+    /// `CheckResult::skipped` of the compile, for the same.
+    pub(crate) skipped: Vec<bool>,
 }
 
 /// The routines a variable of a page, report or xmlport type can run besides the ones the code
@@ -266,26 +273,24 @@ impl RoutineAt {
     }
 }
 
-pub(crate) fn lower_core(
-    ws: &Workspace,
-    members: &MemberTable<'_>,
-    checked: &CheckResult,
+/// What the lowering of an object reads, built from the workspace and the dependency facts, and the
+/// subscribers of dependency objects that were not compiled.
+struct Prologue<'a> {
+    shared: Shared<'a>,
+    uncompiled_subscribers: Vec<ir::UncompiledSubscriber>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_shared<'a>(
+    ws: &'a Workspace,
+    members: &'a MemberTable<'a>,
+    checked: &'a CheckResult,
+    catalog: &'a al_builtins::catalog::Catalog,
     positions: bool,
-    workers: usize,
-    provided: Option<Provided<'_>>,
+    src: Option<&'a dyn crate::provided::DepSource>,
+    flags: &[bool],
     export: bool,
-) -> Result<Lowered, String> {
-    let catalog = al_builtins::catalog::Catalog::load();
-    let (src, mut blocks): (
-        Option<&dyn crate::provided::DepSource>,
-        Vec<Option<crate::provided::DepBlock>>,
-    ) = match provided {
-        Some(p) => (Some(p.src), p.blocks),
-        None => (None, Vec::new()),
-    };
-    let flags: Vec<bool> = (0..ws.objects.len())
-        .map(|oi| blocks.get(oi).is_some_and(Option::is_some))
-        .collect();
+) -> Prologue<'a> {
     let prov = |oi: usize| flags[oi];
     // With dependency apps the checker found what the workspace reaches in them (ADR-013);
     // the rest is not compiled and no longer resolves.
@@ -347,65 +352,6 @@ pub(crate) fn lower_core(
     };
     let routine_offsets = std::sync::Arc::new(routine_offsets);
     let routine_at = RoutineAt(routine_offsets.clone());
-    let mut program = ir::Program {
-        objects: Vec::new(),
-        apps: ws
-            .apps
-            .iter()
-            .enumerate()
-            .map(|(i, a)| ir::AppInfo {
-                id: a.id.clone(),
-                name: a.name.clone(),
-                publisher: String::new(),
-                version: String::new(),
-                dependencies: a.dependencies.clone(),
-                resources: Vec::new(),
-                dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
-                include_source: false,
-            })
-            .collect(),
-        dotnet_types: ws
-            .dotnet
-            .iter()
-            .map(|d| ir::DotNetDecl {
-                alias: d.decl.alias.clone(),
-                assembly: d.decl.assembly.clone(),
-                version: d.decl.version.clone(),
-                culture: d.decl.culture.clone(),
-                public_key_token: d.decl.public_key_token.clone(),
-                type_name: d.decl.type_name.clone(),
-            })
-            .collect(),
-        uncompiled_subscribers,
-        ..Default::default()
-    };
-    let mut out = Lowered {
-        timings: CompileTimings::default(),
-        program: Default::default(),
-        unsupported: Vec::new(),
-        calls: Vec::new(),
-        dependency: (0..ws.objects.len()).map(|oi| ws.is_dependency(oi)).collect(),
-        provided: (0..ws.objects.len()).map(prov).collect(),
-        driven: None,
-        exported: None,
-        al_diagnostics: checked
-            .diagnostics
-            .iter()
-            .filter(|d| d.code.starts_with("AL"))
-            .cloned()
-            .collect(),
-    };
-    if positions {
-        program.sources = ws
-            .files
-            .iter()
-            .map(|f| ir::SourceFile {
-                app: f.app as u32,
-                path: f.path.clone(),
-                lines: Vec::new(),
-            })
-            .collect();
-    }
     // The table whose record is the implicit `Rec` of each object, and each table's extensions.
     let mut table_of: Vec<Option<usize>> = vec![None; ws.objects.len()];
     let mut extensions: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -867,7 +813,7 @@ pub(crate) fn lower_core(
         ws,
         members,
         checked,
-        catalog: &catalog,
+        catalog,
         demand,
         positions,
         active: active_v,
@@ -924,6 +870,99 @@ pub(crate) fn lower_core(
         }
     }
     shared.ext_slots = ext_slot_table;
+    Prologue {
+        shared,
+        uncompiled_subscribers,
+    }
+}
+
+pub(crate) fn lower_core(
+    ws: &Workspace,
+    members: &MemberTable<'_>,
+    checked: &CheckResult,
+    positions: bool,
+    workers: usize,
+    provided: Option<Provided<'_>>,
+    export: bool,
+) -> Result<Lowered, String> {
+    let catalog = al_builtins::catalog::Catalog::load();
+    let (src, mut blocks): (
+        Option<&dyn crate::provided::DepSource>,
+        Vec<Option<crate::provided::DepBlock>>,
+    ) = match provided {
+        Some(p) => (Some(p.src), p.blocks),
+        None => (None, Vec::new()),
+    };
+    let flags: Vec<bool> = (0..ws.objects.len())
+        .map(|oi| blocks.get(oi).is_some_and(Option::is_some))
+        .collect();
+    let prov = |oi: usize| flags[oi];
+    let Prologue {
+        shared,
+        uncompiled_subscribers,
+    } = build_shared(ws, members, checked, &catalog, positions, src, &flags, export);
+    let mut program = ir::Program {
+        objects: Vec::new(),
+        apps: ws
+            .apps
+            .iter()
+            .enumerate()
+            .map(|(i, a)| ir::AppInfo {
+                id: a.id.clone(),
+                name: a.name.clone(),
+                publisher: String::new(),
+                version: String::new(),
+                dependencies: a.dependencies.clone(),
+                resources: Vec::new(),
+                dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
+                include_source: false,
+            })
+            .collect(),
+        dotnet_types: ws
+            .dotnet
+            .iter()
+            .map(|d| ir::DotNetDecl {
+                alias: d.decl.alias.clone(),
+                assembly: d.decl.assembly.clone(),
+                version: d.decl.version.clone(),
+                culture: d.decl.culture.clone(),
+                public_key_token: d.decl.public_key_token.clone(),
+                type_name: d.decl.type_name.clone(),
+            })
+            .collect(),
+        uncompiled_subscribers,
+        ..Default::default()
+    };
+    let mut out = Lowered {
+        timings: CompileTimings::default(),
+        program: Default::default(),
+        unsupported: Vec::new(),
+        calls: Vec::new(),
+        dependency: (0..ws.objects.len()).map(|oi| ws.is_dependency(oi)).collect(),
+        provided: (0..ws.objects.len()).map(prov).collect(),
+        driven: None,
+        exported: None,
+        al_diagnostics: checked
+            .diagnostics
+            .iter()
+            .filter(|d| d.code.starts_with("AL"))
+            .cloned()
+            .collect(),
+        pos_ranges: Vec::new(),
+        checker_diags: checked.from_checker.clone(),
+        skipped: checked.skipped.clone(),
+    };
+    if positions {
+        program.sources = ws
+            .files
+            .iter()
+            .map(|f| ir::SourceFile {
+                app: f.app as u32,
+                path: f.path.clone(),
+                lines: Vec::new(),
+            })
+            .collect();
+    }
     let n = ws.objects.len();
     // Worker threads and this one take the active objects in turn, the workspace's own first (they
     // are the biggest). Each object is lowered with its source positions numbered from 0; they
@@ -1053,8 +1092,9 @@ pub(crate) fn lower_core(
                 query: checked.queries[oi].clone(),
             });
         }
+        let base = program.positions.len() as u32;
+        out.pos_ranges.push((base, piece.positions.len() as u32));
         if !piece.positions.is_empty() {
-            let base = program.positions.len() as u32;
             for r in &mut piece.object.routines {
                 r.shift_positions(base);
             }
@@ -1070,6 +1110,141 @@ pub(crate) fn lower_core(
     }
     out.program = std::sync::Arc::new(program);
     Ok(out)
+}
+
+/// The incremental compile (`incremental.rs`): the objects `dirty` changed in code only (the declarations of
+/// their files are as they were), so only they are checked and lowered again, and `old` (the lowering of the
+/// workspace before the change, with the dependency objects of `src`) takes the result in place. The program
+/// afterwards is the one a complete compile of the changed workspace gives.
+///
+/// Why the other objects stay as they are: an object's lowering reads its own syntax and the declarations of
+/// other objects, never their code, and every cross-object reference in the IR is an object or routine
+/// number, which a change of code leaves as it is. The caller allows only the kinds of object for which that
+/// holds (`incremental::eligible`).
+pub fn relower_objects(
+    ws: &Workspace,
+    catalog: &al_builtins::catalog::Catalog,
+    roots: crate::check::Roots,
+    src: &dyn crate::provided::DepSource,
+    old: &mut Lowered,
+    dirty: &[usize],
+) -> Result<(), String> {
+    let n = ws.objects.len();
+    if old.program.objects.len() != n || old.pos_ranges.len() != n {
+        return Err("the earlier compile does not fit the workspace".into());
+    }
+    let t0 = std::time::Instant::now();
+    let members = crate::members::build(ws);
+    let started = std::time::Instant::now();
+    let mut roots = roots;
+    roots.eager = true;
+    roots.provided = old.provided.clone();
+    roots.provided_queries = (0..n)
+        .map(|oi| old.provided[oi].then(|| src.facts(oi).query.clone()).flatten())
+        .collect();
+    roots.only_objects = Some(dirty.to_vec());
+    roots.skipped_before = Some(old.skipped.clone());
+    let checked = crate::check::check_with(ws, &members, catalog, roots);
+    let check_time = started.elapsed();
+    let started = std::time::Instant::now();
+    let flags = old.provided.clone();
+    let Prologue {
+        shared,
+        uncompiled_subscribers,
+    } = build_shared(ws, &members, &checked, catalog, true, Some(src), &flags, false);
+    let shared_time = started.elapsed();
+    let pieces: Vec<(usize, Piece)> = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(LOWER_STACK)
+            .spawn_scoped(scope, || {
+                let local = Local::new(Nodes::new(ws, shared.active.clone()));
+                let seq = Seq::new(&shared);
+                let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
+                dirty
+                    .iter()
+                    .map(|&oi| (oi, lower_object(&shared, &local, &seq, oi, &mut line_cache)))
+                    .collect()
+            })
+            .expect("spawn a lowering thread")
+            .join()
+            .expect("the lowering thread panicked")
+    });
+    // The new source positions: the table is rebuilt in object order, the objects that did not change
+    // moved to their new place.
+    let mut is_dirty = vec![false; n];
+    for &oi in dirty {
+        is_dirty[oi] = true;
+    }
+    let mut renewed: Vec<Option<Piece>> = (0..n).map(|_| None).collect();
+    for (oi, piece) in pieces {
+        renewed[oi] = Some(piece);
+    }
+    let program = std::sync::Arc::make_mut(&mut old.program);
+    let old_positions = std::mem::take(&mut program.positions);
+    let mut positions: Vec<ir::SrcPos> = Vec::with_capacity(old_positions.len());
+    for (oi, slot) in renewed.iter_mut().enumerate() {
+        let cursor = positions.len() as u32;
+        match slot.take() {
+            Some(mut piece) => {
+                let len = piece.positions.len() as u32;
+                for r in &mut piece.object.routines {
+                    r.shift_positions(cursor);
+                }
+                positions.append(&mut piece.positions);
+                program.objects[oi] = piece.object;
+                old.unsupported[oi] = piece.unsupported;
+                old.calls[oi] = piece.calls;
+                old.pos_ranges[oi] = (cursor, len);
+            }
+            None => {
+                let (start, len) = old.pos_ranges[oi];
+                if len > 0 {
+                    positions.extend_from_slice(&old_positions[start as usize..(start + len) as usize]);
+                    if start != cursor {
+                        let by = cursor.wrapping_sub(start);
+                        for r in &mut program.objects[oi].routines {
+                            r.shift_positions(by);
+                        }
+                    }
+                }
+                old.pos_ranges[oi] = (cursor, len);
+            }
+        }
+    }
+    program.positions = positions;
+    program.uncompiled_subscribers = uncompiled_subscribers;
+    old.driven = Some(shared.driven.clone());
+    // The diagnostics: what the checker found in the files that did not change stays.
+    let dirty_files: std::collections::HashSet<&str> = dirty
+        .iter()
+        .map(|&oi| ws.files[ws.objects[oi].file].path.as_str())
+        .collect();
+    let mut from_checker: Vec<crate::workspace::Diagnostic> = std::mem::take(&mut old.checker_diags);
+    from_checker.retain(|d| !dirty_files.contains(d.file.as_str()));
+    from_checker.extend(checked.from_checker.iter().cloned());
+    let mut all: Vec<crate::workspace::Diagnostic> = from_checker.clone();
+    all.extend(checked.from_codes.iter().cloned());
+    let order: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
+    all.sort_by_key(|d| (order.get(d.file.as_str()).copied(), d.offset));
+    old.al_diagnostics = all.into_iter().filter(|d| d.code.starts_with("AL")).collect();
+    old.checker_diags = from_checker;
+    old.skipped = checked.skipped.clone();
+    old.timings = CompileTimings {
+        check: checked.timings,
+        lower: started.elapsed(),
+        ..Default::default()
+    };
+    if std::env::var_os("ALRUNNER_INCR_TIMINGS").is_some() {
+        eprintln!(
+            "incremental: check {:.3} s (members {:.3}), shared tables {:.3} s, then lower and patch {:.3} s; total {:.3} s",
+            check_time.as_secs_f64(),
+            0.0,
+            shared_time.as_secs_f64(),
+            started.elapsed().as_secs_f64() - shared_time.as_secs_f64(),
+            t0.elapsed().as_secs_f64()
+        );
+    }
+    Ok(())
 }
 
 /// The lowering of one object: its IR, why each routine cannot run, and the routines each calls.

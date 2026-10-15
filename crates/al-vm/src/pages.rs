@@ -636,7 +636,7 @@ impl Session {
                 let engine = self.engine();
                 let o = &engine.program.objects[st.borrow().object as usize];
                 if !names {
-                    return Ok(Value::Text(format!("Page {}", o.id.unwrap_or(0))));
+                    return Ok(Value::Text(format!("Page {}", o.id.unwrap_or(0)).into()));
                 }
                 let caption = match o.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("Caption")) {
                     Some((_, v)) => match crate::recmeta::string_literal(v) {
@@ -645,7 +645,7 @@ impl Session {
                     },
                     None => o.name.clone(),
                 };
-                Ok(Value::Text(format!("Page {caption}")))
+                Ok(Value::Text(format!("Page {caption}").into()))
             }
             // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
             // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
@@ -654,12 +654,12 @@ impl Session {
                 match args.first() {
                     Some(v) => match al_builtins::native::text_of(v) {
                         Some(t) => {
-                            st.borrow_mut().caption = Some(t);
+                            st.borrow_mut().caption = Some(t.to_string());
                             Ok(Value::Null)
                         }
                         None => unsupported(format!("CurrPage.Caption with {}", v.describe())),
                     },
-                    None => Ok(Value::Text(self.page_caption(st))),
+                    None => Ok(Value::Text(self.page_caption(st).into())),
                 }
             }
             // `ObjectId(UseNames)` (CurrPage and a Page variable alike, open or not): `Page <id>`, or with names, the
@@ -672,7 +672,7 @@ impl Session {
                 let engine = self.engine();
                 let o = &engine.program.objects[st.borrow().object as usize];
                 if !names {
-                    return Ok(Value::Text(format!("Page {}", o.id.unwrap_or(0))));
+                    return Ok(Value::Text(format!("Page {}", o.id.unwrap_or(0)).into()));
                 }
                 let caption = o
                     .properties
@@ -680,11 +680,11 @@ impl Session {
                     .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
                     .map(|(_, v)| unquote(v))
                     .unwrap_or_else(|| o.name.clone());
-                Ok(Value::Text(format!("Page {caption}")))
+                Ok(Value::Text(format!("Page {caption}").into()))
             }
             "Caption" => {
                 self.require_open(st)?;
-                Ok(Value::Text(self.page_caption(st)))
+                Ok(Value::Text(self.page_caption(st).into()))
             }
             // `CurrPage.PromptMode := PromptMode::Prompt` states what a PromptDialog already starts in:
             // the pages of handlers/TbaPromptDeclared.Page.al and TbaPromptBare.Page.al do it in OnOpenPage
@@ -884,7 +884,7 @@ impl Session {
                 };
                 let s = st.borrow();
                 match usize::try_from(i - 1).ok().and_then(|n| s.errors.get(n)) {
-                    Some((_, t)) => Ok(Value::Text(t.clone())),
+                    Some((_, t)) => Ok(Value::Text(t.clone().into())),
                     // Index 0 is pinned (handlers/TestPageRuntimeContracts.al:224-236: text and code);
                     // an index past the last error is assumed to raise the same (docs/probes-needed.md).
                     None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
@@ -1873,10 +1873,10 @@ impl Session {
             .map(|n| n.to_string())
             .collect();
         let mut args = vec![
-            Value::Text(area.to_string()),
-            Value::Text(expr.to_string()),
+            Value::Text(area.to_string().into()),
+            Value::Text(expr.to_string().into()),
             Value::Integer(self.global_language),
-            Value::Text(String::new()),
+            Value::Text(String::new().into()),
             Value::Boolean(false),
         ];
         let call = crate::dispatch::EventCall {
@@ -1889,7 +1889,7 @@ impl Session {
         };
         self.raise(&call, &mut args)?;
         Ok(match (&args[4], &args[3]) {
-            (Value::Boolean(true), Value::Text(t) | Value::Code(t)) => t.clone(),
+            (Value::Boolean(true), Value::Text(t) | Value::Code(t)) => t.to_string(),
             _ => text.to_string(),
         })
     }
@@ -3182,7 +3182,7 @@ impl Session {
             Value::Text(t) | Value::Code(t) => t.clone(),
             other => {
                 let converted = ops::convert(other.clone(), &ty)?;
-                self.control_text(st, idx, &converted)?
+                self.control_text(st, idx, &converted)?.into()
             }
         };
         let enum_engine = engine.clone();
@@ -3534,11 +3534,11 @@ impl Session {
             }
             "Value" => {
                 if self.shows_no_row(st, idx) {
-                    return Ok(Value::Text(String::new()));
+                    return Ok(Value::Text(String::new().into()));
                 }
                 let v = self.control_value(st, idx)?;
                 let text = self.control_text(st, idx, &v)?;
-                Ok(Value::Text(text))
+                Ok(Value::Text(text.into()))
             }
             "AsInteger" => self.control_as(st, idx, &RtType::Integer),
             "AsDecimal" => self.control_as(st, idx, &RtType::Decimal),
@@ -3547,7 +3547,7 @@ impl Session {
             "AsTime" => self.control_as(st, idx, &RtType::Time),
             "AsDateTime" => self.control_as(st, idx, &RtType::DateTime),
             "AssertEquals" => self.control_assert_equals(st, idx, args),
-            "Caption" => Ok(Value::Text(self.control_caption(st, idx)?)),
+            "Caption" => Ok(Value::Text(self.control_caption(st, idx)?.into())),
             "OptionCount" | "GetOption" => {
                 let current = self.control_value(st, idx)?;
                 let engine = self.engine();
@@ -3579,7 +3579,7 @@ impl Session {
                     Some(RtType::Enum(id)) => Value::Enum(id, *ordinal),
                     _ => unreachable!(),
                 };
-                Ok(Value::Text(self.control_text(st, idx, &v)?))
+                Ok(Value::Text(self.control_text(st, idx, &v)?.into()))
             }
             // The properties as written; a computed one is not read (docs only).
             "HideValue" | "ShowMandatory" => {
@@ -3625,7 +3625,7 @@ impl Session {
                 // An index past the control's ledger escapes AL as an untrappable CLR exception
                 // (corpus handlers/TestPageValidationError_Tests.al:1-40), so it is not modelled.
                 match usize::try_from(i - 1).ok().and_then(|n| mine.get(n)) {
-                    Some(t) => Ok(Value::Text((*t).clone())),
+                    Some(t) => Ok(Value::Text((*t).clone().into())),
                     None => unsupported("GetValidationError past the ledger"),
                 }
             }
@@ -3724,7 +3724,7 @@ impl Session {
             let inst = self.owner_instance(st, owner);
             let current = self.control_value(st, idx)?;
             let shown = self.control_text(st, idx, &current)?;
-            self.call(object, routine, inst, vec![Value::Text(shown)])
+            self.call(object, routine, inst, vec![Value::Text(shown.into())])
                 .and_then(|(v, finals)| match (v, finals.first()) {
                     (Value::Boolean(true), Some(Value::Text(t))) => {
                         // Written back as the client would type it.
@@ -4308,7 +4308,7 @@ impl Session {
             }
             ir::Binding::Expr(r) => self.control_routine(st, idx, r),
             // A label shows its caption (handlers/TestPageLabelControlContracts.al:Label_IsATestPageMember_WithItsCaption).
-            ir::Binding::Caption => Ok(Value::Text(self.control_caption(st, idx)?)),
+            ir::Binding::Caption => Ok(Value::Text(self.control_caption(st, idx)?.into())),
             ir::Binding::None => unsupported("a control without a source"),
         }
     }
@@ -4376,7 +4376,7 @@ impl Session {
             let expr = match ctl.prop("autoformatexpression") {
                 Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
                 Some(routine) => match self.prop_routine_value(st, idx, routine)? {
-                    Some(Value::Text(t) | Value::Code(t)) => Some(t),
+                    Some(Value::Text(t) | Value::Code(t)) => Some(t.into_string()),
                     _ => None,
                 },
                 None => None,
@@ -4450,7 +4450,7 @@ impl Session {
         else {
             return unsupported("AutoFormatType with a currency: the Currency table has no decimal places fields");
         };
-        let Ok(key) = ops::convert(Value::Text(expr.to_string()), &t.fields[0].ty) else {
+        let Ok(key) = ops::convert(Value::Text(expr.to_string().into()), &t.fields[0].ty) else {
             return Ok((2, 5));
         };
         let row = self
@@ -4561,7 +4561,7 @@ impl Session {
                     Some(rt) => ops::convert(other.clone(), &rt)?,
                     None => other.clone(),
                 };
-                self.control_text(st, idx, &converted)?
+                self.control_text(st, idx, &converted)?.into()
             }
         };
         if expected_text != actual_text {
@@ -4583,7 +4583,7 @@ impl Session {
         let class = match ctl.prop("captionclass") {
             Some(ir::PropVal::Lit(c)) => Some(unquote(c)),
             Some(routine) => match self.prop_routine_value(st, idx, routine)? {
-                Some(Value::Text(t) | Value::Code(t)) => Some(t),
+                Some(Value::Text(t) | Value::Code(t)) => Some(t.into_string()),
                 _ => None,
             },
             None => None,

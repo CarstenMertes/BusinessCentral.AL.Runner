@@ -51,7 +51,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Byte(b) => char::from(*b).to_string(),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         Value::Decimal(d) => format_decimal(d, standard)?,
-        Value::Text(t) | Value::Code(t) => t.clone(),
+        Value::Text(t) | Value::Code(t) => t.to_string(),
         Value::Option(o, members) => match standard {
             2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),

@@ -169,8 +169,8 @@ fn row(t: &TableDef, ty: i64, start: i64) -> Row {
     // "Period End" is a closing date (TestDateVirtualTable.al:124-146).
     r[pos(t, PERIOD_END)] = Value::Date(end as i32, true);
     r[pos(t, PERIOD_NO)] = Value::Integer(no as i32);
-    r[pos(t, PERIOD_NAME)] = Value::Text(name.clone());
-    r[pos(t, PERIOD_INVARIANT_NAME)] = Value::Text(name);
+    r[pos(t, PERIOD_NAME)] = Value::Text(name.clone().into());
+    r[pos(t, PERIOD_INVARIANT_NAME)] = Value::Text(name.into());
     r
 }
 

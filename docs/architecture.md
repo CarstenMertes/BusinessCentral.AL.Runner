@@ -104,6 +104,18 @@ needs more.
   BC's text. A machine without .NET refuses with the `dotnet-unavailable` marker; the ratchet
   skips such baseline cases locally and `--require-dotnet` (CI) makes them an error.
 
+### Text values
+
+`Value::Text` and `Value::Code` hold a `Txt` (`al-builtins/src/text.rs`): a string behind an `Arc`, copy on write.
+A variable read, an argument, a return value and `text_of` clone the handle (a counter bump), not the text. A write
+(`make_mut`, `push_str`) copies only when another value shares the string. `S += x` and `S := S + x` on a Text
+variable take the text out of the variable and append in place (`Session::append_text`), so a loop is linear.
+`Txt` remembers whether it is ASCII (then a UTF-16 position is a byte position) and whether it holds the call-stack
+marker U+E000; both are computed once per string and dropped on a write. The counter and flags are atomic because
+the rows of the test data are shared between threads (`SharedMat`). This is an internal representation (ADR-009):
+nothing AL code can see changed. Still linear per call: `Text.Contains`, `IndexOf`, `Substring` on a long text
+(they scan it, as BC does), and any write to a text that is also held elsewhere (it copies once).
+
 ## Source positions
 
 Lowering records where statements and routines sit in the source. Coverage, call

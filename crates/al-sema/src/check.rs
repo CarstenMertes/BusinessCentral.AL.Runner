@@ -164,6 +164,10 @@ pub struct CheckResult {
     /// with the panic message. A panic is a bug in the compiler; the routine (or object) is lowered
     /// as a refusal, so the run goes on and the tests that reach it are not run.
     pub panicked: HashMap<(usize, usize), String>,
+    /// The diagnostics the check of the objects raised, in the order they were found, and the ones
+    /// `alcodes::check_workspace` raised; `diagnostics` is both, sorted.
+    pub from_checker: Vec<Diagnostic>,
+    pub from_codes: Vec<Diagnostic>,
 }
 
 /// The routine offset of a [`CheckResult::panicked`] entry that covers every routine of the object.
@@ -267,6 +271,13 @@ pub struct Roots {
     /// With `provided`: the query layouts of the objects that come from the cache (the lowering of
     /// the workspace's code reads them), by object index.
     pub provided_queries: Vec<Option<crate::queries::QueryLayout>>,
+    /// Check only these objects (the incremental compile: the objects of the files that changed). The
+    /// result then holds the types, resolutions and diagnostics of those objects only; everything else
+    /// is as for the complete check. Only without a demand state (`eager`).
+    pub only_objects: Option<Vec<usize>>,
+    /// With `only_objects`: `CheckResult::skipped` of the check before the change. Of the objects that
+    /// are not checked again it is still right (a test codeunit is left out or not by its own text).
+    pub skipped_before: Option<Vec<bool>>,
 }
 
 /// Members that platform enums do not have, as the AL compiler says (corpus must-not-compile 0010
@@ -282,6 +293,8 @@ pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> Ch
 }
 
 pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, roots: Roots) -> CheckResult {
+    let t_start = std::time::Instant::now();
+    let narrate = roots.only_objects.is_some() && std::env::var_os("ALRUNNER_INCR_TIMINGS").is_some();
     // With dependency apps, only what the workspace's code reaches in them is checked.
     let demand_mode = ws.kinds.contains(&crate::workspace::AppKind::Dependency)
         && !roots.eager
@@ -289,9 +302,17 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
     // A test codeunit the selection leaves out is not a root; nothing else in the workspace is.
     let skipped: Vec<bool> = match &roots.only_tests {
         None => Vec::new(),
-        Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
+        Some(keep) => (0..ws.objects.len())
+            .map(|oi| match (&roots.only_objects, &roots.skipped_before) {
+                (Some(only), Some(before)) if before.len() == ws.objects.len() && !only.contains(&oi) => before[oi],
+                _ => unselected_test(ws, oi, keep),
+            })
+            .collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
+    if narrate {
+        eprintln!("incremental: check: skipped {:.3}", t_start.elapsed().as_secs_f64());
+    }
     if roots.reach_only && roots.only_tests.is_some() {
         ws.set_unreached(unreached_routines(ws, &skip));
     }
@@ -337,7 +358,10 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         })
     } else {
         let started = std::time::Instant::now();
-        let objects: Vec<usize> = (0..ws.objects.len()).filter(|&oi| !skip(oi) && !provided(oi)).collect();
+        let objects: Vec<usize> = (0..ws.objects.len())
+            .filter(|&oi| !skip(oi) && !provided(oi))
+            .filter(|oi| roots.only_objects.as_ref().is_none_or(|only| only.contains(oi)))
+            .collect();
         let workers = roots.workers.map_or_else(check_workers, |w| w.clamp(1, 32));
         if workers > 1 && objects.len() >= PARALLEL_OBJECTS {
             c.check_objects_parallel(workers, &objects);
@@ -350,13 +374,21 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         timings.workspace = started.elapsed();
         None
     };
+    if narrate {
+        eprintln!("incremental: check: objects {:.3}", t_start.elapsed().as_secs_f64());
+    }
     let rest_started = std::time::Instant::now();
     let positions: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
-    c.diags.extend(crate::alcodes::check_workspace(ws));
+    let from_checker = c.diags.clone();
+    let from_codes = crate::alcodes::check_workspace(ws);
+    c.diags.extend(from_codes.iter().cloned());
     c.diags
         .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
     // Without a demand state (the eager compile) every dependency object is lowered, so every one
     // needs its layout.
+    if narrate {
+        eprintln!("incremental: check: codes {:.3}", t_start.elapsed().as_secs_f64());
+    }
     let wanted = |oi: usize| !provided(oi) && (!ws.is_dependency(oi) || demand.as_ref().is_none_or(|d| d.active(oi)));
     for oi in 0..ws.objects.len() {
         if wanted(oi) {
@@ -385,6 +417,8 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         demand,
         skipped,
         panicked: c.panicked,
+        from_checker,
+        from_codes,
     }
 }
 
@@ -479,13 +513,21 @@ fn unselected_test(ws: &Workspace, oi: usize, keep: &[(usize, u32)]) -> bool {
     let is_test = ast
         .properties()
         .any(|p| p.name().eq_ignore_ascii_case("Subtype") && p.value_text().eq_ignore_ascii_case("Test"));
-    // A test codeunit that subscribes to events listens during every test, so it stays compiled.
+    // A test codeunit that subscribes to events listens during every test, so it stays compiled. The text
+    // of the object is searched token by token (no word of the search spans two tokens).
     is_test
-        && !ast
-            .syntax()
-            .to_string()
-            .to_ascii_lowercase()
-            .contains("eventsubscriber")
+        && !ast.syntax().descendants_with_tokens().any(|e| {
+            e.as_token()
+                .is_some_and(|t| contains_ignore_case(t.text(), b"eventsubscriber"))
+        })
+}
+
+/// Whether `haystack` holds `needle` (lower case ASCII) in any case.
+fn contains_ignore_case(haystack: &str, needle: &[u8]) -> bool {
+    let h = haystack.as_bytes();
+    h.len() >= needle.len()
+        && h.windows(needle.len())
+            .any(|w| w.iter().zip(needle).all(|(a, b)| a.to_ascii_lowercase() == *b))
 }
 
 /// Types that appear in the catalog's signatures but are not receivers or

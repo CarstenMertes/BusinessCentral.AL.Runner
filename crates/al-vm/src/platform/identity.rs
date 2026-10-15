@@ -43,12 +43,12 @@ fn session_unique_id(session_id: i32) -> [u8; 16] {
 pub(super) fn session_row(t: &TableDef, i: &Ident) -> Row {
     let mut r = blank(t);
     r[pos(t, 1)] = Value::Integer(i.session_id);
-    r[pos(t, 2)] = Value::Text(i.user_id.clone());
+    r[pos(t, 2)] = Value::Text(i.user_id.clone().into());
     r[pos(t, 3)] = Value::Boolean(true);
     r[pos(t, 5)] = Value::Time(i.login_millis.rem_euclid(MS_PER_DAY) + 1);
     r[pos(t, 6)] = Value::Date((i.login_millis.div_euclid(MS_PER_DAY) + unix_epoch_day()) as i32, false);
     r[pos(t, 17)] = Value::Text(client_type_ordinal(i.client_type).1.into());
-    r[pos(t, 19)] = Value::Text(i.host_name.clone());
+    r[pos(t, 19)] = Value::Text(i.host_name.clone().into());
     r
 }
 
@@ -60,8 +60,8 @@ pub(super) fn active_session_row(t: &TableDef, i: &Ident) -> Row {
     // "Server Instance Name" and "Server Computer Name" are not blank; only their shape is pinned (session/
     // TestActiveSessionHostColumnsContracts.al), "Client Computer Name" is blank on the test runner.
     r[pos(t, 4)] = Value::Text("BC".into());
-    r[pos(t, 5)] = Value::Text(i.host_name.clone());
-    r[pos(t, 6)] = Value::Text(i.user_id.clone());
+    r[pos(t, 5)] = Value::Text(i.host_name.clone().into());
+    r[pos(t, 6)] = Value::Text(i.user_id.clone().into());
     r[pos(t, 7)] = option(t, 7, client_type_ordinal(i.client_type).0);
     r[pos(t, 9)] = crate::hostvalues::datetime_of_unix_millis(i.login_millis);
     r[pos(t, 11)] = Value::Guid(session_unique_id(i.session_id));

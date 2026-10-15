@@ -161,6 +161,58 @@ The matrix has ten Cloud legs (27.0, 27.3, 27.5, 28.0 to 28.5, 29.0) and ten OnP
 
 Put the result in the test file header, not only in the commit. The runtime reads the header and the assertions. When a row of `docs/probes-needed.md` is settled by your tests, say which row in the handover message; the publisher updates the document.
 
+## Corpus layout
+
+The corpus must stay ordered and free of duplicates. Rules for every writer and for the publisher:
+
+1. **One folder per topic**, named for the topic and not for the writer or the batch. New tests go into the folder that owns their topic (table below). A new topic gets a new folder under `tests/al-language/`; the name is a lower-case singular or plural noun like the existing ones.
+2. **File and codeunit names say what is tested**: `<Topic><Aspect>.al`, codeunit `"<Topic> <Aspect>"` (for example `text/lt-text-functions/CaseConv.al`, codeunit `"LT TxB CaseConv"`). Never a writer or batch prefix in a new name (`PA`, `PX`, `W4`, `batch3`, ...). Test procedures are named `Member_Case_Result`.
+3. **Adding a procedure to an existing topic codeunit is allowed**; changing or removing an existing test procedure is not (the oracle uses their names). If the codeunit has too many tests (over about 25 observations in one procedure, or one codeunit mixing topics), start a new codeunit in the same folder.
+4. **Do not move or rename existing files or tests.** Test names are part of the oracle. A later one-time consolidation is listed below; the owner decides when.
+5. Object ids stay inside your writer range (laptop 70000-74999; the publisher uses 61200-61299 for OnPrem and 69000-69999 for the rest). `check-object-ids.py` enforces uniqueness.
+
+Folder map (`tests/al-language/` unless stated):
+
+| Topic | Folder |
+|---|---|
+| Text, Code, Label, TextBuilder, string builtins | `text/` (`lt-text-functions`, `lt-text-instance`, `lt-label-textbuilder`); older: `types/` |
+| JSON types | `json/` |
+| XML types, XmlPort | `xml/`, `xmlport/` |
+| Streams, Blob, Media, MediaSet, Base64 | `streams/`; older: `media/`, `types/` |
+| List, Dictionary, Array, collections | `collections/` |
+| Date, Time, DateTime, Duration, Decimal, Integer, Boolean, Guid, Option, Enum, Variant | `types/` |
+| Record (fields, keys, filters, find, modify, triggers, validate, relations, CalcFields, FlowFilters) | `record/`, `records/`, `calcfields/`, `filters/`, `system-fields/`, `tableglobals/` |
+| RecordRef, FieldRef, KeyRef | `recordref/`, `fieldref/` |
+| Table and table extension triggers | `tableextension/`, `tableextensiontrigger/` |
+| Pages, TestPage, page extensions, page events | `pages/`, `pageext*/`, `testpart/`, `controls/`, `pagefindrecord/`, `pageupdate/`, `pagesave/`, `pageapplicationarea/`, `appareas/` |
+| Reports, report extensions, datasets, request pages | `report/`, `reportext/`, `reportextensiontrigger/`, `filterpage/` |
+| Queries | `query/` |
+| Codeunits, interfaces, events, subscribers | `codeunit/`, `events/`, `extensionevents/` |
+| Errors, ErrorInfo, error handling | `errors/`, `errorinfo/`, `error-handling/` |
+| Session, user, company, permissions, access control, profiles | `session/`, `permissions/`, `access-control/`, `profile/` |
+| Platform tables and metadata (Field, Key, AllObj, Feature Key, system tables) | `metadata/`, `platform/`, `misc/` |
+| HttpClient and network | `network/`; handler tests in the OnPrem app |
+| Install and upgrade | `install/` (no new install codeunits, see rules) |
+| Shared fixtures | `_fixtures/` (and `fixtures/`) |
+| OnPrem scope objects | `tests/al-language-onprem/<same topic folder>` |
+| Must-not-compile | `tests/must-not-compile/cases/NNNN-short-name.al` |
+
+Older files that carry a writer or batch prefix (`PA*`, `PC*`, `PE*`, `PF*`, `PO*`, `PR*`, `PS*`, `PT*`, `PU*`, `PV*`, `PW*`, `PX*`, `PY*`, `PZ*`, `W1*` to `W7*`, and the `handlers/` folder with about 500 files) stay where they are for now. A later one-time consolidation would move them by topic into the folders above: `W1*` into `pages/`, `W2*` into `appareas/`, `bgtasks/`, `controls/`, `misc/`, `W3*` into `report/`, `reportext/`, `W4*` into `calcfields/`, `events/`, `records/`, `recordref/`, `W5*` into `session/`, `errors/`, `W6*` into `metadata/`, `platform/`, `session/`, `W7*` into `types/`, `query/`, `streams/`, `xmlport/`, `PW*`/`PX*`/`PY*`/`PZ*`/`PU*`/`PV*` into `types/` and `session/`, and the files in `handlers/` into the folder of what they test (`report/`, `pageupdate/`, `session/`, ...). Moving renames the oracle test names, so it needs the owner's decision and a regenerated baseline.
+
+## Check before you write
+
+Before you write a test for a member, in this order:
+
+1. Look the member up in `docs/corpus-coverage.md` (in al-runtime-rs): it lists, per type, which overloads the corpus already calls. A pinned overload is not new work unless you add cases it misses.
+2. `grep -rn "<MemberName>(" tests/al-language/<topic folder> tests/al-language-onprem` in the corpus. Read the matching tests. Add only the cases that are missing (other inputs, edge values, error texts, other types of the argument).
+3. Write your tests. Before you hand the branch over run the duplicate finder:
+
+```bash
+python3 tools/corpus-writer/dupfinder.py --corpus ~/corpus --new-git origin/al-runtime-rs-staging --show
+```
+
+It lists the new tests whose facts (member plus literal inputs) already exist in other files, with the place they exist. Remove or reduce a test that only repeats an existing fact. A listed test that also checks other inputs or another context stays; say so in the handover message. The publisher runs the same command on your branch before merging.
+
 ## Which BC is the reference
 
 The corpus CI and the local container run BC on Linux (MsDyn365Bc.On.Linux). It matches

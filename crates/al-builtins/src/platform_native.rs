@@ -16,6 +16,7 @@
 //! - `InsertLineBreaks` on a text of more than 76 output characters puts CR LF after each 76 (120
 //!   bytes give 164 characters, no trailing break); on an InStream it changes nothing (a 100 byte stream);
 //! - the stream forms read all bytes of the InStream / write the decoded bytes to the OutStream.
+//!
 //! A code page or a character the pin does not cover (a code page other than 0, 1252, 28591 and 65001;
 //! a character that Windows-1252 and Latin-1 encode differently) is refused.
 

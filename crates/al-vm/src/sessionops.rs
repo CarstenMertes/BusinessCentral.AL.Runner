@@ -221,7 +221,10 @@ impl Session {
                     Some(Value::Integer(i)) => self.lock_timeout_duration = i64::from(*i),
                     Some(other) => return unsupported(format!("LockTimeoutDuration with {}", other.describe())),
                 }
-                return Ok(Value::Duration(self.lock_timeout_duration));
+                // The catalog types the result as an Integer (a Duration in AL); the id is pinned (pinned_ids.tsv).
+                return Ok(Value::Integer(
+                    i32::try_from(self.lock_timeout_duration).unwrap_or(i32::MAX),
+                ));
             }
             // The type of the transaction (session/ProbeSystemEnumMembers.al:60-161, BC 27.5;
             // TestClearAllTransactionTypeContracts.al:224-253):

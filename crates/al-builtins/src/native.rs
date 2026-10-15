@@ -111,6 +111,11 @@ pub trait Ctx: FormatCtx {
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         None
     }
+    /// The profile id, the profile's app id and the company of the session user's User Personalization row, which
+    /// `SessionSettings.Init` reads (session/W6UserPersonalization.al). `None` where the context has none.
+    fn session_profile(&self) -> Option<(String, [u8; 16], String)> {
+        None
+    }
     /// The app of the routine `depth` frames out on the call stack: 0 is the routine that runs the
     /// builtin, 1 its caller. `None` when there is no such frame (the caller of a test is the test
     /// runner) or the app's manifest has no readable id.

@@ -130,12 +130,17 @@ fn init(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
             "SessionSettings.Init reads the language, locale and time zone of the running session, which this context does not have (host value, ADR-013)",
         );
     };
+    // The profile and the company are those of the session user's User Personalization row (session/
+    // W6UserPersonalization.al:SessionSettings_Init_ComparedWithTheRow, BC 27.5 and 29.0).
+    let profile = c.session_profile();
     with_settings(r, |s| {
         *s = SessionSettingsState {
             language_id: Some(language),
             locale_id: Some(locale),
             time_zone: Some(zone),
-            ..SessionSettingsState::default()
+            profile_id: profile.as_ref().map(|p| p.0.clone()),
+            profile_app_id: profile.as_ref().map(|p| p.1),
+            company: profile.map(|p| p.2).unwrap_or_default(),
         }
     })
     .map(|()| Value::Null)

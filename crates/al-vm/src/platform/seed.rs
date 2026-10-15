@@ -86,6 +86,13 @@ impl Session {
                     }
                     set(12, Value::Integer(1033));
                     set(27, Value::Integer(1033));
+                    // The row carries the session company and the host's time zone (session/W6UserPersonalization.al:
+                    // row_company_blank and row_time_zone_blank are No, and SessionSettings.Init matches the row).
+                    for (name, value) in [("Company", i.company.clone()), ("Time Zone", i.time_zone.clone())] {
+                        if let Some(p) = t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(name)) {
+                            r[p] = Value::Text(value.into());
+                        }
+                    }
                     r
                 }
                 ACCESS_CONTROL => {

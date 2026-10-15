@@ -2101,6 +2101,9 @@ impl al_builtins::native::Ctx for Session {
         self.temp_files += 1;
         format!("{}{}.tmp", al_builtins::file::TEMP_DIR, self.temp_files)
     }
+    fn session_profile(&self) -> Option<(String, [u8; 16], String)> {
+        self.personalization_of_session_user()
+    }
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         Some((
             self.global_language,

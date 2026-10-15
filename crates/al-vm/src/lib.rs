@@ -898,8 +898,7 @@ impl Session {
         // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
         // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
         let saved_commit_behavior = self.commit_behavior;
-        let collecting;
-        if facts.odd_attributes {
+        let collecting = if facts.odd_attributes {
             // An attribute the runtime does not understand: the scan that reports it.
             for a in r
                 .attributes
@@ -916,13 +915,13 @@ impl Session {
                     }
                 }
             }
-            collecting = errorcollect::declares_collect(&r.attributes)?;
+            errorcollect::declares_collect(&r.attributes)?
         } else {
             if let Some(b) = facts.commit_behavior {
                 self.commit_behavior = b;
             }
-            collecting = facts.collects;
-        }
+            facts.collects
+        };
         if collecting {
             self.error_scopes.open();
         }

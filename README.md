@@ -138,6 +138,25 @@ load it.
 A wrong result is the most useful report: a test that passes or fails here and
 behaves differently on real Business Central.
 
+## What AL Runner v3 does not do
+
+Some AL features are refused on purpose. A test that reaches one is reported as
+"not run", with the reason. It is never guessed.
+
+| Area | What v3 does | What to do instead |
+|---|---|---|
+| Email, outbound HTTP, web service endpoints | Not run. No network, no server | Put the call behind an AL interface and fake it in the test |
+| Cloud storage, Key Vault, external data connections | Not run | Same |
+| File upload and download dialogs | Not run (needs a browser) | Test with streams |
+| Report rendering to PDF, Word or Excel | Not run. The XML dataset works | Assert on the dataset |
+| Background jobs, `StartSession` | Tasks are created and never run. A second session is not started | Call the code the task would run |
+| Licensing, permission enforcement | Everything is granted. Denial paths cannot be tested | Use a real service tier |
+| Apps that ship without AL source | Not run. The message names the app | Provide an `.app` with source |
+| Server mode, watch mode, debugger, coverage | Deferred | Not available yet |
+
+The full list, with reasons and open questions, is
+[ADR-027](docs/adr/027-scope.md) (Proposed).
+
 ## Command lines
 
 **`al-test-cli`** runs the corpus and reports the pass rate against the oracle.

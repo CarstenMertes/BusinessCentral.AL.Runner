@@ -271,13 +271,15 @@ jobs:
       - uses: ./.github/actions/setup
 
       # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s, parser throughput at
-      # least 50 MB/s. #[ignore]d in plain `cargo test` because they only mean something in release.
+      # least 50 MB/s, and the VM budget (ADR-031: instructions per iteration of the tests/vm-bench programs; where the runner
+      # allows no hardware counter it falls back to CPU time with wider limits). #[ignore]d in plain `cargo test` because they only mean something in release.
       # This job runs nothing else at the same time, so the numbers are not disturbed.
       - name: Perf budgets
         run: |
           cargo test --release --no-fail-fast \
             -p al-syntax --test perf_parse_throughput \
             -p al-test-cli --test perf_budget \
+            -p al-test-cli --test perf_vm \
             -p al-test-cli --test corpus_resolve_deps \
             -p al-test-cli --test platform_tables \
             -p al-data --lib \

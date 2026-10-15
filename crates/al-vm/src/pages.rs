@@ -4038,7 +4038,12 @@ impl Session {
                 before.filter(|_| st.borrow().cursor == Cursor::Row && !st.borrow().draft && !st.borrow().refresh)
             {
                 let rec = self.page_rec(st);
-                if !Self::same_values(&rec.borrow().fields, &before) {
+                // A change the action saved itself (`Rec.Modify()` in the action) is not saved again: the
+                // page runs no OnModify for it (misc/W2TableGlobals.al:Modify_ActionCallsModifyItself).
+                let saved_by_action = self
+                    .stored_row(&rec)?
+                    .is_some_and(|stored| Self::same_values(&rec.borrow().fields, &stored));
+                if !Self::same_values(&rec.borrow().fields, &before) && !saved_by_action {
                     st.borrow_mut().dirty = true;
                     self.save_row(st)?;
                 }

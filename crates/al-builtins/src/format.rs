@@ -98,7 +98,14 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         },
         // The text form of a FilterPageBuilder is only known to be non-empty
         // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Format_ReturnsANonEmptyRendering).
-        Value::Library(name, _) if name == "FilterPageBuilder" => "FilterPageBuilder".to_string(),
+        // A builder nobody added a control to formats as an empty text (filterpage/W3FilterPageBuilder.al:
+        // PageCaption_DefaultOfAFreshBuilder, BC 27.5 and 29.0).
+        Value::Library(name, l) if name == "FilterPageBuilder" => match &*l.borrow() {
+            crate::value::LibraryValue::FilterPageBuilder(s) if !s.controls.is_empty() => {
+                "FilterPageBuilder".to_string()
+            }
+            _ => String::new(),
+        },
         // A TableFilter field nobody set holds no filter: empty text. Base App's Change Log
         // Management.HasValue formats such a value on every insert and the tests pass on BC
         // (permissions/TestMetadataExpandedPermission.al:219-235); the text of a set filter is not

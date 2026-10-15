@@ -18,6 +18,15 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+/// An argument error: code `Argument` (filterpage/W3FilterPageBuilder.al, BC 27.5 and 29.0).
+fn arg_error(message: String) -> Signal {
+    Signal::Error(AlError {
+        message,
+        code: "Argument".into(),
+        call_stack: String::new(),
+    })
+}
+
 fn al_error(message: String) -> Signal {
     Signal::Error(AlError {
         message,
@@ -29,7 +38,7 @@ fn al_error(message: String) -> Signal {
 /// The caption of a builder nobody assigned one to: the platform's localized default, which the
 /// corpus only knows to be non-empty (filterpage/TestFilterPageBuilder.al:
 /// FilterPageBuilder_PageCaption_FreshBuilder_IsNonEmptyDefault). docs/probes-needed.md.
-const DEFAULT_CAPTION: &str = "Filter";
+const DEFAULT_CAPTION: &str = "Filter Page";
 
 fn text(args: &[Value], i: usize) -> Result<String, Signal> {
     match args.get(i).and_then(al_builtins::native::text_of) {
@@ -79,7 +88,11 @@ impl Session {
         // The calls that fail answer `fallback` when their result is used and raise otherwise
         // (filterpage/TestFilterPageBuilder.al: the trappable-return convention, header item 4).
         let fail = |message: String, fallback: Value| {
-            if ret_used { Ok(fallback) } else { Err(al_error(message)) }
+            if ret_used {
+                Ok(fallback)
+            } else {
+                Err(arg_error(message))
+            }
         };
         match method {
             "Count" => Ok(Value::Integer(state_of(&cell)?.controls.len() as i32)),
@@ -139,7 +152,10 @@ impl Session {
                     },
                     _ => match args.get(1) {
                         Some(Value::Library(_, l)) => match &*l.borrow() {
-                            LibraryValue::RecordRef(r) => (r.borrow().table, Rc::new(RefCell::new(r.borrow().clone()))),
+                            // The builder keeps the RecordRef's own buffer: a filter set on the RecordRef afterwards shows in the
+                            // builder's view, where AddRecord copies a Record (filterpage/W3FilterPageBuilder.al:
+                            // AddRecord_CopiesTheFiltersOfTheRecord, BC 27.5 and 29.0).
+                            LibraryValue::RecordRef(r) => (r.borrow().table, r.clone()),
                             other => {
                                 return unsupported(format!(
                                     "FilterPageBuilder.AddRecordRef with a RecordRef that is not open ({other})",
@@ -161,7 +177,7 @@ impl Session {
                     Some(_) => {
                         drop(s);
                         fail(
-                            format!("The filter control '{name}' is already defined for another table."),
+                            format!("A table that has the name {name} already exists with a different ID."),
                             Value::Text(String::new()),
                         )
                     }
@@ -180,13 +196,10 @@ impl Session {
                 let Some(control) = self.filter_control(&cell, &name)? else {
                     // The unknown-name answer is pinned for a used result only
                     // (:AddField_UnknownControl_ReturnsFalse).
-                    return if ret_used {
-                        Ok(Value::Boolean(false))
-                    } else {
-                        unsupported(
-                            "FilterPageBuilder.AddField of an unknown control without using the result (error text not pinned)",
-                        )
-                    };
+                    return fail(
+                        format!("Filter control {name} is not defined in the FilterPageBuilder variable."),
+                        Value::Boolean(false),
+                    );
                 };
                 let pos = match args.get(1) {
                     Some(Value::Library(_, l)) => match &*l.borrow() {
@@ -228,8 +241,10 @@ impl Session {
                     Some(c) => {
                         let t = self.table(&c.record)?;
                         // :GetView_CaptionsFlag_RendersAnOptionFilterDifferently
+                        // The view starts with `VERSION(1) ` like a Record's (filterpage/W3FilterPageBuilder.al:
+                        // AddRecord_CopiesTheFiltersOfTheRecord, BC 27.5 and 29.0).
                         self.get_view_with(&c.record, &t, use_names, !use_names, false)
-                            .map(Value::Text)
+                            .map(|v| Value::Text(format!("VERSION(1) {v}")))
                     }
                 }
             }
@@ -240,19 +255,13 @@ impl Session {
                     // :SetView_UnknownControl_Throws names the control; the rest is
                     // docs/probes-needed.md. :SetView_ReturnCaptured_UnknownControl_ReturnsFalse
                     return fail(
-                        format!("The filter control '{name}' does not exist."),
+                        format!("Filter control {name} is not defined in the FilterPageBuilder variable."),
                         Value::Boolean(false),
                     );
                 };
                 if view.is_empty() {
                     // :SetView_EmptyView_ReturnsFalse pins the used result only.
-                    return if ret_used {
-                        Ok(Value::Boolean(false))
-                    } else {
-                        unsupported(
-                            "FilterPageBuilder.SetView with an empty view without using the result (error text not pinned)",
-                        )
-                    };
+                    return fail("The filter page view cannot be empty.".into(), Value::Boolean(false));
                 }
                 let t = self.table(&control.record)?;
                 self.set_view(&control.record, &t, &view)?;

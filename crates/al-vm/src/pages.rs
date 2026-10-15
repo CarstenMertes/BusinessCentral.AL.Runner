@@ -3204,7 +3204,11 @@ impl Session {
                 }
                 // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
                 // Enum_VariableControl_*); one bound to a table field keeps the empty code.
-                return Err(if rec_bound && !no_row { refuse(self, msg) } else { refuse_bound(msg) });
+                return Err(if rec_bound && !no_row {
+                    refuse(self, msg)
+                } else {
+                    refuse_bound(msg)
+                });
             }
             Err(al_builtins::pagefmt::ParseError::Unsupported) => {
                 return unsupported(format!(

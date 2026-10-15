@@ -3168,7 +3168,9 @@ impl Session {
                 })
                 .map(|(v, _)| *v)
         };
-        let suffix = if rec_bound {
+        // Without a row on the page there is nothing to refresh (controls/W2ValueControls.al:Enum_RecordFieldControl_*).
+        let no_row = self.shows_no_row(st, idx);
+        let suffix = if rec_bound && !no_row {
             " (Select Refresh to discard errors)"
         } else {
             ""
@@ -3202,7 +3204,7 @@ impl Session {
                 }
                 // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
                 // Enum_VariableControl_*); one bound to a table field keeps the empty code.
-                return Err(if rec_bound { refuse(self, msg) } else { refuse_bound(msg) });
+                return Err(if rec_bound && !no_row { refuse(self, msg) } else { refuse_bound(msg) });
             }
             Err(al_builtins::pagefmt::ParseError::Unsupported) => {
                 return unsupported(format!(
@@ -3211,6 +3213,11 @@ impl Session {
                 ));
             }
         };
+        // The entry is read before the row is looked for: a refused entry is a validation error, an acceptable one on
+        // a page without a row is TestRowNotFound (controls/W2ValueControls.al:Enum_RecordFieldControl_CaptionAndNames).
+        if self.shows_no_row(st, idx) {
+            return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+        }
         // A Text variable given too many characters (handlers/TestPageVariableMinMaxContracts.al:119).
         // A table field's overlong text is not pinned.
         if let (RtType::Text(Some(max)), Value::Text(t), false) = (&ty, &parsed, rec_bound) {
@@ -3516,6 +3523,13 @@ impl Session {
                     return Ok(Value::Text(String::new()));
                 }
                 let v = self.control_value(st, idx)?;
+                // An Enum control that refused an entry shows the ordinal, not the caption (controls/W2ValueControls.al:
+                // Enum_VariableControl_*, `value` 0 after a refused `Alpha`, BC 27.5 and 29.0).
+                if let Value::Enum(_, ordinal) = &v {
+                    if st.borrow().errors.iter().any(|(i, _)| *i == idx) {
+                        return Ok(Value::Text(ordinal.to_string()));
+                    }
+                }
                 let text = self.control_text(st, idx, &v)?;
                 Ok(Value::Text(text))
             }

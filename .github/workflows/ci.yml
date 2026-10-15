@@ -20,11 +20,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, release]
   pull_request:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+  # release.yml runs the same checks before it builds a numbered alpha.
+  workflow_call:
 
 env:
   # The built sidecar, for the sidecar tests and the corpus run. A missing .NET fails, not skips.
